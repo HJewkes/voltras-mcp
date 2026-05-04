@@ -85,14 +85,23 @@ interface FakeClient {
   onSetBoundary: Mock<(l: SetBoundaryListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
-  // The bridge MUST NOT subscribe to onFrame (R16 — typed-only).
-  onFrame: Mock<(...args: unknown[]) => () => void>;
+  // The bridge subscribes to onFrame to assemble Reps from the typed
+  // telemetry stream (R16 — typed values, no raw buffers).
+  onFrame: Mock<(l: (frame: unknown) => void) => () => void>;
   // Captured listeners for direct invocation.
   fire: {
     repBoundary: () => void;
     setBoundary: () => void;
     settingsUpdate: (settings: SdkSettings) => void;
     connectionStateChange: (state: ConnectionState) => void;
+    frame: (frame: {
+      sequence: number;
+      timestamp: number;
+      phase: number;
+      position: number;
+      velocity: number;
+      force: number;
+    }) => void;
   };
 }
 
@@ -118,7 +127,11 @@ function makeFakeClient(): FakeClient {
     connCb = l;
     return () => undefined;
   });
-  const onFrame = vi.fn(() => () => undefined);
+  let frameCb: (frame: unknown) => void = () => undefined;
+  const onFrame = vi.fn((l: (f: unknown) => void) => {
+    frameCb = l;
+    return () => undefined;
+  });
 
   return {
     onRepBoundary,
@@ -131,6 +144,7 @@ function makeFakeClient(): FakeClient {
       setBoundary: () => setCb(),
       settingsUpdate: (s) => settingsCb(s),
       connectionStateChange: (s) => connCb(s),
+      frame: (f) => frameCb(f),
     },
   };
 }
@@ -189,14 +203,26 @@ describe('wireEventBridge', () => {
       expect(client.onConnectionStateChange).toHaveBeenCalledOnce();
     });
 
-    it('does NOT subscribe to onFrame (R16: typed-only, no raw buffers reach LiveState)', () => {
-      expect(client.onFrame).not.toHaveBeenCalled();
+    it('subscribes to onFrame to assemble Reps from telemetry stream (R16)', () => {
+      // Frames carry typed numeric values (no raw buffers). The bridge maps
+      // each frame to a WorkoutSample and uses analytics' `addSampleToRep`
+      // to assemble a Rep on each onRepBoundary signal.
+      expect(client.onFrame).toHaveBeenCalledOnce();
     });
   });
 
   describe('onRepBoundary', () => {
     it('fires sendResourceUpdated for voltra://set/active when a set is active', () => {
       startSet(live);
+      // Feed at least one frame so the bridge has samples to assemble a Rep.
+      client.fire.frame({
+        sequence: 1,
+        timestamp: Date.now(),
+        phase: 1, // CONCENTRIC
+        position: 0.1,
+        velocity: 0.5,
+        force: 50,
+      });
       client.fire.repBoundary();
       expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
         uri: 'voltra://set/active',

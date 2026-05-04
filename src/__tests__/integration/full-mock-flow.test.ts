@@ -94,6 +94,9 @@ class FakeVoltraClient {
     this.listeners.conn.push(cb as FakeListeners['conn'][number]);
     return () => undefined;
   }
+  onFrame(_cb: (frame: unknown) => void): () => void {
+    return () => undefined;
+  }
   setWeight(_lbs: number): Promise<void> {
     return Promise.resolve();
   }

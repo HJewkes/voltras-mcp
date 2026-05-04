@@ -90,6 +90,7 @@ interface FakeClient {
   onSetBoundary: Mock<(cb: () => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
   onConnectionStateChange: Mock<(cb: (state: unknown) => void) => void>;
+  onFrame: Mock<(cb: (frame: unknown) => void) => void>;
 }
 
 interface FakeManager {
@@ -124,6 +125,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     onSetBoundary: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
     onConnectionStateChange: vi.fn(() => undefined),
+    onFrame: vi.fn(() => undefined),
     ...overrides,
   };
 }

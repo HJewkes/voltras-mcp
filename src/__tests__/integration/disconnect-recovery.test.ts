@@ -60,6 +60,9 @@ class FakeVoltraClient {
   onConnectionStateChange(): () => void {
     return () => undefined;
   }
+  onFrame(): () => void {
+    return () => undefined;
+  }
   setWeight(_lbs: number): Promise<void> {
     return Promise.resolve();
   }
