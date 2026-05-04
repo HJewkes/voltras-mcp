@@ -30,6 +30,7 @@ import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
+import { z } from 'zod';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { registerDeviceTools } from './tools/device-tools.js';
 import { registerSessionTools } from './tools/session-tools.js';
@@ -77,17 +78,25 @@ function startingResult(): ToolResult {
 /**
  * Register a `STARTING`-returning placeholder for every tool name. Returns
  * the `RegisteredTool` map so `runServer` can hot-swap the callback once
- * `bootstrapState` resolves. Placeholder callbacks accept the `extra` arg
- * shape used by zero-schema MCP tools and ignore it.
+ * `bootstrapState` resolves.
+ *
+ * Each placeholder registers with a permissive `z.object({}).passthrough()`
+ * paramsSchema. Without a paramsSchema, the SDK invokes the handler with
+ * only `extra` (no `args`), which would silently drop every tool argument
+ * once Wave 3 swaps in real handlers. The passthrough schema lets the SDK
+ * forward raw args; each real handler's `wrapHandler(schema, fn)` does the
+ * actual typed validation against its real zod schema.
  */
+const PLACEHOLDER_SCHEMA = z.object({}).passthrough().shape;
+
 function registerStartingPlaceholders(server: McpServer): Map<string, RegisteredTool> {
   const placeholders = new Map<string, RegisteredTool>();
   const callback = (): ToolResult => startingResult();
   for (const name of CORE_TOOL_NAMES) {
-    placeholders.set(name, server.tool(name, callback));
+    placeholders.set(name, server.tool(name, PLACEHOLDER_SCHEMA, callback));
   }
   for (const name of MOCK_TOOL_NAMES) {
-    placeholders.set(name, server.tool(name, callback));
+    placeholders.set(name, server.tool(name, PLACEHOLDER_SCHEMA, callback));
   }
   return placeholders;
 }
