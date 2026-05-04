@@ -86,6 +86,10 @@ interface FakeClient {
   setMode: Mock<(mode: number) => Promise<void>>;
   setChains: Mock<(lbs: number) => Promise<void>>;
   setEccentric: Mock<(percent: number) => Promise<void>>;
+  onRepBoundary: Mock<(cb: () => void) => void>;
+  onSetBoundary: Mock<(cb: () => void) => void>;
+  onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
+  onConnectionStateChange: Mock<(cb: (state: unknown) => void) => void>;
 }
 
 interface FakeManager {
@@ -116,6 +120,10 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setMode: vi.fn(async () => undefined),
     setChains: vi.fn(async () => undefined),
     setEccentric: vi.fn(async () => undefined),
+    onRepBoundary: vi.fn(() => undefined),
+    onSetBoundary: vi.fn(() => undefined),
+    onSettingsUpdate: vi.fn(() => undefined),
+    onConnectionStateChange: vi.fn(() => undefined),
     ...overrides,
   };
 }

@@ -38,6 +38,7 @@ import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
 import type { ServerState } from '../state/server-state.js';
+import { wireEventBridge } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -104,7 +105,7 @@ function install(
  * tool-side code typed without bleeding SDK internals into every callsite.
  */
 export function registerDeviceTools(
-  _server: McpServer,
+  server: McpServer,
   state: ServerState,
   placeholders: Placeholders,
 ): void {
@@ -142,7 +143,15 @@ export function registerDeviceTools(
           `No device with id ${JSON.stringify(input.deviceId)} in the last scan.`,
         );
       }
-      await state.manager.connect(device);
+      // `manager.connect` returns the SDK's connected `VoltraClient`, which
+      // is distinct from the parameter-less stub in `state.client` set at
+      // bootstrap. Reassign and re-wire the event bridge so onRepBoundary /
+      // onSettingsUpdate / onConnectionStateChange land on the right object.
+      // The old client's listeners stay attached but never fire (it was
+      // never connected to anything).
+      const client = await state.manager.connect(device);
+      state.client = client;
+      wireEventBridge(client, state.live, server);
       return { ok: true, deviceId: input.deviceId };
     }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
       ? C extends (...a: never[]) => unknown
