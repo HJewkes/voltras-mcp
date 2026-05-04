@@ -21,6 +21,7 @@
 // with a `code` field is preserved by `mapSdkError` -> `errorResult`.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 
 import type { ServerState } from '../state/server-state.js';
@@ -59,30 +60,34 @@ export function registerSetTools(
   install(
     placeholders,
     'set.start',
+    SetStartInput,
     wrapHandler(SetStartInput, () => startSet(state, deviceSnapshots)),
   );
   install(
     placeholders,
     'set.end',
+    SetEndInput,
     wrapHandler(SetEndInput, () => endSet(state, deviceSnapshots)),
   );
   install(
     placeholders,
     'set.live_metrics',
+    SetLiveMetricsInput,
     wrapHandler(SetLiveMetricsInput, () => liveMetrics(state)),
   );
 }
 
-function install(
+function install<S extends z.ZodObject>(
   placeholders: PlaceholderTools,
   name: string,
+  schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ callback: callback as never });
+  tool.update({ paramsSchema: schema.shape, callback: callback as never });
 }
 
 async function startSet(

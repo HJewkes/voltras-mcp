@@ -39,7 +39,7 @@ Server is connect-first: `server.connect(transport)` returns immediately, after 
 
 ## Tool Catalog
 
-20 tools across five always-on namespaces plus an optional `mock.*` namespace.
+22 tools across six always-on namespaces plus an optional `mock.*` namespace.
 
 ### Device (`device.*`)
 
@@ -83,6 +83,13 @@ Server is connect-first: `server.connect(transport)` returns immediately, after 
 | ----------------- | --------------------------------------------- |
 | `exercise.search` | Search the workout-analytics catalog by name. |
 | `exercise.get`    | Fetch a catalog `Exercise` by id.             |
+
+### Timer (`timer.*`)
+
+| Tool           | Purpose                                                                                                                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `timer.wait`   | Block for `durationMs` (1ms..1h), then return. Designed to be invoked as a background tool call so the conversation continues while the timer counts down — completion of the call is the wake-up signal. Optional `label` is echoed in the result. Singleton: a second `timer.wait` while one is active returns `BUSY`. |
+| `timer.cancel` | Cancel the active `timer.wait` if any. The cancelled wait returns immediately with `status: "cancelled"`. No-op success when no timer is active.                                                                                                                                                                         |
 
 ### Mock (`mock.*`, registered iff `VOLTRA_ADAPTER=mock`)
 

@@ -53,7 +53,7 @@ import {
   type Set as AnalyticsSet,
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import type { StoredSet } from '../store/types.js';
@@ -211,7 +211,25 @@ export function registerMetricsTools(
     MetricsComputeInput,
     (input) => compute(state, input),
   );
-  placeholder.update({ callback: handler });
+  // `paramsSchema` paired with `callback`: bootstrap placeholders carry an
+  // empty-object schema that strips required input fields. The MCP SDK's
+  // `update.paramsSchema` only accepts a `ZodRawShape` (key-to-type map), not
+  // a discriminated union, so we declare the loose superset of every variant's
+  // fields here. `wrapHandler(MetricsComputeInput, ...)` does the strict
+  // discriminated-union validation inside the callback — this shape exists
+  // only to keep the SDK from stripping legitimate args.
+  const looseShape = {
+    pipeline: z.string(),
+    setId: z.string().optional(),
+    setIds: z.array(z.string()).optional(),
+    sessionId: z.string().optional(),
+    baselineSetId: z.string().optional(),
+    baselineSessionId: z.string().optional(),
+  };
+  placeholder.update({
+    paramsSchema: looseShape,
+    callback: handler as never,
+  });
 }
 
 // `errorResult` and `textResult` are referenced indirectly via `wrapHandler`

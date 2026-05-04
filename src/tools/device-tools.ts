@@ -79,9 +79,10 @@ type Placeholders = Map<string, RegisteredTool>;
  * Wave 4 may rearrange the bootstrap order, but the contract here is that a
  * missing placeholder is a bug, not a runtime crash.
  */
-function install(
+function install<S extends z.ZodObject>(
   placeholders: Placeholders,
   name: string,
+  schema: S,
   handler: (args: unknown, extra?: unknown) => Promise<ToolResult>,
 ): void {
   const reg = placeholders.get(name);
@@ -93,7 +94,12 @@ function install(
     console.warn(`registerDeviceTools: no placeholder found for ${name}`);
     return;
   }
-  reg.update({ callback: handler });
+  // Pass the real `paramsSchema` alongside the callback. The bootstrap
+  // placeholder schema (`z.object({}).passthrough().shape`) loses passthrough
+  // semantics through `.shape`, so the SDK silently strips ANY input field
+  // when the schema is left unchanged — every tool with a required arg
+  // would fail with INVALID_INPUT until this swap runs.
+  reg.update({ paramsSchema: schema.shape, callback: handler as never });
 }
 
 /**
@@ -115,15 +121,12 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.scan',
+    DeviceScanInput,
     wrapHandler(DeviceScanInput, async (input) => {
       const timeout = input.timeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS;
       const devices = await state.manager.scan({ timeout });
       return { devices };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.connect — looks up the previously-discovered device by id and
@@ -132,6 +135,7 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.connect',
+    DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
       if (state.client.isConnected) {
         throwSdkLike('ALREADY_CONNECTED', 'A device is already connected.');
@@ -153,11 +157,7 @@ export function registerDeviceTools(
       state.client = client;
       wireEventBridge(client, state.live, server);
       return { ok: true, deviceId: input.deviceId };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.disconnect — graceful no-op when nothing is connected, otherwise
@@ -167,17 +167,14 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.disconnect',
+    DeviceDisconnectInput,
     wrapHandler(DeviceDisconnectInput, async () => {
       const id = state.client.connectedDeviceId;
       if (state.client.isConnected && id !== null) {
         await state.manager.disconnect(id);
       }
       return { ok: true };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.set_weight — direct passthrough to the SDK; the schema clamps
@@ -185,14 +182,11 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.set_weight',
+    DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
       await state.client.setWeight(input.lbs);
       return { ok: true };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.set_mode — input is the enum NAME; map back to the SDK numeric
@@ -202,43 +196,34 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.set_mode',
+    DeviceSetModeInput,
     wrapHandler(DeviceSetModeInput, async (input) => {
       const value = (TrainingMode as unknown as Record<string, number>)[input.mode];
       await state.client.setMode(value as TrainingMode);
       return { ok: true };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.set_chains — passthrough; schema enforces 0–100 lbs.
   install(
     placeholders,
     'device.set_chains',
+    DeviceSetChainsInput,
     wrapHandler(DeviceSetChainsInput, async (input) => {
       await state.client.setChains(input.lbs);
       return { ok: true };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.set_eccentric — passthrough; schema enforces -195..+195 percent.
   install(
     placeholders,
     'device.set_eccentric',
+    DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
       await state.client.setEccentric(input.percent);
       return { ok: true };
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 
   // device.get_state — composes the response from the four documented
@@ -249,6 +234,7 @@ export function registerDeviceTools(
   install(
     placeholders,
     'device.get_state',
+    DeviceGetStateInput,
     wrapHandler(DeviceGetStateInput, async () => {
       const isConnected = state.client.isConnected;
       const connectionState = state.client.connectionState;
@@ -276,11 +262,7 @@ export function registerDeviceTools(
         }
       }
       return out;
-    }) as unknown as Parameters<RegisteredTool['update']>[0]['callback'] extends infer C
-      ? C extends (...a: never[]) => unknown
-        ? (args: unknown, extra?: unknown) => Promise<ToolResult>
-        : never
-      : never,
+    }),
   );
 }
 
