@@ -23,22 +23,26 @@ import type { Rep } from '@voltras/workout-analytics';
 export type TrainingModeName = string;
 
 /**
- * A persisted rep row. Extends the upstream analytics `Rep` exactly so that
+ * A persisted rep row. Intersected with the upstream analytics `Rep` so that
  * stored reps can be passed straight back into `@voltras/workout-analytics`
  * functions without translation.
+ *
+ * Modelled as a type intersection rather than `interface … extends Rep`
+ * because TypeScript silently drops Rep's fields when an interface extends
+ * the type-only re-export chain shipped from `@voltras/workout-analytics`
+ * (root → models → rep). The intersection form preserves field visibility.
  */
-export interface StoredRep extends Rep {
+export type StoredRep = Rep & {
   id: string;
   setId: string;
   index: number;
-}
+};
 
 /**
  * Compile-time shape guard: `StoredRep` must remain assignment-compatible
  * with `Rep`. If the upstream `Rep` interface gains or renames a field, the
  * `satisfies` clause below breaks the build — fail loudly at compile time,
- * never silently at runtime. Exported as a const so `noUnusedLocals` is
- * satisfied without leaking implementation detail.
+ * never silently at runtime.
  */
 export const _STORED_REP_SHAPE_CHECK = null as unknown as StoredRep satisfies Rep;
 
