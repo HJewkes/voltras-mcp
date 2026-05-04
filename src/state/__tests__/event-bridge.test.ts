@@ -211,46 +211,204 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onRepBoundary', () => {
-    it('fires sendResourceUpdated for voltra://set/active when a set is active', () => {
+  describe('onRepBoundary (debug-only post-fix)', () => {
+    // The device fires onRepBoundary at every phase transition (concentric
+    // → eccentric → idle), so it cannot be the "rep complete" signal — that
+    // would double-count every rep. The bridge logs onRepBoundary to the
+    // debug buffer but does NOT mutate live state or notify resources.
+    it('does not mutate live state on bare boundary (no frames buffered)', () => {
       startSet(live);
-      // Feed at least one frame so the bridge has samples to assemble a Rep.
-      client.fire.frame({
-        sequence: 1,
-        timestamp: Date.now(),
-        phase: 1, // CONCENTRIC
-        position: 0.1,
-        velocity: 0.5,
-        force: 50,
-      });
+      const before = live.snapshotSet();
       client.fire.repBoundary();
-      expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
-        uri: 'voltra://set/active',
-      });
-      expect(server.server.sendResourceUpdated).toHaveBeenCalledOnce();
-    });
-
-    it('drops the signal silently when no set is active (EC-11 stale-rep policy)', () => {
-      // No set started — this models a rep boundary arriving after endSet.
-      client.fire.repBoundary();
+      expect(live.snapshotSet()).toEqual(before);
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
 
-    it('drops the signal after live.endSet() — stale rep after endSet (EC-11)', () => {
-      startSet(live);
-      live.endSet();
+    it('drops the signal silently when no set is active', () => {
       client.fire.repBoundary();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
   });
 
+  describe('frame-driven cycle detection', () => {
+    function feedFrame(seq: number, phase: number): void {
+      client.fire.frame({
+        sequence: seq,
+        timestamp: 1000 + seq,
+        phase,
+        position: 0.1 * seq,
+        velocity: 0.5,
+        force: 50,
+      });
+    }
+
+    it('starts a new rep when CONCENTRIC follows ECCENTRIC (canonical addSampleToSet boundary)', () => {
+      startSet(live);
+      feedFrame(1, 1); // CONCENTRIC -> starts rep 1
+      feedFrame(2, 1);
+      feedFrame(3, 3); // ECCENTRIC
+      feedFrame(4, 3);
+      feedFrame(5, 1); // CONCENTRIC again -> closes rep 1, starts rep 2
+
+      // Two reps now exist: rep 1 is closed (C + E samples), rep 2 is
+      // in-progress with the trailing CONCENTRIC sample. This matches the
+      // mobile app's behavior — a rep is "closed" when the next one starts.
+      const set = live.snapshotSet();
+      expect(set?.reps.length).toBe(2);
+      expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
+        uri: 'voltra://set/active',
+      });
+    });
+
+    it('emits one rep for CONCENTRIC -> ECCENTRIC -> IDLE (rest after rep)', () => {
+      startSet(live);
+      feedFrame(1, 1); // CONCENTRIC
+      feedFrame(2, 3); // ECCENTRIC
+      feedFrame(3, 0); // IDLE -> closes the rep
+
+      expect(live.snapshotSet()?.reps.length).toBe(1);
+    });
+
+    it('emits exactly two reps for two full cycles (C->E->C->E)', () => {
+      startSet(live);
+      // Rep 1: CONCENTRIC -> ECCENTRIC
+      feedFrame(1, 1);
+      feedFrame(2, 3);
+      // Rep 2: CONCENTRIC closes rep 1, then ECCENTRIC fills rep 2
+      feedFrame(3, 1);
+      feedFrame(4, 3);
+
+      // After the sequence, reps = [rep1_closed, rep2_with_C+E]. Two reps.
+      expect(live.snapshotSet()?.reps.length).toBe(2);
+    });
+
+    it('does not emit a phantom rep for noise frames at start of set (CONCENTRIC then IDLE without ECCENTRIC)', () => {
+      startSet(live);
+      feedFrame(1, 1); // CONCENTRIC (slack pickup)
+      feedFrame(2, 0); // IDLE — no eccentric, no rep emitted
+      // Now a real rep
+      feedFrame(3, 1);
+      feedFrame(4, 3);
+      feedFrame(5, 0);
+
+      expect(live.snapshotSet()?.reps.length).toBe(1);
+    });
+
+    it('does not emit a phantom rep for an ECCENTRIC-only burst at end of set', () => {
+      startSet(live);
+      feedFrame(1, 3); // ECCENTRIC only — no concentric pull
+      feedFrame(2, 0); // IDLE
+      // Without a CONCENTRIC half, the rep is dropped.
+      expect(live.snapshotSet()?.reps.length).toBe(0);
+    });
+
+    it('drops frames when no set is active', () => {
+      feedFrame(1, 1);
+      feedFrame(2, 3);
+      feedFrame(3, 0);
+      // No set → no live state change.
+      expect(live.snapshotSet()).toBeUndefined();
+      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+  });
+
   describe('onSetBoundary', () => {
-    it('is subscribed but takes no structural action and emits no resource update', () => {
+    function startSetNow(): void {
+      live.startSession({
+        sessionId: 'sess-grace',
+        startedAt: new Date().toISOString(),
+        setIds: [],
+        status: 'active',
+      });
+      live.startSet({
+        setId: 'set-grace',
+        sessionId: 'sess-grace',
+        // startedAt = now → grace window applies.
+        startedAt: new Date().toISOString(),
+        reps: [],
+        status: 'active',
+      });
+    }
+
+    it('within the set-start grace window does not reset cycle state (Workout.GO echo suppression)', () => {
+      startSetNow();
+      // Feed half a rep (CONCENTRIC), then receive a spurious set_boundary
+      // within the grace window — the cycle detector should keep its state.
+      client.fire.frame({
+        sequence: 1,
+        timestamp: 1001,
+        phase: 1,
+        position: 0.1,
+        velocity: 0.5,
+        force: 50,
+      });
+      client.fire.setBoundary();
+
+      // Now finish the rep — the bridge should still produce one rep,
+      // proving the spurious boundary did not blow away the buffered
+      // CONCENTRIC samples.
+      client.fire.frame({
+        sequence: 2,
+        timestamp: 1002,
+        phase: 3, // ECCENTRIC
+        position: 0.2,
+        velocity: 0.5,
+        force: 50,
+      });
+      client.fire.frame({
+        sequence: 3,
+        timestamp: 1003,
+        phase: 0, // IDLE -> close rep
+        position: 0.3,
+        velocity: 0,
+        force: 0,
+      });
+      expect(live.snapshotSet()?.reps.length).toBe(1);
+    });
+
+    it('outside the grace window emits no resource update and does not mutate live state', () => {
+      // startSet() helper uses 2025-01-01 — well outside the 500ms grace.
       startSet(live);
       const before = live.snapshotSet();
       client.fire.setBoundary();
       expect(live.snapshotSet()).toEqual(before);
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('explicit set.end finalization', () => {
+    // After set.end the bridge should not append further reps even if frames
+    // continue to arrive. live.endSet() returns the set; subsequent
+    // appendRep is a silent drop per LiveState's own contract.
+    it('drops frames after live.endSet (no phantom rep on stale telemetry)', () => {
+      startSet(live);
+      client.fire.frame({
+        sequence: 1,
+        timestamp: 1001,
+        phase: 1,
+        position: 0.1,
+        velocity: 0.5,
+        force: 50,
+      });
+      client.fire.frame({
+        sequence: 2,
+        timestamp: 1002,
+        phase: 3,
+        position: 0.2,
+        velocity: 0.5,
+        force: 50,
+      });
+      live.endSet();
+      // Late frame after end — should not reach LiveState.
+      client.fire.frame({
+        sequence: 3,
+        timestamp: 1003,
+        phase: 0,
+        position: 0.3,
+        velocity: 0,
+        force: 0,
+      });
+      expect(live.snapshotSet()).toBeUndefined();
     });
   });
 

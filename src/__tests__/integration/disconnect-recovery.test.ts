@@ -75,6 +75,12 @@ class FakeVoltraClient {
   setEccentric(_pct: number): Promise<void> {
     return Promise.resolve();
   }
+  startRecording(): Promise<void> {
+    return Promise.resolve();
+  }
+  endSet(): Promise<void> {
+    return Promise.resolve();
+  }
   async connect(device: { id: string }): Promise<void> {
     this.isConnected = true;
     this.connectionState = 'connected';
@@ -171,9 +177,13 @@ const CORE_TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.get',
   'metrics.compute',
   'exercise.search',
   'exercise.get',
+  'server.health',
+  'debug.recent_frames',
+  'debug.recent_events',
 ] as const;
 const MOCK_TOOL_NAMES = ['mock.configure', 'mock.inject_error'] as const;
 

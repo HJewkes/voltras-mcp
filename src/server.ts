@@ -39,6 +39,8 @@ import { registerMetricsTools } from './tools/metrics-tools.js';
 import { registerExerciseTools } from './tools/exercise-tools.js';
 import { registerMockTools } from './tools/mock-tools.js';
 import { registerTimerTools } from './tools/timer-tools.js';
+import { registerServerTools } from './tools/server-tools.js';
+import { registerDebugTools } from './tools/debug-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -60,11 +62,15 @@ const CORE_TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.get',
   'metrics.compute',
   'exercise.search',
   'exercise.get',
   'timer.wait',
   'timer.cancel',
+  'server.health',
+  'debug.recent_frames',
+  'debug.recent_events',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -164,6 +170,8 @@ export async function runServer(): Promise<void> {
     registerMetricsTools(server, state, placeholders);
     registerExerciseTools(server, state, placeholders);
     registerTimerTools(server, placeholders);
+    registerServerTools(server, state, placeholders);
+    registerDebugTools(server, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }

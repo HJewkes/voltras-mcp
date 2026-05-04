@@ -162,9 +162,13 @@ const CORE_TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.get',
   'metrics.compute',
   'exercise.search',
   'exercise.get',
+  'server.health',
+  'debug.recent_frames',
+  'debug.recent_events',
 ] as const;
 const MOCK_TOOL_NAMES = ['mock.configure', 'mock.inject_error'] as const;
 

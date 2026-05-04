@@ -25,7 +25,7 @@ import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 
 import type { ServerState } from '../state/server-state.js';
-import { SetEndInput, SetLiveMetricsInput, SetStartInput } from '../schemas/set.js';
+import { SetEndInput, SetGetInput, SetLiveMetricsInput, SetStartInput } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
 import { wrapHandler } from './helpers.js';
@@ -44,11 +44,12 @@ interface PlaceholderTools {
 }
 
 /**
- * Register `set.start`, `set.end`, `set.live_metrics`.
+ * Register `set.start`, `set.end`, `set.live_metrics`, `set.get`.
  *
  * The shared `deviceSnapshots` map persists between `set.start` and the
  * matching `set.end` so the snapshot taken at start time survives any
- * intervening `applySettings` mutations.
+ * intervening `applySettings` mutations. `set.get` is read-only: it pulls a
+ * completed set straight from the store and is unaffected by live state.
  */
 export function registerSetTools(
   _server: McpServer,
@@ -74,6 +75,12 @@ export function registerSetTools(
     'set.live_metrics',
     SetLiveMetricsInput,
     wrapHandler(SetLiveMetricsInput, () => liveMetrics(state)),
+  );
+  install(
+    placeholders,
+    'set.get',
+    SetGetInput,
+    wrapHandler(SetGetInput, (input) => getStoredSet(state, input.setId)),
   );
 }
 
@@ -102,6 +109,11 @@ async function startSet(
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
 
+  // Engage the device motor — firmware-side equivalent of the "tap to load"
+  // prompt on the unit. Without this the cable is free-running and no force
+  // is applied. SDK: VoltraClient.startRecording → Workout.GO.
+  await state.client.startRecording();
+
   const setId = randomUUID();
   const startedAt = new Date().toISOString();
   state.live.startSet({
@@ -112,7 +124,7 @@ async function startSet(
     status: 'active',
   });
   deviceSnapshots.set(setId, state.live.snapshotDevice());
-  return Promise.resolve({ setId });
+  return { setId };
 }
 
 async function endSet(
@@ -130,6 +142,11 @@ async function endSet(
     throw new ToolError('NO_ACTIVE_SET', 'No set is active.');
   }
 
+  // Disengage the device motor between sets (Workout.STOP) so the cable goes
+  // free while the user rests. SDK keeps the workout-mode session open so a
+  // subsequent set.start can re-engage without re-arming.
+  await state.client.endSet();
+
   // Use the snapshot captured at `set.start`; fall back to the current
   // snapshot if it was somehow missing (defensive — should not happen).
   const device = deviceSnapshots.get(setId) ?? state.live.snapshotDevice();
@@ -143,6 +160,20 @@ async function endSet(
 async function liveMetrics(state: ServerState): Promise<{ active: false } | ActiveSet> {
   const snapshot = state.live.snapshotSet();
   return Promise.resolve(snapshot ?? { active: false });
+}
+
+/**
+ * Fetch a completed set's full payload (set metadata + every persisted rep
+ * with per-phase telemetry). Throws `SET_NOT_FOUND` when no row matches; the
+ * `errorResult` mapping in `wrapHandler` surfaces that as a structured tool
+ * error to the MCP client.
+ */
+async function getStoredSet(state: ServerState, setId: string): Promise<StoredSet> {
+  const stored = await state.store.getSet(setId);
+  if (stored === undefined) {
+    throw new ToolError('SET_NOT_FOUND', `No set found with id ${JSON.stringify(setId)}.`);
+  }
+  return stored;
 }
 
 function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {

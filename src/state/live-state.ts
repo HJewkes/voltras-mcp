@@ -23,7 +23,8 @@
 // The `applySettings` signature uses `Partial<DeviceSnapshot>` for the input
 // rather than the SDK's settings type so the caller (event-bridge) can keep
 // SDK-shape conversion at its own seam.
-import type { Rep } from '@voltras/workout-analytics';
+import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
+import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
@@ -74,6 +75,16 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /**
+   * Internal analytics-set used to detect rep boundaries from the frame
+   * stream. Mirrors the canonical mobile-app pipeline: `addSampleToSet`
+   * starts a new rep on each ECCENTRIC→CONCENTRIC transition, and IDLE/HOLD
+   * samples are folded into the current rep as hold time. The public
+   * `this.set.reps` is kept in sync with `_analyticsSet.reps` after every
+   * sample so `set.live_metrics` and the resource snapshots reflect the
+   * in-progress rep without waiting for set.end.
+   */
+  private _analyticsSet: AnalyticsSet | undefined = undefined;
 
   /**
    * Merge partial device fields. Coerces `batteryPercent: null` to absent so
@@ -129,6 +140,7 @@ export class LiveState {
       return;
     }
     this.set = { ...s, reps: [...s.reps] };
+    this._analyticsSet = createSet();
   }
 
   /**
@@ -146,10 +158,18 @@ export class LiveState {
     if (current === undefined) {
       return undefined;
     }
+    // Trim trailing IDLE off the in-progress final rep before persistence —
+    // matches the mobile app's `completeSet` behavior. Branch on whichever
+    // ingestion path was used: `processSample` populates `_analyticsSet`,
+    // direct `appendRep` populates `current.reps`. They're disjoint in
+    // practice; whichever produced reps wins.
+    const analyticsReps =
+      this._analyticsSet === undefined ? [] : completeSet(this._analyticsSet).reps;
+    const finalReps = analyticsReps.length > 0 ? analyticsReps : current.reps;
     const endedAt = new Date().toISOString();
     const finalized: ActiveSet = {
       ...current,
-      reps: [...current.reps],
+      reps: [...finalReps],
       endedAt,
       status: reason === undefined ? 'ended' : 'partial',
       ...(reason === undefined ? {} : { partialReason: reason }),
@@ -161,6 +181,7 @@ export class LiveState {
       };
     }
     this.set = undefined;
+    this._analyticsSet = undefined;
     return finalized;
   }
 
@@ -174,6 +195,23 @@ export class LiveState {
       return;
     }
     this.set = { ...this.set, reps: [...this.set.reps, rep] };
+  }
+
+  /**
+   * Process a single telemetry sample through the analytics-set pipeline.
+   * Workout-analytics's `addSampleToSet` owns the rep-boundary state machine
+   * (eccentric→concentric starts a new rep; IDLE folds into the current
+   * rep's hold time). After updating the internal analytics set, the public
+   * `set.reps` is replaced with the analytics set's reps so callers always
+   * see the current rep array — including the in-progress final rep.
+   * Silently dropped if no set is active.
+   */
+  processSample(sample: WorkoutSample): void {
+    if (this.set === undefined || this._analyticsSet === undefined) {
+      return;
+    }
+    this._analyticsSet = addSampleToSet(this._analyticsSet, sample);
+    this.set = { ...this.set, reps: [...this._analyticsSet.reps] };
   }
 
   /**

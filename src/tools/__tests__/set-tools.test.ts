@@ -109,7 +109,7 @@ function makeRep(n: number): Rep {
   return { repNumber: n, concentric: phase, eccentric: phase };
 }
 
-const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics'];
+const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.get'];
 
 interface Harness {
   state: ServerState;
@@ -124,10 +124,14 @@ interface Harness {
 function setup(): Harness {
   const live = new LiveState();
   const store = makeStore();
+  const client = {
+    startRecording: vi.fn().mockResolvedValue(undefined),
+    endSet: vi.fn().mockResolvedValue(undefined),
+  };
   const state = {
     config: {} as never,
     manager: {} as never,
-    client: {} as never,
+    client: client as never,
     live,
     store,
     exercises: {} as never,
@@ -314,5 +318,51 @@ describe('set.live_metrics', () => {
     const r = await h.invoke('set.live_metrics', {});
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual({ active: false });
+  });
+});
+
+describe('set.get', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('returns the stored set including reps when one exists', async () => {
+    const stored: StoredSet = {
+      id: 'set-XYZ',
+      sessionId: 'sess-A',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: [
+        { ...makeRep(1), id: 'r1', setId: 'set-XYZ', index: 0 },
+        { ...makeRep(2), id: 'r2', setId: 'set-XYZ', index: 1 },
+      ],
+    };
+    h.store.getSet.mockResolvedValueOnce(stored);
+
+    const r = await h.invoke('set.get', { setId: 'set-XYZ' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as StoredSet;
+    expect(body.id).toBe('set-XYZ');
+    expect(body.reps.length).toBe(2);
+    expect(body.weightLbs).toBe(100);
+    expect(body.trainingMode).toBe('WeightTraining');
+    expect(h.store.getSet).toHaveBeenCalledWith('set-XYZ');
+  });
+
+  it('returns SET_NOT_FOUND when no row exists for the given id', async () => {
+    h.store.getSet.mockResolvedValueOnce(undefined);
+    const r = await h.invoke('set.get', { setId: 'no-such-set' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_NOT_FOUND');
+  });
+
+  it('returns INVALID_INPUT when setId is missing', async () => {
+    const r = await h.invoke('set.get', {});
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });

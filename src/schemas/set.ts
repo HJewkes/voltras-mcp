@@ -24,3 +24,12 @@ export const SetEndInput = z.object({});
  * (rep count, last rep velocity, etc.). Operates on `state.live.set`.
  */
 export const SetLiveMetricsInput = z.object({});
+
+/**
+ * Input for `set.get` — fetches a completed set from the store, including
+ * every persisted rep with full per-phase telemetry. Returns `SET_NOT_FOUND`
+ * when the id has no row in the store.
+ */
+export const SetGetInput = z.object({
+  setId: z.string().min(1),
+});
