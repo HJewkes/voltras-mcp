@@ -35,11 +35,18 @@
 // scalar inputs or a session-level overload ships.
 
 import {
+  assessRepQuality,
   buildProfile,
+  computeReadiness,
   computeSessionFatigue,
   computeStrengthEstimate,
   computeVolume,
+  createTechniqueBaseline,
+  getPhaseDuration,
+  getPhaseRangeOfMotion,
+  getRepMeanVelocity,
   getSetFatigueIndex,
+  getSetFirstRepVelocity,
   getSetMeanVelocity,
   getSetVelocitySummary,
   type LoadVelocityDataPoint,
@@ -127,16 +134,52 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       return computeStrengthEstimate(sets.map(toAnalyticsSet), weightsOf(sets));
     }
 
-    case 'quality.rep':
-      throw notImplemented(
-        "pipeline 'quality.rep' requires a TechniqueBaseline argument not present in the schema",
-      );
+    case 'quality.rep': {
+      const target = await state.store.getSet(input.setId);
+      if (!target) throw notFound(`set '${input.setId}' not found`);
+      const baseline = await state.store.getSet(input.baselineSetId);
+      if (!baseline) throw notFound(`baseline set '${input.baselineSetId}' not found`);
+      if (baseline.reps.length === 0) {
+        throw notFound(`baseline set '${input.baselineSetId}' has no reps`);
+      }
+      // Average ROM, eccentric/concentric duration, and concentric mean
+      // velocity across the baseline set's reps. The handler is the policy
+      // layer that turns "a set" into a TechniqueBaseline; the analytics
+      // package owns the per-rep comparison logic.
+      const baselineRom = mean(baseline.reps.map((r) => getPhaseRangeOfMotion(r.concentric)));
+      const baselineEccTime = mean(baseline.reps.map((r) => getPhaseDuration(r.eccentric)));
+      const baselineConcTime = mean(baseline.reps.map((r) => getPhaseDuration(r.concentric)));
+      const baselineMeanVel = mean(baseline.reps.map((r) => getRepMeanVelocity(r)));
+      const technique = createTechniqueBaseline({
+        rom: baselineRom,
+        eccentricTime: baselineEccTime,
+        concentricTime: baselineConcTime,
+        meanVelocity: baselineMeanVel,
+      });
+      return target.reps.map((rep) => assessRepQuality(rep, technique));
+    }
 
-    case 'session.readiness':
-      throw notImplemented(
-        "pipeline 'session.readiness' requires actual+baseline velocity scalars not derivable from a session id",
-      );
+    case 'session.readiness': {
+      const target = await state.store.getSetsForSession(input.sessionId);
+      if (target.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
+      const baseline = await state.store.getSetsForSession(input.baselineSessionId);
+      if (baseline.length === 0) {
+        throw notFound(`baseline session '${input.baselineSessionId}' has no sets`);
+      }
+      // Per the analytics signature: actualVelocity = current session's first
+      // set's first-rep concentric velocity; baselineVelocity = same metric
+      // from the baseline session. This pins both values to a directly
+      // comparable measurement (first rep is canonical for "fresh" velocity).
+      const actualVel = getSetFirstRepVelocity(toAnalyticsSet(target[0]!));
+      const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baseline[0]!));
+      return computeReadiness(actualVel, baselineVel);
+    }
   }
+}
+
+function mean(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
 class CodedError extends Error {
@@ -148,7 +191,6 @@ class CodedError extends Error {
   }
 }
 const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
-const notImplemented = (msg: string): CodedError => new CodedError('NOT_IMPLEMENTED', msg);
 
 /**
  * Hot-swap the placeholder `metrics.compute` callback installed at server

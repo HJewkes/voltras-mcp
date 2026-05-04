@@ -509,20 +509,23 @@ describe('VMCP full mock-adapter flow (integration)', () => {
       expect(out.payload, `pipeline ${pipeline} payload`).not.toBeNull();
     }
 
-    // Documented NOT_IMPLEMENTED pipelines (architectural deviation #4 in
-    // header) — assert the structured error code rather than success.
-    const qualityRep = await call(h.client, 'metrics.compute', {
+    // quality.rep + session.readiness now require a baseline reference.
+    // Without a separate baseline run in this test, both fall through to a
+    // NOT_FOUND when the baseline lookup misses.
+    const qualityRepMissing = await call(h.client, 'metrics.compute', {
       pipeline: 'quality.rep',
       setId,
+      baselineSetId: 'does-not-exist',
     });
-    expect(qualityRep.isError).toBe(true);
-    expect(qualityRep.payload.code).toBe('NOT_IMPLEMENTED');
+    expect(qualityRepMissing.isError).toBe(true);
+    expect(qualityRepMissing.payload.code).toBe('NOT_FOUND');
 
-    const readiness = await call(h.client, 'metrics.compute', {
+    const readinessMissing = await call(h.client, 'metrics.compute', {
       pipeline: 'session.readiness',
       sessionId,
+      baselineSessionId: 'does-not-exist',
     });
-    expect(readiness.isError).toBe(true);
-    expect(readiness.payload.code).toBe('NOT_IMPLEMENTED');
+    expect(readinessMissing.isError).toBe(true);
+    expect(readinessMissing.payload.code).toBe('NOT_FOUND');
   });
 });

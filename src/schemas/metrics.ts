@@ -33,9 +33,15 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: buildProfile(points) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('vbt.profile'), setIds: z.array(IdSchema).min(2) }),
 
-  // Per-rep quality flags.
-  // Analytics: assessRepQuality(rep) from @voltras/workout-analytics.
-  z.object({ pipeline: z.literal('quality.rep'), setId: IdSchema }),
+  // Per-rep quality flags. Requires a baseline set whose reps establish
+  // the expected ROM / phase timings / mean velocity. The handler builds
+  // a TechniqueBaseline from the baseline set's reps and calls
+  // assessRepQuality(rep, baseline) for each rep in the target set.
+  z.object({
+    pipeline: z.literal('quality.rep'),
+    setId: IdSchema,
+    baselineSetId: IdSchema,
+  }),
 
   // Set-level fatigue index (RPE, RIR, confidence).
   // Analytics: getSetFatigueIndex(set) from @voltras/workout-analytics.
@@ -45,9 +51,15 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: computeVolume(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.volume'), sessionId: IdSchema }),
 
-  // Session readiness score.
-  // Analytics: computeReadiness(session) from @voltras/workout-analytics.
-  z.object({ pipeline: z.literal('session.readiness'), sessionId: IdSchema }),
+  // Session readiness score. Requires a baseline session whose first
+  // set's first rep mean velocity is the reference; the handler reads
+  // the same metric off the target session and calls
+  // computeReadiness(actualVel, baselineVel).
+  z.object({
+    pipeline: z.literal('session.readiness'),
+    sessionId: IdSchema,
+    baselineSessionId: IdSchema,
+  }),
 
   // Session fatigue accumulation.
   // Analytics: computeSessionFatigue(session) from @voltras/workout-analytics.

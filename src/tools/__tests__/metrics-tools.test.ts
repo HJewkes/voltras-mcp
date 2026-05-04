@@ -448,29 +448,38 @@ describe('metrics.compute — session.strength', () => {
   });
 });
 
-describe('metrics.compute — NOT_IMPLEMENTED pipelines', () => {
-  it('quality.rep returns NOT_IMPLEMENTED (analytics requires a TechniqueBaseline not in the schema)', async () => {
-    const set = makeSet('any-set');
-    const assessSpy = vi.spyOn(analytics, 'assessRepQuality');
+describe('metrics.compute — quality.rep and session.readiness', () => {
+  it('quality.rep dispatches to assessRepQuality with a baseline built from baselineSetId', async () => {
+    const target = makeSet('target-set');
+    const baseline = makeSet('baseline-set');
+    const assessSpy = vi.spyOn(analytics, 'assessRepQuality').mockReturnValue({} as never);
+    const buildSpy = vi.spyOn(analytics, 'createTechniqueBaseline');
     const state = makeStateWithStore({
-      getSet: vi.fn(async () => set),
+      getSet: vi.fn(async (id: string) => (id === 'target-set' ? target : baseline)),
     });
     const { server, tools } = makeFakeServer();
     const placeholders = makePlaceholders(server);
     registerMetricsTools(server, state, placeholders);
 
-    const result = await callTool(tools, { pipeline: 'quality.rep', setId: 'any-set' });
+    const result = await callTool(tools, {
+      pipeline: 'quality.rep',
+      setId: 'target-set',
+      baselineSetId: 'baseline-set',
+    });
 
-    expect(assessSpy).not.toHaveBeenCalled();
-    expect(result.isError).toBe(true);
-    expect((parsePayload(result) as { code: string }).code).toBe('NOT_IMPLEMENTED');
+    expect(buildSpy).toHaveBeenCalledOnce();
+    expect(assessSpy).toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
     assessSpy.mockRestore();
+    buildSpy.mockRestore();
   });
 
-  it('session.readiness returns NOT_IMPLEMENTED (analytics requires scalar velocities not in the schema)', async () => {
-    const readinessSpy = vi.spyOn(analytics, 'computeReadiness');
+  it('session.readiness dispatches to computeReadiness with first-rep velocities from each session', async () => {
+    const target = makeSet('s1', 'sess-target');
+    const baseline = makeSet('s1', 'sess-baseline');
+    const readinessSpy = vi.spyOn(analytics, 'computeReadiness').mockReturnValue({} as never);
     const state = makeStateWithStore({
-      getSetsForSession: vi.fn(async () => [makeSet('s1', 'sess-R')]),
+      getSetsForSession: vi.fn(async (id: string) => [id === 'sess-target' ? target : baseline]),
     });
     const { server, tools } = makeFakeServer();
     const placeholders = makePlaceholders(server);
@@ -478,12 +487,12 @@ describe('metrics.compute — NOT_IMPLEMENTED pipelines', () => {
 
     const result = await callTool(tools, {
       pipeline: 'session.readiness',
-      sessionId: 'sess-R',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
     });
 
-    expect(readinessSpy).not.toHaveBeenCalled();
-    expect(result.isError).toBe(true);
-    expect((parsePayload(result) as { code: string }).code).toBe('NOT_IMPLEMENTED');
+    expect(readinessSpy).toHaveBeenCalledOnce();
+    expect(result.isError).toBeUndefined();
     readinessSpy.mockRestore();
   });
 });
