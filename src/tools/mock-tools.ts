@@ -92,18 +92,20 @@ export function registerMockTools(
   const injectPh = takePlaceholder(placeholders, MOCK_INJECT_ERROR);
 
   configurePh.update({
+    paramsSchema: MockConfigureInput.shape,
     callback: notImplementedHandler(
       MockConfigureInput,
       MOCK_CONFIGURE,
       'a runtime MockBLEAdapter.configure() method',
-    ),
+    ) as never,
   });
 
   injectPh.update({
+    paramsSchema: MockInjectErrorInput.shape,
     callback: notImplementedHandler(
       MockInjectErrorInput,
       MOCK_INJECT_ERROR,
       'a public MockBLEAdapter.injectError() / error-injection method',
-    ),
+    ) as never,
   });
 }

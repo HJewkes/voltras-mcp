@@ -44,9 +44,15 @@ export function registerExerciseTools(
   const search = wrapHandler(ExerciseSearchInput, async ({ query }) => {
     return state.exercises.search(query);
   });
-  placeholders.get('exercise.search')?.update({ callback: search });
+  placeholders.get('exercise.search')?.update({
+    paramsSchema: ExerciseSearchInput.shape,
+    callback: search as never,
+  });
 
-  placeholders.get('exercise.get')?.update({ callback: makeGetCallback(state) });
+  placeholders.get('exercise.get')?.update({
+    paramsSchema: ExerciseGetInput.shape,
+    callback: makeGetCallback(state) as never,
+  });
 }
 
 /**

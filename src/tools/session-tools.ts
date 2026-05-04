@@ -71,38 +71,44 @@ export function registerSessionTools(
   install(
     placeholders,
     'session.start',
+    SessionStartInput,
     wrapHandler(SessionStartInput, (input) => startSession(state, input)),
   );
   install(
     placeholders,
     'session.end',
+    SessionEndInput,
     wrapHandler(SessionEndInput, () => endSession(state)),
   );
   install(
     placeholders,
     'session.list',
+    SessionListInput,
     wrapHandler(SessionListInput, (input) => listSessions(state, input)),
   );
   install(
     placeholders,
     'session.get',
+    SessionGetInput,
     wrapHandler(SessionGetInput, (input) => getSession(state, input)),
   );
 }
 
-function install(
+function install<S extends z.ZodObject>(
   placeholders: PlaceholderTools,
   name: string,
+  schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  // SDK typings for `update.callback` are tied to a paramsSchema generic the
-  // placeholder doesn't carry; cast to `never` to satisfy the typecheck. The
-  // runtime contract — `(args, extra) => ToolResult` — is the same.
-  tool.update({ callback: callback as never });
+  // Pair the real `paramsSchema` with the callback. The bootstrap placeholder
+  // schema (`z.object({}).passthrough().shape`) loses passthrough through
+  // `.shape`, so without this every required input would be stripped before
+  // the callback's wrapHandler sees it.
+  tool.update({ paramsSchema: schema.shape, callback: callback as never });
 }
 
 async function startSession(
