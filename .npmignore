@@ -1,0 +1,32 @@
+# Source - only `dist/` ships
+src/
+**/*.test.ts
+**/*.spec.ts
+
+# Tooling configs
+tsconfig.json
+vitest.config.ts
+eslint.config.mjs
+.prettierrc.json
+.editorconfig
+
+# Husky / lint-staged
+.husky/
+
+# Local artifacts
+coverage/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Repo metadata
+.github/
+.gitignore
+.git/

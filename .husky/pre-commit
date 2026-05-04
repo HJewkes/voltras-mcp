@@ -1,0 +1,7 @@
+# voltras-mcp pre-commit hook.
+#
+# Runs lint-staged today (the only thing safe to run during bootstrap, before
+# `src/server.ts` and the rest of `src/` land in Wave-1 peer tasks). Once peer
+# tasks fill in src/, append `npm run typecheck` and a `vitest related` invocation
+# so the local pre-commit mirrors the CI gate (full suite stays in CI).
+npx lint-staged
