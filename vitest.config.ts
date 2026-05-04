@@ -14,6 +14,15 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     include: ['src/**/*.{test,spec}.ts'],
+    server: {
+      // WA 1.0.0 ships a pure-ESM build whose namespace is sealed by Node's
+      // ESM loader. Inlining lets vitest transform it into a CJS-style module
+      // so tests can `vi.spyOn(analytics, 'foo')` instead of rewriting every
+      // call to a `vi.mock(...)` factory.
+      deps: {
+        inline: ['@voltras/workout-analytics'],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],

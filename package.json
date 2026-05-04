@@ -29,8 +29,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@voltras/node-sdk": "^0.3.0",
-    "@voltras/workout-analytics": "^0.2.0",
+    "@voltras/node-sdk": "^0.4.0",
+    "@voltras/workout-analytics": "^1.0.0",
     "zod": "^4.4.2"
   },
   "devDependencies": {
