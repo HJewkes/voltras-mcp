@@ -28,6 +28,24 @@ class FakeVoltraSDKError extends Error {
 }
 vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: FakeVoltraSDKError,
+  TrainingMode: {
+    Idle: 0,
+    WeightTraining: 1,
+    Bench: 2,
+    Squat: 3,
+    Deadlift: 4,
+  },
+  VoltraClient: class {
+    isConnected = false;
+    connectionState = 'disconnected';
+    connectedDeviceId = undefined;
+    settings = undefined;
+    onRepBoundary = (): void => {};
+    onSettingsUpdate = (): void => {};
+    onConnectionStateChange = (): void => {};
+    onSetBoundary = (): void => {};
+  },
+  VoltraManager: { forNode: () => ({}), forMock: () => ({}) },
 }));
 
 // Replace the real stdio transport with one that never touches stdin/stdout.
@@ -172,12 +190,35 @@ function fakeBootstrapResult(): unknown {
   return {
     config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
     client: {
+      isConnected: false,
+      connectionState: 'disconnected',
+      connectedDeviceId: undefined,
+      settings: undefined,
       onRepBoundary: subscribe,
       onSetBoundary: subscribe,
       onSettingsUpdate: subscribe,
       onConnectionStateChange: subscribe,
     },
-    live: {},
+    manager: {
+      scan: () => Promise.resolve([]),
+      connect: () => Promise.resolve(),
+      dispose: () => undefined,
+    },
+    live: {
+      snapshotDevice: () => ({ connected: false }),
+      snapshotSession: () => undefined,
+      snapshotSet: () => undefined,
+    },
+    store: {
+      putSession: () => Promise.resolve(),
+      putSet: () => Promise.resolve(),
+      getSession: () => Promise.resolve(undefined),
+      getSet: () => Promise.resolve(undefined),
+      listSessions: () => Promise.resolve([]),
+      getSetsForSession: () => Promise.resolve([]),
+      close: () => Promise.resolve(),
+    },
+    exercises: { search: () => [], getById: () => undefined },
   };
 }
 

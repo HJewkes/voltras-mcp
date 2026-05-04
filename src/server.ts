@@ -31,6 +31,15 @@ import { configureLogger, log } from './logger.js';
 import { bootstrapState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
+import { registerDeviceTools } from './tools/device-tools.js';
+import { registerSessionTools } from './tools/session-tools.js';
+import { registerSetTools } from './tools/set-tools.js';
+import { registerMetricsTools } from './tools/metrics-tools.js';
+import { registerExerciseTools } from './tools/exercise-tools.js';
+import { registerMockTools } from './tools/mock-tools.js';
+import { registerDeviceResource } from './resources/device-resource.js';
+import { registerSessionResource } from './resources/session-resource.js';
+import { registerSetResource } from './resources/set-resource.js';
 
 /** Canonical list of every tool name VMCP exposes (R9, R11). */
 const CORE_TOOL_NAMES = [
@@ -98,12 +107,29 @@ export async function runServer(): Promise<void> {
 
   const placeholders = registerStartingPlaceholders(server);
 
+  // Resources must be registered BEFORE `server.connect()` because
+  // `registerResource` extends server capabilities, which the SDK forbids
+  // after transport connect. We pass a lazy `state.live` proxy that resolves
+  // through `stateBox.value` at callback time — populated after bootstrap.
+  const stateBox: { value?: Awaited<ReturnType<typeof bootstrapState>> } = {};
+  const lazyState = {
+    live: {
+      snapshotDevice: () => stateBox.value?.live.snapshotDevice() ?? { connected: false },
+      snapshotSession: () => stateBox.value?.live.snapshotSession(),
+      snapshotSet: () => stateBox.value?.live.snapshotSet(),
+    },
+  } as Parameters<typeof registerDeviceResource>[1];
+  registerDeviceResource(server, lazyState);
+  registerSessionResource(server, lazyState);
+  registerSetResource(server, lazyState);
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
+    stateBox.value = state;
     // Wire the SDK event bridge once `state.client` exists. Listener slots
     // on `VoltraClient` persist across `setAdapter`, so subscribing here
     // (before the device.connect tool installs an adapter) is correct.
@@ -117,10 +143,17 @@ export async function runServer(): Promise<void> {
         placeholders.delete(name);
       }
     }
-    // Wave 3 wires the real handlers here via
-    // `placeholder.update({ callback: realHandler })` for every entry in the
-    // returned map, then registers `voltra://device/current`,
-    // `voltra://session/active`, `voltra://set/active` resources.
+    // Wave 3: hot-swap real handlers into the placeholders. (Resources were
+    // pre-registered before connect; their callbacks now see the live state
+    // via the `stateBox` set above.)
+    registerDeviceTools(server, state, placeholders);
+    registerSessionTools(server, state, placeholders);
+    registerSetTools(server, state, placeholders);
+    registerMetricsTools(server, state, placeholders);
+    registerExerciseTools(server, state, placeholders);
+    if (state.config.adapter === 'mock') {
+      registerMockTools(server, state, placeholders);
+    }
   } catch (err) {
     log.error('bootstrap failed', err);
     await server.close();
