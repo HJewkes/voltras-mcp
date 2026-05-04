@@ -29,6 +29,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState } from './state/server-state.js';
+import { wireEventBridge } from './state/event-bridge.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 
 /** Canonical list of every tool name VMCP exposes (R9, R11). */
@@ -95,14 +96,27 @@ export async function runServer(): Promise<void> {
     { capabilities: { tools: {}, resources: { subscribe: true } } },
   );
 
-  registerStartingPlaceholders(server);
+  const placeholders = registerStartingPlaceholders(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
-    await bootstrapState(config);
+    const state = await bootstrapState(config);
+    // Wire the SDK event bridge once `state.client` exists. Listener slots
+    // on `VoltraClient` persist across `setAdapter`, so subscribing here
+    // (before the device.connect tool installs an adapter) is correct.
+    wireEventBridge(state.client, state.live, server);
+    // Mock-only tools never have real handlers in node mode — drop their
+    // placeholders so `tools/list` reflects only the real surface (R11).
+    // In mock mode the placeholders remain for Wave 3 to hot-swap.
+    if (state.config.adapter !== 'mock') {
+      for (const name of MOCK_TOOL_NAMES) {
+        placeholders.get(name)?.remove();
+        placeholders.delete(name);
+      }
+    }
     // Wave 3 wires the real handlers here via
     // `placeholder.update({ callback: realHandler })` for every entry in the
     // returned map, then registers `voltra://device/current`,

@@ -163,10 +163,31 @@ function callToolRequest(id: number, name: string): JSONRPCMessage {
   };
 }
 
+// Minimal `ServerState`-shaped stub returned by the success-path bootstrap
+// mock. Wave 2C wires `wireEventBridge(state.client, state.live, server)`
+// after bootstrap; this test only exercises the placeholder window, so the
+// `client.on*` slots are no-op stubs and `live` is an empty object.
+function fakeBootstrapResult(): unknown {
+  const subscribe = (): (() => void) => () => undefined;
+  return {
+    config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
+    client: {
+      onRepBoundary: subscribe,
+      onSetBoundary: subscribe,
+      onSettingsUpdate: subscribe,
+      onConnectionStateChange: subscribe,
+    },
+    live: {},
+  };
+}
+
 describe('runServer startup race', () => {
   it('returns STARTING for tools called during the bootstrap window', async () => {
-    // Hang bootstrap for 50ms so we have a clear window to issue the call.
-    bootstrapMock.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    // Hang bootstrap for 50ms so we have a clear window to issue the call,
+    // then resolve with a stub state matching the post-Wave-2C return shape.
+    bootstrapMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(fakeBootstrapResult()), 50)),
+    );
 
     const serverPromise = runServer();
     // Wait for the transport to be wired up by `server.connect()`.
