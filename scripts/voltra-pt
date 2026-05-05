@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# voltra-pt — launch Claude Code with the Voltra MCP wired up for a PT session.
+#
+# Enables the experimental claude/channel capability on the voltras MCP server
+# so push events (rep_finalized, set_target_reached, timer_complete, etc.) are
+# delivered inline as <channel> tags instead of forcing the model to poll.
+#
+# Defaults to an initial prompt that triggers the pt-session skill if it's
+# installed. Override by passing your own prompt as an argument:
+#
+#   voltra-pt                          # start with the default PT prompt
+#   voltra-pt "do a chest fly workout" # custom prompt
+#   voltra-pt --print "list my sessions today"  # non-interactive query
+#
+# Set VOLTRA_PT_PROMPT to change the default without touching this script.
+
+set -euo pipefail
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "voltra-pt: 'claude' CLI not on PATH." >&2
+  echo "Install Claude Code first: https://code.claude.com" >&2
+  exit 127
+fi
+
+if ! claude mcp list 2>&1 | grep -qE '^voltras:'; then
+  cat >&2 <<'EOF'
+voltra-pt: voltras MCP server is not registered with Claude Code.
+
+Register it first:
+  claude mcp add voltras -- voltras-mcp           # local install (npm link)
+  claude mcp add voltras -- npx voltras-mcp       # published package
+
+Then re-run voltra-pt.
+EOF
+  exit 1
+fi
+
+DEFAULT_PROMPT="Start a PT session. I'm ready to lift."
+INITIAL_PROMPT="${VOLTRA_PT_PROMPT:-$DEFAULT_PROMPT}"
+
+if [ "$#" -gt 0 ]; then
+  exec claude --dangerously-load-development-channels server:voltras "$@"
+else
+  exec claude --dangerously-load-development-channels server:voltras "$INITIAL_PROMPT"
+fi
