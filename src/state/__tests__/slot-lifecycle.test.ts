@@ -25,10 +25,20 @@ vi.mock('@voltras/node-sdk', () => ({
   VoltraSDKError: class extends Error {},
 }));
 
+// Stub the per-slot event-bridge wirer. The slot-manager helpers call this
+// to subscribe listeners on the slot's client; here we only care about
+// slot-map invariants (creation / removal / primary reset), so a no-op
+// wirer that returns a tracked unwire fn keeps the test layer-pure without
+// pulling channel-publisher / debug-buffer / live-state plumbing into the
+// fixture.
+vi.mock('../event-bridge.js', () => ({
+  wireBridgeForSlot: vi.fn(() => vi.fn()),
+}));
+
 const { VoltraClient } = await import('@voltras/node-sdk');
 const { LiveState } = await import('../live-state.js');
-const { createSlot, removeSlot, resetPrimarySlot, getSlot, PRIMARY_SLOT, MAX_SLOTS } =
-  await import('../server-state.js');
+const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
+const { createSlot, removeSlot, resetPrimarySlot } = await import('../slot-manager.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's
  * isConnected check). Slot-cap tests need slots whose clients claim to be

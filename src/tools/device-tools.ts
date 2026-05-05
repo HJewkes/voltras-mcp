@@ -39,15 +39,9 @@ import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
-import {
-  type ServerState,
-  PRIMARY_SLOT,
-  MAX_SLOTS,
-  getSlot,
-  createSlot,
-  removeSlot,
-  resetPrimarySlot,
-} from '../state/server-state.js';
+import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
+import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
+import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -212,7 +206,7 @@ export function registerDeviceTools(
       // bridge so onRepBoundary / onSettingsUpdate / onConnectionStateChange
       // land on the right object. For new slots we allocate via
       // `createSlot`, which self-wires the bridge against the new client
-      // through `state.bridgeWirer` (Step 4 of P0 dual-Voltras).
+      // (see slot-manager.ts).
       const client = await state.manager.connect(device);
       if (isNewSlot) {
         createSlot(state, slotId, client);
@@ -223,12 +217,7 @@ export function registerDeviceTools(
         // the freshly-connected client.
         slot.unwireBridge?.();
         slot.client = client;
-        const rewire = state.bridgeWirer?.(state, slot);
-        if (rewire !== undefined) {
-          slot.unwireBridge = rewire;
-        } else {
-          delete slot.unwireBridge;
-        }
+        slot.unwireBridge = wireBridgeForSlot(state, slot);
       }
       return { ok: true, deviceId: input.deviceId };
     }),
