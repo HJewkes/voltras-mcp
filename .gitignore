@@ -29,3 +29,6 @@ npm-debug.log*
 .env.*
 !.env.example
 .worktrees/
+
+# Cross-session working notes (kept on disk, not tracked)
+HANDOFF.md
