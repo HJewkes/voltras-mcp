@@ -39,7 +39,15 @@ import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
-import { type ServerState, getSlot } from '../state/server-state.js';
+import {
+  type ServerState,
+  PRIMARY_SLOT,
+  MAX_SLOTS,
+  getSlot,
+  createSlot,
+  removeSlot,
+  resetPrimarySlot,
+} from '../state/server-state.js';
 import { wireEventBridge } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
@@ -149,16 +157,48 @@ export function registerDeviceTools(
   );
 
   // device.connect — looks up the previously-discovered device by id and
-  // hands it to `manager.connect`. `ALREADY_CONNECTED` short-circuits when
-  // the primary slot's client reports a live connection (EC-08).
+  // hands it to `manager.connect`. Slot lifecycle (Step 3 of P0
+  // dual-Voltras):
+  //   * No `slot` arg: bind to PRIMARY_SLOT. ALREADY_CONNECTED if primary
+  //     is live — the user must pass an explicit `slot` to bring up a
+  //     second device.
+  //   * Explicit `slot: 'primary'`: same rules as above.
+  //   * Explicit `slot: <new-id>`: allocate the slot via `createSlot` so
+  //     the new client gets its own LiveState (independent session/set/rep
+  //     pipeline). Capped at MAX_SLOTS.
+  //   * Explicit `slot: <existing-id>`: error — disconnect first or pick
+  //     another slot.
+  //
+  // Known intermediate limitation: the event bridge is only re-wired for
+  // PRIMARY_SLOT. Frames, rep boundaries, and connection events from
+  // non-primary slots are NOT yet bridged. Step 4 fans the bridge out per
+  // slot with channel-meta tagging.
   install(
     placeholders,
     'device.connect',
     DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
-      const slot = getSlot(state, input.slot);
-      if (slot.client.isConnected) {
-        throwSdkLike('ALREADY_CONNECTED', 'A device is already connected.');
+      const slotId = input.slot ?? PRIMARY_SLOT;
+      const isNewSlot = !state.slots.has(slotId);
+      if (!isNewSlot) {
+        const existing = getSlot(state, slotId);
+        if (existing.client.isConnected) {
+          if (slotId === PRIMARY_SLOT) {
+            throwSdkLike(
+              'ALREADY_CONNECTED',
+              "Primary slot is already connected. Pass an explicit `slot` (e.g. 'left' or 'right') to connect a second device.",
+            );
+          }
+          throwSdkLike(
+            'ALREADY_CONNECTED',
+            `Slot \`${slotId}\` is already connected. Use device.disconnect first or pick another slot.`,
+          );
+        }
+      } else if (state.slots.size >= MAX_SLOTS) {
+        throwSdkLike(
+          'SLOT_LIMIT_EXCEEDED',
+          `Maximum of ${MAX_SLOTS} slots supported in this release.`,
+        );
       }
       const device = state.manager.devices.find((d) => d.id === input.deviceId);
       if (device === undefined) {
@@ -169,13 +209,20 @@ export function registerDeviceTools(
       }
       // `manager.connect` returns the SDK's connected `VoltraClient`, which
       // is distinct from the parameter-less stub in the slot set at
-      // bootstrap. Reassign and re-wire the event bridge so onRepBoundary /
-      // onSettingsUpdate / onConnectionStateChange land on the right object.
-      // The old client's listeners stay attached but never fire (it was
-      // never connected to anything).
+      // bootstrap. For the primary slot we reassign and re-wire the event
+      // bridge so onRepBoundary / onSettingsUpdate / onConnectionStateChange
+      // land on the right object. For new slots we allocate via
+      // `createSlot` (fresh LiveState), but DO NOT wire the bridge — that's
+      // Step 4. The old client's listeners stay attached but never fire (it
+      // was never connected to anything).
       const client = await state.manager.connect(device);
-      slot.client = client;
-      wireEventBridge(client, slot.live, server, state.channels, state);
+      if (isNewSlot) {
+        createSlot(state, slotId, client);
+      } else {
+        const slot = getSlot(state, slotId);
+        slot.client = client;
+        wireEventBridge(client, slot.live, server, state.channels, state);
+      }
       return { ok: true, deviceId: input.deviceId };
     }),
   );
@@ -184,15 +231,39 @@ export function registerDeviceTools(
   // routes through `manager.disconnect(deviceId)` (the SDK manages adapter
   // teardown). Does not call `manager.dispose()` — that would tear down the
   // shared adapter for every connection (and for future scans).
+  //
+  // Slot lifecycle (Step 3 of P0 dual-Voltras):
+  //   * No `slot` arg or `slot: 'primary'`: BLE-disconnect, then
+  //     `resetPrimarySlot` so the slot persists with a fresh client + fresh
+  //     LiveState (so the next single-device `device.connect` works).
+  //   * `slot: <other>`: BLE-disconnect, then `removeSlot` — the slot
+  //     ceases to exist, freeing the soft cap for a future allocation.
   install(
     placeholders,
     'device.disconnect',
     DeviceDisconnectInput,
     wrapHandler(DeviceDisconnectInput, async (input) => {
-      const slot = getSlot(state, input.slot);
+      const slotId = input.slot ?? PRIMARY_SLOT;
+      const slot = getSlot(state, slotId);
       const id = slot.client.connectedDeviceId;
-      if (slot.client.isConnected && id !== null) {
+      const wasConnected = slot.client.isConnected && id !== null;
+      if (wasConnected) {
         await state.manager.disconnect(id);
+      }
+      // Slot teardown only runs when the slot was actually connected. A
+      // disconnect against an idle primary slot stays a true no-op (the
+      // existing test asserts manager.disconnect wasn't called); rebuilding
+      // a fresh client in that case would churn references for no reason.
+      // Non-primary slots are always removed when this tool is reached —
+      // the slot's existence implies a successful prior `device.connect`,
+      // so a `device.disconnect` on a non-primary slot is by definition a
+      // teardown.
+      if (slotId === PRIMARY_SLOT) {
+        if (wasConnected) {
+          resetPrimarySlot(state);
+        }
+      } else {
+        removeSlot(state, slotId);
       }
       return { ok: true };
     }),
