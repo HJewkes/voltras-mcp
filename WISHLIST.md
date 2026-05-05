@@ -2,6 +2,158 @@
 
 Capability gaps surfaced during real use. Not prioritized; not a roadmap. Add new items at the top with a date and the workout/situation that surfaced them.
 
+## 2026-05-05 — CRITICAL: device commands route to the wrong peripheral when two slots are connected (dual-Voltras blocker)
+
+> **Status (2026-05-05):** Fix open as [voltra-node-sdk PR #32](https://github.com/HJewkes/voltra-node-sdk/pull/32), targeting release `0.4.2`. The SDK now builds a fresh BLE adapter per `manager.connect(device)` instead of reusing a singleton. Single-device flows unchanged on both Node and web. Multi-device on web is deferred to 0.5.0 (manager-owns-devices refactor). Once 0.4.2 publishes, voltras-mcp bumps to `^0.4.2` and we re-run the bilateral routing smoke test on real hardware.
+
+**Use case:** Bilateral routing smoke test against `feat/dual-voltras-slots` build. Two Voltras devices paired:
+
+- `slot: 'left'` → VTR-212006 (`C4A88FC8-...`)
+- `slot: 'right'` → VTR-097082 (`621A7B7D-...`)
+
+`device.connect({slot: 'left', deviceId: VTR-212006})` and `device.connect({slot: 'right', deviceId: VTR-097082})` both returned `{ok: true}`. `device.get_state({slot})` correctly returned each slot's distinct deviceId. **Slot bookkeeping in voltras-mcp is correct.**
+
+Then `device.set_weight({slot: 'left', lbs: 35})` and `device.set_weight({slot: 'right', lbs: 35})` both returned `{ok: true}`. Subsequent `device.get_state` for each slot reported `weightLbs: 35` consistently. **But on the physical units:** the right-slot device (VTR-097082) updated to 35 lbs as expected; the left-slot device (VTR-212006) stayed at 55 lbs (the value left over from the prior single-device session) and was inactive.
+
+**Diagnosis (empirically confirmed via A/B test):** in a follow-up experiment we connected the devices in reverse order (right=VTR-097082 first, left=VTR-212006 second/most-recent), then sent four parallel writes with distinguishing values:
+
+| Command                                            | Expected target | Actual physical result                     |
+| -------------------------------------------------- | --------------- | ------------------------------------------ |
+| `set_weight({slot: 'left', lbs: 30})`              | VTR-212006      | VTR-212006 ended at 30 lbs ✓               |
+| `set_weight({slot: 'right', lbs: 40})`             | VTR-097082      | VTR-097082 unchanged (no write reached it) |
+| `set_mode({slot: 'left', mode: 'ResistanceBand'})` | VTR-212006      | VTR-212006 ended in Damper mode ✗          |
+| `set_mode({slot: 'right', mode: 'Damper'})`        | VTR-097082      | VTR-097082 unchanged (no write reached it) |
+
+Decoded: **all four writes landed on the most-recently-connected peripheral (VTR-212006).** Last-write-wins per characteristic (the two weight writes hit left in some order; final value reflects whichever resolved last). VTR-097082 received zero commands.
+
+The per-slot `weightLbs`/`trainingMode` cache in voltras-mcp's `LiveState` updates locally on every successful tool call regardless, masking the failure at the get_state read path.
+
+**Where the bug lives — confirmed in `voltra-node-sdk`, not voltras-mcp:**
+
+- The MCP's command path (`src/tools/device-tools.ts`) correctly routes via `getSlot(state, slotId).client.setWeight(lbs)`. The two slots hold distinct `VoltraClient` instances returned from `manager.connect(device)`. The MCP-side slot bookkeeping is fine — the channel-publish path also routes correctly per slot (proven by slot-tagged set_started/set_ended/connection_changed events on real hardware).
+- The SDK's `VoltraClient` instances **must be sharing an underlying peripheral reference** — or the BLE adapter has a "currently active peripheral" singleton that gets clobbered on each new `manager.connect`. The bilateral mock test passes because the mock manager hands out genuinely independent fake clients; the real BLE adapter does not.
+
+**Investigation paths in voltra-node-sdk:**
+
+1. Open `VoltraManager.connect` — what state does it set on the BLE adapter? Does it call something like `adapter.setActivePeripheral()` that's a singleton?
+2. Open `VoltraClient.setWeight` (or whatever the write method is) — does it hold its own peripheral reference, or look up "the" peripheral on the manager / adapter?
+3. Check the underlying BLE library wiring (Noble?) — Noble supports multiple peripherals natively, but the SDK's wrapper may not.
+4. Audit the `manager.clients: Map<string, VoltraClient>` claim from the architecture report — verify each client truly has its own peripheral binding, not a shared one.
+
+**What's NOT broken (proven on this real-hardware test):**
+
+- ✅ Two simultaneous BLE peripheral connections on macOS work (`device.get_state` for both slots returns correct deviceIds in parallel).
+- ✅ Slot lifecycle in voltras-mcp: `device.connect({slot})` creates new slots; `device.disconnect({slot})` removes them; `device.get_state({slot})` reads correctly.
+- ✅ Slot-tagged channel events fire correctly on real hardware: `set_started`, `set_ended`, `connection_changed` all arrived with `slot="left"` or `slot="right"` matching the originating slot. The bilateral mock test prediction holds.
+- ✅ Per-slot session and set lifecycle: distinct setIds and sessionIds maintained across slots; ending one slot's set doesn't affect the other.
+
+**Why this is the actual blocker for dual-Voltras:** without correct command routing, the user can't independently configure (weight, mode, eccentric) the two devices. Bilateral exercises with asymmetric loading (e.g. unilateral imbalance correction) become impossible. Even a basic chest fly with matched loads becomes risky because the second device might not have actually received the weight command.
+
+**Mitigation ideas to discuss:**
+
+1. SDK fix is the proper path. Until then, voltras-mcp could verify writes succeeded by reading back state from the device after each write, with a small delay. Slow but at least surfaces the failure.
+2. Or: the MCP's `set_weight` handler could refuse to operate on a non-primary slot until the SDK is verified correct. Surfaces the limitation explicitly.
+
+## 2026-05-05 — `device.scan` returns only one device per call even when multiple are advertising
+
+**Use case:** Same bilateral test session. Both VTR-212006 and VTR-097082 were powered and advertising. Two consecutive `device.scan({timeoutMs: 15000})` calls each returned a single-element array — alternating between the two devices on each call. The schema returns a `devices: []` array, implying batch discovery, but the implementation appears to return only the first peripheral found.
+
+**Workable for now** by calling scan repeatedly until the desired count is collected, or by scanning, connecting, scanning again. But the schema/implementation mismatch is a footgun and impacts UX (the tool description should be honest about per-call limits, or the scan should accumulate over its full timeout).
+
+**Investigation path:** the BLE adapter's scan implementation in voltra-node-sdk. Suspect it returns on first peripheral discovery rather than waiting out the full timeout window to accumulate.
+
+## 2026-05-05 — CRITICAL: SDK loses the active set after exactly 2 rep_boundary events (real-hardware blocker)
+
+> **Status (2026-05-05):** Path forward identified. The `RepBoundary` BLE message is a stateless 4-byte type header (no rep counter in the payload), and the SDK has no client-side state machine to derive rep count from frames — it relies on the device firmware to count, but the firmware emits an under-specified tick. The fix path is **not** to crack the existing protocol; it's to land voltra-private's in-flight `vendor-message-rep-set-telemetry` PR (PR #7 of a 7-PR stack) which adds a per-frame vendor message carrying authoritative `motionPhase`, `setCounter`, and `repCount` (uint16 BE). Once that stack merges and the SDK's `protocol-data.generated.ts` is regenerated, refactor the SDK's notification dispatcher to count from the vendor frame instead of trusting the stateless boundary signal. Bug is gated on the private-repo stack landing — no firmware doc spelunking needed.
+
+**Use case:** Left-arm bridge validation. Two sets (35 lb warmup, 55 lb working). On both sets the user did 5–8 reps; the system registered exactly 2. The bug is reproducible across loads and is **upstream of voltras-mcp** — the bridge faithfully relays what the SDK emits.
+
+**Bridge debug-event capture for the working set** (timestamps in ms relative to set start):
+
+```
+t+21513  rep_boundary  repsSoFar: 1    rep 1 finalized (correct)
+t+23852  rep_boundary  repsSoFar: 1    second event — should be repsSoFar: 2
+t+24303  set_boundary  hadActiveSet: true     SDK declares set ended autonomously
+t+24759  rep_boundary  repsSoFar: 0    "ghost" — SDK has dropped the set
+t+25389  set_boundary  hadActiveSet: false
+... ~20s of continuing rep_boundary/set_boundary pairs (the user doing reps 3–8) all with repsSoFar=0, hadActiveSet=false
+```
+
+The 35-lb warmup set shows the identical pattern. **Deterministic at 2 reps.**
+
+**Two distinct SDK bugs in `voltra-node-sdk`:**
+
+1. **Rep-boundary counter doesn't advance past 1.** Two `rep_boundary` events fire close together (~2.3s apart in both sets) and both report `repsSoFar: 1`. Either the SDK is double-firing on a single rep transition, or it's counting both ECC→CONC and CONC→ECC as rep boundaries and the `repsSoFar` field reflects only one direction.
+2. **Stuck-state autonomous set termination.** Immediately after the duplicate rep_boundary, a `set_boundary` fires with `hadActiveSet: true` and the SDK marks the set ended. The voltras-mcp event bridge interprets this as "user pressed Stop on the unit" — surfaced to the user as `partial_reason: 'device_signal'`, which in this case is a false positive.
+
+**Subsequent ghost events.** After the SDK has dropped the set, the device keeps emitting `rep_boundary` and `set_boundary` signals (the user is still repping). The SDK passes them through but with `hadActiveSet: false` / `repsSoFar: 0`. Useful evidence that the device's rep detection is fine — the SDK's _active-set state machine_ is what's failing.
+
+**Investigation paths in the SDK:**
+
+- Find the rep_boundary emission logic (likely in the live-state / sample processor). Why does it fire twice for what looks like one rep? Add logging on the underlying frame-stream signal that triggers it.
+- Find the autonomous set-end heuristic. Is it duration-based, signal-based, or pattern-based on the rep boundaries? It should not be triggering after only 2 reps in a normal set.
+- Check whether the device protocol has a distinct "user pressed Stop" signal vs an inferred set-end. Today the bridge treats any `onSetBoundary` outside the grace window as Stop — that may be wrong if the SDK is firing set_boundary for reasons other than a Stop press.
+
+**Mitigations to consider while the SDK is fixed:**
+
+- Bridge-layer sanity check before publishing `set_ended_by_device`: if rep count is suspiciously low (< 3?) or set duration is short, log a warning instead of declaring the set closed. Avoids losing data.
+- Bridge-layer "phantom-rep recovery": if `rep_boundary` events keep arriving after a set has been declared ended, surface them as a recovery channel event so the coach can prompt the user.
+
+**Why this is a P0 blocker for the dual-Voltras work:** if single-arm rep counting tops out at 2, bilateral coaching can't even validate the simplest claim ("did the user complete the set"). Every real-hardware test we've done has been corrupted by this. The bridge fix shipped on `feat/observability-and-bridge-refactor` is correctly relaying the broken signal — the fix is needed one layer down, in the SDK.
+
+## 2026-05-05 — Channel payload velocity / ROM units appear mislabeled
+
+**Use case:** Left-arm bridge validation set, single-arm cable lat pulldown at 35 lbs. The `rep_finalized` channel event reported:
+
+```
+peak_concentric_velocity: 20      // rep 1
+peak_eccentric_velocity:  131
+peak_concentric_velocity: 293     // rep 2
+rom_m: 1049                       // rep 1
+rom_m: 858                        // rep 2
+```
+
+The field name `rom_m` implies meters; 1049 m of pull stroke is impossible for a cable lat pulldown (~1 m would be realistic). Likewise the `peak_*_velocity` values plausibly fit mm/s (0.293 m/s peak concentric on a warmup is a normal VBT reading) — but the field naming doesn't disambiguate.
+
+**Possible fixes:**
+
+1. Rename channel fields to include unit suffixes: `rom_mm`, `peak_concentric_velocity_mm_s`, etc. Self-documenting; no behavior change.
+2. Or convert to SI at the bridge boundary: divide ROM by 1000, divide velocities by 1000, keep the field names as-is.
+3. Or add a `units` block to the rep payload: `{ velocity: "mm/s", rom: "mm", force: "N" }`.
+
+Trace path: SDK frame → `LiveState.appendRep` → bridge → channel publish. The conversion (or lack of) is somewhere in that chain. Verify by reading what the SDK's frame protocol declares as native units, then either match or convert at the boundary explicitly.
+
+**Why it matters:** every consumer of `rep_finalized` (PT Claude, future plugins) has to know which wire format they're getting. Today it's a guessing game from the magnitude of the numbers.
+
+## 2026-05-05 — `peak_force` reports 0 on real-hardware reps
+
+**Use case:** Same left-arm bridge validation set. The `rep_finalized` event reported `peak_force: 0` on rep 1 of a 35 lb pull. Rep 2's eccentric came back 0/0 because the user racked the weight, but rep 1 was a normal-feeling pull and peak force should be roughly load-bearing × pull velocity, not zero. Likely a missed sensor field or unit-conversion path; could also be a bridge-payload issue where the field is being read from the wrong location in the frame.
+
+**Investigate:** the SDK frame schema's force field, the LiveState rep aggregator's force handling, and the bridge payload assembly. The fact that the field is _present_ but `0` suggests the path is wired but the value isn't landing.
+
+**Note:** this validation set was force-relevant only on rep 1 (rep 2 ended via Stop). Rerun on a longer set to get more data points before committing to a fix.
+
+## 2026-05-05 — Historical-data lookup is unusable due to default frame-stream payload
+
+**Use case:** Mid-session, asked "what did I do yesterday?" — `session.list` to find the session, then `session.get` on the most recent one. The response was 182,500 characters (the full per-frame sample stream across 5 sets / 41 reps). The token limit forced an out-of-band file read + jq projection just to surface the basics (exercise name, set count, weights, rep counts).
+
+Compounding the problem: every per-rep summary field (`peakVelocity`, `meanVelocity`, `romMm`, `peakForceN`) came back `null`. The schema has the slots; the storage layer never populates them at finalize time, so coaching consumers have to call `metrics.compute vbt.set` per setId just to get data the device already computed during the live set.
+
+**Three improvements, ranked by leverage:**
+
+1. **Persist rep summaries at `set.end`.** The `set_ended` channel payload already carries `vbt_summary` (per the bridge fix shipped on the `feat/observability-and-bridge-refactor` branch). Wire that into the store so reads return useful data without a `metrics.compute` roundtrip. ~50 LOC in `finalizeSet`. Closes the "rep fields are null" gap directly.
+
+2. **Add a `detail` enum to `session.get` / `set.get`.** Default to `'reps'` (per-rep summary, no frames). Levels:
+   - `'summary'` — exercise, timestamps, set count, top working weight (no rep array)
+   - `'reps'` — per-rep metrics, no frames (default — what coaching wants 95% of the time)
+   - `'frames'` — adds the raw sample stream (debug / re-analysis only)
+
+   Strictly a breaking change, but the frame stream is barely usable at this size and every real consumer re-derives metrics anyway.
+
+3. **Enrich `session.list` with denormalized summary fields.** Include `setCount`, `topWeightLbs`, `totalReps`, `endedAt` (today the list returns just `{ id, startedAt, endedAt, exerciseName }`, forcing a follow-up `session.get` call to answer "how heavy did I go yesterday?"). With this change the answer's in one tool call.
+
+Combined effect: typical coaching context lookup goes from ~182KB / 2 calls to ~2KB / 1 call, with no fidelity loss for the common case. The persistence change (#1) crosses SDK + MCP boundaries — the SDK's finalize path needs to surface the VBT summary fields the store will write.
+
 ## 2026-05-04 — `session.fatigue` doesn't handle ramp progressions (upstream: workout-analytics)
 
 **Use case:** End of a 5-set lat pulldown progression at 20 → 35 → 55 → 75 → 90 lbs. `session.fatigue` returned:
