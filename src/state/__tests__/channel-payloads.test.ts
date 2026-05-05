@@ -14,11 +14,16 @@ import type { Rep } from '@voltras/workout-analytics';
 
 import {
   buildConnectionChangedPayload,
+  buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
+  buildSetTargetReachedPayload,
+  buildVelocityLossExceededPayload,
   meanConcentricPeakVelocity,
   summarizePreviousSet,
+  summarizeSetForTrigger,
+  triggerDedupeKey,
 } from '../channel-payloads.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
@@ -497,5 +502,287 @@ describe('buildConnectionChangedPayload', () => {
     const device: DeviceSnapshot = { connected: true };
     const { meta } = buildConnectionChangedPayload('connected', device, null);
     expect(meta.device_id).toBeUndefined();
+  });
+});
+
+describe('triggerDedupeKey', () => {
+  it('uses (type, value) for rep_count_reached', () => {
+    expect(triggerDedupeKey({ type: 'rep_count_reached', value: 8 })).toBe('rep_count_reached:8');
+  });
+
+  it('uses (type, pct) for velocity_loss_exceeded', () => {
+    expect(triggerDedupeKey({ type: 'velocity_loss_exceeded', pct: 25 })).toBe(
+      'velocity_loss_exceeded:25',
+    );
+  });
+
+  it('uses (type, value) for idle_timeout_ms', () => {
+    expect(triggerDedupeKey({ type: 'idle_timeout_ms', value: 30_000 })).toBe(
+      'idle_timeout_ms:30000',
+    );
+  });
+});
+
+describe('summarizeSetForTrigger', () => {
+  const device: DeviceSnapshot = {
+    connected: true,
+    weightLbs: 135,
+    trainingMode: 'WeightTraining',
+  };
+
+  it('mirrors the set_ended payload shape (set + reps + vbt_summary)', () => {
+    const set: ActiveSet = {
+      setId: 'set-1',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [makeRep(1, 0.85, 0.5), makeRep(2, 0.7, 0.45)],
+      status: 'active',
+    };
+    const summary = summarizeSetForTrigger(set, device);
+    expect(summary.set).toEqual({
+      set_id: 'set-1',
+      session_id: 'sess-1',
+      weight_lbs: 135,
+      training_mode: 'WeightTraining',
+      started_at: '2025-01-01T00:00:00.000Z',
+    });
+    expect(summary.reps).toHaveLength(2);
+    expect(summary.reps[0]).toMatchObject({
+      rep_number: 1,
+      concentric: { peak_velocity: 0.85 },
+    });
+    expect(summary.vbt_summary.first_rep_v).toBe(0.85);
+    expect(summary.vbt_summary.last_rep_v).toBe(0.7);
+  });
+
+  it('reports null weight/mode when device has none', () => {
+    const set: ActiveSet = {
+      setId: 'set-1',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    };
+    const noDevice: DeviceSnapshot = { connected: true };
+    const summary = summarizeSetForTrigger(set, noDevice);
+    expect(summary.set.weight_lbs).toBeNull();
+    expect(summary.set.training_mode).toBeNull();
+    expect(summary.reps).toEqual([]);
+  });
+});
+
+describe('buildSetTargetReachedPayload', () => {
+  const device: DeviceSnapshot = {
+    connected: true,
+    weightLbs: 135,
+    trainingMode: 'WeightTraining',
+  };
+  function activeSet(reps: Rep[]): ActiveSet {
+    return {
+      setId: 'set-target-12345678',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps,
+      status: 'active',
+    };
+  }
+
+  it('notifyOn match: meta.auto_stopped="false", summary lacks auto-stop tail', () => {
+    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.7, 0.45)]);
+    const { meta, content } = buildSetTargetReachedPayload(set, device, 8, 2, false);
+    expect(meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'set_target_reached',
+      set_id: 'set-target-12345678',
+      session_id: 'sess-1',
+      target_rep_count: '8',
+      actual_rep_count: '2',
+      auto_stopped: 'false',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toContain('Target reached: 2/8 reps');
+    expect(parsed.summary).not.toContain('auto-stopping');
+    expect(parsed.trigger).toEqual({
+      type: 'rep_count_reached',
+      target: 8,
+      actual: 2,
+    });
+    expect(parsed.set_so_far.set.set_id).toBe('set-target-12345678');
+    expect(parsed.set_so_far.reps).toHaveLength(2);
+  });
+
+  it('stopOn match: meta.auto_stopped="true", summary tails the auto-stop note', () => {
+    const set = activeSet([makeRep(1, 0.85, 0.5)]);
+    const { meta, content } = buildSetTargetReachedPayload(set, device, 5, 5, true);
+    expect(meta.auto_stopped).toBe('true');
+    expect(JSON.parse(content).summary).toContain('auto-stopping');
+  });
+});
+
+describe('buildVelocityLossExceededPayload', () => {
+  const device: DeviceSnapshot = {
+    connected: true,
+    weightLbs: 135,
+    trainingMode: 'WeightTraining',
+  };
+  function activeSet(reps: Rep[]): ActiveSet {
+    return {
+      setId: 'set-vel-1',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps,
+      status: 'active',
+    };
+  }
+
+  it('exposes scalar velocity context in meta and trigger details in content', () => {
+    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.8, 0.5), makeRep(3, 0.55, 0.4)]);
+    const { meta, content } = buildVelocityLossExceededPayload(
+      set,
+      device,
+      25,
+      35.3,
+      0.85,
+      0.55,
+      1,
+      3,
+      true,
+    );
+    expect(meta).toMatchObject({
+      event_type: 'velocity_loss_exceeded',
+      set_id: 'set-vel-1',
+      velocity_loss_pct: '35.3',
+      threshold_pct: '25',
+      baseline_velocity: '0.850',
+      current_velocity: '0.550',
+      rep_count_at_threshold: '3',
+      auto_stopped: 'true',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toContain('35.3%');
+    expect(parsed.summary).toContain('rep 3');
+    expect(parsed.summary).toContain('auto-stopping');
+    expect(parsed.trigger).toMatchObject({
+      type: 'velocity_loss_exceeded',
+      threshold_pct: 25,
+      actual_pct: 35.3,
+      baseline_velocity: 0.85,
+      current_velocity: 0.55,
+      baseline_rep_number: 1,
+    });
+    expect(parsed.set_so_far.reps).toHaveLength(3);
+  });
+
+  it('notifyOn variant flips auto_stopped meta to false', () => {
+    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.55, 0.4)]);
+    const { meta, content } = buildVelocityLossExceededPayload(
+      set,
+      device,
+      25,
+      35.3,
+      0.85,
+      0.55,
+      1,
+      2,
+      false,
+    );
+    expect(meta.auto_stopped).toBe('false');
+    expect(JSON.parse(content).summary).not.toContain('auto-stopping');
+  });
+});
+
+describe('buildIdleTimeoutPayload', () => {
+  const device: DeviceSnapshot = { connected: true, weightLbs: 100 };
+  function activeSet(reps: Rep[]): ActiveSet {
+    return {
+      setId: 'set-idle-12345678',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps,
+      status: 'active',
+    };
+  }
+
+  it('emits the standard meta scalars with idle/threshold ms', () => {
+    const set = activeSet([makeRep(1, 0.6, 0.4), makeRep(2, 0.5, 0.4)]);
+    const { meta, content } = buildIdleTimeoutPayload(
+      set,
+      device,
+      30_000,
+      31_500,
+      '2025-01-01T00:00:30.000Z',
+      true,
+    );
+    expect(meta).toMatchObject({
+      event_type: 'idle_timeout',
+      set_id: 'set-idle-12345678',
+      session_id: 'sess-1',
+      idle_ms: '31500',
+      threshold_ms: '30000',
+      last_rep_count: '2',
+      auto_stopped: 'true',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toContain('No reps for 32s');
+    expect(parsed.summary).toContain('threshold 30s');
+    expect(parsed.summary).toContain('auto-stopping');
+    expect(parsed.trigger).toEqual({
+      type: 'idle_timeout_ms',
+      threshold_ms: 30_000,
+      actual_idle_ms: 31_500,
+      last_rep_at: '2025-01-01T00:00:30.000Z',
+      last_rep_count: 2,
+    });
+    expect(parsed.set_so_far.reps).toHaveLength(2);
+  });
+
+  it('reports set_so_far=null when no reps have finalized yet', () => {
+    const set = activeSet([]);
+    const { meta, content } = buildIdleTimeoutPayload(
+      set,
+      device,
+      45_000,
+      45_000,
+      '2025-01-01T00:00:00.000Z',
+      false,
+    );
+    expect(meta.last_rep_count).toBe('0');
+    expect(meta.auto_stopped).toBe('false');
+    const parsed = JSON.parse(content);
+    expect(parsed.set_so_far).toBeNull();
+    expect(parsed.summary).not.toContain('auto-stopping');
+  });
+});
+
+describe('buildSetEndedPayload — auto_stop_cause', () => {
+  function buildStored(reps: Rep[], partialReason: string): StoredSet {
+    return {
+      id: 'set-auto',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:30.000Z',
+      partial: true,
+      partialReason,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: reps.map((r, i) => ({ ...r, id: `r${i}`, setId: 'set-auto', index: i })),
+    };
+  }
+
+  it('flows auto_stop_cause through to meta and content.set when supplied', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5)], 'auto_stopped');
+    const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached');
+    expect(meta.auto_stop_cause).toBe('rep_count_reached');
+    expect(meta.partial_reason).toBe('auto_stopped');
+    const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
+    expect(parsed.set.auto_stop_cause).toBe('rep_count_reached');
+  });
+
+  it('omits auto_stop_cause from meta and content when absent', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5)], 'disconnect');
+    const { meta, content } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.auto_stop_cause).toBeUndefined();
+    const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
+    expect(parsed.set.auto_stop_cause).toBeUndefined();
   });
 });

@@ -251,6 +251,45 @@ describe('set.start', () => {
     expect(parsed.previous_set_summary).toBeNull();
   });
 
+  it('accepts a watch config and stores it on the active set', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: {
+        stopOn: [{ type: 'rep_count_reached', value: 8 }],
+        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }],
+      },
+    });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.set?.watch).toBeDefined();
+    expect(h.live.set?.watch?.stopOn).toEqual([{ type: 'rep_count_reached', value: 8 }]);
+    expect(h.live.set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    // A fresh dedupe ledger is provisioned alongside the watch config.
+    expect(h.live.set?.firedTriggers).toBeInstanceOf(Set);
+    expect(h.live.set?.firedTriggers?.size).toBe(0);
+  });
+
+  it('rejects an invalid watch spec via INVALID_INPUT (out-of-range pct)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: {
+        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 150 }],
+      },
+    });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+    expect(h.live.set).toBeUndefined();
+  });
+
+  it('omitted watch config leaves live.set.watch + firedTriggers undefined', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    expect(h.live.set?.watch).toBeUndefined();
+    expect(h.live.set?.firedTriggers).toBeUndefined();
+  });
+
   it('set_started includes previous_set_summary when a prior set exists in the session', async () => {
     const sessionId = startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });

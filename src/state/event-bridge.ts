@@ -70,7 +70,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { VoltraClient, TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
-import type { WorkoutSample } from '@voltras/workout-analytics';
+import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 
 import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
@@ -78,9 +78,13 @@ import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
   buildRepFinalizedPayload,
+  buildSetTargetReachedPayload,
+  buildVelocityLossExceededPayload,
+  triggerDedupeKey,
   type ActiveSetAtDisconnect,
 } from './channel-payloads.js';
 import type { ServerState } from './server-state.js';
+import type { TriggerSpec } from '../schemas/set.js';
 import { finalizeSet } from '../tools/set-tools.js';
 import { log } from '../logger.js';
 
@@ -217,6 +221,13 @@ export function wireEventBridge(
           set.reps.length,
         );
         channels.publish(payload);
+        // Evaluate any registered trigger DSL specs against the finalized
+        // rep. Trigger events publish BEFORE finalizeSet (which publishes
+        // set_ended) so PT Claude reads `<set_target_reached>` /
+        // `<velocity_loss_exceeded>` first and `<set_ended>` second. State
+        // is required for the auto-stop path; without it (test wiring)
+        // notify-only triggers still fire but stopOn becomes a no-op.
+        evaluateRepTriggers(live, channels, finalizedIndex, finalizedRep, device, state);
       }
     }
   });
@@ -327,6 +338,149 @@ export function wireEventBridge(
 function notify(server: McpServer, uri: string): void {
   // Fire-and-forget: the notification is a best-effort poll hint per R14.
   void server.server.sendResourceUpdated({ uri });
+}
+
+/**
+ * Evaluate the active set's `watch` config against the just-finalized rep.
+ * Publishes one channel event per matching spec (deduped via the active
+ * set's `firedTriggers` ledger) and, if any `stopOn` spec matched, calls
+ * `finalizeSet(partialReason='auto_stopped')` once after publishing.
+ *
+ * Synchronous trigger types only: `rep_count_reached` and
+ * `velocity_loss_exceeded`. The `idle_timeout_ms` spec is handled via the
+ * watchdog (sprint 2 commit 2), wired in `set-tools.ts:startSet`.
+ *
+ * Why publish before finalize: the channel ordering matters — the model
+ * should see the trigger explanation (`<set_target_reached>`) BEFORE the
+ * resulting `<set_ended>` so it can reason about why the set ended without
+ * post-hoc inference. The finalize happens last, exactly once per rep,
+ * even when multiple stopOn specs match.
+ */
+function evaluateRepTriggers(
+  live: LiveState,
+  channels: ChannelPublisher,
+  finalizedIndex: number,
+  finalizedRep: Rep,
+  device: DeviceSnapshot,
+  state: ServerState | undefined,
+): void {
+  const set = live.snapshotSet();
+  if (set === undefined || set.watch === undefined) {
+    return;
+  }
+  const actualReps = finalizedIndex + 1;
+  // Baseline = highest peak concentric velocity across all finalized reps
+  // up to and INCLUDING the just-finalized rep. This intentionally folds
+  // the new rep into the baseline candidate set: when it's the new max,
+  // baseline equals current and loss = 0% so nothing fires. That's the
+  // desired behavior — a stronger rep should not trigger a loss event for
+  // any prior threshold.
+  const finalizedReps = set.reps.slice(0, finalizedIndex + 1);
+  const baseline = peakConcentricBaseline(finalizedReps);
+  const current = finalizedRep.concentric.peakVelocity;
+
+  let stopFired = false;
+  let stopCause: string | undefined;
+
+  const evaluateSpec = (spec: TriggerSpec, isStopOn: boolean): void => {
+    // Only the synchronous specs run in the rep_finalized loop. The
+    // idle_timeout_ms spec arms a watchdog at set.start (commit 2) and
+    // does not participate in this evaluator.
+    if (spec.type === 'idle_timeout_ms') return;
+    const key = triggerDedupeKey(spec);
+
+    if (spec.type === 'rep_count_reached') {
+      if (actualReps !== spec.value) return;
+      if (!live.tryFireTrigger(key)) return;
+      const payload = buildSetTargetReachedPayload(set, device, spec.value, actualReps, isStopOn);
+      channels.publish(payload);
+      if (isStopOn) {
+        stopFired = true;
+        stopCause = stopCause ?? spec.type;
+      }
+      return;
+    }
+
+    if (spec.type === 'velocity_loss_exceeded') {
+      // baseline must be a real positive velocity for loss% to be defined.
+      // current >= baseline ⇒ loss <= 0 ⇒ no fire (covers the just-set-a-
+      // new-max case explicitly).
+      if (baseline <= 0 || current >= baseline) return;
+      const lossPct = (100 * (baseline - current)) / baseline;
+      if (lossPct < spec.pct) return;
+      if (!live.tryFireTrigger(key)) return;
+      const baselineRepNumber = baselineRepNumberFor(finalizedReps);
+      const payload = buildVelocityLossExceededPayload(
+        set,
+        device,
+        spec.pct,
+        lossPct,
+        baseline,
+        current,
+        baselineRepNumber,
+        actualReps,
+        isStopOn,
+      );
+      channels.publish(payload);
+      if (isStopOn) {
+        stopFired = true;
+        stopCause = stopCause ?? spec.type;
+      }
+      return;
+    }
+  };
+
+  for (const spec of set.watch.notifyOn) {
+    evaluateSpec(spec, false);
+  }
+  for (const spec of set.watch.stopOn) {
+    evaluateSpec(spec, true);
+  }
+
+  if (stopFired && state !== undefined && stopCause !== undefined) {
+    void finalizeSet(state, {
+      cause: 'tool',
+      disengageMotor: true,
+      partialReason: 'auto_stopped',
+      auto_stop_cause: stopCause,
+    }).catch((err) => {
+      log.warn('event-bridge: trigger DSL auto-stop finalize failed', err);
+    });
+  }
+}
+
+/**
+ * Highest peak concentric velocity across a rep array. Returns 0 when the
+ * array is empty or no rep has a positive concentric peak.
+ */
+function peakConcentricBaseline(reps: readonly Rep[]): number {
+  let max = 0;
+  for (const rep of reps) {
+    if (rep.concentric.peakVelocity > max) {
+      max = rep.concentric.peakVelocity;
+    }
+  }
+  return max;
+}
+
+/**
+ * Rep number (1-indexed) at which the velocity-loss baseline was set —
+ * the rep with the highest peak concentric velocity. Ties prefer the
+ * earlier rep so the model can reason "baseline came from rep 1, current
+ * from rep 8" without ambiguity.
+ */
+function baselineRepNumberFor(reps: readonly Rep[]): number {
+  let best = 0;
+  let idx = 0;
+  for (let i = 0; i < reps.length; i++) {
+    if (reps[i].concentric.peakVelocity > best) {
+      best = reps[i].concentric.peakVelocity;
+      idx = i;
+    }
+  }
+  // repNumber is canonical when present; fall back to 1-indexed array
+  // position for analytics' immutable rep shape.
+  return reps[idx]?.repNumber ?? idx + 1;
 }
 
 /**

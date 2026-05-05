@@ -27,6 +27,7 @@ import {
 
 import type { ActiveSet, DeviceSnapshot } from './live-state.js';
 import type { StoredSet } from '../store/types.js';
+import type { TriggerSpec } from '../schemas/set.js';
 
 /**
  * Phase movement duration in milliseconds. Workout-analytics's
@@ -262,6 +263,7 @@ export type SetEndedCause = 'tool' | 'device_signal';
 export function buildSetEndedPayload(
   stored: StoredSet,
   cause: SetEndedCause = 'tool',
+  autoStopCause?: string,
 ): {
   meta: Record<string, string>;
   content: string;
@@ -284,20 +286,15 @@ export function buildSetEndedPayload(
   if (stored.partial && stored.partialReason !== undefined) {
     meta.partial_reason = stored.partialReason;
   }
+  if (autoStopCause !== undefined) {
+    // Distinguishes auto-stop sub-causes (`rep_count_reached`,
+    // `velocity_loss_exceeded`, `idle_timeout_ms`) within set_ended without
+    // forcing the model to re-parse the partial_reason enum. Carried in
+    // both meta (for fast scanning) and content (under `set.auto_stop_cause`).
+    meta.auto_stop_cause = autoStopCause;
+  }
 
-  const reps = stored.reps.map((rep) => ({
-    rep_number: rep.repNumber,
-    concentric: {
-      peak_velocity: rep.concentric.peakVelocity,
-      mean_velocity: Number(getPhaseMeanVelocity(rep.concentric).toFixed(3)),
-    },
-    eccentric: {
-      peak_velocity: rep.eccentric.peakVelocity,
-      mean_velocity: Number(getPhaseMeanVelocity(rep.eccentric).toFixed(3)),
-    },
-    rom_m: repRangeOfMotion(rep),
-  }));
-
+  const reps = stored.reps.map(serializeRepForPayload);
   const vbt = computeVbtSummary(stored.reps);
   const summary = buildSetEndedSummary(
     stored.reps.length,
@@ -316,11 +313,38 @@ export function buildSetEndedPayload(
       started_at: stored.startedAt,
       ended_at: stored.endedAt,
       partial_reason: stored.partialReason ?? null,
+      ...(autoStopCause !== undefined ? { auto_stop_cause: autoStopCause } : {}),
     },
     reps,
     vbt_summary: vbt,
   });
   return { meta, content };
+}
+
+/**
+ * Map a single Rep into the channel-payload shape — peak/mean per phase
+ * plus single ROM scalar. Shared between `buildSetEndedPayload` and the
+ * trigger payloads' `set_so_far` block so the model parses the same
+ * structure on every set-level event.
+ */
+function serializeRepForPayload(rep: Rep): {
+  rep_number: number;
+  concentric: { peak_velocity: number; mean_velocity: number };
+  eccentric: { peak_velocity: number; mean_velocity: number };
+  rom_m: number | null;
+} {
+  return {
+    rep_number: rep.repNumber,
+    concentric: {
+      peak_velocity: rep.concentric.peakVelocity,
+      mean_velocity: Number(getPhaseMeanVelocity(rep.concentric).toFixed(3)),
+    },
+    eccentric: {
+      peak_velocity: rep.eccentric.peakVelocity,
+      mean_velocity: Number(getPhaseMeanVelocity(rep.eccentric).toFixed(3)),
+    },
+    rom_m: repRangeOfMotion(rep),
+  };
 }
 
 interface VbtSummary {
@@ -358,6 +382,213 @@ function buildSetEndedSummary(
   const base = `${headline}: ${repCount} reps in ${seconds}s`;
   const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
   return cause === 'device_signal' ? `${withLoss} (user pressed Stop on the unit)` : withLoss;
+}
+
+/**
+ * Compact mid-set summary used in the trigger DSL channel events
+ * (`set_target_reached`, `velocity_loss_exceeded`, `idle_timeout`). Same
+ * structural shape as the `set_ended` payload's `{set, reps, vbt_summary}`,
+ * minus the persistence-only fields (no ended_at). Built directly from the
+ * still-active `ActiveSet` plus the device snapshot — the set has not been
+ * persisted yet at trigger-fire time.
+ */
+export interface SetSoFar {
+  set: {
+    set_id: string;
+    session_id: string;
+    weight_lbs: number | null;
+    training_mode: string | null;
+    started_at: string;
+  };
+  reps: ReturnType<typeof serializeRepForPayload>[];
+  vbt_summary: ReturnType<typeof computeVbtSummary>;
+}
+
+/**
+ * Snapshot the active set into the `set_so_far` block embedded on every
+ * trigger-fire channel event. DRY'd up with `buildSetEndedPayload` via the
+ * shared `serializeRepForPayload` + `computeVbtSummary` helpers so PT Claude
+ * can parse mid-set and end-of-set rep arrays with the same schema.
+ *
+ * NOTE: `partial_reason` is intentionally absent — the set is in-progress
+ * when a trigger fires (even one that auto-stops, since the trigger event
+ * publishes BEFORE `finalizeSet` so the model sees the trigger first).
+ */
+export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): SetSoFar {
+  return {
+    set: {
+      set_id: set.setId,
+      session_id: set.sessionId,
+      weight_lbs: device.weightLbs ?? null,
+      training_mode: device.trainingMode ?? null,
+      started_at: set.startedAt,
+    },
+    reps: set.reps.map(serializeRepForPayload),
+    vbt_summary: computeVbtSummary(set.reps),
+  };
+}
+
+/**
+ * Build the meta + content for a `set_target_reached` channel event
+ * (`rep_count_reached` trigger match). `target` is the configured rep
+ * count; `actualReps` is the just-finalized rep number (1-indexed). The
+ * `autoStopped` flag is `true` when the trigger came from `stopOn` (the
+ * bridge will call `finalizeSet` after publishing this) and `false` when
+ * from `notifyOn` (set continues).
+ */
+export function buildSetTargetReachedPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  target: number,
+  actualReps: number,
+  autoStopped: boolean,
+): { meta: Record<string, string>; content: string } {
+  const setIdShort = set.setId.slice(0, 8);
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'set_target_reached',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    target_rep_count: String(target),
+    actual_rep_count: String(actualReps),
+    auto_stopped: autoStopped ? 'true' : 'false',
+  };
+  const summary = `Target reached: ${actualReps}/${target} reps on set ${setIdShort}${
+    autoStopped ? ' — auto-stopping' : ''
+  }.`;
+  const content = JSON.stringify({
+    summary,
+    trigger: {
+      type: 'rep_count_reached',
+      target,
+      actual: actualReps,
+    },
+    set_so_far: summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a `velocity_loss_exceeded` channel event.
+ * Baseline = highest peak concentric velocity seen so far in the set;
+ * `current` = peak concentric velocity of the just-finalized rep. The
+ * `baselineRepNumber` gives PT Claude the rep at which the baseline was
+ * established (sidesteps "is this baseline rep 1's setup pause artifact?").
+ */
+export function buildVelocityLossExceededPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  threshold: number,
+  pct: number,
+  baseline: number,
+  current: number,
+  baselineRepNumber: number,
+  actualReps: number,
+  autoStopped: boolean,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'velocity_loss_exceeded',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    velocity_loss_pct: pct.toFixed(1),
+    threshold_pct: String(threshold),
+    baseline_velocity: baseline.toFixed(3),
+    current_velocity: current.toFixed(3),
+    rep_count_at_threshold: String(actualReps),
+    auto_stopped: autoStopped ? 'true' : 'false',
+  };
+  const summary =
+    `Velocity dropped ${pct.toFixed(1)}% (${baseline.toFixed(2)} -> ` +
+    `${current.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%${
+      autoStopped ? ' — auto-stopping' : ''
+    }.`;
+  const content = JSON.stringify({
+    summary,
+    trigger: {
+      type: 'velocity_loss_exceeded',
+      threshold_pct: threshold,
+      actual_pct: Number(pct.toFixed(1)),
+      baseline_velocity: baseline,
+      current_velocity: current,
+      baseline_rep_number: baselineRepNumber,
+    },
+    set_so_far: summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for an `idle_timeout` channel event. `set` is
+ * the active set when the watchdog fires; `device` snapshot lets the
+ * payload carry weight/mode for context. `set` may have zero reps (the
+ * watchdog can fire before any rep finalizes), in which case `set_so_far`
+ * is null — the model can't compute a velocity-loss baseline yet, but the
+ * coach still needs to know the user has gone idle.
+ *
+ * `lastRepAt` is the ISO timestamp of the most recent finalized rep, or
+ * the set's `startedAt` when no reps have closed (the watchdog uses
+ * startedAt as its zero reference).
+ */
+export function buildIdleTimeoutPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  thresholdMs: number,
+  actualIdleMs: number,
+  lastRepAt: string,
+  autoStopped: boolean,
+): { meta: Record<string, string>; content: string } {
+  const setIdShort = set.setId.slice(0, 8);
+  const lastRepCount = set.reps.length;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'idle_timeout',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    idle_ms: String(Math.round(actualIdleMs)),
+    threshold_ms: String(thresholdMs),
+    last_rep_count: String(lastRepCount),
+    auto_stopped: autoStopped ? 'true' : 'false',
+  };
+  const summary =
+    `No reps for ${(actualIdleMs / 1000).toFixed(0)}s on set ${setIdShort} ` +
+    `(threshold ${thresholdMs / 1000}s)${autoStopped ? ' — auto-stopping' : ''}.`;
+  const content = JSON.stringify({
+    summary,
+    trigger: {
+      type: 'idle_timeout_ms',
+      threshold_ms: thresholdMs,
+      actual_idle_ms: Math.round(actualIdleMs),
+      last_rep_at: lastRepAt,
+      last_rep_count: lastRepCount,
+    },
+    set_so_far: lastRepCount === 0 ? null : summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
+}
+
+/**
+ * Cause discriminator for trigger-fire channel events, mirroring how the
+ * spec is registered (stopOn vs notifyOn). Currently only used for the
+ * `auto_stopped` meta flag — the payload shape is identical between the
+ * two cases.
+ */
+export type TriggerFireCause = 'stop' | 'notify';
+
+/**
+ * Compute the dedupe key for a trigger spec. Used by the bridge's
+ * `tryFireTrigger` ledger so identical specs across `stopOn`/`notifyOn`
+ * collapse to one event while distinct thresholds fire independently.
+ */
+export function triggerDedupeKey(spec: TriggerSpec): string {
+  switch (spec.type) {
+    case 'rep_count_reached':
+      return `${spec.type}:${spec.value}`;
+    case 'velocity_loss_exceeded':
+      return `${spec.type}:${spec.pct}`;
+    case 'idle_timeout_ms':
+      return `${spec.type}:${spec.value}`;
+  }
 }
 
 /**

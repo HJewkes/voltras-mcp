@@ -26,6 +26,8 @@
 import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
 import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
 
+import type { WatchConfig } from '../schemas/set.js';
+
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
 
@@ -62,12 +64,28 @@ export interface ActiveSet {
   endedAt?: string;
   /**
    * Why the set ended in something other than a graceful tool call.
-   *   * `'disconnect'`   — connection drop cascade
-   *   * `'session_end'`  — explicit `session.end` cascade
+   *   * `'disconnect'`    — connection drop cascade
+   *   * `'session_end'`   — explicit `session.end` cascade
    *   * `'device_signal'` — user pressed Stop on the unit (autonomous
    *     set_boundary outside the start-grace window)
+   *   * `'auto_stopped'`  — a server-evaluated `stopOn` trigger fired
+   *     (rep count, velocity loss, or idle timeout); see WatchConfig.
    */
-  partialReason?: 'disconnect' | 'session_end' | 'device_signal';
+  partialReason?: 'disconnect' | 'session_end' | 'device_signal' | 'auto_stopped';
+  /**
+   * Trigger DSL config registered at `set.start` time. The bridge evaluates
+   * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
+   * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.
+   * Undefined for sets started without a `watch` arg.
+   */
+  watch?: WatchConfig;
+  /**
+   * Dedupe ledger for trigger firings. Keys take the form
+   * `${type}:${value or pct}` so identical specs across `stopOn`/`notifyOn`
+   * collapse to one event, while distinct thresholds (e.g., 15%, 25%, 40%
+   * velocity loss) all fire independently as the set progresses.
+   */
+  firedTriggers?: Set<string>;
 }
 
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
@@ -141,26 +159,35 @@ export class LiveState {
   /**
    * Begin a new set. Same no-op-on-conflict policy as `startSession` (the
    * tool layer enforces EC-13 `SET_ALREADY_ACTIVE`).
+   *
+   * If `s.watch` is supplied, the trigger DSL config is stored on the active
+   * set and a fresh `firedTriggers` ledger is initialized so trigger dedupe
+   * starts clean for every new set.
    */
   startSet(s: ActiveSet): void {
     if (this.set !== undefined) {
       return;
     }
-    this.set = { ...s, reps: [...s.reps] };
+    this.set = {
+      ...s,
+      reps: [...s.reps],
+      ...(s.watch !== undefined ? { watch: s.watch, firedTriggers: new Set<string>() } : {}),
+    };
     this._analyticsSet = createSet();
   }
 
   /**
    * Close out the active set. `reason` distinguishes graceful close
-   * (`undefined`), explicit `session.end` cascade (`'session_end'`), and
-   * connection loss (`'disconnect'`). Returns the finalized set for the
+   * (`undefined`), explicit `session.end` cascade (`'session_end'`),
+   * connection loss (`'disconnect'`), and a server-evaluated trigger DSL
+   * `stopOn` match (`'auto_stopped'`). Returns the finalized set for the
    * caller to persist, or `undefined` when none was active.
    *
    * The set's `setId` is appended to the active session's `setIds` if a
    * session is still tracked, so resource snapshots reflect the close
    * synchronously.
    */
-  endSet(reason?: 'disconnect' | 'session_end'): ActiveSet | undefined {
+  endSet(reason?: 'disconnect' | 'session_end' | 'auto_stopped'): ActiveSet | undefined {
     const current = this.set;
     if (current === undefined) {
       return undefined;
@@ -251,6 +278,30 @@ export class LiveState {
     if (this.set === undefined) {
       return undefined;
     }
+    // `firedTriggers` is intentionally NOT cloned — it's an internal dedupe
+    // ledger the bridge mutates via `tryFireTrigger`. Snapshot consumers
+    // (resource handlers, tools) don't read it; the snapshot still includes
+    // the reference for type completeness, but mutating the returned set
+    // doesn't churn the ledger because the bridge's mutator goes through the
+    // helper.
     return { ...this.set, reps: [...this.set.reps] };
+  }
+
+  /**
+   * Atomically check + mark a trigger as fired against the active set's
+   * dedupe ledger. Returns `true` if the trigger fired now (caller should
+   * publish the channel event); returns `false` if the key was already
+   * present or no set is active. The dedupe key is owned by the caller —
+   * the convention is `${type}:${value or pct}`.
+   */
+  tryFireTrigger(key: string): boolean {
+    if (this.set === undefined || this.set.firedTriggers === undefined) {
+      return false;
+    }
+    if (this.set.firedTriggers.has(key)) {
+      return false;
+    }
+    this.set.firedTriggers.add(key);
+    return true;
   }
 }

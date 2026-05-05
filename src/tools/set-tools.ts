@@ -28,7 +28,13 @@ import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 
 import type { ServerState } from '../state/server-state.js';
-import { SetEndInput, SetGetInput, SetLiveMetricsInput, SetStartInput } from '../schemas/set.js';
+import {
+  SetEndInput,
+  SetGetInput,
+  SetLiveMetricsInput,
+  SetStartInput,
+  type WatchConfig,
+} from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
 import {
@@ -74,7 +80,7 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, () => startSet(state)),
+    wrapHandler(SetStartInput, (input) => startSet(state, input.watch)),
   );
   install(
     placeholders,
@@ -109,7 +115,10 @@ function install<S extends z.ZodObject>(
   tool.update({ paramsSchema: schema.shape, callback: callback as never });
 }
 
-async function startSet(state: ServerState): Promise<{ setId: string }> {
+async function startSet(
+  state: ServerState,
+  watch: WatchConfig | undefined,
+): Promise<{ setId: string }> {
   const session = state.live.session;
   if (session === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active. Call session.start first.');
@@ -131,6 +140,7 @@ async function startSet(state: ServerState): Promise<{ setId: string }> {
     startedAt,
     reps: [],
     status: 'active',
+    ...(watch !== undefined ? { watch } : {}),
   });
   const device = state.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
@@ -205,35 +215,50 @@ async function endSetTool(state: ServerState): Promise<{ ok: true; reps: number 
 }
 
 /**
- * Shared finalize sequence used by both the explicit `set.end` tool and the
- * bridge's autonomous `set_ended_by_device` handler. Returns the persisted
- * set on success, or `undefined` when no set was active (the device-signal
- * caller treats this as a silent drop; the tool caller turns it into
- * NO_ACTIVE_SET).
+ * Shared finalize sequence used by the explicit `set.end` tool, the
+ * bridge's autonomous `set_ended_by_device` handler, AND the trigger DSL
+ * `stopOn` auto-stop path. Returns the persisted set on success, or
+ * `undefined` when no set was active (the device-signal / auto-stop callers
+ * treat this as a silent drop; the tool caller turns it into NO_ACTIVE_SET).
  *
- * `disengageMotor` should be `true` for the tool path (we explicitly stop
- * recording so the cable goes free for rest) and `false` for the device
- * signal path — the device has already de-engaged on its own, and an extra
- * `Workout.STOP` would be a no-op at best and a connection-state churn at
- * worst.
+ * `disengageMotor` should be `true` for the tool / auto-stop paths (we
+ * explicitly stop recording so the cable goes free for rest) and `false`
+ * for the device signal path — the device has already de-engaged on its
+ * own, and an extra `Workout.STOP` would be a no-op at best and a
+ * connection-state churn at worst.
  *
  * `cause` selects the channel `event_type` (`set_ended` vs
  * `set_ended_by_device`) and, for the device-signal path, also stamps the
  * stored row with `partial=true` and `partialReason='device_signal'`.
+ *
+ * `partialReason` overrides the LiveState-derived stamp (used by the
+ * trigger DSL auto-stop path to mark the row as `'auto_stopped'`). When
+ * absent, the device-signal path keeps stamping `'device_signal'`, and the
+ * tool path keeps the graceful-close `partial=false`.
+ *
+ * `auto_stop_cause` flows through to the `set_ended` payload's meta and
+ * content as `auto_stop_cause` so the model can distinguish auto-stop
+ * sub-causes (`rep_count_reached`, `velocity_loss_exceeded`,
+ * `idle_timeout_ms`) without re-parsing the partial_reason enum.
  */
 export async function finalizeSet(
   state: ServerState,
-  opts: { cause: SetEndedCause; disengageMotor: boolean },
+  opts: {
+    cause: SetEndedCause;
+    disengageMotor: boolean;
+    partialReason?: 'auto_stopped';
+    auto_stop_cause?: string;
+  },
 ): Promise<StoredSet | undefined> {
   if (state.live.set === undefined) {
     return undefined;
   }
   const setId = state.live.set.setId;
   // `live.endSet` is called without a `reason`: the explicit-tool path is a
-  // graceful close, and the device-signal path applies its `partial=true /
-  // partialReason='device_signal'` stamp directly on the finalized snapshot
-  // below (LiveState only knows about `'disconnect' | 'session_end'`). This
-  // keeps the partial-reason override in exactly one place.
+  // graceful close, the device-signal path applies its
+  // `partial=true / partialReason='device_signal'` stamp directly on the
+  // finalized snapshot below, and the auto-stop path also stamps below
+  // (so the partial-reason override lives in exactly one place).
   const finalized = state.live.endSet();
   if (finalized === undefined) {
     return undefined;
@@ -242,9 +267,9 @@ export async function finalizeSet(
   if (opts.disengageMotor) {
     // Disengage the device motor between sets (Workout.STOP) so the cable
     // goes free while the user rests. SDK keeps the workout-mode session
-    // open so a subsequent set.start can re-engage without re-arming. Only
-    // the explicit `set.end` tool path runs this — when the device emitted
-    // an autonomous set boundary, the motor is already de-engaged.
+    // open so a subsequent set.start can re-engage without re-arming. The
+    // tool path and auto-stop path both run this; the device-signal path
+    // skips it because the device already de-engaged on its own.
     await state.client.endSet();
   }
 
@@ -253,15 +278,18 @@ export async function finalizeSet(
   const device = state.setStartDeviceSnapshots.get(setId) ?? state.live.snapshotDevice();
   state.setStartDeviceSnapshots.delete(setId);
 
-  // For the device-signal cause we override the stored set's partial flag /
-  // reason; LiveState.endSet only sets those when called with a `reason`,
-  // and we deliberately did not pass one (the explicit-tool default is a
-  // graceful close). The override here is the single source of truth for
-  // `partial_reason: 'device_signal'`.
-  const finalizedWithCause: ActiveSet =
-    opts.cause === 'device_signal'
-      ? { ...finalized, status: 'partial', partialReason: 'device_signal' }
-      : finalized;
+  // Pick the partial-reason stamp (if any). Auto-stop wins when supplied;
+  // device-signal wins when no auto-stop reason is set; otherwise the
+  // graceful tool-end path leaves the row non-partial.
+  const finalizedWithCause: ActiveSet = (() => {
+    if (opts.partialReason !== undefined) {
+      return { ...finalized, status: 'partial', partialReason: opts.partialReason };
+    }
+    if (opts.cause === 'device_signal') {
+      return { ...finalized, status: 'partial', partialReason: 'device_signal' };
+    }
+    return finalized;
+  })();
   const stored = toStoredSet(finalizedWithCause, device);
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
@@ -269,7 +297,7 @@ export async function finalizeSet(
   // summary (first/last rep velocity + velocity-loss %), so PT Claude can
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers.
-  const payload = buildSetEndedPayload(stored, opts.cause);
+  const payload = buildSetEndedPayload(stored, opts.cause, opts.auto_stop_cause);
   state.channels.publish(payload);
   return stored;
 }
