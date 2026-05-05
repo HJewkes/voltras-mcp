@@ -63,11 +63,11 @@ import type { VoltraClient, TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { WorkoutSample } from '@voltras/workout-analytics';
-import { getRepPeakVelocity } from '@voltras/workout-analytics';
 
 import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
+import { buildRepFinalizedPayload } from './channel-payloads.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -169,20 +169,21 @@ export function wireEventBridge(
       if (set !== undefined && set.reps.length >= 2) {
         const finalizedIndex = set.reps.length - 2;
         const finalizedRep = set.reps[finalizedIndex];
-        const peakVelocity = getRepPeakVelocity(finalizedRep);
-        const meta: Record<string, string> = {
-          source: 'voltras',
-          event_type: 'rep_finalized',
-          set_id: set.setId,
-          rep_count: String(finalizedIndex + 1),
-        };
-        if (peakVelocity > 0) {
-          meta.peak_velocity = peakVelocity.toFixed(3);
-        }
-        channels.publish({
-          content: `Rep ${finalizedIndex + 1} complete on set ${set.setId.slice(0, 8)}.`,
-          meta,
-        });
+        const device = live.snapshotDevice();
+        // The summary + structured rep/set_context payload is built by
+        // `buildRepFinalizedPayload` so the channel-content contract lives
+        // in one place (see channel-payloads.ts). The model can read the
+        // summary line for an at-a-glance update or drill into the JSON
+        // body for per-phase peak/mean velocities, ROM, peak force, and
+        // rep_count_so_far without a follow-up `set.get`.
+        const payload = buildRepFinalizedPayload(
+          finalizedRep,
+          finalizedIndex,
+          set,
+          device,
+          set.reps.length,
+        );
+        channels.publish(payload);
       }
     }
   });

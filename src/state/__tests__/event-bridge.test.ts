@@ -338,6 +338,9 @@ describe('wireEventBridge', () => {
       // Rep 1 finalizes at the ECC -> CONC transition that opens rep 2; the
       // closed rep sits at index 0 while the new in-progress rep is index 1.
       startSet(live);
+      // Stamp device with a known weight + mode so the meta + set_context
+      // assertions below have something to look at.
+      live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
       feedFrame(1, 1); // C, rep 1 starts
       feedFrame(2, 3); // E, rep 1 in eccentric phase
       feedFrame(3, 1); // C -> ECC->CONC: rep 1 finalized, rep 2 starts
@@ -348,7 +351,32 @@ describe('wireEventBridge', () => {
       expect(event.meta.event_type).toBe('rep_finalized');
       expect(event.meta.set_id).toBe('set-1');
       expect(event.meta.rep_count).toBe('1');
-      expect(event.content).toContain('Rep 1');
+      // Velocity in the test frames is 0.5 (positive); meta should expose
+      // peak concentric + eccentric velocity since both phases got samples.
+      expect(event.meta.peak_concentric_velocity).toBe('0.500');
+      expect(event.meta.peak_eccentric_velocity).toBe('0.500');
+      expect(event.meta.weight_lbs).toBe('100');
+
+      // Content is JSON-encoded with summary + rep + set_context keys.
+      const parsed = JSON.parse(event.content);
+      expect(typeof parsed.summary).toBe('string');
+      expect(parsed.summary).toContain('Rep 1');
+      expect(parsed.rep.rep_number).toBe(1);
+      expect(parsed.rep.concentric).toMatchObject({
+        peak_velocity: 0.5,
+      });
+      expect(typeof parsed.rep.concentric.duration_ms).toBe('number');
+      expect(parsed.rep.eccentric.peak_velocity).toBe(0.5);
+      // ROM is the absolute concentric position delta. With only one
+      // CONCENTRIC sample (position 0.1) start == end, so ROM is 0; what we
+      // care about is that the field is populated rather than null.
+      expect(typeof parsed.rep.rom_m).toBe('number');
+      expect(parsed.set_context).toMatchObject({
+        weight_lbs: 100,
+        training_mode: 'WeightTraining',
+        // length-1 (in-progress rep 2) reps already started, so rep_count_so_far is 1.
+        rep_count_so_far: 1,
+      });
     });
 
     it('publishes rep_finalized for rep 2 when rep 3 begins (length 2 -> 3)', () => {
@@ -363,7 +391,11 @@ describe('wireEventBridge', () => {
       const second = channels.publish.mock.calls[1][0];
       expect(second.meta.event_type).toBe('rep_finalized');
       expect(second.meta.rep_count).toBe('2');
-      expect(second.content).toContain('Rep 2');
+      const parsed = JSON.parse(second.content);
+      expect(parsed.summary).toContain('Rep 2');
+      expect(parsed.rep.rep_number).toBe(2);
+      // length-1 (in-progress rep 3) means rep_count_so_far is 2.
+      expect(parsed.set_context.rep_count_so_far).toBe(2);
     });
 
     it('does not publish a channel event when no set is active', () => {
