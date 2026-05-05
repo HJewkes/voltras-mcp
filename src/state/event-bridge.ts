@@ -11,13 +11,13 @@
 // Bilateral lifts run two devices simultaneously, each owning its own slot.
 // `wireEventBridge(state)` is the bootstrap orchestrator that calls
 // `wireBridgeForSlot(state, slot)` for every slot currently in the slots map
-// (today: just primary). New slots wire/unwire automatically through
-// `createSlot` / `removeSlot` / `resetPrimarySlot` — those mutators look up
-// `state.bridgeWirer` and invoke it. Each per-slot wirer captures the
-// originating `slot.slotId` in its closures, so every published channel
-// event is tagged with `slot: <slotId>` (via `state.channels.forSlot(...)`)
-// and the autonomous `set_ended_by_device` finalize knows which slot's set
-// to close.
+// (today: just primary). New slots wire/unwire automatically through the
+// `slot-manager.ts` lifecycle helpers (`createSlot` / `removeSlot` /
+// `resetPrimarySlot`), which import `wireBridgeForSlot` directly. Each
+// per-slot wirer captures the originating `slot.slotId` in its closures,
+// so every published channel event is tagged with `slot: <slotId>` (via
+// `state.channels.forSlot(...)`) and the autonomous `set_ended_by_device`
+// finalize knows which slot's set to close.
 //
 // ── Event mapping ─────────────────────────────────────────────────────────
 //
@@ -136,11 +136,11 @@ const SET_START_GRACE_MS = 500;
 
 /**
  * Bootstrap orchestrator: wire the bridge for every slot currently in
- * `state.slots`. Each slot's listeners persist for the slot's lifetime
- * and are torn down when the slot is removed (`removeSlot`) or its
- * client is replaced (`resetPrimarySlot`). At bootstrap time only the
- * primary slot exists; new slots subscribe on allocation through
- * `createSlot`.
+ * `state.slots` and populate each slot's `unwireBridge` tear-down hook in
+ * place. Each slot's listeners persist for the slot's lifetime and are torn
+ * down when the slot is removed (`removeSlot`) or its client is replaced
+ * (`resetPrimarySlot`). At bootstrap time only the primary slot exists;
+ * new slots subscribe on allocation through `createSlot` (slot-manager.ts).
  *
  * Returns a single `unwireAll` function that tears down every per-slot
  * subscription. Mostly useful in tests; `runServer` keeps the

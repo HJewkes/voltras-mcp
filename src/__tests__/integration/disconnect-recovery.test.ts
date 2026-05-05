@@ -146,7 +146,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import { z } from 'zod';
 
 const { bootstrapState, getSlot } = await import('../../state/server-state.js');
-const { wireBridgeForSlot, wireEventBridge } = await import('../../state/event-bridge.js');
+const { wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
 const { registerSessionTools } = await import('../../tools/session-tools.js');
@@ -245,7 +245,6 @@ async function buildHarness(): Promise<Harness> {
   };
   state.channels = channels;
   state.server = server;
-  state.bridgeWirer = wireBridgeForSlot;
   wireEventBridge(state);
 
   registerDeviceTools(server, state, placeholders);

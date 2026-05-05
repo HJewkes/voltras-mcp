@@ -27,6 +27,10 @@
 // support seeds a single `PRIMARY_SLOT` so existing single-device flows are
 // unchanged; later steps add slot allocation tools.
 //
+// Slot lifecycle helpers (`createSlot`, `removeSlot`, `resetPrimarySlot`)
+// live in `slot-manager.ts` so this module can stay free of
+// `event-bridge.ts` (which transitively depends on us via `set-tools.ts`).
+//
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
@@ -61,10 +65,11 @@ export interface SlotState {
    * Tear-down hook returned by the per-slot event-bridge wirer. Set when the
    * bridge subscribes to this slot's `client`; calling it unsubscribes every
    * `on*` listener the bridge installed. `removeSlot` and `resetPrimarySlot`
-   * invoke it before swapping the underlying client so the old subscription
-   * doesn't go on receiving events from a stale handle. Optional because some
-   * tests construct SlotState shapes directly without running the wirer; in
-   * that case the field is undefined and teardown is a no-op.
+   * (in `slot-manager.ts`) invoke it before swapping the underlying client
+   * so the old subscription doesn't go on receiving events from a stale
+   * handle. Optional because `bootstrapState` constructs the primary slot
+   * before the bridge is wired; `wireEventBridge(state)` populates it during
+   * server startup (or in test setup).
    */
   unwireBridge?: () => void;
 }
@@ -92,122 +97,6 @@ export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): Slot
  * we lift the cap later.
  */
 export const MAX_SLOTS = 2;
-
-/**
- * Allocate a brand-new slot. Each slot owns its own `LiveState` so the
- * session/set/rep pipelines run independently — sharing live state across
- * slots would let frames from one device mutate the other's set boundaries
- * and rep buffer. The supplied `client` becomes the slot's BLE handle; the
- * caller is responsible for having already connected it via
- * `manager.connect(device)`.
- *
- * Step 4 of P0 dual-Voltras support: after inserting the slot the helper
- * subscribes the event bridge to the new slot's client and stashes the
- * unwire hook on the slot itself. The bridge wirer is loaded lazily so we
- * don't depend on the event-bridge module at server-state's import time
- * (event-bridge depends on set-tools which depends on this module — lazy
- * loading breaks the cycle). When `state.server` is undefined (test wiring
- * that omits the McpServer handle) the wirer returns a no-op unwire fn.
- */
-export function createSlot(state: ServerState, slotId: string, client: VoltraClient): SlotState {
-  if (state.slots.has(slotId)) {
-    throw new Error(`Slot \`${slotId}\` already exists.`);
-  }
-  // The cap counts slots whose client is actually connected — the
-  // bootstrap-only primary slot (parameter-less VoltraClient, never wired
-  // to a device) does NOT count, so a true bilateral flow can allocate
-  // both `'left'` and `'right'` even though primary is also present in
-  // the map. Once the user binds a device to primary (single-device flow,
-  // no explicit slot arg), primary's client.isConnected flips true and it
-  // joins the count.
-  if (countConnectedSlots(state) >= MAX_SLOTS) {
-    throw new Error(`Maximum of ${MAX_SLOTS} slots supported in this release.`);
-  }
-  const slot: SlotState = { slotId, client, live: new LiveState() };
-  state.slots.set(slotId, slot);
-  slot.unwireBridge = invokeBridgeWirer(state, slot);
-  return slot;
-}
-
-/**
- * Count slots whose underlying client is actively connected to a device.
- * The bootstrap primary slot starts with a parameter-less `VoltraClient`
- * (`isConnected === false`), so it's invisible to the cap until the user
- * runs `device.connect` against it. Adopted in Step 4 of P0 dual-Voltras
- * so a true bilateral allocation (`'left'` + `'right'`) doesn't trip
- * SLOT_LIMIT_EXCEEDED solely because of primary's bookkeeping presence.
- */
-function countConnectedSlots(state: ServerState): number {
-  let count = 0;
-  for (const slot of state.slots.values()) {
-    if (slot.client.isConnected) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-/**
- * Tear down a non-primary slot. The caller must have already issued the
- * BLE-level disconnect via `state.manager.disconnect(deviceId)` — this
- * helper handles only the in-memory removal so the disconnect path stays
- * idempotent against a half-torn-down adapter.
- *
- * Errors when called on `'primary'` because the primary slot must persist
- * across disconnects: re-connecting the primary device should not require
- * re-allocating the slot. Use `resetPrimarySlot` instead.
- */
-export function removeSlot(state: ServerState, slotId: string): void {
-  if (slotId === PRIMARY_SLOT) {
-    throw new Error(`Cannot remove the primary slot — use resetPrimarySlot instead.`);
-  }
-  const slot = state.slots.get(slotId);
-  if (!slot) {
-    throw new Error(`Unknown slot: ${slotId}`);
-  }
-  slot.unwireBridge?.();
-  state.slots.delete(slotId);
-}
-
-/**
- * Reset the primary slot back to its bootstrap shape: a fresh
- * parameter-less `VoltraClient` (so `device.connect` can rebind it) and a
- * fresh `LiveState` (so a stale session/set from the prior connection can't
- * leak into the next one). The slot itself stays in `state.slots` because
- * a single-device flow never calls `device.connect` with an explicit slot
- * id, so the entry must remain resolvable for the default lookup.
- *
- * Step 4 of P0 dual-Voltras support: unwires the existing bridge before
- * swapping client / LiveState so listeners on the old handle can't fire
- * mid-rebind, then re-wires the bridge against the fresh shape. The
- * `slot.unwireBridge` field is replaced with the new tear-down hook.
- */
-export function resetPrimarySlot(state: ServerState): void {
-  const slot = state.slots.get(PRIMARY_SLOT);
-  if (!slot) {
-    throw new Error(`Primary slot is missing — bootstrap was never run.`);
-  }
-  slot.unwireBridge?.();
-  slot.client = new VoltraClient();
-  slot.live = new LiveState();
-  slot.unwireBridge = invokeBridgeWirer(state, slot);
-}
-
-/**
- * Invoke the event-bridge wirer attached to `state.bridgeWirer` (if any),
- * returning the unwire hook the caller stashes on `slot.unwireBridge`. The
- * wirer is a function pointer rather than a top-level import to avoid a
- * circular import cycle (event-bridge → set-tools → server-state). Server
- * bootstrap installs the real wirer onto state before any slot allocation
- * happens; tests that construct SlotState without a wirer get a no-op
- * unwire.
- */
-function invokeBridgeWirer(state: ServerState, slot: SlotState): () => void {
-  if (state.bridgeWirer === undefined) {
-    return () => undefined;
-  }
-  return state.bridgeWirer(state, slot);
-}
 
 export interface ServerState {
   config: Config;
@@ -262,23 +151,12 @@ export interface ServerState {
    * constructed. The event bridge needs this to publish
    * `notifications/resource_updated` hints to the host. Optional because
    * `bootstrapState` finishes before the server is available; it gets
-   * filled in (alongside `channels` and `bridgeWirer`) immediately after
-   * bootstrap returns. Tests that don't observe resource updates can
-   * leave it undefined — the per-slot bridge wirer detects the absence
-   * and skips subscription rather than NPE'ing.
+   * filled in (alongside `channels`) immediately after bootstrap returns.
+   * Tests that don't observe resource updates can leave it undefined —
+   * the per-slot bridge wirer detects the absence and skips subscription
+   * rather than NPE'ing.
    */
   server?: McpServer;
-  /**
-   * Function pointer that subscribes the event bridge to a single slot's
-   * client. Indirected through `state` (rather than a top-level import in
-   * `createSlot` / `resetPrimarySlot`) to break the circular import cycle
-   * between `server-state.ts`, `event-bridge.ts`, and `tools/set-tools.ts`.
-   * `runServer` (or test harnesses that need bridge wiring) install the
-   * concrete `wireBridgeForSlot` here right after bootstrap. When unset,
-   * slot mutators skip wiring — useful for state-layer unit tests that
-   * exercise the slot map shape without the bridge.
-   */
-  bridgeWirer?: (state: ServerState, slot: SlotState) => () => void;
 }
 
 /**
@@ -286,6 +164,11 @@ export interface ServerState {
  * roll back resources opened so far in reverse order before rethrowing
  * (EC-02). Returns a fully wired `ServerState`; subscribing the SDK event
  * bridge is `runServer`'s responsibility once it has the `McpServer` handle.
+ *
+ * The primary slot is created with no `unwireBridge` set — `wireEventBridge`
+ * (called by `runServer` after bootstrap) populates it. Test fixtures that
+ * skip `runServer` must call `wireEventBridge(state)` themselves to get the
+ * same wiring.
  */
 export async function bootstrapState(config: Config): Promise<ServerState> {
   configureLogger(config);

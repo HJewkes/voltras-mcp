@@ -67,6 +67,14 @@ vi.mock('@voltras/node-sdk', () => ({
   VoltraClient: class {},
 }));
 
+// Stub the per-slot event-bridge wirer used by `slot-manager` and the
+// primary-rebind branch of `device.connect`. The device-tools tests don't
+// observe channel/publisher behavior — only slot-map and SDK call-shape
+// invariants — so a no-op wirer keeps the fake state minimal.
+vi.mock('../../state/event-bridge.js', () => ({
+  wireBridgeForSlot: vi.fn(() => vi.fn()),
+}));
+
 const { registerDeviceTools } = await import('../device-tools.js');
 
 // ── Fakes ────────────────────────────────────────────────────────────────
