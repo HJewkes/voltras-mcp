@@ -82,19 +82,19 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, (input) => startSet(state, input.watch)),
+    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot)),
   );
   install(
     placeholders,
     'set.end',
     SetEndInput,
-    wrapHandler(SetEndInput, () => endSetTool(state)),
+    wrapHandler(SetEndInput, (input) => endSetTool(state, input.slot)),
   );
   install(
     placeholders,
     'set.live_metrics',
     SetLiveMetricsInput,
-    wrapHandler(SetLiveMetricsInput, () => liveMetrics(state)),
+    wrapHandler(SetLiveMetricsInput, (input) => liveMetrics(state, input.slot)),
   );
   install(
     placeholders,
@@ -120,8 +120,9 @@ function install<S extends z.ZodObject>(
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
+  slotId: string | undefined,
 ): Promise<{ setId: string }> {
-  const slot = getSlot(state);
+  const slot = getSlot(state, slotId);
   const session = slot.live.session;
   if (session === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active. Call session.start first.');
@@ -347,12 +348,18 @@ async function fetchPreviousSetSummary(
   }
 }
 
-async function endSetTool(state: ServerState): Promise<{ ok: true; reps: number }> {
-  if (getSlot(state).live.set === undefined) {
+async function endSetTool(
+  state: ServerState,
+  slotId: string | undefined,
+): Promise<{ ok: true; reps: number }> {
+  if (getSlot(state, slotId).live.set === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active. Call set.start first.');
   }
   // The explicit-tool path always disengages the motor (Workout.STOP) and
-  // emits a `set_ended` event with no `partialReason`.
+  // emits a `set_ended` event with no `partialReason`. `finalizeSet` itself
+  // still defaults to the primary slot — Step 2 keeps multi-slot routing
+  // out of the shared finalize helper; that becomes a slot-aware lookup in
+  // a later step alongside event-bridge slot threading.
   const stored = await finalizeSet(state, { cause: 'tool', disengageMotor: true });
   if (stored === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active.');
@@ -454,8 +461,11 @@ export async function finalizeSet(
   return stored;
 }
 
-async function liveMetrics(state: ServerState): Promise<{ active: false } | ActiveSet> {
-  const snapshot = getSlot(state).live.snapshotSet();
+async function liveMetrics(
+  state: ServerState,
+  slotId: string | undefined,
+): Promise<{ active: false } | ActiveSet> {
+  const snapshot = getSlot(state, slotId).live.snapshotSet();
   return Promise.resolve(snapshot ?? { active: false });
 }
 

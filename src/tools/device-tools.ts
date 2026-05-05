@@ -38,6 +38,7 @@ import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
+import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, getSlot } from '../state/server-state.js';
 import { wireEventBridge } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
@@ -46,21 +47,38 @@ import { wrapHandler, type ToolResult } from './helpers.js';
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
 // schemas). Each shape is small and tool-local; once Task 03 picks them up
 // they can be moved.
+//
+// `slot` is dual-Voltras Step 2 plumbing — every tool whose handler resolves
+// the slot accepts an optional slot id and falls back to PRIMARY_SLOT.
+// `device.disconnect` and `device.get_state` were `.strict()` before Step 2;
+// they remain strict so unknown fields still fail INVALID_INPUT, and `slot`
+// is the only non-error addition.
 const DeviceConnectInput = z.object({
   deviceId: z.string().min(1),
+  slot: SlotIdSchema,
 });
 
-const DeviceDisconnectInput = z.object({}).strict();
+const DeviceDisconnectInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
 
 const DeviceSetChainsInput = z.object({
   lbs: z.number().int().min(0).max(100),
+  slot: SlotIdSchema,
 });
 
 const DeviceSetEccentricInput = z.object({
   percent: z.number().int().min(-195).max(195),
+  slot: SlotIdSchema,
 });
 
-const DeviceGetStateInput = z.object({}).strict();
+const DeviceGetStateInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
 
 /**
  * Default scan timeout when the input omits `timeoutMs`. Mirrors the schema
@@ -138,7 +156,7 @@ export function registerDeviceTools(
     'device.connect',
     DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
-      const slot = getSlot(state);
+      const slot = getSlot(state, input.slot);
       if (slot.client.isConnected) {
         throwSdkLike('ALREADY_CONNECTED', 'A device is already connected.');
       }
@@ -170,8 +188,8 @@ export function registerDeviceTools(
     placeholders,
     'device.disconnect',
     DeviceDisconnectInput,
-    wrapHandler(DeviceDisconnectInput, async () => {
-      const slot = getSlot(state);
+    wrapHandler(DeviceDisconnectInput, async (input) => {
+      const slot = getSlot(state, input.slot);
       const id = slot.client.connectedDeviceId;
       if (slot.client.isConnected && id !== null) {
         await state.manager.disconnect(id);
@@ -187,7 +205,7 @@ export function registerDeviceTools(
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
-      await getSlot(state).client.setWeight(input.lbs);
+      await getSlot(state, input.slot).client.setWeight(input.lbs);
       return { ok: true };
     }),
   );
@@ -202,7 +220,7 @@ export function registerDeviceTools(
     DeviceSetModeInput,
     wrapHandler(DeviceSetModeInput, async (input) => {
       const value = (TrainingMode as unknown as Record<string, number>)[input.mode];
-      await getSlot(state).client.setMode(value as TrainingMode);
+      await getSlot(state, input.slot).client.setMode(value as TrainingMode);
       return { ok: true };
     }),
   );
@@ -213,7 +231,7 @@ export function registerDeviceTools(
     'device.set_chains',
     DeviceSetChainsInput,
     wrapHandler(DeviceSetChainsInput, async (input) => {
-      await getSlot(state).client.setChains(input.lbs);
+      await getSlot(state, input.slot).client.setChains(input.lbs);
       return { ok: true };
     }),
   );
@@ -224,7 +242,7 @@ export function registerDeviceTools(
     'device.set_eccentric',
     DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
-      await getSlot(state).client.setEccentric(input.percent);
+      await getSlot(state, input.slot).client.setEccentric(input.percent);
       return { ok: true };
     }),
   );
@@ -238,8 +256,8 @@ export function registerDeviceTools(
     placeholders,
     'device.get_state',
     DeviceGetStateInput,
-    wrapHandler(DeviceGetStateInput, async () => {
-      const slot = getSlot(state);
+    wrapHandler(DeviceGetStateInput, async (input) => {
+      const slot = getSlot(state, input.slot);
       const isConnected = slot.client.isConnected;
       const connectionState = slot.client.connectionState;
       const deviceId = slot.client.connectedDeviceId;

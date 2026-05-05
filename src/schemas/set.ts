@@ -9,6 +9,8 @@
 
 import { z } from 'zod';
 
+import { SlotIdSchema } from './common.js';
+
 /**
  * Trigger DSL — server-evaluated conditions a coach can register at
  * `set.start` time. Each spec is a discriminated union by `type` so Zod
@@ -66,21 +68,27 @@ export type WatchConfig = z.infer<typeof WatchConfig>;
  */
 export const SetStartInput = z.object({
   watch: WatchConfig.optional(),
+  slot: SlotIdSchema,
 });
 
-/** Input for `set.end` — operates on the active set in `state.live.set`. */
-export const SetEndInput = z.object({});
+/** Input for `set.end` — operates on the active set in the slot's `live.set`. */
+export const SetEndInput = z.object({
+  slot: SlotIdSchema,
+});
 
 /**
  * Input for `set.live_metrics` — returns rolling metrics for the active set
- * (rep count, last rep velocity, etc.). Operates on `state.live.set`.
+ * (rep count, last rep velocity, etc.). Operates on the slot's `live.set`.
  */
-export const SetLiveMetricsInput = z.object({});
+export const SetLiveMetricsInput = z.object({
+  slot: SlotIdSchema,
+});
 
 /**
  * Input for `set.get` — fetches a completed set from the store, including
  * every persisted rep with full per-phase telemetry. Returns `SET_NOT_FOUND`
- * when the id has no row in the store.
+ * when the id has no row in the store. NOTE: read-only over the store, not
+ * slot-bound — sets are looked up by `setId`.
  */
 export const SetGetInput = z.object({
   setId: z.string().min(1),

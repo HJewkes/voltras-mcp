@@ -23,6 +23,8 @@
 
 import { z } from 'zod';
 
+import { SlotIdSchema } from './common.js';
+
 /**
  * Input for `mock.configure`. Fields mirror `MockBLEConfig` from
  * @voltras/node-sdk. All optional — partial updates are intended.
@@ -35,6 +37,7 @@ export const MockConfigureInput = z.object({
   weight: z.number().int().min(0).optional(),
   repsPerSet: z.number().int().min(1).optional(),
   restBetweenSetsMs: z.number().int().min(0).optional(),
+  slot: SlotIdSchema,
 });
 
 /**
@@ -47,4 +50,5 @@ export const MockConfigureInput = z.object({
  */
 export const MockInjectErrorInput = z.object({
   type: z.enum(['connection', 'scan', 'write', 'read', 'disconnect']),
+  slot: SlotIdSchema,
 });
