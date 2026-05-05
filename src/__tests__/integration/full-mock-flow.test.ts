@@ -203,7 +203,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import { z } from 'zod';
 
 const { bootstrapState, getSlot } = await import('../../state/server-state.js');
-const { wireEventBridge } = await import('../../state/event-bridge.js');
+const { wireBridgeForSlot, wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
 const { registerSessionTools } = await import('../../tools/session-tools.js');
@@ -216,6 +216,7 @@ const { registerSessionResource } = await import('../../resources/session-resour
 const { registerSetResource } = await import('../../resources/set-resource.js');
 
 import type { ServerState } from '../../state/server-state.js';
+import type { ChannelPublisher } from '../../state/channel-publisher.js';
 import type { ToolResult } from '../../tools/helpers.js';
 
 // Same canonical lists as `src/server.ts`. Duplicated here because the source
@@ -311,12 +312,19 @@ async function buildHarness(): Promise<Harness> {
 
   const state = await bootstrapState({ adapter: 'mock', dbPath, logLevel: 'error' });
   stateBox.value = state;
-  // No-op channel publisher: integration tests don't observe claude/channel
-  // pushes, but the bridge requires a valid `ChannelPublisher` argument.
-  const channels = { publish: () => undefined };
+  // No-op channel publisher (with the slot-scoped factory): integration
+  // tests don't observe claude/channel pushes, but the bridge calls
+  // `state.channels.forSlot(slotId)` so the publisher must implement the
+  // interface in full. `forSlot` returns the same no-op shape so chained
+  // calls stay safe.
+  const channels: ChannelPublisher = {
+    publish: () => undefined,
+    forSlot: () => channels,
+  };
   state.channels = channels;
-  const primary = getSlot(state);
-  wireEventBridge(primary.client, primary.live, server, channels);
+  state.server = server;
+  state.bridgeWirer = wireBridgeForSlot;
+  wireEventBridge(state);
 
   registerDeviceTools(server, state, placeholders);
   registerSessionTools(server, state, placeholders);

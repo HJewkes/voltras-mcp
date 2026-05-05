@@ -153,6 +153,8 @@ The server declares the experimental `claude/channel` capability and pushes stru
 
 Payload shape: scalars on `meta` (XML attributes) for fast filtering; structured detail in `content` as a JSON-encoded object whose first key is always `summary` (a human-readable line so the model doesn't have to parse to know what happened).
 
+Every event carries a `slot` meta key identifying which slot fired it (`primary` for single-device flows, `left` / `right` / etc. for bilateral). Coaching surfaces filter on `slot` to disambiguate parallel rep streams when two Voltras are connected at once.
+
 | Event                    | Fires when                                                                                              | Auto-stop?                |
 | ------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `rep_finalized`          | Each ECC→CONC transition closes the prior rep (rep N "done" requires rep N+1 to start).                 | —                         |

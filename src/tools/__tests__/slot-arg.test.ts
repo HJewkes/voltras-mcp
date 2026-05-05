@@ -231,7 +231,28 @@ function setup(): Harness {
   const client = makeFakeClient();
   const slots = new Map();
   slots.set('primary', { slotId: 'primary', client, live });
-  const channels = { publish: vi.fn() };
+  // ChannelPublisher fake: full interface (publish + forSlot) so the
+  // production set-tools code can call `state.channels.forSlot(slotId).publish(...)`
+  // without crashing. Slot-scoped publishes still resolve back to the
+  // top-level `publish` mock, mirroring the real shape — tests that
+  // care about slot meta can read it from the merged event.
+  type FakeChannels = {
+    publish: ReturnType<typeof vi.fn>;
+    forSlot: (slotId: string) => {
+      publish: (e: unknown) => void;
+      forSlot: FakeChannels['forSlot'];
+    };
+  };
+  const channels: FakeChannels = {
+    publish: vi.fn(),
+    forSlot: (slotId: string) => ({
+      publish: (event: unknown) => {
+        const e = event as { content: string; meta: Record<string, string> };
+        channels.publish({ content: e.content, meta: { slot: slotId, ...e.meta } });
+      },
+      forSlot: channels.forSlot,
+    }),
+  };
   const state = {
     config: {} as never,
     manager: { scan: vi.fn(async () => []) } as never,

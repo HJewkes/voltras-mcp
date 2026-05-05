@@ -12,9 +12,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 // SDK stub — `VoltraClient` is constructed by `resetPrimarySlot` and
 // instantiated directly by the test bodies; the real class would pull in
-// the BLE adapter chain, which we don't need here.
+// the BLE adapter chain, which we don't need here. `isConnected` is part
+// of the structural surface the slot-cap policy reads (Step 4 of P0
+// dual-Voltras counts only connected slots), so the stub exposes it as
+// a writable boolean.
 vi.mock('@voltras/node-sdk', () => ({
-  VoltraClient: class {},
+  VoltraClient: class {
+    isConnected = false;
+  },
   VoltraManager: class {},
   TrainingMode: { Idle: 0 },
   VoltraSDKError: class extends Error {},
@@ -25,13 +30,23 @@ const { LiveState } = await import('../live-state.js');
 const { createSlot, removeSlot, resetPrimarySlot, getSlot, PRIMARY_SLOT, MAX_SLOTS } =
   await import('../server-state.js');
 
+/** Build a connected `VoltraClient` stub (matches the slot-cap policy's
+ * isConnected check). Slot-cap tests need slots whose clients claim to be
+ * connected so the cap actually triggers. */
+function connectedClient(): InstanceType<typeof VoltraClient> {
+  const c = new VoltraClient() as InstanceType<typeof VoltraClient> & { isConnected: boolean };
+  c.isConnected = true;
+  return c;
+}
+
 import type { ServerState } from '../server-state.js';
 
-function makeStateWithPrimary(): ServerState {
+function makeStateWithPrimary(opts: { primaryConnected?: boolean } = {}): ServerState {
   const slots = new Map();
+  const client = opts.primaryConnected === true ? connectedClient() : new VoltraClient();
   slots.set(PRIMARY_SLOT, {
     slotId: PRIMARY_SLOT,
-    client: new VoltraClient(),
+    client,
     live: new LiveState(),
   });
   return { slots } as unknown as ServerState;
@@ -57,11 +72,27 @@ describe('createSlot', () => {
     expect(() => createSlot(state, PRIMARY_SLOT, new VoltraClient())).toThrow(/already exists/i);
   });
 
-  it('enforces the MAX_SLOTS soft cap (two slots in this release)', () => {
+  it('enforces the MAX_SLOTS soft cap on CONNECTED slots (two devices in this release)', () => {
+    // Step 4 of P0 dual-Voltras: the cap counts slots with
+    // `client.isConnected === true`, so primary's bootstrap stub
+    // (isConnected=false) is invisible. We have to use already-connected
+    // primary + connected-left to fill the cap; an unconnected stub
+    // would let createSlot succeed past the second slot.
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    createSlot(state, 'left', connectedClient());
+    expect(() => createSlot(state, 'right', connectedClient())).toThrow(/Maximum of 2 slots/i);
+  });
+
+  it('does NOT count an idle bootstrap primary against the cap (allows true bilateral)', () => {
+    // Inverse case: when primary stays at its bootstrap shape
+    // (isConnected=false), allocating both `'left'` and `'right'`
+    // succeeds even though the slots map ends up at size 3. The cap is
+    // about live device connections, not about slot-map bookkeeping.
     const state = makeStateWithPrimary();
-    createSlot(state, 'left', new VoltraClient());
-    expect(state.slots.size).toBe(MAX_SLOTS);
-    expect(() => createSlot(state, 'right', new VoltraClient())).toThrow(/Maximum of 2 slots/i);
+    createSlot(state, 'left', connectedClient());
+    createSlot(state, 'right', connectedClient());
+    expect(state.slots.size).toBe(3);
+    expect(MAX_SLOTS).toBe(2);
   });
 });
 
