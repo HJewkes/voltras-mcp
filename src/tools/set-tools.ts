@@ -28,7 +28,11 @@ import type { ServerState } from '../state/server-state.js';
 import { SetEndInput, SetGetInput, SetLiveMetricsInput, SetStartInput } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
-import { buildSetStartedPayload, summarizePreviousSet } from '../state/channel-payloads.js';
+import {
+  buildSetEndedPayload,
+  buildSetStartedPayload,
+  summarizePreviousSet,
+} from '../state/channel-payloads.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
@@ -212,18 +216,12 @@ async function endSet(
   const stored = toStoredSet(finalized, device);
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on
-  // set close — useful for "score the set" follow-ups without polling.
-  const durationMs = Date.parse(stored.endedAt) - Date.parse(stored.startedAt);
-  state.channels.publish({
-    content: `Set ${setId.slice(0, 8)} ended (${stored.reps.length} reps).`,
-    meta: {
-      source: 'voltras',
-      event_type: 'set_ended',
-      set_id: setId,
-      rep_count: String(stored.reps.length),
-      duration_ms: String(Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0),
-    },
-  });
+  // set close. The payload carries the full rep array plus a pre-computed
+  // VBT summary (first/last rep velocity + velocity-loss %), so PT Claude
+  // can skip the set.get + metrics.compute vbt.set retrieval calls that
+  // almost every set.end currently triggers.
+  const payload = buildSetEndedPayload(stored);
+  state.channels.publish(payload);
   return { ok: true, reps: stored.reps.length };
 }
 

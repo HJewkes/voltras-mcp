@@ -350,7 +350,7 @@ describe('set.end', () => {
     expect((parseResult(r) as { code: string }).code).toBe('NO_ACTIVE_SET');
   });
 
-  it('publishes a set_ended claude/channel event with rep_count + duration_ms', async () => {
+  it('publishes a set_ended claude/channel event with full rep array + vbt summary', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
     const startResult = await h.invoke('set.start', {});
@@ -373,6 +373,50 @@ describe('set.end', () => {
     });
     // duration_ms is a non-negative integer string.
     expect(event.meta.duration_ms).toMatch(/^\d+$/);
+
+    const parsed = JSON.parse(event.content) as {
+      summary: string;
+      set: { set_id: string; weight_lbs: number; training_mode: string; partial_reason: unknown };
+      reps: Array<{ rep_number: number }>;
+      vbt_summary: {
+        first_rep_v: number | null;
+        last_rep_v: number | null;
+        velocity_loss_pct: number | null;
+        mean_velocity: number | null;
+      };
+    };
+    expect(parsed.summary).toContain('2 reps');
+    expect(parsed.set.set_id).toBe(setId);
+    expect(parsed.set.weight_lbs).toBe(75);
+    expect(parsed.set.training_mode).toBe('WeightTraining');
+    expect(parsed.set.partial_reason).toBeNull();
+    // reps array length matches the meta rep_count.
+    expect(parsed.reps).toHaveLength(2);
+    expect(parsed.reps[0].rep_number).toBe(1);
+    expect(parsed.reps[1].rep_number).toBe(2);
+    // makeRep produces zero-velocity phases — vbt.velocity_loss_pct is null
+    // (first rep peak <= 0 disables the loss calc), but the rest of the
+    // vbt_summary fields are present and numeric.
+    expect(parsed.vbt_summary.first_rep_v).toBe(0);
+    expect(parsed.vbt_summary.last_rep_v).toBe(0);
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+  });
+
+  it('set_ended vbt_summary.velocity_loss_pct is null when fewer than 2 reps', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as { content: string };
+    const parsed = JSON.parse(event.content) as {
+      reps: unknown[];
+      vbt_summary: { velocity_loss_pct: number | null };
+    };
+    expect(parsed.reps).toHaveLength(1);
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
   });
 
   it('maps reps to StoredRep with sequential index and parent setId', async () => {
