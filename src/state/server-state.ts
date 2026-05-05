@@ -41,6 +41,7 @@ import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
 import type { ChannelPublisher } from './channel-publisher.js';
+import type { PushTimer } from '../tools/timer-tools.js';
 
 export interface ServerState {
   config: Config;
@@ -58,6 +59,16 @@ export interface ServerState {
    * launched with `--channels`, deliveries are silently dropped.
    */
   channels: ChannelPublisher;
+  /**
+   * In-flight non-blocking timers started via `timer.start`. Keyed by
+   * `timer_id`. Each entry tracks the underlying `setTimeout` handle plus
+   * the metadata needed to publish the `timer_complete` channel event when
+   * the timer fires. Cancelling a timer via `timer.cancel` clears the
+   * handle and removes the entry. The blocking `timer.wait` timer keeps
+   * its module-scoped singleton in `timer-tools.ts` and is NOT in this
+   * map.
+   */
+  timers: Map<string, PushTimer>;
 }
 
 /**
@@ -87,7 +98,8 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // `McpChannelPublisher` once the McpServer instance is available. Tests
     // that don't care about channel pushes can leave the no-op in place.
     const channels: ChannelPublisher = { publish: () => undefined };
-    return { config, manager, client, live, store, exercises, channels };
+    const timers = new Map<string, PushTimer>();
+    return { config, manager, client, live, store, exercises, channels, timers };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
     await safeCloseStore(store);

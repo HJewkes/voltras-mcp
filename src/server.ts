@@ -68,6 +68,7 @@ const CORE_TOOL_NAMES = [
   'exercise.search',
   'exercise.get',
   'timer.wait',
+  'timer.start',
   'timer.cancel',
   'server.health',
   'debug.recent_frames',
@@ -189,7 +190,7 @@ export async function runServer(): Promise<void> {
     registerSetTools(server, state, placeholders);
     registerMetricsTools(server, state, placeholders);
     registerExerciseTools(server, state, placeholders);
-    registerTimerTools(server, placeholders);
+    registerTimerTools(server, state, placeholders);
     registerServerTools(server, state, placeholders);
     registerDebugTools(server, state, placeholders);
     if (state.config.adapter === 'mock') {
