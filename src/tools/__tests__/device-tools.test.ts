@@ -192,16 +192,40 @@ const DEVICE_TOOL_NAMES = [
   'device.get_state',
 ] as const;
 
+interface FakeSlot {
+  slotId: string;
+  client: FakeClient;
+  // `live` is unused by device-tools — present so the slot satisfies SlotState's shape.
+  live: Record<string, never>;
+}
+
 interface State {
   manager: FakeManager;
-  client: FakeClient;
+  slots: Map<string, FakeSlot>;
 }
 
 function makeState(): State {
+  const slots = new Map<string, FakeSlot>();
+  slots.set('primary', { slotId: 'primary', client: makeFakeClient(), live: {} });
   return {
     manager: makeFakeManager(),
-    client: makeFakeClient(),
+    slots,
   };
+}
+
+/**
+ * Convenience accessor — every test was written against a flat `state.client`
+ * before Step 1 of dual-Voltras introduced slots. Returning the primary slot's
+ * client keeps the test bodies single-line without re-implementing the
+ * production `getSlot` helper.
+ */
+function primaryClient(state: State): FakeClient {
+  return state.slots.get('primary')!.client;
+}
+
+function setPrimaryClient(state: State, client: FakeClient): void {
+  const slot = state.slots.get('primary')!;
+  slot.client = client;
 }
 
 // Helper: invoke a registered tool and parse the result envelope.
@@ -312,9 +336,10 @@ describe('registerDeviceTools', () => {
       expect(state.manager.connect).not.toHaveBeenCalled();
     });
 
-    it('returns ALREADY_CONNECTED when state.client is already connected (EC-08)', async () => {
-      state.client.isConnected = true;
-      state.client.connectedDeviceId = 'V-existing';
+    it('returns ALREADY_CONNECTED when the primary slot client is already connected (EC-08)', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-existing';
       state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
       const reg = placeholders.get('device.connect')!;
       const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
@@ -337,8 +362,9 @@ describe('registerDeviceTools', () => {
 
   describe('device.disconnect', () => {
     it('calls manager.disconnect for the active deviceId and returns ok:true', async () => {
-      state.client.isConnected = true;
-      state.client.connectedDeviceId = 'V-1';
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
       const reg = placeholders.get('device.disconnect')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
@@ -361,7 +387,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 50 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setWeight).toHaveBeenCalledWith(50);
+      expect(primaryClient(state).setWeight).toHaveBeenCalledWith(50);
     });
 
     it('rejects out-of-range lbs with INVALID_INPUT', async () => {
@@ -369,7 +395,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 999 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
-      expect(state.client.setWeight).not.toHaveBeenCalled();
+      expect(primaryClient(state).setWeight).not.toHaveBeenCalled();
     });
   });
 
@@ -379,7 +405,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { mode: 'WeightTraining' });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
+      expect(primaryClient(state).setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
     });
 
     it('rejects "Idle" with INVALID_INPUT (EC-05) — Idle is not user-selectable', async () => {
@@ -387,7 +413,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { mode: 'Idle' });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
-      expect(state.client.setMode).not.toHaveBeenCalled();
+      expect(primaryClient(state).setMode).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown mode string with INVALID_INPUT', async () => {
@@ -404,7 +430,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 25 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setChains).toHaveBeenCalledWith(25);
+      expect(primaryClient(state).setChains).toHaveBeenCalledWith(25);
     });
   });
 
@@ -414,7 +440,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { percent: -50 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setEccentric).toHaveBeenCalledWith(-50);
+      expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
     });
 
     it('rejects percent outside [-195, 195] with INVALID_INPUT', async () => {
@@ -430,7 +456,7 @@ describe('registerDeviceTools', () => {
       // Track which getters were read to satisfy AC-26's spy assertion.
       const reads: string[] = [];
       const tracked = {
-        ...state.client,
+        ...primaryClient(state),
         get isConnected() {
           reads.push('isConnected');
           return true;
@@ -456,7 +482,7 @@ describe('registerDeviceTools', () => {
         },
       };
       // Re-register with the tracked client so the closure sees it.
-      state.client = tracked as unknown as FakeClient;
+      setPrimaryClient(state, tracked as unknown as FakeClient);
       const localServer = makeFakeServer();
       const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
       registerDeviceTools(
@@ -489,10 +515,11 @@ describe('registerDeviceTools', () => {
     });
 
     it('coerces battery=null to absent batteryPercent (FIX #6)', async () => {
-      state.client.isConnected = true;
-      state.client.connectionState = 'connected';
-      state.client.connectedDeviceId = 'V-2';
-      state.client.settings = {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.connectedDeviceId = 'V-2';
+      client.settings = {
         weight: 5,
         chains: 0,
         inverseChains: 0,

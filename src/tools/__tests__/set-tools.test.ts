@@ -131,11 +131,12 @@ function setup(): Harness {
     endSet: vi.fn().mockResolvedValue(undefined),
   };
   const channels = { publish: vi.fn() };
+  const slots = new Map();
+  slots.set('primary', { slotId: 'primary', client, live });
   const state = {
     config: {} as never,
     manager: {} as never,
-    client: client as never,
-    live,
+    slots,
     store,
     exercises: {} as never,
     channels,

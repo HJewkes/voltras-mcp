@@ -28,7 +28,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
-import type { ServerState } from '../state/server-state.js';
+import { type ServerState, getSlot } from '../state/server-state.js';
 import {
   SessionEndInput,
   SessionGetInput,
@@ -115,7 +115,8 @@ async function startSession(
   state: ServerState,
   input: z.infer<typeof SessionStartInput>,
 ): Promise<{ sessionId: string }> {
-  if (state.live.session !== undefined) {
+  const slot = getSlot(state);
+  if (slot.live.session !== undefined) {
     throw new ToolError('SESSION_ALREADY_ACTIVE', 'A session is already active.');
   }
 
@@ -144,7 +145,7 @@ async function startSession(
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
   };
-  state.live.startSession(active);
+  slot.live.startSession(active);
 
   const stored: StoredSession = {
     id: sessionId,
@@ -158,21 +159,22 @@ async function startSession(
 }
 
 async function endSession(state: ServerState): Promise<{ ok: true }> {
-  const active = state.live.session;
+  const slot = getSlot(state);
+  const active = slot.live.session;
   if (active === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
   }
 
   // EC-06: if a set is open, force-end it as partial first.
-  if (state.live.set !== undefined) {
-    const device = state.live.snapshotDevice();
-    const finalized = state.live.endSet('session_end');
+  if (slot.live.set !== undefined) {
+    const device = slot.live.snapshotDevice();
+    const finalized = slot.live.endSet('session_end');
     if (finalized !== undefined) {
       await state.store.putSet(toStoredSet(finalized, device));
     }
   }
 
-  const finalizedSession = state.live.endSession();
+  const finalizedSession = slot.live.endSession();
   // `endSession` returns undefined only when there was no active session; we
   // checked that above, so `finalizedSession` is non-undefined here.
   const endedAt = new Date().toISOString();

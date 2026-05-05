@@ -9,21 +9,22 @@
 // avoids the `tools/list_changed` notification that fresh `server.tool()`
 // calls would emit.
 //
-// All BLE interaction flows through `state.manager` and `state.client` —
-// AC-14 forbids any direct BLE-adapter library references from this file.
+// All BLE interaction flows through `state.manager` and the slot's `client`
+// — AC-14 forbids any direct BLE-adapter library references from this file.
 //
 // ── Connection model ──────────────────────────────────────────────────────
 //
 // `device.connect` uses `state.manager.connect(device)` (the SDK's idiomatic
 // connection entry point). The manager creates an internal `VoltraClient`
-// for each connected device — distinct from the parameter-less
-// `state.client` allocated in `bootstrapState`. AC-26 specifies that
-// `device.get_state` reads from `state.client.*` getters, and Wave 2's
-// event-bridge subscribes to `state.client`. Reconciling the two clients
-// (e.g., proxying manager events through `state.client`, or replacing
-// `state.client` after connect with bridge re-wiring) is a Wave 4 concern;
-// this module satisfies the AC-26 contract by reading exactly the documented
-// getters and lets Wave 4 decide how `state.client` becomes connected.
+// for each connected device — distinct from the parameter-less client
+// allocated for the slot in `bootstrapState`. AC-26 specifies that
+// `device.get_state` reads from the slot's `client.*` getters, and Wave 2's
+// event-bridge subscribes to that same client. Reconciling the two clients
+// (e.g., proxying manager events through the slot's client, or replacing
+// the slot's client after connect with bridge re-wiring) is a Wave 4
+// concern; this module satisfies the AC-26 contract by reading exactly the
+// documented getters and lets Wave 4 decide how the slot's client becomes
+// connected.
 //
 // ── `device.scan` options shape ───────────────────────────────────────────
 //
@@ -37,7 +38,7 @@ import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
-import type { ServerState } from '../state/server-state.js';
+import { type ServerState, getSlot } from '../state/server-state.js';
 import { wireEventBridge } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
@@ -131,13 +132,14 @@ export function registerDeviceTools(
 
   // device.connect — looks up the previously-discovered device by id and
   // hands it to `manager.connect`. `ALREADY_CONNECTED` short-circuits when
-  // `state.client` reports a live connection (EC-08).
+  // the primary slot's client reports a live connection (EC-08).
   install(
     placeholders,
     'device.connect',
     DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
-      if (state.client.isConnected) {
+      const slot = getSlot(state);
+      if (slot.client.isConnected) {
         throwSdkLike('ALREADY_CONNECTED', 'A device is already connected.');
       }
       const device = state.manager.devices.find((d) => d.id === input.deviceId);
@@ -148,14 +150,14 @@ export function registerDeviceTools(
         );
       }
       // `manager.connect` returns the SDK's connected `VoltraClient`, which
-      // is distinct from the parameter-less stub in `state.client` set at
+      // is distinct from the parameter-less stub in the slot set at
       // bootstrap. Reassign and re-wire the event bridge so onRepBoundary /
       // onSettingsUpdate / onConnectionStateChange land on the right object.
       // The old client's listeners stay attached but never fire (it was
       // never connected to anything).
       const client = await state.manager.connect(device);
-      state.client = client;
-      wireEventBridge(client, state.live, server, state.channels, state);
+      slot.client = client;
+      wireEventBridge(client, slot.live, server, state.channels, state);
       return { ok: true, deviceId: input.deviceId };
     }),
   );
@@ -169,8 +171,9 @@ export function registerDeviceTools(
     'device.disconnect',
     DeviceDisconnectInput,
     wrapHandler(DeviceDisconnectInput, async () => {
-      const id = state.client.connectedDeviceId;
-      if (state.client.isConnected && id !== null) {
+      const slot = getSlot(state);
+      const id = slot.client.connectedDeviceId;
+      if (slot.client.isConnected && id !== null) {
         await state.manager.disconnect(id);
       }
       return { ok: true };
@@ -184,7 +187,7 @@ export function registerDeviceTools(
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
-      await state.client.setWeight(input.lbs);
+      await getSlot(state).client.setWeight(input.lbs);
       return { ok: true };
     }),
   );
@@ -199,7 +202,7 @@ export function registerDeviceTools(
     DeviceSetModeInput,
     wrapHandler(DeviceSetModeInput, async (input) => {
       const value = (TrainingMode as unknown as Record<string, number>)[input.mode];
-      await state.client.setMode(value as TrainingMode);
+      await getSlot(state).client.setMode(value as TrainingMode);
       return { ok: true };
     }),
   );
@@ -210,7 +213,7 @@ export function registerDeviceTools(
     'device.set_chains',
     DeviceSetChainsInput,
     wrapHandler(DeviceSetChainsInput, async (input) => {
-      await state.client.setChains(input.lbs);
+      await getSlot(state).client.setChains(input.lbs);
       return { ok: true };
     }),
   );
@@ -221,7 +224,7 @@ export function registerDeviceTools(
     'device.set_eccentric',
     DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
-      await state.client.setEccentric(input.percent);
+      await getSlot(state).client.setEccentric(input.percent);
       return { ok: true };
     }),
   );
@@ -236,10 +239,11 @@ export function registerDeviceTools(
     'device.get_state',
     DeviceGetStateInput,
     wrapHandler(DeviceGetStateInput, async () => {
-      const isConnected = state.client.isConnected;
-      const connectionState = state.client.connectionState;
-      const deviceId = state.client.connectedDeviceId;
-      const settings = state.client.settings;
+      const slot = getSlot(state);
+      const isConnected = slot.client.isConnected;
+      const connectionState = slot.client.connectionState;
+      const deviceId = slot.client.connectedDeviceId;
+      const settings = slot.client.settings;
       const out: Record<string, unknown> = {
         connected: isConnected,
         connectionState,

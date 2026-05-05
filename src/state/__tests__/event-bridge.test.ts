@@ -482,10 +482,14 @@ describe('wireEventBridge', () => {
     // enough for the device-signal finalize path: live, store with a
     // putSet spy, channels with a publish spy, and the
     // setStartDeviceSnapshots map populated as if `set.start` had run.
-    interface FakeState {
+    interface FakeSlot {
+      slotId: string;
       live: LiveStateT;
-      store: { putSet: Mock<(s: unknown) => Promise<void>> };
       client: { endSet: Mock<() => Promise<void>> };
+    }
+    interface FakeState {
+      slots: Map<string, FakeSlot>;
+      store: { putSet: Mock<(s: unknown) => Promise<void>> };
       channels: FakeChannels;
       setStartDeviceSnapshots: Map<
         string,
@@ -509,10 +513,15 @@ describe('wireEventBridge', () => {
       client = makeFakeClient();
       server = makeFakeServer();
       channels = makeFakeChannels();
-      fakeState = {
+      const slots = new Map<string, FakeSlot>();
+      slots.set('primary', {
+        slotId: 'primary',
         live,
-        store: { putSet: vi.fn(async () => undefined) },
         client: { endSet: vi.fn(async () => undefined) },
+      });
+      fakeState = {
+        slots,
+        store: { putSet: vi.fn(async () => undefined) },
         channels,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
@@ -600,7 +609,7 @@ describe('wireEventBridge', () => {
 
       // The bridge must NOT have called client.endSet — the device already
       // de-engaged on its own; an extra Workout.STOP would be churn.
-      expect(fakeState.client.endSet).not.toHaveBeenCalled();
+      expect(fakeState.slots.get('primary')!.client.endSet).not.toHaveBeenCalled();
 
       // The voltra://set/active resource is poked so polling clients
       // refresh.
@@ -639,10 +648,14 @@ describe('wireEventBridge', () => {
     // path) so this block re-wires the bridge with a fake state. Notify-only
     // triggers fire even without `state`, but we test both shapes here for
     // coverage.
-    interface FakeStateForTrigger {
+    interface FakeSlotForTrigger {
+      slotId: string;
       live: LiveStateT;
-      store: { putSet: Mock<(s: unknown) => Promise<void>> };
       client: { endSet: Mock<() => Promise<void>> };
+    }
+    interface FakeStateForTrigger {
+      slots: Map<string, FakeSlotForTrigger>;
+      store: { putSet: Mock<(s: unknown) => Promise<void>> };
       channels: FakeChannels;
       setStartDeviceSnapshots: Map<
         string,
@@ -661,10 +674,15 @@ describe('wireEventBridge', () => {
       client = makeFakeClient();
       server = makeFakeServer();
       channels = makeFakeChannels();
-      fakeState = {
+      const slots = new Map<string, FakeSlotForTrigger>();
+      slots.set('primary', {
+        slotId: 'primary',
         live,
-        store: { putSet: vi.fn(async () => undefined) },
         client: { endSet: vi.fn(async () => undefined) },
+      });
+      fakeState = {
+        slots,
+        store: { putSet: vi.fn(async () => undefined) },
         channels,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
