@@ -78,7 +78,7 @@ export function registerSessionTools(
     placeholders,
     'session.end',
     SessionEndInput,
-    wrapHandler(SessionEndInput, () => endSession(state)),
+    wrapHandler(SessionEndInput, (input) => endSession(state, input.slot)),
   );
   install(
     placeholders,
@@ -115,7 +115,7 @@ async function startSession(
   state: ServerState,
   input: z.infer<typeof SessionStartInput>,
 ): Promise<{ sessionId: string }> {
-  const slot = getSlot(state);
+  const slot = getSlot(state, input.slot);
   if (slot.live.session !== undefined) {
     throw new ToolError('SESSION_ALREADY_ACTIVE', 'A session is already active.');
   }
@@ -158,8 +158,8 @@ async function startSession(
   return { sessionId };
 }
 
-async function endSession(state: ServerState): Promise<{ ok: true }> {
-  const slot = getSlot(state);
+async function endSession(state: ServerState, slotId: string | undefined): Promise<{ ok: true }> {
+  const slot = getSlot(state, slotId);
   const active = slot.live.session;
   if (active === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');

@@ -16,6 +16,8 @@
 import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
+import { SlotIdSchema } from './common.js';
+
 /**
  * Selectable training-mode names derived from the SDK enum.
  * Excludes `Idle` (not user-selectable) and any numeric reverse-mapping keys.
@@ -41,6 +43,7 @@ export const DeviceScanInput = z.object({
 /** Input for `device.set_weight` — pounds, integer, SDK clamps to device range. */
 export const DeviceSetWeightInput = z.object({
   lbs: z.number().int().min(5).max(200),
+  slot: SlotIdSchema,
 });
 
 /**
@@ -50,6 +53,7 @@ export const DeviceSetWeightInput = z.object({
  */
 export const DeviceSetModeInput = z.object({
   mode: z.enum(SELECTABLE_MODE_NAMES),
+  slot: SlotIdSchema,
 });
 
 /**
