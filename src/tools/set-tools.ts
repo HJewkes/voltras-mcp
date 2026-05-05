@@ -28,6 +28,8 @@ import type { ServerState } from '../state/server-state.js';
 import { SetEndInput, SetGetInput, SetLiveMetricsInput, SetStartInput } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
+import { buildSetStartedPayload, summarizePreviousSet } from '../state/channel-payloads.js';
+import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
 class ToolError extends Error {
@@ -123,20 +125,63 @@ async function startSet(
     reps: [],
     status: 'active',
   });
-  deviceSnapshots.set(setId, state.live.snapshotDevice());
+  const device = state.live.snapshotDevice();
+  deviceSnapshots.set(setId, device);
   // Push a lifecycle event so a channel-enabled host wakes the model on the
   // set boundary instead of forcing it to poll. Fire-and-forget when the
   // host didn't opt in to channels (see channel-publisher.ts).
-  state.channels.publish({
-    content: `Set ${setId.slice(0, 8)} started.`,
-    meta: {
-      source: 'voltras',
-      event_type: 'set_started',
-      set_id: setId,
-      session_id: session.sessionId,
-    },
-  });
+  //
+  // The channel payload carries the full set config (weight, mode, started_at)
+  // plus a summary of the previous set in the session for fatigue baselining.
+  // PT Claude can skip the device.get_state + session.get retrieval pair that
+  // every set.start currently triggers.
+  //
+  // Ordinal counts the new set as part of the session — the live session's
+  // setIds array doesn't include it yet (set-end is what appends), so add 1.
+  const ordinal = (state.live.snapshotSession()?.setIds.length ?? 0) + 1;
+  // Fetch the previous set summary best-effort. If the store query fails for
+  // any reason (transient SQLite contention, etc.), we fall back to a null
+  // previous_set_summary rather than blowing up the channel emission — the
+  // model can always call metrics.compute later if it wants the fatigue
+  // context.
+  const previousSummary = await fetchPreviousSetSummary(state, session.sessionId, setId);
+  const activeSet: ActiveSet = {
+    setId,
+    sessionId: session.sessionId,
+    startedAt,
+    reps: [],
+    status: 'active',
+  };
+  const payload = buildSetStartedPayload(activeSet, device, ordinal, previousSummary);
+  state.channels.publish(payload);
   return { setId };
+}
+
+async function fetchPreviousSetSummary(
+  state: ServerState,
+  sessionId: string,
+  newSetId: string,
+): Promise<ReturnType<typeof summarizePreviousSet> | null> {
+  try {
+    const sets = await state.store.getSetsForSession(sessionId);
+    if (sets.length === 0) {
+      return null;
+    }
+    // `getSetsForSession` returns oldest-first per the SessionStore contract;
+    // walk from the end to find the most recent set that isn't the new
+    // not-yet-persisted one (defensive — putSet hasn't run yet at this point,
+    // but a re-run with the same id should still pick the prior set).
+    for (let i = sets.length - 1; i >= 0; i--) {
+      const candidate = sets[i];
+      if (candidate.id !== newSetId) {
+        return summarizePreviousSet(candidate);
+      }
+    }
+    return null;
+  } catch (err) {
+    log.warn('set.start: failed to load previous-set summary, omitting from channel event', err);
+    return null;
+  }
 }
 
 async function endSet(

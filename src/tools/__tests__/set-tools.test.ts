@@ -214,7 +214,7 @@ describe('set.start', () => {
     expect(h.live.set?.status).toBe('active');
   });
 
-  it('publishes a set_started claude/channel event with set_id + session_id', async () => {
+  it('publishes a set_started claude/channel event with full payload', async () => {
     const sessionId = startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
 
@@ -230,8 +230,60 @@ describe('set.start', () => {
       event_type: 'set_started',
       set_id: setId,
       session_id: sessionId,
+      weight_lbs: '75',
+      training_mode: 'WeightTraining',
     });
-    expect(typeof event.content).toBe('string');
+    const parsed = JSON.parse(event.content) as {
+      summary: string;
+      set: { set_id: string; session_id: string; weight_lbs: number; training_mode: string };
+      previous_set_summary: unknown;
+    };
+    expect(parsed.summary).toContain('75 lbs');
+    expect(parsed.summary).toContain('WeightTraining');
+    expect(parsed.set).toMatchObject({
+      set_id: setId,
+      session_id: sessionId,
+      weight_lbs: 75,
+      training_mode: 'WeightTraining',
+    });
+    // First set in the session — no previous set to summarize.
+    expect(parsed.previous_set_summary).toBeNull();
+  });
+
+  it('set_started includes previous_set_summary when a prior set exists in the session', async () => {
+    const sessionId = startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    const priorSet: StoredSet = {
+      id: 'set-prev',
+      sessionId,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: [
+        { ...makeRep(1), id: 'r1', setId: 'set-prev', index: 0 },
+        { ...makeRep(2), id: 'r2', setId: 'set-prev', index: 1 },
+      ],
+    };
+    h.store.getSetsForSession.mockResolvedValueOnce([priorSet]);
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    const parsed = JSON.parse(event.content) as {
+      previous_set_summary: { set_id: string; rep_count: number; weight_lbs: number };
+    };
+    expect(parsed.previous_set_summary).toMatchObject({
+      set_id: 'set-prev',
+      rep_count: 2,
+      weight_lbs: 100,
+    });
+    expect(h.store.getSetsForSession).toHaveBeenCalledWith(sessionId);
   });
 });
 
