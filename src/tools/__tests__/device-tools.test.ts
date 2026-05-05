@@ -453,27 +453,76 @@ describe('registerDeviceTools', () => {
       expect(String(payload.message)).toMatch(/explicit `slot`/i);
     });
 
-    it('rejects a third slot allocation with SLOT_LIMIT_EXCEEDED (max 2 in this release)', async () => {
+    it('rejects a third connected slot with SLOT_LIMIT_EXCEEDED (max 2 connected devices)', async () => {
+      // Step 4 of dual-Voltras: the cap counts CONNECTED slots, not total
+      // map size. Primary's bootstrap stub (`isConnected=false`) is
+      // invisible to the cap, so a true bilateral allocation
+      // (`'left'` + `'right'`) succeeds. To trip the cap we have to bind
+      // primary first (single-device flow) and THEN attempt left + right.
       state.manager.devices = [
-        { id: 'V-1', name: null, rssi: null },
-        { id: 'V-2', name: null, rssi: null },
+        { id: 'V-PRIMARY', name: null, rssi: null },
+        { id: 'V-LEFT', name: null, rssi: null },
+        { id: 'V-RIGHT', name: null, rssi: null },
       ];
-      state.manager.connect.mockResolvedValue(
+      const reg = placeholders.get('device.connect')!;
+
+      state.manager.connect.mockResolvedValueOnce(
         makeFakeClient({
           isConnected: true,
           connectionState: 'connected',
-          connectedDeviceId: 'V-1',
+          connectedDeviceId: 'V-PRIMARY',
         }),
       );
-      const reg = placeholders.get('device.connect')!;
-      await invoke(reg, { deviceId: 'V-1', slot: 'left' });
-      // 'primary' is already in the map from bootstrap, so 'left' fills the cap.
-      expect(state.slots.size).toBe(2);
+      await invoke(reg, { deviceId: 'V-PRIMARY' });
 
-      const third = await invoke(reg, { deviceId: 'V-2', slot: 'right' });
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-LEFT',
+        }),
+      );
+      await invoke(reg, { deviceId: 'V-LEFT', slot: 'left' });
+
+      // primary + left both connected ⇒ the cap is full.
+      const third = await invoke(reg, { deviceId: 'V-RIGHT', slot: 'right' });
       expect(third.isError).toBe(true);
       expect(third.payload.code).toBe('SLOT_LIMIT_EXCEEDED');
       expect(state.slots.has('right')).toBe(false);
+    });
+
+    it('allows two non-primary slots when primary is idle (true bilateral)', async () => {
+      // The bilateral case the cap relaxation was sized for: primary
+      // remains in the map (bootstrap leftover) but isConnected=false,
+      // so allocating both `'left'` and `'right'` lands two real devices
+      // without tripping the cap.
+      state.manager.devices = [
+        { id: 'V-LEFT', name: null, rssi: null },
+        { id: 'V-RIGHT', name: null, rssi: null },
+      ];
+      const reg = placeholders.get('device.connect')!;
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-LEFT',
+        }),
+      );
+      const r1 = await invoke(reg, { deviceId: 'V-LEFT', slot: 'left' });
+      expect(r1.isError).toBeUndefined();
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-RIGHT',
+        }),
+      );
+      const r2 = await invoke(reg, { deviceId: 'V-RIGHT', slot: 'right' });
+      expect(r2.isError).toBeUndefined();
+      expect(state.slots.has('left')).toBe(true);
+      expect(state.slots.has('right')).toBe(true);
     });
 
     it("disconnecting an explicit 'left' slot removes it from state.slots", async () => {

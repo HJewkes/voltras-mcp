@@ -29,7 +29,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState, getSlot } from './state/server-state.js';
-import { wireEventBridge } from './state/event-bridge.js';
+import { wireBridgeForSlot, wireEventBridge } from './state/event-bridge.js';
 import { McpChannelPublisher } from './state/channel-publisher.js';
 import { z } from 'zod';
 import { errorResult, type ToolResult } from './tools/helpers.js';
@@ -172,18 +172,19 @@ export async function runServer(): Promise<void> {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
     state.channels = channels;
+    state.server = server;
+    // Install the per-slot bridge wirer so `createSlot` / `resetPrimarySlot`
+    // can subscribe / re-subscribe new slots automatically (Step 4 of P0
+    // dual-Voltras). This sits on `state` rather than as a direct import to
+    // sidestep the server-state ↔ event-bridge ↔ set-tools cycle.
+    state.bridgeWirer = wireBridgeForSlot;
     stateBox.value = state;
-    // Wire the SDK event bridge for the primary slot once bootstrap has run.
-    // Listener slots on `VoltraClient` persist across `setAdapter`, so
-    // subscribing here (before the device.connect tool installs an adapter)
-    // is correct. `state` is threaded so the bridge can call `finalizeSet`
-    // when the device emits an out-of-grace `set_boundary` (user-pressed
-    // Stop on the Voltra UI). Without it, autonomous device-side set ends
-    // would be silently dropped — see event-bridge.ts:onSetBoundary.
-    // Per-slot bridge fan-out is a later step; today only the primary slot
-    // is wired.
-    const primary = getSlot(state);
-    wireEventBridge(primary.client, primary.live, server, channels, state);
+    // Wire the SDK event bridge for every slot currently in the slots map.
+    // Listener handles persist across `setAdapter`, so subscribing here
+    // (before the device.connect tool installs an adapter) is correct for
+    // primary. New slots allocated via `createSlot` (device.connect with an
+    // explicit slot) self-wire through `state.bridgeWirer`.
+    wireEventBridge(state);
     // Mock-only tools never have real handlers in node mode — drop their
     // placeholders so `tools/list` reflects only the real surface (R11).
     // In mock mode the placeholders remain for Wave 3 to hot-swap.

@@ -48,7 +48,6 @@ import {
   removeSlot,
   resetPrimarySlot,
 } from '../state/server-state.js';
-import { wireEventBridge } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -138,7 +137,7 @@ function install<S extends z.ZodObject>(
  * tool-side code typed without bleeding SDK internals into every callsite.
  */
 export function registerDeviceTools(
-  server: McpServer,
+  _server: McpServer,
   state: ServerState,
   placeholders: Placeholders,
 ): void {
@@ -194,7 +193,7 @@ export function registerDeviceTools(
             `Slot \`${slotId}\` is already connected. Use device.disconnect first or pick another slot.`,
           );
         }
-      } else if (state.slots.size >= MAX_SLOTS) {
+      } else if (countConnectedSlots(state) >= MAX_SLOTS) {
         throwSdkLike(
           'SLOT_LIMIT_EXCEEDED',
           `Maximum of ${MAX_SLOTS} slots supported in this release.`,
@@ -212,16 +211,24 @@ export function registerDeviceTools(
       // bootstrap. For the primary slot we reassign and re-wire the event
       // bridge so onRepBoundary / onSettingsUpdate / onConnectionStateChange
       // land on the right object. For new slots we allocate via
-      // `createSlot` (fresh LiveState), but DO NOT wire the bridge — that's
-      // Step 4. The old client's listeners stay attached but never fire (it
-      // was never connected to anything).
+      // `createSlot`, which self-wires the bridge against the new client
+      // through `state.bridgeWirer` (Step 4 of P0 dual-Voltras).
       const client = await state.manager.connect(device);
       if (isNewSlot) {
         createSlot(state, slotId, client);
       } else {
         const slot = getSlot(state, slotId);
+        // Unwire the existing bridge before swapping clients so listeners
+        // on the stale handle can't fire mid-rebind, then re-wire against
+        // the freshly-connected client.
+        slot.unwireBridge?.();
         slot.client = client;
-        wireEventBridge(client, slot.live, server, state.channels, state);
+        const rewire = state.bridgeWirer?.(state, slot);
+        if (rewire !== undefined) {
+          slot.unwireBridge = rewire;
+        } else {
+          delete slot.unwireBridge;
+        }
       }
       return { ok: true, deviceId: input.deviceId };
     }),
@@ -369,4 +376,20 @@ function throwSdkLike(code: string, message: string): never {
   const err = new Error(message) as Error & { code: string };
   err.code = code;
   throw err;
+}
+
+/**
+ * Count slots whose client is actively connected. Mirrors the helper in
+ * `state/server-state.ts` but lives at the device-tools layer too so the
+ * `device.connect` precondition reads the same policy without crossing
+ * the abstraction boundary into state internals.
+ */
+function countConnectedSlots(state: ServerState): number {
+  let count = 0;
+  for (const slot of state.slots.values()) {
+    if (slot.client.isConnected) {
+      count += 1;
+    }
+  }
+  return count;
 }

@@ -60,7 +60,7 @@ vi.mock('@voltras/node-sdk', () => ({
 
 const { LiveState } = await import('../live-state.js');
 type LiveStateT = InstanceType<typeof LiveState>;
-const { wireEventBridge } = await import('../event-bridge.js');
+const { wireBridgeForSlot } = await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 
@@ -90,6 +90,11 @@ interface FakeClient {
   // The bridge subscribes to onFrame to assemble Reps from the typed
   // telemetry stream (R16 — typed values, no raw buffers).
   onFrame: Mock<(l: (frame: unknown) => void) => () => void>;
+  // `finalizeSet` calls `slot.client.endSet` whenever `disengageMotor` is
+  // true. The autonomous-finalize tests assert this is NOT called for the
+  // device-signal path (disengageMotor: false), so the mock has to live on
+  // the same object the bridge subscribed to.
+  endSet: Mock<() => Promise<void>>;
   // Captured listeners for direct invocation.
   fire: {
     repBoundary: () => void;
@@ -141,6 +146,7 @@ function makeFakeClient(): FakeClient {
     onSettingsUpdate,
     onConnectionStateChange,
     onFrame,
+    endSet: vi.fn(async () => undefined),
     fire: {
       repBoundary: () => repCb(),
       setBoundary: () => setCb(),
@@ -165,10 +171,36 @@ function makeFakeServer(): FakeServer {
 
 interface FakeChannels {
   publish: Mock<(event: { content: string; meta: Record<string, string> }) => void>;
+  forSlot: Mock<(slotId: string) => FakeChannels>;
 }
 
+/**
+ * Build a fake `ChannelPublisher` that records every publish on the
+ * top-level `publish` mock, regardless of whether it was issued through
+ * `forSlot(slotId).publish(...)` or directly. Slot-scoped publishes get
+ * their `meta.slot` auto-injected by mirroring the real
+ * `slotScopedPublisher` behavior so test assertions against meta.slot
+ * remain meaningful.
+ */
 function makeFakeChannels(): FakeChannels {
-  return { publish: vi.fn() };
+  const channels = {
+    publish: vi.fn() as FakeChannels['publish'],
+    forSlot: vi.fn() as FakeChannels['forSlot'],
+  } as FakeChannels;
+  channels.forSlot.mockImplementation((slotId: string) => {
+    const scoped: FakeChannels = {
+      publish: vi.fn((event) => {
+        channels.publish({
+          content: event.content,
+          meta: { slot: slotId, ...event.meta },
+        });
+      }) as FakeChannels['publish'],
+      forSlot: vi.fn(),
+    };
+    scoped.forSlot.mockImplementation((nextSlotId) => makeFakeChannels().forSlot(nextSlotId));
+    return scoped;
+  });
+  return channels;
 }
 
 function startSet(live: LiveStateT): void {
@@ -187,6 +219,24 @@ function startSet(live: LiveStateT): void {
   });
 }
 
+/**
+ * Build a minimal ServerState shape carrying the bridge's required
+ * collaborators (slots map, channels, server). Tests that exercise the
+ * autonomous-finalize path replace this with a richer harness that adds a
+ * mock store + setStartDeviceSnapshots — see the dedicated `beforeEach`
+ * blocks further down.
+ */
+function makeBareState(opts: {
+  client: FakeClient;
+  live: LiveStateT;
+  server: FakeServer;
+  channels: FakeChannels;
+}): { slots: Map<string, unknown>; channels: FakeChannels; server: FakeServer } {
+  const slots = new Map<string, unknown>();
+  slots.set('primary', { slotId: 'primary', client: opts.client, live: opts.live });
+  return { slots, channels: opts.channels, server: opts.server };
+}
+
 describe('wireEventBridge', () => {
   let live: LiveStateT;
   let client: FakeClient;
@@ -200,11 +250,10 @@ describe('wireEventBridge', () => {
     channels = makeFakeChannels();
     // Cast through unknown to keep test-only types decoupled from the SDK
     // module — the bridge accepts the structural surface we provide.
-    wireEventBridge(
-      client as unknown as Parameters<typeof wireEventBridge>[0],
-      live,
-      server as unknown as Parameters<typeof wireEventBridge>[2],
-      channels as unknown as Parameters<typeof wireEventBridge>[3],
+    const state = makeBareState({ client, live, server, channels });
+    wireBridgeForSlot(
+      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      state.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
     );
   });
 
@@ -461,19 +510,12 @@ describe('wireEventBridge', () => {
       expect(live.snapshotSet()?.reps.length).toBe(1);
     });
 
-    it('outside the grace window with no `state` wired emits no resource update and does not mutate live state', () => {
-      // The default `wireEventBridge` call in `beforeEach` omits the
-      // optional `state` parameter — without it, the bridge has no
-      // `finalizeSet` reference and silently drops the boundary even
-      // outside grace. Production wiring (server.ts) always passes state;
-      // this case just keeps the legacy contract for tests / hosts that
-      // don't construct a full ServerState.
-      startSet(live);
-      const before = live.snapshotSet();
-      client.fire.setBoundary();
-      expect(live.snapshotSet()).toEqual(before);
-      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
-    });
+    // Legacy "outside the grace window with no state wired" test removed
+    // in Step 4 of P0 dual-Voltras: the bridge now always operates with a
+    // ServerState (the per-slot wirer takes one as a required argument),
+    // so the "missing-state silent drop" branch no longer exists. The
+    // dedicated `set_ended_by_device finalize` describe block below covers
+    // the active behavior end-to-end.
   });
 
   describe('onSetBoundary → set_ended_by_device finalize', () => {
@@ -485,12 +527,13 @@ describe('wireEventBridge', () => {
     interface FakeSlot {
       slotId: string;
       live: LiveStateT;
-      client: { endSet: Mock<() => Promise<void>> };
+      client: FakeClient;
     }
     interface FakeState {
       slots: Map<string, FakeSlot>;
       store: { putSet: Mock<(s: unknown) => Promise<void>> };
       channels: FakeChannels;
+      server: FakeServer;
       setStartDeviceSnapshots: Map<
         string,
         { connected: boolean; weightLbs?: number; trainingMode?: string }
@@ -514,24 +557,29 @@ describe('wireEventBridge', () => {
       server = makeFakeServer();
       channels = makeFakeChannels();
       const slots = new Map<string, FakeSlot>();
+      // Sneak the fake `client` (which captures the bridge's listeners)
+      // into the slot via the test-side harness — finalizeSet's getSlot
+      // lookup will see this slot, but the bridge subscribes to the
+      // outer `client` reference passed via the slot. The slot's
+      // `client.endSet` mock is asserted on for the
+      // disengageMotor=false device-signal path.
       slots.set('primary', {
         slotId: 'primary',
         live,
-        client: { endSet: vi.fn(async () => undefined) },
+        client: client as unknown as FakeSlot['client'],
       });
       fakeState = {
         slots,
         store: { putSet: vi.fn(async () => undefined) },
         channels,
+        server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
       };
-      wireEventBridge(
-        client as unknown as Parameters<typeof wireEventBridge>[0],
-        live,
-        server as unknown as Parameters<typeof wireEventBridge>[2],
-        channels as unknown as Parameters<typeof wireEventBridge>[3],
-        fakeState as unknown as Parameters<typeof wireEventBridge>[4],
+      const slot = slots.get('primary')!;
+      wireBridgeForSlot(
+        fakeState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        slot as unknown as Parameters<typeof wireBridgeForSlot>[1],
       );
     });
 
@@ -651,12 +699,13 @@ describe('wireEventBridge', () => {
     interface FakeSlotForTrigger {
       slotId: string;
       live: LiveStateT;
-      client: { endSet: Mock<() => Promise<void>> };
+      client: FakeClient;
     }
     interface FakeStateForTrigger {
       slots: Map<string, FakeSlotForTrigger>;
       store: { putSet: Mock<(s: unknown) => Promise<void>> };
       channels: FakeChannels;
+      server: FakeServer;
       setStartDeviceSnapshots: Map<
         string,
         { connected: boolean; weightLbs?: number; trainingMode?: string }
@@ -678,21 +727,20 @@ describe('wireEventBridge', () => {
       slots.set('primary', {
         slotId: 'primary',
         live,
-        client: { endSet: vi.fn(async () => undefined) },
+        client,
       });
       fakeState = {
         slots,
         store: { putSet: vi.fn(async () => undefined) },
         channels,
+        server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
       };
-      wireEventBridge(
-        client as unknown as Parameters<typeof wireEventBridge>[0],
-        live,
-        server as unknown as Parameters<typeof wireEventBridge>[2],
-        channels as unknown as Parameters<typeof wireEventBridge>[3],
-        fakeState as unknown as Parameters<typeof wireEventBridge>[4],
+      const slot = slots.get('primary')!;
+      wireBridgeForSlot(
+        fakeState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        slot as unknown as Parameters<typeof wireBridgeForSlot>[1],
       );
     });
 
