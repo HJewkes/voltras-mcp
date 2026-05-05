@@ -27,11 +27,17 @@ export type TrainingModeName = string;
  * Optional slot identifier for slot-scoped tools. Omit for single-device
  * sessions; the handler defaults to the `'primary'` slot. Description is
  * surfaced to MCP clients (and therefore to model callers).
+ *
+ * Step 3 of dual-Voltras support tightens the shape with a regex constraint
+ * (`[a-zA-Z][a-zA-Z0-9_-]*`) so newly-allocated slot ids cannot contain
+ * whitespace or punctuation that would mangle log lines, channel-meta tags,
+ * or future routing keys. Existing single-device callers omit `slot`
+ * entirely and remain unaffected.
  */
 export const SlotIdSchema = z
   .string()
-  .min(1)
+  .regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/)
   .optional()
   .describe(
-    "Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises).",
+    "Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises). Must match /^[a-zA-Z][a-zA-Z0-9_-]*$/ — letters, digits, underscores, and hyphens, leading with a letter.",
   );

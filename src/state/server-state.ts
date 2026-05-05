@@ -73,6 +73,85 @@ export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): Slot
   return slot;
 }
 
+/**
+ * Soft cap on connected slots in the initial dual-Voltras release. Two is
+ * the only shape we exercise (left / right for bilateral lifts); a third
+ * slot has no UX or analytics story yet, so the limit lives at the state
+ * layer rather than as a tool-schema enum to keep the surface flexible if
+ * we lift the cap later.
+ */
+export const MAX_SLOTS = 2;
+
+/**
+ * Allocate a brand-new slot. Each slot owns its own `LiveState` so the
+ * session/set/rep pipelines run independently — sharing live state across
+ * slots would let frames from one device mutate the other's set boundaries
+ * and rep buffer. The supplied `client` becomes the slot's BLE handle; the
+ * caller is responsible for having already connected it via
+ * `manager.connect(device)`.
+ *
+ * Step 3 of P0 dual-Voltras support: this helper is pure data — it does NOT
+ * subscribe the event bridge to the new client. Step 4 wires the bridge
+ * per-slot with channel-meta tagging; until then, frames / rep boundaries /
+ * connection events from non-primary slots are not bridged through
+ * `wireEventBridge`. Callers see the limitation immediately on
+ * `set.live_metrics` for the new slot — `LiveState` reports an empty rep
+ * buffer because no frames are flowing in.
+ */
+export function createSlot(state: ServerState, slotId: string, client: VoltraClient): SlotState {
+  if (state.slots.has(slotId)) {
+    throw new Error(`Slot \`${slotId}\` already exists.`);
+  }
+  if (state.slots.size >= MAX_SLOTS) {
+    throw new Error(`Maximum of ${MAX_SLOTS} slots supported in this release.`);
+  }
+  const slot: SlotState = { slotId, client, live: new LiveState() };
+  state.slots.set(slotId, slot);
+  return slot;
+}
+
+/**
+ * Tear down a non-primary slot. The caller must have already issued the
+ * BLE-level disconnect via `state.manager.disconnect(deviceId)` — this
+ * helper handles only the in-memory removal so the disconnect path stays
+ * idempotent against a half-torn-down adapter.
+ *
+ * Errors when called on `'primary'` because the primary slot must persist
+ * across disconnects: re-connecting the primary device should not require
+ * re-allocating the slot. Use `resetPrimarySlot` instead.
+ */
+export function removeSlot(state: ServerState, slotId: string): void {
+  if (slotId === PRIMARY_SLOT) {
+    throw new Error(`Cannot remove the primary slot — use resetPrimarySlot instead.`);
+  }
+  if (!state.slots.has(slotId)) {
+    throw new Error(`Unknown slot: ${slotId}`);
+  }
+  state.slots.delete(slotId);
+}
+
+/**
+ * Reset the primary slot back to its bootstrap shape: a fresh
+ * parameter-less `VoltraClient` (so `device.connect` can rebind it) and a
+ * fresh `LiveState` (so a stale session/set from the prior connection can't
+ * leak into the next one). The slot itself stays in `state.slots` because
+ * a single-device flow never calls `device.connect` with an explicit slot
+ * id, so the entry must remain resolvable for the default lookup.
+ *
+ * Step 3 of P0 dual-Voltras support: this helper does NOT re-wire the
+ * event bridge. The bridge in `runServer` was subscribed to the original
+ * primary client; `device.connect`'s subsequent re-wire on reconnect is
+ * what re-establishes per-event delivery.
+ */
+export function resetPrimarySlot(state: ServerState): void {
+  const slot = state.slots.get(PRIMARY_SLOT);
+  if (!slot) {
+    throw new Error(`Primary slot is missing — bootstrap was never run.`);
+  }
+  slot.client = new VoltraClient();
+  slot.live = new LiveState();
+}
+
 export interface ServerState {
   config: Config;
   manager: VoltraManager;

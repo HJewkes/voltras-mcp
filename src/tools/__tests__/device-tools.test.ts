@@ -59,6 +59,12 @@ const FakeTrainingMode = {
 vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: FakeTrainingMode,
   VoltraSDKError: FakeVoltraSDKError,
+  // Stubbed for `resetPrimarySlot`, which constructs a fresh placeholder
+  // client when an actually-connected primary slot disconnects (Step 3 of
+  // dual-Voltras). The body is unused — the production helper only needs
+  // a constructable shape, and the slot reference goes stale immediately
+  // after disconnect anyway.
+  VoltraClient: class {},
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
@@ -378,6 +384,147 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
       expect(state.manager.disconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Slot lifecycle (Step 3 of dual-Voltras) ───────────────────────────
+  //
+  // Connect / disconnect cooperating with the slots map. New slot creation
+  // is the path that actually exercises `state.slots.size` change; the
+  // primary-only path is covered exhaustively above. Bridge fan-out is a
+  // Step 4 concern, so these tests do not assert on event delivery.
+  describe('device.connect / device.disconnect slot lifecycle', () => {
+    it("explicit slot:'left' creates a new slot in state.slots after manager.connect resolves", async () => {
+      state.manager.devices = [{ id: 'V-1', name: 'Voltra-1', rssi: -50 }];
+      const connected = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(connected);
+      const reg = placeholders.get('device.connect')!;
+
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1', slot: 'left' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true, deviceId: 'V-1' });
+
+      // Slot map now has both 'primary' and 'left'.
+      expect(state.slots.size).toBe(2);
+      expect(state.slots.has('left')).toBe(true);
+      // The new slot's client is the one returned by manager.connect — not
+      // the placeholder allocated at bootstrap.
+      expect(state.slots.get('left')!.client).toBe(connected as unknown);
+    });
+
+    it('connecting twice to the same explicit slot returns ALREADY_CONNECTED', async () => {
+      state.manager.devices = [
+        { id: 'V-1', name: null, rssi: null },
+        { id: 'V-2', name: null, rssi: null },
+      ];
+      const first = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(first);
+      const reg = placeholders.get('device.connect')!;
+      await invoke(reg, { deviceId: 'V-1', slot: 'left' });
+
+      const second = await invoke(reg, { deviceId: 'V-2', slot: 'left' });
+      expect(second.isError).toBe(true);
+      expect(second.payload.code).toBe('ALREADY_CONNECTED');
+      // Helpful message names the slot.
+      expect(String(second.payload.message)).toMatch(/`left`/);
+      // No second manager.connect call.
+      expect(state.manager.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('connect with no slot when primary is taken returns ALREADY_CONNECTED with the dual-device hint', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-existing';
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const reg = placeholders.get('device.connect')!;
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('ALREADY_CONNECTED');
+      // Message should hint at the explicit-slot escape hatch.
+      expect(String(payload.message)).toMatch(/Primary slot is already connected/i);
+      expect(String(payload.message)).toMatch(/explicit `slot`/i);
+    });
+
+    it('rejects a third slot allocation with SLOT_LIMIT_EXCEEDED (max 2 in this release)', async () => {
+      state.manager.devices = [
+        { id: 'V-1', name: null, rssi: null },
+        { id: 'V-2', name: null, rssi: null },
+      ];
+      state.manager.connect.mockResolvedValue(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-1',
+        }),
+      );
+      const reg = placeholders.get('device.connect')!;
+      await invoke(reg, { deviceId: 'V-1', slot: 'left' });
+      // 'primary' is already in the map from bootstrap, so 'left' fills the cap.
+      expect(state.slots.size).toBe(2);
+
+      const third = await invoke(reg, { deviceId: 'V-2', slot: 'right' });
+      expect(third.isError).toBe(true);
+      expect(third.payload.code).toBe('SLOT_LIMIT_EXCEEDED');
+      expect(state.slots.has('right')).toBe(false);
+    });
+
+    it("disconnecting an explicit 'left' slot removes it from state.slots", async () => {
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const connected = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(connected);
+      await invoke(placeholders.get('device.connect')!, { deviceId: 'V-1', slot: 'left' });
+      expect(state.slots.has('left')).toBe(true);
+
+      const r = await invoke(placeholders.get('device.disconnect')!, { slot: 'left' });
+      expect(r.isError).toBeUndefined();
+      expect(r.payload).toEqual({ ok: true });
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      // Slot is gone — primary remains.
+      expect(state.slots.has('left')).toBe(false);
+      expect(state.slots.has('primary')).toBe(true);
+    });
+
+    it("disconnecting 'primary' resets the slot in place (does not delete it)", async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      // Capture the SlotState wrapper before reset — `resetPrimarySlot`
+      // mutates `slot.client` in place, so reading from the same reference
+      // after the reset would see the new client.
+      const beforeSlot = state.slots.get('primary');
+
+      const r = await invoke(placeholders.get('device.disconnect')!, { slot: 'primary' });
+      expect(r.isError).toBeUndefined();
+      expect(r.payload).toEqual({ ok: true });
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      // Same SlotState wrapper, still present, but the client field has been
+      // reset (the BLE-connected client is replaced by a fresh placeholder).
+      expect(state.slots.has('primary')).toBe(true);
+      expect(state.slots.get('primary')).toBe(beforeSlot);
+      // The original `client` was the BLE-connected handle; after reset the
+      // slot points at a freshly-constructed VoltraClient stub.
+      expect(state.slots.get('primary')!.client).not.toBe(client as unknown);
+    });
+
+    it('rejects slot ids with whitespace at the schema layer (INVALID_INPUT)', async () => {
+      const reg = placeholders.get('device.connect')!;
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1', slot: 'left side' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      // Manager is never reached.
+      expect(state.manager.connect).not.toHaveBeenCalled();
     });
   });
 
