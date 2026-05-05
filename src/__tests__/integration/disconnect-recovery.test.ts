@@ -145,7 +145,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { Rep } from '@voltras/workout-analytics';
 import { z } from 'zod';
 
-const { bootstrapState } = await import('../../state/server-state.js');
+const { bootstrapState, getSlot } = await import('../../state/server-state.js');
 const { wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
@@ -218,9 +218,11 @@ async function buildHarness(): Promise<Harness> {
   const stateBox: { value?: ServerState } = {};
   const lazyState = {
     live: {
-      snapshotDevice: () => stateBox.value?.live.snapshotDevice() ?? { connected: false },
-      snapshotSession: () => stateBox.value?.live.snapshotSession(),
-      snapshotSet: () => stateBox.value?.live.snapshotSet(),
+      snapshotDevice: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
+      snapshotSession: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
+      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
     },
   } as Parameters<typeof registerDeviceResource>[1];
   registerDeviceResource(server, lazyState);
@@ -237,7 +239,8 @@ async function buildHarness(): Promise<Harness> {
   // pushes, but the bridge requires a valid `ChannelPublisher` argument.
   const channels = { publish: () => undefined };
   state.channels = channels;
-  wireEventBridge(state.client, state.live, server, channels);
+  const primary = getSlot(state);
+  wireEventBridge(primary.client, primary.live, server, channels);
 
   registerDeviceTools(server, state, placeholders);
   registerSessionTools(server, state, placeholders);
@@ -328,7 +331,7 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
 
     const connect = await call(h.client, 'device.connect', { deviceId });
     expect(connect.isError).toBeUndefined();
-    h.state.live.applySettings({
+    getSlot(h.state).live.applySettings({
       connected: true,
       deviceId,
       weightLbs: 100,
@@ -343,8 +346,8 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
     expect(setStart.isError).toBeUndefined();
     const setId = setStart.payload.setId as string;
 
-    h.state.live.appendRep(syntheticRep(1));
-    h.state.live.appendRep(syntheticRep(2));
+    getSlot(h.state).live.appendRep(syntheticRep(1));
+    getSlot(h.state).live.appendRep(syntheticRep(2));
 
     // ── Step 2: simulate disconnect via the same path the bridge would ──
     // The SDK does not expose `MockBLEAdapter.injectError` (see file header
@@ -352,7 +355,7 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
     // real `connectionState === 'disconnected'` event — that is what
     // exercises the partial-set persistence path the test cares about.
     const disconnectAt = new Date().toISOString();
-    h.state.live.markDisconnected(disconnectAt);
+    getSlot(h.state).live.markDisconnected(disconnectAt);
 
     // ── Step 3: set.end -> store carries partial: true + reason ─────────
     const setEnd = await call(h.client, 'set.end');

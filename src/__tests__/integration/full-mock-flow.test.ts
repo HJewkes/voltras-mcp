@@ -202,7 +202,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { Rep } from '@voltras/workout-analytics';
 import { z } from 'zod';
 
-const { bootstrapState } = await import('../../state/server-state.js');
+const { bootstrapState, getSlot } = await import('../../state/server-state.js');
 const { wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
@@ -294,9 +294,11 @@ async function buildHarness(): Promise<Harness> {
   const stateBox: { value?: ServerState } = {};
   const lazyState = {
     live: {
-      snapshotDevice: () => stateBox.value?.live.snapshotDevice() ?? { connected: false },
-      snapshotSession: () => stateBox.value?.live.snapshotSession(),
-      snapshotSet: () => stateBox.value?.live.snapshotSet(),
+      snapshotDevice: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
+      snapshotSession: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
+      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
     },
   } as Parameters<typeof registerDeviceResource>[1];
   registerDeviceResource(server, lazyState);
@@ -313,7 +315,8 @@ async function buildHarness(): Promise<Harness> {
   // pushes, but the bridge requires a valid `ChannelPublisher` argument.
   const channels = { publish: () => undefined };
   state.channels = channels;
-  wireEventBridge(state.client, state.live, server, channels);
+  const primary = getSlot(state);
+  wireEventBridge(primary.client, primary.live, server, channels);
 
   registerDeviceTools(server, state, placeholders);
   registerSessionTools(server, state, placeholders);
@@ -428,7 +431,7 @@ describe('VMCP full mock-adapter flow (integration)', () => {
 
     // Manually publish a settings update through `state.live` so the
     // persisted set captures a non-default training mode + weight.
-    h.state.live.applySettings({
+    getSlot(h.state).live.applySettings({
       connected: true,
       deviceId,
       ...(devices[0].name ? { deviceName: devices[0].name } : {}),
@@ -451,7 +454,7 @@ describe('VMCP full mock-adapter flow (integration)', () => {
 
     // ── Step 5: feed 5 reps + assert AC-15 (live count == set/active) ────
     for (let i = 0; i < 5; i += 1) {
-      h.state.live.appendRep(syntheticRep(i + 1));
+      getSlot(h.state).live.appendRep(syntheticRep(i + 1));
       const live = await call(h.client, 'set.live_metrics');
       expect(live.isError).toBeUndefined();
       const liveReps = live.payload.reps as unknown[] | undefined;
@@ -498,11 +501,11 @@ describe('VMCP full mock-adapter flow (integration)', () => {
     // can differ — buildProfile needs distinct (load, velocity) points.
     const session2 = await call(h.client, 'session.start', { exerciseName: 'Squat' });
     expect(session2.isError).toBeUndefined();
-    h.state.live.applySettings({ weightLbs: 110, trainingMode: 'WeightTraining' });
+    getSlot(h.state).live.applySettings({ weightLbs: 110, trainingMode: 'WeightTraining' });
     const set2 = await call(h.client, 'set.start');
     const set2Id = set2.payload.setId as string;
     for (let i = 0; i < 3; i += 1) {
-      h.state.live.appendRep(syntheticRep(i + 1));
+      getSlot(h.state).live.appendRep(syntheticRep(i + 1));
     }
     await call(h.client, 'set.end');
     await call(h.client, 'session.end');

@@ -28,7 +28,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
-import { bootstrapState } from './state/server-state.js';
+import { bootstrapState, getSlot } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
 import { McpChannelPublisher } from './state/channel-publisher.js';
 import { z } from 'zod';
@@ -147,14 +147,18 @@ export async function runServer(): Promise<void> {
 
   // Resources must be registered BEFORE `server.connect()` because
   // `registerResource` extends server capabilities, which the SDK forbids
-  // after transport connect. We pass a lazy `state.live` proxy that resolves
+  // after transport connect. We pass a lazy `live` proxy that resolves
   // through `stateBox.value` at callback time — populated after bootstrap.
+  // The proxy reads from the primary slot, which is the only slot Step 1
+  // wires up; resource fan-out across slots is a later wave.
   const stateBox: { value?: Awaited<ReturnType<typeof bootstrapState>> } = {};
   const lazyState = {
     live: {
-      snapshotDevice: () => stateBox.value?.live.snapshotDevice() ?? { connected: false },
-      snapshotSession: () => stateBox.value?.live.snapshotSession(),
-      snapshotSet: () => stateBox.value?.live.snapshotSet(),
+      snapshotDevice: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
+      snapshotSession: () =>
+        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
+      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
     },
   } as Parameters<typeof registerDeviceResource>[1];
   registerDeviceResource(server, lazyState);
@@ -169,14 +173,17 @@ export async function runServer(): Promise<void> {
     const state = await bootstrapState(config);
     state.channels = channels;
     stateBox.value = state;
-    // Wire the SDK event bridge once `state.client` exists. Listener slots
-    // on `VoltraClient` persist across `setAdapter`, so subscribing here
-    // (before the device.connect tool installs an adapter) is correct.
-    // `state` is threaded so the bridge can call `finalizeSet` when the
-    // device emits an out-of-grace `set_boundary` (user-pressed Stop on the
-    // Voltra UI). Without it, autonomous device-side set ends would be
-    // silently dropped — see event-bridge.ts:onSetBoundary.
-    wireEventBridge(state.client, state.live, server, channels, state);
+    // Wire the SDK event bridge for the primary slot once bootstrap has run.
+    // Listener slots on `VoltraClient` persist across `setAdapter`, so
+    // subscribing here (before the device.connect tool installs an adapter)
+    // is correct. `state` is threaded so the bridge can call `finalizeSet`
+    // when the device emits an out-of-grace `set_boundary` (user-pressed
+    // Stop on the Voltra UI). Without it, autonomous device-side set ends
+    // would be silently dropped — see event-bridge.ts:onSetBoundary.
+    // Per-slot bridge fan-out is a later step; today only the primary slot
+    // is wired.
+    const primary = getSlot(state);
+    wireEventBridge(primary.client, primary.live, server, channels, state);
     // Mock-only tools never have real handlers in node mode — drop their
     // placeholders so `tools/list` reflects only the real surface (R11).
     // In mock mode the placeholders remain for Wave 3 to hot-swap.
