@@ -9,21 +9,22 @@
 // avoids the `tools/list_changed` notification that fresh `server.tool()`
 // calls would emit.
 //
-// All BLE interaction flows through `state.manager` and `state.client` —
-// AC-14 forbids any direct BLE-adapter library references from this file.
+// All BLE interaction flows through `state.manager` and the slot's `client`
+// — AC-14 forbids any direct BLE-adapter library references from this file.
 //
 // ── Connection model ──────────────────────────────────────────────────────
 //
 // `device.connect` uses `state.manager.connect(device)` (the SDK's idiomatic
 // connection entry point). The manager creates an internal `VoltraClient`
-// for each connected device — distinct from the parameter-less
-// `state.client` allocated in `bootstrapState`. AC-26 specifies that
-// `device.get_state` reads from `state.client.*` getters, and Wave 2's
-// event-bridge subscribes to `state.client`. Reconciling the two clients
-// (e.g., proxying manager events through `state.client`, or replacing
-// `state.client` after connect with bridge re-wiring) is a Wave 4 concern;
-// this module satisfies the AC-26 contract by reading exactly the documented
-// getters and lets Wave 4 decide how `state.client` becomes connected.
+// for each connected device — distinct from the parameter-less client
+// allocated for the slot in `bootstrapState`. AC-26 specifies that
+// `device.get_state` reads from the slot's `client.*` getters, and Wave 2's
+// event-bridge subscribes to that same client. Reconciling the two clients
+// (e.g., proxying manager events through the slot's client, or replacing
+// the slot's client after connect with bridge re-wiring) is a Wave 4
+// concern; this module satisfies the AC-26 contract by reading exactly the
+// documented getters and lets Wave 4 decide how the slot's client becomes
+// connected.
 //
 // ── `device.scan` options shape ───────────────────────────────────────────
 //
@@ -37,29 +38,48 @@ import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
-import type { ServerState } from '../state/server-state.js';
-import { wireEventBridge } from '../state/event-bridge.js';
+import { SlotIdSchema } from '../schemas/common.js';
+import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
+import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
+import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
 // schemas). Each shape is small and tool-local; once Task 03 picks them up
 // they can be moved.
+//
+// `slot` is dual-Voltras Step 2 plumbing — every tool whose handler resolves
+// the slot accepts an optional slot id and falls back to PRIMARY_SLOT.
+// `device.disconnect` and `device.get_state` were `.strict()` before Step 2;
+// they remain strict so unknown fields still fail INVALID_INPUT, and `slot`
+// is the only non-error addition.
 const DeviceConnectInput = z.object({
   deviceId: z.string().min(1),
+  slot: SlotIdSchema,
 });
 
-const DeviceDisconnectInput = z.object({}).strict();
+const DeviceDisconnectInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
 
 const DeviceSetChainsInput = z.object({
   lbs: z.number().int().min(0).max(100),
+  slot: SlotIdSchema,
 });
 
 const DeviceSetEccentricInput = z.object({
   percent: z.number().int().min(-195).max(195),
+  slot: SlotIdSchema,
 });
 
-const DeviceGetStateInput = z.object({}).strict();
+const DeviceGetStateInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
 
 /**
  * Default scan timeout when the input omits `timeoutMs`. Mirrors the schema
@@ -111,7 +131,7 @@ function install<S extends z.ZodObject>(
  * tool-side code typed without bleeding SDK internals into every callsite.
  */
 export function registerDeviceTools(
-  server: McpServer,
+  _server: McpServer,
   state: ServerState,
   placeholders: Placeholders,
 ): void {
@@ -130,15 +150,48 @@ export function registerDeviceTools(
   );
 
   // device.connect — looks up the previously-discovered device by id and
-  // hands it to `manager.connect`. `ALREADY_CONNECTED` short-circuits when
-  // `state.client` reports a live connection (EC-08).
+  // hands it to `manager.connect`. Slot lifecycle (Step 3 of P0
+  // dual-Voltras):
+  //   * No `slot` arg: bind to PRIMARY_SLOT. ALREADY_CONNECTED if primary
+  //     is live — the user must pass an explicit `slot` to bring up a
+  //     second device.
+  //   * Explicit `slot: 'primary'`: same rules as above.
+  //   * Explicit `slot: <new-id>`: allocate the slot via `createSlot` so
+  //     the new client gets its own LiveState (independent session/set/rep
+  //     pipeline). Capped at MAX_SLOTS.
+  //   * Explicit `slot: <existing-id>`: error — disconnect first or pick
+  //     another slot.
+  //
+  // Known intermediate limitation: the event bridge is only re-wired for
+  // PRIMARY_SLOT. Frames, rep boundaries, and connection events from
+  // non-primary slots are NOT yet bridged. Step 4 fans the bridge out per
+  // slot with channel-meta tagging.
   install(
     placeholders,
     'device.connect',
     DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
-      if (state.client.isConnected) {
-        throwSdkLike('ALREADY_CONNECTED', 'A device is already connected.');
+      const slotId = input.slot ?? PRIMARY_SLOT;
+      const isNewSlot = !state.slots.has(slotId);
+      if (!isNewSlot) {
+        const existing = getSlot(state, slotId);
+        if (existing.client.isConnected) {
+          if (slotId === PRIMARY_SLOT) {
+            throwSdkLike(
+              'ALREADY_CONNECTED',
+              "Primary slot is already connected. Pass an explicit `slot` (e.g. 'left' or 'right') to connect a second device.",
+            );
+          }
+          throwSdkLike(
+            'ALREADY_CONNECTED',
+            `Slot \`${slotId}\` is already connected. Use device.disconnect first or pick another slot.`,
+          );
+        }
+      } else if (countConnectedSlots(state) >= MAX_SLOTS) {
+        throwSdkLike(
+          'SLOT_LIMIT_EXCEEDED',
+          `Maximum of ${MAX_SLOTS} slots supported in this release.`,
+        );
       }
       const device = state.manager.devices.find((d) => d.id === input.deviceId);
       if (device === undefined) {
@@ -148,14 +201,24 @@ export function registerDeviceTools(
         );
       }
       // `manager.connect` returns the SDK's connected `VoltraClient`, which
-      // is distinct from the parameter-less stub in `state.client` set at
-      // bootstrap. Reassign and re-wire the event bridge so onRepBoundary /
-      // onSettingsUpdate / onConnectionStateChange land on the right object.
-      // The old client's listeners stay attached but never fire (it was
-      // never connected to anything).
+      // is distinct from the parameter-less stub in the slot set at
+      // bootstrap. For the primary slot we reassign and re-wire the event
+      // bridge so onRepBoundary / onSettingsUpdate / onConnectionStateChange
+      // land on the right object. For new slots we allocate via
+      // `createSlot`, which self-wires the bridge against the new client
+      // (see slot-manager.ts).
       const client = await state.manager.connect(device);
-      state.client = client;
-      wireEventBridge(client, state.live, server, state.channels, state);
+      if (isNewSlot) {
+        createSlot(state, slotId, client);
+      } else {
+        const slot = getSlot(state, slotId);
+        // Unwire the existing bridge before swapping clients so listeners
+        // on the stale handle can't fire mid-rebind, then re-wire against
+        // the freshly-connected client.
+        slot.unwireBridge?.();
+        slot.client = client;
+        slot.unwireBridge = wireBridgeForSlot(state, slot);
+      }
       return { ok: true, deviceId: input.deviceId };
     }),
   );
@@ -164,14 +227,39 @@ export function registerDeviceTools(
   // routes through `manager.disconnect(deviceId)` (the SDK manages adapter
   // teardown). Does not call `manager.dispose()` — that would tear down the
   // shared adapter for every connection (and for future scans).
+  //
+  // Slot lifecycle (Step 3 of P0 dual-Voltras):
+  //   * No `slot` arg or `slot: 'primary'`: BLE-disconnect, then
+  //     `resetPrimarySlot` so the slot persists with a fresh client + fresh
+  //     LiveState (so the next single-device `device.connect` works).
+  //   * `slot: <other>`: BLE-disconnect, then `removeSlot` — the slot
+  //     ceases to exist, freeing the soft cap for a future allocation.
   install(
     placeholders,
     'device.disconnect',
     DeviceDisconnectInput,
-    wrapHandler(DeviceDisconnectInput, async () => {
-      const id = state.client.connectedDeviceId;
-      if (state.client.isConnected && id !== null) {
+    wrapHandler(DeviceDisconnectInput, async (input) => {
+      const slotId = input.slot ?? PRIMARY_SLOT;
+      const slot = getSlot(state, slotId);
+      const id = slot.client.connectedDeviceId;
+      const wasConnected = slot.client.isConnected && id !== null;
+      if (wasConnected) {
         await state.manager.disconnect(id);
+      }
+      // Slot teardown only runs when the slot was actually connected. A
+      // disconnect against an idle primary slot stays a true no-op (the
+      // existing test asserts manager.disconnect wasn't called); rebuilding
+      // a fresh client in that case would churn references for no reason.
+      // Non-primary slots are always removed when this tool is reached —
+      // the slot's existence implies a successful prior `device.connect`,
+      // so a `device.disconnect` on a non-primary slot is by definition a
+      // teardown.
+      if (slotId === PRIMARY_SLOT) {
+        if (wasConnected) {
+          resetPrimarySlot(state);
+        }
+      } else {
+        removeSlot(state, slotId);
       }
       return { ok: true };
     }),
@@ -184,7 +272,7 @@ export function registerDeviceTools(
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
-      await state.client.setWeight(input.lbs);
+      await getSlot(state, input.slot).client.setWeight(input.lbs);
       return { ok: true };
     }),
   );
@@ -199,7 +287,7 @@ export function registerDeviceTools(
     DeviceSetModeInput,
     wrapHandler(DeviceSetModeInput, async (input) => {
       const value = (TrainingMode as unknown as Record<string, number>)[input.mode];
-      await state.client.setMode(value as TrainingMode);
+      await getSlot(state, input.slot).client.setMode(value as TrainingMode);
       return { ok: true };
     }),
   );
@@ -210,7 +298,7 @@ export function registerDeviceTools(
     'device.set_chains',
     DeviceSetChainsInput,
     wrapHandler(DeviceSetChainsInput, async (input) => {
-      await state.client.setChains(input.lbs);
+      await getSlot(state, input.slot).client.setChains(input.lbs);
       return { ok: true };
     }),
   );
@@ -221,7 +309,7 @@ export function registerDeviceTools(
     'device.set_eccentric',
     DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
-      await state.client.setEccentric(input.percent);
+      await getSlot(state, input.slot).client.setEccentric(input.percent);
       return { ok: true };
     }),
   );
@@ -235,11 +323,12 @@ export function registerDeviceTools(
     placeholders,
     'device.get_state',
     DeviceGetStateInput,
-    wrapHandler(DeviceGetStateInput, async () => {
-      const isConnected = state.client.isConnected;
-      const connectionState = state.client.connectionState;
-      const deviceId = state.client.connectedDeviceId;
-      const settings = state.client.settings;
+    wrapHandler(DeviceGetStateInput, async (input) => {
+      const slot = getSlot(state, input.slot);
+      const isConnected = slot.client.isConnected;
+      const connectionState = slot.client.connectionState;
+      const deviceId = slot.client.connectedDeviceId;
+      const settings = slot.client.settings;
       const out: Record<string, unknown> = {
         connected: isConnected,
         connectionState,
@@ -276,4 +365,20 @@ function throwSdkLike(code: string, message: string): never {
   const err = new Error(message) as Error & { code: string };
   err.code = code;
   throw err;
+}
+
+/**
+ * Count slots whose client is actively connected. Mirrors the helper in
+ * `state/server-state.ts` but lives at the device-tools layer too so the
+ * `device.connect` precondition reads the same policy without crossing
+ * the abstraction boundary into state internals.
+ */
+function countConnectedSlots(state: ServerState): number {
+  let count = 0;
+  for (const slot of state.slots.values()) {
+    if (slot.client.isConnected) {
+      count += 1;
+    }
+  }
+  return count;
 }

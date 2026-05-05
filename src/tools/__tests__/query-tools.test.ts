@@ -124,11 +124,12 @@ function setup(): Harness {
   const live = new LiveState();
   const store = makeStore();
   const exercises = { search: () => [], getById: () => undefined } as unknown as ExerciseService;
+  const slots = new Map();
+  slots.set('primary', { slotId: 'primary', client: {} as never, live });
   const state = {
     config: {} as never,
     manager: {} as never,
-    client: {} as never,
-    live,
+    slots,
     store,
     exercises,
   } as unknown as ServerState;

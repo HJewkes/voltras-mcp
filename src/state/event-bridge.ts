@@ -2,9 +2,22 @@
 // and emits MCP `sendResourceUpdated` hints for the affected resource URIs.
 //
 // Wave 2C wiring (Task 09). Subscribes once per connect; the returned
-// unsubscribe handles are intentionally discarded — the client is owned by
-// `bootstrapState` for the lifetime of the process and is disposed via
-// `manager.dispose()` at shutdown, which clears every listener.
+// unsubscribe handles are kept on the slot (`slot.unwireBridge`) so a slot
+// teardown / primary reset can detach listeners from the stale client before
+// rebinding to a fresh one.
+//
+// ── Per-slot fan-out (Step 4 of P0 dual-Voltras) ──────────────────────────
+//
+// Bilateral lifts run two devices simultaneously, each owning its own slot.
+// `wireEventBridge(state)` is the bootstrap orchestrator that calls
+// `wireBridgeForSlot(state, slot)` for every slot currently in the slots map
+// (today: just primary). New slots wire/unwire automatically through the
+// `slot-manager.ts` lifecycle helpers (`createSlot` / `removeSlot` /
+// `resetPrimarySlot`), which import `wireBridgeForSlot` directly. Each
+// per-slot wirer captures the originating `slot.slotId` in its closures,
+// so every published channel event is tagged with `slot: <slotId>` (via
+// `state.channels.forSlot(...)`) and the autonomous `set_ended_by_device`
+// finalize knows which slot's set to close.
 //
 // ── Event mapping ─────────────────────────────────────────────────────────
 //
@@ -67,7 +80,7 @@
 // `no-floating-promises` linting.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { VoltraClient, TelemetryFrame } from '@voltras/node-sdk';
+import type { TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
@@ -83,7 +96,7 @@ import {
   triggerDedupeKey,
   type ActiveSetAtDisconnect,
 } from './channel-payloads.js';
-import type { ServerState } from './server-state.js';
+import type { ServerState, SlotState } from './server-state.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import { finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { log } from '../logger.js';
@@ -122,30 +135,56 @@ const SET_URI = 'voltra://set/active';
 const SET_START_GRACE_MS = 500;
 
 /**
- * Subscribe `live` to the SDK events on `client` and emit the matching
- * resource-updated notifications via `server`. Idempotent at the type
- * level — caller is expected to invoke once per server lifetime.
+ * Bootstrap orchestrator: wire the bridge for every slot currently in
+ * `state.slots` and populate each slot's `unwireBridge` tear-down hook in
+ * place. Each slot's listeners persist for the slot's lifetime and are torn
+ * down when the slot is removed (`removeSlot`) or its client is replaced
+ * (`resetPrimarySlot`). At bootstrap time only the primary slot exists;
+ * new slots subscribe on allocation through `createSlot` (slot-manager.ts).
  *
- * `channels` is invoked on rep finalization so the model wakes inline (via
- * `<channel>` tag delivery in Claude Code) rather than having to poll
- * `set.live_metrics`. Fire-and-forget: when the host wasn't launched with
- * `--channels`, publish is a no-op.
- *
- * `state` is optional only because a handful of unit tests construct the
- * bridge without a full `ServerState`. When `undefined`, the
- * `set_ended_by_device` finalize path is short-circuited (the bridge logs
- * the boundary to the debug buffer but does not persist or publish). All
- * production wiring (`server.ts` / `device-tools.ts:device.connect`) MUST
- * pass `state` so the autonomous-device-stop path is active.
+ * Returns a single `unwireAll` function that tears down every per-slot
+ * subscription. Mostly useful in tests; `runServer` keeps the
+ * subscriptions for the process lifetime and lets `manager.dispose()`
+ * clear listeners on shutdown.
  */
-export function wireEventBridge(
-  client: VoltraClient,
-  live: LiveState,
-  server: McpServer,
-  channels: ChannelPublisher,
-  state?: ServerState,
-): void {
+export function wireEventBridge(state: ServerState): () => void {
+  const unwirers: Array<() => void> = [];
+  for (const slot of state.slots.values()) {
+    const unwire = wireBridgeForSlot(state, slot);
+    slot.unwireBridge = unwire;
+    unwirers.push(unwire);
+  }
+  return () => {
+    for (const u of unwirers) {
+      u();
+    }
+  };
+}
+
+/**
+ * Subscribe the bridge to a single slot's `client`. Returns the unwire hook
+ * the caller stashes on `slot.unwireBridge` so the slot can detach listeners
+ * when its client is swapped or the slot itself is removed.
+ *
+ * Captures the slot reference in a closure so every event handler knows
+ * which slot's `live` / `client` to operate on, and every published channel
+ * event is auto-tagged with `slot: slot.slotId` via
+ * `state.channels.forSlot(...)`. `finalizeSet` calls thread the slot id so
+ * the autonomous device-signal path closes the correct slot's set instead
+ * of always defaulting to primary.
+ *
+ * Tolerates `state.server === undefined` (test wiring that constructs a
+ * partial ServerState) by skipping resource-updated notifications. The
+ * channel + finalize paths still run so unit tests can observe them.
+ */
+export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => void {
+  const { client, live } = slot;
+  const slotId = slot.slotId;
+  const server = state.server;
+  const channels = state.channels;
+  const slotChannels = channels.forSlot(slotId);
   const debug = getDebugBuffers();
+  const unsubs: Array<() => void> = [];
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -160,189 +199,244 @@ export function wireEventBridge(
   // `onSetBoundary` for state mutation either — the device emits it
   // continuously during workout mode, not just at end-of-set, and the set
   // lifecycle is owned by the explicit `set.start`/`set.end` tools.
-  client.onFrame((frame: TelemetryFrame) => {
-    debug.frames.push({
-      sequence: frame.sequence,
-      timestamp: frame.timestamp,
-      phase: frame.phase as unknown as number,
-      position: frame.position,
-      velocity: frame.velocity,
-      force: frame.force,
-    });
+  pushUnsub(
+    unsubs,
+    client.onFrame((frame: TelemetryFrame) => {
+      debug.frames.push({
+        sequence: frame.sequence,
+        timestamp: frame.timestamp,
+        phase: frame.phase as unknown as number,
+        position: frame.position,
+        velocity: frame.velocity,
+        force: frame.force,
+      });
 
-    if (live.snapshotSet() === undefined) return;
+      if (live.snapshotSet() === undefined) return;
 
-    const phase = frame.phase as unknown as number;
-    if (phase === SDK_PHASE_UNKNOWN) return;
+      const phase = frame.phase as unknown as number;
+      if (phase === SDK_PHASE_UNKNOWN) return;
 
-    const previousRepCount = live.snapshotSet()?.reps.length ?? 0;
-    live.processSample({
-      sequence: frame.sequence,
-      timestamp: frame.timestamp,
-      phase: phase as unknown as WorkoutSample['phase'],
-      position: frame.position,
-      velocity: Math.abs(frame.velocity),
-      force: Math.abs(frame.force),
-    });
-    const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
-    if (nextRepCount !== previousRepCount) {
-      notify(server, SET_URI);
-      // Publish a `rep_finalized` channel event only when a rep has actually
-      // closed. Per workout-analytics's `addSampleToSet`:
-      //   - The first CONCENTRIC sample creates rep 1 in-progress (length
-      //     0 -> 1). Nothing has finalized yet, so do not publish.
-      //   - Every subsequent ECCENTRIC -> CONCENTRIC transition appends a
-      //     new in-progress rep AND leaves the previously-final rep
-      //     untouched. That's the moment the prior rep is "done" — it sits
-      //     at index `nextRepCount - 2` while the new in-progress rep is
-      //     at `nextRepCount - 1`.
-      //   - The terminal rep (rep N) never closes via a phase transition;
-      //     `set.end` -> `completeSet` finalizes it and the `set_ended`
-      //     channel event from set-tools.ts covers that case.
-      // Net coverage: reps 1..N-1 emit `rep_finalized` (each fires when the
-      // *next* rep begins — small lag the coaching surface should expect),
-      // and rep N is delivered inside `set_ended`.
-      const set = live.snapshotSet();
-      if (set !== undefined && set.reps.length >= 2) {
-        const finalizedIndex = set.reps.length - 2;
-        const finalizedRep = set.reps[finalizedIndex];
-        const device = live.snapshotDevice();
-        // The summary + structured rep/set_context payload is built by
-        // `buildRepFinalizedPayload` so the channel-content contract lives
-        // in one place (see channel-payloads.ts). The model can read the
-        // summary line for an at-a-glance update or drill into the JSON
-        // body for per-phase peak/mean velocities, ROM, peak force, and
-        // rep_count_so_far without a follow-up `set.get`.
-        const payload = buildRepFinalizedPayload(
-          finalizedRep,
-          finalizedIndex,
-          set,
-          device,
-          set.reps.length,
-        );
-        channels.publish(payload);
-        // Reset the idle watchdog — an active lifter must never trip the
-        // abandonment alarm. Safe to call unconditionally; no-op when the
-        // set has no idle_timeout_ms specs registered.
-        if (state !== undefined && set.watch !== undefined) {
-          resetIdleWatchdog(state, set.setId, set.watch);
-        }
-        // Evaluate any registered trigger DSL specs against the finalized
-        // rep. Trigger events publish BEFORE finalizeSet (which publishes
-        // set_ended) so PT Claude reads `<set_target_reached>` /
-        // `<velocity_loss_exceeded>` first and `<set_ended>` second. State
-        // is required for the auto-stop path; without it (test wiring)
-        // notify-only triggers still fire but stopOn becomes a no-op.
-        evaluateRepTriggers(live, channels, finalizedIndex, finalizedRep, device, state);
-      }
-    }
-  });
-
-  client.onRepBoundary(() => {
-    // Device fires this at every phase transition (concentric→eccentric,
-    // eccentric→idle), so it is unreliable as a "rep complete" signal.
-    // Logged for diagnostic visibility only — rep boundaries are detected
-    // from frames in `LiveState.processSample`.
-    debug.events.push({
-      capturedAt: Date.now(),
-      type: 'rep_boundary',
-      payload: { repsSoFar: live.snapshotSet()?.reps.length ?? 0 },
-    });
-  });
-
-  client.onSetBoundary(() => {
-    // Device emits this continuously during workout mode — most are noise
-    // (the firmware's response to our Workout.GO engage command, fired
-    // ~immediately after `set.start`). The bridge ignores boundaries
-    // within the SET_START_GRACE_MS window of the active set's startedAt;
-    // outside that window with an active set, the boundary is the user
-    // pressing Stop on the unit and we finalize via the shared helper.
-    //
-    // Race-condition guard: when the explicit `set.end` tool runs, it
-    // mutates LiveState first, so by the time the device's set_boundary
-    // arrives (the firmware always emits one in response to Workout.STOP),
-    // `live.snapshotSet()` is already `undefined` and the `if` below is a
-    // silent no-op. Tests in event-bridge.test.ts pin this — see the
-    // "explicit set.end finalization" describe block.
-    const activeSet = live.snapshotSet();
-    debug.events.push({
-      capturedAt: Date.now(),
-      type: 'set_boundary',
-      payload: { hadActiveSet: activeSet !== undefined },
-    });
-    if (activeSet === undefined || state === undefined) {
-      return;
-    }
-    const startedMs = Date.parse(activeSet.startedAt);
-    if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
-      return;
-    }
-    notify(server, SET_URI);
-    // Fire-and-forget the persist + publish chain. The void-discard here
-    // is deliberate — the SDK callback signature is sync, and we don't
-    // want a slow store.putSet to block other event handlers. Errors are
-    // logged at warn so they're visible without crashing the bridge.
-    void finalizeSet(state, { cause: 'device_signal', disengageMotor: false }).catch((err) => {
-      log.warn('event-bridge: set_ended_by_device finalize failed', err);
-    });
-  });
-
-  client.onSettingsUpdate((settings: SdkSettingsUpdate) => {
-    debug.events.push({
-      capturedAt: Date.now(),
-      type: 'settings_update',
-      payload: {
-        weight: settings.weight ?? settings.baseWeight ?? null,
-        mode: settings.mode ?? settings.trainingMode ?? null,
-        battery: settings.battery ?? null,
-      },
-    });
-    live.applySettings(settingsToSnapshot(settings));
-    notify(server, DEVICE_URI);
-  });
-
-  client.onConnectionStateChange((connState) => {
-    debug.events.push({
-      capturedAt: Date.now(),
-      type: 'connection_state_change',
-      payload: { state: connState },
-    });
-    // Snapshot the active set BEFORE any cascade so a disconnect-mid-set
-    // payload still carries the set context. `markDisconnected` does not
-    // currently clear the set in LiveState, but taking the snapshot up
-    // front future-proofs against that ordering changing.
-    const activeSetBefore = live.snapshotSet();
-    live.applySettings({ connected: connState === 'connected' });
-    notify(server, DEVICE_URI);
-    if (connState === 'disconnected') {
-      live.markDisconnected(new Date().toISOString());
-      notify(server, SESSION_URI);
-      notify(server, SET_URI);
-    }
-    // Build the channel payload AFTER the LiveState mutations so the
-    // device snapshot reflects post-transition state (notably the
-    // `disconnectedAt` timestamp set by `markDisconnected`). The active-set
-    // snapshot, on the other hand, is the pre-cascade copy.
-    const activeSetForPayload: ActiveSetAtDisconnect | null =
-      connState === 'disconnected' && activeSetBefore !== undefined
-        ? {
-            set_id: activeSetBefore.setId,
-            rep_count_so_far: activeSetBefore.reps.length,
-            weight_lbs: live.snapshotDevice().weightLbs ?? null,
-            training_mode: live.snapshotDevice().trainingMode ?? null,
+      const previousRepCount = live.snapshotSet()?.reps.length ?? 0;
+      live.processSample({
+        sequence: frame.sequence,
+        timestamp: frame.timestamp,
+        phase: phase as unknown as WorkoutSample['phase'],
+        position: frame.position,
+        velocity: Math.abs(frame.velocity),
+        force: Math.abs(frame.force),
+      });
+      const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
+      if (nextRepCount !== previousRepCount) {
+        notify(server, SET_URI);
+        // Publish a `rep_finalized` channel event only when a rep has
+        // actually closed. Per workout-analytics's `addSampleToSet`:
+        //   - The first CONCENTRIC sample creates rep 1 in-progress
+        //     (length 0 -> 1). Nothing has finalized yet, so do not
+        //     publish.
+        //   - Every subsequent ECCENTRIC -> CONCENTRIC transition
+        //     appends a new in-progress rep AND leaves the previously-
+        //     final rep untouched. That's the moment the prior rep is
+        //     "done" — it sits at index `nextRepCount - 2` while the new
+        //     in-progress rep is at `nextRepCount - 1`.
+        //   - The terminal rep (rep N) never closes via a phase
+        //     transition; `set.end` -> `completeSet` finalizes it and
+        //     the `set_ended` channel event from set-tools.ts covers
+        //     that case.
+        // Net coverage: reps 1..N-1 emit `rep_finalized` (each fires
+        // when the *next* rep begins — small lag the coaching surface
+        // should expect), and rep N is delivered inside `set_ended`.
+        const set = live.snapshotSet();
+        if (set !== undefined && set.reps.length >= 2) {
+          const finalizedIndex = set.reps.length - 2;
+          const finalizedRep = set.reps[finalizedIndex];
+          const device = live.snapshotDevice();
+          // The summary + structured rep/set_context payload is built
+          // by `buildRepFinalizedPayload` so the channel-content
+          // contract lives in one place (see channel-payloads.ts). The
+          // model can read the summary line for an at-a-glance update
+          // or drill into the JSON body for per-phase peak/mean
+          // velocities, ROM, peak force, and rep_count_so_far without a
+          // follow-up `set.get`.
+          const payload = buildRepFinalizedPayload(
+            finalizedRep,
+            finalizedIndex,
+            set,
+            device,
+            set.reps.length,
+          );
+          slotChannels.publish(payload);
+          // Reset the idle watchdog — an active lifter must never trip
+          // the abandonment alarm. Safe to call unconditionally; no-op
+          // when the set has no idle_timeout_ms specs registered.
+          if (set.watch !== undefined) {
+            resetIdleWatchdog(state, set.setId, set.watch);
           }
-        : null;
-    const payload = buildConnectionChangedPayload(
-      connState,
-      live.snapshotDevice(),
-      activeSetForPayload,
-    );
-    channels.publish(payload);
-  });
+          // Evaluate any registered trigger DSL specs against the
+          // finalized rep. Trigger events publish BEFORE finalizeSet
+          // (which publishes set_ended) so PT Claude reads
+          // `<set_target_reached>` / `<velocity_loss_exceeded>` first
+          // and `<set_ended>` second.
+          evaluateRepTriggers(
+            live,
+            slotChannels,
+            finalizedIndex,
+            finalizedRep,
+            device,
+            state,
+            slotId,
+          );
+        }
+      }
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onRepBoundary(() => {
+      // Device fires this at every phase transition
+      // (concentric→eccentric, eccentric→idle), so it is unreliable as
+      // a "rep complete" signal. Logged for diagnostic visibility only
+      // — rep boundaries are detected from frames in
+      // `LiveState.processSample`.
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'rep_boundary',
+        payload: { repsSoFar: live.snapshotSet()?.reps.length ?? 0 },
+      });
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onSetBoundary(() => {
+      // Device emits this continuously during workout mode — most are
+      // noise (the firmware's response to our Workout.GO engage
+      // command, fired ~immediately after `set.start`). The bridge
+      // ignores boundaries within the SET_START_GRACE_MS window of the
+      // active set's startedAt; outside that window with an active set,
+      // the boundary is the user pressing Stop on the unit and we
+      // finalize via the shared helper.
+      //
+      // Race-condition guard: when the explicit `set.end` tool runs, it
+      // mutates LiveState first, so by the time the device's
+      // set_boundary arrives (the firmware always emits one in response
+      // to Workout.STOP), `live.snapshotSet()` is already `undefined`
+      // and the `if` below is a silent no-op. Tests in
+      // event-bridge.test.ts pin this — see the "explicit set.end
+      // finalization" describe block.
+      const activeSet = live.snapshotSet();
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'set_boundary',
+        payload: { hadActiveSet: activeSet !== undefined },
+      });
+      if (activeSet === undefined) {
+        return;
+      }
+      const startedMs = Date.parse(activeSet.startedAt);
+      if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
+        return;
+      }
+      notify(server, SET_URI);
+      // Fire-and-forget the persist + publish chain. The void-discard
+      // here is deliberate — the SDK callback signature is sync, and we
+      // don't want a slow store.putSet to block other event handlers.
+      // Errors are logged at warn so they're visible without crashing
+      // the bridge.
+      void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
+        (err) => {
+          log.warn('event-bridge: set_ended_by_device finalize failed', err);
+        },
+      );
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onSettingsUpdate((settings: SdkSettingsUpdate) => {
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'settings_update',
+        payload: {
+          weight: settings.weight ?? settings.baseWeight ?? null,
+          mode: settings.mode ?? settings.trainingMode ?? null,
+          battery: settings.battery ?? null,
+        },
+      });
+      live.applySettings(settingsToSnapshot(settings));
+      notify(server, DEVICE_URI);
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onConnectionStateChange((connState) => {
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'connection_state_change',
+        payload: { state: connState },
+      });
+      // Snapshot the active set BEFORE any cascade so a
+      // disconnect-mid-set payload still carries the set context.
+      // `markDisconnected` does not currently clear the set in
+      // LiveState, but taking the snapshot up front future-proofs
+      // against that ordering changing.
+      const activeSetBefore = live.snapshotSet();
+      live.applySettings({ connected: connState === 'connected' });
+      notify(server, DEVICE_URI);
+      if (connState === 'disconnected') {
+        live.markDisconnected(new Date().toISOString());
+        notify(server, SESSION_URI);
+        notify(server, SET_URI);
+      }
+      // Build the channel payload AFTER the LiveState mutations so the
+      // device snapshot reflects post-transition state (notably the
+      // `disconnectedAt` timestamp set by `markDisconnected`). The
+      // active-set snapshot, on the other hand, is the pre-cascade copy.
+      const activeSetForPayload: ActiveSetAtDisconnect | null =
+        connState === 'disconnected' && activeSetBefore !== undefined
+          ? {
+              set_id: activeSetBefore.setId,
+              rep_count_so_far: activeSetBefore.reps.length,
+              weight_lbs: live.snapshotDevice().weightLbs ?? null,
+              training_mode: live.snapshotDevice().trainingMode ?? null,
+            }
+          : null;
+      const payload = buildConnectionChangedPayload(
+        connState,
+        live.snapshotDevice(),
+        activeSetForPayload,
+      );
+      slotChannels.publish(payload);
+    }),
+  );
+
+  return () => {
+    for (const u of unsubs) {
+      u();
+    }
+  };
 }
 
-function notify(server: McpServer, uri: string): void {
+/**
+ * Capture an SDK `on*` return value as an unsubscribe entry. The SDK
+ * documents its `on*` listeners as returning a `() => void` unsubscribe
+ * handle, but the runtime / mock shape varies — some fakes return
+ * `undefined`, and a few older paths return a plain `void`. We narrow at
+ * the push site rather than scattering the guard across each subscription.
+ */
+function pushUnsub(unsubs: Array<() => void>, handle: unknown): void {
+  if (typeof handle === 'function') {
+    unsubs.push(handle as () => void);
+  }
+}
+
+function notify(server: McpServer | undefined, uri: string): void {
   // Fire-and-forget: the notification is a best-effort poll hint per R14.
+  // `server` is optional to keep test wirings (which build a partial
+  // ServerState) from having to construct an McpServer just to observe
+  // channel publishes — a missing server skips the resource hint.
+  if (server === undefined) return;
   void server.server.sendResourceUpdated({ uri });
 }
 
@@ -368,7 +462,8 @@ function evaluateRepTriggers(
   finalizedIndex: number,
   finalizedRep: Rep,
   device: DeviceSnapshot,
-  state: ServerState | undefined,
+  state: ServerState,
+  slotId: string,
 ): void {
   const set = live.snapshotSet();
   if (set === undefined || set.watch === undefined) {
@@ -443,8 +538,8 @@ function evaluateRepTriggers(
     evaluateSpec(spec, true);
   }
 
-  if (stopFired && state !== undefined && stopCause !== undefined) {
-    void finalizeSet(state, {
+  if (stopFired && stopCause !== undefined) {
+    void finalizeSet(state, slotId, {
       cause: 'tool',
       disengageMotor: true,
       partialReason: 'auto_stopped',

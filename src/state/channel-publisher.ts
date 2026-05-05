@@ -32,6 +32,43 @@ export interface ChannelEvent {
 
 export interface ChannelPublisher {
   publish(event: ChannelEvent): void;
+  /**
+   * Return a publisher that auto-injects `slot: slotId` into every event's
+   * meta. Step 4 of P0 dual-Voltras support — bilateral coaching surfaces
+   * need every channel event tagged with the originating slot so they can
+   * tell left-arm rep events from right-arm ones. Single-device flows go
+   * through the primary slot, so existing pipelines see `slot: 'primary'`
+   * (a meta-key addition, not a behavior change). The returned publisher
+   * preserves the underlying transport: forSlot() on a no-op publisher is
+   * still a no-op.
+   */
+  forSlot(slotId: string): ChannelPublisher;
+}
+
+/**
+ * Build a slot-scoped publisher around an existing one. The wrapper passes
+ * every publish through to `inner`, but spreads `slot: slotId` into the meta
+ * first so explicit `slot` keys on the event still win (defensive — no caller
+ * should set `slot` directly, but the merge order means a hand-set value
+ * overrides the slot-scope tag rather than silently colliding).
+ */
+function slotScopedPublisher(inner: ChannelPublisher, slotId: string): ChannelPublisher {
+  return {
+    publish(event: ChannelEvent): void {
+      inner.publish({
+        content: event.content,
+        meta: { slot: slotId, ...event.meta },
+      });
+    },
+    forSlot(nextSlotId: string): ChannelPublisher {
+      // Re-scoping a slot publisher rebases on the underlying transport so
+      // chained `.forSlot('a').forSlot('b')` lands on `slot: 'b'`. Without
+      // this rebase the merge above would let the outer slot win (`{slot: 'a',
+      // ...{slot: 'b'}}` = 'b' — fine in this direction, but the explicit
+      // rebase keeps the contract obvious).
+      return slotScopedPublisher(inner, nextSlotId);
+    },
+  };
 }
 
 /**
@@ -50,4 +87,19 @@ export class McpChannelPublisher implements ChannelPublisher {
       params: { content: event.content, meta: event.meta },
     });
   }
+
+  forSlot(slotId: string): ChannelPublisher {
+    return slotScopedPublisher(this, slotId);
+  }
 }
+
+/**
+ * No-op publisher used when channels aren't wired (tests, hosts launched
+ * without --channels). Provides a `forSlot` that returns the same no-op so
+ * slot-scoped publish callers never have to special-case the channel
+ * transport.
+ */
+export const noopChannelPublisher: ChannelPublisher = {
+  publish: () => undefined,
+  forSlot: () => noopChannelPublisher,
+};

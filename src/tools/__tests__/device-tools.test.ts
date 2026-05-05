@@ -59,6 +59,20 @@ const FakeTrainingMode = {
 vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: FakeTrainingMode,
   VoltraSDKError: FakeVoltraSDKError,
+  // Stubbed for `resetPrimarySlot`, which constructs a fresh placeholder
+  // client when an actually-connected primary slot disconnects (Step 3 of
+  // dual-Voltras). The body is unused — the production helper only needs
+  // a constructable shape, and the slot reference goes stale immediately
+  // after disconnect anyway.
+  VoltraClient: class {},
+}));
+
+// Stub the per-slot event-bridge wirer used by `slot-manager` and the
+// primary-rebind branch of `device.connect`. The device-tools tests don't
+// observe channel/publisher behavior — only slot-map and SDK call-shape
+// invariants — so a no-op wirer keeps the fake state minimal.
+vi.mock('../../state/event-bridge.js', () => ({
+  wireBridgeForSlot: vi.fn(() => vi.fn()),
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
@@ -192,16 +206,40 @@ const DEVICE_TOOL_NAMES = [
   'device.get_state',
 ] as const;
 
+interface FakeSlot {
+  slotId: string;
+  client: FakeClient;
+  // `live` is unused by device-tools — present so the slot satisfies SlotState's shape.
+  live: Record<string, never>;
+}
+
 interface State {
   manager: FakeManager;
-  client: FakeClient;
+  slots: Map<string, FakeSlot>;
 }
 
 function makeState(): State {
+  const slots = new Map<string, FakeSlot>();
+  slots.set('primary', { slotId: 'primary', client: makeFakeClient(), live: {} });
   return {
     manager: makeFakeManager(),
-    client: makeFakeClient(),
+    slots,
   };
+}
+
+/**
+ * Convenience accessor — every test was written against a flat `state.client`
+ * before Step 1 of dual-Voltras introduced slots. Returning the primary slot's
+ * client keeps the test bodies single-line without re-implementing the
+ * production `getSlot` helper.
+ */
+function primaryClient(state: State): FakeClient {
+  return state.slots.get('primary')!.client;
+}
+
+function setPrimaryClient(state: State, client: FakeClient): void {
+  const slot = state.slots.get('primary')!;
+  slot.client = client;
 }
 
 // Helper: invoke a registered tool and parse the result envelope.
@@ -312,9 +350,10 @@ describe('registerDeviceTools', () => {
       expect(state.manager.connect).not.toHaveBeenCalled();
     });
 
-    it('returns ALREADY_CONNECTED when state.client is already connected (EC-08)', async () => {
-      state.client.isConnected = true;
-      state.client.connectedDeviceId = 'V-existing';
+    it('returns ALREADY_CONNECTED when the primary slot client is already connected (EC-08)', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-existing';
       state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
       const reg = placeholders.get('device.connect')!;
       const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
@@ -337,8 +376,9 @@ describe('registerDeviceTools', () => {
 
   describe('device.disconnect', () => {
     it('calls manager.disconnect for the active deviceId and returns ok:true', async () => {
-      state.client.isConnected = true;
-      state.client.connectedDeviceId = 'V-1';
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
       const reg = placeholders.get('device.disconnect')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
@@ -355,13 +395,203 @@ describe('registerDeviceTools', () => {
     });
   });
 
+  // ── Slot lifecycle (Step 3 of dual-Voltras) ───────────────────────────
+  //
+  // Connect / disconnect cooperating with the slots map. New slot creation
+  // is the path that actually exercises `state.slots.size` change; the
+  // primary-only path is covered exhaustively above. Bridge fan-out is a
+  // Step 4 concern, so these tests do not assert on event delivery.
+  describe('device.connect / device.disconnect slot lifecycle', () => {
+    it("explicit slot:'left' creates a new slot in state.slots after manager.connect resolves", async () => {
+      state.manager.devices = [{ id: 'V-1', name: 'Voltra-1', rssi: -50 }];
+      const connected = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(connected);
+      const reg = placeholders.get('device.connect')!;
+
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1', slot: 'left' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true, deviceId: 'V-1' });
+
+      // Slot map now has both 'primary' and 'left'.
+      expect(state.slots.size).toBe(2);
+      expect(state.slots.has('left')).toBe(true);
+      // The new slot's client is the one returned by manager.connect — not
+      // the placeholder allocated at bootstrap.
+      expect(state.slots.get('left')!.client).toBe(connected as unknown);
+    });
+
+    it('connecting twice to the same explicit slot returns ALREADY_CONNECTED', async () => {
+      state.manager.devices = [
+        { id: 'V-1', name: null, rssi: null },
+        { id: 'V-2', name: null, rssi: null },
+      ];
+      const first = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(first);
+      const reg = placeholders.get('device.connect')!;
+      await invoke(reg, { deviceId: 'V-1', slot: 'left' });
+
+      const second = await invoke(reg, { deviceId: 'V-2', slot: 'left' });
+      expect(second.isError).toBe(true);
+      expect(second.payload.code).toBe('ALREADY_CONNECTED');
+      // Helpful message names the slot.
+      expect(String(second.payload.message)).toMatch(/`left`/);
+      // No second manager.connect call.
+      expect(state.manager.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('connect with no slot when primary is taken returns ALREADY_CONNECTED with the dual-device hint', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-existing';
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const reg = placeholders.get('device.connect')!;
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('ALREADY_CONNECTED');
+      // Message should hint at the explicit-slot escape hatch.
+      expect(String(payload.message)).toMatch(/Primary slot is already connected/i);
+      expect(String(payload.message)).toMatch(/explicit `slot`/i);
+    });
+
+    it('rejects a third connected slot with SLOT_LIMIT_EXCEEDED (max 2 connected devices)', async () => {
+      // Step 4 of dual-Voltras: the cap counts CONNECTED slots, not total
+      // map size. Primary's bootstrap stub (`isConnected=false`) is
+      // invisible to the cap, so a true bilateral allocation
+      // (`'left'` + `'right'`) succeeds. To trip the cap we have to bind
+      // primary first (single-device flow) and THEN attempt left + right.
+      state.manager.devices = [
+        { id: 'V-PRIMARY', name: null, rssi: null },
+        { id: 'V-LEFT', name: null, rssi: null },
+        { id: 'V-RIGHT', name: null, rssi: null },
+      ];
+      const reg = placeholders.get('device.connect')!;
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-PRIMARY',
+        }),
+      );
+      await invoke(reg, { deviceId: 'V-PRIMARY' });
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-LEFT',
+        }),
+      );
+      await invoke(reg, { deviceId: 'V-LEFT', slot: 'left' });
+
+      // primary + left both connected ⇒ the cap is full.
+      const third = await invoke(reg, { deviceId: 'V-RIGHT', slot: 'right' });
+      expect(third.isError).toBe(true);
+      expect(third.payload.code).toBe('SLOT_LIMIT_EXCEEDED');
+      expect(state.slots.has('right')).toBe(false);
+    });
+
+    it('allows two non-primary slots when primary is idle (true bilateral)', async () => {
+      // The bilateral case the cap relaxation was sized for: primary
+      // remains in the map (bootstrap leftover) but isConnected=false,
+      // so allocating both `'left'` and `'right'` lands two real devices
+      // without tripping the cap.
+      state.manager.devices = [
+        { id: 'V-LEFT', name: null, rssi: null },
+        { id: 'V-RIGHT', name: null, rssi: null },
+      ];
+      const reg = placeholders.get('device.connect')!;
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-LEFT',
+        }),
+      );
+      const r1 = await invoke(reg, { deviceId: 'V-LEFT', slot: 'left' });
+      expect(r1.isError).toBeUndefined();
+
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-RIGHT',
+        }),
+      );
+      const r2 = await invoke(reg, { deviceId: 'V-RIGHT', slot: 'right' });
+      expect(r2.isError).toBeUndefined();
+      expect(state.slots.has('left')).toBe(true);
+      expect(state.slots.has('right')).toBe(true);
+    });
+
+    it("disconnecting an explicit 'left' slot removes it from state.slots", async () => {
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const connected = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(connected);
+      await invoke(placeholders.get('device.connect')!, { deviceId: 'V-1', slot: 'left' });
+      expect(state.slots.has('left')).toBe(true);
+
+      const r = await invoke(placeholders.get('device.disconnect')!, { slot: 'left' });
+      expect(r.isError).toBeUndefined();
+      expect(r.payload).toEqual({ ok: true });
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      // Slot is gone — primary remains.
+      expect(state.slots.has('left')).toBe(false);
+      expect(state.slots.has('primary')).toBe(true);
+    });
+
+    it("disconnecting 'primary' resets the slot in place (does not delete it)", async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      // Capture the SlotState wrapper before reset — `resetPrimarySlot`
+      // mutates `slot.client` in place, so reading from the same reference
+      // after the reset would see the new client.
+      const beforeSlot = state.slots.get('primary');
+
+      const r = await invoke(placeholders.get('device.disconnect')!, { slot: 'primary' });
+      expect(r.isError).toBeUndefined();
+      expect(r.payload).toEqual({ ok: true });
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      // Same SlotState wrapper, still present, but the client field has been
+      // reset (the BLE-connected client is replaced by a fresh placeholder).
+      expect(state.slots.has('primary')).toBe(true);
+      expect(state.slots.get('primary')).toBe(beforeSlot);
+      // The original `client` was the BLE-connected handle; after reset the
+      // slot points at a freshly-constructed VoltraClient stub.
+      expect(state.slots.get('primary')!.client).not.toBe(client as unknown);
+    });
+
+    it('rejects slot ids with whitespace at the schema layer (INVALID_INPUT)', async () => {
+      const reg = placeholders.get('device.connect')!;
+      const { isError, payload } = await invoke(reg, { deviceId: 'V-1', slot: 'left side' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      // Manager is never reached.
+      expect(state.manager.connect).not.toHaveBeenCalled();
+    });
+  });
+
   describe('device.set_weight', () => {
     it('forwards lbs to client.setWeight and returns ok:true', async () => {
       const reg = placeholders.get('device.set_weight')!;
       const { isError, payload } = await invoke(reg, { lbs: 50 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setWeight).toHaveBeenCalledWith(50);
+      expect(primaryClient(state).setWeight).toHaveBeenCalledWith(50);
     });
 
     it('rejects out-of-range lbs with INVALID_INPUT', async () => {
@@ -369,7 +599,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 999 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
-      expect(state.client.setWeight).not.toHaveBeenCalled();
+      expect(primaryClient(state).setWeight).not.toHaveBeenCalled();
     });
   });
 
@@ -379,7 +609,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { mode: 'WeightTraining' });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
+      expect(primaryClient(state).setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
     });
 
     it('rejects "Idle" with INVALID_INPUT (EC-05) — Idle is not user-selectable', async () => {
@@ -387,7 +617,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { mode: 'Idle' });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
-      expect(state.client.setMode).not.toHaveBeenCalled();
+      expect(primaryClient(state).setMode).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown mode string with INVALID_INPUT', async () => {
@@ -404,7 +634,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 25 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setChains).toHaveBeenCalledWith(25);
+      expect(primaryClient(state).setChains).toHaveBeenCalledWith(25);
     });
   });
 
@@ -414,7 +644,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { percent: -50 });
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
-      expect(state.client.setEccentric).toHaveBeenCalledWith(-50);
+      expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
     });
 
     it('rejects percent outside [-195, 195] with INVALID_INPUT', async () => {
@@ -430,7 +660,7 @@ describe('registerDeviceTools', () => {
       // Track which getters were read to satisfy AC-26's spy assertion.
       const reads: string[] = [];
       const tracked = {
-        ...state.client,
+        ...primaryClient(state),
         get isConnected() {
           reads.push('isConnected');
           return true;
@@ -456,7 +686,7 @@ describe('registerDeviceTools', () => {
         },
       };
       // Re-register with the tracked client so the closure sees it.
-      state.client = tracked as unknown as FakeClient;
+      setPrimaryClient(state, tracked as unknown as FakeClient);
       const localServer = makeFakeServer();
       const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
       registerDeviceTools(
@@ -489,10 +719,11 @@ describe('registerDeviceTools', () => {
     });
 
     it('coerces battery=null to absent batteryPercent (FIX #6)', async () => {
-      state.client.isConnected = true;
-      state.client.connectionState = 'connected';
-      state.client.connectedDeviceId = 'V-2';
-      state.client.settings = {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.connectedDeviceId = 'V-2';
+      client.settings = {
         weight: 5,
         chains: 0,
         inverseChains: 0,

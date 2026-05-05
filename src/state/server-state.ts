@@ -16,22 +16,27 @@
 // pre-existing manager release is `dispose()` (synchronous, void) — not
 // `close()`, which is not part of the SDK's surface.
 //
-// ── Why `client` is constructed parameter-less ────────────────────────────
+// ── Why each slot's `client` is constructed parameter-less ───────────────
 //
-// `ServerState.client: VoltraClient` is an interface contract from Wave 1.
-// At bootstrap there is no connected device — `manager.connect(device)`
-// happens later, when the `device.connect` tool runs. To satisfy the
-// interface today the bootstrap allocates a parameter-less `VoltraClient`
-// (no adapter); Wave 3's `device.connect` will assign an adapter and call
-// `client.connect(device)` directly. Subscribing to events on this client
-// (via `wireEventBridge` in `runServer`) is safe because the listener slots
-// persist across `setAdapter`.
+// Each `SlotState.client` is a `VoltraClient` allocated at bootstrap with no
+// adapter. `manager.connect(device)` happens later, when the `device.connect`
+// tool runs against the slot. Wave 3's `device.connect` assigns an adapter
+// and calls `client.connect(device)` directly. Subscribing to events on a
+// slot's client (via `wireEventBridge` in `runServer`) is safe because the
+// listener slots persist across `setAdapter`. Step 1 of P0 dual-Voltras
+// support seeds a single `PRIMARY_SLOT` so existing single-device flows are
+// unchanged; later steps add slot allocation tools.
+//
+// Slot lifecycle helpers (`createSlot`, `removeSlot`, `resetPrimarySlot`)
+// live in `slot-manager.ts` so this module can stay free of
+// `event-bridge.ts` (which transitively depends on us via `set-tools.ts`).
 //
 // Do NOT remove or change the exported names/shapes; downstream wiring
 // (event-bridge, tool registries) imports them by these exact identifiers.
 
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
@@ -40,15 +45,69 @@ import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
-import type { ChannelPublisher } from './channel-publisher.js';
+import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
 import { SetWatchdog } from './set-watchdog.js';
 import type { PushTimer } from '../tools/timer-tools.js';
+
+/**
+ * Per-slot processing unit. A slot owns one BLE connection (`client`) and the
+ * single processing pipeline (`live`) attached to it. Step 1 of P0 dual-Voltras
+ * support introduces a single `'primary'` slot at bootstrap so all existing
+ * single-device flows are unchanged; subsequent waves will allow allocating
+ * additional slots and threading an optional `slot` argument through tool
+ * schemas.
+ */
+export interface SlotState {
+  slotId: string;
+  client: VoltraClient;
+  live: LiveState;
+  /**
+   * Tear-down hook returned by the per-slot event-bridge wirer. Set when the
+   * bridge subscribes to this slot's `client`; calling it unsubscribes every
+   * `on*` listener the bridge installed. `removeSlot` and `resetPrimarySlot`
+   * (in `slot-manager.ts`) invoke it before swapping the underlying client
+   * so the old subscription doesn't go on receiving events from a stale
+   * handle. Optional because `bootstrapState` constructs the primary slot
+   * before the bridge is wired; `wireEventBridge(state)` populates it during
+   * server startup (or in test setup).
+   */
+  unwireBridge?: () => void;
+}
+
+export const PRIMARY_SLOT = 'primary' as const;
+
+/**
+ * Resolve a slot by id, defaulting to the primary slot. Throws when the id is
+ * unknown so callers don't silently fall through to a partially-initialized
+ * shape (a typo in `slotId` should be loud, not a runtime undefined).
+ */
+export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): SlotState {
+  const slot = state.slots.get(slotId);
+  if (!slot) {
+    throw new Error(`Unknown slot: ${slotId}`);
+  }
+  return slot;
+}
+
+/**
+ * Soft cap on connected slots in the initial dual-Voltras release. Two is
+ * the only shape we exercise (left / right for bilateral lifts); a third
+ * slot has no UX or analytics story yet, so the limit lives at the state
+ * layer rather than as a tool-schema enum to keep the surface flexible if
+ * we lift the cap later.
+ */
+export const MAX_SLOTS = 2;
 
 export interface ServerState {
   config: Config;
   manager: VoltraManager;
-  client: VoltraClient;
-  live: LiveState;
+  /**
+   * Per-slot connection + processing state, keyed by `slotId`. Bootstrap
+   * always seeds a single `PRIMARY_SLOT` entry so existing single-device
+   * flows resolve via `getSlot(state)` with no argument. Multi-slot
+   * allocation is a later wave.
+   */
+  slots: Map<string, SlotState>;
   store: SessionStore;
   exercises: ExerciseService;
   /**
@@ -87,6 +146,17 @@ export interface ServerState {
    * `finalizeSet` so any termination path clears the timer.
    */
   setWatchdog: SetWatchdog;
+  /**
+   * Live `McpServer` handle, set by `runServer` once the server is
+   * constructed. The event bridge needs this to publish
+   * `notifications/resource_updated` hints to the host. Optional because
+   * `bootstrapState` finishes before the server is available; it gets
+   * filled in (alongside `channels`) immediately after bootstrap returns.
+   * Tests that don't observe resource updates can leave it undefined —
+   * the per-slot bridge wirer detects the absence and skips subscription
+   * rather than NPE'ing.
+   */
+  server?: McpServer;
 }
 
 /**
@@ -94,6 +164,11 @@ export interface ServerState {
  * roll back resources opened so far in reverse order before rethrowing
  * (EC-02). Returns a fully wired `ServerState`; subscribing the SDK event
  * bridge is `runServer`'s responsibility once it has the `McpServer` handle.
+ *
+ * The primary slot is created with no `unwireBridge` set — `wireEventBridge`
+ * (called by `runServer` after bootstrap) populates it. Test fixtures that
+ * skip `runServer` must call `wireEventBridge(state)` themselves to get the
+ * same wiring.
  */
 export async function bootstrapState(config: Config): Promise<ServerState> {
   configureLogger(config);
@@ -115,15 +190,16 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // Default to a no-op publisher; `runServer` overwrites this with an
     // `McpChannelPublisher` once the McpServer instance is available. Tests
     // that don't care about channel pushes can leave the no-op in place.
-    const channels: ChannelPublisher = { publish: () => undefined };
+    const channels: ChannelPublisher = noopChannelPublisher;
     const timers = new Map<string, PushTimer>();
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
     const setWatchdog = new SetWatchdog();
+    const slots = new Map<string, SlotState>();
+    slots.set(PRIMARY_SLOT, { slotId: PRIMARY_SLOT, client, live });
     return {
       config,
       manager,
-      client,
-      live,
+      slots,
       store,
       exercises,
       channels,

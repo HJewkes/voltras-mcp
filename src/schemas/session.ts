@@ -8,7 +8,7 @@
 // implemented in the handler, not the schema.
 
 import { z } from 'zod';
-import { IdSchema } from './common.js';
+import { IdSchema, SlotIdSchema } from './common.js';
 
 /**
  * Input for `session.start`. Both fields are optional individually so that
@@ -23,6 +23,7 @@ export const SessionStartInput = z
   .object({
     exerciseId: z.string().optional(),
     exerciseName: z.string().optional(),
+    slot: SlotIdSchema,
   })
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',
@@ -45,8 +46,10 @@ export const SessionListInput = z.object({
 export const SessionGetInput = z.object({ id: IdSchema });
 
 /**
- * Input for `session.end` — operates on the live active session, so it takes
- * no parameters. The handler reads `state.live.session` to determine the
+ * Input for `session.end` — operates on the slot's live active session.
+ * The handler reads the resolved slot's `live.session` to determine the
  * target.
  */
-export const SessionEndInput = z.object({});
+export const SessionEndInput = z.object({
+  slot: SlotIdSchema,
+});

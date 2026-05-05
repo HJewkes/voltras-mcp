@@ -130,12 +130,33 @@ function setup(): Harness {
     startRecording: vi.fn().mockResolvedValue(undefined),
     endSet: vi.fn().mockResolvedValue(undefined),
   };
-  const channels = { publish: vi.fn() };
+  // Top-level publish mock collects every event; `forSlot(slotId)` returns
+  // a publisher that re-routes through the same mock with `slot: slotId`
+  // injected into meta. Mirrors the production
+  // `slotScopedPublisher` shape so tests that don't touch slot meta keep
+  // working unchanged while bilateral-aware assertions can read meta.slot.
+  const channels: {
+    publish: ReturnType<typeof vi.fn>;
+    forSlot: (slotId: string) => {
+      publish: (e: unknown) => void;
+      forSlot: typeof channels.forSlot;
+    };
+  } = {
+    publish: vi.fn(),
+    forSlot: (slotId: string) => ({
+      publish: (event: unknown) => {
+        const e = event as { content: string; meta: Record<string, string> };
+        channels.publish({ content: e.content, meta: { slot: slotId, ...e.meta } });
+      },
+      forSlot: channels.forSlot,
+    }),
+  };
+  const slots = new Map();
+  slots.set('primary', { slotId: 'primary', client, live });
   const state = {
     config: {} as never,
     manager: {} as never,
-    client: client as never,
-    live,
+    slots,
     store,
     exercises: {} as never,
     channels,

@@ -10,7 +10,7 @@
 //     returning `{ active: false }` when no set is in flight (AC-12).
 //
 // `SetStartInput` is `z.object({})` by design (R18 / Task 03's handoff): all
-// set metadata derives from `state.live.snapshotDevice()`. The "snapshot at
+// set metadata derives from the slot's `live.snapshotDevice()`. The "snapshot at
 // start" choice is implemented via `state.setStartDeviceSnapshots`
 // (Map<setId, DeviceSnapshot>) — the snapshot is held until `set.end` (or
 // the bridge's `set_ended_by_device` autonomous handler) consumes it. The
@@ -27,7 +27,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 
-import type { ServerState } from '../state/server-state.js';
+import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
   SetEndInput,
   SetGetInput,
@@ -82,19 +82,19 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, (input) => startSet(state, input.watch)),
+    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot)),
   );
   install(
     placeholders,
     'set.end',
     SetEndInput,
-    wrapHandler(SetEndInput, () => endSetTool(state)),
+    wrapHandler(SetEndInput, (input) => endSetTool(state, input.slot)),
   );
   install(
     placeholders,
     'set.live_metrics',
     SetLiveMetricsInput,
-    wrapHandler(SetLiveMetricsInput, () => liveMetrics(state)),
+    wrapHandler(SetLiveMetricsInput, (input) => liveMetrics(state, input.slot)),
   );
   install(
     placeholders,
@@ -120,23 +120,26 @@ function install<S extends z.ZodObject>(
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
+  slotIdInput: string | undefined,
 ): Promise<{ setId: string }> {
-  const session = state.live.session;
+  const slotId = slotIdInput ?? PRIMARY_SLOT;
+  const slot = getSlot(state, slotId);
+  const session = slot.live.session;
   if (session === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active. Call session.start first.');
   }
-  if (state.live.set !== undefined) {
+  if (slot.live.set !== undefined) {
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
 
   // Engage the device motor — firmware-side equivalent of the "tap to load"
   // prompt on the unit. Without this the cable is free-running and no force
   // is applied. SDK: VoltraClient.startRecording → Workout.GO.
-  await state.client.startRecording();
+  await slot.client.startRecording();
 
   const setId = randomUUID();
   const startedAt = new Date().toISOString();
-  state.live.startSet({
+  slot.live.startSet({
     setId,
     sessionId: session.sessionId,
     startedAt,
@@ -144,7 +147,7 @@ async function startSet(
     status: 'active',
     ...(watch !== undefined ? { watch } : {}),
   });
-  const device = state.live.snapshotDevice();
+  const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
   // Push a lifecycle event so a channel-enabled host wakes the model on the
   // set boundary instead of forcing it to poll. Fire-and-forget when the
@@ -157,7 +160,7 @@ async function startSet(
   //
   // Ordinal counts the new set as part of the session — the live session's
   // setIds array doesn't include it yet (set-end is what appends), so add 1.
-  const ordinal = (state.live.snapshotSession()?.setIds.length ?? 0) + 1;
+  const ordinal = (slot.live.snapshotSession()?.setIds.length ?? 0) + 1;
   // Fetch the previous set summary best-effort. If the store query fails for
   // any reason (transient SQLite contention, etc.), we fall back to a null
   // previous_set_summary rather than blowing up the channel emission — the
@@ -172,13 +175,17 @@ async function startSet(
     status: 'active',
   };
   const payload = buildSetStartedPayload(activeSet, device, ordinal, previousSummary);
-  state.channels.publish(payload);
+  // Slot-scoped publisher auto-injects `slot: slotId` into meta — every
+  // channel event from this slot is tagged so bilateral coaching can
+  // tell left-arm from right-arm at a glance. Single-device flows still
+  // see meta.slot = 'primary' (a meta-key addition, not a behavior change).
+  state.channels.forSlot(slotId).publish(payload);
   // Arm the idle-timeout watchdog if any idle_timeout_ms spec is in the
   // watch config. Smallest threshold wins (one watchdog per set) — see
   // SetWatchdog for the rationale. Reset happens in the bridge on every
   // rep_finalized; cancel happens in finalizeSet.
   if (watch !== undefined) {
-    armIdleWatchdog(state, setId, startedAt, watch);
+    armIdleWatchdog(state, setId, startedAt, watch, slotId);
   }
   return { setId };
 }
@@ -202,6 +209,7 @@ export function armIdleWatchdog(
   setId: string,
   setStartedAt: string,
   watch: WatchConfig,
+  slotId: string = PRIMARY_SLOT,
 ): void {
   const smallest = smallestIdleSpec(watch);
   if (smallest === undefined) {
@@ -209,7 +217,7 @@ export function armIdleWatchdog(
   }
   const idleMs = smallest.spec.value;
   state.setWatchdog.register(setId, idleMs, () => {
-    fireIdleTimeout(state, setId, setStartedAt, smallest.spec, smallest.isStopOn);
+    fireIdleTimeout(state, setId, setStartedAt, smallest.spec, smallest.isStopOn, slotId);
   });
 }
 
@@ -224,7 +232,10 @@ export function resetIdleWatchdog(state: ServerState, setId: string, watch?: Wat
   if (smallest === undefined) return;
   const idleMs = smallest.spec.value;
   // Re-arm with the same onFire — read-time snapshot still works because
-  // the closure captures setId and the spec, not stale rep data.
+  // the closure captures setId and the spec, not stale rep data. The
+  // watchdog is registered per-set and setIds are unique across slots
+  // (LiveState mints them) so the bridge can re-arm without threading a
+  // slot id; fireIdleTimeout discovers the right slot from the setId.
   state.setWatchdog.reset(setId, idleMs, () => {
     fireIdleTimeout(
       state,
@@ -232,8 +243,26 @@ export function resetIdleWatchdog(state: ServerState, setId: string, watch?: Wat
       /* setStartedAt — recomputed below */ '',
       smallest.spec,
       smallest.isStopOn,
+      slotForSetId(state, setId),
     );
   });
+}
+
+/**
+ * Reverse-lookup which slot owns the given `setId` by scanning live state
+ * for a match. Each slot's `LiveState` mints UUIDs, so collisions are
+ * astronomically unlikely; if the set is no longer active anywhere
+ * (already finalized through some other path) we return `PRIMARY_SLOT`
+ * defensively — the watchdog callback will then no-op once it finds
+ * `live.snapshotSet()?.setId !== setId`.
+ */
+function slotForSetId(state: ServerState, setId: string): string {
+  for (const slot of state.slots.values()) {
+    if (slot.live.snapshotSet()?.setId === setId) {
+      return slot.slotId;
+    }
+  }
+  return PRIMARY_SLOT;
 }
 
 interface SmallestIdleSpec {
@@ -277,18 +306,20 @@ function fireIdleTimeout(
   _setStartedAt: string,
   spec: Extract<TriggerSpec, { type: 'idle_timeout_ms' }>,
   isStopOn: boolean,
+  slotId: string,
 ): void {
-  const set = state.live.snapshotSet();
+  const slot = getSlot(state, slotId);
+  const set = slot.live.snapshotSet();
   if (set === undefined || set.setId !== setId) {
     // Set already ended through some other path between the timer queue
     // and this callback — silent drop.
     return;
   }
   const dedupeKey = `idle_timeout_ms:${spec.value}`;
-  if (!state.live.tryFireTrigger(dedupeKey)) {
+  if (!slot.live.tryFireTrigger(dedupeKey)) {
     return;
   }
-  const device = state.live.snapshotDevice();
+  const device = slot.live.snapshotDevice();
   // Compute "last rep at" — the timestamp anchoring the idle interval.
   // Without per-rep timestamps surfaced through the bridge we anchor on
   // set.startedAt for the zero-rep case; otherwise the most recent rep's
@@ -305,9 +336,9 @@ function fireIdleTimeout(
     return set.startedAt;
   })();
   const payload = buildIdleTimeoutPayload(set, device, spec.value, spec.value, lastRepAt, isStopOn);
-  state.channels.publish(payload);
+  state.channels.forSlot(slotId).publish(payload);
   if (isStopOn) {
-    void finalizeSet(state, {
+    void finalizeSet(state, slotId, {
       cause: 'tool',
       disengageMotor: true,
       partialReason: 'auto_stopped',
@@ -345,13 +376,19 @@ async function fetchPreviousSetSummary(
   }
 }
 
-async function endSetTool(state: ServerState): Promise<{ ok: true; reps: number }> {
-  if (state.live.set === undefined) {
+async function endSetTool(
+  state: ServerState,
+  slotIdInput: string | undefined,
+): Promise<{ ok: true; reps: number }> {
+  const slotId = slotIdInput ?? PRIMARY_SLOT;
+  if (getSlot(state, slotId).live.set === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active. Call set.start first.');
   }
   // The explicit-tool path always disengages the motor (Workout.STOP) and
-  // emits a `set_ended` event with no `partialReason`.
-  const stored = await finalizeSet(state, { cause: 'tool', disengageMotor: true });
+  // emits a `set_ended` event with no `partialReason`. Step 4 of P0
+  // dual-Voltras threads the slot id all the way through `finalizeSet` so
+  // bilateral flows close the right slot's set instead of always primary.
+  const stored = await finalizeSet(state, slotId, { cause: 'tool', disengageMotor: true });
   if (stored === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active.');
   }
@@ -387,6 +424,7 @@ async function endSetTool(state: ServerState): Promise<{ ok: true; reps: number 
  */
 export async function finalizeSet(
   state: ServerState,
+  slotId: string,
   opts: {
     cause: SetEndedCause;
     disengageMotor: boolean;
@@ -394,10 +432,11 @@ export async function finalizeSet(
     auto_stop_cause?: string;
   },
 ): Promise<StoredSet | undefined> {
-  if (state.live.set === undefined) {
+  const slot = getSlot(state, slotId);
+  if (slot.live.set === undefined) {
     return undefined;
   }
-  const setId = state.live.set.setId;
+  const setId = slot.live.set.setId;
   // Cancel the idle watchdog as the very first step. Any termination
   // path (tool, device-signal, auto-stop, disconnect cascade) routes
   // through here, so this guarantees a stale timer never publishes
@@ -408,7 +447,7 @@ export async function finalizeSet(
   // `partial=true / partialReason='device_signal'` stamp directly on the
   // finalized snapshot below, and the auto-stop path also stamps below
   // (so the partial-reason override lives in exactly one place).
-  const finalized = state.live.endSet();
+  const finalized = slot.live.endSet();
   if (finalized === undefined) {
     return undefined;
   }
@@ -419,12 +458,12 @@ export async function finalizeSet(
     // open so a subsequent set.start can re-engage without re-arming. The
     // tool path and auto-stop path both run this; the device-signal path
     // skips it because the device already de-engaged on its own.
-    await state.client.endSet();
+    await slot.client.endSet();
   }
 
   // Use the snapshot captured at `set.start`; fall back to the current
   // snapshot if it was somehow missing (defensive — should not happen).
-  const device = state.setStartDeviceSnapshots.get(setId) ?? state.live.snapshotDevice();
+  const device = state.setStartDeviceSnapshots.get(setId) ?? slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.delete(setId);
 
   // Pick the partial-reason stamp (if any). Auto-stop wins when supplied;
@@ -445,14 +484,19 @@ export async function finalizeSet(
   // close. The payload carries the full rep array plus a pre-computed VBT
   // summary (first/last rep velocity + velocity-loss %), so PT Claude can
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
-  // every set close currently triggers.
+  // every set close currently triggers. Slot-scoped publisher so meta
+  // carries `slot: slotId` for bilateral consumers.
   const payload = buildSetEndedPayload(stored, opts.cause, opts.auto_stop_cause);
-  state.channels.publish(payload);
+  state.channels.forSlot(slotId).publish(payload);
   return stored;
 }
 
-async function liveMetrics(state: ServerState): Promise<{ active: false } | ActiveSet> {
-  const snapshot = state.live.snapshotSet();
+async function liveMetrics(
+  state: ServerState,
+  slotIdInput: string | undefined,
+): Promise<{ active: false } | ActiveSet> {
+  const slotId = slotIdInput ?? PRIMARY_SLOT;
+  const snapshot = getSlot(state, slotId).live.snapshotSet();
   return Promise.resolve(snapshot ?? { active: false });
 }
 

@@ -148,6 +148,16 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 const bootstrapMock = vi.fn();
 vi.mock('../state/server-state.js', () => ({
   bootstrapState: (...args: unknown[]) => bootstrapMock(...(args as [unknown])) as Promise<unknown>,
+  // `getSlot` is consumed by `runServer` to resolve the primary slot before
+  // wiring the event bridge. The mock replaces the whole module so we must
+  // mirror this helper here; the test's `fakeBootstrapResult` already shapes
+  // the state with a `slots` map keyed by 'primary'.
+  PRIMARY_SLOT: 'primary' as const,
+  getSlot: (state: { slots: Map<string, unknown> }, slotId: string = 'primary') => {
+    const slot = state.slots.get(slotId);
+    if (!slot) throw new Error(`Unknown slot: ${slotId}`);
+    return slot;
+  },
 }));
 
 const { runServer } = await import('../server.js');
@@ -183,33 +193,36 @@ function callToolRequest(id: number, name: string): JSONRPCMessage {
 }
 
 // Minimal `ServerState`-shaped stub returned by the success-path bootstrap
-// mock. Wave 2C wires `wireEventBridge(state.client, state.live, server)`
-// after bootstrap; this test only exercises the placeholder window, so the
-// `client.on*` slots are no-op stubs and `live` is an empty object.
+// mock. After bootstrap, `wireEventBridge` runs against the primary slot's
+// client + live; this test only exercises the placeholder window, so the
+// slot's `client.on*` slots are no-op stubs and `live` is an empty object.
 function fakeBootstrapResult(): unknown {
   const subscribe = (): (() => void) => () => undefined;
+  const client = {
+    isConnected: false,
+    connectionState: 'disconnected',
+    connectedDeviceId: undefined,
+    settings: undefined,
+    onRepBoundary: subscribe,
+    onSetBoundary: subscribe,
+    onSettingsUpdate: subscribe,
+    onConnectionStateChange: subscribe,
+    onFrame: subscribe,
+  };
+  const live = {
+    snapshotDevice: () => ({ connected: false }),
+    snapshotSession: () => undefined,
+    snapshotSet: () => undefined,
+  };
+  const slots = new Map();
+  slots.set('primary', { slotId: 'primary', client, live });
   return {
     config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
-    client: {
-      isConnected: false,
-      connectionState: 'disconnected',
-      connectedDeviceId: undefined,
-      settings: undefined,
-      onRepBoundary: subscribe,
-      onSetBoundary: subscribe,
-      onSettingsUpdate: subscribe,
-      onConnectionStateChange: subscribe,
-      onFrame: subscribe,
-    },
+    slots,
     manager: {
       scan: () => Promise.resolve([]),
       connect: () => Promise.resolve(),
       dispose: () => undefined,
-    },
-    live: {
-      snapshotDevice: () => ({ connected: false }),
-      snapshotSession: () => undefined,
-      snapshotSet: () => undefined,
     },
     store: {
       putSession: () => Promise.resolve(),
