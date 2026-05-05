@@ -172,7 +172,11 @@ export async function runServer(): Promise<void> {
     // Wire the SDK event bridge once `state.client` exists. Listener slots
     // on `VoltraClient` persist across `setAdapter`, so subscribing here
     // (before the device.connect tool installs an adapter) is correct.
-    wireEventBridge(state.client, state.live, server, channels);
+    // `state` is threaded so the bridge can call `finalizeSet` when the
+    // device emits an out-of-grace `set_boundary` (user-pressed Stop on the
+    // Voltra UI). Without it, autonomous device-side set ends would be
+    // silently dropped — see event-bridge.ts:onSetBoundary.
+    wireEventBridge(state.client, state.live, server, channels, state);
     // Mock-only tools never have real handlers in node mode — drop their
     // placeholders so `tools/list` reflects only the real surface (R11).
     // In mock mode the placeholders remain for Wave 3 to hot-swap.

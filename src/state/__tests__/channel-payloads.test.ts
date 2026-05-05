@@ -350,4 +350,54 @@ describe('buildSetEndedPayload', () => {
       mean_velocity: null,
     });
   });
+
+  describe('cause = "device_signal" → set_ended_by_device', () => {
+    it('emits meta.event_type=set_ended_by_device with the same scalar fields as set_ended', () => {
+      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const stored = buildStored(reps, { reason: 'device_signal' });
+      const { meta } = buildSetEndedPayload(stored, 'device_signal');
+      expect(meta).toMatchObject({
+        source: 'voltras',
+        event_type: 'set_ended_by_device',
+        set_id: 'set-end',
+        session_id: 'sess-1',
+        rep_count: '2',
+        duration_ms: '90000',
+        partial_reason: 'device_signal',
+      });
+    });
+
+    it('summary text headlines "Set ended by device" and tails the user-pressed-Stop note', () => {
+      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const stored = buildStored(reps, { reason: 'device_signal' });
+      const { content } = buildSetEndedPayload(stored, 'device_signal');
+      const parsed = JSON.parse(content);
+      expect(parsed.summary).toContain('Set ended by device');
+      expect(parsed.summary).toContain('2 reps');
+      expect(parsed.summary).toContain('90s');
+      expect(parsed.summary).toContain('user pressed Stop on the unit');
+    });
+
+    it('content payload is structurally identical to set_ended (reps + vbt_summary + set)', () => {
+      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const stored = buildStored(reps, { reason: 'device_signal' });
+      const toolPayload = JSON.parse(buildSetEndedPayload(stored, 'tool').content);
+      const devicePayload = JSON.parse(buildSetEndedPayload(stored, 'device_signal').content);
+      // Same shape — the same model can parse either with one schema.
+      expect(Object.keys(devicePayload).sort()).toEqual(Object.keys(toolPayload).sort());
+      expect(devicePayload.reps).toEqual(toolPayload.reps);
+      expect(devicePayload.vbt_summary).toEqual(toolPayload.vbt_summary);
+      expect(devicePayload.set.partial_reason).toBe('device_signal');
+    });
+
+    it('summary still surfaces velocity loss when the set has at least 2 reps', () => {
+      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const stored = buildStored(reps, { reason: 'device_signal' });
+      const { content } = buildSetEndedPayload(stored, 'device_signal');
+      const parsed = JSON.parse(content);
+      // velocity_loss_pct is computed identically to the tool path.
+      expect(parsed.vbt_summary.velocity_loss_pct).toBeCloseTo(41.2, 1);
+      expect(parsed.summary).toContain('41.2% velocity loss');
+    });
+  });
 });

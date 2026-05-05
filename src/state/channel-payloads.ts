@@ -235,12 +235,34 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
 }
 
 /**
- * Build the meta + content for a `set_ended` channel event. Carries the
- * full per-rep array plus a pre-computed VBT summary so the model can skip
- * the `set.get` + `metrics.compute vbt.set` follow-up calls that almost
- * every set.end currently triggers.
+ * Cause of a `set_ended*` channel emission. `'tool'` is the explicit
+ * `set.end` MCP-tool path; `'device_signal'` is the bridge's autonomous
+ * finalize when the user pressed Stop on the unit (an out-of-grace
+ * `onSetBoundary` event). The cause selects the meta `event_type` and tunes
+ * the summary text — payload shape is identical between the two so PT
+ * Claude can parse either with one schema.
  */
-export function buildSetEndedPayload(stored: StoredSet): {
+export type SetEndedCause = 'tool' | 'device_signal';
+
+/**
+ * Build the meta + content for a `set_ended` (or `set_ended_by_device`)
+ * channel event. Carries the full per-rep array plus a pre-computed VBT
+ * summary so the model can skip the `set.get` + `metrics.compute vbt.set`
+ * follow-up calls that almost every set close currently triggers.
+ *
+ * The `cause` argument selects between the two emission types:
+ *   * `'tool'` → `event_type='set_ended'`. Default.
+ *   * `'device_signal'` → `event_type='set_ended_by_device'`. Summary text
+ *     also adds the "(user pressed Stop on the unit)" tail so the model can
+ *     distinguish the autonomous device finish from an explicit end. Caller
+ *     is expected to have set `stored.partial=true` and
+ *     `stored.partialReason='device_signal'` before invoking — those flow
+ *     unchanged into the payload.
+ */
+export function buildSetEndedPayload(
+  stored: StoredSet,
+  cause: SetEndedCause = 'tool',
+): {
   meta: Record<string, string>;
   content: string;
 } {
@@ -249,11 +271,13 @@ export function buildSetEndedPayload(stored: StoredSet): {
   const durationMs =
     Number.isFinite(startedMs) && Number.isFinite(endedMs) ? endedMs - startedMs : 0;
   const safeDurationMs = Math.max(0, durationMs);
+  const eventType = cause === 'device_signal' ? 'set_ended_by_device' : 'set_ended';
 
   const meta: Record<string, string> = {
     source: 'voltras',
-    event_type: 'set_ended',
+    event_type: eventType,
     set_id: stored.id,
+    session_id: stored.sessionId,
     rep_count: String(stored.reps.length),
     duration_ms: String(safeDurationMs),
   };
@@ -275,7 +299,12 @@ export function buildSetEndedPayload(stored: StoredSet): {
   }));
 
   const vbt = computeVbtSummary(stored.reps);
-  const summary = buildSetEndedSummary(stored.reps.length, safeDurationMs, vbt.velocity_loss_pct);
+  const summary = buildSetEndedSummary(
+    stored.reps.length,
+    safeDurationMs,
+    vbt.velocity_loss_pct,
+    cause,
+  );
 
   const content = JSON.stringify({
     summary,
@@ -322,11 +351,11 @@ function buildSetEndedSummary(
   repCount: number,
   durationMs: number,
   lossPct: number | null,
+  cause: SetEndedCause,
 ): string {
   const seconds = Math.round(durationMs / 1000);
-  const base = `Set ended: ${repCount} reps in ${seconds}s`;
-  if (lossPct === null) {
-    return base;
-  }
-  return `${base}, ${lossPct}% velocity loss`;
+  const headline = cause === 'device_signal' ? 'Set ended by device' : 'Set ended';
+  const base = `${headline}: ${repCount} reps in ${seconds}s`;
+  const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
+  return cause === 'device_signal' ? `${withLoss} (user pressed Stop on the unit)` : withLoss;
 }

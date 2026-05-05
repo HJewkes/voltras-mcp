@@ -35,7 +35,7 @@ import type { VoltraManager } from '@voltras/node-sdk';
 
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
-import { LiveState } from './live-state.js';
+import { LiveState, type DeviceSnapshot } from './live-state.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
@@ -69,6 +69,15 @@ export interface ServerState {
    * map.
    */
   timers: Map<string, PushTimer>;
+  /**
+   * Device snapshot captured at `set.start` time, keyed by setId. Persists
+   * until the matching set is finalized so the stored row reflects the
+   * configuration the user lifted against (not whatever the device drifts
+   * to mid-set). Lives on the shared state container so two finalize paths
+   * — the explicit `set.end` tool and the bridge's autonomous
+   * `set_ended_by_device` handler — can both consume it.
+   */
+  setStartDeviceSnapshots: Map<string, DeviceSnapshot>;
 }
 
 /**
@@ -99,7 +108,18 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // that don't care about channel pushes can leave the no-op in place.
     const channels: ChannelPublisher = { publish: () => undefined };
     const timers = new Map<string, PushTimer>();
-    return { config, manager, client, live, store, exercises, channels, timers };
+    const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
+    return {
+      config,
+      manager,
+      client,
+      live,
+      store,
+      exercises,
+      channels,
+      timers,
+      setStartDeviceSnapshots,
+    };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
     await safeCloseStore(store);

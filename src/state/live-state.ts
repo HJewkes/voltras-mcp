@@ -60,7 +60,14 @@ export interface ActiveSet {
   reps: Rep[];
   status: 'active' | 'ended' | 'partial';
   endedAt?: string;
-  partialReason?: 'disconnect' | 'session_end';
+  /**
+   * Why the set ended in something other than a graceful tool call.
+   *   * `'disconnect'`   — connection drop cascade
+   *   * `'session_end'`  — explicit `session.end` cascade
+   *   * `'device_signal'` — user pressed Stop on the unit (autonomous
+   *     set_boundary outside the start-grace window)
+   */
+  partialReason?: 'disconnect' | 'session_end' | 'device_signal';
 }
 
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });

@@ -23,10 +23,18 @@
 //                                 set_boundary in response to our Workout.GO
 //                                 engage command, which would otherwise reset
 //                                 the rep counter mid-set). Outside the grace
-//                                 window the set lifecycle is owned by the
-//                                 explicit `set.start`/`set.end` tools; the
-//                                 autonomous device signal does not mutate
-//                                 VMCP state. (Critic gap Q6.)
+//                                 window WITH an active set, the boundary is
+//                                 treated as the user pressing Stop on the
+//                                 Voltra UI — the bridge finalizes the set
+//                                 via the shared `finalizeSet` helper, which
+//                                 persists, clears live state, and emits the
+//                                 `set_ended_by_device` channel event.
+//                                 Outside the grace window with NO active
+//                                 set, the boundary is a silent drop (the
+//                                 explicit `set.end` tool already finalized;
+//                                 LiveState's set is undefined and double-
+//                                 firing is the race-condition guard).
+//                                 (Critic gap Q6.)
 //   onSettingsUpdate            → applySettings + notify voltra://device/current.
 //   onConnectionStateChange     → applySettings({ connected }) + notify
 //                                 voltra://device/current. On 'disconnected'
@@ -68,6 +76,9 @@ import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import { buildRepFinalizedPayload } from './channel-payloads.js';
+import type { ServerState } from './server-state.js';
+import { finalizeSet } from '../tools/set-tools.js';
+import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -93,6 +104,16 @@ const SESSION_URI = 'voltra://session/active';
 const SET_URI = 'voltra://set/active';
 
 /**
+ * Suppression window after `set.start`: any `onSetBoundary` event that
+ * arrives within this many milliseconds of the set's `startedAt` is
+ * treated as the device's echo of our Workout.GO engage command rather
+ * than a user-pressed Stop. The chosen 500ms is empirically wide enough
+ * to swallow the BLE round-trip jitter (~80–250ms in normal conditions)
+ * without overlapping with the shortest realistic user-driven Stop.
+ */
+const SET_START_GRACE_MS = 500;
+
+/**
  * Subscribe `live` to the SDK events on `client` and emit the matching
  * resource-updated notifications via `server`. Idempotent at the type
  * level — caller is expected to invoke once per server lifetime.
@@ -101,12 +122,20 @@ const SET_URI = 'voltra://set/active';
  * `<channel>` tag delivery in Claude Code) rather than having to poll
  * `set.live_metrics`. Fire-and-forget: when the host wasn't launched with
  * `--channels`, publish is a no-op.
+ *
+ * `state` is optional only because a handful of unit tests construct the
+ * bridge without a full `ServerState`. When `undefined`, the
+ * `set_ended_by_device` finalize path is short-circuited (the bridge logs
+ * the boundary to the debug buffer but does not persist or publish). All
+ * production wiring (`server.ts` / `device-tools.ts:device.connect`) MUST
+ * pass `state` so the autonomous-device-stop path is active.
  */
 export function wireEventBridge(
   client: VoltraClient,
   live: LiveState,
   server: McpServer,
   channels: ChannelPublisher,
+  state?: ServerState,
 ): void {
   const debug = getDebugBuffers();
 
@@ -201,13 +230,39 @@ export function wireEventBridge(
   });
 
   client.onSetBoundary(() => {
-    // Device emits this continuously during workout mode — NOT just at
-    // end-of-set. Logged for diagnostic visibility only; the set lifecycle
-    // is owned by the explicit `set.start`/`set.end` tools.
+    // Device emits this continuously during workout mode — most are noise
+    // (the firmware's response to our Workout.GO engage command, fired
+    // ~immediately after `set.start`). The bridge ignores boundaries
+    // within the SET_START_GRACE_MS window of the active set's startedAt;
+    // outside that window with an active set, the boundary is the user
+    // pressing Stop on the unit and we finalize via the shared helper.
+    //
+    // Race-condition guard: when the explicit `set.end` tool runs, it
+    // mutates LiveState first, so by the time the device's set_boundary
+    // arrives (the firmware always emits one in response to Workout.STOP),
+    // `live.snapshotSet()` is already `undefined` and the `if` below is a
+    // silent no-op. Tests in event-bridge.test.ts pin this — see the
+    // "explicit set.end finalization" describe block.
+    const activeSet = live.snapshotSet();
     debug.events.push({
       capturedAt: Date.now(),
       type: 'set_boundary',
-      payload: { hadActiveSet: live.snapshotSet() !== undefined },
+      payload: { hadActiveSet: activeSet !== undefined },
+    });
+    if (activeSet === undefined || state === undefined) {
+      return;
+    }
+    const startedMs = Date.parse(activeSet.startedAt);
+    if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
+      return;
+    }
+    notify(server, SET_URI);
+    // Fire-and-forget the persist + publish chain. The void-discard here
+    // is deliberate — the SDK callback signature is sync, and we don't
+    // want a slow store.putSet to block other event handlers. Errors are
+    // logged at warn so they're visible without crashing the bridge.
+    void finalizeSet(state, { cause: 'device_signal', disengageMotor: false }).catch((err) => {
+      log.warn('event-bridge: set_ended_by_device finalize failed', err);
     });
   });
 

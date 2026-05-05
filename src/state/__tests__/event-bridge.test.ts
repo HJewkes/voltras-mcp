@@ -459,13 +459,174 @@ describe('wireEventBridge', () => {
       expect(live.snapshotSet()?.reps.length).toBe(1);
     });
 
-    it('outside the grace window emits no resource update and does not mutate live state', () => {
-      // startSet() helper uses 2025-01-01 — well outside the 500ms grace.
+    it('outside the grace window with no `state` wired emits no resource update and does not mutate live state', () => {
+      // The default `wireEventBridge` call in `beforeEach` omits the
+      // optional `state` parameter — without it, the bridge has no
+      // `finalizeSet` reference and silently drops the boundary even
+      // outside grace. Production wiring (server.ts) always passes state;
+      // this case just keeps the legacy contract for tests / hosts that
+      // don't construct a full ServerState.
       startSet(live);
       const before = live.snapshotSet();
       client.fire.setBoundary();
       expect(live.snapshotSet()).toEqual(before);
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onSetBoundary → set_ended_by_device finalize', () => {
+    // A second harness — the bridge needs `state` threaded so it can call
+    // `finalizeSet`. We re-wire here with a minimal fake state shaped just
+    // enough for the device-signal finalize path: live, store with a
+    // putSet spy, channels with a publish spy, and the
+    // setStartDeviceSnapshots map populated as if `set.start` had run.
+    interface FakeState {
+      live: LiveStateT;
+      store: { putSet: Mock<(s: unknown) => Promise<void>> };
+      client: { endSet: Mock<() => Promise<void>> };
+      channels: FakeChannels;
+      setStartDeviceSnapshots: Map<
+        string,
+        { connected: boolean; weightLbs?: number; trainingMode?: string }
+      >;
+    }
+    let fakeState: FakeState;
+
+    function flushMicrotasks(): Promise<void> {
+      // The bridge's onSetBoundary handler kicks off `finalizeSet` via
+      // `void ...catch(...)` — a fire-and-forget Promise chain. We need
+      // pending microtasks to drain so assertions on putSet / publish see
+      // the side-effects. Two `setImmediate` flushes cover the
+      // chain length (await live.endSet → await store.putSet → publish).
+      return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+    }
+
+    beforeEach(() => {
+      live = new LiveState();
+      client = makeFakeClient();
+      server = makeFakeServer();
+      channels = makeFakeChannels();
+      fakeState = {
+        live,
+        store: { putSet: vi.fn(async () => undefined) },
+        client: { endSet: vi.fn(async () => undefined) },
+        channels,
+        setStartDeviceSnapshots: new Map(),
+      };
+      wireEventBridge(
+        client as unknown as Parameters<typeof wireEventBridge>[0],
+        live,
+        server as unknown as Parameters<typeof wireEventBridge>[2],
+        channels as unknown as Parameters<typeof wireEventBridge>[3],
+        fakeState as unknown as Parameters<typeof wireEventBridge>[4],
+      );
+    });
+
+    function startActiveSet(opts: { startedAt: string }): void {
+      live.startSession({
+        sessionId: 'sess-dev',
+        startedAt: opts.startedAt,
+        setIds: [],
+        status: 'active',
+      });
+      live.startSet({
+        setId: 'set-dev',
+        sessionId: 'sess-dev',
+        startedAt: opts.startedAt,
+        reps: [],
+        status: 'active',
+      });
+      fakeState.setStartDeviceSnapshots.set('set-dev', {
+        connected: true,
+        weightLbs: 135,
+        trainingMode: 'WeightTraining',
+      });
+    }
+
+    it('inside the grace window does NOT finalize (existing Workout.GO echo suppression)', async () => {
+      // startedAt = now → still within grace. The bridge must not call
+      // store.putSet / channels.publish.
+      startActiveSet({ startedAt: new Date().toISOString() });
+      client.fire.setBoundary();
+      await flushMicrotasks();
+      expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      expect(channels.publish).not.toHaveBeenCalled();
+      expect(live.snapshotSet()).toBeDefined();
+    });
+
+    it('outside the grace window with an active set persists, clears live state, and publishes set_ended_by_device', async () => {
+      // startedAt 2025-01-01 — far outside any grace window.
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+      client.fire.setBoundary();
+      await flushMicrotasks();
+
+      expect(fakeState.store.putSet).toHaveBeenCalledTimes(1);
+      const stored = fakeState.store.putSet.mock.calls[0][0] as {
+        id: string;
+        partial: boolean;
+        partialReason?: string;
+        weightLbs: number;
+        trainingMode: string;
+      };
+      expect(stored.id).toBe('set-dev');
+      expect(stored.partial).toBe(true);
+      expect(stored.partialReason).toBe('device_signal');
+      // Device snapshot from `set.start` is honored.
+      expect(stored.weightLbs).toBe(135);
+      expect(stored.trainingMode).toBe('WeightTraining');
+
+      // LiveState's set is cleared.
+      expect(live.snapshotSet()).toBeUndefined();
+
+      // Channel event matches the `set_ended_by_device` contract.
+      expect(channels.publish).toHaveBeenCalledTimes(1);
+      const event = channels.publish.mock.calls[0][0];
+      expect(event.meta.event_type).toBe('set_ended_by_device');
+      expect(event.meta.set_id).toBe('set-dev');
+      expect(event.meta.session_id).toBe('sess-dev');
+      expect(event.meta.partial_reason).toBe('device_signal');
+
+      const parsed = JSON.parse(event.content) as {
+        summary: string;
+        set: { partial_reason: string };
+      };
+      expect(parsed.set.partial_reason).toBe('device_signal');
+      expect(parsed.summary).toContain('Set ended by device');
+      expect(parsed.summary).toContain('user pressed Stop on the unit');
+
+      // The bridge must NOT have called client.endSet — the device already
+      // de-engaged on its own; an extra Workout.STOP would be churn.
+      expect(fakeState.client.endSet).not.toHaveBeenCalled();
+
+      // The voltra://set/active resource is poked so polling clients
+      // refresh.
+      expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
+        uri: 'voltra://set/active',
+      });
+    });
+
+    it('outside the grace window with NO active set is a silent drop', async () => {
+      // No startSet invocation — `live.snapshotSet()` is undefined.
+      // Simulates the explicit `set.end` race: tool already ran, bridge's
+      // onSetBoundary fires from the device's Workout.STOP echo.
+      client.fire.setBoundary();
+      await flushMicrotasks();
+      expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      expect(channels.publish).not.toHaveBeenCalled();
+      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+
+    it('race-condition guard: live.endSet() before onSetBoundary is a silent drop', async () => {
+      // Reproduce the exact sequence the explicit `set.end` tool produces:
+      // LiveState.endSet() runs, then the device's Workout.STOP echo
+      // fires onSetBoundary. The bridge must observe the cleared live set
+      // and drop without re-finalizing.
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+      live.endSet();
+      client.fire.setBoundary();
+      await flushMicrotasks();
+      expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      expect(channels.publish).not.toHaveBeenCalled();
     });
   });
 

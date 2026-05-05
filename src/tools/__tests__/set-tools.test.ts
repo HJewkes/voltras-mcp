@@ -138,6 +138,7 @@ function setup(): Harness {
     store,
     exercises: {} as never,
     channels,
+    setStartDeviceSnapshots: new Map(),
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -400,6 +401,29 @@ describe('set.end', () => {
     expect(parsed.vbt_summary.first_rep_v).toBe(0);
     expect(parsed.vbt_summary.last_rep_v).toBe(0);
     expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+  });
+
+  it('explicit set.end produces set_ended (not set_ended_by_device) — bridge-driven event_type is unaffected', async () => {
+    // Regression guard for the sprint 1B refactor: the autonomous
+    // `set_ended_by_device` event lives on the bridge's onSetBoundary
+    // path. The tool path (this test) MUST keep emitting `set_ended` with
+    // no `partial_reason` so analytics consumers don't see a spurious
+    // partial flag on graceful set ends.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as {
+      meta: Record<string, string>;
+      content: string;
+    };
+    expect(event.meta.event_type).toBe('set_ended');
+    expect(event.meta.partial_reason).toBeUndefined();
+    const parsed = JSON.parse(event.content) as { set: { partial_reason: unknown } };
+    expect(parsed.set.partial_reason).toBeNull();
   });
 
   it('set_ended vbt_summary.velocity_loss_pct is null when fewer than 2 reps', async () => {

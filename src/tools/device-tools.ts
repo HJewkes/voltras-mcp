@@ -155,7 +155,7 @@ export function registerDeviceTools(
       // never connected to anything).
       const client = await state.manager.connect(device);
       state.client = client;
-      wireEventBridge(client, state.live, server, state.channels);
+      wireEventBridge(client, state.live, server, state.channels, state);
       return { ok: true, deviceId: input.deviceId };
     }),
   );

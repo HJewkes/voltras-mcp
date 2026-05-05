@@ -11,11 +11,14 @@
 //
 // `SetStartInput` is `z.object({})` by design (R18 / Task 03's handoff): all
 // set metadata derives from `state.live.snapshotDevice()`. The "snapshot at
-// start" choice is implemented via a per-handler `Map<setId, DeviceSnapshot>`
-// — the same closure that owns the live state holds the snapshot until
-// `set.end` consumes it. Re-reading the device at `set.end` would let
-// mid-set `device.set_weight` calls retroactively rewrite the stored
-// `weightLbs`, which is the wrong shape for analytics consumers.
+// start" choice is implemented via `state.setStartDeviceSnapshots`
+// (Map<setId, DeviceSnapshot>) — the snapshot is held until `set.end` (or
+// the bridge's `set_ended_by_device` autonomous handler) consumes it. The
+// map lives on shared state rather than in this module's closure so both
+// finalize paths reuse the same `finalizeSet` helper. Re-reading the device
+// at finalize time would let mid-set `device.set_weight` calls
+// retroactively rewrite the stored `weightLbs`, which is the wrong shape
+// for analytics consumers.
 //
 // Error-channel convention matches `session-tools.ts`: a thrown `ToolError`
 // with a `code` field is preserved by `mapSdkError` -> `errorResult`.
@@ -32,6 +35,7 @@ import {
   buildSetEndedPayload,
   buildSetStartedPayload,
   summarizePreviousSet,
+  type SetEndedCause,
 } from '../state/channel-payloads.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
@@ -52,9 +56,13 @@ interface PlaceholderTools {
 /**
  * Register `set.start`, `set.end`, `set.live_metrics`, `set.get`.
  *
- * The shared `deviceSnapshots` map persists between `set.start` and the
- * matching `set.end` so the snapshot taken at start time survives any
- * intervening `applySettings` mutations. `set.get` is read-only: it pulls a
+ * The shared device-snapshot map (on `state.setStartDeviceSnapshots`)
+ * persists between `set.start` and the matching finalize call so the
+ * snapshot taken at start time survives any intervening `applySettings`
+ * mutations. The map lives on `state` rather than in this module's closure
+ * so the bridge's `set_ended_by_device` handler can finalize the same set
+ * with the same recorded device config when the user presses Stop on the
+ * unit (event-bridge.ts:onSetBoundary). `set.get` is read-only: it pulls a
  * completed set straight from the store and is unaffected by live state.
  */
 export function registerSetTools(
@@ -62,19 +70,17 @@ export function registerSetTools(
   state: ServerState,
   placeholders: PlaceholderTools,
 ): void {
-  const deviceSnapshots = new Map<string, DeviceSnapshot>();
-
   install(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, () => startSet(state, deviceSnapshots)),
+    wrapHandler(SetStartInput, () => startSet(state)),
   );
   install(
     placeholders,
     'set.end',
     SetEndInput,
-    wrapHandler(SetEndInput, () => endSet(state, deviceSnapshots)),
+    wrapHandler(SetEndInput, () => endSetTool(state)),
   );
   install(
     placeholders,
@@ -103,10 +109,7 @@ function install<S extends z.ZodObject>(
   tool.update({ paramsSchema: schema.shape, callback: callback as never });
 }
 
-async function startSet(
-  state: ServerState,
-  deviceSnapshots: Map<string, DeviceSnapshot>,
-): Promise<{ setId: string }> {
+async function startSet(state: ServerState): Promise<{ setId: string }> {
   const session = state.live.session;
   if (session === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active. Call session.start first.');
@@ -130,7 +133,7 @@ async function startSet(
     status: 'active',
   });
   const device = state.live.snapshotDevice();
-  deviceSnapshots.set(setId, device);
+  state.setStartDeviceSnapshots.set(setId, device);
   // Push a lifecycle event so a channel-enabled host wakes the model on the
   // set boundary instead of forcing it to poll. Fire-and-forget when the
   // host didn't opt in to channels (see channel-publisher.ts).
@@ -188,41 +191,87 @@ async function fetchPreviousSetSummary(
   }
 }
 
-async function endSet(
-  state: ServerState,
-  deviceSnapshots: Map<string, DeviceSnapshot>,
-): Promise<{ ok: true; reps: number }> {
+async function endSetTool(state: ServerState): Promise<{ ok: true; reps: number }> {
   if (state.live.set === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active. Call set.start first.');
   }
-
-  const setId = state.live.set.setId;
-  const finalized = state.live.endSet();
-  // `live.set` was defined a moment ago, so `endSet()` returned a value.
-  if (finalized === undefined) {
+  // The explicit-tool path always disengages the motor (Workout.STOP) and
+  // emits a `set_ended` event with no `partialReason`.
+  const stored = await finalizeSet(state, { cause: 'tool', disengageMotor: true });
+  if (stored === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active.');
   }
+  return { ok: true, reps: stored.reps.length };
+}
 
-  // Disengage the device motor between sets (Workout.STOP) so the cable goes
-  // free while the user rests. SDK keeps the workout-mode session open so a
-  // subsequent set.start can re-engage without re-arming.
-  await state.client.endSet();
+/**
+ * Shared finalize sequence used by both the explicit `set.end` tool and the
+ * bridge's autonomous `set_ended_by_device` handler. Returns the persisted
+ * set on success, or `undefined` when no set was active (the device-signal
+ * caller treats this as a silent drop; the tool caller turns it into
+ * NO_ACTIVE_SET).
+ *
+ * `disengageMotor` should be `true` for the tool path (we explicitly stop
+ * recording so the cable goes free for rest) and `false` for the device
+ * signal path — the device has already de-engaged on its own, and an extra
+ * `Workout.STOP` would be a no-op at best and a connection-state churn at
+ * worst.
+ *
+ * `cause` selects the channel `event_type` (`set_ended` vs
+ * `set_ended_by_device`) and, for the device-signal path, also stamps the
+ * stored row with `partial=true` and `partialReason='device_signal'`.
+ */
+export async function finalizeSet(
+  state: ServerState,
+  opts: { cause: SetEndedCause; disengageMotor: boolean },
+): Promise<StoredSet | undefined> {
+  if (state.live.set === undefined) {
+    return undefined;
+  }
+  const setId = state.live.set.setId;
+  // `live.endSet` is called without a `reason`: the explicit-tool path is a
+  // graceful close, and the device-signal path applies its `partial=true /
+  // partialReason='device_signal'` stamp directly on the finalized snapshot
+  // below (LiveState only knows about `'disconnect' | 'session_end'`). This
+  // keeps the partial-reason override in exactly one place.
+  const finalized = state.live.endSet();
+  if (finalized === undefined) {
+    return undefined;
+  }
+
+  if (opts.disengageMotor) {
+    // Disengage the device motor between sets (Workout.STOP) so the cable
+    // goes free while the user rests. SDK keeps the workout-mode session
+    // open so a subsequent set.start can re-engage without re-arming. Only
+    // the explicit `set.end` tool path runs this — when the device emitted
+    // an autonomous set boundary, the motor is already de-engaged.
+    await state.client.endSet();
+  }
 
   // Use the snapshot captured at `set.start`; fall back to the current
   // snapshot if it was somehow missing (defensive — should not happen).
-  const device = deviceSnapshots.get(setId) ?? state.live.snapshotDevice();
-  deviceSnapshots.delete(setId);
+  const device = state.setStartDeviceSnapshots.get(setId) ?? state.live.snapshotDevice();
+  state.setStartDeviceSnapshots.delete(setId);
 
-  const stored = toStoredSet(finalized, device);
+  // For the device-signal cause we override the stored set's partial flag /
+  // reason; LiveState.endSet only sets those when called with a `reason`,
+  // and we deliberately did not pass one (the explicit-tool default is a
+  // graceful close). The override here is the single source of truth for
+  // `partial_reason: 'device_signal'`.
+  const finalizedWithCause: ActiveSet =
+    opts.cause === 'device_signal'
+      ? { ...finalized, status: 'partial', partialReason: 'device_signal' }
+      : finalized;
+  const stored = toStoredSet(finalizedWithCause, device);
   await state.store.putSet(stored);
-  // Push a lifecycle event so a channel-enabled host wakes the model on
-  // set close. The payload carries the full rep array plus a pre-computed
-  // VBT summary (first/last rep velocity + velocity-loss %), so PT Claude
-  // can skip the set.get + metrics.compute vbt.set retrieval calls that
-  // almost every set.end currently triggers.
-  const payload = buildSetEndedPayload(stored);
+  // Push a lifecycle event so a channel-enabled host wakes the model on set
+  // close. The payload carries the full rep array plus a pre-computed VBT
+  // summary (first/last rep velocity + velocity-loss %), so PT Claude can
+  // skip the set.get + metrics.compute vbt.set retrieval calls that almost
+  // every set close currently triggers.
+  const payload = buildSetEndedPayload(stored, opts.cause);
   state.channels.publish(payload);
-  return { ok: true, reps: stored.reps.length };
+  return stored;
 }
 
 async function liveMetrics(state: ServerState): Promise<{ active: false } | ActiveSet> {
