@@ -119,6 +119,7 @@ interface Harness {
   ) => Promise<{ content: { text: string }[]; isError?: boolean }>;
   store: ReturnType<typeof makeStore>;
   live: LiveStateType;
+  channels: { publish: ReturnType<typeof vi.fn> };
 }
 
 function setup(): Harness {
@@ -128,6 +129,7 @@ function setup(): Harness {
     startRecording: vi.fn().mockResolvedValue(undefined),
     endSet: vi.fn().mockResolvedValue(undefined),
   };
+  const channels = { publish: vi.fn() };
   const state = {
     config: {} as never,
     manager: {} as never,
@@ -135,6 +137,7 @@ function setup(): Harness {
     live,
     store,
     exercises: {} as never,
+    channels,
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -148,6 +151,7 @@ function setup(): Harness {
     invoke: (name, args) => invokers[name](args),
     store,
     live,
+    channels,
   };
 }
 
@@ -208,6 +212,26 @@ describe('set.start', () => {
     expect(h.live.set?.setId).toBe(body.setId);
     expect(h.live.set?.sessionId).toBe(sessionId);
     expect(h.live.set?.status).toBe('active');
+  });
+
+  it('publishes a set_started claude/channel event with set_id + session_id', async () => {
+    const sessionId = startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('set.start', {});
+    const setId = (parseResult(r) as { setId: string }).setId;
+    expect(h.channels.publish).toHaveBeenCalledTimes(1);
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    expect(event.meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'set_started',
+      set_id: setId,
+      session_id: sessionId,
+    });
+    expect(typeof event.content).toBe('string');
   });
 });
 
@@ -272,6 +296,31 @@ describe('set.end', () => {
     const r = await h.invoke('set.end', {});
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('NO_ACTIVE_SET');
+  });
+
+  it('publishes a set_ended claude/channel event with rep_count + duration_ms', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    const startResult = await h.invoke('set.start', {});
+    const setId = (parseResult(startResult) as { setId: string }).setId;
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    expect(h.channels.publish).toHaveBeenCalledTimes(1);
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    expect(event.meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'set_ended',
+      set_id: setId,
+      rep_count: '2',
+    });
+    // duration_ms is a non-negative integer string.
+    expect(event.meta.duration_ms).toMatch(/^\d+$/);
   });
 
   it('maps reps to StoredRep with sequential index and parent setId', async () => {

@@ -17,3 +17,16 @@ export const DebugRecentFramesInput = z.object({
 export const DebugRecentEventsInput = z.object({
   n: z.number().int().min(1).max(10_000).optional().default(DEFAULT_N),
 });
+
+/**
+ * Input for `debug.push_test_channel` — smoke-test the `claude/channel`
+ * publisher without requiring real device hardware. Mirrors the
+ * `ChannelEvent` shape: a human-readable `content` line and a flat
+ * string→string `meta` map that becomes XML attributes on the delivered
+ * `<channel>` tag. The host silently drops the notification when channels
+ * weren't enabled at session launch (`--channels`).
+ */
+export const DebugPushTestChannelInput = z.object({
+  content: z.string().min(1),
+  meta: z.record(z.string(), z.string()).default({}),
+});

@@ -40,6 +40,7 @@ import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
+import type { ChannelPublisher } from './channel-publisher.js';
 
 export interface ServerState {
   config: Config;
@@ -48,6 +49,15 @@ export interface ServerState {
   live: LiveState;
   store: SessionStore;
   exercises: ExerciseService;
+  /**
+   * Publisher for `claude/channel` push events. Wired in `runServer` after
+   * the McpServer is constructed (see `server.ts`), then attached to this
+   * state object before tool registration. Tool handlers can call
+   * `state.channels.publish(...)` to wake the model on lifecycle events
+   * without requiring a polling tool. Fire-and-forget: when the host wasn't
+   * launched with `--channels`, deliveries are silently dropped.
+   */
+  channels: ChannelPublisher;
 }
 
 /**
@@ -73,7 +83,11 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
-    return { config, manager, client, live, store, exercises };
+    // Default to a no-op publisher; `runServer` overwrites this with an
+    // `McpChannelPublisher` once the McpServer instance is available. Tests
+    // that don't care about channel pushes can leave the no-op in place.
+    const channels: ChannelPublisher = { publish: () => undefined };
+    return { config, manager, client, live, store, exercises, channels };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
     await safeCloseStore(store);

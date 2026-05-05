@@ -1,22 +1,32 @@
-// `debug.*` diagnostic tools — surface the bridge's ring buffers.
+// `debug.*` diagnostic tools — surface the bridge's ring buffers and expose
+// channel push smoke-testing.
 //
-// Two read-only tools:
+// Three tools:
 //   * `debug.recent_frames(n)` — last N telemetry frames the bridge captured
 //     via `client.onFrame`. Strictly numeric / typed values; never any raw
 //     protocol bytes.
 //   * `debug.recent_events(n)` — last N bridge-level events (rep_boundary,
 //     set_boundary, settings_update, connection_state_change, cycle_complete)
 //     with timestamps and lightweight structured payloads.
+//   * `debug.push_test_channel({ content, meta })` — fires a single
+//     `claude/channel` notification through the publisher so a developer
+//     can verify channel delivery (host launched with `--channels`) without
+//     attaching real hardware.
 //
-// Both default to the schema's default `n` (50), capped at the buffer's
+// `recent_*` default to the schema's default `n` (50), capped at the buffer's
 // configured capacity (default 256, override via `VMCP_DEBUG_BUFFER_SIZE`).
 // The buffers are process-local — a server restart drops them.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
-import { DebugRecentEventsInput, DebugRecentFramesInput } from '../schemas/debug.js';
+import {
+  DebugPushTestChannelInput,
+  DebugRecentEventsInput,
+  DebugRecentFramesInput,
+} from '../schemas/debug.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
+import type { ServerState } from '../state/server-state.js';
 import { wrapHandler } from './helpers.js';
 
 interface PlaceholderTools {
@@ -37,11 +47,17 @@ function install<S extends z.ZodObject>(
 }
 
 /**
- * Hot-swap `debug.recent_frames` and `debug.recent_events` placeholders with
- * their real handlers. Both pull from the singleton ring buffers populated
- * by the event bridge.
+ * Hot-swap the `debug.*` placeholders with their real handlers. The
+ * recent_* tools read from the singleton ring buffers populated by the
+ * event bridge; `push_test_channel` calls into `state.channels` so the
+ * smoke test exercises the same publisher used by the bridge and set
+ * lifecycle tools.
  */
-export function registerDebugTools(_server: McpServer, placeholders: PlaceholderTools): void {
+export function registerDebugTools(
+  _server: McpServer,
+  state: ServerState,
+  placeholders: PlaceholderTools,
+): void {
   install(
     placeholders,
     'debug.recent_frames',
@@ -70,6 +86,15 @@ export function registerDebugTools(_server: McpServer, placeholders: Placeholder
         returned: events.length,
         events,
       });
+    }),
+  );
+  install(
+    placeholders,
+    'debug.push_test_channel',
+    DebugPushTestChannelInput,
+    wrapHandler(DebugPushTestChannelInput, (input) => {
+      state.channels.publish({ content: input.content, meta: input.meta });
+      return Promise.resolve({ ok: true });
     }),
   );
 }

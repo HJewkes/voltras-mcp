@@ -6,6 +6,7 @@
 // own tests verify it appends correctly; here we verify the tool boundary.
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
+import type { ServerState } from '../../state/server-state.js';
 
 vi.mock('@voltras/node-sdk', () => ({}));
 
@@ -43,17 +44,20 @@ function makePlaceholders(names: string[]): {
   };
 }
 
+function fakeState(channels: { publish: ReturnType<typeof vi.fn> }): ServerState {
+  return { channels } as unknown as ServerState;
+}
+
+const ALL_DEBUG_TOOLS = ['debug.recent_frames', 'debug.recent_events', 'debug.push_test_channel'];
+
 describe('debug.recent_frames', () => {
   beforeEach(() => {
     _resetDebugBuffersForTest();
   });
 
   it('returns an empty list when the buffer is fresh', async () => {
-    const { placeholders, invoke } = makePlaceholders([
-      'debug.recent_frames',
-      'debug.recent_events',
-    ]);
-    registerDebugTools({} as never, placeholders as never);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
     const result = await invoke('debug.recent_frames', { n: 10 });
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
@@ -69,11 +73,8 @@ describe('debug.recent_frames', () => {
   });
 
   it('returns the most recent N frames in chronological order', async () => {
-    const { placeholders, invoke } = makePlaceholders([
-      'debug.recent_frames',
-      'debug.recent_events',
-    ]);
-    registerDebugTools({} as never, placeholders as never);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
     const buffers = getDebugBuffers();
     for (let i = 0; i < 5; i += 1) {
       buffers.frames.push({
@@ -94,11 +95,8 @@ describe('debug.recent_frames', () => {
   });
 
   it('caps n at the current buffer size when n exceeds size', async () => {
-    const { placeholders, invoke } = makePlaceholders([
-      'debug.recent_frames',
-      'debug.recent_events',
-    ]);
-    registerDebugTools({} as never, placeholders as never);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
     const buffers = getDebugBuffers();
     buffers.frames.push({
       sequence: 0,
@@ -115,11 +113,8 @@ describe('debug.recent_frames', () => {
   });
 
   it('uses the schema default n when input omits it', async () => {
-    const { placeholders, invoke } = makePlaceholders([
-      'debug.recent_frames',
-      'debug.recent_events',
-    ]);
-    registerDebugTools({} as never, placeholders as never);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
     const buffers = getDebugBuffers();
     for (let i = 0; i < 70; i += 1) {
       buffers.frames.push({
@@ -144,11 +139,8 @@ describe('debug.recent_events', () => {
   });
 
   it('returns the most recent N events with their payloads', async () => {
-    const { placeholders, invoke } = makePlaceholders([
-      'debug.recent_frames',
-      'debug.recent_events',
-    ]);
-    registerDebugTools({} as never, placeholders as never);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
     const buffers = getDebugBuffers();
     buffers.events.push({
       capturedAt: 1,
@@ -171,5 +163,50 @@ describe('debug.recent_events', () => {
       events: Array<{ type: string; capturedAt: number }>;
     };
     expect(body.events.map((e) => e.type)).toEqual(['cycle_complete', 'set_boundary']);
+  });
+});
+
+describe('debug.push_test_channel', () => {
+  beforeEach(() => {
+    _resetDebugBuffersForTest();
+  });
+
+  it('forwards content + meta to the channel publisher and returns ok', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    const r = await invoke('debug.push_test_channel', {
+      content: 'hello channels',
+      meta: { source: 'voltras', event_type: 'manual_test' },
+    });
+    expect(r.isError).toBeUndefined();
+    expect(JSON.parse(r.content[0].text)).toEqual({ ok: true });
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith({
+      content: 'hello channels',
+      meta: { source: 'voltras', event_type: 'manual_test' },
+    });
+  });
+
+  it('defaults meta to an empty object when caller omits it', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    const r = await invoke('debug.push_test_channel', { content: 'plain' });
+    expect(r.isError).toBeUndefined();
+    expect(publish).toHaveBeenCalledWith({ content: 'plain', meta: {} });
+  });
+
+  it('returns INVALID_INPUT when content is missing', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    const r = await invoke('debug.push_test_channel', { meta: {} });
+    expect(r.isError).toBe(true);
+    expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
+    expect(publish).not.toHaveBeenCalled();
   });
 });

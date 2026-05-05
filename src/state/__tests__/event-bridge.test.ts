@@ -161,6 +161,14 @@ function makeFakeServer(): FakeServer {
   };
 }
 
+interface FakeChannels {
+  publish: Mock<(event: { content: string; meta: Record<string, string> }) => void>;
+}
+
+function makeFakeChannels(): FakeChannels {
+  return { publish: vi.fn() };
+}
+
 function startSet(live: LiveStateT): void {
   live.startSession({
     sessionId: 'sess-1',
@@ -181,17 +189,20 @@ describe('wireEventBridge', () => {
   let live: LiveStateT;
   let client: FakeClient;
   let server: FakeServer;
+  let channels: FakeChannels;
 
   beforeEach(() => {
     live = new LiveState();
     client = makeFakeClient();
     server = makeFakeServer();
+    channels = makeFakeChannels();
     // Cast through unknown to keep test-only types decoupled from the SDK
     // module — the bridge accepts the structural surface we provide.
     wireEventBridge(
       client as unknown as Parameters<typeof wireEventBridge>[0],
       live,
       server as unknown as Parameters<typeof wireEventBridge>[2],
+      channels as unknown as Parameters<typeof wireEventBridge>[3],
     );
   });
 
@@ -309,6 +320,28 @@ describe('wireEventBridge', () => {
       // No set → no live state change.
       expect(live.snapshotSet()).toBeUndefined();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+
+    it('publishes a rep_finalized claude/channel event when a new rep is detected', () => {
+      startSet(live);
+      // First rep: CONCENTRIC -> ECCENTRIC -> IDLE closes rep 1.
+      feedFrame(1, 1);
+      feedFrame(2, 3);
+      feedFrame(3, 0);
+
+      expect(channels.publish).toHaveBeenCalled();
+      const event = channels.publish.mock.calls[0][0];
+      expect(event.meta.source).toBe('voltras');
+      expect(event.meta.event_type).toBe('rep_finalized');
+      expect(event.meta.set_id).toBe('set-1');
+      expect(event.meta.rep_count).toBe('1');
+      expect(typeof event.content).toBe('string');
+    });
+
+    it('does not publish a channel event when no set is active', () => {
+      feedFrame(1, 1);
+      feedFrame(2, 3);
+      expect(channels.publish).not.toHaveBeenCalled();
     });
   });
 

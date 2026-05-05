@@ -63,9 +63,11 @@ import type { VoltraClient, TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { WorkoutSample } from '@voltras/workout-analytics';
+import { getRepPeakVelocity } from '@voltras/workout-analytics';
 
 import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
+import type { ChannelPublisher } from './channel-publisher.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -94,8 +96,18 @@ const SET_URI = 'voltra://set/active';
  * Subscribe `live` to the SDK events on `client` and emit the matching
  * resource-updated notifications via `server`. Idempotent at the type
  * level — caller is expected to invoke once per server lifetime.
+ *
+ * `channels` is invoked on rep finalization so the model wakes inline (via
+ * `<channel>` tag delivery in Claude Code) rather than having to poll
+ * `set.live_metrics`. Fire-and-forget: when the host wasn't launched with
+ * `--channels`, publish is a no-op.
  */
-export function wireEventBridge(client: VoltraClient, live: LiveState, server: McpServer): void {
+export function wireEventBridge(
+  client: VoltraClient,
+  live: LiveState,
+  server: McpServer,
+  channels: ChannelPublisher,
+): void {
   const debug = getDebugBuffers();
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
@@ -138,6 +150,32 @@ export function wireEventBridge(client: VoltraClient, live: LiveState, server: M
     const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
     if (nextRepCount !== previousRepCount) {
       notify(server, SET_URI);
+      // Push a rep_finalized channel event so the model wakes on every
+      // completed rep without polling. The most recently finalized rep is
+      // the previously-final one (a new rep starts on each ECCENTRIC ->
+      // CONCENTRIC transition, closing the prior rep), so the just-closed
+      // rep sits at index `nextRepCount - 2` while a new in-progress rep
+      // is at index `nextRepCount - 1`. When this is the very first rep
+      // emission we fall back to the only rep present.
+      const set = live.snapshotSet();
+      if (set !== undefined && set.reps.length > 0) {
+        const finalizedIndex = set.reps.length >= 2 ? set.reps.length - 2 : 0;
+        const finalizedRep = set.reps[finalizedIndex];
+        const peakVelocity = getRepPeakVelocity(finalizedRep);
+        const meta: Record<string, string> = {
+          source: 'voltras',
+          event_type: 'rep_finalized',
+          set_id: set.setId,
+          rep_count: String(finalizedIndex + 1),
+        };
+        if (peakVelocity > 0) {
+          meta.peak_velocity = peakVelocity.toFixed(3);
+        }
+        channels.publish({
+          content: `Rep ${finalizedIndex + 1} complete on set ${set.setId.slice(0, 8)}.`,
+          meta,
+        });
+      }
     }
   });
 

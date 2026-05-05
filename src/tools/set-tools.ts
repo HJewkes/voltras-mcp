@@ -124,6 +124,18 @@ async function startSet(
     status: 'active',
   });
   deviceSnapshots.set(setId, state.live.snapshotDevice());
+  // Push a lifecycle event so a channel-enabled host wakes the model on the
+  // set boundary instead of forcing it to poll. Fire-and-forget when the
+  // host didn't opt in to channels (see channel-publisher.ts).
+  state.channels.publish({
+    content: `Set ${setId.slice(0, 8)} started.`,
+    meta: {
+      source: 'voltras',
+      event_type: 'set_started',
+      set_id: setId,
+      session_id: session.sessionId,
+    },
+  });
   return { setId };
 }
 
@@ -154,6 +166,19 @@ async function endSet(
 
   const stored = toStoredSet(finalized, device);
   await state.store.putSet(stored);
+  // Push a lifecycle event so a channel-enabled host wakes the model on
+  // set close — useful for "score the set" follow-ups without polling.
+  const durationMs = Date.parse(stored.endedAt) - Date.parse(stored.startedAt);
+  state.channels.publish({
+    content: `Set ${setId.slice(0, 8)} ended (${stored.reps.length} reps).`,
+    meta: {
+      source: 'voltras',
+      event_type: 'set_ended',
+      set_id: setId,
+      rep_count: String(stored.reps.length),
+      duration_ms: String(Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0),
+    },
+  });
   return { ok: true, reps: stored.reps.length };
 }
 
