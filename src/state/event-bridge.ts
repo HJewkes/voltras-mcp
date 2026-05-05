@@ -75,7 +75,11 @@ import type { WorkoutSample } from '@voltras/workout-analytics';
 import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
-import { buildRepFinalizedPayload } from './channel-payloads.js';
+import {
+  buildConnectionChangedPayload,
+  buildRepFinalizedPayload,
+  type ActiveSetAtDisconnect,
+} from './channel-payloads.js';
 import type { ServerState } from './server-state.js';
 import { finalizeSet } from '../tools/set-tools.js';
 import { log } from '../logger.js';
@@ -280,19 +284,43 @@ export function wireEventBridge(
     notify(server, DEVICE_URI);
   });
 
-  client.onConnectionStateChange((state) => {
+  client.onConnectionStateChange((connState) => {
     debug.events.push({
       capturedAt: Date.now(),
       type: 'connection_state_change',
-      payload: { state },
+      payload: { state: connState },
     });
-    live.applySettings({ connected: state === 'connected' });
+    // Snapshot the active set BEFORE any cascade so a disconnect-mid-set
+    // payload still carries the set context. `markDisconnected` does not
+    // currently clear the set in LiveState, but taking the snapshot up
+    // front future-proofs against that ordering changing.
+    const activeSetBefore = live.snapshotSet();
+    live.applySettings({ connected: connState === 'connected' });
     notify(server, DEVICE_URI);
-    if (state === 'disconnected') {
+    if (connState === 'disconnected') {
       live.markDisconnected(new Date().toISOString());
       notify(server, SESSION_URI);
       notify(server, SET_URI);
     }
+    // Build the channel payload AFTER the LiveState mutations so the
+    // device snapshot reflects post-transition state (notably the
+    // `disconnectedAt` timestamp set by `markDisconnected`). The active-set
+    // snapshot, on the other hand, is the pre-cascade copy.
+    const activeSetForPayload: ActiveSetAtDisconnect | null =
+      connState === 'disconnected' && activeSetBefore !== undefined
+        ? {
+            set_id: activeSetBefore.setId,
+            rep_count_so_far: activeSetBefore.reps.length,
+            weight_lbs: live.snapshotDevice().weightLbs ?? null,
+            training_mode: live.snapshotDevice().trainingMode ?? null,
+          }
+        : null;
+    const payload = buildConnectionChangedPayload(
+      connState,
+      live.snapshotDevice(),
+      activeSetForPayload,
+    );
+    channels.publish(payload);
   });
 }
 

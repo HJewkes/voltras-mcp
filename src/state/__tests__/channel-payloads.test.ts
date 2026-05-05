@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 
 import {
+  buildConnectionChangedPayload,
   buildRepFinalizedPayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
@@ -399,5 +400,102 @@ describe('buildSetEndedPayload', () => {
       expect(parsed.vbt_summary.velocity_loss_pct).toBeCloseTo(41.2, 1);
       expect(parsed.summary).toContain('41.2% velocity loss');
     });
+  });
+});
+
+describe('buildConnectionChangedPayload', () => {
+  it('connected: meta carries state + device_id, summary names the device when known', () => {
+    const device: DeviceSnapshot = {
+      connected: true,
+      deviceId: 'voltra-XYZ',
+      deviceName: 'Voltra Pro',
+      batteryPercent: 85,
+    };
+    const { meta, content } = buildConnectionChangedPayload('connected', device, null);
+    expect(meta).toEqual({
+      source: 'voltras',
+      event_type: 'connection_changed',
+      state: 'connected',
+      device_id: 'voltra-XYZ',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe('Voltra connected (Voltra Pro).');
+    expect(parsed.device).toEqual({
+      device_id: 'voltra-XYZ',
+      device_name: 'Voltra Pro',
+      connected: true,
+      battery_percent: 85,
+    });
+    expect(parsed.active_set_at_disconnect).toBeNull();
+  });
+
+  it('connected: summary omits the device-name parens when deviceName is absent', () => {
+    const device: DeviceSnapshot = { connected: true };
+    const { content } = buildConnectionChangedPayload('connected', device, null);
+    expect(JSON.parse(content).summary).toBe('Voltra connected.');
+  });
+
+  it('disconnected with no active set: omits mid_set meta and reports null active set', () => {
+    const device: DeviceSnapshot = {
+      connected: false,
+      deviceId: 'voltra-XYZ',
+      disconnectedAt: '2025-05-01T12:00:00.000Z',
+    };
+    const { meta, content } = buildConnectionChangedPayload('disconnected', device, null);
+    expect(meta.mid_set).toBeUndefined();
+    expect(meta.disconnected_at).toBe('2025-05-01T12:00:00.000Z');
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe('Voltra disconnected.');
+    expect(parsed.active_set_at_disconnect).toBeNull();
+  });
+
+  it('disconnected mid-set: emits mid_set=true and renders the summary with rep + set id prefix', () => {
+    const device: DeviceSnapshot = {
+      connected: false,
+      deviceId: 'voltra-XYZ',
+      disconnectedAt: '2025-05-01T12:00:00.000Z',
+      weightLbs: 135,
+      trainingMode: 'WeightTraining',
+    };
+    const activeSet = {
+      set_id: 'set-abcd1234efgh5678',
+      rep_count_so_far: 4,
+      weight_lbs: 135,
+      training_mode: 'WeightTraining',
+    };
+    const { meta, content } = buildConnectionChangedPayload('disconnected', device, activeSet);
+    expect(meta).toMatchObject({
+      event_type: 'connection_changed',
+      state: 'disconnected',
+      mid_set: 'true',
+      device_id: 'voltra-XYZ',
+      disconnected_at: '2025-05-01T12:00:00.000Z',
+    });
+    const parsed = JSON.parse(content);
+    // set_id_short is set_id.slice(0, 8).
+    expect(parsed.summary).toBe('Voltra disconnected mid-set (rep 4 of set set-abcd, 135 lbs).');
+    expect(parsed.active_set_at_disconnect).toEqual(activeSet);
+  });
+
+  it("intermediate 'connecting' state renders 'Voltra connecting.' summary", () => {
+    const device: DeviceSnapshot = { connected: false };
+    const { meta, content } = buildConnectionChangedPayload('connecting', device, null);
+    expect(meta.state).toBe('connecting');
+    // No mid_set / disconnected_at attrs on intermediate states.
+    expect(meta.mid_set).toBeUndefined();
+    expect(meta.disconnected_at).toBeUndefined();
+    expect(JSON.parse(content).summary).toBe('Voltra connecting.');
+  });
+
+  it("intermediate 'authenticating' state renders 'Voltra authenticating.' summary", () => {
+    const device: DeviceSnapshot = { connected: false };
+    const { content } = buildConnectionChangedPayload('authenticating', device, null);
+    expect(JSON.parse(content).summary).toBe('Voltra authenticating.');
+  });
+
+  it('omits device_id from meta when the device snapshot has none', () => {
+    const device: DeviceSnapshot = { connected: true };
+    const { meta } = buildConnectionChangedPayload('connected', device, null);
+    expect(meta.device_id).toBeUndefined();
   });
 });

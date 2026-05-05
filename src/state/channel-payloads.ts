@@ -359,3 +359,92 @@ function buildSetEndedSummary(
   const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
   return cause === 'device_signal' ? `${withLoss} (user pressed Stop on the unit)` : withLoss;
 }
+
+/**
+ * SDK connection-state values, mirrored locally so this module doesn't pull
+ * in the SDK type. Matches `@voltras/node-sdk`'s connection-state union.
+ */
+export type ConnectionState = 'connected' | 'disconnected' | 'connecting' | 'authenticating';
+
+/**
+ * Compact summary of the active set at the moment a disconnect lands. Used
+ * only on the `connection_changed` event when `state === 'disconnected'`
+ * and a set was active. PT Claude reads this to decide whether to surface
+ * a "you got disconnected mid-rep" prompt to the user.
+ */
+export interface ActiveSetAtDisconnect {
+  set_id: string;
+  rep_count_so_far: number;
+  weight_lbs: number | null;
+  training_mode: string | null;
+}
+
+/**
+ * Build the meta + content for a `connection_changed` channel event. Fires
+ * on every state transition (connected / disconnected / connecting /
+ * authenticating). The `device` snapshot should reflect post-transition
+ * state — for the disconnect case that means after `markDisconnected`, so
+ * `device.disconnectedAt` is populated. The `activeSet` snapshot, on the
+ * other hand, is taken from BEFORE any disconnect cascade so the payload
+ * still carries the mid-set context the model can reason over.
+ *
+ * `device.connected` is forwarded as the boolean `connected` flag in the
+ * content body — separate from the four-state `state` so the model can
+ * filter on either axis without parsing.
+ */
+export function buildConnectionChangedPayload(
+  state: ConnectionState,
+  device: DeviceSnapshot,
+  activeSet: ActiveSetAtDisconnect | null,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'connection_changed',
+    state,
+  };
+  if (device.deviceId !== undefined) {
+    meta.device_id = device.deviceId;
+  }
+  if (state === 'disconnected') {
+    if (device.disconnectedAt !== undefined) {
+      meta.disconnected_at = device.disconnectedAt;
+    }
+    if (activeSet !== null) {
+      meta.mid_set = 'true';
+    }
+  }
+
+  const summary = buildConnectionChangedSummary(state, device, activeSet);
+  const content = JSON.stringify({
+    summary,
+    device: {
+      device_id: device.deviceId ?? null,
+      device_name: device.deviceName ?? null,
+      connected: device.connected,
+      battery_percent: device.batteryPercent ?? null,
+    },
+    active_set_at_disconnect: state === 'disconnected' ? activeSet : null,
+  });
+  return { meta, content };
+}
+
+function buildConnectionChangedSummary(
+  state: ConnectionState,
+  device: DeviceSnapshot,
+  activeSet: ActiveSetAtDisconnect | null,
+): string {
+  if (state === 'connected') {
+    return device.deviceName !== undefined
+      ? `Voltra connected (${device.deviceName}).`
+      : 'Voltra connected.';
+  }
+  if (state === 'disconnected') {
+    if (activeSet === null) {
+      return 'Voltra disconnected.';
+    }
+    const setIdShort = activeSet.set_id.slice(0, 8);
+    const weight = activeSet.weight_lbs ?? 0;
+    return `Voltra disconnected mid-set (rep ${activeSet.rep_count_so_far} of set ${setIdShort}, ${weight} lbs).`;
+  }
+  return `Voltra ${state}.`;
+}

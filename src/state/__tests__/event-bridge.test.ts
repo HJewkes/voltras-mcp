@@ -731,5 +731,175 @@ describe('wireEventBridge', () => {
       client.fire.connectionStateChange('authenticating');
       expect(live.snapshotDevice().connected).toBe(false);
     });
+
+    describe('connection_changed channel event', () => {
+      it("publishes connection_changed with state=connected and device snapshot on 'connected'", () => {
+        live.applySettings({
+          deviceId: 'voltra-XYZ',
+          deviceName: 'Voltra Pro',
+          batteryPercent: 80,
+        });
+        channels.publish.mockClear();
+        client.fire.connectionStateChange('connected');
+
+        expect(channels.publish).toHaveBeenCalledTimes(1);
+        const event = channels.publish.mock.calls[0][0];
+        expect(event.meta).toMatchObject({
+          source: 'voltras',
+          event_type: 'connection_changed',
+          state: 'connected',
+          device_id: 'voltra-XYZ',
+        });
+        // No mid_set / disconnected_at attrs on connect.
+        expect(event.meta.mid_set).toBeUndefined();
+        expect(event.meta.disconnected_at).toBeUndefined();
+
+        const parsed = JSON.parse(event.content) as {
+          summary: string;
+          device: {
+            device_id: string | null;
+            device_name: string | null;
+            connected: boolean;
+            battery_percent: number | null;
+          };
+          active_set_at_disconnect: unknown;
+        };
+        expect(parsed.summary).toContain('Voltra connected');
+        expect(parsed.summary).toContain('Voltra Pro');
+        expect(parsed.device).toMatchObject({
+          device_id: 'voltra-XYZ',
+          device_name: 'Voltra Pro',
+          connected: true,
+          battery_percent: 80,
+        });
+        expect(parsed.active_set_at_disconnect).toBeNull();
+      });
+
+      it("on 'disconnected' with an active set publishes mid_set=true and the active-set context", () => {
+        // Set up a session + set + device weight so the mid-set summary
+        // has something to render.
+        live.applySettings({
+          deviceId: 'voltra-XYZ',
+          deviceName: 'Voltra Pro',
+          weightLbs: 135,
+          trainingMode: 'WeightTraining',
+        });
+        startSet(live);
+        // Append a few reps so rep_count_so_far is non-zero.
+        const rep = (n: number) =>
+          ({
+            repNumber: n,
+            concentric: {
+              samples: [],
+              startTime: 0,
+              endTime: 0,
+              startPosition: 0,
+              endPosition: 0,
+              _totalVelocity: 0,
+              _totalForce: 0,
+              _totalLoad: 0,
+              _movementSampleCount: 0,
+              _totalHoldDuration: 0,
+              peakVelocity: 0,
+              peakForce: 0,
+              peakLoad: 0,
+            },
+            eccentric: {
+              samples: [],
+              startTime: 0,
+              endTime: 0,
+              startPosition: 0,
+              endPosition: 0,
+              _totalVelocity: 0,
+              _totalForce: 0,
+              _totalLoad: 0,
+              _movementSampleCount: 0,
+              _totalHoldDuration: 0,
+              peakVelocity: 0,
+              peakForce: 0,
+              peakLoad: 0,
+            },
+          }) as unknown as Parameters<typeof live.appendRep>[0];
+        live.appendRep(rep(1));
+        live.appendRep(rep(2));
+        channels.publish.mockClear();
+
+        client.fire.connectionStateChange('disconnected');
+
+        expect(channels.publish).toHaveBeenCalledTimes(1);
+        const event = channels.publish.mock.calls[0][0];
+        expect(event.meta).toMatchObject({
+          source: 'voltras',
+          event_type: 'connection_changed',
+          state: 'disconnected',
+          mid_set: 'true',
+          device_id: 'voltra-XYZ',
+        });
+        // disconnected_at is the ISO timestamp set by markDisconnected.
+        expect(event.meta.disconnected_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+        const parsed = JSON.parse(event.content) as {
+          summary: string;
+          device: { connected: boolean };
+          active_set_at_disconnect: {
+            set_id: string;
+            rep_count_so_far: number;
+            weight_lbs: number;
+            training_mode: string;
+          } | null;
+        };
+        // Mid-set summary surfaces rep number, set id prefix, and weight.
+        expect(parsed.summary).toContain('disconnected mid-set');
+        expect(parsed.summary).toContain('rep 2');
+        expect(parsed.summary).toContain('135 lbs');
+        // Device snapshot reflects the post-disconnect connected=false.
+        expect(parsed.device.connected).toBe(false);
+        // active-set context is taken from BEFORE the disconnect cascade.
+        expect(parsed.active_set_at_disconnect).toMatchObject({
+          set_id: 'set-1',
+          rep_count_so_far: 2,
+          weight_lbs: 135,
+          training_mode: 'WeightTraining',
+        });
+      });
+
+      it("on 'disconnected' without an active set omits mid_set meta and reports null active set", () => {
+        channels.publish.mockClear();
+        client.fire.connectionStateChange('disconnected');
+
+        const event = channels.publish.mock.calls[0][0];
+        expect(event.meta.event_type).toBe('connection_changed');
+        expect(event.meta.state).toBe('disconnected');
+        expect(event.meta.mid_set).toBeUndefined();
+
+        const parsed = JSON.parse(event.content) as {
+          summary: string;
+          active_set_at_disconnect: unknown;
+        };
+        expect(parsed.summary).toBe('Voltra disconnected.');
+        expect(parsed.active_set_at_disconnect).toBeNull();
+      });
+
+      it("publishes connection_changed for intermediate 'connecting' / 'authenticating' states", () => {
+        channels.publish.mockClear();
+        client.fire.connectionStateChange('connecting');
+        client.fire.connectionStateChange('authenticating');
+
+        expect(channels.publish).toHaveBeenCalledTimes(2);
+        const first = channels.publish.mock.calls[0][0];
+        expect(first.meta).toMatchObject({
+          event_type: 'connection_changed',
+          state: 'connecting',
+        });
+        expect(JSON.parse(first.content).summary).toBe('Voltra connecting.');
+
+        const second = channels.publish.mock.calls[1][0];
+        expect(second.meta).toMatchObject({
+          event_type: 'connection_changed',
+          state: 'authenticating',
+        });
+        expect(JSON.parse(second.content).summary).toBe('Voltra authenticating.');
+      });
+    });
   });
 });
