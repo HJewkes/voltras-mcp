@@ -139,6 +139,8 @@ Option 1 is safer (only affects analytics output, doesn't rewrite phase labels).
 
 ## 2026-05-04 — Push-driven set lifecycle (MCP → PT Claude callbacks)
 
+**Status:** Push primitive validated end-to-end on 2026-05-04. `notifications/claude/channel` is the working mechanism (NOT `notifications/resource_updated` — that's host-side cache only and never reaches the model). Capability + publisher + per-rep / per-set lifecycle events are shipped on `feat/observability-and-bridge-refactor`. Launch flag: `claude --dangerously-load-development-channels server:voltras`. Trigger DSL and `timer.wait` push variant remain. Full status + UX quirks (rep_finalized fires when next rep begins, not when current rep ends) in HANDOFF.md.
+
 **Use case:** The current PT loop requires the user to type "done" between sets. That's friction during a workout — they're breathing, sweating, often not at the keyboard. PT Claude should be able to _register interest_ in specific telemetry-derived events when the set starts, then react when the MCP fires them.
 
 **Sketch:**
@@ -167,11 +169,13 @@ Option 1 is safer (only affects analytics output, doesn't rewrite phase labels).
 
 PT Claude registers, the MCP watches the telemetry stream, and when a trigger fires the MCP pushes a notification (or resolves a long-running tool call) so the conversation can react without polling.
 
-**Implementation paths to evaluate:**
+**Implementation path (chosen 2026-05-04):**
 
-- MCP already supports `notifications/resource_updated` per spec; `event-bridge.ts:notify()` already fires those for `voltra://set/active`. _Does the Claude Code conversation surface those notifications to the model as user-turn input?_ Open question — needs verification. If yes, half the work is done; we just need a subscription/filter layer.
-- Alternative: a long-running `set.wait_for_event` tool that blocks until any registered trigger fires (or a timeout). Same blocking-call problem as `timer.wait` today, but with a clear "tap me when X happens" semantic.
-- Alternative: upgrade `set.live_metrics` from polling-only to a streaming/SSE shape — but that's a bigger MCP-spec excursion.
+`notifications/claude/channel` (Claude Code experimental capability) is the delivery mechanism. Server declares `experimental: { 'claude/channel': {} }`; events go out via `mcp.notification({ method: 'notifications/claude/channel', params: { content, meta } })` and arrive in the live conversation as `<channel source="..." ...>` tags. `notifications/resource_updated` was ruled out — Claude Code consumes those for client-side cache only, never delivers to the model.
+
+Foundation already built (commit `1b238ae`, plus rep-index off-by-one fix follow-up): capability declaration, `McpChannelPublisher`, per-rep + set-lifecycle emissions, smoke-test tool. Launch with `claude --dangerously-load-development-channels server:voltras`.
+
+What's left: the trigger DSL above (filter what gets pushed), the `timer.wait → timer.start({ onComplete })` upgrade, and (later) plugin-wrapping for marketplace distribution. The blocking `set.wait_for_event` fallback is no longer needed — channels carry the same UX without burning tool turns.
 
 **Coaching scenarios this unlocks:**
 

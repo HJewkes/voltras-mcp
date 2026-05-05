@@ -72,13 +72,34 @@ cd /Users/hjewkes/Documents/projects/voltras-workspace/voltras-mcp && npm run ty
 
 **Why:** Today the user has to type "done" between sets and "go" after a rest timer. The MCP knows when reps complete and when timers fire — there's no reason it can't push these to PT Claude and skip the manual handoff.
 
-**Top of WISHLIST entry:** `## 2026-05-04 — Push-driven set lifecycle (MCP → PT Claude callbacks)`. Reading order:
+**Status (2026-05-04 end of session): architecture validated and partially shipped.**
 
-1. **First investigate**: does Claude Code's MCP integration surface `notifications/resource_updated` to the model as user-turn input today? The bridge already emits these via `event-bridge.ts:notify()` for `voltra://set/active`, etc. If yes, half the work is "just consume the notifications correctly" — write a sub-agent task to test this empirically before designing anything new.
-2. **If the runtime supports push**, the architecture is: `set.start({watch: { stopOn, notifyOn }})` registers triggers; bridge evaluates them on each rep finalization in `LiveState.processSample`; matching triggers fire MCP notifications. Coach gets a wakeup turn when a trigger fires.
-3. **If the runtime doesn't support push**, the fallback is a long-running `set.wait_for_event` tool that blocks until any registered trigger fires (or timeout). Same blocking-call problem as `timer.wait` today, but with a clear "tap me when X happens" semantic. Document the same `taskSupport: forbidden` constraint that bites timer.wait.
-4. **Trigger DSL** sketch is in WISHLIST. Start with the most common: `rep_count_reached`, `set_ended_by_device` (user pressed end on Voltra UI), `idle_timeout_ms`. Add `velocity_loss_exceeded` once we trust the per-rep velocity stream.
-5. **Same architecture solves the rest-timer-up case.** `timer.wait` becomes `timer.start({durationMs, onComplete: <event-spec>})` — fires a notification when done instead of blocking the conversation.
+`notifications/resource_updated` is NOT delivered to the model in Claude Code (cache hint only — verified empirically via `debug.push_test_channel` smoke test). The working push primitive is `notifications/claude/channel`, which delivers events inline to the live conversation as `<channel>` XML tags. Reference impl: `~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts` (and `telegram/`, `discord/`).
+
+**What's wired today** (commit `1b238ae` on `feat/observability-and-bridge-refactor`, then bug-fix follow-up):
+
+- `experimental: { 'claude/channel': {} }` declared in capabilities (`src/server.ts`).
+- `McpChannelPublisher` wraps `server.server.notification(...)` fire-and-forget (`src/state/channel-publisher.ts`).
+- Bridge emits `rep_finalized` events when a rep closes (length N→N+1 for N≥1; rep N is covered by `set_ended` instead — see "UX quirk" below).
+- `set.start`/`set.end` emit `set_started`/`set_ended` events with set ID, rep count, duration.
+- `debug.push_test_channel` tool for smoke testing without real hardware.
+
+**How to launch with channels enabled** (the flag is hidden from `claude --help` because it's `--dangerously-`-prefixed; the doc page lives at https://code.claude.com/docs/en/channels-reference):
+
+```bash
+claude --dangerously-load-development-channels server:voltras
+```
+
+The `server:<name>` form works for plain `.mcp.json` servers — no plugin packaging required. Use `--channels plugin:<name>@<marketplace>` only after the MCP is wrapped as a plugin and published. The dev flag is gated behind the research-preview status (Claude Code v2.1.80+).
+
+**UX quirk to know about:** `rep_finalized` fires when the _next_ rep begins, not when the current one ends. This is intrinsic to `addSampleToSet`'s ECC→CONC boundary detection — a rep can't be confirmed "done" until the next concentric pull rules out a long pause. The terminal rep (rep N) never sees a phase transition that closes it; `set.end` finalizes it via `completeSet()` and the `set_ended` channel event covers that case. Net coverage: reps 1..N-1 fire `rep_finalized` (with small lag); rep N rides on `set_ended`. The coaching surface should treat each `rep_finalized` event as "user just started a new rep, here's the prior one's metrics" rather than "user just released the cable."
+
+**Remaining work** (in rough order of value, all on top of the existing branch):
+
+1. **Trigger DSL** — `set.start({ watch: { stopOn, notifyOn } })`. Server-side filter so the coach only wakes on events it cares about. Sketch in WISHLIST. Start narrow: `rep_count_reached`, `set_ended_by_device`, `idle_timeout_ms`. Add `velocity_loss_exceeded` once per-rep velocity is trusted.
+2. **`timer.wait` push variant** — replace the blocking long-poll with `timer.start({ durationMs, onComplete: <event-spec> })`. Fires a channel event when done; conversation isn't held open.
+3. **Reliability story** — Claude Code v2.1.128 delivers channels reliably with the dev flag, but the brain MCP's tool description says "not reliable in all Claude Code versions." Worth a defensive guard: if channels aren't enabled (no `--dangerously-load-development-channels`), the publisher silently no-ops today. We may want a one-time log line at startup when the host doesn't acknowledge the capability so users notice missing push-driven flow.
+4. **Plugin-wrap for distribution** — once the trigger DSL stabilizes, wrap voltras-mcp as a plugin (drop a `.claude-plugin/plugin.json` + `.mcp.json` into the repo per the fakechat reference). Lets users install with `--channels plugin:voltras@<marketplace>` instead of the dev flag.
 
 **Tradeoff to flag:** the user wants ergonomics; the implementer wants correctness. Push-driven flows are easy to break with race conditions (rep finalization mid-flight when set.end fires, network jitter, etc.). The first cut should err toward conservative — only fire triggers from finalized state, never speculative.
 

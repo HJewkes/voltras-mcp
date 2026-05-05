@@ -322,20 +322,48 @@ describe('wireEventBridge', () => {
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
 
-    it('publishes a rep_finalized claude/channel event when a new rep is detected', () => {
+    it('does not publish rep_finalized while rep 1 is still in-progress (length 0 -> 1)', () => {
+      // addSampleToSet creates rep 1 on the first CONCENTRIC sample. At that
+      // moment rep 1 is in-progress — nothing has closed yet, so no channel
+      // event should fire. The `set_ended` event from set-tools.ts covers
+      // the terminal rep when the set itself ends.
       startSet(live);
-      // First rep: CONCENTRIC -> ECCENTRIC -> IDLE closes rep 1.
-      feedFrame(1, 1);
-      feedFrame(2, 3);
-      feedFrame(3, 0);
+      feedFrame(1, 1); // CONCENTRIC -> length 0 -> 1, rep 1 in-progress
+      feedFrame(2, 3); // ECCENTRIC, samples appended to rep 1
+      feedFrame(3, 0); // IDLE, samples appended to rep 1
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
 
-      expect(channels.publish).toHaveBeenCalled();
+    it('publishes rep_finalized for rep 1 when rep 2 begins (length 1 -> 2)', () => {
+      // Rep 1 finalizes at the ECC -> CONC transition that opens rep 2; the
+      // closed rep sits at index 0 while the new in-progress rep is index 1.
+      startSet(live);
+      feedFrame(1, 1); // C, rep 1 starts
+      feedFrame(2, 3); // E, rep 1 in eccentric phase
+      feedFrame(3, 1); // C -> ECC->CONC: rep 1 finalized, rep 2 starts
+
+      expect(channels.publish).toHaveBeenCalledTimes(1);
       const event = channels.publish.mock.calls[0][0];
       expect(event.meta.source).toBe('voltras');
       expect(event.meta.event_type).toBe('rep_finalized');
       expect(event.meta.set_id).toBe('set-1');
       expect(event.meta.rep_count).toBe('1');
-      expect(typeof event.content).toBe('string');
+      expect(event.content).toContain('Rep 1');
+    });
+
+    it('publishes rep_finalized for rep 2 when rep 3 begins (length 2 -> 3)', () => {
+      startSet(live);
+      feedFrame(1, 1); // C, rep 1 starts (no publish)
+      feedFrame(2, 3); // E
+      feedFrame(3, 1); // ECC->CONC: rep 1 finalized, rep 2 starts (publish rep 1)
+      feedFrame(4, 3); // E, rep 2 in eccentric
+      feedFrame(5, 1); // ECC->CONC: rep 2 finalized, rep 3 starts (publish rep 2)
+
+      expect(channels.publish).toHaveBeenCalledTimes(2);
+      const second = channels.publish.mock.calls[1][0];
+      expect(second.meta.event_type).toBe('rep_finalized');
+      expect(second.meta.rep_count).toBe('2');
+      expect(second.content).toContain('Rep 2');
     });
 
     it('does not publish a channel event when no set is active', () => {

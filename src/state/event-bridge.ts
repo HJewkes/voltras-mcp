@@ -150,16 +150,24 @@ export function wireEventBridge(
     const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
     if (nextRepCount !== previousRepCount) {
       notify(server, SET_URI);
-      // Push a rep_finalized channel event so the model wakes on every
-      // completed rep without polling. The most recently finalized rep is
-      // the previously-final one (a new rep starts on each ECCENTRIC ->
-      // CONCENTRIC transition, closing the prior rep), so the just-closed
-      // rep sits at index `nextRepCount - 2` while a new in-progress rep
-      // is at index `nextRepCount - 1`. When this is the very first rep
-      // emission we fall back to the only rep present.
+      // Publish a `rep_finalized` channel event only when a rep has actually
+      // closed. Per workout-analytics's `addSampleToSet`:
+      //   - The first CONCENTRIC sample creates rep 1 in-progress (length
+      //     0 -> 1). Nothing has finalized yet, so do not publish.
+      //   - Every subsequent ECCENTRIC -> CONCENTRIC transition appends a
+      //     new in-progress rep AND leaves the previously-final rep
+      //     untouched. That's the moment the prior rep is "done" — it sits
+      //     at index `nextRepCount - 2` while the new in-progress rep is
+      //     at `nextRepCount - 1`.
+      //   - The terminal rep (rep N) never closes via a phase transition;
+      //     `set.end` -> `completeSet` finalizes it and the `set_ended`
+      //     channel event from set-tools.ts covers that case.
+      // Net coverage: reps 1..N-1 emit `rep_finalized` (each fires when the
+      // *next* rep begins — small lag the coaching surface should expect),
+      // and rep N is delivered inside `set_ended`.
       const set = live.snapshotSet();
-      if (set !== undefined && set.reps.length > 0) {
-        const finalizedIndex = set.reps.length >= 2 ? set.reps.length - 2 : 0;
+      if (set !== undefined && set.reps.length >= 2) {
+        const finalizedIndex = set.reps.length - 2;
         const finalizedRep = set.reps[finalizedIndex];
         const peakVelocity = getRepPeakVelocity(finalizedRep);
         const meta: Record<string, string> = {
