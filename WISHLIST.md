@@ -139,7 +139,7 @@ Option 1 is safer (only affects analytics output, doesn't rewrite phase labels).
 
 ## 2026-05-04 — Push-driven set lifecycle (MCP → PT Claude callbacks)
 
-**Status:** Push primitive validated end-to-end on 2026-05-04. `notifications/claude/channel` is the working mechanism (NOT `notifications/resource_updated` — that's host-side cache only and never reaches the model). Capability + publisher + per-rep / per-set lifecycle events are shipped on `feat/observability-and-bridge-refactor`. Launch flag: `claude --dangerously-load-development-channels server:voltras`. Trigger DSL and `timer.wait` push variant remain. Full status + UX quirks (rep_finalized fires when next rep begins, not when current rep ends) in HANDOFF.md.
+**Status:** Architecture complete on 2026-05-04. Validated end-to-end. Six channel events + trigger DSL shipped on `feat/observability-and-bridge-refactor`. `notifications/claude/channel` is the working push mechanism (NOT `notifications/resource_updated` — host-side cache only, never reaches the model). Launch flag: `claude --dangerously-load-development-channels server:voltras`. Full status table + UX quirks in HANDOFF.md. Remaining: reliability log, plugin-wrap for marketplace distribution, channel suppression API, and bilateral/dual-Voltras integration once that lands.
 
 **Use case:** The current PT loop requires the user to type "done" between sets. That's friction during a workout — they're breathing, sweating, often not at the keyboard. PT Claude should be able to _register interest_ in specific telemetry-derived events when the set starts, then react when the MCP fires them.
 

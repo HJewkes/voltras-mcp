@@ -94,14 +94,30 @@ The `server:<name>` form works for plain `.mcp.json` servers — no plugin packa
 
 **UX quirk to know about:** `rep_finalized` fires when the _next_ rep begins, not when the current one ends. This is intrinsic to `addSampleToSet`'s ECC→CONC boundary detection — a rep can't be confirmed "done" until the next concentric pull rules out a long pause. The terminal rep (rep N) never sees a phase transition that closes it; `set.end` finalizes it via `completeSet()` and the `set_ended` channel event covers that case. Net coverage: reps 1..N-1 fire `rep_finalized` (with small lag); rep N rides on `set_ended`. The coaching surface should treat each `rep_finalized` event as "user just started a new rep, here's the prior one's metrics" rather than "user just released the cable."
 
-**Remaining work** (in rough order of value, all on top of the existing branch):
+**Channel events shipped (sprints 1A, 1B, 2):**
 
-1. **Trigger DSL** — `set.start({ watch: { stopOn, notifyOn } })`. Server-side filter so the coach only wakes on events it cares about. Sketch in WISHLIST. Start narrow: `rep_count_reached`, `set_ended_by_device`, `idle_timeout_ms`. Add `velocity_loss_exceeded` once per-rep velocity is trusted.
-2. **`timer.wait` push variant** — replace the blocking long-poll with `timer.start({ durationMs, onComplete: <event-spec> })`. Fires a channel event when done; conversation isn't held open.
-3. **Reliability story** — Claude Code v2.1.128 delivers channels reliably with the dev flag, but the brain MCP's tool description says "not reliable in all Claude Code versions." Worth a defensive guard: if channels aren't enabled (no `--dangerously-load-development-channels`), the publisher silently no-ops today. We may want a one-time log line at startup when the host doesn't acknowledge the capability so users notice missing push-driven flow.
-4. **Plugin-wrap for distribution** — once the trigger DSL stabilizes, wrap voltras-mcp as a plugin (drop a `.claude-plugin/plugin.json` + `.mcp.json` into the repo per the fakechat reference). Lets users install with `--channels plugin:voltras@<marketplace>` instead of the dev flag.
+| Event                    | Trigger                                                 | Auto-stop?                        |
+| ------------------------ | ------------------------------------------------------- | --------------------------------- |
+| `rep_finalized`          | Each ECC→CONC transition (rep N closes when N+1 begins) | —                                 |
+| `set_started`            | `set.start` tool                                        | —                                 |
+| `set_ended`              | `set.end` tool                                          | —                                 |
+| `set_ended_by_device`    | `onSetBoundary` outside grace window                    | implicit (device already stopped) |
+| `connection_changed`     | `onConnectionStateChange` (every state)                 | —                                 |
+| `timer_complete`         | `timer.start` duration elapsed                          | —                                 |
+| `set_target_reached`     | `rep_count_reached` trigger matches                     | optional via stopOn               |
+| `velocity_loss_exceeded` | `velocity_loss_exceeded` trigger matches                | optional via stopOn               |
+| `idle_timeout`           | `idle_timeout_ms` watchdog fires                        | optional via stopOn               |
 
-**Tradeoff to flag:** the user wants ergonomics; the implementer wants correctness. Push-driven flows are easy to break with race conditions (rep finalization mid-flight when set.end fires, network jitter, etc.). The first cut should err toward conservative — only fire triggers from finalized state, never speculative.
+Trigger DSL on `set.start({ watch: { stopOn[], notifyOn[] } })` covers the three watchable events. Auto-stop fires the trigger event then `set_ended` with `partial_reason: 'auto_stopped'` and `auto_stop_cause: <trigger.type>`. Dedupe per (type, value) — registering the same trigger twice fires once. Velocity baseline is the highest peak concentric velocity seen so far in the set (sidesteps the rep-1 setup-pause artifact).
+
+**Remaining push work** (in rough order of value):
+
+1. **Reliability story** — Claude Code v2.1.128 delivers channels reliably with the dev flag, but brain's tool description warns "not reliable in all Claude Code versions." If channels aren't enabled at session launch (no `--dangerously-load-development-channels`), the publisher silently no-ops today. Worth a one-time log line at startup when the host doesn't acknowledge the capability so users notice missing push-driven flow.
+2. **Plugin-wrap for distribution** — drop a `.claude-plugin/plugin.json` + `.mcp.json` into the repo per the fakechat reference (`~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/`). Lets users install with `--channels plugin:voltras@<marketplace>` instead of the dev flag.
+3. **Channel suppression API** — opt-out for noisy phases (e.g., `set.start({ silent: true })` for warmups, or a per-event-type filter). Defer until in-conversation noise is actually a problem.
+4. **Bilateral / dual-Voltras integration** — once dual-Voltras lands (P0 #1), trigger DSL needs slot-tagged variants (`bilateral_asymmetry`, per-slot rep counts). Plus channel events should carry slot meta. Plan in tandem with the dual-Voltras schema decision.
+
+**Tradeoff to flag:** push-driven flows are easy to break with race conditions (rep finalization mid-flight when set.end fires, network jitter, etc.). The first cut errs toward conservative — only fire triggers from finalized state, never speculative.
 
 ## Remaining WISHLIST items (priority-sorted)
 
