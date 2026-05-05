@@ -41,6 +41,7 @@ import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
 import type { ChannelPublisher } from './channel-publisher.js';
+import { SetWatchdog } from './set-watchdog.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 
 export interface ServerState {
@@ -78,6 +79,14 @@ export interface ServerState {
    * `set_ended_by_device` handler — can both consume it.
    */
   setStartDeviceSnapshots: Map<string, DeviceSnapshot>;
+  /**
+   * Per-set idle-timeout watchdog backing the trigger DSL's
+   * `idle_timeout_ms` spec. Armed at `set.start` when the watch config
+   * registers any idle thresholds (smallest threshold wins, one watchdog
+   * per set), reset on every rep_finalized boundary, and cancelled in
+   * `finalizeSet` so any termination path clears the timer.
+   */
+  setWatchdog: SetWatchdog;
 }
 
 /**
@@ -109,6 +118,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const channels: ChannelPublisher = { publish: () => undefined };
     const timers = new Map<string, PushTimer>();
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
+    const setWatchdog = new SetWatchdog();
     return {
       config,
       manager,
@@ -119,6 +129,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       channels,
       timers,
       setStartDeviceSnapshots,
+      setWatchdog,
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');

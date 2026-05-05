@@ -61,6 +61,8 @@ vi.mock('@voltras/node-sdk', () => ({
 const { LiveState } = await import('../live-state.js');
 type LiveStateT = InstanceType<typeof LiveState>;
 const { wireEventBridge } = await import('../event-bridge.js');
+const { SetWatchdog } = await import('../set-watchdog.js');
+type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -489,6 +491,7 @@ describe('wireEventBridge', () => {
         string,
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
+      setWatchdog: SetWatchdogT;
     }
     let fakeState: FakeState;
 
@@ -512,6 +515,7 @@ describe('wireEventBridge', () => {
         client: { endSet: vi.fn(async () => undefined) },
         channels,
         setStartDeviceSnapshots: new Map(),
+        setWatchdog: new SetWatchdog(),
       };
       wireEventBridge(
         client as unknown as Parameters<typeof wireEventBridge>[0],
@@ -644,6 +648,7 @@ describe('wireEventBridge', () => {
         string,
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
+      setWatchdog: SetWatchdogT;
     }
     let fakeState: FakeStateForTrigger;
 
@@ -662,6 +667,7 @@ describe('wireEventBridge', () => {
         client: { endSet: vi.fn(async () => undefined) },
         channels,
         setStartDeviceSnapshots: new Map(),
+        setWatchdog: new SetWatchdog(),
       };
       wireEventBridge(
         client as unknown as Parameters<typeof wireEventBridge>[0],

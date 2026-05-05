@@ -6,7 +6,7 @@
 //   * Set metadata at start time comes from `live.snapshotDevice()`
 //   * NO_ACTIVE_SET on set.end without an active set (AC-17)
 //   * set.live_metrics returns the live snapshot or `{ active: false }`
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -26,6 +26,7 @@ vi.mock('@voltras/node-sdk', () => {
 
 const { LiveState } = await import('../../state/live-state.js');
 const { registerSetTools } = await import('../set-tools.js');
+const { SetWatchdog } = await import('../../state/set-watchdog.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -139,6 +140,7 @@ function setup(): Harness {
     exercises: {} as never,
     channels,
     setStartDeviceSnapshots: new Map(),
+    setWatchdog: new SetWatchdog(),
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -572,5 +574,194 @@ describe('set.get', () => {
     const r = await h.invoke('set.get', {});
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('set.start — idle_timeout_ms watchdog', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h = setup();
+  });
+
+  afterEach(() => {
+    // Drain any leftover scheduled idle timers between cases so background
+    // setTimeouts don't bleed into the next test's assertions.
+    (h.state.setWatchdog as { clearAll: () => void }).clearAll();
+    vi.useRealTimers();
+  });
+
+  async function flushMicrotasks(): Promise<void> {
+    // Drain a handful of microtask turns so void-chained awaits inside
+    // fireIdleTimeout → finalizeSet (await client.endSet → await
+    // store.putSet → publish) all settle before assertions. setImmediate
+    // is intercepted by vi.useFakeTimers() so we use real Promise turns.
+    for (let i = 0; i < 8; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it('does not arm a watchdog when watch config has no idle_timeout_ms specs', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'rep_count_reached', value: 5 }] },
+    });
+    const id = (parseResult(r) as { setId: string }).setId;
+    expect((h.state.setWatchdog as { has: (s: string) => boolean }).has(id)).toBe(false);
+  });
+
+  it('notifyOn idle_timeout fires the channel event but does not auto-stop', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    const setId = (parseResult(r) as { setId: string }).setId;
+    expect((h.state.setWatchdog as { has: (id: string) => boolean }).has(setId)).toBe(true);
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(h.channels.publish).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+
+    const idleEvent = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string>; content: string })
+      .find((e) => e.meta.event_type === 'idle_timeout');
+    expect(idleEvent).toBeDefined();
+    expect(idleEvent!.meta).toMatchObject({
+      set_id: setId,
+      threshold_ms: '30000',
+      idle_ms: '30000',
+      auto_stopped: 'false',
+      last_rep_count: '0',
+    });
+    // Set still active — notifyOn does not finalize.
+    expect(h.live.set?.setId).toBe(setId);
+    expect(h.store.putSet).not.toHaveBeenCalled();
+  });
+
+  it('stopOn idle_timeout fires event AND auto-stops via finalizeSet', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 45_000 }] },
+    });
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    await flushMicrotasks();
+
+    // idle_timeout publishes BEFORE set_ended.
+    const eventTypes = h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    const idleIdx = eventTypes.indexOf('idle_timeout');
+    const endedIdx = eventTypes.indexOf('set_ended');
+    expect(idleIdx).toBeGreaterThan(-1);
+    expect(endedIdx).toBeGreaterThan(idleIdx);
+
+    // Set finalized with auto_stopped partial reason + idle cause.
+    expect(h.live.set).toBeUndefined();
+    expect(h.store.putSet).toHaveBeenCalledTimes(1);
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.partial).toBe(true);
+    expect(stored.partialReason).toBe('auto_stopped');
+
+    const setEnded = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string> })
+      .find((e) => e.meta.event_type === 'set_ended');
+    expect(setEnded?.meta.auto_stop_cause).toBe('idle_timeout_ms');
+  });
+
+  it('rep finalization resets the watchdog so an active lifter does not trip it', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    const setId = (parseResult(r) as { setId: string }).setId;
+    h.channels.publish.mockClear();
+
+    // Advance 25s, then exercise resetIdleWatchdog directly (the bridge
+    // does this on rep_finalized; we don't pull the bridge into this
+    // unit-scoped harness).
+    await vi.advanceTimersByTimeAsync(25_000);
+    const { resetIdleWatchdog } = await import('../set-tools.js');
+    resetIdleWatchdog(h.state, setId, h.live.set?.watch);
+
+    // Another 25s with no further reset still leaves us at 25s into the
+    // new 30s window — no fire.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(
+      h.channels.publish.mock.calls.find(
+        (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+      ),
+    ).toBeUndefined();
+
+    // 5s more — total 30s since reset → fire.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
+    expect(
+      h.channels.publish.mock.calls.find(
+        (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+      ),
+    ).toBeDefined();
+  });
+
+  it('explicit set.end cancels the watchdog so no spurious fire after', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushMicrotasks();
+
+    // Only the set_ended event from the tool path — no idle_timeout.
+    const idleEvents = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEvents).toHaveLength(0);
+  });
+
+  it('smallest threshold wins across stopOn + notifyOn — fires once at smallest timeout', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: {
+        stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }],
+        notifyOn: [{ type: 'idle_timeout_ms', value: 60_000 }],
+      },
+    });
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await flushMicrotasks();
+
+    // Smallest (30s) fires; auto_stopped=true because stopOn threshold won.
+    const idleEvents = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEvents).toHaveLength(1);
+    expect((idleEvents[0][0] as { meta: Record<string, string> }).meta).toMatchObject({
+      threshold_ms: '30000',
+      auto_stopped: 'true',
+    });
+    // Set finalized — so the 60s timer would never fire even if armed.
+    expect(h.live.set).toBeUndefined();
+
+    // Advance further to confirm no second fire.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushMicrotasks();
+    const idleEventsAfter = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEventsAfter).toHaveLength(1);
   });
 });

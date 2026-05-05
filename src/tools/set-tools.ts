@@ -33,11 +33,13 @@ import {
   SetGetInput,
   SetLiveMetricsInput,
   SetStartInput,
+  type TriggerSpec,
   type WatchConfig,
 } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
 import {
+  buildIdleTimeoutPayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
   summarizePreviousSet,
@@ -171,7 +173,149 @@ async function startSet(
   };
   const payload = buildSetStartedPayload(activeSet, device, ordinal, previousSummary);
   state.channels.publish(payload);
+  // Arm the idle-timeout watchdog if any idle_timeout_ms spec is in the
+  // watch config. Smallest threshold wins (one watchdog per set) — see
+  // SetWatchdog for the rationale. Reset happens in the bridge on every
+  // rep_finalized; cancel happens in finalizeSet.
+  if (watch !== undefined) {
+    armIdleWatchdog(state, setId, startedAt, watch);
+  }
   return { setId };
+}
+
+/**
+ * Arm the idle-timeout watchdog for `setId`. Picks the smallest
+ * `idle_timeout_ms` threshold across `stopOn` + `notifyOn` (the larger
+ * thresholds would never get to fire because the smallest wakes the
+ * model first; see SetWatchdog for the policy). Returns silently when
+ * no idle_timeout_ms specs are registered — the watch config may carry
+ * only synchronous trigger types, in which case there's no watchdog to
+ * arm.
+ *
+ * `onFire` reads the current LiveState snapshot at fire time so the
+ * payload reflects whichever reps managed to land before the timeout
+ * (or none, if the user pulled their hand back at startup). Auto-stop
+ * is governed by whether the smallest threshold is on `stopOn`.
+ */
+export function armIdleWatchdog(
+  state: ServerState,
+  setId: string,
+  setStartedAt: string,
+  watch: WatchConfig,
+): void {
+  const smallest = smallestIdleSpec(watch);
+  if (smallest === undefined) {
+    return;
+  }
+  const idleMs = smallest.spec.value;
+  state.setWatchdog.register(setId, idleMs, () => {
+    fireIdleTimeout(state, setId, setStartedAt, smallest.spec, smallest.isStopOn);
+  });
+}
+
+/**
+ * Reset the watchdog deadline for `setId`. Called by the bridge after
+ * every rep_finalized boundary so an active lifter never trips the
+ * idle alarm. No-op when the set didn't register an idle spec.
+ */
+export function resetIdleWatchdog(state: ServerState, setId: string, watch?: WatchConfig): void {
+  if (watch === undefined) return;
+  const smallest = smallestIdleSpec(watch);
+  if (smallest === undefined) return;
+  const idleMs = smallest.spec.value;
+  // Re-arm with the same onFire — read-time snapshot still works because
+  // the closure captures setId and the spec, not stale rep data.
+  state.setWatchdog.reset(setId, idleMs, () => {
+    fireIdleTimeout(
+      state,
+      setId,
+      /* setStartedAt — recomputed below */ '',
+      smallest.spec,
+      smallest.isStopOn,
+    );
+  });
+}
+
+interface SmallestIdleSpec {
+  spec: Extract<TriggerSpec, { type: 'idle_timeout_ms' }>;
+  isStopOn: boolean;
+}
+
+/**
+ * Pick the spec with the smallest threshold across stopOn + notifyOn.
+ * `isStopOn=true` if the winning threshold appears in stopOn (a
+ * stopOn:30s + notifyOn:60s registers the 30s as stopOn, since 30 < 60).
+ * If the same threshold appears in both arrays, stopOn wins so the
+ * coach's "abandon and end" intent takes priority over the soft notify.
+ */
+function smallestIdleSpec(watch: WatchConfig): SmallestIdleSpec | undefined {
+  let best: SmallestIdleSpec | undefined;
+  const consider = (spec: TriggerSpec, isStopOn: boolean): void => {
+    if (spec.type !== 'idle_timeout_ms') return;
+    if (best === undefined || spec.value < best.spec.value) {
+      best = { spec, isStopOn };
+    } else if (spec.value === best.spec.value && isStopOn) {
+      // stopOn wins on tie — auto-stop intent dominates notify-only.
+      best = { spec, isStopOn };
+    }
+  };
+  for (const spec of watch.stopOn) consider(spec, true);
+  for (const spec of watch.notifyOn) consider(spec, false);
+  return best;
+}
+
+/**
+ * Build + publish the `idle_timeout` channel event for the active set,
+ * then auto-stop if the firing spec was on stopOn. Reads the current
+ * LiveState snapshot so the payload reflects whichever reps closed
+ * before the timeout. The dedupe key prevents double-fire if a stray
+ * reset somehow re-arms the timer after expiry — defensive.
+ */
+function fireIdleTimeout(
+  state: ServerState,
+  setId: string,
+  _setStartedAt: string,
+  spec: Extract<TriggerSpec, { type: 'idle_timeout_ms' }>,
+  isStopOn: boolean,
+): void {
+  const set = state.live.snapshotSet();
+  if (set === undefined || set.setId !== setId) {
+    // Set already ended through some other path between the timer queue
+    // and this callback — silent drop.
+    return;
+  }
+  const dedupeKey = `idle_timeout_ms:${spec.value}`;
+  if (!state.live.tryFireTrigger(dedupeKey)) {
+    return;
+  }
+  const device = state.live.snapshotDevice();
+  // Compute "last rep at" — the timestamp anchoring the idle interval.
+  // Without per-rep timestamps surfaced through the bridge we anchor on
+  // set.startedAt for the zero-rep case; otherwise the most recent rep's
+  // concentric.endTime gives us the moment the rep closed.
+  const lastRepAt = (() => {
+    if (set.reps.length === 0) {
+      return set.startedAt;
+    }
+    const lastRep = set.reps[set.reps.length - 1];
+    const t = lastRep.concentric.endTime;
+    if (typeof t === 'number' && Number.isFinite(t) && t > 0) {
+      return new Date(t).toISOString();
+    }
+    return set.startedAt;
+  })();
+  const payload = buildIdleTimeoutPayload(set, device, spec.value, spec.value, lastRepAt, isStopOn);
+  state.channels.publish(payload);
+  if (isStopOn) {
+    void finalizeSet(state, {
+      cause: 'tool',
+      disengageMotor: true,
+      partialReason: 'auto_stopped',
+      auto_stop_cause: 'idle_timeout_ms',
+    }).catch((err) => {
+      log.warn('set-tools: idle_timeout auto-stop finalize failed', err);
+    });
+  }
 }
 
 async function fetchPreviousSetSummary(
@@ -254,6 +398,11 @@ export async function finalizeSet(
     return undefined;
   }
   const setId = state.live.set.setId;
+  // Cancel the idle watchdog as the very first step. Any termination
+  // path (tool, device-signal, auto-stop, disconnect cascade) routes
+  // through here, so this guarantees a stale timer never publishes
+  // after the set has been considered finalized.
+  state.setWatchdog.cancel(setId);
   // `live.endSet` is called without a `reason`: the explicit-tool path is a
   // graceful close, the device-signal path applies its
   // `partial=true / partialReason='device_signal'` stamp directly on the

@@ -85,7 +85,7 @@ import {
 } from './channel-payloads.js';
 import type { ServerState } from './server-state.js';
 import type { TriggerSpec } from '../schemas/set.js';
-import { finalizeSet } from '../tools/set-tools.js';
+import { finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -221,6 +221,12 @@ export function wireEventBridge(
           set.reps.length,
         );
         channels.publish(payload);
+        // Reset the idle watchdog — an active lifter must never trip the
+        // abandonment alarm. Safe to call unconditionally; no-op when the
+        // set has no idle_timeout_ms specs registered.
+        if (state !== undefined && set.watch !== undefined) {
+          resetIdleWatchdog(state, set.setId, set.watch);
+        }
         // Evaluate any registered trigger DSL specs against the finalized
         // rep. Trigger events publish BEFORE finalizeSet (which publishes
         // set_ended) so PT Claude reads `<set_target_reached>` /
