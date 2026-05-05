@@ -30,6 +30,7 @@ import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
+import { McpChannelPublisher } from './state/channel-publisher.js';
 import { z } from 'zod';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { registerDeviceTools } from './tools/device-tools.js';
@@ -39,6 +40,8 @@ import { registerMetricsTools } from './tools/metrics-tools.js';
 import { registerExerciseTools } from './tools/exercise-tools.js';
 import { registerMockTools } from './tools/mock-tools.js';
 import { registerTimerTools } from './tools/timer-tools.js';
+import { registerServerTools } from './tools/server-tools.js';
+import { registerDebugTools } from './tools/debug-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -60,11 +63,17 @@ const CORE_TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.get',
   'metrics.compute',
   'exercise.search',
   'exercise.get',
   'timer.wait',
+  'timer.start',
   'timer.cancel',
+  'server.health',
+  'debug.recent_frames',
+  'debug.recent_events',
+  'debug.push_test_channel',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -114,8 +123,25 @@ export async function runServer(): Promise<void> {
 
   const server = new McpServer(
     { name: 'voltras-mcp', version: '0.1.0' },
-    { capabilities: { tools: {}, resources: { subscribe: true } } },
+    {
+      capabilities: {
+        tools: {},
+        resources: { subscribe: true },
+        // Experimental: declares support for `claude/channel` push events so
+        // hosts that opt in (Claude Code with `--channels`) route our
+        // notifications/claude/channel messages back to the model inline as
+        // <channel> tags. Hosts without channel support silently ignore the
+        // declaration. See state/channel-publisher.ts for delivery semantics.
+        experimental: { 'claude/channel': {} },
+      },
+    },
   );
+
+  // The channel publisher needs the McpServer handle, so it's constructed
+  // here and passed into bootstrapState's result before tool registration.
+  // `bootstrapState` initializes `state.channels` to a no-op default; we
+  // overwrite it below once the live server exists.
+  const channels = new McpChannelPublisher(server);
 
   const placeholders = registerStartingPlaceholders(server);
 
@@ -141,11 +167,16 @@ export async function runServer(): Promise<void> {
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
+    state.channels = channels;
     stateBox.value = state;
     // Wire the SDK event bridge once `state.client` exists. Listener slots
     // on `VoltraClient` persist across `setAdapter`, so subscribing here
     // (before the device.connect tool installs an adapter) is correct.
-    wireEventBridge(state.client, state.live, server);
+    // `state` is threaded so the bridge can call `finalizeSet` when the
+    // device emits an out-of-grace `set_boundary` (user-pressed Stop on the
+    // Voltra UI). Without it, autonomous device-side set ends would be
+    // silently dropped — see event-bridge.ts:onSetBoundary.
+    wireEventBridge(state.client, state.live, server, channels, state);
     // Mock-only tools never have real handlers in node mode — drop their
     // placeholders so `tools/list` reflects only the real surface (R11).
     // In mock mode the placeholders remain for Wave 3 to hot-swap.
@@ -163,7 +194,9 @@ export async function runServer(): Promise<void> {
     registerSetTools(server, state, placeholders);
     registerMetricsTools(server, state, placeholders);
     registerExerciseTools(server, state, placeholders);
-    registerTimerTools(server, placeholders);
+    registerTimerTools(server, state, placeholders);
+    registerServerTools(server, state, placeholders);
+    registerDebugTools(server, state, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }

@@ -35,11 +35,14 @@ import type { VoltraManager } from '@voltras/node-sdk';
 
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
-import { LiveState } from './live-state.js';
+import { LiveState, type DeviceSnapshot } from './live-state.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
+import type { ChannelPublisher } from './channel-publisher.js';
+import { SetWatchdog } from './set-watchdog.js';
+import type { PushTimer } from '../tools/timer-tools.js';
 
 export interface ServerState {
   config: Config;
@@ -48,6 +51,42 @@ export interface ServerState {
   live: LiveState;
   store: SessionStore;
   exercises: ExerciseService;
+  /**
+   * Publisher for `claude/channel` push events. Wired in `runServer` after
+   * the McpServer is constructed (see `server.ts`), then attached to this
+   * state object before tool registration. Tool handlers can call
+   * `state.channels.publish(...)` to wake the model on lifecycle events
+   * without requiring a polling tool. Fire-and-forget: when the host wasn't
+   * launched with `--channels`, deliveries are silently dropped.
+   */
+  channels: ChannelPublisher;
+  /**
+   * In-flight non-blocking timers started via `timer.start`. Keyed by
+   * `timer_id`. Each entry tracks the underlying `setTimeout` handle plus
+   * the metadata needed to publish the `timer_complete` channel event when
+   * the timer fires. Cancelling a timer via `timer.cancel` clears the
+   * handle and removes the entry. The blocking `timer.wait` timer keeps
+   * its module-scoped singleton in `timer-tools.ts` and is NOT in this
+   * map.
+   */
+  timers: Map<string, PushTimer>;
+  /**
+   * Device snapshot captured at `set.start` time, keyed by setId. Persists
+   * until the matching set is finalized so the stored row reflects the
+   * configuration the user lifted against (not whatever the device drifts
+   * to mid-set). Lives on the shared state container so two finalize paths
+   * — the explicit `set.end` tool and the bridge's autonomous
+   * `set_ended_by_device` handler — can both consume it.
+   */
+  setStartDeviceSnapshots: Map<string, DeviceSnapshot>;
+  /**
+   * Per-set idle-timeout watchdog backing the trigger DSL's
+   * `idle_timeout_ms` spec. Armed at `set.start` when the watch config
+   * registers any idle thresholds (smallest threshold wins, one watchdog
+   * per set), reset on every rep_finalized boundary, and cancelled in
+   * `finalizeSet` so any termination path clears the timer.
+   */
+  setWatchdog: SetWatchdog;
 }
 
 /**
@@ -73,7 +112,25 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
-    return { config, manager, client, live, store, exercises };
+    // Default to a no-op publisher; `runServer` overwrites this with an
+    // `McpChannelPublisher` once the McpServer instance is available. Tests
+    // that don't care about channel pushes can leave the no-op in place.
+    const channels: ChannelPublisher = { publish: () => undefined };
+    const timers = new Map<string, PushTimer>();
+    const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
+    const setWatchdog = new SetWatchdog();
+    return {
+      config,
+      manager,
+      client,
+      live,
+      store,
+      exercises,
+      channels,
+      timers,
+      setStartDeviceSnapshots,
+      setWatchdog,
+    };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
     await safeCloseStore(store);

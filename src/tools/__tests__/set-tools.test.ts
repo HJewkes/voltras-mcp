@@ -6,7 +6,7 @@
 //   * Set metadata at start time comes from `live.snapshotDevice()`
 //   * NO_ACTIVE_SET on set.end without an active set (AC-17)
 //   * set.live_metrics returns the live snapshot or `{ active: false }`
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -26,6 +26,7 @@ vi.mock('@voltras/node-sdk', () => {
 
 const { LiveState } = await import('../../state/live-state.js');
 const { registerSetTools } = await import('../set-tools.js');
+const { SetWatchdog } = await import('../../state/set-watchdog.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -109,7 +110,7 @@ function makeRep(n: number): Rep {
   return { repNumber: n, concentric: phase, eccentric: phase };
 }
 
-const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics'];
+const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.get'];
 
 interface Harness {
   state: ServerState;
@@ -119,18 +120,27 @@ interface Harness {
   ) => Promise<{ content: { text: string }[]; isError?: boolean }>;
   store: ReturnType<typeof makeStore>;
   live: LiveStateType;
+  channels: { publish: ReturnType<typeof vi.fn> };
 }
 
 function setup(): Harness {
   const live = new LiveState();
   const store = makeStore();
+  const client = {
+    startRecording: vi.fn().mockResolvedValue(undefined),
+    endSet: vi.fn().mockResolvedValue(undefined),
+  };
+  const channels = { publish: vi.fn() };
   const state = {
     config: {} as never,
     manager: {} as never,
-    client: {} as never,
+    client: client as never,
     live,
     store,
     exercises: {} as never,
+    channels,
+    setStartDeviceSnapshots: new Map(),
+    setWatchdog: new SetWatchdog(),
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -144,6 +154,7 @@ function setup(): Harness {
     invoke: (name, args) => invokers[name](args),
     store,
     live,
+    channels,
   };
 }
 
@@ -204,6 +215,117 @@ describe('set.start', () => {
     expect(h.live.set?.setId).toBe(body.setId);
     expect(h.live.set?.sessionId).toBe(sessionId);
     expect(h.live.set?.status).toBe('active');
+  });
+
+  it('publishes a set_started claude/channel event with full payload', async () => {
+    const sessionId = startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('set.start', {});
+    const setId = (parseResult(r) as { setId: string }).setId;
+    expect(h.channels.publish).toHaveBeenCalledTimes(1);
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    expect(event.meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'set_started',
+      set_id: setId,
+      session_id: sessionId,
+      weight_lbs: '75',
+      training_mode: 'WeightTraining',
+    });
+    const parsed = JSON.parse(event.content) as {
+      summary: string;
+      set: { set_id: string; session_id: string; weight_lbs: number; training_mode: string };
+      previous_set_summary: unknown;
+    };
+    expect(parsed.summary).toContain('75 lbs');
+    expect(parsed.summary).toContain('WeightTraining');
+    expect(parsed.set).toMatchObject({
+      set_id: setId,
+      session_id: sessionId,
+      weight_lbs: 75,
+      training_mode: 'WeightTraining',
+    });
+    // First set in the session — no previous set to summarize.
+    expect(parsed.previous_set_summary).toBeNull();
+  });
+
+  it('accepts a watch config and stores it on the active set', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: {
+        stopOn: [{ type: 'rep_count_reached', value: 8 }],
+        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }],
+      },
+    });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.set?.watch).toBeDefined();
+    expect(h.live.set?.watch?.stopOn).toEqual([{ type: 'rep_count_reached', value: 8 }]);
+    expect(h.live.set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    // A fresh dedupe ledger is provisioned alongside the watch config.
+    expect(h.live.set?.firedTriggers).toBeInstanceOf(Set);
+    expect(h.live.set?.firedTriggers?.size).toBe(0);
+  });
+
+  it('rejects an invalid watch spec via INVALID_INPUT (out-of-range pct)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: {
+        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 150 }],
+      },
+    });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+    expect(h.live.set).toBeUndefined();
+  });
+
+  it('omitted watch config leaves live.set.watch + firedTriggers undefined', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    expect(h.live.set?.watch).toBeUndefined();
+    expect(h.live.set?.firedTriggers).toBeUndefined();
+  });
+
+  it('set_started includes previous_set_summary when a prior set exists in the session', async () => {
+    const sessionId = startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    const priorSet: StoredSet = {
+      id: 'set-prev',
+      sessionId,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: [
+        { ...makeRep(1), id: 'r1', setId: 'set-prev', index: 0 },
+        { ...makeRep(2), id: 'r2', setId: 'set-prev', index: 1 },
+      ],
+    };
+    h.store.getSetsForSession.mockResolvedValueOnce([priorSet]);
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    const parsed = JSON.parse(event.content) as {
+      previous_set_summary: { set_id: string; rep_count: number; weight_lbs: number };
+    };
+    expect(parsed.previous_set_summary).toMatchObject({
+      set_id: 'set-prev',
+      rep_count: 2,
+      weight_lbs: 100,
+    });
+    expect(h.store.getSetsForSession).toHaveBeenCalledWith(sessionId);
   });
 });
 
@@ -270,6 +392,98 @@ describe('set.end', () => {
     expect((parseResult(r) as { code: string }).code).toBe('NO_ACTIVE_SET');
   });
 
+  it('publishes a set_ended claude/channel event with full rep array + vbt summary', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    const startResult = await h.invoke('set.start', {});
+    const setId = (parseResult(startResult) as { setId: string }).setId;
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    expect(h.channels.publish).toHaveBeenCalledTimes(1);
+    const event = h.channels.publish.mock.calls[0][0] as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    expect(event.meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'set_ended',
+      set_id: setId,
+      rep_count: '2',
+    });
+    // duration_ms is a non-negative integer string.
+    expect(event.meta.duration_ms).toMatch(/^\d+$/);
+
+    const parsed = JSON.parse(event.content) as {
+      summary: string;
+      set: { set_id: string; weight_lbs: number; training_mode: string; partial_reason: unknown };
+      reps: Array<{ rep_number: number }>;
+      vbt_summary: {
+        first_rep_v: number | null;
+        last_rep_v: number | null;
+        velocity_loss_pct: number | null;
+        mean_velocity: number | null;
+      };
+    };
+    expect(parsed.summary).toContain('2 reps');
+    expect(parsed.set.set_id).toBe(setId);
+    expect(parsed.set.weight_lbs).toBe(75);
+    expect(parsed.set.training_mode).toBe('WeightTraining');
+    expect(parsed.set.partial_reason).toBeNull();
+    // reps array length matches the meta rep_count.
+    expect(parsed.reps).toHaveLength(2);
+    expect(parsed.reps[0].rep_number).toBe(1);
+    expect(parsed.reps[1].rep_number).toBe(2);
+    // makeRep produces zero-velocity phases — vbt.velocity_loss_pct is null
+    // (first rep peak <= 0 disables the loss calc), but the rest of the
+    // vbt_summary fields are present and numeric.
+    expect(parsed.vbt_summary.first_rep_v).toBe(0);
+    expect(parsed.vbt_summary.last_rep_v).toBe(0);
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+  });
+
+  it('explicit set.end produces set_ended (not set_ended_by_device) — bridge-driven event_type is unaffected', async () => {
+    // Regression guard for the sprint 1B refactor: the autonomous
+    // `set_ended_by_device` event lives on the bridge's onSetBoundary
+    // path. The tool path (this test) MUST keep emitting `set_ended` with
+    // no `partial_reason` so analytics consumers don't see a spurious
+    // partial flag on graceful set ends.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as {
+      meta: Record<string, string>;
+      content: string;
+    };
+    expect(event.meta.event_type).toBe('set_ended');
+    expect(event.meta.partial_reason).toBeUndefined();
+    const parsed = JSON.parse(event.content) as { set: { partial_reason: unknown } };
+    expect(parsed.set.partial_reason).toBeNull();
+  });
+
+  it('set_ended vbt_summary.velocity_loss_pct is null when fewer than 2 reps', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as { content: string };
+    const parsed = JSON.parse(event.content) as {
+      reps: unknown[];
+      vbt_summary: { velocity_loss_pct: number | null };
+    };
+    expect(parsed.reps).toHaveLength(1);
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+  });
+
   it('maps reps to StoredRep with sequential index and parent setId', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
@@ -314,5 +528,240 @@ describe('set.live_metrics', () => {
     const r = await h.invoke('set.live_metrics', {});
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual({ active: false });
+  });
+});
+
+describe('set.get', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('returns the stored set including reps when one exists', async () => {
+    const stored: StoredSet = {
+      id: 'set-XYZ',
+      sessionId: 'sess-A',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: [
+        { ...makeRep(1), id: 'r1', setId: 'set-XYZ', index: 0 },
+        { ...makeRep(2), id: 'r2', setId: 'set-XYZ', index: 1 },
+      ],
+    };
+    h.store.getSet.mockResolvedValueOnce(stored);
+
+    const r = await h.invoke('set.get', { setId: 'set-XYZ' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as StoredSet;
+    expect(body.id).toBe('set-XYZ');
+    expect(body.reps.length).toBe(2);
+    expect(body.weightLbs).toBe(100);
+    expect(body.trainingMode).toBe('WeightTraining');
+    expect(h.store.getSet).toHaveBeenCalledWith('set-XYZ');
+  });
+
+  it('returns SET_NOT_FOUND when no row exists for the given id', async () => {
+    h.store.getSet.mockResolvedValueOnce(undefined);
+    const r = await h.invoke('set.get', { setId: 'no-such-set' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_NOT_FOUND');
+  });
+
+  it('returns INVALID_INPUT when setId is missing', async () => {
+    const r = await h.invoke('set.get', {});
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('set.start — idle_timeout_ms watchdog', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h = setup();
+  });
+
+  afterEach(() => {
+    // Drain any leftover scheduled idle timers between cases so background
+    // setTimeouts don't bleed into the next test's assertions.
+    (h.state.setWatchdog as { clearAll: () => void }).clearAll();
+    vi.useRealTimers();
+  });
+
+  async function flushMicrotasks(): Promise<void> {
+    // Drain a handful of microtask turns so void-chained awaits inside
+    // fireIdleTimeout → finalizeSet (await client.endSet → await
+    // store.putSet → publish) all settle before assertions. setImmediate
+    // is intercepted by vi.useFakeTimers() so we use real Promise turns.
+    for (let i = 0; i < 8; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it('does not arm a watchdog when watch config has no idle_timeout_ms specs', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'rep_count_reached', value: 5 }] },
+    });
+    const id = (parseResult(r) as { setId: string }).setId;
+    expect((h.state.setWatchdog as { has: (s: string) => boolean }).has(id)).toBe(false);
+  });
+
+  it('notifyOn idle_timeout fires the channel event but does not auto-stop', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    const setId = (parseResult(r) as { setId: string }).setId;
+    expect((h.state.setWatchdog as { has: (id: string) => boolean }).has(setId)).toBe(true);
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(h.channels.publish).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+
+    const idleEvent = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string>; content: string })
+      .find((e) => e.meta.event_type === 'idle_timeout');
+    expect(idleEvent).toBeDefined();
+    expect(idleEvent!.meta).toMatchObject({
+      set_id: setId,
+      threshold_ms: '30000',
+      idle_ms: '30000',
+      auto_stopped: 'false',
+      last_rep_count: '0',
+    });
+    // Set still active — notifyOn does not finalize.
+    expect(h.live.set?.setId).toBe(setId);
+    expect(h.store.putSet).not.toHaveBeenCalled();
+  });
+
+  it('stopOn idle_timeout fires event AND auto-stops via finalizeSet', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 45_000 }] },
+    });
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    await flushMicrotasks();
+
+    // idle_timeout publishes BEFORE set_ended.
+    const eventTypes = h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    const idleIdx = eventTypes.indexOf('idle_timeout');
+    const endedIdx = eventTypes.indexOf('set_ended');
+    expect(idleIdx).toBeGreaterThan(-1);
+    expect(endedIdx).toBeGreaterThan(idleIdx);
+
+    // Set finalized with auto_stopped partial reason + idle cause.
+    expect(h.live.set).toBeUndefined();
+    expect(h.store.putSet).toHaveBeenCalledTimes(1);
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.partial).toBe(true);
+    expect(stored.partialReason).toBe('auto_stopped');
+
+    const setEnded = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string> })
+      .find((e) => e.meta.event_type === 'set_ended');
+    expect(setEnded?.meta.auto_stop_cause).toBe('idle_timeout_ms');
+  });
+
+  it('rep finalization resets the watchdog so an active lifter does not trip it', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('set.start', {
+      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    const setId = (parseResult(r) as { setId: string }).setId;
+    h.channels.publish.mockClear();
+
+    // Advance 25s, then exercise resetIdleWatchdog directly (the bridge
+    // does this on rep_finalized; we don't pull the bridge into this
+    // unit-scoped harness).
+    await vi.advanceTimersByTimeAsync(25_000);
+    const { resetIdleWatchdog } = await import('../set-tools.js');
+    resetIdleWatchdog(h.state, setId, h.live.set?.watch);
+
+    // Another 25s with no further reset still leaves us at 25s into the
+    // new 30s window — no fire.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(
+      h.channels.publish.mock.calls.find(
+        (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+      ),
+    ).toBeUndefined();
+
+    // 5s more — total 30s since reset → fire.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
+    expect(
+      h.channels.publish.mock.calls.find(
+        (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+      ),
+    ).toBeDefined();
+  });
+
+  it('explicit set.end cancels the watchdog so no spurious fire after', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+    });
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushMicrotasks();
+
+    // Only the set_ended event from the tool path — no idle_timeout.
+    const idleEvents = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEvents).toHaveLength(0);
+  });
+
+  it('smallest threshold wins across stopOn + notifyOn — fires once at smallest timeout', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {
+      watch: {
+        stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }],
+        notifyOn: [{ type: 'idle_timeout_ms', value: 60_000 }],
+      },
+    });
+    h.channels.publish.mockClear();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await flushMicrotasks();
+
+    // Smallest (30s) fires; auto_stopped=true because stopOn threshold won.
+    const idleEvents = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEvents).toHaveLength(1);
+    expect((idleEvents[0][0] as { meta: Record<string, string> }).meta).toMatchObject({
+      threshold_ms: '30000',
+      auto_stopped: 'true',
+    });
+    // Set finalized — so the 60s timer would never fire even if armed.
+    expect(h.live.set).toBeUndefined();
+
+    // Advance further to confirm no second fire.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushMicrotasks();
+    const idleEventsAfter = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
+    );
+    expect(idleEventsAfter).toHaveLength(1);
   });
 });

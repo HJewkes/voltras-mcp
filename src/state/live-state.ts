@@ -23,7 +23,10 @@
 // The `applySettings` signature uses `Partial<DeviceSnapshot>` for the input
 // rather than the SDK's settings type so the caller (event-bridge) can keep
 // SDK-shape conversion at its own seam.
-import type { Rep } from '@voltras/workout-analytics';
+import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
+import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
+
+import type { WatchConfig } from '../schemas/set.js';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
@@ -59,7 +62,30 @@ export interface ActiveSet {
   reps: Rep[];
   status: 'active' | 'ended' | 'partial';
   endedAt?: string;
-  partialReason?: 'disconnect' | 'session_end';
+  /**
+   * Why the set ended in something other than a graceful tool call.
+   *   * `'disconnect'`    — connection drop cascade
+   *   * `'session_end'`   — explicit `session.end` cascade
+   *   * `'device_signal'` — user pressed Stop on the unit (autonomous
+   *     set_boundary outside the start-grace window)
+   *   * `'auto_stopped'`  — a server-evaluated `stopOn` trigger fired
+   *     (rep count, velocity loss, or idle timeout); see WatchConfig.
+   */
+  partialReason?: 'disconnect' | 'session_end' | 'device_signal' | 'auto_stopped';
+  /**
+   * Trigger DSL config registered at `set.start` time. The bridge evaluates
+   * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
+   * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.
+   * Undefined for sets started without a `watch` arg.
+   */
+  watch?: WatchConfig;
+  /**
+   * Dedupe ledger for trigger firings. Keys take the form
+   * `${type}:${value or pct}` so identical specs across `stopOn`/`notifyOn`
+   * collapse to one event, while distinct thresholds (e.g., 15%, 25%, 40%
+   * velocity loss) all fire independently as the set progresses.
+   */
+  firedTriggers?: Set<string>;
 }
 
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
@@ -74,6 +100,16 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /**
+   * Internal analytics-set used to detect rep boundaries from the frame
+   * stream. Mirrors the canonical mobile-app pipeline: `addSampleToSet`
+   * starts a new rep on each ECCENTRIC→CONCENTRIC transition, and IDLE/HOLD
+   * samples are folded into the current rep as hold time. The public
+   * `this.set.reps` is kept in sync with `_analyticsSet.reps` after every
+   * sample so `set.live_metrics` and the resource snapshots reflect the
+   * in-progress rep without waiting for set.end.
+   */
+  private _analyticsSet: AnalyticsSet | undefined = undefined;
 
   /**
    * Merge partial device fields. Coerces `batteryPercent: null` to absent so
@@ -123,33 +159,51 @@ export class LiveState {
   /**
    * Begin a new set. Same no-op-on-conflict policy as `startSession` (the
    * tool layer enforces EC-13 `SET_ALREADY_ACTIVE`).
+   *
+   * If `s.watch` is supplied, the trigger DSL config is stored on the active
+   * set and a fresh `firedTriggers` ledger is initialized so trigger dedupe
+   * starts clean for every new set.
    */
   startSet(s: ActiveSet): void {
     if (this.set !== undefined) {
       return;
     }
-    this.set = { ...s, reps: [...s.reps] };
+    this.set = {
+      ...s,
+      reps: [...s.reps],
+      ...(s.watch !== undefined ? { watch: s.watch, firedTriggers: new Set<string>() } : {}),
+    };
+    this._analyticsSet = createSet();
   }
 
   /**
    * Close out the active set. `reason` distinguishes graceful close
-   * (`undefined`), explicit `session.end` cascade (`'session_end'`), and
-   * connection loss (`'disconnect'`). Returns the finalized set for the
+   * (`undefined`), explicit `session.end` cascade (`'session_end'`),
+   * connection loss (`'disconnect'`), and a server-evaluated trigger DSL
+   * `stopOn` match (`'auto_stopped'`). Returns the finalized set for the
    * caller to persist, or `undefined` when none was active.
    *
    * The set's `setId` is appended to the active session's `setIds` if a
    * session is still tracked, so resource snapshots reflect the close
    * synchronously.
    */
-  endSet(reason?: 'disconnect' | 'session_end'): ActiveSet | undefined {
+  endSet(reason?: 'disconnect' | 'session_end' | 'auto_stopped'): ActiveSet | undefined {
     const current = this.set;
     if (current === undefined) {
       return undefined;
     }
+    // Trim trailing IDLE off the in-progress final rep before persistence —
+    // matches the mobile app's `completeSet` behavior. Branch on whichever
+    // ingestion path was used: `processSample` populates `_analyticsSet`,
+    // direct `appendRep` populates `current.reps`. They're disjoint in
+    // practice; whichever produced reps wins.
+    const analyticsReps =
+      this._analyticsSet === undefined ? [] : completeSet(this._analyticsSet).reps;
+    const finalReps = analyticsReps.length > 0 ? analyticsReps : current.reps;
     const endedAt = new Date().toISOString();
     const finalized: ActiveSet = {
       ...current,
-      reps: [...current.reps],
+      reps: [...finalReps],
       endedAt,
       status: reason === undefined ? 'ended' : 'partial',
       ...(reason === undefined ? {} : { partialReason: reason }),
@@ -161,6 +215,7 @@ export class LiveState {
       };
     }
     this.set = undefined;
+    this._analyticsSet = undefined;
     return finalized;
   }
 
@@ -174,6 +229,23 @@ export class LiveState {
       return;
     }
     this.set = { ...this.set, reps: [...this.set.reps, rep] };
+  }
+
+  /**
+   * Process a single telemetry sample through the analytics-set pipeline.
+   * Workout-analytics's `addSampleToSet` owns the rep-boundary state machine
+   * (eccentric→concentric starts a new rep; IDLE folds into the current
+   * rep's hold time). After updating the internal analytics set, the public
+   * `set.reps` is replaced with the analytics set's reps so callers always
+   * see the current rep array — including the in-progress final rep.
+   * Silently dropped if no set is active.
+   */
+  processSample(sample: WorkoutSample): void {
+    if (this.set === undefined || this._analyticsSet === undefined) {
+      return;
+    }
+    this._analyticsSet = addSampleToSet(this._analyticsSet, sample);
+    this.set = { ...this.set, reps: [...this._analyticsSet.reps] };
   }
 
   /**
@@ -206,6 +278,30 @@ export class LiveState {
     if (this.set === undefined) {
       return undefined;
     }
+    // `firedTriggers` is intentionally NOT cloned — it's an internal dedupe
+    // ledger the bridge mutates via `tryFireTrigger`. Snapshot consumers
+    // (resource handlers, tools) don't read it; the snapshot still includes
+    // the reference for type completeness, but mutating the returned set
+    // doesn't churn the ledger because the bridge's mutator goes through the
+    // helper.
     return { ...this.set, reps: [...this.set.reps] };
+  }
+
+  /**
+   * Atomically check + mark a trigger as fired against the active set's
+   * dedupe ledger. Returns `true` if the trigger fired now (caller should
+   * publish the channel event); returns `false` if the key was already
+   * present or no set is active. The dedupe key is owned by the caller —
+   * the convention is `${type}:${value or pct}`.
+   */
+  tryFireTrigger(key: string): boolean {
+    if (this.set === undefined || this.set.firedTriggers === undefined) {
+      return false;
+    }
+    if (this.set.firedTriggers.has(key)) {
+      return false;
+    }
+    this.set.firedTriggers.add(key);
+    return true;
   }
 }

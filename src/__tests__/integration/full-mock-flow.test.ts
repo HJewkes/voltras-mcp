@@ -109,6 +109,12 @@ class FakeVoltraClient {
   setEccentric(_pct: number): Promise<void> {
     return Promise.resolve();
   }
+  startRecording(): Promise<void> {
+    return Promise.resolve();
+  }
+  endSet(): Promise<void> {
+    return Promise.resolve();
+  }
   async connect(_device: { id: string }): Promise<void> {
     this.isConnected = true;
     this.connectionState = 'connected';
@@ -230,9 +236,14 @@ const CORE_TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.get',
   'metrics.compute',
   'exercise.search',
   'exercise.get',
+  'server.health',
+  'debug.recent_frames',
+  'debug.recent_events',
+  'debug.push_test_channel',
 ] as const;
 const MOCK_TOOL_NAMES = ['mock.configure', 'mock.inject_error'] as const;
 
@@ -298,7 +309,11 @@ async function buildHarness(): Promise<Harness> {
 
   const state = await bootstrapState({ adapter: 'mock', dbPath, logLevel: 'error' });
   stateBox.value = state;
-  wireEventBridge(state.client, state.live, server);
+  // No-op channel publisher: integration tests don't observe claude/channel
+  // pushes, but the bridge requires a valid `ChannelPublisher` argument.
+  const channels = { publish: () => undefined };
+  state.channels = channels;
+  wireEventBridge(state.client, state.live, server, channels);
 
   registerDeviceTools(server, state, placeholders);
   registerSessionTools(server, state, placeholders);
