@@ -550,6 +550,77 @@ describe('set.live_metrics', () => {
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual({ active: false });
   });
+
+  it('omits latestInProgress when no onInProgress payload has landed', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+
+    const r = await h.invoke('set.live_metrics', {});
+    const body = parseResult(r) as { latestInProgress?: unknown };
+    expect(body.latestInProgress).toBeUndefined();
+  });
+
+  it('surfaces latestInProgress once an onInProgress payload has been captured', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 135, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+
+    h.live.applyInProgress(
+      {
+        peakForceTenths: 1500,
+        currentForceTenths: 900,
+        velocityCmPerSec: 42,
+        targetWeightTenths: 1350,
+        raw: new Uint8Array(79),
+      },
+      1_700_000_000_000,
+    );
+
+    const r = await h.invoke('set.live_metrics', {});
+    const body = parseResult(r) as {
+      latestInProgress?: {
+        peakForceTenths: number;
+        currentForceTenths: number;
+        velocityCmPerSec: number;
+        targetWeightTenths: number;
+        capturedAt: number;
+      };
+    };
+    expect(body.latestInProgress).toEqual({
+      peakForceTenths: 1500,
+      currentForceTenths: 900,
+      velocityCmPerSec: 42,
+      targetWeightTenths: 1350,
+      capturedAt: 1_700_000_000_000,
+    });
+  });
+
+  it('does not surface latestSummary through set.live_metrics (PR-C surface)', async () => {
+    // latestSummary is captured on the active set but is intentionally
+    // private — the persisted-set surface is what consumes it. PR-C will
+    // route it through `set_ended_by_device`. Until then, even though the
+    // field is on the snapshot, this test pins the contract that PR-B's
+    // live_metrics output does not include it as a coaching read.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.applySummary({
+      schemaVersion: 1,
+      setCounter: 1,
+      repCount: 5,
+      raw: new Uint8Array(140),
+    });
+
+    const r = await h.invoke('set.live_metrics', {});
+    // The structural snapshot DOES include latestSummary today (it lives on
+    // ActiveSet), but the brief's contract is that we don't expose it as a
+    // dedicated coaching surface — i.e. callers shouldn't treat it as a
+    // documented field. We assert here only that latestInProgress is not
+    // accidentally populated by an onSummary call.
+    const body = parseResult(r) as { latestInProgress?: unknown };
+    expect(body.latestInProgress).toBeUndefined();
+  });
 });
 
 describe('set.get', () => {

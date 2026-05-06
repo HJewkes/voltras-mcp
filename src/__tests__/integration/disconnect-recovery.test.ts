@@ -54,6 +54,9 @@ class FakeVoltraClient {
   onInProgress(): () => void {
     return () => undefined;
   }
+  onSummary(): () => void {
+    return () => undefined;
+  }
   onSettingsUpdate(): () => void {
     return () => undefined;
   }

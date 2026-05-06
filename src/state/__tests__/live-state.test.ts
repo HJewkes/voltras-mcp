@@ -256,6 +256,123 @@ describe('LiveState', () => {
     });
   });
 
+  describe('applyInProgress (typed-payload live-state plumbing)', () => {
+    const payload = {
+      peakForceTenths: 1234,
+      currentForceTenths: 800,
+      velocityCmPerSec: 45,
+      targetWeightTenths: 1350,
+      raw: new Uint8Array(79),
+    };
+
+    it('is a no-op when no set is active', () => {
+      const live = new LiveState();
+      live.applyInProgress(payload, 1_000);
+      expect(live.snapshotSet()).toBeUndefined();
+    });
+
+    it('captures the latest payload on the active set', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applyInProgress(payload, 1_700_000_000_000);
+      expect(live.snapshotSet()?.latestInProgress).toEqual({
+        peakForceTenths: 1234,
+        currentForceTenths: 800,
+        velocityCmPerSec: 45,
+        targetWeightTenths: 1350,
+        capturedAt: 1_700_000_000_000,
+      });
+    });
+
+    it('overwrites — later payloads replace earlier ones rather than accumulating', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applyInProgress(payload, 1_000);
+      live.applyInProgress(
+        {
+          peakForceTenths: 9999,
+          currentForceTenths: 7777,
+          velocityCmPerSec: 88,
+          targetWeightTenths: 2000,
+          raw: new Uint8Array(79),
+        },
+        2_000,
+      );
+      expect(live.snapshotSet()?.latestInProgress).toEqual({
+        peakForceTenths: 9999,
+        currentForceTenths: 7777,
+        velocityCmPerSec: 88,
+        targetWeightTenths: 2000,
+        capturedAt: 2_000,
+      });
+    });
+
+    it('latestInProgress is dropped when endSet clears the active set', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applyInProgress(payload, 1_000);
+      live.endSet();
+      expect(live.snapshotSet()).toBeUndefined();
+    });
+  });
+
+  describe('applySummary / consumeLatestSummary (typed-payload live-state plumbing)', () => {
+    const summaryPayload = {
+      schemaVersion: 1,
+      setCounter: 3,
+      repCount: 8,
+      raw: new Uint8Array(140),
+    };
+
+    it('applySummary is a no-op when no set is active', () => {
+      const live = new LiveState();
+      live.applySummary(summaryPayload);
+      expect(live.snapshotSet()).toBeUndefined();
+    });
+
+    it('applySummary captures repCount + schemaVersion on the active set', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applySummary(summaryPayload);
+      expect(live.snapshotSet()?.latestSummary).toEqual({
+        repCount: 8,
+        schemaVersion: 1,
+      });
+    });
+
+    it('consumeLatestSummary returns undefined when no set is active', () => {
+      const live = new LiveState();
+      expect(live.consumeLatestSummary()).toBeUndefined();
+    });
+
+    it('consumeLatestSummary returns undefined when active set has no summary', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      expect(live.consumeLatestSummary()).toBeUndefined();
+    });
+
+    it('consumeLatestSummary read-and-clears the active set summary', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applySummary(summaryPayload);
+      const consumed = live.consumeLatestSummary();
+      expect(consumed).toEqual({ repCount: 8, schemaVersion: 1 });
+      // Subsequent reads see nothing — strictly read-once semantics.
+      expect(live.consumeLatestSummary()).toBeUndefined();
+      expect(live.snapshotSet()?.latestSummary).toBeUndefined();
+    });
+
+    it('latestSummary is dropped when endSet clears the active set (mid-set disconnect path)', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.applySummary(summaryPayload);
+      live.endSet('disconnect');
+      // No active set to consume from anymore — guards against stale carry-forward.
+      expect(live.snapshotSet()).toBeUndefined();
+      expect(live.consumeLatestSummary()).toBeUndefined();
+    });
+  });
+
   describe('snapshot independence', () => {
     it('snapshotDevice returns an independent copy', () => {
       const live = new LiveState();
