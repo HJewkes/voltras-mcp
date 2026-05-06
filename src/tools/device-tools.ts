@@ -37,7 +37,19 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
-import { DeviceScanInput, DeviceSetWeightInput, DeviceSetModeInput } from '../schemas/device.js';
+import {
+  DeviceScanInput,
+  DeviceSetWeightInput,
+  DeviceSetModeInput,
+  DeviceSetDamperLevelInput,
+  DeviceSetAssistModeInput,
+  DeviceSetBandMaxForceInput,
+  DeviceSetIsokineticTargetSpeedInput,
+  DeviceSetIsokineticEccModeInput,
+  DeviceSetIsokineticEccSpeedLimitInput,
+  DeviceSetIsokineticEccConstWeightInput,
+  DeviceSetIsokineticEccOverloadWeightInput,
+} from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
 import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
@@ -91,6 +103,40 @@ const DeviceGetStateInput = z
  */
 const DEFAULT_SCAN_TIMEOUT_MS = 10_000;
 
+// ── Tool descriptions (SDK 0.6.0 mode-config setters) ────────────────────
+//
+// All 8 setters share two cross-cutting caveats from the on-device validation
+// pass: (1) settings persist GLOBALLY across mode switches — flipping the
+// device into a different training mode does not clear them — and (2) the
+// underlying opcodes (0xa9/0xc7) do NOT trigger a `modeConfirmation`, so the
+// `await client.setX(...)` resolves on adapter.write completion, not on a
+// device acknowledgement. The const-weight and overload-weight setters cause
+// an audible device beep — possibly a firmware safety/range cue.
+
+const DAMPER_LEVEL_DESCRIPTION =
+  'Set the damper-mode resistance level (0-9). UI displays the value as N+1 (1-10). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const ASSIST_MODE_DESCRIPTION =
+  'Toggle assist mode on/off. UI affordance lives in the Settings menu, not the idle screen. Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const BAND_MAX_FORCE_DESCRIPTION =
+  'Set the band-mode maximum-force ceiling (15-70 lbs). Pounds. Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const ISOKINETIC_TARGET_SPEED_DESCRIPTION =
+  'Set the isokinetic target speed (0-2000 mm/s, step 10). Input is millimeters/second; the device UI displays the value in meters/second (input ÷ 1000). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const ISOKINETIC_ECC_MODE_DESCRIPTION =
+  'Set the isokinetic eccentric mode ("isokinetic" or "constant"). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const ISOKINETIC_ECC_SPEED_LIMIT_DESCRIPTION =
+  'Set the isokinetic eccentric speed limit (0-2000 mm/s, step 10). 0 = auto. Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
+
+const ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION =
+  'Set the isokinetic eccentric constant weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
+
+const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
+  'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
+
 type Placeholders = Map<string, RegisteredTool>;
 
 /**
@@ -104,6 +150,7 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   handler: (args: unknown, extra?: unknown) => Promise<ToolResult>,
+  description?: string,
 ): void {
   const reg = placeholders.get(name);
   if (reg === undefined) {
@@ -119,7 +166,14 @@ function install<S extends z.ZodObject>(
   // semantics through `.shape`, so the SDK silently strips ANY input field
   // when the schema is left unchanged — every tool with a required arg
   // would fail with INVALID_INPUT until this swap runs.
-  reg.update({ paramsSchema: schema.shape, callback: handler as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: handler as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  reg.update(updates as never);
 }
 
 /**
@@ -312,6 +366,102 @@ export function registerDeviceTools(
       await getSlot(state, input.slot).client.setEccentric(input.percent);
       return { ok: true };
     }),
+  );
+
+  // ── SDK 0.6.0 mode-config setters ──────────────────────────────────────
+  //
+  // Each tool is a thin passthrough to the corresponding `client.setX`
+  // method. SDK-side validation (range / step / mode-state) is the
+  // authoritative gate: the MCP schema sanity-bounds the input, and any
+  // rejection by the SDK surfaces through `wrapHandler`'s error mapping as
+  // an `InvalidSettingError` (or `NotConnectedError` if disconnected).
+
+  install(
+    placeholders,
+    'device.set_damper_level',
+    DeviceSetDamperLevelInput,
+    wrapHandler(DeviceSetDamperLevelInput, async (input) => {
+      await getSlot(state, input.slot).client.setDamperLevel(input.level);
+      return { ok: true };
+    }),
+    DAMPER_LEVEL_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_assist_mode',
+    DeviceSetAssistModeInput,
+    wrapHandler(DeviceSetAssistModeInput, async (input) => {
+      await getSlot(state, input.slot).client.setAssistMode(input.mode);
+      return { ok: true };
+    }),
+    ASSIST_MODE_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_band_max_force',
+    DeviceSetBandMaxForceInput,
+    wrapHandler(DeviceSetBandMaxForceInput, async (input) => {
+      await getSlot(state, input.slot).client.setBandMaxForce(input.lbs);
+      return { ok: true };
+    }),
+    BAND_MAX_FORCE_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_isokinetic_target_speed',
+    DeviceSetIsokineticTargetSpeedInput,
+    wrapHandler(DeviceSetIsokineticTargetSpeedInput, async (input) => {
+      await getSlot(state, input.slot).client.setIsokineticTargetSpeed(input.mmPerSec);
+      return { ok: true };
+    }),
+    ISOKINETIC_TARGET_SPEED_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_isokinetic_ecc_mode',
+    DeviceSetIsokineticEccModeInput,
+    wrapHandler(DeviceSetIsokineticEccModeInput, async (input) => {
+      await getSlot(state, input.slot).client.setIsokineticEccMode(input.mode);
+      return { ok: true };
+    }),
+    ISOKINETIC_ECC_MODE_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_isokinetic_ecc_speed_limit',
+    DeviceSetIsokineticEccSpeedLimitInput,
+    wrapHandler(DeviceSetIsokineticEccSpeedLimitInput, async (input) => {
+      await getSlot(state, input.slot).client.setIsokineticEccSpeedLimit(input.mmPerSec);
+      return { ok: true };
+    }),
+    ISOKINETIC_ECC_SPEED_LIMIT_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_isokinetic_ecc_const_weight',
+    DeviceSetIsokineticEccConstWeightInput,
+    wrapHandler(DeviceSetIsokineticEccConstWeightInput, async (input) => {
+      await getSlot(state, input.slot).client.setIsokineticEccConstWeight(input.lbs);
+      return { ok: true };
+    }),
+    ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'device.set_isokinetic_ecc_overload_weight',
+    DeviceSetIsokineticEccOverloadWeightInput,
+    wrapHandler(DeviceSetIsokineticEccOverloadWeightInput, async (input) => {
+      await getSlot(state, input.slot).client.setIsokineticEccOverloadWeight(input.lbs);
+      return { ok: true };
+    }),
+    ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION,
   );
 
   // device.get_state — composes the response from the four documented

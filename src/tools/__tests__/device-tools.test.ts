@@ -100,6 +100,14 @@ interface FakeClient {
   setMode: Mock<(mode: number) => Promise<void>>;
   setChains: Mock<(lbs: number) => Promise<void>>;
   setEccentric: Mock<(percent: number) => Promise<void>>;
+  setDamperLevel: Mock<(level: number) => Promise<void>>;
+  setAssistMode: Mock<(mode: 'off' | 'on') => Promise<void>>;
+  setBandMaxForce: Mock<(lbs: number) => Promise<void>>;
+  setIsokineticTargetSpeed: Mock<(mmPerSec: number) => Promise<void>>;
+  setIsokineticEccMode: Mock<(mode: 'isokinetic' | 'constant') => Promise<void>>;
+  setIsokineticEccSpeedLimit: Mock<(mmPerSec: number) => Promise<void>>;
+  setIsokineticEccConstWeight: Mock<(lbs: number) => Promise<void>>;
+  setIsokineticEccOverloadWeight: Mock<(lbs: number) => Promise<void>>;
   onPerRep: Mock<(cb: (event: unknown) => void) => void>;
   onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
@@ -135,6 +143,14 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setMode: vi.fn(async () => undefined),
     setChains: vi.fn(async () => undefined),
     setEccentric: vi.fn(async () => undefined),
+    setDamperLevel: vi.fn(async () => undefined),
+    setAssistMode: vi.fn(async () => undefined),
+    setBandMaxForce: vi.fn(async () => undefined),
+    setIsokineticTargetSpeed: vi.fn(async () => undefined),
+    setIsokineticEccMode: vi.fn(async () => undefined),
+    setIsokineticEccSpeedLimit: vi.fn(async () => undefined),
+    setIsokineticEccConstWeight: vi.fn(async () => undefined),
+    setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
     onPerRep: vi.fn(() => undefined),
     onInProgress: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
@@ -203,6 +219,14 @@ const DEVICE_TOOL_NAMES = [
   'device.set_mode',
   'device.set_chains',
   'device.set_eccentric',
+  'device.set_damper_level',
+  'device.set_assist_mode',
+  'device.set_band_max_force',
+  'device.set_isokinetic_target_speed',
+  'device.set_isokinetic_ecc_mode',
+  'device.set_isokinetic_ecc_speed_limit',
+  'device.set_isokinetic_ecc_const_weight',
+  'device.set_isokinetic_ecc_overload_weight',
   'device.get_state',
 ] as const;
 
@@ -746,6 +770,240 @@ describe('registerDeviceTools', () => {
       expect(payload.connected).toBe(false);
       expect(payload.connectionState).toBe('disconnected');
       expect(payload.deviceId).toBeUndefined();
+    });
+  });
+
+  // ── SDK 0.6.0 mode-config setters ─────────────────────────────────────
+  //
+  // Each setter tool is a thin passthrough; tests assert the schema gate,
+  // the SDK call shape, the structured-error mapping, and (for one setter)
+  // slot routing. The MCP schema is intentionally permissive on numeric
+  // ranges — the SDK's `InvalidSettingError` is the authoritative gate.
+
+  describe('device.set_damper_level', () => {
+    it('forwards level to client.setDamperLevel and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_damper_level')!;
+      const { isError, payload } = await invoke(reg, { level: 5 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setDamperLevel).toHaveBeenCalledWith(5);
+    });
+
+    it('rejects out-of-range level (99) with INVALID_INPUT and never calls SDK', async () => {
+      const reg = placeholders.get('device.set_damper_level')!;
+      const { isError, payload } = await invoke(reg, { level: 99 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setDamperLevel).not.toHaveBeenCalled();
+    });
+
+    it('routes to the slot-specified client (slot:left)', async () => {
+      const leftClient = makeFakeClient();
+      state.slots.set('left', { slotId: 'left', client: leftClient, live: {} });
+      const reg = placeholders.get('device.set_damper_level')!;
+      const { isError } = await invoke(reg, { level: 3, slot: 'left' });
+      expect(isError).toBeUndefined();
+      expect(leftClient.setDamperLevel).toHaveBeenCalledWith(3);
+      expect(primaryClient(state).setDamperLevel).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('device.set_assist_mode', () => {
+    it("forwards 'on' to client.setAssistMode and returns ok:true", async () => {
+      const reg = placeholders.get('device.set_assist_mode')!;
+      const { isError, payload } = await invoke(reg, { mode: 'on' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setAssistMode).toHaveBeenCalledWith('on');
+    });
+
+    it("forwards 'off' to client.setAssistMode", async () => {
+      const reg = placeholders.get('device.set_assist_mode')!;
+      const { isError } = await invoke(reg, { mode: 'off' });
+      expect(isError).toBeUndefined();
+      expect(primaryClient(state).setAssistMode).toHaveBeenCalledWith('off');
+    });
+
+    it('rejects an unknown mode string with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_assist_mode')!;
+      const { isError, payload } = await invoke(reg, { mode: 'maybe' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setAssistMode).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('device.set_band_max_force', () => {
+    it('forwards lbs to client.setBandMaxForce and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_band_max_force')!;
+      const { isError, payload } = await invoke(reg, { lbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setBandMaxForce).toHaveBeenCalledWith(50);
+    });
+
+    it('rejects out-of-range lbs (999) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_band_max_force')!;
+      const { isError, payload } = await invoke(reg, { lbs: 999 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setBandMaxForce).not.toHaveBeenCalled();
+    });
+
+    it('surfaces SDK InvalidSettingError when value is in MCP range but rejected by SDK', async () => {
+      // MCP schema accepts 0..100, but the SDK valid set is 15..70. A
+      // value of 5 passes the schema and hits the SDK, which rejects it.
+      const client = primaryClient(state);
+      client.setBandMaxForce.mockRejectedValueOnce(
+        new FakeVoltraSDKError('bandMaxForce out of range', 'INVALID_SETTING'),
+      );
+      const reg = placeholders.get('device.set_band_max_force')!;
+      const { isError, payload } = await invoke(reg, { lbs: 5 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_SETTING');
+      expect(client.setBandMaxForce).toHaveBeenCalledWith(5);
+    });
+  });
+
+  describe('device.set_isokinetic_target_speed', () => {
+    it('forwards mmPerSec to client.setIsokineticTargetSpeed and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_isokinetic_target_speed')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: 1500 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setIsokineticTargetSpeed).toHaveBeenCalledWith(1500);
+    });
+
+    it('rejects mmPerSec above 2000 with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_isokinetic_target_speed')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: 5000 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticTargetSpeed).not.toHaveBeenCalled();
+    });
+
+    it('surfaces SDK InvalidSettingError for invalid step (e.g. 1505 — not multiple of 10)', async () => {
+      const client = primaryClient(state);
+      client.setIsokineticTargetSpeed.mockRejectedValueOnce(
+        new FakeVoltraSDKError('must be multiple of 10', 'INVALID_SETTING'),
+      );
+      const reg = placeholders.get('device.set_isokinetic_target_speed')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: 1505 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_SETTING');
+    });
+  });
+
+  describe('device.set_isokinetic_ecc_mode', () => {
+    it("forwards 'isokinetic' to client.setIsokineticEccMode and returns ok:true", async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_mode')!;
+      const { isError, payload } = await invoke(reg, { mode: 'isokinetic' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setIsokineticEccMode).toHaveBeenCalledWith('isokinetic');
+    });
+
+    it("forwards 'constant' to client.setIsokineticEccMode", async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_mode')!;
+      const { isError } = await invoke(reg, { mode: 'constant' });
+      expect(isError).toBeUndefined();
+      expect(primaryClient(state).setIsokineticEccMode).toHaveBeenCalledWith('constant');
+    });
+
+    it('rejects an unknown mode string with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_mode')!;
+      const { isError, payload } = await invoke(reg, { mode: 'sometimes' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticEccMode).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('device.set_isokinetic_ecc_speed_limit', () => {
+    it('forwards mmPerSec to client.setIsokineticEccSpeedLimit and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_speed_limit')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: 0 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      // 0 = auto.
+      expect(primaryClient(state).setIsokineticEccSpeedLimit).toHaveBeenCalledWith(0);
+    });
+
+    it('rejects negative mmPerSec with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_speed_limit')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: -100 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticEccSpeedLimit).not.toHaveBeenCalled();
+    });
+
+    it('surfaces SDK InvalidSettingError on rejection', async () => {
+      const client = primaryClient(state);
+      client.setIsokineticEccSpeedLimit.mockRejectedValueOnce(
+        new FakeVoltraSDKError('invalid step', 'INVALID_SETTING'),
+      );
+      const reg = placeholders.get('device.set_isokinetic_ecc_speed_limit')!;
+      const { isError, payload } = await invoke(reg, { mmPerSec: 1505 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_SETTING');
+    });
+  });
+
+  describe('device.set_isokinetic_ecc_const_weight', () => {
+    it('forwards lbs to client.setIsokineticEccConstWeight and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_const_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: 100 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setIsokineticEccConstWeight).toHaveBeenCalledWith(100);
+    });
+
+    it('rejects out-of-range lbs (300) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_const_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: 300 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticEccConstWeight).not.toHaveBeenCalled();
+    });
+
+    it('maps a NotConnectedError thrown by the SDK to its code', async () => {
+      const client = primaryClient(state);
+      client.setIsokineticEccConstWeight.mockRejectedValueOnce(
+        new FakeVoltraSDKError('not connected', 'NOT_CONNECTED'),
+      );
+      const reg = placeholders.get('device.set_isokinetic_ecc_const_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: 50 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('NOT_CONNECTED');
+    });
+  });
+
+  describe('device.set_isokinetic_ecc_overload_weight', () => {
+    it('forwards lbs to client.setIsokineticEccOverloadWeight and returns ok:true', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_overload_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: 75 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setIsokineticEccOverloadWeight).toHaveBeenCalledWith(75);
+    });
+
+    it('rejects out-of-range lbs (-1) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.set_isokinetic_ecc_overload_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: -1 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticEccOverloadWeight).not.toHaveBeenCalled();
+    });
+
+    it('surfaces SDK InvalidSettingError on rejection', async () => {
+      const client = primaryClient(state);
+      client.setIsokineticEccOverloadWeight.mockRejectedValueOnce(
+        new FakeVoltraSDKError('overload weight invalid', 'INVALID_SETTING'),
+      );
+      const reg = placeholders.get('device.set_isokinetic_ecc_overload_weight')!;
+      const { isError, payload } = await invoke(reg, { lbs: 50 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_SETTING');
     });
   });
 
