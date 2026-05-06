@@ -576,6 +576,9 @@ export function registerDeviceTools(
         if (settings.battery !== null && settings.battery !== undefined) {
           out.batteryPercent = settings.battery;
         }
+        if (typeof settings.damperLevel === 'number') {
+          out.damperLevel = settings.damperLevel;
+        }
       }
       return out;
     }),
