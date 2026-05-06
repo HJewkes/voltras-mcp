@@ -56,6 +56,63 @@ export const DeviceSetModeInput = z.object({
   slot: SlotIdSchema,
 });
 
+// ── SDK 0.6.0 mode-config setters (validated on-device 2026-05-06) ────────
+//
+// MCP-side schemas keep numeric ranges intentionally permissive — the SDK's
+// command-builder rejects out-of-band values with `InvalidSettingError`,
+// and that rejection is the authoritative range gate. MCP just sanity-bounds
+// the input so an obviously bogus value doesn't reach the BLE write path.
+// String-union setters are exhaustive at the schema layer (no SDK round-trip
+// needed to enumerate valid values).
+
+/** Input for `device.set_damper_level` — int 0..9 (UI shows N+1 ⇒ 1..10). */
+export const DeviceSetDamperLevelInput = z.object({
+  level: z.number().int().min(0).max(9),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_assist_mode` — toggle on/off. */
+export const DeviceSetAssistModeInput = z.object({
+  mode: z.enum(['off', 'on']),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_band_max_force` — pounds; SDK valid range 15..70. */
+export const DeviceSetBandMaxForceInput = z.object({
+  lbs: z.number().int().min(0).max(100),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_isokinetic_target_speed` — mm/s; SDK requires step-of-10. */
+export const DeviceSetIsokineticTargetSpeedInput = z.object({
+  mmPerSec: z.number().int().min(0).max(2000),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_isokinetic_ecc_mode` — eccentric mode for isokinetic. */
+export const DeviceSetIsokineticEccModeInput = z.object({
+  mode: z.enum(['isokinetic', 'constant']),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_isokinetic_ecc_speed_limit` — mm/s; 0 = auto. */
+export const DeviceSetIsokineticEccSpeedLimitInput = z.object({
+  mmPerSec: z.number().int().min(0).max(2000),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_isokinetic_ecc_const_weight` — pounds. Device beeps. */
+export const DeviceSetIsokineticEccConstWeightInput = z.object({
+  lbs: z.number().int().min(0).max(200),
+  slot: SlotIdSchema,
+});
+
+/** Input for `device.set_isokinetic_ecc_overload_weight` — pounds. Device beeps. */
+export const DeviceSetIsokineticEccOverloadWeightInput = z.object({
+  lbs: z.number().int().min(0).max(200),
+  slot: SlotIdSchema,
+});
+
 /**
  * Output shape for `device.get_state`. The handler composes this from
  * individual `VoltraClient` getters — the SDK has no `getState()` method.
