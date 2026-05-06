@@ -90,6 +90,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {
   GuidedLoadState,
   InProgressEvent,
+  PreSummaryEvent,
   SummaryEvent,
   TelemetryFrame,
 } from '@voltras/node-sdk';
@@ -104,6 +105,7 @@ import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
   buildRepFinalizedPayload,
+  buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
@@ -340,15 +342,45 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     client.onSummary((payload: SummaryEvent) => {
       // End-of-set vendor frame. Capture on the active set so the
       // finalize path can read-and-clear it for the persisted payload
-      // (PR-C will surface this through `set_ended_by_device` and the
-      // `set_pre_summary` channel event). No channel publish here — the
-      // current PR is live-state plumbing only.
+      // (the `set_ended*` payload's `device_summary` block — see
+      // `finalizeSet` in set-tools.ts and `buildSetEndedPayload`'s
+      // `deviceSummary` parameter). No channel publish here — the
+      // summary rides out on the `set_ended` event via
+      // `consumeLatestSummary` to avoid a race between two events for
+      // the same set.
       debug.events.push({
         capturedAt: Date.now(),
         type: 'summary',
         payload: { schemaVersion: payload.schemaVersion, repCount: payload.repCount },
       });
       live.applySummary(payload);
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onPreSummary((payload: PreSummaryEvent) => {
+      // Vendor `preSummary` frame — fires ~3s before the final rep with
+      // early access to `repDurationMs` + `repCount`. Publishes the
+      // `set_pre_summary` channel event so PT Claude can prep the
+      // rest-period coaching prompt while the user finishes the rep.
+      // Ghost preSummary after `set.end` already closed the set: silent
+      // drop (the explicit tool finalize already cleared `live.set`).
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'pre_summary',
+        payload: {
+          schemaVersion: payload.schemaVersion,
+          repCount: payload.repCount,
+          repDurationMs: payload.repDurationMs,
+        },
+      });
+      const set = live.snapshotSet();
+      if (set === undefined) {
+        return;
+      }
+      const device = live.snapshotDevice();
+      slotChannels.publish(buildSetPreSummaryPayload(set, device, payload));
     }),
   );
 
