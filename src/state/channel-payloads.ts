@@ -18,6 +18,7 @@
 // are silently dropped on serialization). Values must all be strings —
 // helpers `toFixed(N)` or `String(...)` numbers before assignment.
 
+import type { PreSummaryEvent } from '@voltras/node-sdk';
 import type { Rep } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
@@ -246,6 +247,20 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
 export type SetEndedCause = 'tool' | 'device_signal';
 
 /**
+ * Device-asserted end-of-set summary metadata, harvested from the SDK's
+ * `onSummary` vendor frame via `LiveState.consumeLatestSummary`. Threaded
+ * onto the `set_ended*` payload so PT Claude can cross-reference the
+ * device's canonical rep count + schema version against the analytics-set
+ * count without an extra retrieval. Optional — sets that ended without
+ * ever receiving an `onSummary` (mid-set disconnect, abrupt close) omit
+ * the block entirely.
+ */
+export interface DeviceSummaryBlock {
+  repCount: number;
+  schemaVersion: number;
+}
+
+/**
  * Build the meta + content for a `set_ended` (or `set_ended_by_device`)
  * channel event. Carries the full per-rep array plus a pre-computed VBT
  * summary so the model can skip the `set.get` + `metrics.compute vbt.set`
@@ -259,11 +274,19 @@ export type SetEndedCause = 'tool' | 'device_signal';
  *     is expected to have set `stored.partial=true` and
  *     `stored.partialReason='device_signal'` before invoking — those flow
  *     unchanged into the payload.
+ *
+ * The optional `deviceSummary` carries the device-asserted rep count +
+ * schema version harvested from the SDK's `onSummary` frame at finalize
+ * time. When supplied, meta gains `device_rep_count` + `device_schema_version`
+ * and content gains a `device_summary` block. When absent (mid-set
+ * disconnect, no graceful close, no summary frame received) the payload
+ * omits both — backwards-compatible with pre-PR-C consumers.
  */
 export function buildSetEndedPayload(
   stored: StoredSet,
   cause: SetEndedCause = 'tool',
   autoStopCause?: string,
+  deviceSummary?: DeviceSummaryBlock,
 ): {
   meta: Record<string, string>;
   content: string;
@@ -293,6 +316,14 @@ export function buildSetEndedPayload(
     // both meta (for fast scanning) and content (under `set.auto_stop_cause`).
     meta.auto_stop_cause = autoStopCause;
   }
+  if (deviceSummary !== undefined) {
+    // Device-asserted canonical counts harvested from the SDK's `onSummary`
+    // vendor frame. Carried alongside the analytics-derived `rep_count` so
+    // the model can spot a mismatch (e.g., device-side counter desync) at
+    // a glance without parsing content.
+    meta.device_rep_count = String(deviceSummary.repCount);
+    meta.device_schema_version = String(deviceSummary.schemaVersion);
+  }
 
   const reps = stored.reps.map(serializeRepForPayload);
   const vbt = computeVbtSummary(stored.reps);
@@ -317,6 +348,14 @@ export function buildSetEndedPayload(
     },
     reps,
     vbt_summary: vbt,
+    ...(deviceSummary !== undefined
+      ? {
+          device_summary: {
+            rep_count: deviceSummary.repCount,
+            schema_version: deviceSummary.schemaVersion,
+          },
+        }
+      : {}),
   });
   return { meta, content };
 }
@@ -382,6 +421,47 @@ function buildSetEndedSummary(
   const base = `${headline}: ${repCount} reps in ${seconds}s`;
   const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
   return cause === 'device_signal' ? `${withLoss} (user pressed Stop on the unit)` : withLoss;
+}
+
+/**
+ * Build the meta + content for a `set_pre_summary` channel event. Fires
+ * when the device's vendor `preSummary` frame lands (~3s before the final
+ * rep) — gives PT Claude an early-warning hook for the rest period
+ * coaching prompt without waiting for the set to fully close.
+ *
+ * The `set_so_far` block mirrors the trigger-event shape so the model
+ * parses mid-set context with the same schema across `set_target_reached`,
+ * `velocity_loss_exceeded`, `idle_timeout`, and now `set_pre_summary`.
+ *
+ * `payload.targetWeightTenths` is carried through as-is (raw tenths) for
+ * completeness — the model can divide by 10 when it wants pounds.
+ */
+export function buildSetPreSummaryPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  payload: PreSummaryEvent,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'set_pre_summary',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    device_rep_count: String(payload.repCount),
+    final_rep_duration_ms: String(payload.repDurationMs),
+    schema_version: String(payload.schemaVersion),
+  };
+  const summary = `Final rep complete: ${payload.repCount} reps, last rep ${payload.repDurationMs}ms`;
+  const content = JSON.stringify({
+    summary,
+    pre_summary: {
+      rep_count: payload.repCount,
+      final_rep_duration_ms: payload.repDurationMs,
+      schema_version: payload.schemaVersion,
+      target_weight_tenths: payload.targetWeightTenths,
+    },
+    set_so_far: summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
 }
 
 /**
