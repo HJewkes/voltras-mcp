@@ -100,8 +100,8 @@ interface FakeClient {
   setMode: Mock<(mode: number) => Promise<void>>;
   setChains: Mock<(lbs: number) => Promise<void>>;
   setEccentric: Mock<(percent: number) => Promise<void>>;
-  onRepBoundary: Mock<(cb: () => void) => void>;
-  onSetBoundary: Mock<(cb: () => void) => void>;
+  onPerRep: Mock<(cb: (event: unknown) => void) => void>;
+  onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
   onConnectionStateChange: Mock<(cb: (state: unknown) => void) => void>;
   onFrame: Mock<(cb: (frame: unknown) => void) => void>;
@@ -135,8 +135,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setMode: vi.fn(async () => undefined),
     setChains: vi.fn(async () => undefined),
     setEccentric: vi.fn(async () => undefined),
-    onRepBoundary: vi.fn(() => undefined),
-    onSetBoundary: vi.fn(() => undefined),
+    onPerRep: vi.fn(() => undefined),
+    onInProgress: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
     onConnectionStateChange: vi.fn(() => undefined),
     onFrame: vi.fn(() => undefined),

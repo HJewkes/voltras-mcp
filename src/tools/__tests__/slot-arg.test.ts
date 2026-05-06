@@ -156,8 +156,8 @@ interface FakeClient {
   setEccentric: ReturnType<typeof vi.fn>;
   startRecording: ReturnType<typeof vi.fn>;
   endSet: ReturnType<typeof vi.fn>;
-  onRepBoundary: ReturnType<typeof vi.fn>;
-  onSetBoundary: ReturnType<typeof vi.fn>;
+  onPerRep: ReturnType<typeof vi.fn>;
+  onInProgress: ReturnType<typeof vi.fn>;
   onSettingsUpdate: ReturnType<typeof vi.fn>;
   onConnectionStateChange: ReturnType<typeof vi.fn>;
   onFrame: ReturnType<typeof vi.fn>;
@@ -183,8 +183,8 @@ function makeFakeClient(): FakeClient {
     setEccentric: vi.fn(async () => undefined),
     startRecording: vi.fn(async () => undefined),
     endSet: vi.fn(async () => undefined),
-    onRepBoundary: vi.fn(),
-    onSetBoundary: vi.fn(),
+    onPerRep: vi.fn(),
+    onInProgress: vi.fn(),
     onSettingsUpdate: vi.fn(),
     onConnectionStateChange: vi.fn(),
     onFrame: vi.fn(),

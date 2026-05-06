@@ -40,10 +40,10 @@ vi.mock('@voltras/node-sdk', () => ({
     connectionState = 'disconnected';
     connectedDeviceId = undefined;
     settings = undefined;
-    onRepBoundary = (): void => {};
+    onPerRep = (): void => {};
     onSettingsUpdate = (): void => {};
     onConnectionStateChange = (): void => {};
-    onSetBoundary = (): void => {};
+    onInProgress = (): void => {};
     onFrame = (): void => {};
   },
   VoltraManager: { forNode: () => ({}), forMock: () => ({}) },
@@ -203,8 +203,8 @@ function fakeBootstrapResult(): unknown {
     connectionState: 'disconnected',
     connectedDeviceId: undefined,
     settings: undefined,
-    onRepBoundary: subscribe,
-    onSetBoundary: subscribe,
+    onPerRep: subscribe,
+    onInProgress: subscribe,
     onSettingsUpdate: subscribe,
     onConnectionStateChange: subscribe,
     onFrame: subscribe,

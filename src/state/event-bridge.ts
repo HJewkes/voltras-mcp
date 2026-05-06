@@ -24,26 +24,27 @@
 //   onFrame                     → buffer telemetry samples; detect rep cycle
 //                                 completion via phase transitions; emit one
 //                                 Rep at the *end* of each cycle.
-//   onRepBoundary               → debug-only — the device fires this at every
-//                                 phase transition (concentric→eccentric,
-//                                 eccentric→idle), so it produces ~2 splits
-//                                 per real rep. We log it to the debug event
-//                                 buffer and otherwise ignore it. Subscribing
-//                                 keeps the listener slot bound so the SDK
-//                                 does not buffer events.
-//   onSetBoundary               → suppressed within a SET_START_GRACE_MS
-//                                 window of `set.start` (the device fires a
-//                                 set_boundary in response to our Workout.GO
-//                                 engage command, which would otherwise reset
-//                                 the rep counter mid-set). Outside the grace
-//                                 window WITH an active set, the boundary is
-//                                 treated as the user pressing Stop on the
-//                                 Voltra UI — the bridge finalizes the set
-//                                 via the shared `finalizeSet` helper, which
-//                                 persists, clears live state, and emits the
+//   onPerRep                    → debug-only — the device fires this at every
+//                                 phase transition (pull start, return start),
+//                                 so it produces ~2 splits per real rep. We
+//                                 log it to the debug event buffer and
+//                                 otherwise ignore it. Subscribing keeps the
+//                                 listener slot bound so the SDK does not
+//                                 buffer events.
+//   onInProgress                → suppressed within a SET_START_GRACE_MS
+//                                 window of `set.start` (the device fires
+//                                 in-progress events in response to our
+//                                 Workout.GO engage command, which would
+//                                 otherwise reset the rep counter mid-set).
+//                                 Outside the grace window WITH an active
+//                                 set, the heartbeat is treated as the user
+//                                 pressing Stop on the Voltra UI — the
+//                                 bridge finalizes the set via the shared
+//                                 `finalizeSet` helper, which persists,
+//                                 clears live state, and emits the
 //                                 `set_ended_by_device` channel event.
 //                                 Outside the grace window with NO active
-//                                 set, the boundary is a silent drop (the
+//                                 set, the event is a silent drop (the
 //                                 explicit `set.end` tool already finalized;
 //                                 LiveState's set is undefined and double-
 //                                 firing is the race-condition guard).
@@ -125,7 +126,7 @@ const SESSION_URI = 'voltra://session/active';
 const SET_URI = 'voltra://set/active';
 
 /**
- * Suppression window after `set.start`: any `onSetBoundary` event that
+ * Suppression window after `set.start`: any `onInProgress` event that
  * arrives within this many milliseconds of the set's `startedAt` is
  * treated as the device's echo of our Workout.GO engage command rather
  * than a user-pressed Stop. The chosen 500ms is empirically wide enough
@@ -194,9 +195,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // convert each `TelemetryFrame` into a `WorkoutSample` and forward it.
   // The state machine (eccentric→concentric starts a new rep, IDLE folds
   // into hold time) is owned by the model. We do NOT subscribe to
-  // `onRepBoundary` for state mutation — the device fires it at every
-  // phase transition, which produces split reps. We do NOT subscribe to
-  // `onSetBoundary` for state mutation either — the device emits it
+  // `onPerRep` for state mutation — the device fires it at every phase
+  // transition, which produces split reps. We do NOT subscribe to
+  // `onInProgress` for state mutation either — the device emits it
   // continuously during workout mode, not just at end-of-set, and the set
   // lifecycle is owned by the explicit `set.start`/`set.end` tools.
   pushUnsub(
@@ -292,7 +293,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onRepBoundary(() => {
+    client.onPerRep(() => {
       // Device fires this at every phase transition
       // (concentric→eccentric, eccentric→idle), so it is unreliable as
       // a "rep complete" signal. Logged for diagnostic visibility only
@@ -308,7 +309,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onSetBoundary(() => {
+    client.onInProgress(() => {
       // Device emits this continuously during workout mode — most are
       // noise (the firmware's response to our Workout.GO engage
       // command, fired ~immediately after `set.start`). The bridge

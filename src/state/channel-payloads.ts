@@ -239,7 +239,7 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
  * Cause of a `set_ended*` channel emission. `'tool'` is the explicit
  * `set.end` MCP-tool path; `'device_signal'` is the bridge's autonomous
  * finalize when the user pressed Stop on the unit (an out-of-grace
- * `onSetBoundary` event). The cause selects the meta `event_type` and tunes
+ * `onInProgress` event). The cause selects the meta `event_type` and tunes
  * the summary text — payload shape is identical between the two so PT
  * Claude can parse either with one schema.
  */

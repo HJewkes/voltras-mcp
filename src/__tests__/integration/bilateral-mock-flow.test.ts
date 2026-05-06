@@ -47,10 +47,10 @@ class FakeVoltraClient {
   connectedDeviceId: string | null = null;
   settings: Record<string, unknown> | undefined = undefined;
 
-  onRepBoundary(_cb: () => void): () => void {
+  onPerRep(_cb: (event: unknown) => void): () => void {
     return () => undefined;
   }
-  onSetBoundary(_cb: () => void): () => void {
+  onInProgress(_cb: (event: unknown) => void): () => void {
     return () => undefined;
   }
   onSettingsUpdate(_cb: (s: unknown) => void): () => void {

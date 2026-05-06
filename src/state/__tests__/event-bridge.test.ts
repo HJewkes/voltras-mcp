@@ -7,24 +7,24 @@
 // because all the bridge needs is the lower-level handle.
 //
 // Coverage targets (NF-03 floor 70% for event-bridge.ts):
-//   - onRepBoundary fires sendResourceUpdated for voltra://set/active when a
+//   - onPerRep fires sendResourceUpdated for voltra://set/active when a
 //     set is active.
-//   - onRepBoundary on no-active-set is a silent drop (EC-11).
+//   - onPerRep on no-active-set is a silent drop (EC-11).
 //   - onSettingsUpdate maps SDK fields to DeviceSnapshot fields and notifies
 //     voltra://device/current.
 //   - onSettingsUpdate coerces battery=null to absent (FIX #6).
 //   - onConnectionStateChange('connected') flips connected to true; on
 //     'disconnected' calls markDisconnected and notifies all three URIs (R24).
-//   - onSetBoundary subscribes but does not mutate state nor notify (gap
+//   - onInProgress subscribes but does not mutate state nor notify (gap
 //     filed by the critic; bridge owns the no-action policy).
 //   - Raw frame events (onFrame) are NOT subscribed by the bridge (R16:
 //     typed-only, no Buffer leak).
 //
-// Note on the SDK signature: `client.onRepBoundary` is `() => void` in the
-// installed `@voltras/node-sdk`. The bridge therefore cannot call
-// `live.appendRep(rep)` from this signal alone — rep construction from the
-// frame stream is Wave 3's responsibility. The bridge's role for the rep
-// boundary is to (a) drop the signal when no set is active and (b) emit the
+// Note on the SDK signature: `client.onPerRep` carries a `PerRepEvent` payload
+// in `@voltras/node-sdk` 0.6.0. The bridge currently ignores the payload and
+// only logs the listener firing — rep construction from the frame stream is
+// Wave 3's responsibility. The bridge's role for the per-rep signal is to
+// (a) drop the signal when no set is active and (b) emit the
 // resource-updated hint when one is. EC-11 (stale rep drop) is enforced at
 // the bridge layer by the active-set check before the hint is sent.
 
@@ -68,8 +68,28 @@ type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 // real SDK module shape — we only model the listener-registration surface
 // the bridge uses.
 type ConnectionState = 'disconnected' | 'connecting' | 'authenticating' | 'connected';
-type RepBoundaryListener = () => void;
-type SetBoundaryListener = () => void;
+
+// Mirrors the SDK 0.6.0 `PerRepEvent` shape; redeclared structurally so the
+// test file does not import from the mocked package.
+interface PerRepEvent {
+  phase: 'pull' | 'return';
+  frameCounter: number;
+  setCounter: number;
+  repCount: number;
+  targetWeightTenths: number;
+}
+
+// Mirrors the SDK 0.6.0 `InProgressEvent` shape (the ~1 Hz heartbeat).
+interface InProgressEvent {
+  peakForceTenths: number;
+  currentForceTenths: number;
+  velocityCmPerSec: number;
+  targetWeightTenths: number;
+  raw: Uint8Array;
+}
+
+type PerRepListener = (event: PerRepEvent) => void;
+type InProgressListener = (event: InProgressEvent) => void;
 type SettingsUpdateListener = (settings: SdkSettings) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 
@@ -83,8 +103,8 @@ interface SdkSettings {
 }
 
 interface FakeClient {
-  onRepBoundary: Mock<(l: RepBoundaryListener) => () => void>;
-  onSetBoundary: Mock<(l: SetBoundaryListener) => () => void>;
+  onPerRep: Mock<(l: PerRepListener) => () => void>;
+  onInProgress: Mock<(l: InProgressListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
   // The bridge subscribes to onFrame to assemble Reps from the typed
@@ -97,8 +117,8 @@ interface FakeClient {
   endSet: Mock<() => Promise<void>>;
   // Captured listeners for direct invocation.
   fire: {
-    repBoundary: () => void;
-    setBoundary: () => void;
+    perRep: (event?: PerRepEvent) => void;
+    inProgress: (event?: InProgressEvent) => void;
     settingsUpdate: (settings: SdkSettings) => void;
     connectionStateChange: (state: ConnectionState) => void;
     frame: (frame: {
@@ -112,18 +132,36 @@ interface FakeClient {
   };
 }
 
+const makePerRepEvent = (overrides: Partial<PerRepEvent> = {}): PerRepEvent => ({
+  phase: 'pull',
+  frameCounter: 1,
+  setCounter: 1,
+  repCount: 1,
+  targetWeightTenths: 0,
+  ...overrides,
+});
+
+const makeInProgressEvent = (overrides: Partial<InProgressEvent> = {}): InProgressEvent => ({
+  peakForceTenths: 0,
+  currentForceTenths: 0,
+  velocityCmPerSec: 0,
+  targetWeightTenths: 0,
+  raw: new Uint8Array(79),
+  ...overrides,
+});
+
 function makeFakeClient(): FakeClient {
-  let repCb: RepBoundaryListener = () => undefined;
-  let setCb: SetBoundaryListener = () => undefined;
+  let perRepCb: PerRepListener = () => undefined;
+  let inProgressCb: InProgressListener = () => undefined;
   let settingsCb: SettingsUpdateListener = () => undefined;
   let connCb: ConnectionStateListener = () => undefined;
 
-  const onRepBoundary = vi.fn((l: RepBoundaryListener) => {
-    repCb = l;
+  const onPerRep = vi.fn((l: PerRepListener) => {
+    perRepCb = l;
     return () => undefined;
   });
-  const onSetBoundary = vi.fn((l: SetBoundaryListener) => {
-    setCb = l;
+  const onInProgress = vi.fn((l: InProgressListener) => {
+    inProgressCb = l;
     return () => undefined;
   });
   const onSettingsUpdate = vi.fn((l: SettingsUpdateListener) => {
@@ -141,15 +179,15 @@ function makeFakeClient(): FakeClient {
   });
 
   return {
-    onRepBoundary,
-    onSetBoundary,
+    onPerRep,
+    onInProgress,
     onSettingsUpdate,
     onConnectionStateChange,
     onFrame,
     endSet: vi.fn(async () => undefined),
     fire: {
-      repBoundary: () => repCb(),
-      setBoundary: () => setCb(),
+      perRep: (e) => perRepCb(e ?? makePerRepEvent()),
+      inProgress: (e) => inProgressCb(e ?? makeInProgressEvent()),
       settingsUpdate: (s) => settingsCb(s),
       connectionStateChange: (s) => connCb(s),
       frame: (f) => frameCb(f),
@@ -258,9 +296,9 @@ describe('wireEventBridge', () => {
   });
 
   describe('subscription surface', () => {
-    it('subscribes to onRepBoundary, onSetBoundary, onSettingsUpdate, and onConnectionStateChange', () => {
-      expect(client.onRepBoundary).toHaveBeenCalledOnce();
-      expect(client.onSetBoundary).toHaveBeenCalledOnce();
+    it('subscribes to onPerRep, onInProgress, onSettingsUpdate, and onConnectionStateChange', () => {
+      expect(client.onPerRep).toHaveBeenCalledOnce();
+      expect(client.onInProgress).toHaveBeenCalledOnce();
       expect(client.onSettingsUpdate).toHaveBeenCalledOnce();
       expect(client.onConnectionStateChange).toHaveBeenCalledOnce();
     });
@@ -268,26 +306,26 @@ describe('wireEventBridge', () => {
     it('subscribes to onFrame to assemble Reps from telemetry stream (R16)', () => {
       // Frames carry typed numeric values (no raw buffers). The bridge maps
       // each frame to a WorkoutSample and uses analytics' `addSampleToRep`
-      // to assemble a Rep on each onRepBoundary signal.
+      // to assemble a Rep on each onPerRep signal.
       expect(client.onFrame).toHaveBeenCalledOnce();
     });
   });
 
-  describe('onRepBoundary (debug-only post-fix)', () => {
-    // The device fires onRepBoundary at every phase transition (concentric
+  describe('onPerRep (debug-only post-fix)', () => {
+    // The device fires onPerRep at every phase transition (concentric
     // → eccentric → idle), so it cannot be the "rep complete" signal — that
-    // would double-count every rep. The bridge logs onRepBoundary to the
+    // would double-count every rep. The bridge logs onPerRep to the
     // debug buffer but does NOT mutate live state or notify resources.
-    it('does not mutate live state on bare boundary (no frames buffered)', () => {
+    it('does not mutate live state on bare per-rep event (no frames buffered)', () => {
       startSet(live);
       const before = live.snapshotSet();
-      client.fire.repBoundary();
+      client.fire.perRep();
       expect(live.snapshotSet()).toEqual(before);
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
 
     it('drops the signal silently when no set is active', () => {
-      client.fire.repBoundary();
+      client.fire.perRep();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
   });
@@ -456,7 +494,7 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onSetBoundary', () => {
+  describe('onInProgress', () => {
     function startSetNow(): void {
       live.startSession({
         sessionId: 'sess-grace',
@@ -476,8 +514,9 @@ describe('wireEventBridge', () => {
 
     it('within the set-start grace window does not reset cycle state (Workout.GO echo suppression)', () => {
       startSetNow();
-      // Feed half a rep (CONCENTRIC), then receive a spurious set_boundary
-      // within the grace window — the cycle detector should keep its state.
+      // Feed half a rep (CONCENTRIC), then receive a spurious in-progress
+      // event within the grace window — the cycle detector should keep
+      // its state.
       client.fire.frame({
         sequence: 1,
         timestamp: 1001,
@@ -486,7 +525,7 @@ describe('wireEventBridge', () => {
         velocity: 0.5,
         force: 50,
       });
-      client.fire.setBoundary();
+      client.fire.inProgress();
 
       // Now finish the rep — the bridge should still produce one rep,
       // proving the spurious boundary did not blow away the buffered
@@ -518,7 +557,7 @@ describe('wireEventBridge', () => {
     // the active behavior end-to-end.
   });
 
-  describe('onSetBoundary → set_ended_by_device finalize', () => {
+  describe('onInProgress → set_ended_by_device finalize', () => {
     // A second harness — the bridge needs `state` threaded so it can call
     // `finalizeSet`. We re-wire here with a minimal fake state shaped just
     // enough for the device-signal finalize path: live, store with a
@@ -543,7 +582,7 @@ describe('wireEventBridge', () => {
     let fakeState: FakeState;
 
     function flushMicrotasks(): Promise<void> {
-      // The bridge's onSetBoundary handler kicks off `finalizeSet` via
+      // The bridge's onInProgress handler kicks off `finalizeSet` via
       // `void ...catch(...)` — a fire-and-forget Promise chain. We need
       // pending microtasks to drain so assertions on putSet / publish see
       // the side-effects. Two `setImmediate` flushes cover the
@@ -608,7 +647,7 @@ describe('wireEventBridge', () => {
       // startedAt = now → still within grace. The bridge must not call
       // store.putSet / channels.publish.
       startActiveSet({ startedAt: new Date().toISOString() });
-      client.fire.setBoundary();
+      client.fire.inProgress();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
       expect(channels.publish).not.toHaveBeenCalled();
@@ -618,7 +657,7 @@ describe('wireEventBridge', () => {
     it('outside the grace window with an active set persists, clears live state, and publishes set_ended_by_device', async () => {
       // startedAt 2025-01-01 — far outside any grace window.
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
-      client.fire.setBoundary();
+      client.fire.inProgress();
       await flushMicrotasks();
 
       expect(fakeState.store.putSet).toHaveBeenCalledTimes(1);
@@ -669,22 +708,22 @@ describe('wireEventBridge', () => {
     it('outside the grace window with NO active set is a silent drop', async () => {
       // No startSet invocation — `live.snapshotSet()` is undefined.
       // Simulates the explicit `set.end` race: tool already ran, bridge's
-      // onSetBoundary fires from the device's Workout.STOP echo.
-      client.fire.setBoundary();
+      // onInProgress fires from the device's Workout.STOP echo.
+      client.fire.inProgress();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
       expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
 
-    it('race-condition guard: live.endSet() before onSetBoundary is a silent drop', async () => {
+    it('race-condition guard: live.endSet() before onInProgress is a silent drop', async () => {
       // Reproduce the exact sequence the explicit `set.end` tool produces:
       // LiveState.endSet() runs, then the device's Workout.STOP echo
-      // fires onSetBoundary. The bridge must observe the cleared live set
+      // fires onInProgress. The bridge must observe the cleared live set
       // and drop without re-finalizing.
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
       live.endSet();
-      client.fire.setBoundary();
+      client.fire.inProgress();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
       expect(channels.publish).not.toHaveBeenCalled();

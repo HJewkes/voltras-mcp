@@ -203,7 +203,7 @@ export function registerDeviceTools(
       // `manager.connect` returns the SDK's connected `VoltraClient`, which
       // is distinct from the parameter-less stub in the slot set at
       // bootstrap. For the primary slot we reassign and re-wire the event
-      // bridge so onRepBoundary / onSettingsUpdate / onConnectionStateChange
+      // bridge so onPerRep / onSettingsUpdate / onConnectionStateChange
       // land on the right object. For new slots we allocate via
       // `createSlot`, which self-wires the bridge against the new client
       // (see slot-manager.ts).

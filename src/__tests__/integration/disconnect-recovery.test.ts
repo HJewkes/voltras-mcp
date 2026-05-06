@@ -48,10 +48,10 @@ class FakeVoltraClient {
   connectionState: 'disconnected' | 'connecting' | 'authenticating' | 'connected' = 'disconnected';
   connectedDeviceId: string | null = null;
   settings: Record<string, unknown> | undefined = undefined;
-  onRepBoundary(): () => void {
+  onPerRep(): () => void {
     return () => undefined;
   }
-  onSetBoundary(): () => void {
+  onInProgress(): () => void {
     return () => undefined;
   }
   onSettingsUpdate(): () => void {
