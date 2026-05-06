@@ -111,6 +111,7 @@ interface FakeClient {
   onPerRep: Mock<(cb: (event: unknown) => void) => void>;
   onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSummary: Mock<(cb: (event: unknown) => void) => void>;
+  onPreSummary: Mock<(cb: (event: unknown) => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
   onConnectionStateChange: Mock<(cb: (state: unknown) => void) => void>;
   onFrame: Mock<(cb: (frame: unknown) => void) => void>;
@@ -155,6 +156,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     onPerRep: vi.fn(() => undefined),
     onInProgress: vi.fn(() => undefined),
     onSummary: vi.fn(() => undefined),
+    onPreSummary: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
     onConnectionStateChange: vi.fn(() => undefined),
     onFrame: vi.fn(() => undefined),

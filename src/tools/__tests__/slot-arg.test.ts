@@ -159,6 +159,7 @@ interface FakeClient {
   onPerRep: ReturnType<typeof vi.fn>;
   onInProgress: ReturnType<typeof vi.fn>;
   onSummary: ReturnType<typeof vi.fn>;
+  onPreSummary: ReturnType<typeof vi.fn>;
   onSettingsUpdate: ReturnType<typeof vi.fn>;
   onConnectionStateChange: ReturnType<typeof vi.fn>;
   onFrame: ReturnType<typeof vi.fn>;
@@ -187,6 +188,7 @@ function makeFakeClient(): FakeClient {
     onPerRep: vi.fn(),
     onInProgress: vi.fn(),
     onSummary: vi.fn(),
+    onPreSummary: vi.fn(),
     onSettingsUpdate: vi.fn(),
     onConnectionStateChange: vi.fn(),
     onFrame: vi.fn(),

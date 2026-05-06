@@ -57,6 +57,9 @@ class FakeVoltraClient {
   onSummary(): () => void {
     return () => undefined;
   }
+  onPreSummary(): () => void {
+    return () => undefined;
+  }
   onSettingsUpdate(): () => void {
     return () => undefined;
   }
