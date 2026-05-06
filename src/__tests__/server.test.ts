@@ -58,6 +58,7 @@ vi.mock('@voltras/node-sdk', () => ({
     onConnectionStateChange = (): void => {};
     onInProgress = (): void => {};
     onSummary = (): void => {};
+    onPreSummary = (): void => {};
     onFrame = (): void => {};
   },
   VoltraManager: { forNode: () => ({}), forMock: () => ({}) },
@@ -220,6 +221,7 @@ function fakeBootstrapResult(): unknown {
     onPerRep: subscribe,
     onInProgress: subscribe,
     onSummary: subscribe,
+    onPreSummary: subscribe,
     onSettingsUpdate: subscribe,
     onConnectionStateChange: subscribe,
     onFrame: subscribe,

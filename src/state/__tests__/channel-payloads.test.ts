@@ -17,6 +17,7 @@ import {
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
   buildSetEndedPayload,
+  buildSetPreSummaryPayload,
   buildSetStartedPayload,
   buildSetTargetReachedPayload,
   buildVelocityLossExceededPayload,
@@ -784,5 +785,211 @@ describe('buildSetEndedPayload — auto_stop_cause', () => {
     expect(meta.auto_stop_cause).toBeUndefined();
     const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
     expect(parsed.set.auto_stop_cause).toBeUndefined();
+  });
+});
+
+describe('buildSetEndedPayload — device_summary', () => {
+  function buildStored(reps: Rep[]): StoredSet {
+    return {
+      id: 'set-ds',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:30.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: reps.map((r, i) => ({ ...r, id: `r${i}`, setId: 'set-ds', index: i })),
+    };
+  }
+
+  it('flows deviceSummary into meta keys + content.device_summary block when supplied', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5), makeRep(2, 0.6, 0.4)]);
+    const { meta, content } = buildSetEndedPayload(stored, 'tool', undefined, {
+      repCount: 2,
+      schemaVersion: 1,
+    });
+    expect(meta.device_rep_count).toBe('2');
+    expect(meta.device_schema_version).toBe('1');
+    const parsed = JSON.parse(content) as {
+      device_summary?: { rep_count: number; schema_version: number };
+    };
+    expect(parsed.device_summary).toEqual({ rep_count: 2, schema_version: 1 });
+  });
+
+  it('omits device_summary keys + block when deviceSummary is undefined', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const { meta, content } = buildSetEndedPayload(stored);
+    expect(meta.device_rep_count).toBeUndefined();
+    expect(meta.device_schema_version).toBeUndefined();
+    const parsed = JSON.parse(content) as { device_summary?: unknown };
+    expect(parsed.device_summary).toBeUndefined();
+  });
+
+  it('attaches device_summary to set_ended_by_device just like set_ended (cause-agnostic)', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const { meta, content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
+      repCount: 1,
+      schemaVersion: 3,
+    });
+    expect(meta.event_type).toBe('set_ended_by_device');
+    expect(meta.device_rep_count).toBe('1');
+    expect(meta.device_schema_version).toBe('3');
+    const parsed = JSON.parse(content) as {
+      device_summary: { rep_count: number; schema_version: number };
+    };
+    expect(parsed.device_summary).toEqual({ rep_count: 1, schema_version: 3 });
+  });
+
+  it('coexists with auto_stop_cause without losing either field', () => {
+    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached', {
+      repCount: 1,
+      schemaVersion: 2,
+    });
+    expect(meta.auto_stop_cause).toBe('rep_count_reached');
+    expect(meta.device_rep_count).toBe('1');
+    const parsed = JSON.parse(content) as {
+      set: { auto_stop_cause?: string };
+      device_summary: { rep_count: number };
+    };
+    expect(parsed.set.auto_stop_cause).toBe('rep_count_reached');
+    expect(parsed.device_summary.rep_count).toBe(1);
+  });
+
+  it('does not break parse for pre-PR-C consumers reading only set + reps + vbt_summary', () => {
+    // Backwards-compatibility shape check: the original keys must still be
+    // present and structurally identical regardless of whether the new
+    // device_summary block was included.
+    const stored = buildStored([makeRep(1, 0.8, 0.5), makeRep(2, 0.6, 0.4)]);
+    const withSummary = JSON.parse(
+      buildSetEndedPayload(stored, 'tool', undefined, { repCount: 2, schemaVersion: 1 }).content,
+    );
+    const withoutSummary = JSON.parse(buildSetEndedPayload(stored, 'tool').content);
+    expect(withSummary.summary).toBe(withoutSummary.summary);
+    expect(withSummary.set).toEqual(withoutSummary.set);
+    expect(withSummary.reps).toEqual(withoutSummary.reps);
+    expect(withSummary.vbt_summary).toEqual(withoutSummary.vbt_summary);
+  });
+});
+
+describe('buildSetPreSummaryPayload', () => {
+  const device: DeviceSnapshot = {
+    connected: true,
+    weightLbs: 100,
+    trainingMode: 'WeightTraining',
+  };
+  function activeSet(reps: Rep[]): ActiveSet {
+    return {
+      setId: 'set-pre-12345678',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps,
+      status: 'active',
+    };
+  }
+
+  it('emits the standard meta scalars with device rep count + final-rep duration', () => {
+    const set = activeSet([makeRep(1, 0.8, 0.5), makeRep(2, 0.7, 0.5)]);
+    const { meta, content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 1000,
+      repCount: 5,
+      repDurationMs: 1800,
+      raw: new Uint8Array(110),
+    });
+    expect(meta).toEqual({
+      source: 'voltras',
+      event_type: 'set_pre_summary',
+      set_id: 'set-pre-12345678',
+      session_id: 'sess-1',
+      device_rep_count: '5',
+      final_rep_duration_ms: '1800',
+      schema_version: '1',
+    });
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      pre_summary: {
+        rep_count: number;
+        final_rep_duration_ms: number;
+        schema_version: number;
+        target_weight_tenths: number;
+      };
+      set_so_far: { reps: unknown[] };
+    };
+    expect(parsed.summary).toBe('Final rep complete: 5 reps, last rep 1800ms');
+    expect(parsed.pre_summary).toEqual({
+      rep_count: 5,
+      final_rep_duration_ms: 1800,
+      schema_version: 1,
+      target_weight_tenths: 1000,
+    });
+    // set_so_far mirrors the trigger-event shape so the model parses one schema
+    // across set_target_reached / velocity_loss_exceeded / idle_timeout /
+    // set_pre_summary.
+    expect(parsed.set_so_far.reps).toHaveLength(2);
+  });
+
+  it('handles a zero-rep set (preSummary fired before any rep finalized — defensive)', () => {
+    const set = activeSet([]);
+    const { meta, content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 0,
+      repCount: 0,
+      repDurationMs: 0,
+      raw: new Uint8Array(110),
+    });
+    expect(meta.device_rep_count).toBe('0');
+    expect(meta.final_rep_duration_ms).toBe('0');
+    const parsed = JSON.parse(content) as {
+      pre_summary: { rep_count: number; final_rep_duration_ms: number };
+      set_so_far: { reps: unknown[] };
+    };
+    expect(parsed.pre_summary.rep_count).toBe(0);
+    expect(parsed.set_so_far.reps).toHaveLength(0);
+  });
+
+  it('passes through large repDurationMs values without truncation', () => {
+    const set = activeSet([makeRep(1, 0.8, 0.5)]);
+    const { meta, content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 1500,
+      repCount: 1,
+      repDurationMs: 65_535,
+      raw: new Uint8Array(110),
+    });
+    expect(meta.final_rep_duration_ms).toBe('65535');
+    const parsed = JSON.parse(content) as {
+      pre_summary: { final_rep_duration_ms: number };
+    };
+    expect(parsed.pre_summary.final_rep_duration_ms).toBe(65_535);
+  });
+
+  it.each([1, 2, 3, 4])('carries schemaVersion=%i through meta + content', (sv) => {
+    const set = activeSet([makeRep(1, 0.7, 0.5)]);
+    const { meta, content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: sv,
+      targetWeightTenths: 1000,
+      repCount: 1,
+      repDurationMs: 1500,
+      raw: new Uint8Array(110),
+    });
+    expect(meta.schema_version).toBe(String(sv));
+    const parsed = JSON.parse(content) as { pre_summary: { schema_version: number } };
+    expect(parsed.pre_summary.schema_version).toBe(sv);
+  });
+
+  it('preserves target_weight_tenths raw value (PT Claude divides by 10 if it wants pounds)', () => {
+    const set = activeSet([makeRep(1, 0.8, 0.5)]);
+    const { content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 1357,
+      repCount: 3,
+      repDurationMs: 1800,
+      raw: new Uint8Array(110),
+    });
+    const parsed = JSON.parse(content) as {
+      pre_summary: { target_weight_tenths: number };
+    };
+    expect(parsed.pre_summary.target_weight_tenths).toBe(1357);
   });
 });
