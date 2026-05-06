@@ -70,7 +70,7 @@ interface PlaceholderTools {
  * mutations. The map lives on `state` rather than in this module's closure
  * so the bridge's `set_ended_by_device` handler can finalize the same set
  * with the same recorded device config when the user presses Stop on the
- * unit (event-bridge.ts:onSetBoundary). `set.get` is read-only: it pulls a
+ * unit (event-bridge.ts:onInProgress). `set.get` is read-only: it pulls a
  * completed set straight from the store and is unaffected by live state.
  */
 export function registerSetTools(

@@ -30,7 +30,7 @@
 //    would create a SEPARATE internal client. So real telemetry from any
 //    real `MockBLEAdapter` never fans out into `live.appendRep`. To still
 //    exercise AC-17 ("reps.length === 5") we drive `state.live.appendRep`
-//    directly — the same call the bridge would issue if its `onRepBoundary`
+//    directly — the same call the bridge would issue if its `onPerRep`
 //    listener carried a `Rep` argument (see SDK signature note in
 //    `src/state/event-bridge.ts`).
 //
@@ -62,8 +62,8 @@ class FakeVoltraSDKError extends Error {
 }
 
 interface FakeListeners {
-  rep: Array<() => void>;
-  set: Array<() => void>;
+  rep: Array<(event: unknown) => void>;
+  set: Array<(event: unknown) => void>;
   settings: Array<(s: unknown) => void>;
   conn: Array<(s: 'disconnected' | 'connecting' | 'authenticating' | 'connected') => void>;
 }
@@ -75,11 +75,11 @@ class FakeVoltraClient {
   settings: Record<string, unknown> | undefined = undefined;
   readonly listeners: FakeListeners = { rep: [], set: [], settings: [], conn: [] };
 
-  onRepBoundary(cb: () => void): () => void {
+  onPerRep(cb: (event: unknown) => void): () => void {
     this.listeners.rep.push(cb);
     return () => undefined;
   }
-  onSetBoundary(cb: () => void): () => void {
+  onInProgress(cb: (event: unknown) => void): () => void {
     this.listeners.set.push(cb);
     return () => undefined;
   }

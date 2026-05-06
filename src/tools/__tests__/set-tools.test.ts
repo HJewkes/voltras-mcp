@@ -467,7 +467,7 @@ describe('set.end', () => {
 
   it('explicit set.end produces set_ended (not set_ended_by_device) — bridge-driven event_type is unaffected', async () => {
     // Regression guard for the sprint 1B refactor: the autonomous
-    // `set_ended_by_device` event lives on the bridge's onSetBoundary
+    // `set_ended_by_device` event lives on the bridge's onInProgress
     // path. The tool path (this test) MUST keep emitting `set_ended` with
     // no `partial_reason` so analytics consumers don't see a spurious
     // partial flag on graceful set ends.
