@@ -83,6 +83,9 @@ class FakeVoltraClient {
     this.listeners.set.push(cb);
     return () => undefined;
   }
+  onSummary(_cb: (event: unknown) => void): () => void {
+    return () => undefined;
+  }
   onSettingsUpdate(cb: (s: unknown) => void): () => void {
     this.listeners.settings.push(cb);
     return () => undefined;
