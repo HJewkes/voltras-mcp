@@ -1,6 +1,6 @@
 {
   "name": "voltras-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server exposing Voltra device control, session recording, history, and analytics as tools and resources for Claude.",
   "type": "module",
   "bin": {
