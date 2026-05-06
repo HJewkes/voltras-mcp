@@ -39,6 +39,7 @@ import { z } from 'zod';
 
 import {
   DeviceScanInput,
+  DeviceSendRawInput,
   DeviceSetWeightInput,
   DeviceSetModeInput,
   DeviceSetDamperLevelInput,
@@ -59,6 +60,7 @@ import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
 import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
+import { getDebugBuffers } from '../state/debug-buffer.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -144,6 +146,9 @@ const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
 
 const START_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.';
+
+const SEND_RAW_DESCRIPTION =
+  'DIAGNOSTIC ONLY. Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.';
 
 type Placeholders = Map<string, RegisteredTool>;
 
@@ -541,6 +546,124 @@ export function registerDeviceTools(
     START_GUIDED_LOAD_DESCRIPTION,
   );
 
+  // device.send_raw — DIAGNOSTIC byte-pipe. Reaches through `client.getAdapter()`
+  // (a public SDK method) to the BLE adapter's `write(Uint8Array)`. No opcode
+  // validation, no semantic checks — the caller owns byte semantics.
+  //
+  // Mock-mode gate: returns a structured `MOCK_NOT_SUPPORTED` error. We never
+  // pretend to succeed in mock mode because the only reason to invoke this
+  // tool is to probe real-hardware behavior; a silent mock success would
+  // mislead the caller into thinking a campaign step verified something it
+  // did not.
+  //
+  // Audit trail: every invocation appends a `send_raw` event to the debug
+  // ring buffer (visible via `debug.recent_events`) with the hex echo of the
+  // bytes written, the slot, byte count, expectResponse flag, and (on
+  // completion) the count of frames captured during the response window.
+  // The event is always recorded — INVALID_INPUT failures, mock-mode
+  // rejections, and write errors all leave a trace.
+  install(
+    placeholders,
+    'device.send_raw',
+    DeviceSendRawInput,
+    wrapHandler(DeviceSendRawInput, async (input) => {
+      const startedAt = new Date();
+      const slotId = input.slot ?? PRIMARY_SLOT;
+
+      // Mock-adapter gate (constraint: do NOT pretend to succeed in mock mode).
+      if (state.config.adapter === 'mock') {
+        recordSendRawEvent(startedAt.getTime(), {
+          slot: slotId,
+          bytesWritten: 0,
+          bytesHex: '',
+          expectResponse: input.expectResponse,
+          outcome: 'mock_not_supported',
+        });
+        throwSdkLike(
+          'MOCK_NOT_SUPPORTED',
+          'device.send_raw is a diagnostic tool that requires real hardware. Run with VOLTRA_ADAPTER=node against a connected device.',
+        );
+      }
+
+      const data = bytesToUint8Array(input.bytes);
+      const bytesHex = uint8ArrayToHex(data);
+
+      const slot = getSlot(state, slotId);
+      const adapter = slot.client.getAdapter();
+      if (adapter === null) {
+        recordSendRawEvent(startedAt.getTime(), {
+          slot: slotId,
+          bytesWritten: data.length,
+          bytesHex,
+          expectResponse: input.expectResponse,
+          outcome: 'no_adapter',
+        });
+        throwSdkLike(
+          'NOT_CONNECTED',
+          `Slot \`${slotId}\` has no BLE adapter — connect a device first via device.connect.`,
+        );
+      }
+      if (!slot.client.isConnected) {
+        recordSendRawEvent(startedAt.getTime(), {
+          slot: slotId,
+          bytesWritten: data.length,
+          bytesHex,
+          expectResponse: input.expectResponse,
+          outcome: 'not_connected',
+        });
+        throwSdkLike(
+          'NOT_CONNECTED',
+          `Slot \`${slotId}\` is not connected — connect a device first via device.connect.`,
+        );
+      }
+
+      // Pre-arm the response listener BEFORE the write so a fast device
+      // reply arriving during the write's microtask is not lost. The
+      // promise resolves when the window expires; the listener detaches
+      // unconditionally inside the `finally`-equivalent path.
+      const responseCollector = input.expectResponse
+        ? collectResponses(adapter, input.responseWindowMs)
+        : null;
+
+      try {
+        await adapter.write(data);
+      } catch (err) {
+        responseCollector?.cancel();
+        recordSendRawEvent(startedAt.getTime(), {
+          slot: slotId,
+          bytesWritten: data.length,
+          bytesHex,
+          expectResponse: input.expectResponse,
+          outcome: 'write_failed',
+        });
+        throw err;
+      }
+
+      const responses = responseCollector ? await responseCollector.done : undefined;
+
+      recordSendRawEvent(startedAt.getTime(), {
+        slot: slotId,
+        bytesWritten: data.length,
+        bytesHex,
+        expectResponse: input.expectResponse,
+        outcome: 'ok',
+        responsesCaptured: responses?.length ?? 0,
+      });
+
+      const out: Record<string, unknown> = {
+        ok: true,
+        bytesWritten: data.length,
+        bytesHex,
+        timestamp: startedAt.toISOString(),
+      };
+      if (responses !== undefined) {
+        out.responses = responses;
+      }
+      return out;
+    }),
+    SEND_RAW_DESCRIPTION,
+  );
+
   // device.get_state — composes the response from the four documented
   // getters (AC-26). Numeric `mode` is converted to its enum NAME via the
   // SDK's reverse mapping; an unknown value falls through as undefined.
@@ -627,4 +750,139 @@ function countConnectedSlots(state: ServerState): number {
     }
   }
   return count;
+}
+
+// ── device.send_raw helpers ──────────────────────────────────────────────
+
+/**
+ * Convert the dual-form `bytes` input (hex string OR integer array) to a
+ * `Uint8Array`. The schema has already enforced range and pattern, so this
+ * is a pure structural conversion — but we re-check the hex length parity
+ * because the schema's regex allows any positive even or odd length.
+ */
+function bytesToUint8Array(input: string | number[]): Uint8Array {
+  if (typeof input === 'string') {
+    if (input.length % 2 !== 0) {
+      throwSdkLike(
+        'INVALID_INPUT',
+        'bytes hex string must have an even number of characters (each byte is two hex chars).',
+      );
+    }
+    const out = new Uint8Array(input.length / 2);
+    for (let i = 0; i < input.length; i += 2) {
+      const byte = Number.parseInt(input.slice(i, i + 2), 16);
+      // The regex on the schema guarantees `byte` is a valid 0..255 number,
+      // but a defensive check costs nothing and makes the conversion total.
+      if (!Number.isFinite(byte) || byte < 0 || byte > 255) {
+        throwSdkLike(
+          'INVALID_INPUT',
+          `Invalid hex byte at offset ${i}: "${input.slice(i, i + 2)}"`,
+        );
+      }
+      out[i / 2] = byte;
+    }
+    return out;
+  }
+  // Array form — schema already bounds each element to 0..255.
+  return Uint8Array.from(input);
+}
+
+const HEX_DIGITS = '0123456789abcdef';
+
+/**
+ * Encode a `Uint8Array` as a lowercase hex string. Implemented inline so we
+ * never reach for `Buffer.toString('hex')` — keeps `device-tools.ts` free of
+ * a Node-specific `Buffer` reference and gives the function a stable shape
+ * across runtimes.
+ */
+function uint8ArrayToHex(data: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < data.length; i += 1) {
+    const b = data[i];
+    out += HEX_DIGITS[(b >> 4) & 0x0f];
+    out += HEX_DIGITS[b & 0x0f];
+  }
+  return out;
+}
+
+/**
+ * Adapter-agnostic shape we need for `device.send_raw` response collection.
+ * Mirrors the public BLEAdapter surface but typed locally so this file does
+ * not need to import the SDK's adapter types directly.
+ */
+interface RawWriteAdapter {
+  write(data: Uint8Array): Promise<void>;
+  onNotification(callback: (data: Uint8Array) => void): () => void;
+}
+
+/**
+ * Subscribe to BLE notifications for `windowMs`, capture every frame as
+ * hex, and resolve with the collected list when the window expires (or
+ * immediately if the caller invokes `cancel()`). The subscription is
+ * detached unconditionally inside the resolution path — even on cancel —
+ * so a stale listener cannot outlive the window.
+ *
+ * `windowMs === 0` resolves on the next microtask with an empty list. We
+ * still arm the listener briefly to give the BLE layer a chance to flush a
+ * synchronous reply, but in practice 0ms is "don't wait".
+ */
+function collectResponses(
+  adapter: RawWriteAdapter,
+  windowMs: number,
+): { done: Promise<Array<{ bytesHex: string; capturedAt: string }>>; cancel: () => void } {
+  const captured: Array<{ bytesHex: string; capturedAt: string }> = [];
+  const unsubscribe = adapter.onNotification((data) => {
+    captured.push({
+      bytesHex: uint8ArrayToHex(data),
+      capturedAt: new Date().toISOString(),
+    });
+  });
+  let settled = false;
+  let resolveFn: (v: typeof captured) => void = () => {};
+  const done = new Promise<typeof captured>((resolve) => {
+    resolveFn = resolve;
+  });
+  const finalize = (): void => {
+    if (settled) return;
+    settled = true;
+    unsubscribe();
+    resolveFn(captured);
+  };
+  const timer = setTimeout(finalize, windowMs);
+  // Allow process exit / test teardown to proceed without blocking on this
+  // timer when the host doesn't wait for the response (defensive — the
+  // tool always awaits `done`, but unref keeps shutdowns clean).
+  if (typeof timer === 'object' && timer !== null && typeof timer.unref === 'function') {
+    timer.unref();
+  }
+  return {
+    done,
+    cancel: () => {
+      clearTimeout(timer);
+      finalize();
+    },
+  };
+}
+
+/**
+ * Append a `send_raw` event to the diagnostic ring buffer. Centralised so
+ * every exit path through the handler — success, mock rejection, write
+ * failure — leaves the same shape of audit record.
+ */
+function recordSendRawEvent(
+  capturedAt: number,
+  payload: {
+    slot: string;
+    bytesWritten: number;
+    bytesHex: string;
+    expectResponse: boolean;
+    outcome: 'ok' | 'mock_not_supported' | 'no_adapter' | 'not_connected' | 'write_failed';
+    responsesCaptured?: number;
+  },
+): void {
+  getDebugBuffers().events.push({
+    capturedAt,
+    type: 'send_raw',
+    payload: { ...payload },
+  });
 }

@@ -163,6 +163,63 @@ export const DeviceStartGuidedLoadInput = z.object({
   slot: SlotIdSchema,
 });
 
+// ── device.send_raw (diagnostic-only) ─────────────────────────────────────
+//
+// DIAGNOSTIC tool — writes arbitrary bytes to the device's BLE write
+// characteristic via `client.getAdapter().write(...)`. The MCP layer is
+// intentionally a generic byte-pipe: it does NOT validate against known
+// opcodes or "safe" patterns. The caller (typically a human running an
+// on-device validation campaign) owns byte semantics.
+//
+// `confirm: true` is required to invoke. The literal-true gate forces a
+// caller to acknowledge that this is a diagnostic write that can put the
+// device in unexpected state.
+//
+// The window for `expectResponse` is bounded to keep the call latency
+// predictable; 500ms matches the device's typical settings-update echo
+// cadence under steady-state load.
+
+const HEX_PATTERN = /^[0-9a-fA-F]+$/;
+const MAX_RAW_BYTES = 244; // ATT_MTU upper bound on a single BLE write.
+const RESPONSE_WINDOW_MIN_MS = 0;
+const RESPONSE_WINDOW_MAX_MS = 5_000;
+const RESPONSE_WINDOW_DEFAULT_MS = 500;
+
+/**
+ * Input for `device.send_raw`.
+ *
+ * `bytes` accepts either a hex string (`"AA811001020304"`) or an array of
+ * integers in 0–255. The handler converts to `Uint8Array` internally and
+ * rejects out-of-range values or odd-length hex with `INVALID_INPUT`.
+ *
+ * `confirm` MUST be the literal `true`. This is intentional friction: the
+ * tool is a generic BLE write-pipe with no opcode validation, so the caller
+ * has to acknowledge each invocation.
+ */
+export const DeviceSendRawInput = z.object({
+  bytes: z.union([
+    z
+      .string()
+      .min(2)
+      .max(MAX_RAW_BYTES * 2)
+      .regex(HEX_PATTERN, 'bytes hex string must contain only [0-9a-fA-F]'),
+    z.array(z.number().int().min(0).max(255)).min(1).max(MAX_RAW_BYTES),
+  ]),
+  expectResponse: z.boolean().optional().default(false),
+  responseWindowMs: z
+    .number()
+    .int()
+    .min(RESPONSE_WINDOW_MIN_MS)
+    .max(RESPONSE_WINDOW_MAX_MS)
+    .optional()
+    .default(RESPONSE_WINDOW_DEFAULT_MS),
+  confirm: z.literal(true, {
+    message:
+      'device.send_raw requires `confirm: true` — diagnostic write to BLE; caller acknowledges device-state risk.',
+  }),
+  slot: SlotIdSchema,
+});
+
 /**
  * Output shape for `device.get_state`. The handler composes this from
  * individual `VoltraClient` getters — the SDK has no `getState()` method.
