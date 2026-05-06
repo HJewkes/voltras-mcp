@@ -447,6 +447,14 @@ export async function finalizeSet(
   // `partial=true / partialReason='device_signal'` stamp directly on the
   // finalized snapshot below, and the auto-stop path also stamps below
   // (so the partial-reason override lives in exactly one place).
+  // Harvest the device-asserted summary BEFORE `endSet` — once `endSet`
+  // discards the active set, the captured `latestSummary` goes with it.
+  // Symmetric across both finalize paths (tool-driven `set_ended` and
+  // bridge-driven `set_ended_by_device`): if an `onSummary` arrived during
+  // the set's lifetime, the resulting payload carries the `device_summary`
+  // block; if it never arrived (mid-set disconnect, abrupt close), the
+  // block is omitted.
+  const deviceSummary = slot.live.consumeLatestSummary();
   const finalized = slot.live.endSet();
   if (finalized === undefined) {
     return undefined;
@@ -486,7 +494,7 @@ export async function finalizeSet(
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
-  const payload = buildSetEndedPayload(stored, opts.cause, opts.auto_stop_cause);
+  const payload = buildSetEndedPayload(stored, opts.cause, opts.auto_stop_cause, deviceSummary);
   state.channels.forSlot(slotId).publish(payload);
   return stored;
 }
