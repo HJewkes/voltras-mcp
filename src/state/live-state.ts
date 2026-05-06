@@ -23,6 +23,7 @@
 // The `applySettings` signature uses `Partial<DeviceSnapshot>` for the input
 // rather than the SDK's settings type so the caller (event-bridge) can keep
 // SDK-shape conversion at its own seam.
+import type { InProgressEvent, SummaryEvent } from '@voltras/node-sdk';
 import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
 import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
 
@@ -86,6 +87,34 @@ export interface ActiveSet {
    * velocity loss) all fire independently as the set progresses.
    */
   firedTriggers?: Set<string>;
+  /**
+   * Most recent `onInProgress` payload while the set is active. Single-slot
+   * — every heartbeat overwrites the prior tick rather than accumulating.
+   * Exposed through `set.live_metrics` so coaching reads see the latest
+   * peak-force / velocity / target-weight values without subscribing to the
+   * raw frame stream. Cleared implicitly when `endSet` discards the active
+   * set; once the set ends, `set.live_metrics` returns `{ active: false }`
+   * anyway, so there's nothing to dangle.
+   */
+  latestInProgress?: {
+    peakForceTenths: number;
+    currentForceTenths: number;
+    velocityCmPerSec: number;
+    targetWeightTenths: number;
+    /** `Date.now()` ms at the time the bridge captured the heartbeat. */
+    capturedAt: number;
+  };
+  /**
+   * Most recent `onSummary` payload received during this set's lifetime.
+   * Read-and-cleared by `endSet` (via `consumeLatestSummary`) so the
+   * finalized set carries it forward to the persisted payload exactly once.
+   * If `endSet` runs without a prior `onSummary` (mid-set disconnect, no
+   * graceful close), the finalized set has no summary block — never stale.
+   */
+  latestSummary?: {
+    repCount: number;
+    schemaVersion: number;
+  };
 }
 
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
@@ -246,6 +275,76 @@ export class LiveState {
     }
     this._analyticsSet = addSampleToSet(this._analyticsSet, sample);
     this.set = { ...this.set, reps: [...this._analyticsSet.reps] };
+  }
+
+  /**
+   * Capture the most recent `onInProgress` heartbeat on the active set. The
+   * bridge calls this on every ~1 Hz tick before the SET_START_GRACE_MS
+   * grace check so coaching reads always see the latest value, even within
+   * the start-of-set grace window. Single-slot — each tick overwrites the
+   * prior tick rather than accumulating. No-op when no set is active (the
+   * device emits `onInProgress` continuously during workout mode, including
+   * after an explicit `set.end` race; silent drop matches the bridge's
+   * existing race-condition guard).
+   */
+  applyInProgress(payload: InProgressEvent, capturedAt: number): void {
+    if (this.set === undefined) {
+      return;
+    }
+    this.set = {
+      ...this.set,
+      latestInProgress: {
+        peakForceTenths: payload.peakForceTenths,
+        currentForceTenths: payload.currentForceTenths,
+        velocityCmPerSec: payload.velocityCmPerSec,
+        targetWeightTenths: payload.targetWeightTenths,
+        capturedAt,
+      },
+    };
+  }
+
+  /**
+   * Capture the most recent `onSummary` payload on the active set. The
+   * device emits this once at end-of-set with the canonical rep count and
+   * schema version. `consumeLatestSummary` reads-and-clears it during
+   * `endSet` so the finalized set carries it forward exactly once. No-op
+   * when no set is active.
+   */
+  applySummary(payload: SummaryEvent): void {
+    if (this.set === undefined) {
+      return;
+    }
+    this.set = {
+      ...this.set,
+      latestSummary: {
+        repCount: payload.repCount,
+        schemaVersion: payload.schemaVersion,
+      },
+    };
+  }
+
+  /**
+   * Read-and-clear the active set's `latestSummary`. Returns the captured
+   * summary (if any) and removes it from live state in the same call so
+   * subsequent reads see `undefined`. Used by the finalize path to thread
+   * the summary block onto the persisted set without leaving stale data
+   * on the active-set object.
+   *
+   * Returns `undefined` when no set is active OR the active set never
+   * received an `onSummary` (mid-set disconnect path).
+   */
+  consumeLatestSummary(): ActiveSet['latestSummary'] | undefined {
+    if (this.set === undefined) {
+      return undefined;
+    }
+    const summary = this.set.latestSummary;
+    if (summary === undefined) {
+      return undefined;
+    }
+    const next = { ...this.set };
+    delete next.latestSummary;
+    this.set = next;
+    return summary;
   }
 
   /**
