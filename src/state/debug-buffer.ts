@@ -35,6 +35,7 @@ export interface DebugEvent {
   type:
     | 'rep_boundary'
     | 'set_boundary'
+    | 'summary'
     | 'settings_update'
     | 'connection_state_change'
     | 'cycle_complete';

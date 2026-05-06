@@ -81,7 +81,7 @@
 // `no-floating-promises` linting.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { TelemetryFrame } from '@voltras/node-sdk';
+import type { InProgressEvent, SummaryEvent, TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
@@ -294,11 +294,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   pushUnsub(
     unsubs,
     client.onPerRep(() => {
-      // Device fires this at every phase transition
-      // (concentric→eccentric, eccentric→idle), so it is unreliable as
-      // a "rep complete" signal. Logged for diagnostic visibility only
-      // — rep boundaries are detected from frames in
-      // `LiveState.processSample`.
+      // Subscription kept for parity / future field consumption; payload
+      // deliberately ignored. The device fires this at every phase
+      // transition (concentric→eccentric, eccentric→idle), so it is
+      // unreliable as a "rep complete" signal — rep boundaries are
+      // detected from frames in `LiveState.processSample`. See the SDK
+      // 0.6.0 design pass for the rationale on keeping the bind in place
+      // even though we don't read the fields today.
       debug.events.push({
         capturedAt: Date.now(),
         type: 'rep_boundary',
@@ -309,23 +311,47 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onInProgress(() => {
-      // Device emits this continuously during workout mode — most are
-      // noise (the firmware's response to our Workout.GO engage
-      // command, fired ~immediately after `set.start`). The bridge
-      // ignores boundaries within the SET_START_GRACE_MS window of the
-      // active set's startedAt; outside that window with an active set,
-      // the boundary is the user pressing Stop on the unit and we
-      // finalize via the shared helper.
+    client.onSummary((payload: SummaryEvent) => {
+      // End-of-set vendor frame. Capture on the active set so the
+      // finalize path can read-and-clear it for the persisted payload
+      // (PR-C will surface this through `set_ended_by_device` and the
+      // `set_pre_summary` channel event). No channel publish here — the
+      // current PR is live-state plumbing only.
+      debug.events.push({
+        capturedAt: Date.now(),
+        type: 'summary',
+        payload: { schemaVersion: payload.schemaVersion, repCount: payload.repCount },
+      });
+      live.applySummary(payload);
+    }),
+  );
+
+  pushUnsub(
+    unsubs,
+    client.onInProgress((payload: InProgressEvent) => {
+      // Device emits this continuously during workout mode (~1 Hz
+      // heartbeat) — most are noise (the firmware's response to our
+      // Workout.GO engage command, fired ~immediately after
+      // `set.start`).
       //
-      // Race-condition guard: when the explicit `set.end` tool runs, it
-      // mutates LiveState first, so by the time the device's
-      // set_boundary arrives (the firmware always emits one in response
-      // to Workout.STOP), `live.snapshotSet()` is already `undefined`
-      // and the `if` below is a silent no-op. Tests in
-      // event-bridge.test.ts pin this — see the "explicit set.end
-      // finalization" describe block.
+      // Apply the payload to live state FIRST so `set.live_metrics`
+      // reflects the most recent peak-force / velocity / target-weight
+      // tick even within the SET_START_GRACE_MS grace window. Missing
+      // the freshest tick on a Stop-press would lose the user's last
+      // heartbeat in the live snapshot for no reason.
+      //
+      // After capture, the existing grace-window logic decides whether
+      // the boundary represents the user pressing Stop on the unit
+      // (outside the grace window with an active set ⇒ finalize via
+      // `set_ended_by_device`) or just the firmware's echo (inside the
+      // grace window ⇒ no finalize). Race-condition guard: when the
+      // explicit `set.end` tool runs first, `live.snapshotSet()` is
+      // already `undefined` by the time the firmware's echoing
+      // Workout.STOP arrives, so the `if` below is a silent no-op.
       const activeSet = live.snapshotSet();
+      if (activeSet !== undefined) {
+        live.applyInProgress(payload, Date.now());
+      }
       debug.events.push({
         capturedAt: Date.now(),
         type: 'set_boundary',
