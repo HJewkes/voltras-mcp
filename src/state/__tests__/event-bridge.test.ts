@@ -121,6 +121,7 @@ interface SdkSettings {
   eccentric?: number;
   mode?: number; // TrainingMode enum value
   battery?: number | null;
+  damperLevel?: number;
 }
 
 interface FakeClient {
@@ -130,6 +131,8 @@ interface FakeClient {
   onPreSummary: Mock<(l: PreSummaryListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
+  /** SDK-retained settings (null = never connected / first boot). Used for D4 replay. */
+  settings: SdkSettings | null;
   // The bridge subscribes to onFrame to assemble Reps from the typed
   // telemetry stream (R16 — typed values, no raw buffers).
   onFrame: Mock<(l: (frame: unknown) => void) => () => void>;
@@ -239,6 +242,7 @@ function makeFakeClient(): FakeClient {
     onConnectionStateChange,
     onFrame,
     endSet: vi.fn(async () => undefined),
+    settings: null,
     fire: {
       perRep: (e) => perRepCb(e ?? makePerRepEvent()),
       inProgress: (e) => inProgressCb(e ?? makeInProgressEvent()),
@@ -1486,6 +1490,79 @@ describe('wireEventBridge', () => {
       const dev = live.snapshotDevice();
       expect(dev.batteryPercent).toBeUndefined();
       expect(dev.weightLbs).toBe(50);
+    });
+
+    it('C5 — maps damperLevel from settings update into DeviceSnapshot', () => {
+      client.fire.settingsUpdate({ damperLevel: 4 });
+      expect(live.snapshotDevice().damperLevel).toBe(4);
+    });
+
+    it('C5 — omits damperLevel from snapshot when settings update carries none', () => {
+      client.fire.settingsUpdate({ weight: 80 });
+      expect(live.snapshotDevice().damperLevel).toBeUndefined();
+    });
+  });
+
+  describe('D4 — settings replay on wireBridgeForSlot', () => {
+    it('replays client.settings into LiveState synchronously at wire time', () => {
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      freshClient.settings = { weight: 100, mode: 1, battery: 85, damperLevel: 3 };
+      const freshServer = makeFakeServer();
+      const freshChannels = makeFakeChannels();
+      const freshState = makeBareState({
+        client: freshClient,
+        live: freshLive,
+        server: freshServer,
+        channels: freshChannels,
+      });
+      wireBridgeForSlot(
+        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+      const snap = freshLive.snapshotDevice();
+      expect(snap.weightLbs).toBe(100);
+      expect(snap.damperLevel).toBe(3);
+    });
+
+    it('D4 — reconnect: LiveState reflects prior damperLevel before first onSettingsUpdate', () => {
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      // Simulate SDK 0.7.0 Bug 17 fix: client retains last known settings across reconnect.
+      freshClient.settings = { damperLevel: 7, weight: 60, battery: 50 };
+      const freshServer = makeFakeServer();
+      const freshChannels = makeFakeChannels();
+      const freshState = makeBareState({
+        client: freshClient,
+        live: freshLive,
+        server: freshServer,
+        channels: freshChannels,
+      });
+      wireBridgeForSlot(
+        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+      // Assert BEFORE any onSettingsUpdate fires — the replay alone should carry it.
+      expect(freshLive.snapshotDevice().damperLevel).toBe(7);
+    });
+
+    it('D4 — null client.settings (fresh connect) does not mutate LiveState', () => {
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      freshClient.settings = null; // default — never connected before
+      const freshServer = makeFakeServer();
+      const freshChannels = makeFakeChannels();
+      const freshState = makeBareState({
+        client: freshClient,
+        live: freshLive,
+        server: freshServer,
+        channels: freshChannels,
+      });
+      wireBridgeForSlot(
+        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+      expect(freshLive.snapshotDevice()).toEqual({ connected: false });
     });
   });
 

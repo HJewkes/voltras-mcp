@@ -40,6 +40,10 @@ export interface DeviceSnapshot {
   weightLbs?: number;
   trainingMode?: TrainingModeName;
   batteryPercent?: number;
+  /** Damper resistance level (0-9). SDK 0.7.0 Bug 17 fix preserves this
+   *  across reconnect; populated via `applySettings` on the `onSettingsUpdate`
+   *  path and replayed from `client.settings` at connect time (D4). */
+  damperLevel?: number;
   /** ISO timestamp of the last connection drop, when one is known. */
   disconnectedAt?: string;
 }

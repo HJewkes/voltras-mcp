@@ -254,6 +254,18 @@ describe('LiveState', () => {
         trainingMode: 'WeightTraining',
       });
     });
+
+    it('C5 — stores and exposes damperLevel via snapshotDevice', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, damperLevel: 5 });
+      expect(live.snapshotDevice().damperLevel).toBe(5);
+    });
+
+    it('C5 — damperLevel is absent from snapshot when never set', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, weightLbs: 80 });
+      expect(live.snapshotDevice().damperLevel).toBeUndefined();
+    });
   });
 
   describe('applyInProgress (typed-payload live-state plumbing)', () => {
