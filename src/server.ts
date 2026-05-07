@@ -69,6 +69,7 @@ const CORE_TOOL_NAMES = [
   'device.start_row',
   // </Bug-22>
   'device.get_state',
+  'device.send_raw',
   'session.start',
   'session.end',
   'session.list',

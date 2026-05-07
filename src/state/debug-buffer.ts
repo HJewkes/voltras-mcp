@@ -41,7 +41,27 @@ export interface DebugEvent {
     | 'connection_state_change'
     | 'cycle_complete'
     | 'guided_load_state'
-    | 'state_dump';
+    | 'state_dump'
+    /**
+     * Diagnostic raw-byte write via the `device.send_raw` MCP tool. Payload
+     * carries the hex-encoded bytes written (`bytesHex`), the byte count
+     * (`bytesWritten`), the slot, whether a response window was opened
+     * (`expectResponse`), and on completion the count of frames captured
+     * during that window (`responsesCaptured`). Recorded synchronously at
+     * the tool boundary so post-session analysis can correlate the write
+     * against any frames the device emitted in response.
+     */
+    | 'send_raw'
+    /**
+     * Inbound BLE notification, captured BEFORE decode via SDK 0.6.2's
+     * `client.onRawFrame` listener. Payload: `{bytesHex, bytesLength}`. Fires
+     * for EVERY notification — telemetry stream, vendor frames, settings
+     * cascades, async-updates, frames the decoder cannot classify. Diagnostic
+     * surface for byte-level work (cmd=0x10 reconnaissance, bootstrap parity
+     * capture). At 40 Hz telemetry rate this can fill a 256-capacity ring in
+     * ~6 seconds — bump `VMCP_DEBUG_BUFFER_SIZE` for longer captures.
+     */
+    | 'raw_frame';
   payload: Record<string, unknown>;
 }
 
