@@ -81,10 +81,11 @@
 // `no-floating-promises` linting.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { TelemetryFrame } from '@voltras/node-sdk';
+import type { GuidedLoadState, TelemetryFrame } from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
+import { randomUUID } from 'node:crypto';
 
 import type { LiveState, DeviceSnapshot } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
@@ -352,6 +353,50 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
+  // Guided-load (Phase 1g, SDK 0.6.3+, @experimental). Fires whenever the
+  // SDK's polling loop decodes a fresh status-register read. The bridge's
+  // contract here is exclusively about session/set CONTEXT — when the
+  // device transitions into the direct-load state machine ('armed' /
+  // 'countdown' / 'engaging' / 'active'), any rep_boundary or set_boundary
+  // frames that follow MUST land on a real LiveState session+set so they
+  // are not orphaned (Bugs 28 + 29 from the on-device 2026-05-06T21-38-19
+  // session). If no session exists we mint one tagged "Guided Load
+  // (auto)"; if no set exists inside that session we mint one too.
+  // `onGuidedLoadState` is a pre-0.6.3 no-op when the SDK doesn't expose
+  // it, so the optional-chain guards against older builds.
+  if (typeof client.onGuidedLoadState === 'function') {
+    pushUnsub(
+      unsubs,
+      client.onGuidedLoadState((gls: GuidedLoadState) => {
+        debug.events.push({
+          capturedAt: Date.now(),
+          type: 'guided_load_state',
+          payload: {
+            phase: gls.phase,
+            countdownRemainingMs: gls.countdownRemainingMs,
+            fitnessModeRaw: gls.fitnessModeRaw,
+          },
+        });
+        // Only auto-create on the "device is in the direct-load state
+        // machine" phases — `idle`/`exited`/`timeout` carry no
+        // attribution requirement. We do not auto-tear-down on
+        // `exited`/`timeout`: the explicit `session.end`/`set.end` tools
+        // remain authoritative for ending the auto-created bookkeeping,
+        // which keeps the bridge's tear-down policy uniform across
+        // explicit and auto-created sessions.
+        if (
+          gls.phase !== 'armed' &&
+          gls.phase !== 'countdown' &&
+          gls.phase !== 'engaging' &&
+          gls.phase !== 'active'
+        ) {
+          return;
+        }
+        ensureGuidedLoadSessionAndSet(state, slot, slotId);
+      }),
+    );
+  }
+
   pushUnsub(
     unsubs,
     client.onSettingsUpdate((settings: SdkSettingsUpdate) => {
@@ -593,6 +638,68 @@ function baselineRepNumberFor(reps: readonly Rep[]): number {
  * across `VoltraDeviceSettings` (high-level) and the protocol-layer
  * `DeviceSettings` notification payload.
  */
+/**
+ * Ensure a session and a set are open in `LiveState` for the supplied slot
+ * so subsequent rep_boundary / set_boundary frames during a guided-load
+ * flow have a real attribution target. Closes Bugs 28 + 29 (orphan rep
+ * boundaries during direct-load) by giving the bridge an autonomous
+ * session/set bootstrap path it can drive from the Phase 1g state machine.
+ *
+ * Persists a `StoredSession` row asynchronously (fire-and-forget) so the
+ * sync mutator order — `live.startSession` → `live.startSet` — is not
+ * gated on disk I/O. SQLite errors are logged but otherwise non-fatal:
+ * the LiveState mutation already succeeded and the bridge's downstream
+ * consumers (channels + resources) can keep running.
+ *
+ * Idempotent: a no-op when a session AND set are already active. When a
+ * session is active but no set is, only the set is created (caller
+ * already started a session via `session.start`). Mirrors the same
+ * randomUUID + `state.setStartDeviceSnapshots` plumbing that the explicit
+ * `set.start` tool uses so the finalize path's snapshot lookup behaves
+ * identically.
+ */
+function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slotId: string): void {
+  if (slot.live.session === undefined) {
+    const sessionId = randomUUID();
+    const startedAt = new Date().toISOString();
+    slot.live.startSession({
+      sessionId,
+      startedAt,
+      setIds: [],
+      status: 'active',
+      exerciseName: 'Guided Load (auto)',
+    });
+    // Persist the row so a downstream `metrics.compute` / `session.list`
+    // can find it. Errors are logged; the in-memory session is the
+    // source of truth for live attribution.
+    void state.store
+      .putSession({
+        id: sessionId,
+        startedAt,
+        exerciseName: 'Guided Load (auto)',
+      })
+      .catch((err) => {
+        log.warn('event-bridge: guided-load auto session persist failed', err);
+      });
+  }
+
+  if (slot.live.set === undefined) {
+    const session = slot.live.snapshotSession();
+    if (session === undefined) return; // belt-and-braces; startSession just ran
+    const setId = randomUUID();
+    const startedAt = new Date().toISOString();
+    slot.live.startSet({
+      setId,
+      sessionId: session.sessionId,
+      startedAt,
+      reps: [],
+      status: 'active',
+    });
+    state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
+    void slotId; // slotId reserved for future per-slot channel notification
+  }
+}
+
 export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot> {
   const out: Partial<DeviceSnapshot> = {};
   const weight = s.weight ?? s.baseWeight;

@@ -114,6 +114,22 @@ export const DeviceSetIsokineticEccOverloadWeightInput = z.object({
 });
 
 /**
+ * Input for `device.start_guided_load` (Phase 1g, @experimental).
+ *
+ * Triggers the firmware direct-load (`0xAA 0x12`) flow at the supplied
+ * target weight. The SDK polls the 4 status registers every 500ms for
+ * 18 seconds post-trigger; both intervals are overridable for diagnostics
+ * but rarely need adjustment. `targetWeightLbs` reuses the SDK's standard
+ * BP_BASE_WEIGHT range (5..200).
+ */
+export const DeviceStartGuidedLoadInput = z.object({
+  targetWeightLbs: z.number().int().min(5).max(200),
+  pollIntervalMs: z.number().int().min(100).max(2000).optional(),
+  pollDurationMs: z.number().int().min(1000).max(60000).optional(),
+  slot: SlotIdSchema,
+});
+
+/**
  * Output shape for `device.get_state`. The handler composes this from
  * individual `VoltraClient` getters — the SDK has no `getState()` method.
  *

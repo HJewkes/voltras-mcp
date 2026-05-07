@@ -49,6 +49,7 @@ import {
   DeviceSetIsokineticEccSpeedLimitInput,
   DeviceSetIsokineticEccConstWeightInput,
   DeviceSetIsokineticEccOverloadWeightInput,
+  DeviceStartGuidedLoadInput,
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
@@ -136,6 +137,9 @@ const ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION =
 
 const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
   'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
+
+const START_GUIDED_LOAD_DESCRIPTION =
+  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.';
 
 type Placeholders = Map<string, RegisteredTool>;
 
@@ -462,6 +466,33 @@ export function registerDeviceTools(
       return { ok: true };
     }),
     ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION,
+  );
+
+  // device.start_guided_load (Phase 1g, @experimental) — wraps the SDK's
+  // `startGuidedLoad`. Resolves once the trigger frame has been written and
+  // the SDK's polling loop is armed; downstream phase transitions surface
+  // through the event-bridge's `guided_load_state` debug events plus the
+  // auto-created session/set context (closes Bugs 28/29).
+  install(
+    placeholders,
+    'device.start_guided_load',
+    DeviceStartGuidedLoadInput,
+    wrapHandler(DeviceStartGuidedLoadInput, async (input) => {
+      const opts: {
+        targetWeightLbs: number;
+        pollIntervalMs?: number;
+        pollDurationMs?: number;
+      } = { targetWeightLbs: input.targetWeightLbs };
+      if (typeof input.pollIntervalMs === 'number') {
+        opts.pollIntervalMs = input.pollIntervalMs;
+      }
+      if (typeof input.pollDurationMs === 'number') {
+        opts.pollDurationMs = input.pollDurationMs;
+      }
+      await getSlot(state, input.slot).client.startGuidedLoad(opts);
+      return { ok: true };
+    }),
+    START_GUIDED_LOAD_DESCRIPTION,
   );
 
   // device.get_state — composes the response from the four documented
