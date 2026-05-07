@@ -25,11 +25,34 @@ vi.mock('@voltras/node-sdk', () => {
       this.code = code;
     }
   }
-  return { VoltraSDKError: FakeVoltraSDKError };
+  return {
+    VoltraSDKError: FakeVoltraSDKError,
+    TrainingMode: {
+      Idle: 0,
+      WeightTraining: 1,
+      ResistanceBand: 2,
+      Rowing: 3,
+      Damper: 4,
+      CustomCurves: 6,
+      Isokinetic: 7,
+      Isometric: 8,
+    },
+    TrainingModeNames: {
+      0: 'Idle',
+      1: 'WeightTraining',
+      2: 'ResistanceBand',
+      3: 'Rowing',
+      4: 'Damper',
+      6: 'CustomCurves',
+      7: 'Isokinetic',
+      8: 'Isometric',
+    },
+  };
 });
 
 const { LiveState } = await import('../../state/live-state.js');
 const { registerSessionTools } = await import('../session-tools.js');
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -125,7 +148,12 @@ function setup(): Harness {
   const store = makeStore();
   const exercises = { search: () => [], getById: () => undefined } as unknown as ExerciseService;
   const slots = new Map();
-  slots.set('primary', { slotId: 'primary', client: {} as never, live });
+  slots.set('primary', {
+    slotId: 'primary',
+    client: {} as never,
+    live,
+    modeRevertGuard: new ModeRevertGuard(),
+  });
   const state = {
     config: {} as never,
     manager: {} as never,

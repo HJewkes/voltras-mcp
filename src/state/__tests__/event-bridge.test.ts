@@ -63,6 +63,8 @@ type LiveStateT = InstanceType<typeof LiveState>;
 const { wireBridgeForSlot } = await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
+const { ModeRevertGuard } = await import('../mode-revert-guard.js');
+type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -271,7 +273,12 @@ function makeBareState(opts: {
   channels: FakeChannels;
 }): { slots: Map<string, unknown>; channels: FakeChannels; server: FakeServer } {
   const slots = new Map<string, unknown>();
-  slots.set('primary', { slotId: 'primary', client: opts.client, live: opts.live });
+  slots.set('primary', {
+    slotId: 'primary',
+    client: opts.client,
+    live: opts.live,
+    modeRevertGuard: new ModeRevertGuard(),
+  });
   return { slots, channels: opts.channels, server: opts.server };
 }
 
@@ -567,6 +574,7 @@ describe('wireEventBridge', () => {
       slotId: string;
       live: LiveStateT;
       client: FakeClient;
+      modeRevertGuard: ModeRevertGuardT;
     }
     interface FakeState {
       slots: Map<string, FakeSlot>;
@@ -606,6 +614,7 @@ describe('wireEventBridge', () => {
         slotId: 'primary',
         live,
         client: client as unknown as FakeSlot['client'],
+        modeRevertGuard: new ModeRevertGuard(),
       });
       fakeState = {
         slots,
@@ -739,6 +748,7 @@ describe('wireEventBridge', () => {
       slotId: string;
       live: LiveStateT;
       client: FakeClient;
+      modeRevertGuard: ModeRevertGuardT;
     }
     interface FakeStateForTrigger {
       slots: Map<string, FakeSlotForTrigger>;
@@ -767,6 +777,7 @@ describe('wireEventBridge', () => {
         slotId: 'primary',
         live,
         client,
+        modeRevertGuard: new ModeRevertGuard(),
       });
       fakeState = {
         slots,
@@ -1413,6 +1424,250 @@ describe('wireEventBridge', () => {
           state: 'authenticating',
         });
         expect(JSON.parse(second.content).summary).toBe('Voltra authenticating.');
+      });
+    });
+  });
+
+  // ── Bug 22 — mode-revert guard wiring ──────────────────────────────────
+  describe('mode-revert guard (Bug 22)', () => {
+    // The guard's own state-machine has dedicated unit tests in
+    // mode-revert-guard.test.ts; here we only verify the bridge wires
+    // `onSettingsUpdate` through to the slot's guard so a divergent
+    // trainingMode latches an abort consult-able from set.start.
+
+    it('feeds trainingMode from settings_update into the slot guard so divergence latches an abort', () => {
+      // Build a fresh harness with a captured slot reference so we can
+      // reach the guard directly. The bare-state primary slot is created
+      // in the suite-level beforeEach; we re-wire here against a
+      // separately-built slot so the assertions are unambiguous.
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      const freshChannels = makeFakeChannels();
+      const slot = {
+        slotId: 'primary',
+        client: freshClient,
+        live: freshLive,
+        modeRevertGuard: new ModeRevertGuard(),
+      };
+      const slots = new Map([['primary', slot]]);
+      const fresh = { slots, channels: freshChannels, server: undefined };
+
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        slot as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      // User requests Rowing (TrainingMode=3).
+      slot.modeRevertGuard.arm(3 as never);
+
+      // Device sends a settings_update with a different trainingMode
+      // (WeightTraining=1) — the bridge must forward it into the guard.
+      freshClient.fire.settingsUpdate({ mode: 1 });
+
+      expect(slot.modeRevertGuard.isAborted()).toBe(true);
+      const abort = slot.modeRevertGuard.consumeAbort();
+      expect(abort).not.toBeNull();
+      expect(abort!.requested).toBe(3);
+      expect(abort!.actual).toBe(1);
+    });
+
+    it('does NOT latch when the settings_update reports the requested mode (confirmation path)', () => {
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      const freshChannels = makeFakeChannels();
+      const slot = {
+        slotId: 'primary',
+        client: freshClient,
+        live: freshLive,
+        modeRevertGuard: new ModeRevertGuard(),
+      };
+      const slots = new Map([['primary', slot]]);
+      const fresh = { slots, channels: freshChannels, server: undefined };
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        slot as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      slot.modeRevertGuard.arm(3 as never);
+      freshClient.fire.settingsUpdate({ mode: 3 });
+      expect(slot.modeRevertGuard.isAborted()).toBe(false);
+    });
+  });
+
+  // ── Bug 24 — Iso pre-session-start stream policy (D1) ──────────────────
+  describe('Isometric pre-session-start stream policy (Bug 24)', () => {
+    // When the device is set to Isometric mode without `session.start`,
+    // the unit emits a 500ms-cadence cmd=0x70 (aa 81 2b) keep-alive burst
+    // (per A4). Each frame surfaces through the SDK as an InProgressEvent.
+    // The bridge's policy (D1): when no session is active, suppress the
+    // event entirely — neither debug-buffer logs nor any downstream
+    // mutation. Once the user calls `session.start`, the bridge resumes
+    // its normal "outside the start-grace window with no active set is
+    // a silent drop" behavior.
+
+    it('does not log a set_boundary debug event when no session is active', async () => {
+      const { _resetDebugBuffersForTest, getDebugBuffers } = await import('../debug-buffer.js');
+      _resetDebugBuffersForTest();
+      const debug = getDebugBuffers();
+      // Re-wire so the fresh buffers are used.
+      const fresh = makeBareState({ client, live, server, channels });
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        fresh.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      // No live.startSession — pre-session-start state.
+      client.fire.inProgress();
+      client.fire.inProgress();
+      client.fire.inProgress();
+
+      const events = debug.events.recent(10);
+      const setBoundaryEvents = events.filter((e) => e.type === 'set_boundary');
+      expect(setBoundaryEvents).toHaveLength(0);
+    });
+
+    it('does not publish channel events from cmd=0x70 bursts pre-session-start', () => {
+      // No session, no set — sanity-check the firehose is silent.
+      channels.publish.mockClear();
+      for (let i = 0; i < 10; i++) {
+        client.fire.inProgress();
+      }
+      const repEvents = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) =>
+          ['rep_finalized', 'set_boundary', 'set_ended_by_device'].includes(e.meta.event_type),
+        );
+      expect(repEvents).toHaveLength(0);
+    });
+
+    it('still logs set_boundary debug events when a session IS active (post-set.end race)', async () => {
+      // Once session.start has run, the bridge resumes logging boundary
+      // events even when no set is currently active — this preserves the
+      // explicit set.end race-condition guard's observability.
+      const { _resetDebugBuffersForTest, getDebugBuffers } = await import('../debug-buffer.js');
+      _resetDebugBuffersForTest();
+      const debug = getDebugBuffers();
+      const fresh = makeBareState({ client, live, server, channels });
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        fresh.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      live.startSession({
+        sessionId: 'sess-iso',
+        startedAt: '2025-01-01T00:00:00.000Z',
+        setIds: [],
+        status: 'active',
+      });
+      client.fire.inProgress();
+
+      const events = debug.events.recent(10);
+      const setBoundaryEvents = events.filter((e) => e.type === 'set_boundary');
+      expect(setBoundaryEvents).toHaveLength(1);
+      expect(setBoundaryEvents[0].payload.hadActiveSet).toBe(false);
+    });
+  });
+
+  // ── Bug 27 — damperLevel synthetic settings_update ─────────────────────
+  describe('damperLevel synthetic settings_update (Bug 27)', () => {
+    // The cmd=0x10 cascade carries paramID 0x0351 (B4's SDK PR #41
+    // corrected from `5103` to `0351`); when present, the SDK surfaces
+    // damperLevel via DeviceSettings.damperLevel through onSettingsUpdate.
+    // The bridge tracks the last known value and emits a synthetic
+    // `settings_update` channel event each time it transitions, with
+    // `__all` snapshotting every monitored field.
+
+    it('emits a settings_update channel event on the first damperLevel update', () => {
+      channels.publish.mockClear();
+      client.fire.settingsUpdate({ damperLevel: 7 });
+
+      const settingsEvents = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'settings_update');
+      expect(settingsEvents).toHaveLength(1);
+      const event = settingsEvents[0];
+      expect(event.meta.changed_field).toBe('damperLevel');
+      expect(event.meta.changed_value).toBe('7');
+      expect(event.meta.damper_level).toBe('7');
+
+      const parsed = JSON.parse(event.content);
+      expect(parsed.summary).toContain('damperLevel changed to 7');
+      expect(parsed.changed).toEqual({ field: 'damperLevel', value: 7 });
+      expect(parsed.__all.damper_level).toBe(7);
+    });
+
+    it('does NOT emit a duplicate event when damperLevel is unchanged', () => {
+      channels.publish.mockClear();
+      client.fire.settingsUpdate({ damperLevel: 7 });
+      client.fire.settingsUpdate({ damperLevel: 7 });
+      client.fire.settingsUpdate({ damperLevel: 7 });
+
+      const settingsEvents = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'settings_update');
+      expect(settingsEvents).toHaveLength(1);
+    });
+
+    it('emits a new event every time damperLevel transitions', () => {
+      channels.publish.mockClear();
+      client.fire.settingsUpdate({ damperLevel: 1 });
+      client.fire.settingsUpdate({ damperLevel: 5 });
+      client.fire.settingsUpdate({ damperLevel: 9 });
+
+      const settingsEvents = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'settings_update');
+      expect(settingsEvents).toHaveLength(3);
+      expect(settingsEvents.map((e) => e.meta.changed_value)).toEqual(['1', '5', '9']);
+    });
+
+    it('omits absent fields from __all (no synthesised null pollution)', () => {
+      channels.publish.mockClear();
+      // Clean device state — no weight, no mode, no battery yet.
+      client.fire.settingsUpdate({ damperLevel: 4 });
+
+      const event = channels.publish.mock.calls.find(
+        (c) => c[0].meta.event_type === 'settings_update',
+      )![0];
+      const parsed = JSON.parse(event.content);
+      expect(parsed.__all.damper_level).toBe(4);
+      // The other fields were never set on live state — they serialise as
+      // null in `__all`, NOT as the previously-snapshotted values.
+      expect(parsed.__all.weight_lbs).toBeNull();
+      expect(parsed.__all.training_mode).toBeNull();
+      expect(parsed.__all.battery_percent).toBeNull();
+    });
+
+    it('settings_update without damperLevel does NOT emit a synthetic event', () => {
+      channels.publish.mockClear();
+      client.fire.settingsUpdate({ weight: 75, mode: 1, battery: 80 });
+
+      const settingsEvents = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'settings_update');
+      expect(settingsEvents).toHaveLength(0);
+    });
+
+    it('__all reflects the post-applySettings device snapshot at emission time', () => {
+      // First populate live device state, then change damperLevel.
+      live.applySettings({
+        connected: true,
+        weightLbs: 135,
+        trainingMode: 'WeightTraining',
+        batteryPercent: 82,
+      });
+      channels.publish.mockClear();
+      client.fire.settingsUpdate({ damperLevel: 6 });
+
+      const event = channels.publish.mock.calls.find(
+        (c) => c[0].meta.event_type === 'settings_update',
+      )![0];
+      const parsed = JSON.parse(event.content);
+      expect(parsed.__all).toMatchObject({
+        damper_level: 6,
+        weight_lbs: 135,
+        training_mode: 'WeightTraining',
+        battery_percent: 82,
       });
     });
   });

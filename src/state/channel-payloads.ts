@@ -659,6 +659,97 @@ export function buildConnectionChangedPayload(
   return { meta, content };
 }
 
+/**
+ * Build the meta + content for a `set_aborted_by_mode_revert` channel event
+ * (Bug 22). Fired when the user requested a training mode (e.g., Rowing)
+ * via session.start / set.start and the device autonomously reverted to a
+ * different mode within the detection window. The bridge raises this
+ * BEFORE it would otherwise call `client.startRecording()`, so the motor
+ * never engages — the model can explain the safety abort to the user
+ * without an unexpected load on the cable.
+ *
+ * `requested` and `actual` are the canonical TrainingMode names (the same
+ * lookup `settingsToSnapshot` uses) so PT Claude's surface text reads
+ * naturally without re-mapping enum values.
+ */
+export function buildSetAbortedByModeRevertPayload(
+  requested: string,
+  actual: string,
+  timestampMs: number,
+  sessionId: string | null,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'set_aborted_by_mode_revert',
+    requested_mode: requested,
+    actual_mode: actual,
+    timestamp_ms: String(timestampMs),
+  };
+  if (sessionId !== null) {
+    meta.session_id = sessionId;
+  }
+  const summary =
+    `Set aborted: device reverted from ${requested} to ${actual}. ` +
+    `Motor not engaged. Re-select ${requested} on the unit and retry.`;
+  const content = JSON.stringify({
+    summary,
+    abort: {
+      reason: 'mode_revert',
+      requested_mode: requested,
+      actual_mode: actual,
+      timestamp_ms: timestampMs,
+    },
+    session_id: sessionId,
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a synthetic `settings_update` channel event
+ * (Bugs 26 / 27). Fires when the bridge observes a transition in a
+ * monitored device-setting field (currently `damperLevel`; assist toggle
+ * is blocked on SDK PR #41 routing — see event-bridge.ts).
+ *
+ * The content body carries a `__all` block snapshotting every known field
+ * at emission time so consumers don't have to merge against a prior
+ * settings_update — the same shape A4's runbook expected when filing
+ * Bug 27.
+ */
+export interface SettingsUpdateAll {
+  weightLbs?: number;
+  trainingMode?: string;
+  batteryPercent?: number;
+  damperLevel?: number;
+}
+
+export function buildSettingsUpdatePayload(
+  changedField: 'damperLevel',
+  changedValue: number,
+  all: SettingsUpdateAll,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'settings_update',
+    changed_field: changedField,
+    changed_value: String(changedValue),
+  };
+  if (all.damperLevel !== undefined) {
+    meta.damper_level = String(all.damperLevel);
+  }
+  const summary = `${changedField} changed to ${changedValue}.`;
+  const content = JSON.stringify({
+    summary,
+    changed: { field: changedField, value: changedValue },
+    __all: {
+      weight_lbs: all.weightLbs ?? null,
+      training_mode: all.trainingMode ?? null,
+      battery_percent: all.batteryPercent ?? null,
+      damper_level: all.damperLevel ?? null,
+    },
+  });
+  return { meta, content };
+}
+
 function buildConnectionChangedSummary(
   state: ConnectionState,
   device: DeviceSnapshot,

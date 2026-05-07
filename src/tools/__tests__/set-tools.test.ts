@@ -21,12 +21,35 @@ vi.mock('@voltras/node-sdk', () => {
       this.code = code;
     }
   }
-  return { VoltraSDKError: FakeVoltraSDKError };
+  return {
+    VoltraSDKError: FakeVoltraSDKError,
+    TrainingMode: {
+      Idle: 0,
+      WeightTraining: 1,
+      ResistanceBand: 2,
+      Rowing: 3,
+      Damper: 4,
+      CustomCurves: 6,
+      Isokinetic: 7,
+      Isometric: 8,
+    },
+    TrainingModeNames: {
+      0: 'Idle',
+      1: 'WeightTraining',
+      2: 'ResistanceBand',
+      3: 'Rowing',
+      4: 'Damper',
+      6: 'CustomCurves',
+      7: 'Isokinetic',
+      8: 'Isometric',
+    },
+  };
 });
 
 const { LiveState } = await import('../../state/live-state.js');
 const { registerSetTools } = await import('../set-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -157,7 +180,7 @@ function setup(): Harness {
     }),
   };
   const slots = new Map();
-  slots.set('primary', { slotId: 'primary', client, live });
+  slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard: new ModeRevertGuard() });
   const state = {
     config: {} as never,
     manager: {} as never,
@@ -402,6 +425,103 @@ describe('set.start', () => {
     });
   });
   // </Bug-22>
+});
+
+// ── Bug 22 — Mode-revert guard refusal at set.start ──────────────────────
+describe('set.start — mode-revert guard (Bug 22)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  function arm(slot: { modeRevertGuard: { arm: (m: number) => void } }, mode: number): void {
+    slot.modeRevertGuard.arm(mode);
+  }
+
+  it('refuses to engage the motor when the slot guard is latched (Rowing → WT revert)', async () => {
+    startSession(h.live);
+    // Device's *current* mode is the post-revert state (WT). The user
+    // originally requested Rowing; the latch records that provenance.
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    // Simulate the bridge having observed a settings_update mid-window
+    // that reported WeightTraining instead of the user-requested Rowing.
+    arm(slot as never, 3); // Rowing
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_ABORTED_BY_MODE_REVERT');
+    // Motor must NOT have engaged.
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).not.toHaveBeenCalled();
+    // No set should be active in live state.
+    expect(h.live.set).toBeUndefined();
+  });
+
+  it('publishes a set_aborted_by_mode_revert channel event with requested/actual mode names', async () => {
+    startSession(h.live);
+    // Device's *current* mode is the post-revert state (WT). The user
+    // originally requested Rowing; the latch records that provenance.
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    arm(slot as never, 3); // Rowing
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT
+
+    h.channels.publish.mockClear();
+    await h.invoke('set.start', {});
+
+    const abortEvent = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string>; content: string })
+      .find((e) => e.meta.event_type === 'set_aborted_by_mode_revert');
+    expect(abortEvent).toBeDefined();
+    expect(abortEvent!.meta.requested_mode).toBe('Rowing');
+    expect(abortEvent!.meta.actual_mode).toBe('WeightTraining');
+    const parsed = JSON.parse(abortEvent!.content);
+    expect(parsed.summary).toContain('reverted from Rowing to WeightTraining');
+    expect(parsed.summary).toContain('Motor not engaged');
+    expect(parsed.abort.reason).toBe('mode_revert');
+  });
+
+  it('clears the abort latch after refusal so a subsequent valid set.start can proceed', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    arm(slot as never, 3); // Rowing requested
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT — latch
+
+    // First call refuses.
+    const refused = await h.invoke('set.start', {});
+    expect(refused.isError).toBe(true);
+
+    // Second call (user accepted the safety abort, retried with WT-as-current-mode):
+    // the latch was consumed by the first refusal, the new arm at set.start
+    // records WT (current mode), and no new revert has been observed.
+    const retry = await h.invoke('set.start', {});
+    expect(retry.isError).toBeUndefined();
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT refuse when the guard is idle (no abort latched)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    expect(
+      (h.state.slots.get('primary')!.client as { startRecording: ReturnType<typeof vi.fn> })
+        .startRecording,
+    ).toHaveBeenCalled();
+  });
 });
 
 describe('set.end', () => {

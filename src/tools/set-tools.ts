@@ -26,6 +26,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 
 import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
@@ -40,6 +41,7 @@ import type { StoredRep, StoredSet } from '../store/types.js';
 import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
 import {
   buildIdleTimeoutPayload,
+  buildSetAbortedByModeRevertPayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
   summarizePreviousSet,
@@ -117,6 +119,31 @@ function install<S extends z.ZodObject>(
   tool.update({ paramsSchema: schema.shape, callback: callback as never });
 }
 
+/**
+ * Re-arm the slot's mode-revert guard against the device's *current*
+ * training mode. Called at `set.start` time so a mode change between
+ * `session.start` and `set.start` (the user toggled modes on the unit
+ * between two sets in the same session) is treated as the new
+ * user-requested baseline rather than as a revert from the
+ * session-start mode.
+ *
+ * A snapshot mode of `'Unknown'` (or any name the SDK doesn't recognise)
+ * leaves the guard idle — fail-open is safer here than fail-closed,
+ * because we'd otherwise refuse every set.start on devices that haven't
+ * yet completed their initial settings cascade.
+ */
+function armModeRevertGuardForSet(slot: ReturnType<typeof getSlot>): void {
+  const name = slot.live.snapshotDevice().trainingMode;
+  if (name === undefined) return;
+  for (const key of Object.keys(TrainingModeNames)) {
+    const value = Number(key) as TrainingMode;
+    if (TrainingModeNames[value] === name) {
+      slot.modeRevertGuard.arm(value);
+      return;
+    }
+  }
+}
+
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
@@ -148,6 +175,43 @@ async function startSet(
     );
   }
   // </Bug-22>
+
+  // Bug 22 — consult the mode-revert guard BEFORE engaging the motor.
+  // If the per-slot guard latched an abort (a settings_update inside the
+  // detection window reported a trainingMode different from what the user
+  // requested at session.start / a prior set.start), refuse the engage,
+  // emit a `set_aborted_by_mode_revert` channel event, and surface a
+  // structured tool error. The motor never engages — this is the
+  // HIGH-severity safety guarantee. The user must re-select the desired
+  // mode on the unit and retry; arming the guard again happens implicitly
+  // when set.start is called and `armModeRevertGuardForSet` records the
+  // device's *current* mode below.
+  const pendingAbort = slot.modeRevertGuard.consumeAbort();
+  if (pendingAbort !== null) {
+    const requestedName =
+      TrainingModeNames[pendingAbort.requested] ?? String(pendingAbort.requested);
+    const actualName = TrainingModeNames[pendingAbort.actual] ?? String(pendingAbort.actual);
+    const payload = buildSetAbortedByModeRevertPayload(
+      requestedName,
+      actualName,
+      pendingAbort.timestampMs,
+      session.sessionId,
+    );
+    state.channels.forSlot(slotId).publish(payload);
+    throw new ToolError(
+      'SET_ABORTED_BY_MODE_REVERT',
+      `Set aborted: device reverted from ${requestedName} to ${actualName} after the user requested ${requestedName}. ` +
+        `Motor not engaged. Re-select ${requestedName} on the unit and retry.`,
+    );
+  }
+
+  // Re-arm the guard for the upcoming engagement window. The user's
+  // intent at this exact moment is the device's current trainingMode (the
+  // guard rearm BEFORE startRecording so any device-side autonomous
+  // revert that lands during the BLE round-trip is observed and latched
+  // for the *next* set.start, since this current call has already
+  // committed past the abort check).
+  armModeRevertGuardForSet(slot);
 
   // Engage the device motor — firmware-side equivalent of the "tap to load"
   // prompt on the unit. Without this the cable is free-running and no force

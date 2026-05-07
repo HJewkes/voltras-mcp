@@ -28,11 +28,34 @@ vi.mock('@voltras/node-sdk', () => {
       this.code = code;
     }
   }
-  return { VoltraSDKError: FakeVoltraSDKError };
+  return {
+    VoltraSDKError: FakeVoltraSDKError,
+    TrainingMode: {
+      Idle: 0,
+      WeightTraining: 1,
+      ResistanceBand: 2,
+      Rowing: 3,
+      Damper: 4,
+      CustomCurves: 6,
+      Isokinetic: 7,
+      Isometric: 8,
+    },
+    TrainingModeNames: {
+      0: 'Idle',
+      1: 'WeightTraining',
+      2: 'ResistanceBand',
+      3: 'Rowing',
+      4: 'Damper',
+      6: 'CustomCurves',
+      7: 'Isokinetic',
+      8: 'Isometric',
+    },
+  };
 });
 
 const { LiveState } = await import('../../state/live-state.js');
 const { registerSessionTools } = await import('../session-tools.js');
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -155,7 +178,12 @@ function setup(): Harness {
   const store = makeStore();
   const exercises = makeExercises({ 'bench-press': BENCH });
   const slots = new Map();
-  slots.set('primary', { slotId: 'primary', client: {} as never, live });
+  slots.set('primary', {
+    slotId: 'primary',
+    client: {} as never,
+    live,
+    modeRevertGuard: new ModeRevertGuard(),
+  });
   const state = {
     config: {} as never,
     manager: {} as never,
@@ -253,6 +281,41 @@ describe('session.start', () => {
     const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
     expect(stored.exerciseId).toBeUndefined();
     expect(stored.exerciseName).toBe('something custom');
+  });
+
+  // ── Bug 22 — Mode-revert guard arming on session.start ─────────────────
+  it('arms the slot mode-revert guard with the current device training mode', async () => {
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Rowing' });
+    const slot = h.state.slots.get('primary')!;
+
+    await h.invoke('session.start', { exerciseName: 'Row' });
+
+    // Direct guard inspection: a settings_update reporting a different
+    // mode within the window should now latch.
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT
+    expect(
+      (
+        slot as never as { modeRevertGuard: { isAborted: () => boolean } }
+      ).modeRevertGuard.isAborted(),
+    ).toBe(true);
+  });
+
+  it('does NOT arm the guard when the device has no recognised training mode', async () => {
+    // Fresh device: applySettings has not run yet, so trainingMode is undefined.
+    const slot = h.state.slots.get('primary')!;
+    await h.invoke('session.start', { exerciseName: 'Test' });
+
+    // No requested mode in flight → settings_update does not latch.
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1);
+    expect(
+      (
+        slot as never as { modeRevertGuard: { isAborted: () => boolean } }
+      ).modeRevertGuard.isAborted(),
+    ).toBe(false);
   });
 });
 
