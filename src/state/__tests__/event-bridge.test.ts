@@ -90,8 +90,17 @@ interface InProgressEvent {
   raw: Uint8Array;
 }
 
+// Mirrors the SDK 0.6.0 `SummaryEvent` shape (end-of-set vendor frame).
+interface SummaryEvent {
+  schemaVersion: number;
+  setCounter: number;
+  repCount: number;
+  raw: Uint8Array;
+}
+
 type PerRepListener = (event: PerRepEvent) => void;
 type InProgressListener = (event: InProgressEvent) => void;
+type SummaryListener = (event: SummaryEvent) => void;
 type SettingsUpdateListener = (settings: SdkSettings) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 
@@ -107,6 +116,7 @@ interface SdkSettings {
 interface FakeClient {
   onPerRep: Mock<(l: PerRepListener) => () => void>;
   onInProgress: Mock<(l: InProgressListener) => () => void>;
+  onSummary: Mock<(l: SummaryListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
   // The bridge subscribes to onFrame to assemble Reps from the typed
@@ -121,6 +131,7 @@ interface FakeClient {
   fire: {
     perRep: (event?: PerRepEvent) => void;
     inProgress: (event?: InProgressEvent) => void;
+    summary: (event?: SummaryEvent) => void;
     settingsUpdate: (settings: SdkSettings) => void;
     connectionStateChange: (state: ConnectionState) => void;
     frame: (frame: {
@@ -152,9 +163,18 @@ const makeInProgressEvent = (overrides: Partial<InProgressEvent> = {}): InProgre
   ...overrides,
 });
 
+const makeSummaryEvent = (overrides: Partial<SummaryEvent> = {}): SummaryEvent => ({
+  schemaVersion: 1,
+  setCounter: 1,
+  repCount: 0,
+  raw: new Uint8Array(140),
+  ...overrides,
+});
+
 function makeFakeClient(): FakeClient {
   let perRepCb: PerRepListener = () => undefined;
   let inProgressCb: InProgressListener = () => undefined;
+  let summaryCb: SummaryListener = () => undefined;
   let settingsCb: SettingsUpdateListener = () => undefined;
   let connCb: ConnectionStateListener = () => undefined;
 
@@ -164,6 +184,10 @@ function makeFakeClient(): FakeClient {
   });
   const onInProgress = vi.fn((l: InProgressListener) => {
     inProgressCb = l;
+    return () => undefined;
+  });
+  const onSummary = vi.fn((l: SummaryListener) => {
+    summaryCb = l;
     return () => undefined;
   });
   const onSettingsUpdate = vi.fn((l: SettingsUpdateListener) => {
@@ -183,6 +207,7 @@ function makeFakeClient(): FakeClient {
   return {
     onPerRep,
     onInProgress,
+    onSummary,
     onSettingsUpdate,
     onConnectionStateChange,
     onFrame,
@@ -190,6 +215,7 @@ function makeFakeClient(): FakeClient {
     fire: {
       perRep: (e) => perRepCb(e ?? makePerRepEvent()),
       inProgress: (e) => inProgressCb(e ?? makeInProgressEvent()),
+      summary: (e) => summaryCb(e ?? makeSummaryEvent()),
       settingsUpdate: (s) => settingsCb(s),
       connectionStateChange: (s) => connCb(s),
       frame: (f) => frameCb(f),
@@ -303,9 +329,10 @@ describe('wireEventBridge', () => {
   });
 
   describe('subscription surface', () => {
-    it('subscribes to onPerRep, onInProgress, onSettingsUpdate, and onConnectionStateChange', () => {
+    it('subscribes to onPerRep, onInProgress, onSummary, onSettingsUpdate, and onConnectionStateChange', () => {
       expect(client.onPerRep).toHaveBeenCalledOnce();
       expect(client.onInProgress).toHaveBeenCalledOnce();
+      expect(client.onSummary).toHaveBeenCalledOnce();
       expect(client.onSettingsUpdate).toHaveBeenCalledOnce();
       expect(client.onConnectionStateChange).toHaveBeenCalledOnce();
     });
@@ -1152,6 +1179,110 @@ describe('wireEventBridge', () => {
           .filter((e) => e.meta.event_type === 'set_ended');
         expect(setEnded).toHaveLength(1);
       });
+    });
+  });
+
+  describe('onInProgress / onSummary typed-payload plumbing (PR-B)', () => {
+    // These tests exercise the live-state mutators wired in event-bridge.ts.
+    // The grace-window finalize path is covered above; this block focuses on
+    // payload capture, which runs BEFORE the grace check so even start-of-set
+    // heartbeats land in `latestInProgress`.
+    function startSetNow(): void {
+      live.startSession({
+        sessionId: 'sess-payload',
+        startedAt: new Date().toISOString(),
+        setIds: [],
+        status: 'active',
+      });
+      live.startSet({
+        setId: 'set-payload',
+        sessionId: 'sess-payload',
+        startedAt: new Date().toISOString(),
+        reps: [],
+        status: 'active',
+      });
+    }
+
+    it('onInProgress captures payload into live.activeSet.latestInProgress within the grace window', () => {
+      startSetNow(); // startedAt = now → still in grace window
+      client.fire.inProgress({
+        peakForceTenths: 1500,
+        currentForceTenths: 900,
+        velocityCmPerSec: 42,
+        targetWeightTenths: 1350,
+        raw: new Uint8Array(79),
+      });
+      const snap = live.snapshotSet();
+      expect(snap?.latestInProgress).toMatchObject({
+        peakForceTenths: 1500,
+        currentForceTenths: 900,
+        velocityCmPerSec: 42,
+        targetWeightTenths: 1350,
+      });
+      expect(typeof snap?.latestInProgress?.capturedAt).toBe('number');
+    });
+
+    it('onInProgress captures the most recent tick when fired multiple times', () => {
+      startSetNow();
+      client.fire.inProgress({
+        peakForceTenths: 100,
+        currentForceTenths: 50,
+        velocityCmPerSec: 10,
+        targetWeightTenths: 500,
+        raw: new Uint8Array(79),
+      });
+      client.fire.inProgress({
+        peakForceTenths: 2000,
+        currentForceTenths: 1500,
+        velocityCmPerSec: 60,
+        targetWeightTenths: 1800,
+        raw: new Uint8Array(79),
+      });
+      expect(live.snapshotSet()?.latestInProgress).toMatchObject({
+        peakForceTenths: 2000,
+        currentForceTenths: 1500,
+        velocityCmPerSec: 60,
+        targetWeightTenths: 1800,
+      });
+    });
+
+    it('onInProgress with no active set does not blow up (silent drop)', () => {
+      // No startSet — bridge should still call the inProgress handler safely.
+      client.fire.inProgress();
+      expect(live.snapshotSet()).toBeUndefined();
+    });
+
+    it('onSummary updates live.activeSet.latestSummary without publishing a channel event', () => {
+      startSetNow();
+      channels.publish.mockClear();
+      client.fire.summary({
+        schemaVersion: 1,
+        setCounter: 1,
+        repCount: 5,
+        raw: new Uint8Array(140),
+      });
+      expect(live.snapshotSet()?.latestSummary).toEqual({
+        schemaVersion: 1,
+        repCount: 5,
+      });
+      // PR-B must NOT publish a channel event for summary — that's PR-C's job.
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
+
+    it('onSummary with no active set is a silent drop (no channel event, no crash)', () => {
+      channels.publish.mockClear();
+      client.fire.summary();
+      expect(live.snapshotSet()).toBeUndefined();
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
+
+    it('onSummary does not call sendResourceUpdated (PR-B is live-state plumbing only)', () => {
+      startSetNow();
+      server.server.sendResourceUpdated.mockClear();
+      client.fire.summary();
+      // The bridge captures the payload onto live state but does NOT poke any
+      // resource — `latestSummary` is internal until PR-C surfaces it.
+      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
   });
 
