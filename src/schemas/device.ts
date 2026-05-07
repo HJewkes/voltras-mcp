@@ -178,4 +178,5 @@ export const DeviceGetStateOutput = z.object({
   trainingMode: z.string().optional(),
   batteryPercent: z.number().optional(),
   damperLevel: z.number().int().min(0).max(9).optional(),
+  isRowingActive: z.boolean().optional(),
 });

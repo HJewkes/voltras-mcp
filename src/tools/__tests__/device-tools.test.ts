@@ -890,6 +890,28 @@ describe('registerDeviceTools', () => {
       expect(payload).not.toHaveProperty('damperLevel');
       expect(payload.damperLevel).toBeUndefined();
     });
+
+    it('returns isRowingActive:false when Rowing two-stage has not completed', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.isRowingActive = false;
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.isRowingActive).toBe(false);
+    });
+
+    it('returns isRowingActive:true when Rowing two-stage has completed', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.isRowingActive = true;
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.isRowingActive).toBe(true);
+    });
   });
 
   // ── SDK 0.6.0 mode-config setters ─────────────────────────────────────
