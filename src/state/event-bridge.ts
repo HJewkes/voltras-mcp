@@ -97,6 +97,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {
   GuidedLoadState,
   InProgressEvent,
+  PerRepEvent,
   PreSummaryEvent,
   SummaryEvent,
   TelemetryFrame,
@@ -348,18 +349,21 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onPerRep(() => {
-      // Subscription kept for parity / future field consumption; payload
-      // deliberately ignored. The device fires this at every phase
-      // transition (concentric→eccentric, eccentric→idle), so it is
-      // unreliable as a "rep complete" signal — rep boundaries are
-      // detected from frames in `LiveState.processSample`. See the SDK
-      // 0.6.0 design pass for the rationale on keeping the bind in place
-      // even though we don't read the fields today.
+    client.onPerRep((payload: PerRepEvent) => {
+      // Diagnostic capture: full device payload to debug ring so Phase 0
+      // validation can verify setCounter/repCount/targetWeightTenths
+      // ground truth. Bridge does not act on these fields yet.
       debug.events.push({
         capturedAt: Date.now(),
         type: 'rep_boundary',
-        payload: { repsSoFar: live.snapshotSet()?.reps.length ?? 0 },
+        payload: {
+          phase: payload.phase,
+          frameCounter: payload.frameCounter,
+          setCounter: payload.setCounter,
+          repCount: payload.repCount,
+          targetWeightTenths: payload.targetWeightTenths,
+          bridgeRepsSoFar: live.snapshotSet()?.reps.length ?? 0,
+        },
       });
     }),
   );
@@ -378,7 +382,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       debug.events.push({
         capturedAt: Date.now(),
         type: 'summary',
-        payload: { schemaVersion: payload.schemaVersion, repCount: payload.repCount },
+        payload: {
+          schemaVersion: payload.schemaVersion,
+          setCounter: payload.setCounter,
+          repCount: payload.repCount,
+          rawHex: Buffer.from(payload.raw).toString('hex'),
+          rawLength: payload.raw.length,
+        },
       });
       live.applySummary(payload);
     }),
@@ -398,8 +408,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         type: 'pre_summary',
         payload: {
           schemaVersion: payload.schemaVersion,
+          targetWeightTenths: payload.targetWeightTenths,
           repCount: payload.repCount,
           repDurationMs: payload.repDurationMs,
+          rawHex: Buffer.from(payload.raw).toString('hex'),
+          rawLength: payload.raw.length,
         },
       });
       const set = live.snapshotSet();
@@ -458,7 +471,15 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       debug.events.push({
         capturedAt: Date.now(),
         type: 'set_boundary',
-        payload: { hadActiveSet: activeSet !== undefined },
+        payload: {
+          hadActiveSet: activeSet !== undefined,
+          peakForceTenths: payload.peakForceTenths,
+          currentForceTenths: payload.currentForceTenths,
+          velocityCmPerSec: payload.velocityCmPerSec,
+          targetWeightTenths: payload.targetWeightTenths,
+          rawHex: Buffer.from(payload.raw).toString('hex'),
+          rawLength: payload.raw.length,
+        },
       });
       if (activeSet === undefined) {
         return;
@@ -536,6 +557,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           mode: settings.mode ?? settings.trainingMode ?? null,
           battery: settings.battery ?? null,
           damperLevel: settings.damperLevel ?? null,
+          __all: Object.fromEntries(
+            Object.entries(settings as Record<string, unknown>).filter(([, v]) => v !== undefined),
+          ),
         },
       });
       live.applySettings(settingsToSnapshot(settings));
