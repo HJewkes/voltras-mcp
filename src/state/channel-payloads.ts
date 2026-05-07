@@ -800,10 +800,19 @@ export interface SettingsUpdateAll {
   trainingMode?: string;
   batteryPercent?: number;
   damperLevel?: number;
+  assistMode?: number;
+  chainsActive?: number;
+  chainTargetTenths?: number;
 }
 
+export type SettingsUpdateField =
+  | 'damperLevel'
+  | 'assistMode'
+  | 'chainsActive'
+  | 'chainTargetTenths';
+
 export function buildSettingsUpdatePayload(
-  changedField: 'damperLevel',
+  changedField: SettingsUpdateField,
   changedValue: number,
   all: SettingsUpdateAll,
 ): { meta: Record<string, string>; content: string } {
@@ -816,6 +825,12 @@ export function buildSettingsUpdatePayload(
   if (all.damperLevel !== undefined) {
     meta.damper_level = String(all.damperLevel);
   }
+  if (all.assistMode !== undefined) {
+    meta.assist_mode = String(all.assistMode);
+  }
+  if (all.chainsActive !== undefined) {
+    meta.chains_active = String(all.chainsActive);
+  }
   const summary = `${changedField} changed to ${changedValue}.`;
   const content = JSON.stringify({
     summary,
@@ -825,6 +840,9 @@ export function buildSettingsUpdatePayload(
       training_mode: all.trainingMode ?? null,
       battery_percent: all.batteryPercent ?? null,
       damper_level: all.damperLevel ?? null,
+      assist_mode: all.assistMode ?? null,
+      chains_active: all.chainsActive ?? null,
+      chain_target_tenths: all.chainTargetTenths ?? null,
     },
   });
   return { meta, content };

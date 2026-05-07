@@ -179,4 +179,13 @@ export const DeviceGetStateOutput = z.object({
   batteryPercent: z.number().optional(),
   damperLevel: z.number().int().min(0).max(9).optional(),
   isRowingActive: z.boolean().optional(),
+  /**
+   * Raw assist-mode value from the last cmd=0x07 state-dump. 0 = off, 2 = on,
+   * 8 = device idle sentinel. Absent until the first state-dump has fired.
+   */
+  assistMode: z.number().int().optional(),
+  /** Chains-active flag (0 or 1) from the last state-dump. Absent until first state-dump. */
+  chainsActive: z.number().int().min(0).max(1).optional(),
+  /** Chain-target weight in tenths of pounds from the last state-dump. */
+  chainTargetTenths: z.number().int().min(0).optional(),
 });

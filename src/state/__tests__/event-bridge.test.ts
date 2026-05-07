@@ -107,12 +107,21 @@ interface PreSummaryEvent {
   raw: Uint8Array;
 }
 
+// Mirrors the SDK 0.7.0 `StateDumpEvent` shape (cmd=0x07).
+interface StateDumpEvent {
+  chainsActive: number;
+  assistMode: number;
+  chainTargetTenths: number;
+  raw: Uint8Array;
+}
+
 type PerRepListener = (event: PerRepEvent) => void;
 type InProgressListener = (event: InProgressEvent) => void;
 type SummaryListener = (event: SummaryEvent) => void;
 type PreSummaryListener = (event: PreSummaryEvent) => void;
 type SettingsUpdateListener = (settings: SdkSettings) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
+type StateDumpListener = (event: StateDumpEvent) => void;
 
 interface SdkSettings {
   weight?: number;
@@ -131,6 +140,7 @@ interface FakeClient {
   onPreSummary: Mock<(l: PreSummaryListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
+  onStateDump: Mock<(l: StateDumpListener) => () => void>;
   /** SDK-retained settings (null = never connected / first boot). Used for D4 replay. */
   settings: SdkSettings | null;
   // The bridge subscribes to onFrame to assemble Reps from the typed
@@ -149,6 +159,7 @@ interface FakeClient {
     preSummary: (event?: PreSummaryEvent) => void;
     settingsUpdate: (settings: SdkSettings) => void;
     connectionStateChange: (state: ConnectionState) => void;
+    stateDump: (event: StateDumpEvent) => void;
     frame: (frame: {
       sequence: number;
       timestamp: number;
@@ -195,6 +206,14 @@ const makePreSummaryEvent = (overrides: Partial<PreSummaryEvent> = {}): PreSumma
   ...overrides,
 });
 
+const makeStateDumpEvent = (overrides: Partial<StateDumpEvent> = {}): StateDumpEvent => ({
+  chainsActive: 0,
+  assistMode: 0,
+  chainTargetTenths: 0,
+  raw: new Uint8Array(37),
+  ...overrides,
+});
+
 function makeFakeClient(): FakeClient {
   let perRepCb: PerRepListener = () => undefined;
   let inProgressCb: InProgressListener = () => undefined;
@@ -202,6 +221,7 @@ function makeFakeClient(): FakeClient {
   let preSummaryCb: PreSummaryListener = () => undefined;
   let settingsCb: SettingsUpdateListener = () => undefined;
   let connCb: ConnectionStateListener = () => undefined;
+  let stateDumpCb: StateDumpListener = () => undefined;
 
   const onPerRep = vi.fn((l: PerRepListener) => {
     perRepCb = l;
@@ -227,6 +247,10 @@ function makeFakeClient(): FakeClient {
     connCb = l;
     return () => undefined;
   });
+  const onStateDump = vi.fn((l: StateDumpListener) => {
+    stateDumpCb = l;
+    return () => undefined;
+  });
   let frameCb: (frame: unknown) => void = () => undefined;
   const onFrame = vi.fn((l: (f: unknown) => void) => {
     frameCb = l;
@@ -240,6 +264,7 @@ function makeFakeClient(): FakeClient {
     onPreSummary,
     onSettingsUpdate,
     onConnectionStateChange,
+    onStateDump,
     onFrame,
     endSet: vi.fn(async () => undefined),
     settings: null,
@@ -250,6 +275,7 @@ function makeFakeClient(): FakeClient {
       preSummary: (e) => preSummaryCb(e ?? makePreSummaryEvent()),
       settingsUpdate: (s) => settingsCb(s),
       connectionStateChange: (s) => connCb(s),
+      stateDump: (e) => stateDumpCb(e),
       frame: (f) => frameCb(f),
     },
   };
@@ -361,13 +387,14 @@ describe('wireEventBridge', () => {
   });
 
   describe('subscription surface', () => {
-    it('subscribes to onPerRep, onInProgress, onSummary, onPreSummary, onSettingsUpdate, and onConnectionStateChange', () => {
+    it('subscribes to onPerRep, onInProgress, onSummary, onPreSummary, onSettingsUpdate, onConnectionStateChange, and onStateDump', () => {
       expect(client.onPerRep).toHaveBeenCalledOnce();
       expect(client.onInProgress).toHaveBeenCalledOnce();
       expect(client.onSummary).toHaveBeenCalledOnce();
       expect(client.onPreSummary).toHaveBeenCalledOnce();
       expect(client.onSettingsUpdate).toHaveBeenCalledOnce();
       expect(client.onConnectionStateChange).toHaveBeenCalledOnce();
+      expect(client.onStateDump).toHaveBeenCalledOnce();
     });
 
     it('subscribes to onFrame to assemble Reps from telemetry stream (R16)', () => {
@@ -2154,5 +2181,153 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(live.snapshotSession()?.sessionId).toBe('existing-sess');
     expect(live.snapshotSet()).toBeDefined();
     expect(state.store.putSession).not.toHaveBeenCalled();
+  });
+});
+
+// ── onStateDump (cmd=0x07 — Bug 26 / Gap C1) ───────────────────────────────
+//
+// SDK 0.7.0 routes the 52-byte `aa 80 25` envelope through `onStateDump`.
+// The bridge must: (a) subscribe, (b) apply state to LiveState, (c) notify
+// voltra://device/current, (d) push a debug event, (e) synthesize a
+// `settings_update` channel event on transition, and (f) de-duplicate when
+// the value does not change.
+
+describe('onStateDump (cmd=0x07 — Bug 26)', () => {
+  let live: LiveStateT;
+  let client: FakeClient;
+  let server: FakeServer;
+  let channels: FakeChannels;
+
+  beforeEach(() => {
+    live = new LiveState();
+    client = makeFakeClient();
+    server = makeFakeServer();
+    channels = makeFakeChannels();
+    const state = makeBareState({ client, live, server, channels });
+    wireBridgeForSlot(
+      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      state.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+  });
+
+  it('subscribes to onStateDump once', () => {
+    expect(client.onStateDump).toHaveBeenCalledOnce();
+  });
+
+  it('applies assistMode / chainsActive / chainTargetTenths to LiveState', () => {
+    client.fire.stateDump(
+      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 }),
+    );
+    const snap = live.snapshotDevice();
+    expect(snap.assistMode).toBe(2);
+    expect(snap.chainsActive).toBe(1);
+    expect(snap.chainTargetTenths).toBe(250);
+  });
+
+  it('notifies voltra://device/current on each state-dump event', () => {
+    client.fire.stateDump(makeStateDumpEvent());
+    expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
+      uri: 'voltra://device/current',
+    });
+  });
+
+  it('synthesizes a settings_update channel event for assistMode on first dump', () => {
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
+    // The first dump transitions all three fields from undefined; find the assistMode event.
+    const assistCall = channels.publish.mock.calls.find((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    expect(assistCall).toBeDefined();
+    const content = JSON.parse(assistCall![0].content) as {
+      changed: { field: string; value: number };
+    };
+    expect(content.changed.field).toBe('assistMode');
+    expect(content.changed.value).toBe(2);
+  });
+
+  it('synthesizes three channel events on first dump (all fields transition from undefined)', () => {
+    client.fire.stateDump(
+      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 100 }),
+    );
+    // Each of the three fields transitions from undefined → value on first dump.
+    expect(channels.publish).toHaveBeenCalledTimes(3);
+    const fields = channels.publish.mock.calls.map((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field;
+    });
+    expect(fields).toContain('assistMode');
+    expect(fields).toContain('chainsActive');
+    expect(fields).toContain('chainTargetTenths');
+  });
+
+  it('de-duplicates: same value on second dump does not re-emit a channel event', () => {
+    const dump = makeStateDumpEvent({ assistMode: 0, chainsActive: 0, chainTargetTenths: 0 });
+    client.fire.stateDump(dump);
+    const countAfterFirst = channels.publish.mock.calls.length;
+    client.fire.stateDump(dump); // same payload
+    expect(channels.publish).toHaveBeenCalledTimes(countAfterFirst);
+  });
+
+  it('synthesizes a channel event when assistMode transitions from 0 to 2', () => {
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 0 }));
+    channels.publish.mockClear();
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
+    expect(channels.publish).toHaveBeenCalledOnce();
+    const content = JSON.parse(channels.publish.mock.calls[0][0].content) as {
+      changed: { field: string; value: number };
+    };
+    expect(content.changed.field).toBe('assistMode');
+    expect(content.changed.value).toBe(2);
+  });
+
+  it('treats assistMode=8 (idle sentinel) as a real transition and emits a channel event', () => {
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
+    channels.publish.mockClear();
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 8 }));
+    // assistMode 2 → 8 is a genuine transition (device went idle).
+    const assistCall = channels.publish.mock.calls.find((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    expect(assistCall).toBeDefined();
+    const content = JSON.parse(assistCall![0].content) as { changed: { value: number } };
+    expect(content.changed.value).toBe(8);
+  });
+
+  it('does not re-emit when assistMode stays at idle sentinel (8)', () => {
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 8 }));
+    channels.publish.mockClear();
+    client.fire.stateDump(makeStateDumpEvent({ assistMode: 8 }));
+    const assistCalls = channels.publish.mock.calls.filter((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    expect(assistCalls).toHaveLength(0);
+  });
+
+  it('includes all known fields in the __all block of the settings_update payload', () => {
+    live.applySettings({ weightLbs: 100, batteryPercent: 75 });
+    client.fire.stateDump(
+      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 300 }),
+    );
+    const assistCall = channels.publish.mock.calls.find((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    const content = JSON.parse(assistCall![0].content) as {
+      __all: {
+        weight_lbs: number | null;
+        battery_percent: number | null;
+        assist_mode: number | null;
+        chains_active: number | null;
+        chain_target_tenths: number | null;
+      };
+    };
+    expect(content.__all.weight_lbs).toBe(100);
+    expect(content.__all.battery_percent).toBe(75);
+    expect(content.__all.assist_mode).toBe(2);
+    expect(content.__all.chains_active).toBe(1);
+    expect(content.__all.chain_target_tenths).toBe(300);
   });
 });

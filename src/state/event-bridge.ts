@@ -56,6 +56,13 @@
 //                                 visible to set.start, and synthesises a
 //                                 `settings_update` channel event whenever
 //                                 `damperLevel` transitions (Bug 27).
+//   onStateDump                 → applyStateDump + notify voltra://device/current.
+//                                 Synthesises a `settings_update` channel
+//                                 event for each field that transitions
+//                                 (assistMode, chainsActive, chainTargetTenths).
+//                                 assistMode=8 is the device's idle sentinel
+//                                 (no active fitness mode) — treated as the
+//                                 "off" state for channel-event reporting (Bug 26).
 //   onConnectionStateChange     → applySettings({ connected }) + notify
 //                                 voltra://device/current. On 'disconnected'
 //                                 also markDisconnected and notify both
@@ -112,6 +119,7 @@ import {
   triggerDedupeKey,
   type ActiveSetAtDisconnect,
   type SettingsUpdateAll,
+  type SettingsUpdateField,
 } from './channel-payloads.js';
 import type { ServerState, SlotState } from './server-state.js';
 import type { TriggerSpec } from '../schemas/set.js';
@@ -141,6 +149,19 @@ interface SdkSettingsUpdate {
   trainingMode?: TrainingMode;
   battery?: number | null;
   damperLevel?: number;
+}
+
+// Structural mirror of SDK 0.7.0's `StateDumpEvent` (from the internal
+// `src/voltra/protocol/types.ts`). Not imported from the public entry
+// because `StateDumpEvent` is not re-exported from `@voltras/node-sdk`'s
+// root `index.ts` — the bridge only consumes it via the `onStateDump`
+// callback, so the structural alias is sufficient and keeps the bridge
+// decoupled from the SDK's private module paths.
+interface SdkStateDump {
+  chainsActive: number;
+  assistMode: number;
+  chainTargetTenths: number;
+  raw: Uint8Array;
 }
 
 const DEVICE_URI = 'voltra://device/current';
@@ -214,6 +235,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // event — without that, cold-start consumers would never see the initial
   // damper value and would have to call `device.get_state` to discover it.
   let lastDamperLevel: number | undefined = undefined;
+  // Latest known state-dump values; transitions synthesize `settings_update`
+  // channel events (Bug 26 / C1). Initialised to `undefined` so the first
+  // state-dump frame always emits a baseline event.
+  let lastAssistMode: number | undefined = undefined;
+  let lastChainsActive: number | undefined = undefined;
+  let lastChainTargetTenths: number | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -544,6 +571,44 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
+  // cmd=0x07 state-dump — exposes assist mode, chains-active flag, and chain
+  // target weight. SDK 0.7.0 routes this through `onStateDump` (PR #41).
+  // `onStateDump` is absent on older builds; the optional-chain guard keeps
+  // backward compatibility with any pre-0.7.0 test fixtures.
+  if (typeof client.onStateDump === 'function') {
+    pushUnsub(
+      unsubs,
+      client.onStateDump((dump: SdkStateDump) => {
+        debug.events.push({
+          capturedAt: Date.now(),
+          type: 'state_dump',
+          payload: {
+            assistMode: dump.assistMode,
+            chainsActive: dump.chainsActive,
+            chainTargetTenths: dump.chainTargetTenths,
+          },
+        });
+        live.applyStateDump({
+          assistMode: dump.assistMode,
+          chainsActive: dump.chainsActive,
+          chainTargetTenths: dump.chainTargetTenths,
+        });
+        notify(server, DEVICE_URI);
+
+        synthStateDumpTransitions(
+          dump,
+          { lastAssistMode, lastChainsActive, lastChainTargetTenths },
+          lastDamperLevel,
+          live,
+          slotChannels,
+        );
+        lastAssistMode = dump.assistMode;
+        lastChainsActive = dump.chainsActive;
+        lastChainTargetTenths = dump.chainTargetTenths;
+      }),
+    );
+  }
+
   pushUnsub(
     unsubs,
     client.onConnectionStateChange((connState) => {
@@ -841,6 +906,59 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
     void slotId; // slotId reserved for future per-slot channel notification
   }
+}
+
+/**
+ * Synthesize `settings_update` channel events for each state-dump field that
+ * transitioned. Called once per `onStateDump` after `applyStateDump` so the
+ * live snapshot is already current when the payload's `__all` block is built.
+ *
+ * assistMode=8 is the firmware's idle sentinel (no active fitness mode); it
+ * is reported as-is in the payload so consumers can distinguish "assist off"
+ * (0) from "device idle" (8) if needed.
+ */
+function synthStateDumpTransitions(
+  dump: SdkStateDump,
+  prev: {
+    lastAssistMode: number | undefined;
+    lastChainsActive: number | undefined;
+    lastChainTargetTenths: number | undefined;
+  },
+  knownDamperLevel: number | undefined,
+  live: LiveState,
+  channels: ChannelPublisher,
+): void {
+  const device = live.snapshotDevice();
+  const all: SettingsUpdateAll = {
+    assistMode: dump.assistMode,
+    chainsActive: dump.chainsActive,
+    chainTargetTenths: dump.chainTargetTenths,
+  };
+  if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
+  if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
+  if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
+  if (knownDamperLevel !== undefined) all.damperLevel = knownDamperLevel;
+
+  publishIfTransition('assistMode', dump.assistMode, prev.lastAssistMode, all, channels);
+  publishIfTransition('chainsActive', dump.chainsActive, prev.lastChainsActive, all, channels);
+  publishIfTransition(
+    'chainTargetTenths',
+    dump.chainTargetTenths,
+    prev.lastChainTargetTenths,
+    all,
+    channels,
+  );
+}
+
+function publishIfTransition(
+  field: SettingsUpdateField,
+  current: number,
+  prev: number | undefined,
+  all: SettingsUpdateAll,
+  channels: ChannelPublisher,
+): void {
+  if (current === prev) return;
+  channels.publish(buildSettingsUpdatePayload(field, current, all));
 }
 
 export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot> {

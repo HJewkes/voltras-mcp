@@ -415,4 +415,45 @@ describe('LiveState', () => {
       expect(live.snapshotSet()?.reps).toHaveLength(1);
     });
   });
+
+  describe('applyStateDump', () => {
+    it('merges assistMode, chainsActive, chainTargetTenths into device snapshot', () => {
+      const live = new LiveState();
+      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 });
+      const snap = live.snapshotDevice();
+      expect(snap.assistMode).toBe(2);
+      expect(snap.chainsActive).toBe(1);
+      expect(snap.chainTargetTenths).toBe(250);
+    });
+
+    it('does not clobber existing device fields (connected, weightLbs, etc.)', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, weightLbs: 100, batteryPercent: 80 });
+      live.applyStateDump({ assistMode: 0, chainsActive: 0, chainTargetTenths: 0 });
+      const snap = live.snapshotDevice();
+      expect(snap.connected).toBe(true);
+      expect(snap.weightLbs).toBe(100);
+      expect(snap.batteryPercent).toBe(80);
+    });
+
+    it('updates assistMode to idle sentinel (8) without clobbering prior state-dump values', () => {
+      const live = new LiveState();
+      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 300 });
+      live.applyStateDump({ assistMode: 8, chainsActive: 1, chainTargetTenths: 300 });
+      const snap = live.snapshotDevice();
+      expect(snap.assistMode).toBe(8);
+      expect(snap.chainsActive).toBe(1);
+      expect(snap.chainTargetTenths).toBe(300);
+    });
+
+    it('overwrites prior state-dump values on subsequent calls', () => {
+      const live = new LiveState();
+      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 100 });
+      live.applyStateDump({ assistMode: 0, chainsActive: 0, chainTargetTenths: 200 });
+      const snap = live.snapshotDevice();
+      expect(snap.assistMode).toBe(0);
+      expect(snap.chainsActive).toBe(0);
+      expect(snap.chainTargetTenths).toBe(200);
+    });
+  });
 });
