@@ -129,6 +129,11 @@ function setup(): Harness {
   const client = {
     startRecording: vi.fn().mockResolvedValue(undefined),
     endSet: vi.fn().mockResolvedValue(undefined),
+    // <Bug-22> Default `isRowingActive` to false so existing tests are
+    // unaffected; rowing-specific tests below override this on the slot's
+    // client to exercise the guard.
+    isRowingActive: false,
+    // </Bug-22>
   };
   // Top-level publish mock collects every event; `forSlot(slotId)` returns
   // a publisher that re-routes through the same mock with `slot: slotId`
@@ -348,6 +353,55 @@ describe('set.start', () => {
     });
     expect(h.store.getSetsForSession).toHaveBeenCalledWith(sessionId);
   });
+
+  // <Bug-22>
+  describe('Rowing safety guard', () => {
+    it('refuses set.start when trainingMode is Rowing — does NOT call startRecording', async () => {
+      startSession(h.live);
+      h.live.applySettings({ connected: true, weightLbs: 0, trainingMode: 'Rowing' });
+
+      const r = await h.invoke('set.start', {});
+      expect(r.isError).toBe(true);
+      expect((parseResult(r) as { code: string }).code).toBe('ROWING_USE_TWO_STAGE');
+      const slot = (
+        h.state as unknown as {
+          slots: Map<string, { client: { startRecording: ReturnType<typeof vi.fn> } }>;
+        }
+      ).slots.get('primary')!;
+      expect(slot.client.startRecording).not.toHaveBeenCalled();
+      expect(h.live.set).toBeUndefined();
+    });
+
+    it('refuses set.start when client.isRowingActive is true', async () => {
+      startSession(h.live);
+      h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+      const slot = (
+        h.state as unknown as {
+          slots: Map<
+            string,
+            { client: { startRecording: ReturnType<typeof vi.fn>; isRowingActive: boolean } }
+          >;
+        }
+      ).slots.get('primary')!;
+      slot.client.isRowingActive = true;
+
+      const r = await h.invoke('set.start', {});
+      expect(r.isError).toBe(true);
+      expect((parseResult(r) as { code: string }).code).toBe('ROWING_USE_TWO_STAGE');
+      expect(slot.client.startRecording).not.toHaveBeenCalled();
+    });
+
+    it('error message mentions the two-stage rowing tools', async () => {
+      startSession(h.live);
+      h.live.applySettings({ connected: true, weightLbs: 0, trainingMode: 'Rowing' });
+
+      const r = await h.invoke('set.start', {});
+      const payload = parseResult(r) as { message?: string };
+      expect(payload.message ?? '').toMatch(/device\.enter_row_mode/);
+      expect(payload.message ?? '').toMatch(/device\.start_row/);
+    });
+  });
+  // </Bug-22>
 });
 
 describe('set.end', () => {

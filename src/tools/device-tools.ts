@@ -50,6 +50,10 @@ import {
   DeviceSetIsokineticEccConstWeightInput,
   DeviceSetIsokineticEccOverloadWeightInput,
   DeviceStartGuidedLoadInput,
+  // <Bug-22>
+  DeviceEnterRowModeInput,
+  DeviceStartRowInput,
+  // </Bug-22>
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
@@ -339,6 +343,14 @@ export function registerDeviceTools(
   // value before calling. `Idle` is excluded by the schema (EC-05), so by
   // the time we reach the body the lookup is guaranteed to land on a
   // valid `TrainingMode` member.
+  //
+  // <Bug-22> Per A10 mode-hierarchy research: the SDK encapsulates the
+  // correct primitive for Rowing — `client.setMode(Rowing)` auto-routes
+  // to enterRowMode + startRow (Just Row, no preset). MCP callers that
+  // need a distance preset can still use `device.start_row` directly.
+  // Either way, the strength-arm primitive (`BP_SET_FITNESS_MODE = 5`)
+  // is NEVER written for Rowing — firmware would silently reinterpret
+  // it as a strength session, reverting the rowing flow. HIGH safety.
   install(
     placeholders,
     'device.set_mode',
@@ -349,6 +361,40 @@ export function registerDeviceTools(
       return { ok: true };
     }),
   );
+
+  // <Bug-22> Stage 1 of Rowing entry — opens the Just-Row / Distance
+  // sub-menu without engaging resistance. The slot's client must be
+  // connected; otherwise the SDK throws `NotConnectedError`, which
+  // `wrapHandler` maps to a structured tool error.
+  install(
+    placeholders,
+    'device.enter_row_mode',
+    DeviceEnterRowModeInput,
+    wrapHandler(DeviceEnterRowModeInput, async (input) => {
+      await getSlot(state, input.slot).client.enterRowMode();
+      return { ok: true };
+    }),
+    'Open the Voltra rowing sub-menu (stage 1 of 2). Must be followed by ' +
+      'device.start_row to commit into a live rowing session. The cable will ' +
+      'NOT engage between these two calls.',
+  );
+
+  // <Bug-22> Stage 2 of Rowing entry — commits via EP_SCR_SWITCH and
+  // schedules SDK-side reasserts at +750/+1750/+3000 ms. `distance`
+  // defaults to `'JustRow'` (free row, no preset).
+  install(
+    placeholders,
+    'device.start_row',
+    DeviceStartRowInput,
+    wrapHandler(DeviceStartRowInput, async (input) => {
+      await getSlot(state, input.slot).client.startRow(input.distance);
+      return { ok: true };
+    }),
+    'Commit into a live rowing session (stage 2 of 2). Requires a prior ' +
+      'device.enter_row_mode. Distance presets are iPad-side stroke targets — ' +
+      'EP_SCR_SWITCH only selects the preset screen.',
+  );
+  // </Bug-22>
 
   // device.set_chains — passthrough; schema enforces 0–100 lbs.
   install(

@@ -115,6 +115,11 @@ interface FakeClient {
       pollDurationMs?: number;
     }) => Promise<void>
   >;
+  // <Bug-22>
+  enterRowMode: Mock<() => Promise<void>>;
+  startRow: Mock<(distance?: string) => Promise<void>>;
+  isRowingActive: boolean;
+  // </Bug-22>
   onPerRep: Mock<(cb: (event: unknown) => void) => void>;
   onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
@@ -159,6 +164,11 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
     startGuidedLoad: vi.fn(async () => undefined),
+    // <Bug-22>
+    enterRowMode: vi.fn(async () => undefined),
+    startRow: vi.fn(async () => undefined),
+    isRowingActive: false,
+    // </Bug-22>
     onPerRep: vi.fn(() => undefined),
     onInProgress: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
@@ -236,6 +246,10 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
   'device.start_guided_load',
+  // <Bug-22>
+  'device.enter_row_mode',
+  'device.start_row',
+  // </Bug-22>
   'device.get_state',
 ] as const;
 
@@ -659,7 +673,62 @@ describe('registerDeviceTools', () => {
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
     });
+
+    // <Bug-22>
+    it('forwards Rowing to client.setMode (which auto-routes via SDK) — never the legacy strength-arm', async () => {
+      // Per A10: the SDK's setMode() encapsulates the two-stage entry
+      // for Rowing. MCP just forwards the call; SDK handles routing.
+      const reg = placeholders.get('device.set_mode')!;
+      const { isError, payload } = await invoke(reg, { mode: 'Rowing' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setMode).toHaveBeenCalledWith(FakeTrainingMode.Rowing);
+    });
+    // </Bug-22>
   });
+
+  // <Bug-22>
+  describe('device.enter_row_mode', () => {
+    it('forwards to client.enterRowMode', async () => {
+      const reg = placeholders.get('device.enter_row_mode')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).enterRowMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not invoke setMode or startRow', async () => {
+      const reg = placeholders.get('device.enter_row_mode')!;
+      await invoke(reg, {});
+      expect(primaryClient(state).setMode).not.toHaveBeenCalled();
+      expect(primaryClient(state).startRow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('device.start_row', () => {
+    it('forwards distance to client.startRow', async () => {
+      const reg = placeholders.get('device.start_row')!;
+      const { isError, payload } = await invoke(reg, { distance: 'M500' });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).startRow).toHaveBeenCalledWith('M500');
+    });
+
+    it('passes undefined to client.startRow when distance is omitted', async () => {
+      const reg = placeholders.get('device.start_row')!;
+      await invoke(reg, {});
+      expect(primaryClient(state).startRow).toHaveBeenCalledWith(undefined);
+    });
+
+    it('rejects unknown distance presets with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.start_row')!;
+      const { isError, payload } = await invoke(reg, { distance: 'M999' });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).startRow).not.toHaveBeenCalled();
+    });
+  });
+  // </Bug-22>
 
   describe('device.set_chains', () => {
     it('forwards lbs to client.setChains', async () => {

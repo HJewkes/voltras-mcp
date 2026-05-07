@@ -113,6 +113,40 @@ export const DeviceSetIsokineticEccOverloadWeightInput = z.object({
   slot: SlotIdSchema,
 });
 
+// <Bug-22> Rowing two-stage entry — replaces set_mode(Rowing).
+/** Input for `device.enter_row_mode` — opens the rowing sub-menu. */
+export const DeviceEnterRowModeInput = z.object({
+  slot: SlotIdSchema,
+});
+
+/**
+ * Distance-preset names accepted by `device.start_row`. The wire-byte
+ * mapping lives in `@voltras/node-sdk`; the SDK's `RowingDistancePreset`
+ * type is the source of truth. Re-declared here as a literal because
+ * importing a type union as a runtime value isn't possible — when adding
+ * presets, update both lists.
+ *
+ * Only `JustRow` and `M50` are independently verified against iPad
+ * sysdiagnose; the 100/500/1000/2000/5000 m codes are inferred and
+ * pending on-device validation.
+ */
+export const ROWING_DISTANCE_PRESETS = [
+  'JustRow',
+  'M50',
+  'M100',
+  'M500',
+  'M1000',
+  'M2000',
+  'M5000',
+] as const;
+
+/** Input for `device.start_row` — commits the rowing session. */
+export const DeviceStartRowInput = z.object({
+  distance: z.enum(ROWING_DISTANCE_PRESETS).optional(),
+  slot: SlotIdSchema,
+});
+// </Bug-22>
+
 /**
  * Input for `device.start_guided_load` (Phase 1g, @experimental).
  *

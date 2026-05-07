@@ -64,6 +64,10 @@ const CORE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
   'device.start_guided_load',
+  // <Bug-22> Rowing two-stage entry — replaces device.set_mode with mode=Rowing.
+  'device.enter_row_mode',
+  'device.start_row',
+  // </Bug-22>
   'device.get_state',
   'session.start',
   'session.end',
