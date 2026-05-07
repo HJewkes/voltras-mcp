@@ -108,6 +108,13 @@ interface FakeClient {
   setIsokineticEccSpeedLimit: Mock<(mmPerSec: number) => Promise<void>>;
   setIsokineticEccConstWeight: Mock<(lbs: number) => Promise<void>>;
   setIsokineticEccOverloadWeight: Mock<(lbs: number) => Promise<void>>;
+  startGuidedLoad: Mock<
+    (opts: {
+      targetWeightLbs: number;
+      pollIntervalMs?: number;
+      pollDurationMs?: number;
+    }) => Promise<void>
+  >;
   onPerRep: Mock<(cb: (event: unknown) => void) => void>;
   onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSettingsUpdate: Mock<(cb: (settings: unknown) => void) => void>;
@@ -151,6 +158,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccSpeedLimit: vi.fn(async () => undefined),
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
+    startGuidedLoad: vi.fn(async () => undefined),
     onPerRep: vi.fn(() => undefined),
     onInProgress: vi.fn(() => undefined),
     onSettingsUpdate: vi.fn(() => undefined),
@@ -227,6 +235,7 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_speed_limit',
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
+  'device.start_guided_load',
   'device.get_state',
 ] as const;
 
@@ -1002,6 +1011,60 @@ describe('registerDeviceTools', () => {
       );
       const reg = placeholders.get('device.set_isokinetic_ecc_overload_weight')!;
       const { isError, payload } = await invoke(reg, { lbs: 50 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_SETTING');
+    });
+  });
+
+  describe('device.start_guided_load', () => {
+    it('forwards targetWeightLbs to client.startGuidedLoad and returns ok:true', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).startGuidedLoad).toHaveBeenCalledWith({
+        targetWeightLbs: 50,
+      });
+    });
+
+    it('forwards optional pollIntervalMs and pollDurationMs when supplied', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, {
+        targetWeightLbs: 75,
+        pollIntervalMs: 250,
+        pollDurationMs: 30000,
+      });
+      expect(isError).toBeUndefined();
+      expect(primaryClient(state).startGuidedLoad).toHaveBeenCalledWith({
+        targetWeightLbs: 75,
+        pollIntervalMs: 250,
+        pollDurationMs: 30000,
+      });
+    });
+
+    it('rejects out-of-range targetWeightLbs (4) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 4 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range targetWeightLbs (201) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 201 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
+    });
+
+    it('surfaces SDK InvalidSettingError on rejection', async () => {
+      const client = primaryClient(state);
+      client.startGuidedLoad.mockRejectedValueOnce(
+        new FakeVoltraSDKError('weight unsupported', 'INVALID_SETTING'),
+      );
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_SETTING');
     });

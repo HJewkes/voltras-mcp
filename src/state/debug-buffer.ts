@@ -37,7 +37,8 @@ export interface DebugEvent {
     | 'set_boundary'
     | 'settings_update'
     | 'connection_state_change'
-    | 'cycle_complete';
+    | 'cycle_complete'
+    | 'guided_load_state';
   payload: Record<string, unknown>;
 }
 

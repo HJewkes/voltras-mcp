@@ -1417,3 +1417,140 @@ describe('wireEventBridge', () => {
     });
   });
 });
+
+// ── Guided-load auto-session-create (Phase 1g, Bugs 28/29) ───────────────
+//
+// The bridge subscribes to `client.onGuidedLoadState` whenever the SDK
+// surfaces it (>= 0.6.3) and auto-creates a session+set in LiveState the
+// first time it observes the device-side state machine moving into
+// `armed` / `countdown` / `engaging` / `active`. This block exercises the
+// auto-create path with a focused harness that augments the standard
+// FakeClient with an `onGuidedLoadState` capture.
+describe('wireEventBridge — guided-load auto-create', () => {
+  // Re-using the file's `GuidedLoadPhase` shape structurally (the SDK module
+  // is mocked at file scope; importing the real type would defeat that).
+  type Phase = 'idle' | 'armed' | 'countdown' | 'engaging' | 'active' | 'exited' | 'timeout';
+  interface GuidedLoadStateLike {
+    phase: Phase;
+    countdownRemainingMs: number | null;
+    fitnessModeRaw: number | null;
+  }
+  type GuidedLoadStateListenerLike = (s: GuidedLoadStateLike) => void;
+
+  type GuidedFakeClient = FakeClient & {
+    onGuidedLoadState: Mock<(l: GuidedLoadStateListenerLike) => () => void>;
+    fireGuided: (s: GuidedLoadStateLike) => void;
+  };
+
+  function makeGuidedFakeClient(): GuidedFakeClient {
+    const base = makeFakeClient();
+    let cb: GuidedLoadStateListenerLike = () => undefined;
+    const onGuidedLoadState = vi.fn((l: GuidedLoadStateListenerLike) => {
+      cb = l;
+      return () => undefined;
+    });
+    return Object.assign(base, {
+      onGuidedLoadState,
+      fireGuided: (s: GuidedLoadStateLike) => cb(s),
+    });
+  }
+
+  interface State {
+    slots: Map<string, { slotId: string; live: LiveStateT; client: GuidedFakeClient }>;
+    store: {
+      putSession: Mock<(s: unknown) => Promise<void>>;
+      putSet: Mock<(s: unknown) => Promise<void>>;
+    };
+    channels: FakeChannels;
+    server: FakeServer;
+    setStartDeviceSnapshots: Map<string, unknown>;
+    setWatchdog: SetWatchdogT;
+  }
+
+  let live: LiveStateT;
+  let client: GuidedFakeClient;
+  let state: State;
+
+  beforeEach(() => {
+    live = new LiveState();
+    client = makeGuidedFakeClient();
+    const slots = new Map<string, { slotId: string; live: LiveStateT; client: GuidedFakeClient }>();
+    slots.set('primary', { slotId: 'primary', live, client });
+    state = {
+      slots,
+      store: {
+        putSession: vi.fn(async () => undefined),
+        putSet: vi.fn(async () => undefined),
+      },
+      channels: makeFakeChannels(),
+      server: makeFakeServer(),
+      setStartDeviceSnapshots: new Map(),
+      setWatchdog: new SetWatchdog(),
+    };
+    wireBridgeForSlot(
+      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+  });
+
+  it('subscribes to client.onGuidedLoadState when present', () => {
+    expect(client.onGuidedLoadState).toHaveBeenCalledOnce();
+  });
+
+  it("auto-creates session + set on 'armed' phase", () => {
+    expect(live.snapshotSession()).toBeUndefined();
+    expect(live.snapshotSet()).toBeUndefined();
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const sess = live.snapshotSession();
+    const set = live.snapshotSet();
+    expect(sess).toBeDefined();
+    expect(set).toBeDefined();
+    expect(sess?.exerciseName).toBe('Guided Load (auto)');
+    expect(state.store.putSession).toHaveBeenCalledTimes(1);
+    expect(state.setStartDeviceSnapshots.has(set!.setId)).toBe(true);
+  });
+
+  it("does NOT auto-create on 'idle' / 'exited' / 'timeout' phases", () => {
+    client.fireGuided({ phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null });
+    client.fireGuided({ phase: 'exited', countdownRemainingMs: null, fitnessModeRaw: 0x0004 });
+    client.fireGuided({ phase: 'timeout', countdownRemainingMs: null, fitnessModeRaw: null });
+
+    expect(live.snapshotSession()).toBeUndefined();
+    expect(live.snapshotSet()).toBeUndefined();
+    expect(state.store.putSession).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent across multiple armed/countdown/active emissions', () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+    const sess1 = live.snapshotSession()!;
+    const set1 = live.snapshotSet()!;
+
+    client.fireGuided({ phase: 'countdown', countdownRemainingMs: 2500, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'engaging', countdownRemainingMs: 0, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 });
+
+    const sess2 = live.snapshotSession()!;
+    const set2 = live.snapshotSet()!;
+    expect(sess2.sessionId).toBe(sess1.sessionId);
+    expect(set2.setId).toBe(set1.setId);
+    expect(state.store.putSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('only mints a set when a session already exists (caller pre-started)', () => {
+    live.startSession({
+      sessionId: 'existing-sess',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseName: 'Squat',
+    });
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    expect(live.snapshotSession()?.sessionId).toBe('existing-sess');
+    expect(live.snapshotSet()).toBeDefined();
+    expect(state.store.putSession).not.toHaveBeenCalled();
+  });
+});

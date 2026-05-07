@@ -63,6 +63,7 @@ const CORE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_speed_limit',
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
+  'device.start_guided_load',
   'device.get_state',
   'session.start',
   'session.end',
