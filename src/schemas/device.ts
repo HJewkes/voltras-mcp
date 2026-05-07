@@ -177,4 +177,5 @@ export const DeviceGetStateOutput = z.object({
   weightLbs: z.number().optional(),
   trainingMode: z.string().optional(),
   batteryPercent: z.number().optional(),
+  damperLevel: z.number().int().min(0).max(9).optional(),
 });

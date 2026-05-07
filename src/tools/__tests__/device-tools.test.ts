@@ -86,6 +86,7 @@ interface FakeSettings {
   eccentric: number;
   mode: number;
   battery: number | null;
+  damperLevel?: number;
 }
 
 interface FakeClient {
@@ -848,6 +849,46 @@ describe('registerDeviceTools', () => {
       expect(payload.connected).toBe(false);
       expect(payload.connectionState).toBe('disconnected');
       expect(payload.deviceId).toBeUndefined();
+    });
+
+    it('surfaces damperLevel when client.settings.damperLevel is set', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.connectedDeviceId = 'V-3';
+      client.settings = {
+        weight: 10,
+        chains: 0,
+        inverseChains: 0,
+        eccentric: 0,
+        mode: FakeTrainingMode.WeightTraining,
+        battery: 50,
+        damperLevel: 4,
+      };
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.damperLevel).toBe(4);
+    });
+
+    it('omits damperLevel when client.settings.damperLevel is undefined', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      client.connectedDeviceId = 'V-4';
+      client.settings = {
+        weight: 10,
+        chains: 0,
+        inverseChains: 0,
+        eccentric: 0,
+        mode: FakeTrainingMode.WeightTraining,
+        battery: 50,
+      };
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload).not.toHaveProperty('damperLevel');
+      expect(payload.damperLevel).toBeUndefined();
     });
   });
 
