@@ -87,7 +87,12 @@
 // `no-floating-promises` linting.
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { GuidedLoadState, InProgressEvent, SummaryEvent, TelemetryFrame } from '@voltras/node-sdk';
+import type {
+  GuidedLoadState,
+  InProgressEvent,
+  SummaryEvent,
+  TelemetryFrame,
+} from '@voltras/node-sdk';
 import { TrainingModeNames } from '@voltras/node-sdk';
 import type { TrainingMode } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
