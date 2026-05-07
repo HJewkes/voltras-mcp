@@ -802,7 +802,23 @@ export interface SettingsUpdateAll {
   damperLevel?: number;
   assistMode?: number;
   chainsActive?: number;
+  /**
+   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
+   * tenths of pounds. **WARNING:** on-device testing 2026-05-07 showed
+   * this tracks `weight × 10`, NOT chain force at the cable — the decoder
+   * is reading the wrong byte offset. Field preserved for back-compat;
+   * prefer `chainSettingLbs` for the user's chains setting in lbs.
+   * @deprecated Decoder-bug field; will be repurposed once the cmd=0x07
+   *   layout-discriminator fix lands.
+   */
   chainTargetTenths?: number;
+  /**
+   * User's chains setting in pounds (= what `set_chains` wrote, after the
+   * firmware's silent chains≤weight cap), sourced from the cmd=0x10
+   * cascade `chains` field. On-device testing 2026-05-07 confirmed this
+   * is reliable.
+   */
+  chainSettingLbs?: number;
 }
 
 export type SettingsUpdateField =
@@ -843,6 +859,7 @@ export function buildSettingsUpdatePayload(
       assist_mode: all.assistMode ?? null,
       chains_active: all.chainsActive ?? null,
       chain_target_tenths: all.chainTargetTenths ?? null,
+      chain_setting_lbs: all.chainSettingLbs ?? null,
     },
   });
   return { meta, content };

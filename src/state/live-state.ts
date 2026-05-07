@@ -54,8 +54,37 @@ export interface DeviceSnapshot {
   assistMode?: number;
   /** Chains-active flag from the last cmd=0x07 state-dump (0 or 1). */
   chainsActive?: number;
-  /** Chain-target weight in tenths of pounds from the last state-dump frame. */
+  /**
+   * Raw value at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
+   * tenths of pounds.
+   *
+   * **WARNING — decoder bug:** on-device testing on 2026-05-07 (Bug 23
+   * retest) showed that bytes [6-7] track `weight × 10`, **not** chain
+   * force at the cable. The actual effective chain force lives at bytes
+   * [8-9]. The field name (`chainTargetTenths`) and the naming of the
+   * underlying SDK field both originate from a misread of the envelope
+   * layout. Until the decoder fix lands (deferred pending the cmd=0x07
+   * variable-layout discriminator work — Option C in
+   * `voltra-private/research/HANDOFF-2026-05-08-post-0.7.2-followups.md`),
+   * this field is unreliable and effectively duplicates `weightLbs`.
+   *
+   * Prefer {@link chainSettingLbs} for the user's chains setting in lbs
+   * (sourced from the cmd=0x10 cascade, which IS correct).
+   *
+   * @deprecated Decoder reads the wrong byte offset; use `chainSettingLbs`
+   *   for the chains setting. This field will be repurposed once the
+   *   layout-discriminator fix lands.
+   */
   chainTargetTenths?: number;
+  /**
+   * User's chains setting in pounds, sourced from the cmd=0x10 cascade
+   * `chains` field on `onSettingsUpdate`. This is the value the firmware
+   * accepted after its silent chains≤weight cap (e.g., a `set_chains(60)`
+   * write against weight=50 surfaces here as 50). On-device testing
+   * 2026-05-07 confirmed this matches the user's most recent post-cap
+   * setting and is reliable.
+   */
+  chainSettingLbs?: number;
 }
 
 /** Active session metadata. `setIds` accumulates as sets close. */

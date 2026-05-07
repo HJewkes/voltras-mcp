@@ -455,5 +455,19 @@ describe('LiveState', () => {
       expect(snap.chainsActive).toBe(0);
       expect(snap.chainTargetTenths).toBe(200);
     });
+
+    it('keeps chainSettingLbs (cmd=0x10 cascade source) distinct from state-dump fields', () => {
+      // Settings cascade carries the user's post-cap chains setting; the
+      // state-dump path is independent and updates separate fields.
+      const live = new LiveState();
+      live.applySettings({ chainSettingLbs: 50 });
+      live.applyStateDump({ assistMode: 0, chainsActive: 1, chainTargetTenths: 500 });
+      const snap = live.snapshotDevice();
+      expect(snap.chainSettingLbs).toBe(50);
+      // chainTargetTenths is preserved here for back-compat / debug only;
+      // it is a known decoder-bug field (tracks weight×10, not chain force).
+      expect(snap.chainTargetTenths).toBe(500);
+      expect(snap.chainsActive).toBe(1);
+    });
   });
 });
