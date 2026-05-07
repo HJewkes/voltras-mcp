@@ -132,6 +132,23 @@ async function startSet(
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
 
+  // <Bug-22> Refuse to engage strength-mode GO when the device is in Rowing.
+  // `client.startRecording()` writes `BP_SET_FITNESS_MODE = 5` (the strength
+  // arm), which silently reverts an active rowing session — HIGH safety
+  // severity. Rowing is committed via the SDK's `enterRowMode + startRow`
+  // pair; once `client.isRowingActive` is true (or the device has already
+  // settled into Rowing mode), the user must not engage via `set.start`.
+  const trainingMode = slot.live.snapshotDevice().trainingMode;
+  if (trainingMode === 'Rowing' || slot.client.isRowingActive) {
+    throw new ToolError(
+      'ROWING_USE_TWO_STAGE',
+      'Cannot start a set while the device is in Rowing mode. Rowing engages via ' +
+        'device.enter_row_mode + device.start_row, not set.start. set.start would issue ' +
+        'the strength-mode GO and silently revert the rowing session.',
+    );
+  }
+  // </Bug-22>
+
   // Engage the device motor — firmware-side equivalent of the "tap to load"
   // prompt on the unit. Without this the cable is free-running and no force
   // is applied. SDK: VoltraClient.startRecording → Workout.GO.
