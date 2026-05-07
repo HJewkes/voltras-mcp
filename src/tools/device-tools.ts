@@ -580,6 +580,7 @@ export function registerDeviceTools(
           out.damperLevel = settings.damperLevel;
         }
       }
+      out.isRowingActive = slot.client.isRowingActive;
       return out;
     }),
   );
