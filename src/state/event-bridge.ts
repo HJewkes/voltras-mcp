@@ -61,8 +61,10 @@
 //                                 event for each field that transitions
 //                                 (assistMode, chainsActive, chainTargetTenths).
 //                                 assistMode=8 is the device's idle sentinel
-//                                 (no active fitness mode) — treated as the
-//                                 "off" state for channel-event reporting (Bug 26).
+//                                 (no active fitness mode) — surfaced as-is in
+//                                 channel events and `device.get_state` so
+//                                 consumers can distinguish `0` (off) /
+//                                 `2` (on) / `8` (idle) (Bug 26).
 //   onConnectionStateChange     → applySettings({ connected }) + notify
 //                                 voltra://device/current. On 'disconnected'
 //                                 also markDisconnected and notify both
@@ -704,8 +706,16 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // state across reconnect. Without this replay, `voltra://device/current`
   // shows a blank snapshot until the first `onSettingsUpdate` fires (which
   // requires the device to push a settings cascade — not guaranteed on
-  // reconnect alone). The replay is idempotent: on a fresh connect
-  // `client.settings` is null and the branch is skipped.
+  // reconnect alone).
+  //
+  // Note: the SDK's `settings` getter returns `{ ...this._settings }` and
+  // never returns null, so this branch always executes. On a truly-fresh
+  // connect (no prior cascade), `_settings` equals `DEFAULT_SETTINGS` and
+  // we apply those defaults to LiveState; subsequent cascades overwrite via
+  // the standard `onSettingsUpdate` path. SDK 0.7.1 also replays the cached
+  // protocol-layer cascade through `onSettingsUpdate` at listener-attach
+  // time (b3e3dc3), so this explicit call is redundant on reconnect but
+  // remains the canonical entry point for non-cascade-driven snapshots.
   const initialSettings = (client as unknown as { settings?: SdkSettingsUpdate | null }).settings;
   if (initialSettings != null) {
     live.applySettings(settingsToSnapshot(initialSettings));
