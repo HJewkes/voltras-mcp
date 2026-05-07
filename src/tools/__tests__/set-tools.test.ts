@@ -662,6 +662,58 @@ describe('set.end', () => {
     expect(parsed.set.partial_reason).toBeNull();
   });
 
+  it('attaches device_summary to set_ended when an onSummary landed during the set', async () => {
+    // Tool-driven set.end path symmetry with the bridge's set_ended_by_device:
+    // if applySummary fired during the set's lifetime, finalizeSet harvests
+    // the captured summary via consumeLatestSummary and threads it into the
+    // payload's device_summary block.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.applySummary({
+      schemaVersion: 3,
+      setCounter: 1,
+      repCount: 2,
+      raw: new Uint8Array(140),
+    });
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as {
+      meta: Record<string, string>;
+      content: string;
+    };
+    expect(event.meta.event_type).toBe('set_ended');
+    expect(event.meta.device_rep_count).toBe('2');
+    expect(event.meta.device_schema_version).toBe('3');
+    const parsed = JSON.parse(event.content) as {
+      device_summary: { rep_count: number; schema_version: number };
+    };
+    expect(parsed.device_summary).toEqual({ rep_count: 2, schema_version: 3 });
+  });
+
+  it('omits device_summary from set_ended when no onSummary fired during the set', async () => {
+    // Backwards-compat: pre-PR-C consumers reading the payload without a
+    // device_summary expectation must still parse it cleanly.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    const event = h.channels.publish.mock.calls[0][0] as {
+      meta: Record<string, string>;
+      content: string;
+    };
+    expect(event.meta.device_rep_count).toBeUndefined();
+    expect(event.meta.device_schema_version).toBeUndefined();
+    const parsed = JSON.parse(event.content) as { device_summary?: unknown };
+    expect(parsed.device_summary).toBeUndefined();
+  });
+
   it('set_ended vbt_summary.velocity_loss_pct is null when fewer than 2 reps', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });

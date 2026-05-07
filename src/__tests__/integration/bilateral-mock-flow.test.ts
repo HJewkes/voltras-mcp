@@ -56,6 +56,9 @@ class FakeVoltraClient {
   onSummary(_cb: (event: unknown) => void): () => void {
     return () => undefined;
   }
+  onPreSummary(_cb: (event: unknown) => void): () => void {
+    return () => undefined;
+  }
   onSettingsUpdate(_cb: (s: unknown) => void): () => void {
     return () => undefined;
   }
