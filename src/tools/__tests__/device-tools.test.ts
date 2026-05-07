@@ -258,11 +258,19 @@ const DEVICE_TOOL_NAMES = [
   'device.get_state',
 ] as const;
 
+interface FakeLive {
+  snapshotDevice: () => {
+    connected: boolean;
+    assistMode?: number;
+    chainsActive?: number;
+    chainTargetTenths?: number;
+  };
+}
+
 interface FakeSlot {
   slotId: string;
   client: FakeClient;
-  // `live` is unused by device-tools — present so the slot satisfies SlotState's shape.
-  live: Record<string, never>;
+  live: FakeLive;
 }
 
 interface State {
@@ -270,9 +278,15 @@ interface State {
   slots: Map<string, FakeSlot>;
 }
 
+function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>> = {}): FakeLive {
+  return {
+    snapshotDevice: () => ({ connected: false, ...overrides }),
+  };
+}
+
 function makeState(): State {
   const slots = new Map<string, FakeSlot>();
-  slots.set('primary', { slotId: 'primary', client: makeFakeClient(), live: {} });
+  slots.set('primary', { slotId: 'primary', client: makeFakeClient(), live: makeFakeLive() });
   return {
     manager: makeFakeManager(),
     slots,
@@ -915,6 +929,36 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.isRowingActive).toBe(true);
+    });
+
+    it('surfaces assistMode / chainsActive / chainTargetTenths from live.snapshotDevice (state-dump fields)', async () => {
+      // Wire a fake live that returns state-dump fields.
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 });
+      // Re-register tools so the new slot shape is captured by the closure.
+      const localServer = makeFakeServer();
+      const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+      registerDeviceTools(
+        localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+        state as unknown as Parameters<typeof registerDeviceTools>[1],
+        localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+      );
+      const reg = localPlaceholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.assistMode).toBe(2);
+      expect(payload.chainsActive).toBe(1);
+      expect(payload.chainTargetTenths).toBe(250);
+    });
+
+    it('omits state-dump fields when live.snapshotDevice returns them as undefined', async () => {
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      // Default makeFakeLive returns no state-dump fields.
+      expect(payload).not.toHaveProperty('assistMode');
+      expect(payload).not.toHaveProperty('chainsActive');
+      expect(payload).not.toHaveProperty('chainTargetTenths');
     });
   });
 

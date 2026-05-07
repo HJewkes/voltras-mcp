@@ -46,6 +46,16 @@ export interface DeviceSnapshot {
   damperLevel?: number;
   /** ISO timestamp of the last connection drop, when one is known. */
   disconnectedAt?: string;
+  /**
+   * Assist-mode raw value from the last cmd=0x07 state-dump frame. 0 = off,
+   * 2 = on, 8 = device idle / no active mode (Bug 26). Absent until the
+   * first state-dump has been received.
+   */
+  assistMode?: number;
+  /** Chains-active flag from the last cmd=0x07 state-dump (0 or 1). */
+  chainsActive?: number;
+  /** Chain-target weight in tenths of pounds from the last state-dump frame. */
+  chainTargetTenths?: number;
 }
 
 /** Active session metadata. `setIds` accumulates as sets close. */
@@ -160,6 +170,19 @@ export class LiveState {
       delete merged.batteryPercent;
     }
     this.device = merged;
+  }
+
+  /**
+   * Merge state-dump fields from a cmd=0x07 frame into the device snapshot.
+   * Called by the event-bridge `onStateDump` handler; decoupled from
+   * `applySettings` so callers can mutate just the assist/chains surface
+   * without risk of clobbering the weight/mode/battery fields that arrive
+   * through a separate settings-update path.
+   */
+  applyStateDump(
+    fields: Pick<DeviceSnapshot, 'assistMode' | 'chainsActive' | 'chainTargetTenths'>,
+  ): void {
+    this.device = { ...this.device, ...fields };
   }
 
   /**

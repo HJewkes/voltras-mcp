@@ -581,6 +581,21 @@ export function registerDeviceTools(
         }
       }
       out.isRowingActive = slot.client.isRowingActive;
+      // State-dump fields (assistMode, chainsActive, chainTargetTenths) are
+      // not available from client.settings — they arrive via cmd=0x07 and
+      // are stored in LiveState by the event-bridge. Read from the snapshot
+      // so the tool reflects the last-known state-dump without requiring a
+      // fresh BLE read.
+      const liveDevice = slot.live.snapshotDevice();
+      if (typeof liveDevice.assistMode === 'number') {
+        out.assistMode = liveDevice.assistMode;
+      }
+      if (typeof liveDevice.chainsActive === 'number') {
+        out.chainsActive = liveDevice.chainsActive;
+      }
+      if (typeof liveDevice.chainTargetTenths === 'number') {
+        out.chainTargetTenths = liveDevice.chainTargetTenths;
+      }
       return out;
     }),
   );

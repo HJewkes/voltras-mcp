@@ -40,7 +40,8 @@ export interface DebugEvent {
     | 'settings_update'
     | 'connection_state_change'
     | 'cycle_complete'
-    | 'guided_load_state';
+    | 'guided_load_state'
+    | 'state_dump';
   payload: Record<string, unknown>;
 }
 
