@@ -256,6 +256,28 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // `onInProgress` for state mutation either — the device emits it
   // continuously during workout mode, not just at end-of-set, and the set
   // lifecycle is owned by the explicit `set.start`/`set.end` tools.
+  // Diagnostic raw-frame capture (SDK 0.6.2+). Fires for every inbound BLE
+  // notification BEFORE decode, including frames the decoder can't classify
+  // (cmd=0x10 family until Phase 1a lands). Pushed into the events ring as
+  // a 'raw_frame' event for byte-level analysis. The client.onRawFrame
+  // method itself is no-op on SDK <0.6.2; the optional-chain guards against
+  // pre-0.6.2 SDK builds in case a consumer pins an older version.
+  if (typeof client.onRawFrame === 'function') {
+    pushUnsub(
+      unsubs,
+      client.onRawFrame((data: Uint8Array) => {
+        debug.events.push({
+          capturedAt: Date.now(),
+          type: 'raw_frame',
+          payload: {
+            bytesHex: Buffer.from(data).toString('hex'),
+            bytesLength: data.length,
+          },
+        });
+      }),
+    );
+  }
+
   pushUnsub(
     unsubs,
     client.onFrame((frame: TelemetryFrame) => {
