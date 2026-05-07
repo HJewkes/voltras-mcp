@@ -54,6 +54,7 @@ const FakeTrainingMode = {
 
 vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: FakeTrainingMode,
+  TrainingModeNames: FakeTrainingMode,
   VoltraSDKError: FakeVoltraSDKError,
   VoltraClient: class {},
   VoltraManager: class {},
@@ -66,6 +67,7 @@ const { registerSetTools } = await import('../set-tools.js');
 const { registerDeviceTools } = await import('../device-tools.js');
 const { registerMockTools } = await import('../mock-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -230,7 +232,7 @@ function setup(): Harness {
   const live = new LiveState();
   const client = makeFakeClient();
   const slots = new Map();
-  slots.set('primary', { slotId: 'primary', client, live });
+  slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard: new ModeRevertGuard() });
   // ChannelPublisher fake: full interface (publish + forSlot) so the
   // production set-tools code can call `state.channels.forSlot(slotId).publish(...)`
   // without crashing. Slot-scoped publishes still resolve back to the

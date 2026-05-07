@@ -27,6 +27,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
+import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 
 import { type ServerState, getSlot } from '../state/server-state.js';
 import {
@@ -155,7 +156,43 @@ async function startSession(
   };
   await state.store.putSession(stored);
 
+  // Bug 22 — arm the per-slot mode-revert guard with the current device
+  // training mode. Subsequent `onSettingsUpdate` events inside the
+  // detection window that report a different trainingMode latch a safety
+  // abort that blocks the next `set.start` from engaging the motor. We
+  // arm against the device's *current* mode (the user-facing intent at
+  // session.start time) rather than a tool argument because session.start
+  // does not yet take a trainingMode parameter — the mode is set
+  // implicitly via prior `device.set_mode` calls.
+  const requestedMode = trainingModeFromSnapshot(slot.live.snapshotDevice().trainingMode);
+  if (requestedMode !== undefined) {
+    slot.modeRevertGuard.arm(requestedMode);
+  }
+
   return { sessionId };
+}
+
+/**
+ * Reverse-lookup a `TrainingMode` enum value from a `TrainingModeName`
+ * string (the form `DeviceSnapshot.trainingMode` carries). Returns
+ * `undefined` when the snapshot has no recognised mode (`'Unknown'` or
+ * the device hasn't pushed a settings_update yet) — the guard treats that
+ * as "nothing to watch for", which is the correct fail-open shape for
+ * sessions started with a mode the bridge doesn't recognise.
+ *
+ * Implementation note: there's no public reverse-map exported from the
+ * SDK, so we walk `TrainingModeNames` once. The set is fixed at 8
+ * entries; the lookup is O(1) amortised because we iterate once.
+ */
+function trainingModeFromSnapshot(name: string | undefined): TrainingMode | undefined {
+  if (name === undefined) return undefined;
+  for (const key of Object.keys(TrainingModeNames)) {
+    const value = Number(key) as TrainingMode;
+    if (TrainingModeNames[value] === name) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 async function endSession(state: ServerState, slotId: string | undefined): Promise<{ ok: true }> {

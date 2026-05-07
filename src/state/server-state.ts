@@ -47,6 +47,7 @@ import { ExerciseService } from '../exercises/exercise-service.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
 import { SetWatchdog } from './set-watchdog.js';
+import { ModeRevertGuard } from './mode-revert-guard.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 
 /**
@@ -61,6 +62,17 @@ export interface SlotState {
   slotId: string;
   client: VoltraClient;
   live: LiveState;
+  /**
+   * Per-slot mode-revert guard (Bug 22, HIGH safety). Watches
+   * `onSettingsUpdate` for trainingMode drift after the user requested a
+   * mode via `session.start` / `set.start`. A latched abort state blocks
+   * the next motor engagement and surfaces a `set_aborted_by_mode_revert`
+   * channel event so PT Claude can explain the safety abort.
+   *
+   * One guard per slot — bilateral lifts get independent detectors. See
+   * `mode-revert-guard.ts` for the state machine.
+   */
+  modeRevertGuard: ModeRevertGuard;
   /**
    * Tear-down hook returned by the per-slot event-bridge wirer. Set when the
    * bridge subscribes to this slot's `client`; calling it unsubscribes every
@@ -195,7 +207,12 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
     const setWatchdog = new SetWatchdog();
     const slots = new Map<string, SlotState>();
-    slots.set(PRIMARY_SLOT, { slotId: PRIMARY_SLOT, client, live });
+    slots.set(PRIMARY_SLOT, {
+      slotId: PRIMARY_SLOT,
+      client,
+      live,
+      modeRevertGuard: new ModeRevertGuard(),
+    });
     return {
       config,
       manager,

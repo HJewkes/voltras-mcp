@@ -24,6 +24,7 @@ import { VoltraClient } from '@voltras/node-sdk';
 
 import { LiveState } from './live-state.js';
 import { wireBridgeForSlot } from './event-bridge.js';
+import { ModeRevertGuard } from './mode-revert-guard.js';
 import { PRIMARY_SLOT, MAX_SLOTS, type ServerState, type SlotState } from './server-state.js';
 
 /**
@@ -53,7 +54,12 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
   if (countConnectedSlots(state) >= MAX_SLOTS) {
     throw new Error(`Maximum of ${MAX_SLOTS} slots supported in this release.`);
   }
-  const slot: SlotState = { slotId, client, live: new LiveState() };
+  const slot: SlotState = {
+    slotId,
+    client,
+    live: new LiveState(),
+    modeRevertGuard: new ModeRevertGuard(),
+  };
   state.slots.set(slotId, slot);
   slot.unwireBridge = wireBridgeForSlot(state, slot);
   return slot;
@@ -102,6 +108,9 @@ export function resetPrimarySlot(state: ServerState): void {
   slot.unwireBridge?.();
   slot.client = new VoltraClient();
   slot.live = new LiveState();
+  // Replace the guard so a stale latched abort from the prior connection
+  // can't block the first set.start of the new connection.
+  slot.modeRevertGuard = new ModeRevertGuard();
   slot.unwireBridge = wireBridgeForSlot(state, slot);
 }
 

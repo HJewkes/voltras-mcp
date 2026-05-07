@@ -31,9 +31,22 @@ vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: {
     Idle: 0,
     WeightTraining: 1,
-    Bench: 2,
-    Squat: 3,
-    Deadlift: 4,
+    ResistanceBand: 2,
+    Rowing: 3,
+    Damper: 4,
+    CustomCurves: 6,
+    Isokinetic: 7,
+    Isometric: 8,
+  },
+  TrainingModeNames: {
+    0: 'Idle',
+    1: 'WeightTraining',
+    2: 'ResistanceBand',
+    3: 'Rowing',
+    4: 'Damper',
+    6: 'CustomCurves',
+    7: 'Isokinetic',
+    8: 'Isometric',
   },
   VoltraClient: class {
     isConnected = false;
@@ -215,7 +228,17 @@ function fakeBootstrapResult(): unknown {
     snapshotSet: () => undefined,
   };
   const slots = new Map();
-  slots.set('primary', { slotId: 'primary', client, live });
+  // Minimal stub mode-revert guard — server.test only exercises the
+  // startup race; bridge-driven set.start mode-revert behavior is covered
+  // separately in event-bridge.test.ts and set-tools.test.ts.
+  const modeRevertGuard = {
+    arm: () => {},
+    onSettingsUpdate: () => {},
+    isAborted: () => false,
+    consumeAbort: () => null,
+    reset: () => {},
+  };
+  slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard });
   return {
     config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
     slots,

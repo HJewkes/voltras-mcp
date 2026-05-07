@@ -50,6 +50,12 @@
 //                                 firing is the race-condition guard).
 //                                 (Critic gap Q6.)
 //   onSettingsUpdate            → applySettings + notify voltra://device/current.
+//                                 Also feeds the per-slot ModeRevertGuard
+//                                 (Bug 22) so trainingMode drift inside the
+//                                 detection window can latch a safety abort
+//                                 visible to set.start, and synthesises a
+//                                 `settings_update` channel event whenever
+//                                 `damperLevel` transitions (Bug 27).
 //   onConnectionStateChange     → applySettings({ connected }) + notify
 //                                 voltra://device/current. On 'disconnected'
 //                                 also markDisconnected and notify both
@@ -94,9 +100,11 @@ import {
   buildConnectionChangedPayload,
   buildRepFinalizedPayload,
   buildSetTargetReachedPayload,
+  buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
   triggerDedupeKey,
   type ActiveSetAtDisconnect,
+  type SettingsUpdateAll,
 } from './channel-payloads.js';
 import type { ServerState, SlotState } from './server-state.js';
 import type { TriggerSpec } from '../schemas/set.js';
@@ -111,6 +119,11 @@ const SDK_PHASE_UNKNOWN = -1;
 // The settings-update payload is the SDK's protocol-layer `DeviceSettings`.
 // Re-declared structurally here to avoid pulling in the protocol module's
 // type path (which is not exported from the package's public entry).
+//
+// `damperLevel` was added in SDK 0.6.0's `VoltraDeviceSettings` and surfaces
+// through this same callback when the cmd=0x10 cascade carries paramID
+// 0x0351 (Bug 27 / B4 SDK PR #41 corrected the paramID from `5103` to
+// `0351` at the decoder layer).
 interface SdkSettingsUpdate {
   baseWeight?: number;
   weight?: number;
@@ -120,6 +133,7 @@ interface SdkSettingsUpdate {
   mode?: TrainingMode;
   trainingMode?: TrainingMode;
   battery?: number | null;
+  damperLevel?: number;
 }
 
 const DEVICE_URI = 'voltra://device/current';
@@ -187,6 +201,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   const slotChannels = channels.forSlot(slotId);
   const debug = getDebugBuffers();
   const unsubs: Array<() => void> = [];
+  // Latest known damperLevel; the bridge synthesizes a `settings_update`
+  // channel event only on transition (Bug 27). Initialised to `undefined`
+  // so the very first cmd=0x10 cascade carrying damperLevel emits a baseline
+  // event — without that, cold-start consumers would never see the initial
+  // damper value and would have to call `device.get_state` to discover it.
+  let lastDamperLevel: number | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -326,6 +346,24 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // and the `if` below is a silent no-op. Tests in
       // event-bridge.test.ts pin this — see the "explicit set.end
       // finalization" describe block.
+      //
+      // Bug 24 — Isometric auto-telemetry stream policy (D1):
+      // When the user sets Isometric mode without first calling
+      // `session.start`, the device starts a 500ms-cadence cmd=0x70
+      // (aa 81 2b) keep-alive burst (A4 confirms cadence). Without a
+      // gate, every burst frame would push a `set_boundary` debug event
+      // tagged `hadActiveSet: false` — orphan events that pollute the
+      // diagnostic surface and could confuse downstream consumers. The
+      // policy: when there is no active SESSION at all, treat the
+      // inProgress firehose as silent — drop without logging. We still
+      // log when a session is active but no set is, because that case
+      // surfaces the explicit set.end race-condition guard (see the
+      // "outside the grace window with NO active set is a silent drop"
+      // test in event-bridge.test.ts).
+      const activeSession = live.snapshotSession();
+      if (activeSession === undefined) {
+        return;
+      }
       const activeSet = live.snapshotSet();
       debug.events.push({
         capturedAt: Date.now(),
@@ -407,10 +445,39 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           weight: settings.weight ?? settings.baseWeight ?? null,
           mode: settings.mode ?? settings.trainingMode ?? null,
           battery: settings.battery ?? null,
+          damperLevel: settings.damperLevel ?? null,
         },
       });
       live.applySettings(settingsToSnapshot(settings));
       notify(server, DEVICE_URI);
+
+      // Bug 22 — feed the mode-revert guard. The guard ignores updates that
+      // don't carry a trainingMode field; this call is safe to invoke
+      // unconditionally regardless of which paramIDs the cascade actually
+      // surfaced. `mode` and `trainingMode` are aliases at the wire layer
+      // (different SDK versions used different field names); we collapse
+      // them here for the guard.
+      const incomingMode = settings.mode ?? settings.trainingMode;
+      slot.modeRevertGuard.onSettingsUpdate(incomingMode);
+
+      // Bug 27 — synthesize a `settings_update` channel event when
+      // damperLevel transitions. The cmd=0x10 cascade carrying paramID
+      // 0x0351 routes through this same callback (B4's SDK PR #41 corrects
+      // the paramID from `5103` to `0351` at the decoder layer); we
+      // observe the field on `settings.damperLevel` and only publish
+      // when the value actually changes. The `__all` block in the payload
+      // snapshots every monitored field at emission time so consumers
+      // don't have to merge against a prior settings_update.
+      if (settings.damperLevel !== undefined && settings.damperLevel !== lastDamperLevel) {
+        lastDamperLevel = settings.damperLevel;
+        const device = live.snapshotDevice();
+        const all: SettingsUpdateAll = { damperLevel: settings.damperLevel };
+        if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
+        if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
+        if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
+        const payload = buildSettingsUpdatePayload('damperLevel', settings.damperLevel, all);
+        slotChannels.publish(payload);
+      }
     }),
   );
 
