@@ -587,6 +587,19 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
+  // D4 — replay SDK-retained settings into LiveState synchronously after
+  // wiring all listeners. SDK 0.7.0 (Bug 17 fix) no longer resets
+  // `_settings` on `cleanup()`, so `client.settings` carries the last known
+  // state across reconnect. Without this replay, `voltra://device/current`
+  // shows a blank snapshot until the first `onSettingsUpdate` fires (which
+  // requires the device to push a settings cascade — not guaranteed on
+  // reconnect alone). The replay is idempotent: on a fresh connect
+  // `client.settings` is null and the branch is skipped.
+  const initialSettings = (client as unknown as { settings?: SdkSettingsUpdate | null }).settings;
+  if (initialSettings != null) {
+    live.applySettings(settingsToSnapshot(initialSettings));
+  }
+
   return () => {
     for (const u of unsubs) {
       u();
@@ -842,6 +855,9 @@ export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot
   }
   if (s.battery !== null && s.battery !== undefined) {
     out.batteryPercent = s.battery;
+  }
+  if (typeof s.damperLevel === 'number') {
+    out.damperLevel = s.damperLevel;
   }
   return out;
 }
