@@ -1,0 +1,11 @@
+# Pinned deps for the voltras-mcp voice listener sidecar.
+# Python >= 3.10 required (matches openwakeword's floor).
+#
+# openwakeword pulls in `onnxruntime` and `tflite-runtime` transitively; we
+# explicitly pin onnxruntime so the sidecar uses the ONNX inference path
+# (faster on Apple Silicon, no extra build step) and pin numpy for ABI
+# stability across CPython point releases.
+
+openwakeword==0.6.0
+onnxruntime==1.20.1
+numpy>=1.26,<3.0
