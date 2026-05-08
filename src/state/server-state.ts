@@ -49,6 +49,7 @@ import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import type { PushTimer } from '../tools/timer-tools.js';
+import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
 
 /**
  * Per-slot processing unit. A slot owns one BLE connection (`client`) and the
@@ -169,6 +170,15 @@ export interface ServerState {
    * rather than NPE'ing.
    */
   server?: McpServer;
+  /**
+   * Singleton holder for the voice listener — created at bootstrap with a
+   * null inner listener; `system.listen_start` allocates the real
+   * `VoiceListener` and parks it here so subsequent `listen_start` calls
+   * are idempotent and `listen_stop` can find the right instance to tear
+   * down. Off-by-default: the listener is null until the user explicitly
+   * arms it. See `tools/voice-tools.ts` for the start/stop wiring.
+   */
+  voice: VoiceListenerHolder;
 }
 
 /**
@@ -223,6 +233,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       timers,
       setStartDeviceSnapshots,
       setWatchdog,
+      voice: makeVoiceHolder(),
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
