@@ -16,6 +16,20 @@ should not need to invoke it manually outside of the smoke test below.
 
 ## Install
 
+The recommended path is the repo's automation:
+
+```bash
+cd voltras-mcp
+npm run voice:setup        # or: scripts/setup-voice.sh
+```
+
+That verifies host prereqs (sox + python3 ≥ 3.10), creates `.venv/`,
+installs `requirements.txt`, and runs the smoke test below. Pass
+`--clean` (or `npm run voice:clean && npm run voice:setup`) to wipe and
+rebuild the venv from scratch.
+
+Manual equivalent if you'd rather drive it yourself:
+
 ```bash
 cd voltras-mcp/voice-listener
 python3 -m venv .venv
@@ -36,9 +50,12 @@ export VOLTRAS_VOICE_PYTHON=$PWD/.venv/bin/python3
 
 For the MVP we ship the integration wired against openWakeWord's pre-trained
 **`hey_jarvis`** model (the closest 2-word built-in to the user's preferred
-"hey coach" phrase). The model is auto-downloaded by openWakeWord on first
-boot of the sidecar — no model file needs to live in `voltras-mcp/voice-models/`
-to get the listener running for the first time.
+"hey coach" phrase). `scripts/setup-voice.sh` downloads the full set of
+openWakeWord built-in ONNX models (~10 MB) into the venv's
+`site-packages/openwakeword/resources/models/` so the listener boots
+without crashing on the first real `system.listen_start` call —
+`Model()` with no `wakeword_models` argument loads every built-in
+registry entry and fails fast if any `.onnx` is missing.
 
 The custom-trained `hey_coach` model is a follow-up: see
 [`../voice-models/README.md`](../voice-models/README.md) for the openWakeWord

@@ -25,6 +25,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
+    "voice:setup": "scripts/setup-voice.sh",
+    "voice:clean": "scripts/clean-voice.sh",
     "prepare": "husky"
   },
   "dependencies": {

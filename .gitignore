@@ -32,3 +32,6 @@ npm-debug.log*
 
 # Cross-session working notes (kept on disk, not tracked)
 HANDOFF.md
+
+# Python venv for the voice-listener sidecar (created by scripts/setup-voice.sh)
+voice-listener/.venv/

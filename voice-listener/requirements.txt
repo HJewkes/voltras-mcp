@@ -2,10 +2,14 @@
 # Python >= 3.10 required (matches openwakeword's floor).
 #
 # openwakeword pulls in `onnxruntime` and `tflite-runtime` transitively; we
-# explicitly pin onnxruntime so the sidecar uses the ONNX inference path
-# (faster on Apple Silicon, no extra build step) and pin numpy for ABI
-# stability across CPython point releases.
+# explicitly include onnxruntime so the sidecar uses the ONNX inference path
+# (faster on Apple Silicon, no extra build step) and constrain numpy for ABI
+# stability.
+#
+# Pins are version *floors* with major-version caps, not exact equalities — a
+# strict `==` pin breaks when the host's Python is newer than the wheel's
+# build matrix (e.g. CPython 3.14 has no `onnxruntime==1.20.x` wheel).
 
-openwakeword==0.6.0
-onnxruntime==1.20.1
+openwakeword>=0.6.0,<0.7
+onnxruntime>=1.20,<2
 numpy>=1.26,<3.0
