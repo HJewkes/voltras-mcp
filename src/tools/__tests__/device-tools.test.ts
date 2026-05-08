@@ -949,6 +949,8 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       expect(payload.assistMode).toBe(2);
       expect(payload.chainsActive).toBe(1);
+      // chainTargetTenths is preserved for back-compat (decoder-bug field —
+      // see schema JSDoc); consumers should prefer chainSettingLbs.
       expect(payload.chainTargetTenths).toBe(250);
     });
 
@@ -960,6 +962,31 @@ describe('registerDeviceTools', () => {
       expect(payload).not.toHaveProperty('assistMode');
       expect(payload).not.toHaveProperty('chainsActive');
       expect(payload).not.toHaveProperty('chainTargetTenths');
+    });
+
+    it('surfaces chainSettingLbs from client.settings.chains (cmd=0x10 cascade source)', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
+      // SDK exposes the user's chains setting on `settings.chains` (post-cascade,
+      // post hardware cap). On-device 2026-05-07 this matched the user's last
+      // set_chains write capped at the current weight.
+      client.settings = { ...client.settings, chains: 50 };
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.chainSettingLbs).toBe(50);
+    });
+
+    it('omits chainSettingLbs when client.settings is null (never connected)', async () => {
+      const client = primaryClient(state);
+      // Force settings to a falsy value so the outer `if (settings)` skips
+      // the entire weight/mode/battery/damper/chains block.
+      (client as unknown as { settings: unknown }).settings = null;
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload).not.toHaveProperty('chainSettingLbs');
     });
   });
 

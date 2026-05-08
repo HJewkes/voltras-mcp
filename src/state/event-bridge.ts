@@ -163,6 +163,14 @@ interface SdkSettingsUpdate {
 interface SdkStateDump {
   chainsActive: number;
   assistMode: number;
+  /**
+   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope.
+   * On-device testing 2026-05-07 (Bug 23 retest) showed this tracks
+   * `weight × 10`, NOT chain force at the cable. The actual effective
+   * chain force lives at bytes [8-9] and is currently undecoded. Field
+   * is preserved for back-compat; consumers should prefer the user's
+   * chains setting via `chainSettingLbs` on LiveState (cmd=0x10 cascade).
+   */
   chainTargetTenths: number;
   raw: Uint8Array;
 }
@@ -994,6 +1002,7 @@ function synthStateDumpTransitions(
   if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
   if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
   if (knownDamperLevel !== undefined) all.damperLevel = knownDamperLevel;
+  if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
 
   publishIfTransition('assistMode', dump.assistMode, prev.lastAssistMode, all, channels);
   publishIfTransition('chainsActive', dump.chainsActive, prev.lastChainsActive, all, channels);
@@ -1032,6 +1041,9 @@ export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot
   }
   if (typeof s.damperLevel === 'number') {
     out.damperLevel = s.damperLevel;
+  }
+  if (typeof s.chains === 'number') {
+    out.chainSettingLbs = s.chains;
   }
   return out;
 }

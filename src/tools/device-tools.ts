@@ -702,6 +702,16 @@ export function registerDeviceTools(
         if (typeof settings.damperLevel === 'number') {
           out.damperLevel = settings.damperLevel;
         }
+        // The user's chains setting in lbs (= what `set_chains` wrote, after
+        // the firmware's silent chains≤weight cap) lives on the cmd=0x10
+        // cascade `chains` field, which the SDK exposes on `client.settings`.
+        // On-device testing 2026-05-07 confirmed this matches the user's
+        // last write; the bridge's `chainTargetTenths` (decoded from the
+        // cmd=0x07 envelope) is currently a known decoder bug and should NOT
+        // be used as the chains setting.
+        if (typeof (settings as { chains?: number }).chains === 'number') {
+          out.chainSettingLbs = (settings as { chains: number }).chains;
+        }
       }
       out.isRowingActive = slot.client.isRowingActive;
       // State-dump fields (assistMode, chainsActive, chainTargetTenths) are
@@ -709,6 +719,10 @@ export function registerDeviceTools(
       // are stored in LiveState by the event-bridge. Read from the snapshot
       // so the tool reflects the last-known state-dump without requiring a
       // fresh BLE read.
+      //
+      // NOTE: `chainTargetTenths` is preserved here for back-compat but is a
+      // known decoder bug (reads weight×10, not chain force) — see schema
+      // JSDoc. Consumers should prefer `chainSettingLbs` above.
       const liveDevice = slot.live.snapshotDevice();
       if (typeof liveDevice.assistMode === 'number') {
         out.assistMode = liveDevice.assistMode;

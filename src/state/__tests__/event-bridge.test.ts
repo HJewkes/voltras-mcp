@@ -2221,6 +2221,10 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     const snap = live.snapshotDevice();
     expect(snap.assistMode).toBe(2);
     expect(snap.chainsActive).toBe(1);
+    // chainTargetTenths is a known-buggy decoder field (reads weight×10,
+    // not chain force) — see live-state.ts JSDoc. Asserting the raw decode
+    // here only locks in pass-through; the actual chains setting in lbs is
+    // surfaced via `chainSettingLbs` from the cmd=0x10 cascade.
     expect(snap.chainTargetTenths).toBe(250);
   });
 
@@ -2329,5 +2333,30 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     expect(content.__all.assist_mode).toBe(2);
     expect(content.__all.chains_active).toBe(1);
     expect(content.__all.chain_target_tenths).toBe(300);
+  });
+
+  it('surfaces chainSettingLbs from cmd=0x10 cascade `chains` field', () => {
+    client.fire.settingsUpdate({ chains: 50 });
+    expect(live.snapshotDevice().chainSettingLbs).toBe(50);
+  });
+
+  it('includes chain_setting_lbs in the __all block of state-dump settings_update payloads', () => {
+    // First, prime the chains setting via the cmd=0x10 cascade path.
+    client.fire.settingsUpdate({ chains: 50 });
+    // Then a state-dump fires; its __all block should include the cached
+    // chainSettingLbs alongside the (decoder-bug) chain_target_tenths.
+    client.fire.stateDump(
+      makeStateDumpEvent({ assistMode: 0, chainsActive: 1, chainTargetTenths: 500 }),
+    );
+    const dumpCall = channels.publish.mock.calls.find((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'chainTargetTenths';
+    });
+    expect(dumpCall).toBeDefined();
+    const content = JSON.parse(dumpCall![0].content) as {
+      __all: { chain_setting_lbs: number | null; chain_target_tenths: number | null };
+    };
+    expect(content.__all.chain_setting_lbs).toBe(50);
+    expect(content.__all.chain_target_tenths).toBe(500);
   });
 });

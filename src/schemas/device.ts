@@ -243,6 +243,29 @@ export const DeviceGetStateOutput = z.object({
   assistMode: z.number().int().optional(),
   /** Chains-active flag (0 or 1) from the last state-dump. Absent until first state-dump. */
   chainsActive: z.number().int().min(0).max(1).optional(),
-  /** Chain-target weight in tenths of pounds from the last state-dump. */
+  /**
+   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
+   * tenths of pounds.
+   *
+   * **WARNING — decoder bug:** on-device testing 2026-05-07 (Bug 23
+   * retest) showed bytes [6-7] track `weight × 10`, NOT chain force at the
+   * cable (the actual effective force is at bytes [8-9]). Field is
+   * preserved for back-compat; consumers should treat it as unreliable
+   * until the cmd=0x07 layout-discriminator fix lands (Option C in
+   * `voltra-private/research/HANDOFF-2026-05-08-post-0.7.2-followups.md`).
+   *
+   * Prefer `chainSettingLbs` for the user's chains setting in lbs.
+   *
+   * @deprecated Decoder reads the wrong byte offset; use `chainSettingLbs`.
+   */
   chainTargetTenths: z.number().int().min(0).optional(),
+  /**
+   * User's chains setting in pounds, sourced from the cmd=0x10 cascade
+   * `chains` field on `onSettingsUpdate`. This is the value the firmware
+   * accepted after its silent chains≤weight cap (a `set_chains(60)` write
+   * against `weightLbs=50` surfaces here as 50). On-device testing
+   * 2026-05-07 confirmed this is reliable. Absent until the first cmd=0x10
+   * cascade carrying the `chains` field has fired.
+   */
+  chainSettingLbs: z.number().min(0).optional(),
 });
