@@ -310,8 +310,48 @@ export function registerDeviceTools(
       const slot = getSlot(state, slotId);
       const id = slot.client.connectedDeviceId;
       const wasConnected = slot.client.isConnected && id !== null;
+      // Capture the adapter reference BEFORE manager.disconnect runs.
+      // `manager.disconnect(id)` calls `client.dispose()` internally, which
+      // clears the adapter reference; capturing here lets us still force-close
+      // the adapter even if the manager path errors mid-teardown. Slot-routing
+      // bug fix — see
+      // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md` and
+      // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
+      const adapterRef = slot.client.getAdapter();
+      let managerDisconnectError: unknown = null;
       if (wasConnected) {
-        await state.manager.disconnect(id);
+        try {
+          await state.manager.disconnect(id);
+        } catch (e) {
+          // Swallow into the local var; we still want the defensive teardown
+          // below to run so slot bookkeeping reaches a clean terminal state.
+          // The error is rethrown after slot teardown so the tool still
+          // surfaces failure to the caller.
+          managerDisconnectError = e;
+        }
+      }
+      // Belt-and-suspenders: force-close the adapter even if `manager.disconnect`
+      // succeeded silently against a partial-disconnect path (W3C
+      // `device.gatt.disconnect()` is fire-and-forget; SimpleBLE handle map
+      // can leak). If the adapter is already torn down this is a no-op.
+      if (adapterRef !== null) {
+        try {
+          await adapterRef.disconnect();
+        } catch {
+          // Adapter teardown failures are non-fatal — the JS handles are
+          // already nulled by `cleanup()` paths and the writeChar is gone.
+        }
+      }
+      // Idempotent: dispose returns early if already disposed (e.g., by
+      // `manager.disconnect`'s internal call). This catches the case where
+      // the slot's client is held outside the manager.clients map (e.g.,
+      // primary's bootstrap stub), or where `manager.disconnect` short-
+      // circuited because the deviceId wasn't registered.
+      try {
+        slot.client.dispose();
+      } catch {
+        // Defensive — dispose is documented as idempotent and shouldn't
+        // throw, but we don't want a slot teardown to fail the tool.
       }
       // Slot teardown only runs when the slot was actually connected. A
       // disconnect against an idle primary slot stays a true no-op (the
@@ -327,6 +367,9 @@ export function registerDeviceTools(
         }
       } else {
         removeSlot(state, slotId);
+      }
+      if (managerDisconnectError !== null) {
+        throw managerDisconnectError;
       }
       return { ok: true };
     }),

@@ -85,6 +85,7 @@ interface FakeClient {
   connectedDeviceId: string | null;
   settings: Record<string, unknown>;
   getAdapter: Mock<() => FakeAdapter | null>;
+  dispose: Mock<() => void>;
 }
 
 function makeFakeClient(adapter: FakeAdapter | null = null): FakeClient {
@@ -101,6 +102,7 @@ function makeFakeClient(adapter: FakeAdapter | null = null): FakeClient {
       battery: null,
     },
     getAdapter: vi.fn(() => adapter),
+    dispose: vi.fn(),
   };
 }
 

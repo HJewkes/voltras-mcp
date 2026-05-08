@@ -84,6 +84,17 @@ export function removeSlot(state: ServerState, slotId: string): void {
     throw new Error(`Unknown slot: ${slotId}`);
   }
   slot.unwireBridge?.();
+  // Defensive dispose: even if the BLE-level disconnect path didn't reach
+  // this client (manager.disconnect skipped, adapter teardown errored), the
+  // disposed flag prevents subsequent stray writes from routing through a
+  // stale adapter handle. Dispose is idempotent — if a prior path already
+  // disposed, this is a no-op. Slot-routing bug fix — see
+  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  try {
+    slot.client.dispose();
+  } catch {
+    // Non-fatal — dispose is documented as idempotent.
+  }
   state.slots.delete(slotId);
 }
 
@@ -109,6 +120,16 @@ export function resetPrimarySlot(state: ServerState): void {
     throw new Error(`Primary slot is missing — bootstrap was never run.`);
   }
   slot.unwireBridge?.();
+  // Defensive dispose of the outgoing client before swapping in the fresh
+  // one. Same rationale as `removeSlot`: ensures no stale adapter/writeChar
+  // can route a stray write after the slot has been swapped. Idempotent.
+  // Slot-routing bug fix — see
+  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  try {
+    slot.client.dispose();
+  } catch {
+    // Non-fatal — dispose is documented as idempotent.
+  }
   slot.client = new VoltraClient();
   slot.live.markDisconnected(new Date().toISOString());
   slot.modeRevertGuard = new ModeRevertGuard();

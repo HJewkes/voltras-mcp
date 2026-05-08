@@ -95,6 +95,8 @@ interface FakeClient {
   connectedDeviceId: string | null;
   settings: FakeSettings;
   setAdapter: Mock<(adapter: unknown) => void>;
+  getAdapter: Mock<() => unknown>;
+  dispose: Mock<() => void>;
   connect: Mock<(device: unknown) => Promise<void>>;
   disconnect: Mock<() => Promise<void>>;
   setWeight: Mock<(lbs: number) => Promise<void>>;
@@ -152,6 +154,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       battery: null,
     },
     setAdapter: vi.fn(() => undefined),
+    getAdapter: vi.fn(() => null),
+    dispose: vi.fn(() => undefined),
     connect: vi.fn(async () => undefined),
     disconnect: vi.fn(async () => undefined),
     setWeight: vi.fn(async () => undefined),
@@ -467,6 +471,50 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       expect(payload).toEqual({ ok: true });
       expect(state.manager.disconnect).not.toHaveBeenCalled();
+    });
+
+    // Slot-routing fix (2026-05-08): defensive teardown — see
+    // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+    // After `device.disconnect`, the slot's client must be disposed so a
+    // stray write through this client throws ('Client has been disposed')
+    // rather than potentially routing through a leaked adapter handle.
+    it('disposes the slot client after disconnect (defensive teardown)', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(client.dispose).toHaveBeenCalled();
+    });
+
+    it('force-closes a captured adapter even after manager.disconnect succeeds', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      const fakeAdapter = { disconnect: vi.fn(async () => undefined) };
+      client.getAdapter.mockReturnValue(fakeAdapter);
+      const reg = placeholders.get('device.disconnect')!;
+      await invoke(reg, {});
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      // Belt-and-suspenders adapter close runs regardless of manager success.
+      expect(fakeAdapter.disconnect).toHaveBeenCalled();
+    });
+
+    it('still tears down the slot when manager.disconnect rejects', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      state.manager.disconnect.mockRejectedValueOnce(new Error('manager kaboom'));
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError, payload } = await invoke(reg, {});
+      // The manager error is rethrown so callers see the failure ...
+      expect(isError).toBe(true);
+      expect(String(payload.message)).toMatch(/manager kaboom/);
+      // ... but the defensive teardown still ran: client is disposed,
+      // adapter close was attempted, primary slot was reset to a fresh client.
+      expect(client.dispose).toHaveBeenCalled();
+      expect(state.slots.get('primary')!.client).not.toBe(client as unknown);
     });
   });
 
