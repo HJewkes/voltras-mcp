@@ -705,32 +705,36 @@ export function registerDeviceTools(
         // the firmware's silent chains≤weight cap) lives on the cmd=0x10
         // cascade `chains` field, which the SDK exposes on `client.settings`.
         // On-device testing 2026-05-07 confirmed this matches the user's
-        // last write; the bridge's `chainTargetTenths` (decoded from the
-        // cmd=0x07 envelope) is currently a known decoder bug and should NOT
-        // be used as the chains setting.
+        // last write. The cmd=0x07 envelope's `chainTargetForceTenths`
+        // (surfaced separately) is the effective on-cable force, NOT the
+        // user's chain setting — they only agree when `chains <= weight`.
         if (typeof (settings as { chains?: number }).chains === 'number') {
           out.chainSettingLbs = (settings as { chains: number }).chains;
         }
       }
       out.isRowingActive = slot.client.isRowingActive;
-      // State-dump fields (assistMode, chainsActive, chainTargetTenths) are
+      // State-dump fields (assistMode, trainingModeRaw,
+      // chainTargetForceTenths, weightLbsTenths, eccentricPercentTenths) are
       // not available from client.settings — they arrive via cmd=0x07 and
       // are stored in LiveState by the event-bridge. Read from the snapshot
       // so the tool reflects the last-known state-dump without requiring a
-      // fresh BLE read.
-      //
-      // NOTE: `chainTargetTenths` is preserved here for back-compat but is a
-      // known decoder bug (reads weight×10, not chain force) — see schema
-      // JSDoc. Consumers should prefer `chainSettingLbs` above.
+      // fresh BLE read. Field offsets validated on-device 2026-05-07; see
+      // voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md.
       const liveDevice = slot.live.snapshotDevice();
       if (typeof liveDevice.assistMode === 'number') {
         out.assistMode = liveDevice.assistMode;
       }
-      if (typeof liveDevice.chainsActive === 'number') {
-        out.chainsActive = liveDevice.chainsActive;
+      if (typeof liveDevice.trainingModeRaw === 'number') {
+        out.trainingModeRaw = liveDevice.trainingModeRaw;
       }
-      if (typeof liveDevice.chainTargetTenths === 'number') {
-        out.chainTargetTenths = liveDevice.chainTargetTenths;
+      if (typeof liveDevice.chainTargetForceTenths === 'number') {
+        out.chainTargetForceTenths = liveDevice.chainTargetForceTenths;
+      }
+      if (typeof liveDevice.weightLbsTenths === 'number') {
+        out.weightLbsTenths = liveDevice.weightLbsTenths;
+      }
+      if (typeof liveDevice.eccentricPercentTenths === 'number') {
+        out.eccentricPercentTenths = liveDevice.eccentricPercentTenths;
       }
       return out;
     }),

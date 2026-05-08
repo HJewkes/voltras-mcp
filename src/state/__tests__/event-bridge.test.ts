@@ -107,11 +107,15 @@ interface PreSummaryEvent {
   raw: Uint8Array;
 }
 
-// Mirrors the SDK 0.7.0 `StateDumpEvent` shape (cmd=0x07).
+// Mirrors the SDK 0.7.x `StateDumpEvent` shape (cmd=0x07). Field offsets
+// validated on-device 2026-05-07; see voltra-private/research/cmd-0x07-
+// variable-layout-fix-2026-05-08.md.
 interface StateDumpEvent {
-  chainsActive: number;
+  trainingMode: number;
   assistMode: number;
-  chainTargetTenths: number;
+  weightLbsTenths: number;
+  chainTargetForceTenths: number;
+  eccentricPercentTenths: number;
   raw: Uint8Array;
 }
 
@@ -206,10 +210,15 @@ const makePreSummaryEvent = (overrides: Partial<PreSummaryEvent> = {}): PreSumma
   ...overrides,
 });
 
+// Defaults to a stable WeightTraining frame so individual tests don't accidentally
+// trigger the bridge's transitional-frame suppression (trainingMode=0). Tests
+// covering the suppression path explicitly set `trainingMode: 0`.
 const makeStateDumpEvent = (overrides: Partial<StateDumpEvent> = {}): StateDumpEvent => ({
-  chainsActive: 0,
+  trainingMode: 1,
   assistMode: 0,
-  chainTargetTenths: 0,
+  weightLbsTenths: 0,
+  chainTargetForceTenths: 0,
+  eccentricPercentTenths: 0,
   raw: new Uint8Array(37),
   ...overrides,
 });
@@ -2263,30 +2272,33 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     expect(client.onStateDump).toHaveBeenCalledOnce();
   });
 
-  it('applies assistMode / chainsActive / chainTargetTenths to LiveState', () => {
+  it('applies assistMode + cmd=0x07 fields to LiveState on a stable frame', () => {
     client.fire.stateDump(
-      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 }),
+      makeStateDumpEvent({
+        trainingMode: 1,
+        assistMode: 2,
+        weightLbsTenths: 1000,
+        chainTargetForceTenths: 250,
+        eccentricPercentTenths: 50,
+      }),
     );
     const snap = live.snapshotDevice();
     expect(snap.assistMode).toBe(2);
-    expect(snap.chainsActive).toBe(1);
-    // chainTargetTenths is a known-buggy decoder field (reads weight×10,
-    // not chain force) — see live-state.ts JSDoc. Asserting the raw decode
-    // here only locks in pass-through; the actual chains setting in lbs is
-    // surfaced via `chainSettingLbs` from the cmd=0x10 cascade.
-    expect(snap.chainTargetTenths).toBe(250);
+    expect(snap.trainingModeRaw).toBe(1);
+    expect(snap.chainTargetForceTenths).toBe(250);
+    expect(snap.weightLbsTenths).toBe(1000);
+    expect(snap.eccentricPercentTenths).toBe(50);
   });
 
-  it('notifies voltra://device/current on each state-dump event', () => {
+  it('notifies voltra://device/current on each stable state-dump event', () => {
     client.fire.stateDump(makeStateDumpEvent());
     expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
       uri: 'voltra://device/current',
     });
   });
 
-  it('synthesizes a settings_update channel event for assistMode on first dump', () => {
+  it('synthesizes a settings_update channel event for assistMode on first stable dump', () => {
     client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
-    // The first dump transitions all three fields from undefined; find the assistMode event.
     const assistCall = channels.publish.mock.calls.find((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
       return content.changed.field === 'assistMode';
@@ -2295,30 +2307,43 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     const content = JSON.parse(assistCall![0].content) as {
       changed: { field: string; value: number };
     };
-    expect(content.changed.field).toBe('assistMode');
     expect(content.changed.value).toBe(2);
   });
 
-  it('synthesizes three channel events on first dump (all fields transition from undefined)', () => {
+  it('synthesizes channel events for every transitioned field on the first stable dump', () => {
     client.fire.stateDump(
-      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 100 }),
+      makeStateDumpEvent({
+        trainingMode: 1,
+        assistMode: 2,
+        weightLbsTenths: 1000,
+        chainTargetForceTenths: 100,
+        eccentricPercentTenths: 50,
+      }),
     );
-    // Each of the three fields transitions from undefined → value on first dump.
-    expect(channels.publish).toHaveBeenCalledTimes(3);
+    // All five tracked fields transition from undefined → value on the first
+    // stable dump and each emits one channel event.
     const fields = channels.publish.mock.calls.map((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
       return content.changed.field;
     });
     expect(fields).toContain('assistMode');
-    expect(fields).toContain('chainsActive');
-    expect(fields).toContain('chainTargetTenths');
+    expect(fields).toContain('trainingModeRaw');
+    expect(fields).toContain('chainTargetForceTenths');
+    expect(fields).toContain('weightLbsTenths');
+    expect(fields).toContain('eccentricPercentTenths');
   });
 
-  it('de-duplicates: same value on second dump does not re-emit a channel event', () => {
-    const dump = makeStateDumpEvent({ assistMode: 0, chainsActive: 0, chainTargetTenths: 0 });
+  it('de-duplicates: same payload on second dump does not re-emit a channel event', () => {
+    const dump = makeStateDumpEvent({
+      trainingMode: 1,
+      assistMode: 0,
+      weightLbsTenths: 0,
+      chainTargetForceTenths: 0,
+      eccentricPercentTenths: 0,
+    });
     client.fire.stateDump(dump);
     const countAfterFirst = channels.publish.mock.calls.length;
-    client.fire.stateDump(dump); // same payload
+    client.fire.stateDump(dump);
     expect(channels.publish).toHaveBeenCalledTimes(countAfterFirst);
   });
 
@@ -2326,11 +2351,14 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     client.fire.stateDump(makeStateDumpEvent({ assistMode: 0 }));
     channels.publish.mockClear();
     client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
-    expect(channels.publish).toHaveBeenCalledOnce();
-    const content = JSON.parse(channels.publish.mock.calls[0][0].content) as {
-      changed: { field: string; value: number };
+    const assistCalls = channels.publish.mock.calls.filter((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    expect(assistCalls).toHaveLength(1);
+    const content = JSON.parse(assistCalls[0][0].content) as {
+      changed: { value: number };
     };
-    expect(content.changed.field).toBe('assistMode');
     expect(content.changed.value).toBe(2);
   });
 
@@ -2338,7 +2366,6 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     client.fire.stateDump(makeStateDumpEvent({ assistMode: 2 }));
     channels.publish.mockClear();
     client.fire.stateDump(makeStateDumpEvent({ assistMode: 8 }));
-    // assistMode 2 → 8 is a genuine transition (device went idle).
     const assistCall = channels.publish.mock.calls.find((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
       return content.changed.field === 'assistMode';
@@ -2362,7 +2389,13 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
   it('includes all known fields in the __all block of the settings_update payload', () => {
     live.applySettings({ weightLbs: 100, batteryPercent: 75 });
     client.fire.stateDump(
-      makeStateDumpEvent({ assistMode: 2, chainsActive: 1, chainTargetTenths: 300 }),
+      makeStateDumpEvent({
+        trainingMode: 1,
+        assistMode: 2,
+        weightLbsTenths: 1000,
+        chainTargetForceTenths: 300,
+        eccentricPercentTenths: 50,
+      }),
     );
     const assistCall = channels.publish.mock.calls.find((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
@@ -2373,15 +2406,19 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
         weight_lbs: number | null;
         battery_percent: number | null;
         assist_mode: number | null;
-        chains_active: number | null;
-        chain_target_tenths: number | null;
+        training_mode_raw: number | null;
+        chain_target_force_tenths: number | null;
+        weight_lbs_tenths: number | null;
+        eccentric_percent_tenths: number | null;
       };
     };
     expect(content.__all.weight_lbs).toBe(100);
     expect(content.__all.battery_percent).toBe(75);
     expect(content.__all.assist_mode).toBe(2);
-    expect(content.__all.chains_active).toBe(1);
-    expect(content.__all.chain_target_tenths).toBe(300);
+    expect(content.__all.training_mode_raw).toBe(1);
+    expect(content.__all.chain_target_force_tenths).toBe(300);
+    expect(content.__all.weight_lbs_tenths).toBe(1000);
+    expect(content.__all.eccentric_percent_tenths).toBe(50);
   });
 
   it('surfaces chainSettingLbs from cmd=0x10 cascade `chains` field', () => {
@@ -2390,22 +2427,69 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
   });
 
   it('includes chain_setting_lbs in the __all block of state-dump settings_update payloads', () => {
-    // First, prime the chains setting via the cmd=0x10 cascade path.
     client.fire.settingsUpdate({ chains: 50 });
-    // Then a state-dump fires; its __all block should include the cached
-    // chainSettingLbs alongside the (decoder-bug) chain_target_tenths.
     client.fire.stateDump(
-      makeStateDumpEvent({ assistMode: 0, chainsActive: 1, chainTargetTenths: 500 }),
+      makeStateDumpEvent({
+        trainingMode: 1,
+        assistMode: 0,
+        chainTargetForceTenths: 500,
+        weightLbsTenths: 500,
+      }),
     );
     const dumpCall = channels.publish.mock.calls.find((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
-      return content.changed.field === 'chainTargetTenths';
+      return content.changed.field === 'chainTargetForceTenths';
     });
     expect(dumpCall).toBeDefined();
     const content = JSON.parse(dumpCall![0].content) as {
-      __all: { chain_setting_lbs: number | null; chain_target_tenths: number | null };
+      __all: { chain_setting_lbs: number | null; chain_target_force_tenths: number | null };
     };
     expect(content.__all.chain_setting_lbs).toBe(50);
-    expect(content.__all.chain_target_tenths).toBe(500);
+    expect(content.__all.chain_target_force_tenths).toBe(500);
+  });
+
+  // ── Transitional-frame suppression ──────────────────────────────────────
+  // During mode-switch bursts the device emits ~4 frames in 130ms; two carry
+  // the new mode value, two carry transitional `trainingMode=0` (Idle) with
+  // assistMode flicker. The bridge drops those transitional frames entirely
+  // so consumers never see the `assistMode 2↔0↔2` oscillation.
+
+  it('drops transitional frames (trainingMode=0): no LiveState mutation, no channel event, no notify', () => {
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        trainingMode: 0,
+        assistMode: 0,
+        weightLbsTenths: 0,
+        chainTargetForceTenths: 0,
+        eccentricPercentTenths: 0,
+      }),
+    );
+    expect(live.snapshotDevice().assistMode).toBeUndefined();
+    expect(live.snapshotDevice().trainingModeRaw).toBeUndefined();
+    expect(channels.publish).not.toHaveBeenCalled();
+    expect(server.server.sendResourceUpdated).not.toHaveBeenCalledWith({
+      uri: 'voltra://device/current',
+    });
+  });
+
+  it('emits exactly one assistMode transition across a mode-switch burst (WT → transitional → WT)', () => {
+    // Real device burst: stable WT (assist 2) → transitional (mode 0, assist 0)
+    // → transitional (mode 0, assist 0) → stable WT (assist 2). Without
+    // suppression consumers see assist 2 → 0 → 2 (three transitions).
+    client.fire.stateDump(makeStateDumpEvent({ trainingMode: 1, assistMode: 2 }));
+    channels.publish.mockClear();
+    // Transitional burst frames (suppressed).
+    client.fire.stateDump(makeStateDumpEvent({ trainingMode: 0, assistMode: 0 }));
+    client.fire.stateDump(makeStateDumpEvent({ trainingMode: 0, assistMode: 0 }));
+    // Stable frame returns with the same assist value as before the burst.
+    client.fire.stateDump(makeStateDumpEvent({ trainingMode: 1, assistMode: 2 }));
+    const assistCalls = channels.publish.mock.calls.filter((c) => {
+      const content = JSON.parse(c[0].content) as { changed: { field: string } };
+      return content.changed.field === 'assistMode';
+    });
+    // Without suppression this would be 3 (transition to 0, back to 2, then
+    // 2→2 dedupe = at least 2). With suppression the assist value never
+    // changes from the consumer's perspective.
+    expect(assistCalls).toHaveLength(0);
   });
 });

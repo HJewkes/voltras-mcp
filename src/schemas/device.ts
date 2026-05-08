@@ -241,24 +241,32 @@ export const DeviceGetStateOutput = z.object({
    * 8 = device idle sentinel. Absent until the first state-dump has fired.
    */
   assistMode: z.number().int().optional(),
-  /** Chains-active count (0..7) from the last state-dump. Absent until first state-dump. */
-  chainsActive: z.number().int().min(0).max(7).optional(),
   /**
-   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
-   * tenths of pounds.
-   *
-   * **WARNING — decoder bug:** on-device testing 2026-05-07 (Bug 23
-   * retest) showed bytes [6-7] track `weight × 10`, NOT chain force at the
-   * cable (the actual effective force is at bytes [8-9]). Field is
-   * preserved for back-compat; consumers should treat it as unreliable
-   * until the cmd=0x07 layout-discriminator fix lands (Option C in
-   * `voltra-private/research/HANDOFF-2026-05-08-post-0.7.2-followups.md`).
-   *
-   * Prefer `chainSettingLbs` for the user's chains setting in lbs.
-   *
-   * @deprecated Decoder reads the wrong byte offset; use `chainSettingLbs`.
+   * Active training mode raw byte from the last cmd=0x07 state-dump
+   * (1 = WeightTraining, 2 = ResistanceBand). The bridge drops transitional
+   * frames where the byte is 0, so this field never appears as 0 in the
+   * tool output. Distinct from `trainingMode` above (the string form sourced
+   * from the cmd=0x10 cascade). Absent until the first stable state-dump
+   * has fired.
    */
-  chainTargetTenths: z.number().int().min(0).optional(),
+  trainingModeRaw: z.number().int().min(0).optional(),
+  /**
+   * Effective chain target force at the cable in tenths of pounds, decoded
+   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
+   * `min(chains, weight) × 10` — the device caps chains at weight.
+   * For the user's chains setting in lbs prefer `chainSettingLbs`.
+   */
+  chainTargetForceTenths: z.number().int().min(0).optional(),
+  /**
+   * Active weight setting in tenths of pounds, from cmd=0x07 bytes [6-7]
+   * (mirrors `baseWeight × 10`). Zero in non-WeightTraining modes.
+   */
+  weightLbsTenths: z.number().int().min(0).optional(),
+  /**
+   * Eccentric overload setting in tenths of percent, from cmd=0x07
+   * bytes [10-11] (mirrors `eccentric × 10`).
+   */
+  eccentricPercentTenths: z.number().int().min(0).optional(),
   /**
    * User's chains setting in pounds, sourced from the cmd=0x10 cascade
    * `chains` field on `onSettingsUpdate`. This is the value the firmware

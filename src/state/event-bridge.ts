@@ -59,7 +59,14 @@
 //   onStateDump                 → applyStateDump + notify voltra://device/current.
 //                                 Synthesises a `settings_update` channel
 //                                 event for each field that transitions
-//                                 (assistMode, chainsActive, chainTargetTenths).
+//                                 (assistMode, trainingModeRaw,
+//                                 chainTargetForceTenths, weightLbsTenths,
+//                                 eccentricPercentTenths). Frames where
+//                                 `trainingMode === Idle (0)` are dropped
+//                                 entirely — these are the transitional
+//                                 mid-mode-switch frames that produce
+//                                 `assistMode 2↔0↔2` burst noise without
+//                                 carrying any stable post-switch state.
 //                                 assistMode=8 is the device's idle sentinel
 //                                 (no active fitness mode) — surfaced as-is in
 //                                 channel events and `device.get_state` so
@@ -104,8 +111,7 @@ import type {
   SummaryEvent,
   TelemetryFrame,
 } from '@voltras/node-sdk';
-import { TrainingModeNames } from '@voltras/node-sdk';
-import type { TrainingMode } from '@voltras/node-sdk';
+import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
@@ -153,24 +159,24 @@ interface SdkSettingsUpdate {
   damperLevel?: number;
 }
 
-// Structural mirror of SDK 0.7.0's `StateDumpEvent` (from the internal
+// Structural mirror of SDK 0.7.x's `StateDumpEvent` (from the internal
 // `src/voltra/protocol/types.ts`). Not imported from the public entry
 // because `StateDumpEvent` is not re-exported from `@voltras/node-sdk`'s
 // root `index.ts` — the bridge only consumes it via the `onStateDump`
 // callback, so the structural alias is sufficient and keeps the bridge
 // decoupled from the SDK's private module paths.
+//
+// Field offsets validated on-device in session E (2026-05-07); see
+// `voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md`.
+// `trainingMode` here is a raw byte (0 = transitional / mid-mode-switch,
+// 1 = WeightTraining, 2 = ResistanceBand); the bridge uses the SDK's
+// numeric `TrainingMode` enum for typed comparisons.
 interface SdkStateDump {
-  chainsActive: number;
+  trainingMode: number;
   assistMode: number;
-  /**
-   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope.
-   * On-device testing 2026-05-07 (Bug 23 retest) showed this tracks
-   * `weight × 10`, NOT chain force at the cable. The actual effective
-   * chain force lives at bytes [8-9] and is currently undecoded. Field
-   * is preserved for back-compat; consumers should prefer the user's
-   * chains setting via `chainSettingLbs` on LiveState (cmd=0x10 cascade).
-   */
-  chainTargetTenths: number;
+  weightLbsTenths: number;
+  chainTargetForceTenths: number;
+  eccentricPercentTenths: number;
   raw: Uint8Array;
 }
 
@@ -249,8 +255,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
   let lastAssistMode: number | undefined = undefined;
-  let lastChainsActive: number | undefined = undefined;
-  let lastChainTargetTenths: number | undefined = undefined;
+  let lastTrainingModeRaw: number | undefined = undefined;
+  let lastChainTargetForceTenths: number | undefined = undefined;
+  let lastWeightLbsTenths: number | undefined = undefined;
+  let lastEccentricPercentTenths: number | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -637,10 +645,18 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
-  // cmd=0x07 state-dump — exposes assist mode, chains-active flag, and chain
-  // target weight. SDK 0.7.0+ routes this through `onStateDump`.
-  // `onStateDump` is absent on older builds; the optional-chain guard keeps
-  // backward compatibility with any pre-0.7.0 test fixtures.
+  // cmd=0x07 state-dump — exposes assist mode, active training mode, weight,
+  // effective chain target force, and eccentric overload. SDK 0.7.0+ routes
+  // this through `onStateDump`. `onStateDump` is absent on older builds; the
+  // optional-chain guard keeps backward compatibility with any pre-0.7.0
+  // test fixtures.
+  //
+  // Mode-switch bursts emit ~4 cmd=0x07 frames in ~130ms; two carry the new
+  // mode value, two carry transitional `trainingMode=0` (Idle) frames with
+  // assistMode flicker. Suppress the transitional frames entirely (no
+  // LiveState mutation, no channel events, no resource notify) so consumers
+  // never see the `assistMode 2↔0↔2` oscillation. Investigation:
+  // voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md.
   if (typeof client.onStateDump === 'function') {
     pushUnsub(
       unsubs,
@@ -650,27 +666,49 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           type: 'state_dump',
           payload: {
             assistMode: dump.assistMode,
-            chainsActive: dump.chainsActive,
-            chainTargetTenths: dump.chainTargetTenths,
+            trainingMode: dump.trainingMode,
+            weightLbsTenths: dump.weightLbsTenths,
+            chainTargetForceTenths: dump.chainTargetForceTenths,
+            eccentricPercentTenths: dump.eccentricPercentTenths,
           },
         });
+
+        // Drop transitional / mid-mode-switch burst frames before any
+        // observable side effect. The next ~130ms will carry the stable
+        // post-switch frame; suppressing here keeps `device.get_state`
+        // and the `voltra://device/current` resource showing the last
+        // stable state instead of momentarily flipping to zeroes.
+        if (dump.trainingMode === TrainingMode.Idle) {
+          return;
+        }
+
         live.applyStateDump({
           assistMode: dump.assistMode,
-          chainsActive: dump.chainsActive,
-          chainTargetTenths: dump.chainTargetTenths,
+          trainingModeRaw: dump.trainingMode,
+          weightLbsTenths: dump.weightLbsTenths,
+          chainTargetForceTenths: dump.chainTargetForceTenths,
+          eccentricPercentTenths: dump.eccentricPercentTenths,
         });
         notify(server, DEVICE_URI);
 
         synthStateDumpTransitions(
           dump,
-          { lastAssistMode, lastChainsActive, lastChainTargetTenths },
+          {
+            lastAssistMode,
+            lastTrainingModeRaw,
+            lastChainTargetForceTenths,
+            lastWeightLbsTenths,
+            lastEccentricPercentTenths,
+          },
           lastDamperLevel,
           live,
           slotChannels,
         );
         lastAssistMode = dump.assistMode;
-        lastChainsActive = dump.chainsActive;
-        lastChainTargetTenths = dump.chainTargetTenths;
+        lastTrainingModeRaw = dump.trainingMode;
+        lastChainTargetForceTenths = dump.chainTargetForceTenths;
+        lastWeightLbsTenths = dump.weightLbsTenths;
+        lastEccentricPercentTenths = dump.eccentricPercentTenths;
       }),
     );
   }
@@ -979,8 +1017,10 @@ function synthStateDumpTransitions(
   dump: SdkStateDump,
   prev: {
     lastAssistMode: number | undefined;
-    lastChainsActive: number | undefined;
-    lastChainTargetTenths: number | undefined;
+    lastTrainingModeRaw: number | undefined;
+    lastChainTargetForceTenths: number | undefined;
+    lastWeightLbsTenths: number | undefined;
+    lastEccentricPercentTenths: number | undefined;
   },
   knownDamperLevel: number | undefined,
   live: LiveState,
@@ -989,8 +1029,10 @@ function synthStateDumpTransitions(
   const device = live.snapshotDevice();
   const all: SettingsUpdateAll = {
     assistMode: dump.assistMode,
-    chainsActive: dump.chainsActive,
-    chainTargetTenths: dump.chainTargetTenths,
+    trainingModeRaw: dump.trainingMode,
+    chainTargetForceTenths: dump.chainTargetForceTenths,
+    weightLbsTenths: dump.weightLbsTenths,
+    eccentricPercentTenths: dump.eccentricPercentTenths,
   };
   if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
   if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
@@ -999,11 +1041,31 @@ function synthStateDumpTransitions(
   if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
 
   publishIfTransition('assistMode', dump.assistMode, prev.lastAssistMode, all, channels);
-  publishIfTransition('chainsActive', dump.chainsActive, prev.lastChainsActive, all, channels);
   publishIfTransition(
-    'chainTargetTenths',
-    dump.chainTargetTenths,
-    prev.lastChainTargetTenths,
+    'trainingModeRaw',
+    dump.trainingMode,
+    prev.lastTrainingModeRaw,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'chainTargetForceTenths',
+    dump.chainTargetForceTenths,
+    prev.lastChainTargetForceTenths,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'weightLbsTenths',
+    dump.weightLbsTenths,
+    prev.lastWeightLbsTenths,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'eccentricPercentTenths',
+    dump.eccentricPercentTenths,
+    prev.lastEccentricPercentTenths,
     all,
     channels,
   );

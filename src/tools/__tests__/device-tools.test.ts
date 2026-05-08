@@ -263,8 +263,10 @@ interface FakeLive {
   snapshotDevice: () => {
     connected: boolean;
     assistMode?: number;
-    chainsActive?: number;
-    chainTargetTenths?: number;
+    trainingModeRaw?: number;
+    chainTargetForceTenths?: number;
+    weightLbsTenths?: number;
+    eccentricPercentTenths?: number;
   };
   markDisconnected: (at: string) => void;
 }
@@ -934,11 +936,16 @@ describe('registerDeviceTools', () => {
       expect(payload.isRowingActive).toBe(true);
     });
 
-    it('surfaces assistMode / chainsActive / chainTargetTenths from live.snapshotDevice (state-dump fields)', async () => {
+    it('surfaces cmd=0x07 state-dump fields from live.snapshotDevice', async () => {
       // Wire a fake live that returns state-dump fields.
       const slot = state.slots.get('primary')!;
-      slot.live = makeFakeLive({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 });
-      // Re-register tools so the new slot shape is captured by the closure.
+      slot.live = makeFakeLive({
+        assistMode: 2,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 250,
+        weightLbsTenths: 1000,
+        eccentricPercentTenths: 50,
+      });
       const localServer = makeFakeServer();
       const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
       registerDeviceTools(
@@ -950,10 +957,10 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.assistMode).toBe(2);
-      expect(payload.chainsActive).toBe(1);
-      // chainTargetTenths is preserved for back-compat (decoder-bug field —
-      // see schema JSDoc); consumers should prefer chainSettingLbs.
-      expect(payload.chainTargetTenths).toBe(250);
+      expect(payload.trainingModeRaw).toBe(1);
+      expect(payload.chainTargetForceTenths).toBe(250);
+      expect(payload.weightLbsTenths).toBe(1000);
+      expect(payload.eccentricPercentTenths).toBe(50);
     });
 
     it('omits state-dump fields when live.snapshotDevice returns them as undefined', async () => {
@@ -962,8 +969,10 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       // Default makeFakeLive returns no state-dump fields.
       expect(payload).not.toHaveProperty('assistMode');
-      expect(payload).not.toHaveProperty('chainsActive');
-      expect(payload).not.toHaveProperty('chainTargetTenths');
+      expect(payload).not.toHaveProperty('trainingModeRaw');
+      expect(payload).not.toHaveProperty('chainTargetForceTenths');
+      expect(payload).not.toHaveProperty('weightLbsTenths');
+      expect(payload).not.toHaveProperty('eccentricPercentTenths');
     });
 
     it('surfaces chainSettingLbs from client.settings.chains (cmd=0x10 cascade source)', async () => {

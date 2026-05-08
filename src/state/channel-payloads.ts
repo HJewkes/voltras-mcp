@@ -807,17 +807,24 @@ export interface SettingsUpdateAll {
   batteryPercent?: number;
   damperLevel?: number;
   assistMode?: number;
-  chainsActive?: number;
   /**
-   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
-   * tenths of pounds. **WARNING:** on-device testing 2026-05-07 showed
-   * this tracks `weight × 10`, NOT chain force at the cable — the decoder
-   * is reading the wrong byte offset. Field preserved for back-compat;
-   * prefer `chainSettingLbs` for the user's chains setting in lbs.
-   * @deprecated Decoder-bug field; will be repurposed once the cmd=0x07
-   *   layout-discriminator fix lands.
+   * Active training-mode raw byte from the last cmd=0x07 state-dump
+   * (1 = WeightTraining, 2 = ResistanceBand). The bridge drops transitional
+   * frames where the byte is 0, so this field never appears as 0 in a
+   * published payload.
    */
-  chainTargetTenths?: number;
+  trainingModeRaw?: number;
+  /**
+   * Effective chain target force at the cable in tenths of pounds, decoded
+   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
+   * `min(chains, weight) × 10` (the device caps chains at weight). For the
+   * user's chains setting in lbs prefer `chainSettingLbs`.
+   */
+  chainTargetForceTenths?: number;
+  /** Active weight in tenths of pounds from cmd=0x07 (mirrors `baseWeight × 10`). */
+  weightLbsTenths?: number;
+  /** Eccentric overload in tenths of percent from cmd=0x07. */
+  eccentricPercentTenths?: number;
   /**
    * User's chains setting in pounds (= what `set_chains` wrote, after the
    * firmware's silent chains≤weight cap), sourced from the cmd=0x10
@@ -830,8 +837,10 @@ export interface SettingsUpdateAll {
 export type SettingsUpdateField =
   | 'damperLevel'
   | 'assistMode'
-  | 'chainsActive'
-  | 'chainTargetTenths';
+  | 'trainingModeRaw'
+  | 'chainTargetForceTenths'
+  | 'weightLbsTenths'
+  | 'eccentricPercentTenths';
 
 export function buildSettingsUpdatePayload(
   changedField: SettingsUpdateField,
@@ -850,8 +859,8 @@ export function buildSettingsUpdatePayload(
   if (all.assistMode !== undefined) {
     meta.assist_mode = String(all.assistMode);
   }
-  if (all.chainsActive !== undefined) {
-    meta.chains_active = String(all.chainsActive);
+  if (all.trainingModeRaw !== undefined) {
+    meta.training_mode_raw = String(all.trainingModeRaw);
   }
   const summary = `${changedField} changed to ${changedValue}.`;
   const content = JSON.stringify({
@@ -863,8 +872,10 @@ export function buildSettingsUpdatePayload(
       battery_percent: all.batteryPercent ?? null,
       damper_level: all.damperLevel ?? null,
       assist_mode: all.assistMode ?? null,
-      chains_active: all.chainsActive ?? null,
-      chain_target_tenths: all.chainTargetTenths ?? null,
+      training_mode_raw: all.trainingModeRaw ?? null,
+      chain_target_force_tenths: all.chainTargetForceTenths ?? null,
+      weight_lbs_tenths: all.weightLbsTenths ?? null,
+      eccentric_percent_tenths: all.eccentricPercentTenths ?? null,
       chain_setting_lbs: all.chainSettingLbs ?? null,
     },
   });
