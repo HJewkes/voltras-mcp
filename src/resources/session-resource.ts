@@ -1,50 +1,82 @@
-// `voltra://session/active` — active session metadata, served from
-// `LiveState`. Returns `{ active: false }` when no session is active
-// (EC-10) — not `null`, not `{}`. The literal `{ active: false }` shape is
-// part of the contract: clients distinguish "no session" from "session with
-// missing fields" by the presence of `active: false`.
+// `voltra://session/{slot}/active` — active session metadata for a slot,
+// served from that slot's `LiveState`. The legacy URI
+// `voltra://session/active` is preserved as a primary-slot alias.
 //
-// Polling-first per R13. The event-bridge emits
-// `sendResourceUpdated({ uri: 'voltra://session/active' })` on session
-// mutations; this handler just serves the latest snapshot on each read.
+// Returns `{ active: false }` when no session is active (EC-10) — not
+// `null`, not `{}`. The literal `{ active: false }` shape is part of the
+// contract; clients distinguish "no session" from "session with missing
+// fields" by the presence of `active: false`.
 //
-// TODO(Wave 4): wire `registerSessionResource(server, state)` from
-// `runServer` after `bootstrapState` resolves.
+// Polling-first per R13.
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  ResourceTemplate,
+  type McpServer,
+  type ReadResourceTemplateCallback,
+} from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ListResourcesResult } from '@modelcontextprotocol/sdk/types.js';
 
 import type { LiveState } from '../state/live-state.js';
 
-const URI = 'voltra://session/active';
+const LEGACY_URI = 'voltra://session/active';
+const TEMPLATE_URI = 'voltra://session/{slot}/active';
 
 /** Minimal slice of `ServerState` required by this resource. */
-interface SessionResourceState {
-  live: LiveState;
+export interface SessionResourceState {
+  liveForSlot: (slotId: string) => LiveState | undefined;
+  slotIds: () => string[];
+}
+
+function sessionUriForSlot(slotId: string): string {
+  return `voltra://session/${slotId}/active`;
 }
 
 /**
- * Register the `voltra://session/active` resource on `server`. The handler
- * captures `state.live` by reference; subsequent `live` mutations are visible
- * to every read.
+ * Register the templated per-slot session resource and the legacy alias.
  */
 export function registerSessionResource(server: McpServer, state: SessionResourceState): void {
+  const readBody = (slotId: string): string => {
+    const live = state.liveForSlot(slotId);
+    return JSON.stringify(live?.snapshotSession() ?? { active: false });
+  };
+
+  const templateRead: ReadResourceTemplateCallback = (uri, variables) => ({
+    contents: [
+      { uri: uri.toString(), mimeType: 'application/json', text: readBody(String(variables.slot)) },
+    ],
+  });
+
   server.registerResource(
     'session-active',
-    URI,
+    new ResourceTemplate(TEMPLATE_URI, {
+      list: (): ListResourcesResult => ({
+        resources: state.slotIds().map((slotId) => ({
+          uri: sessionUriForSlot(slotId),
+          name: `session-active-${slotId}`,
+          title: `Active session (${slotId})`,
+          mimeType: 'application/json',
+        })),
+      }),
+    }),
     {
-      title: 'Active workout session',
+      title: 'Active workout session (per slot)',
       description:
-        'Polling snapshot of the active session metadata (sessionId, startedAt, exercise, accumulated setIds). Returns { active: false } when no session is in progress.',
+        'Polling snapshot of the active session metadata (sessionId, startedAt, exercise, accumulated setIds). Templated by {slot}. Returns { active: false } when no session is in progress.',
+      mimeType: 'application/json',
+    },
+    templateRead,
+  );
+
+  server.registerResource(
+    'session-active-legacy',
+    LEGACY_URI,
+    {
+      title: 'Active workout session (primary slot, legacy alias)',
+      description: 'Backwards-compatible alias for `voltra://session/primary/active`.',
       mimeType: 'application/json',
     },
     () => ({
-      contents: [
-        {
-          uri: URI,
-          mimeType: 'application/json',
-          text: JSON.stringify(state.live.snapshotSession() ?? { active: false }),
-        },
-      ],
+      contents: [{ uri: LEGACY_URI, mimeType: 'application/json', text: readBody('primary') }],
     }),
   );
 }

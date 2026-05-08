@@ -184,6 +184,14 @@ const DEVICE_URI = 'voltra://device/current';
 const SESSION_URI = 'voltra://session/active';
 const SET_URI = 'voltra://set/active';
 
+// Per-slot URI builders. The legacy static URIs above remain as
+// primary-slot aliases (Phase 0.5.2 backwards-compat); every notify also
+// fans out to the templated `voltra://<kind>/{slot}/<sub>` form so
+// bilateral consumers subscribing to the templated URI receive pushes too.
+const deviceUriForSlot = (slotId: string): string => `voltra://device/${slotId}/current`;
+const sessionUriForSlot = (slotId: string): string => `voltra://session/${slotId}/active`;
+const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active`;
+
 /**
  * Suppression window after `set.start`: any `onInProgress` event that
  * arrives within this many milliseconds of the set's `startedAt` is
@@ -323,7 +331,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       });
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
-        notify(server, SET_URI);
+        notifySlot(server, slotId, SET_URI, setUriForSlot);
         // Publish a `rep_finalized` channel event only when a rep has
         // actually closed. Per workout-analytics's `addSampleToSet`:
         //   - The first CONCENTRIC sample creates rep 1 in-progress
@@ -527,7 +535,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
         return;
       }
-      notify(server, SET_URI);
+      notifySlot(server, slotId, SET_URI, setUriForSlot);
       // Fire-and-forget the persist + publish chain. The void-discard
       // here is deliberate — the SDK callback signature is sync, and we
       // don't want a slow store.putSet to block other event handlers.
@@ -603,7 +611,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       });
       const wasStale = live.isStale();
       live.applySettings(settingsToSnapshot(settings));
-      notify(server, DEVICE_URI);
+      notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
 
       // Phase 0.5.1 soft-reset: the first device push after a reconnect
       // clears the staleness flag and emits a `connection_changed` event
@@ -689,7 +697,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           chainTargetForceTenths: dump.chainTargetForceTenths,
           eccentricPercentTenths: dump.eccentricPercentTenths,
         });
-        notify(server, DEVICE_URI);
+        notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
 
         synthStateDumpTransitions(
           dump,
@@ -727,12 +735,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // LiveState, but taking the snapshot up front future-proofs
       // against that ordering changing.
       const activeSetBefore = live.snapshotSet();
-      live.applySettings({ connected: connState === 'connected' });
-      notify(server, DEVICE_URI);
+      // Capture the device id alongside `connected: true` so the resource
+      // and `device.get_state` can surface which device was last bound to
+      // this slot even after `resetPrimarySlot` swaps in a fresh client and
+      // wipes `client.connectedDeviceId`. On 'disconnected' we leave the
+      // last-known id in place — the snapshot is explicitly stale.
+      const settingsDelta: Partial<DeviceSnapshot> = {
+        connected: connState === 'connected',
+      };
+      if (connState === 'connected' && typeof client.connectedDeviceId === 'string') {
+        settingsDelta.deviceId = client.connectedDeviceId;
+      }
+      live.applySettings(settingsDelta);
+      notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
       if (connState === 'disconnected') {
         live.markDisconnected(new Date().toISOString());
-        notify(server, SESSION_URI);
-        notify(server, SET_URI);
+        notifySlot(server, slotId, SESSION_URI, sessionUriForSlot);
+        notifySlot(server, slotId, SET_URI, setUriForSlot);
       }
       // Build the channel payload AFTER the LiveState mutations so the
       // device snapshot reflects post-transition state (notably the
@@ -788,6 +807,25 @@ function notify(server: McpServer | undefined, uri: string): void {
   // channel publishes — a missing server skips the resource hint.
   if (server === undefined) return;
   void server.server.sendResourceUpdated({ uri });
+}
+
+/**
+ * Fire a resource-updated hint for the slot's templated URI AND, when
+ * `slotId === 'primary'`, also for the legacy static URI alias. This lets
+ * pre-Phase-0.5.2 callers that subscribed to `voltra://device/current`
+ * keep receiving pushes while bilateral consumers of
+ * `voltra://device/{slot}/current` get a per-slot push.
+ */
+function notifySlot(
+  server: McpServer | undefined,
+  slotId: string,
+  legacyUri: string,
+  buildSlotUri: (slotId: string) => string,
+): void {
+  notify(server, buildSlotUri(slotId));
+  if (slotId === 'primary') {
+    notify(server, legacyUri);
+  }
 }
 
 /**

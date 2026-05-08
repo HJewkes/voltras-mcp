@@ -35,6 +35,15 @@ export type TrainingModeName = string;
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
   connected: boolean;
+  /**
+   * Last-known BLE device id (e.g. `"V-097082"`). Captured from the SDK's
+   * `client.connectedDeviceId` on the first `onConnectionStateChange('connected')`
+   * after a connect, then preserved across the soft-reset disconnect window so
+   * `voltra://device/{slot}/current` and `device.get_state` can both surface
+   * which device was last bound to this slot even while `client` itself has
+   * been swapped to a fresh `VoltraClient` by `resetPrimarySlot`.
+   */
+  deviceId?: string;
   weightLbs?: number;
   trainingMode?: TrainingModeName;
   batteryPercent?: number;
