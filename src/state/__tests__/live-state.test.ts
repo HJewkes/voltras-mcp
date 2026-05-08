@@ -196,11 +196,13 @@ describe('LiveState', () => {
   describe('markDisconnected', () => {
     it('sets disconnectedAt on device only when no session is active', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceId: 'd1' });
+      live.applySettings({ connected: true, weightLbs: 80 });
       live.markDisconnected(TS_B);
       expect(live.snapshotDevice()).toMatchObject({
         connected: false,
         disconnectedAt: TS_B,
+        staleSinceDisconnect: TS_B,
+        isStale: true,
       });
       expect(live.snapshotSession()).toBeUndefined();
     });
@@ -211,6 +213,46 @@ describe('LiveState', () => {
       live.markDisconnected(TS_B);
       expect(live.snapshotSession()?.disconnectedAt).toBe(TS_B);
       expect(live.snapshotDevice().disconnectedAt).toBe(TS_B);
+    });
+  });
+
+  describe('soft-reset staleness (Phase 0.5.1)', () => {
+    it('preserves last-known device settings after markDisconnected', () => {
+      const live = new LiveState();
+      live.applySettings({
+        connected: true,
+        weightLbs: 100,
+        trainingMode: 'WeightTraining',
+        damperLevel: 3,
+      });
+      live.markDisconnected(TS_B);
+      const snap = live.snapshotDevice();
+      expect(snap.weightLbs).toBe(100);
+      expect(snap.trainingMode).toBe('WeightTraining');
+      expect(snap.damperLevel).toBe(3);
+      expect(snap.connected).toBe(false);
+      expect(snap.staleSinceDisconnect).toBe(TS_B);
+      expect(snap.isStale).toBe(true);
+      expect(live.isStale()).toBe(true);
+    });
+
+    it('clearStaleness drops the flag and the snapshot loses staleness fields', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, weightLbs: 80 });
+      live.markDisconnected(TS_B);
+      expect(live.isStale()).toBe(true);
+      live.clearStaleness();
+      expect(live.isStale()).toBe(false);
+      const snap = live.snapshotDevice();
+      expect(snap.staleSinceDisconnect).toBeUndefined();
+      expect(snap.isStale).toBeUndefined();
+      expect(snap.weightLbs).toBe(80);
+    });
+
+    it('isStale starts false on a fresh LiveState', () => {
+      const live = new LiveState();
+      expect(live.isStale()).toBe(false);
+      expect(live.snapshotDevice().staleSinceDisconnect).toBeUndefined();
     });
   });
 
@@ -245,11 +287,11 @@ describe('LiveState', () => {
 
     it('merges multiple partial updates additively', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceName: 'Voltra-1' });
+      live.applySettings({ connected: true, batteryPercent: 90 });
       live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
       expect(live.snapshotDevice()).toEqual({
         connected: true,
-        deviceName: 'Voltra-1',
+        batteryPercent: 90,
         weightLbs: 100,
         trainingMode: 'WeightTraining',
       });
@@ -388,10 +430,10 @@ describe('LiveState', () => {
   describe('snapshot independence', () => {
     it('snapshotDevice returns an independent copy', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceName: 'Voltra-1' });
+      live.applySettings({ connected: true, trainingMode: 'WeightTraining' });
       const snap = live.snapshotDevice();
-      snap.deviceName = 'mutated';
-      expect(live.snapshotDevice().deviceName).toBe('Voltra-1');
+      snap.trainingMode = 'mutated';
+      expect(live.snapshotDevice().trainingMode).toBe('WeightTraining');
     });
 
     it('snapshotSession returns an independent copy with cloned setIds', () => {

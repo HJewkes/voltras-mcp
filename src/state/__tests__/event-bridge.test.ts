@@ -1530,11 +1530,16 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('D4 — settings replay on wireBridgeForSlot', () => {
-    it('replays client.settings into LiveState synchronously at wire time', () => {
+  describe('LiveState soft-reset (Phase 0.5.1)', () => {
+    it('first onSettingsUpdate after a stale snapshot clears the staleness flag', () => {
       const freshLive = new LiveState();
+      // Seed the LiveState with cached pre-disconnect data, then mark stale
+      // — the same shape `slot-manager.resetPrimarySlot` produces.
+      freshLive.applySettings({ connected: true, weightLbs: 90, damperLevel: 5 });
+      freshLive.markDisconnected('2025-05-01T12:00:00.000Z');
+      expect(freshLive.isStale()).toBe(true);
+
       const freshClient = makeFakeClient();
-      freshClient.settings = { weight: 100, mode: 1, battery: 85, damperLevel: 3 };
       const freshServer = makeFakeServer();
       const freshChannels = makeFakeChannels();
       const freshState = makeBareState({
@@ -1547,49 +1552,96 @@ describe('wireEventBridge', () => {
         freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
         freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
       );
+
+      // Wiring alone does not clear the flag — only a real device push does.
+      expect(freshLive.isStale()).toBe(true);
+
+      // First push after reconnect.
+      freshClient.fire.settingsUpdate({ weight: 95, damperLevel: 6 });
+
+      expect(freshLive.isStale()).toBe(false);
       const snap = freshLive.snapshotDevice();
+      expect(snap.staleSinceDisconnect).toBeUndefined();
+      expect(snap.weightLbs).toBe(95);
+      expect(snap.damperLevel).toBe(6);
+    });
+
+    it('emits a connection_changed channel event when staleness clears', () => {
+      const freshLive = new LiveState();
+      freshLive.applySettings({ connected: true, weightLbs: 90 });
+      freshLive.markDisconnected('2025-05-01T12:00:00.000Z');
+
+      const freshClient = makeFakeClient();
+      const freshServer = makeFakeServer();
+      const freshChannels = makeFakeChannels();
+      const freshState = makeBareState({
+        client: freshClient,
+        live: freshLive,
+        server: freshServer,
+        channels: freshChannels,
+      });
+      wireBridgeForSlot(
+        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      freshClient.fire.settingsUpdate({ weight: 95 });
+
+      const events = freshChannels.publish.mock.calls.map((c) => c[0]);
+      const connectionEvent = events.find(
+        (e) => e.meta.event_type === 'connection_changed' && e.meta.state === 'connected',
+      );
+      expect(connectionEvent).toBeDefined();
+      expect(connectionEvent?.meta.refreshed).toBe('true');
+    });
+
+    it('does not emit a connection_changed event when LiveState was already non-stale', () => {
+      // Sanity: a settings push when LiveState is already fresh should not
+      // trigger the soft-reset connection_changed (avoid double-firing when
+      // multiple pushes arrive in close succession).
+      const freshLive = new LiveState();
+      const freshClient = makeFakeClient();
+      const freshServer = makeFakeServer();
+      const freshChannels = makeFakeChannels();
+      const freshState = makeBareState({
+        client: freshClient,
+        live: freshLive,
+        server: freshServer,
+        channels: freshChannels,
+      });
+      wireBridgeForSlot(
+        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+
+      freshClient.fire.settingsUpdate({ weight: 95 });
+
+      const events = freshChannels.publish.mock.calls.map((c) => c[0]);
+      const connectionEvent = events.find((e) => e.meta.event_type === 'connection_changed');
+      expect(connectionEvent).toBeUndefined();
+    });
+  });
+
+  describe('voltra://device/current resource shape during disconnect window', () => {
+    it('returns last-known device state with staleSinceDisconnect during the disconnect window', () => {
+      const freshLive = new LiveState();
+      freshLive.applySettings({
+        connected: true,
+        weightLbs: 100,
+        trainingMode: 'WeightTraining',
+        damperLevel: 4,
+      });
+      freshLive.markDisconnected('2025-05-01T12:00:00.000Z');
+
+      // The resource-handler reads `live.snapshotDevice()` directly — the
+      // externally-observable shape is what we assert.
+      const snap = freshLive.snapshotDevice();
+      expect(snap.connected).toBe(false);
       expect(snap.weightLbs).toBe(100);
-      expect(snap.damperLevel).toBe(3);
-    });
-
-    it('D4 — reconnect: LiveState reflects prior damperLevel before first onSettingsUpdate', () => {
-      const freshLive = new LiveState();
-      const freshClient = makeFakeClient();
-      // Simulate SDK 0.7.0 Bug 17 fix: client retains last known settings across reconnect.
-      freshClient.settings = { damperLevel: 7, weight: 60, battery: 50 };
-      const freshServer = makeFakeServer();
-      const freshChannels = makeFakeChannels();
-      const freshState = makeBareState({
-        client: freshClient,
-        live: freshLive,
-        server: freshServer,
-        channels: freshChannels,
-      });
-      wireBridgeForSlot(
-        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
-        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
-      );
-      // Assert BEFORE any onSettingsUpdate fires — the replay alone should carry it.
-      expect(freshLive.snapshotDevice().damperLevel).toBe(7);
-    });
-
-    it('D4 — null client.settings (fresh connect) does not mutate LiveState', () => {
-      const freshLive = new LiveState();
-      const freshClient = makeFakeClient();
-      freshClient.settings = null; // default — never connected before
-      const freshServer = makeFakeServer();
-      const freshChannels = makeFakeChannels();
-      const freshState = makeBareState({
-        client: freshClient,
-        live: freshLive,
-        server: freshServer,
-        channels: freshChannels,
-      });
-      wireBridgeForSlot(
-        freshState as unknown as Parameters<typeof wireBridgeForSlot>[0],
-        freshState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
-      );
-      expect(freshLive.snapshotDevice()).toEqual({ connected: false });
+      expect(snap.trainingMode).toBe('WeightTraining');
+      expect(snap.damperLevel).toBe(4);
+      expect(snap.staleSinceDisconnect).toBe('2025-05-01T12:00:00.000Z');
+      expect(snap.isStale).toBe(true);
     });
   });
 
@@ -1634,9 +1686,9 @@ describe('wireEventBridge', () => {
     describe('connection_changed channel event', () => {
       it("publishes connection_changed with state=connected and device snapshot on 'connected'", () => {
         live.applySettings({
-          deviceId: 'voltra-XYZ',
-          deviceName: 'Voltra Pro',
           batteryPercent: 80,
+          weightLbs: 135,
+          trainingMode: 'WeightTraining',
         });
         channels.publish.mockClear();
         client.fire.connectionStateChange('connected');
@@ -1647,7 +1699,6 @@ describe('wireEventBridge', () => {
           source: 'voltras',
           event_type: 'connection_changed',
           state: 'connected',
-          device_id: 'voltra-XYZ',
         });
         // No mid_set / disconnected_at attrs on connect.
         expect(event.meta.mid_set).toBeUndefined();
@@ -1656,20 +1707,21 @@ describe('wireEventBridge', () => {
         const parsed = JSON.parse(event.content) as {
           summary: string;
           device: {
-            device_id: string | null;
-            device_name: string | null;
             connected: boolean;
             battery_percent: number | null;
+            weight_lbs: number | null;
+            training_mode: string | null;
+            damper_level: number | null;
+            stale_since_disconnect: string | null;
           };
           active_set_at_disconnect: unknown;
         };
-        expect(parsed.summary).toContain('Voltra connected');
-        expect(parsed.summary).toContain('Voltra Pro');
+        expect(parsed.summary).toBe('Voltra connected.');
         expect(parsed.device).toMatchObject({
-          device_id: 'voltra-XYZ',
-          device_name: 'Voltra Pro',
           connected: true,
           battery_percent: 80,
+          weight_lbs: 135,
+          training_mode: 'WeightTraining',
         });
         expect(parsed.active_set_at_disconnect).toBeNull();
       });
@@ -1678,8 +1730,6 @@ describe('wireEventBridge', () => {
         // Set up a session + set + device weight so the mid-set summary
         // has something to render.
         live.applySettings({
-          deviceId: 'voltra-XYZ',
-          deviceName: 'Voltra Pro',
           weightLbs: 135,
           trainingMode: 'WeightTraining',
         });
@@ -1732,7 +1782,6 @@ describe('wireEventBridge', () => {
           event_type: 'connection_changed',
           state: 'disconnected',
           mid_set: 'true',
-          device_id: 'voltra-XYZ',
         });
         // disconnected_at is the ISO timestamp set by markDisconnected.
         expect(event.meta.disconnected_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -1944,9 +1993,9 @@ describe('wireEventBridge', () => {
 
   // ── Bug 27 — damperLevel synthetic settings_update ─────────────────────
   describe('damperLevel synthetic settings_update (Bug 27)', () => {
-    // The cmd=0x10 cascade carries paramID 0x0351 (B4's SDK PR #41
-    // corrected from `5103` to `0351`); when present, the SDK surfaces
-    // damperLevel via DeviceSettings.damperLevel through onSettingsUpdate.
+    // The cmd=0x10 cascade carries paramID 0x0351; when present, the SDK
+    // surfaces damperLevel via DeviceSettings.damperLevel through
+    // onSettingsUpdate.
     // The bridge tracks the last known value and emits a synthetic
     // `settings_update` channel event each time it transitions, with
     // `__all` snapshotting every monitored field.

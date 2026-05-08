@@ -266,6 +266,7 @@ interface FakeLive {
     chainsActive?: number;
     chainTargetTenths?: number;
   };
+  markDisconnected: (at: string) => void;
 }
 
 interface FakeSlot {
@@ -282,6 +283,7 @@ interface State {
 function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>> = {}): FakeLive {
   return {
     snapshotDevice: () => ({ connected: false, ...overrides }),
+    markDisconnected: vi.fn(),
   };
 }
 

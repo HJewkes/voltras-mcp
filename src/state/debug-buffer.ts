@@ -39,7 +39,6 @@ export interface DebugEvent {
     | 'pre_summary'
     | 'settings_update'
     | 'connection_state_change'
-    | 'cycle_complete'
     | 'guided_load_state'
     | 'state_dump'
     /**

@@ -713,9 +713,6 @@ export function buildConnectionChangedPayload(
     event_type: 'connection_changed',
     state,
   };
-  if (device.deviceId !== undefined) {
-    meta.device_id = device.deviceId;
-  }
   if (state === 'disconnected') {
     if (device.disconnectedAt !== undefined) {
       meta.disconnected_at = device.disconnectedAt;
@@ -724,15 +721,24 @@ export function buildConnectionChangedPayload(
       meta.mid_set = 'true';
     }
   }
+  if (state === 'connected' && !device.isStale) {
+    // Tag fresh-data events: any 'connected' connection_changed where the
+    // LiveState is non-stale represents either the original connect (no
+    // prior disconnect) or the first push after a soft-reset reconnect
+    // cleared the staleness flag.
+    meta.refreshed = 'true';
+  }
 
   const summary = buildConnectionChangedSummary(state, device, activeSet);
   const content = JSON.stringify({
     summary,
     device: {
-      device_id: device.deviceId ?? null,
-      device_name: device.deviceName ?? null,
       connected: device.connected,
       battery_percent: device.batteryPercent ?? null,
+      weight_lbs: device.weightLbs ?? null,
+      training_mode: device.trainingMode ?? null,
+      damper_level: device.damperLevel ?? null,
+      stale_since_disconnect: device.staleSinceDisconnect ?? null,
     },
     active_set_at_disconnect: state === 'disconnected' ? activeSet : null,
   });
@@ -785,10 +791,10 @@ export function buildSetAbortedByModeRevertPayload(
 }
 
 /**
- * Build the meta + content for a synthetic `settings_update` channel event
- * (Bugs 26 / 27). Fires when the bridge observes a transition in a
- * monitored device-setting field (currently `damperLevel`; assist toggle
- * is blocked on SDK PR #41 routing — see event-bridge.ts).
+ * Build the meta + content for a synthetic `settings_update` channel event.
+ * Fires when the bridge observes a transition in a monitored device-setting
+ * field (`damperLevel` from the cmd=0x10 cascade; assist mode + chains
+ * activity from the cmd=0x07 state-dump).
  *
  * The content body carries a `__all` block snapshotting every known field
  * at emission time so consumers don't have to merge against a prior
@@ -867,13 +873,11 @@ export function buildSettingsUpdatePayload(
 
 function buildConnectionChangedSummary(
   state: ConnectionState,
-  device: DeviceSnapshot,
+  _device: DeviceSnapshot,
   activeSet: ActiveSetAtDisconnect | null,
 ): string {
   if (state === 'connected') {
-    return device.deviceName !== undefined
-      ? `Voltra connected (${device.deviceName}).`
-      : 'Voltra connected.';
+    return 'Voltra connected.';
   }
   if (state === 'disconnected') {
     if (activeSet === null) {

@@ -62,8 +62,6 @@ function makeSet(overrides: Partial<StoredSet> = {}): StoredSet {
     partial: false,
     trainingMode: 'WeightTraining',
     weightLbs: 135,
-    chainsLbs: 0,
-    eccentricPercent: 100,
     reps: [makeRep(setId, 0), makeRep(setId, 1), makeRep(setId, 2)],
     ...overrides,
   };
@@ -238,7 +236,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  it('throws SCHEMA_INCOMPATIBLE on user_version mismatch (R17)', () => {
+  it('throws SCHEMA_INCOMPATIBLE on unknown user_version (R17)', () => {
     const dbPath = join(workdir, 'wrong-version.sqlite');
     const seed = new DatabaseSync(dbPath);
     seed.exec('PRAGMA user_version = 99');
@@ -255,7 +253,57 @@ describe('SqliteSessionStore.open() error paths', () => {
     expect(e.code).toBe('SCHEMA_INCOMPATIBLE');
     expect(e.message).toContain(dbPath);
     expect(e.message).toContain('99');
-    expect(e.message).toContain('1');
+    expect(e.message).toContain('2');
+  });
+
+  it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
+    const dbPath = join(workdir, 'v1-migrate.sqlite');
+    const seed = new DatabaseSync(dbPath);
+    seed.exec(`
+      CREATE TABLE sets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        partial INTEGER NOT NULL,
+        partial_reason TEXT,
+        training_mode TEXT NOT NULL,
+        weight_lbs REAL NOT NULL,
+        chains_lbs REAL,
+        eccentric_percent REAL
+      );
+      PRAGMA user_version = 1;
+    `);
+    seed.close();
+
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const cols = raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>;
+      const names = cols.map((c) => c.name);
+      expect(names).not.toContain('chains_lbs');
+      expect(names).not.toContain('eccentric_percent');
+      const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+        user_version?: number;
+      };
+      expect(version.user_version).toBe(2);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('a brand-new DB is created at the current schema version with no obsolete columns', async () => {
+    const dbPath = join(workdir, 'fresh.sqlite');
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const cols = raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>;
+      const names = cols.map((c) => c.name);
+      expect(names).not.toContain('chains_lbs');
+      expect(names).not.toContain('eccentric_percent');
+    } finally {
+      await store.close();
+    }
   });
 
   it('throws lock error mentioning VMCP_DB_PATH and "already in use" (R8)', () => {

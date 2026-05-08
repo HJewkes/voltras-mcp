@@ -388,7 +388,6 @@ describe('VMCP NDA structural redaction sweep (integration, AC-11)', () => {
     recordCall('device.connect', await call(h.client, 'device.connect', { deviceId }));
     getSlot(h.state).live.applySettings({
       connected: true,
-      deviceId,
       weightLbs: 100,
       trainingMode: 'WeightTraining',
     });

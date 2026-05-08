@@ -28,7 +28,7 @@ import type {
   StoredSet,
 } from './types.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
@@ -49,9 +49,7 @@ const SCHEMA_SQL = `
     partial INTEGER NOT NULL,
     partial_reason TEXT,
     training_mode TEXT NOT NULL,
-    weight_lbs REAL NOT NULL,
-    chains_lbs REAL,
-    eccentric_percent REAL
+    weight_lbs REAL NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
 
@@ -62,6 +60,19 @@ const SCHEMA_SQL = `
     payload TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_reps_set_id ON reps(set_id, rep_index);
+`;
+
+/**
+ * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
+ * `sets` table. Phase 0.5.1 cleanup — those fields were never read by any
+ * consumer (per `inventory-bridge.md`) and the in-memory `DeviceSnapshot`
+ * never carried them. Idempotent: pre-v2 schemas have the columns and need
+ * the drop; v2 schemas already lack them and the `IF EXISTS`-equivalent
+ * `pragma_table_info` guard skips the work.
+ */
+const MIGRATE_V1_TO_V2_SQL = `
+  ALTER TABLE sets DROP COLUMN chains_lbs;
+  ALTER TABLE sets DROP COLUMN eccentric_percent;
 `;
 
 interface SessionRow {
@@ -82,8 +93,6 @@ interface SetRow {
   partial_reason: string | null;
   training_mode: string;
   weight_lbs: number;
-  chains_lbs: number | null;
-  eccentric_percent: number | null;
 }
 
 interface RepRow {
@@ -123,6 +132,7 @@ export class SqliteSessionStore implements SessionStore {
       checkSchemaVersion(db, path);
       probeWriteLock(db, path);
       db.exec(SCHEMA_SQL);
+      applyMigrations(db);
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       return new SqliteSessionStore(db);
     } catch (err) {
@@ -165,8 +175,8 @@ export class SqliteSessionStore implements SessionStore {
     const upsertSet = this.db.prepare(
       `INSERT OR REPLACE INTO sets
          (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs, chains_lbs, eccentric_percent)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_mode, weight_lbs)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -184,8 +194,6 @@ export class SqliteSessionStore implements SessionStore {
         s.partialReason ?? null,
         s.trainingMode,
         s.weightLbs,
-        s.chainsLbs ?? null,
-        s.eccentricPercent ?? null,
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -269,8 +277,26 @@ export class SqliteSessionStore implements SessionStore {
 function checkSchemaVersion(db: DatabaseSync, path: string): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const found = row?.user_version ?? 0;
-  if (found !== 0 && found !== SCHEMA_VERSION) {
+  // 0 = brand-new DB (CREATE TABLE IF NOT EXISTS will populate it).
+  // 1 = pre-Phase-0.5.1 schema (migrated forward in `applyMigrations`).
+  // SCHEMA_VERSION = current. Anything else is an unknown future version
+  // and we refuse to touch it.
+  if (found !== 0 && found !== 1 && found !== SCHEMA_VERSION) {
     throw createSchemaIncompatibleError(path, found);
+  }
+}
+
+/**
+ * Apply forward migrations on an open `db`. Idempotent: each migration is
+ * gated by the user_version it targets, so running on a fresh v2 DB is a
+ * no-op. Runs after `SCHEMA_SQL` so brand-new DBs already have the v2 table
+ * shape and skip every migration body.
+ */
+function applyMigrations(db: DatabaseSync): void {
+  const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
+  const current = row?.user_version ?? 0;
+  if (current === 1) {
+    db.exec(MIGRATE_V1_TO_V2_SQL);
   }
 }
 
@@ -348,7 +374,5 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
     reps,
   };
   if (row.partial_reason !== null) out.partialReason = row.partial_reason;
-  if (row.chains_lbs !== null) out.chainsLbs = row.chains_lbs;
-  if (row.eccentric_percent !== null) out.eccentricPercent = row.eccentric_percent;
   return out;
 }

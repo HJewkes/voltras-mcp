@@ -141,20 +141,18 @@ describe('voltras-mcp resources', () => {
     it('reflects applySettings mutations', async () => {
       live.applySettings({
         connected: true,
-        deviceName: 'Voltra-1',
         weightLbs: 75,
         batteryPercent: 88,
       });
       const result = await readResource(server, 'voltra://device/current');
       const body = jsonText(result) as Record<string, unknown>;
       expect(body.connected).toBe(true);
-      expect(body.deviceName).toBe('Voltra-1');
       expect(body.weightLbs).toBe(75);
       expect(body.batteryPercent).toBe(88);
     });
 
     it('returns identical JSON across two reads with no state change (AC-12)', async () => {
-      live.applySettings({ connected: true, deviceName: 'Voltra-1', weightLbs: 50 });
+      live.applySettings({ connected: true, weightLbs: 50 });
       const a = await readResource(server, 'voltra://device/current');
       const b = await readResource(server, 'voltra://device/current');
       expect(a.contents?.[0]?.text).toBe(b.contents?.[0]?.text);

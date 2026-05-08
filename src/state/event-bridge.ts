@@ -140,8 +140,7 @@ const SDK_PHASE_UNKNOWN = -1;
 //
 // `damperLevel` was added in SDK 0.6.0's `VoltraDeviceSettings` and surfaces
 // through this same callback when the cmd=0x10 cascade carries paramID
-// 0x0351 (Bug 27 / B4 SDK PR #41 corrected the paramID from `5103` to
-// `0351` at the decoder layer).
+// 0x0351.
 interface SdkSettingsUpdate {
   baseWeight?: number;
   weight?: number;
@@ -311,8 +310,8 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         timestamp: frame.timestamp,
         phase: phase as unknown as WorkoutSample['phase'],
         position: frame.position,
-        velocity: Math.abs(frame.velocity),
-        force: Math.abs(frame.force),
+        velocity: frame.velocity,
+        force: frame.force,
       });
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
@@ -594,11 +593,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           ),
         },
       });
+      const wasStale = live.isStale();
       live.applySettings(settingsToSnapshot(settings));
       notify(server, DEVICE_URI);
 
-      // Bug 22 — feed the mode-revert guard. The guard ignores updates that
-      // don't carry a trainingMode field; this call is safe to invoke
+      // Phase 0.5.1 soft-reset: the first device push after a reconnect
+      // clears the staleness flag and emits a `connection_changed` event
+      // with the freshly-confirmed device snapshot. Distinguishes "we have
+      // a live cable" from "we cached pre-disconnect state".
+      if (wasStale) {
+        live.clearStaleness();
+        const refreshedDevice = live.snapshotDevice();
+        const payload = buildConnectionChangedPayload('connected', refreshedDevice, null);
+        slotChannels.publish(payload);
+      }
+
+      // Feed the mode-revert guard. The guard ignores updates that don't
+      // carry a trainingMode field; this call is safe to invoke
       // unconditionally regardless of which paramIDs the cascade actually
       // surfaced. `mode` and `trainingMode` are aliases at the wire layer
       // (different SDK versions used different field names); we collapse
@@ -606,14 +617,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // Bug 27 — synthesize a `settings_update` channel event when
-      // damperLevel transitions. The cmd=0x10 cascade carrying paramID
-      // 0x0351 routes through this same callback (B4's SDK PR #41 corrects
-      // the paramID from `5103` to `0351` at the decoder layer); we
-      // observe the field on `settings.damperLevel` and only publish
-      // when the value actually changes. The `__all` block in the payload
-      // snapshots every monitored field at emission time so consumers
-      // don't have to merge against a prior settings_update.
+      // Synthesize a `settings_update` channel event when damperLevel
+      // transitions. The cmd=0x10 cascade carrying paramID 0x0351 routes
+      // through this same callback; we observe the field on
+      // `settings.damperLevel` and only publish when the value actually
+      // changes. The `__all` block in the payload snapshots every monitored
+      // field at emission time so consumers don't have to merge against a
+      // prior settings_update.
       if (settings.damperLevel !== undefined && settings.damperLevel !== lastDamperLevel) {
         lastDamperLevel = settings.damperLevel;
         const device = live.snapshotDevice();
@@ -628,7 +638,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   );
 
   // cmd=0x07 state-dump — exposes assist mode, chains-active flag, and chain
-  // target weight. SDK 0.7.0 routes this through `onStateDump` (PR #41).
+  // target weight. SDK 0.7.0+ routes this through `onStateDump`.
   // `onStateDump` is absent on older builds; the optional-chain guard keeps
   // backward compatibility with any pre-0.7.0 test fixtures.
   if (typeof client.onStateDump === 'function') {
@@ -708,26 +718,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
-  // D4 — replay SDK-retained settings into LiveState synchronously after
-  // wiring all listeners. SDK 0.7.0 (Bug 17 fix) no longer resets
-  // `_settings` on `cleanup()`, so `client.settings` carries the last known
-  // state across reconnect. Without this replay, `voltra://device/current`
-  // shows a blank snapshot until the first `onSettingsUpdate` fires (which
-  // requires the device to push a settings cascade — not guaranteed on
-  // reconnect alone).
-  //
-  // Note: the SDK's `settings` getter returns `{ ...this._settings }` and
-  // never returns null, so this branch always executes. On a truly-fresh
-  // connect (no prior cascade), `_settings` equals `DEFAULT_SETTINGS` and
-  // we apply those defaults to LiveState; subsequent cascades overwrite via
-  // the standard `onSettingsUpdate` path. SDK 0.7.1 also replays the cached
-  // protocol-layer cascade through `onSettingsUpdate` at listener-attach
-  // time (b3e3dc3), so this explicit call is redundant on reconnect but
-  // remains the canonical entry point for non-cascade-driven snapshots.
-  const initialSettings = (client as unknown as { settings?: SdkSettingsUpdate | null }).settings;
-  if (initialSettings != null) {
-    live.applySettings(settingsToSnapshot(initialSettings));
-  }
+  // SDK 0.7.1+ replays the cached settings cascade through `onSettingsUpdate`
+  // at listener-attach time, so the bridge does not need an explicit
+  // `client.settings` read here — every fresh wire-up receives the last-
+  // known cascade through the standard event path.
 
   return () => {
     for (const u of unsubs) {

@@ -133,36 +133,36 @@ describe('removeSlot', () => {
 });
 
 describe('resetPrimarySlot', () => {
-  it("keeps 'primary' in the map but with a fresh client and fresh LiveState", () => {
+  it("keeps 'primary' in the map with a fresh client and a soft-reset LiveState", () => {
     const state = makeStateWithPrimary();
     const original = getSlot(state);
-    // Capture references *before* the reset — `original.client` /
-    // `original.live` would otherwise see the post-reset values because
-    // `resetPrimarySlot` mutates the SlotState wrapper in place.
+    // Capture references *before* the reset — `original.client` would
+    // otherwise see the post-reset value because `resetPrimarySlot` mutates
+    // the SlotState wrapper in place.
     const priorClient = original.client;
     const priorLive = original.live;
-    // Mutate primary's LiveState so we can verify the reset replaced it.
-    priorLive.startSession({
-      sessionId: 'sess-pre-reset',
-      startedAt: '2025-01-01T00:00:00.000Z',
-      setIds: [],
-      status: 'active',
-    });
-    expect(priorLive.snapshotSession()?.sessionId).toBe('sess-pre-reset');
+    // Seed last-known settings on LiveState so we can verify the soft-reset
+    // preserved them as cached pre-disconnect data.
+    priorLive.applySettings({ connected: true, weightLbs: 50, damperLevel: 4 });
 
     resetPrimarySlot(state);
 
     const after = getSlot(state);
     expect(state.slots.has(PRIMARY_SLOT)).toBe(true);
     expect(after.slotId).toBe(PRIMARY_SLOT);
-    // Same SlotState wrapper (we mutate fields in place) — so the
-    // `getSlot(state)` reference held by callers stays valid.
     expect(after).toBe(original);
     // Fresh client — not the original VoltraClient instance.
     expect(after.client).not.toBe(priorClient);
     expect(after.client).toBeInstanceOf(VoltraClient);
-    // Fresh LiveState — the pre-reset session is gone.
-    expect(after.live).not.toBe(priorLive);
-    expect(after.live.snapshotSession()).toBeUndefined();
+    // Same LiveState instance — soft-reset preserves last-known data.
+    expect(after.live).toBe(priorLive);
+    // The cached snapshot is still the pre-disconnect device state, but
+    // marked stale so consumers can distinguish it from a fresh push.
+    const snap = after.live.snapshotDevice();
+    expect(snap.weightLbs).toBe(50);
+    expect(snap.damperLevel).toBe(4);
+    expect(snap.connected).toBe(false);
+    expect(after.live.isStale()).toBe(true);
+    expect(snap.staleSinceDisconnect).toBeDefined();
   });
 });

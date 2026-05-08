@@ -417,13 +417,11 @@ describe('VMCP bilateral mock-adapter flow (integration)', () => {
     // `left` must NOT bleed into `right`.
     getSlot(h.state, 'left').live.applySettings({
       connected: true,
-      deviceId: leftDeviceId,
       weightLbs: 35,
       trainingMode: 'WeightTraining',
     });
     getSlot(h.state, 'right').live.applySettings({
       connected: true,
-      deviceId: rightDeviceId,
       weightLbs: 40,
       trainingMode: 'WeightTraining',
     });

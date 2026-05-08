@@ -446,8 +446,6 @@ describe('VMCP full mock-adapter flow (integration)', () => {
     // persisted set captures a non-default training mode + weight.
     getSlot(h.state).live.applySettings({
       connected: true,
-      deviceId,
-      ...(devices[0].name ? { deviceName: devices[0].name } : {}),
       weightLbs: 100,
       trainingMode: 'WeightTraining',
     });

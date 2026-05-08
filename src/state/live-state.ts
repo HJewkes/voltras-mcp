@@ -35,8 +35,6 @@ export type TrainingModeName = string;
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
   connected: boolean;
-  deviceId?: string;
-  deviceName?: string;
   weightLbs?: number;
   trainingMode?: TrainingModeName;
   batteryPercent?: number;
@@ -85,6 +83,21 @@ export interface DeviceSnapshot {
    * setting and is reliable.
    */
   chainSettingLbs?: number;
+  /**
+   * ISO timestamp set on disconnect and cleared on the first device push
+   * after the next reconnect. Consumers can read this to know the rest of
+   * the snapshot is the LAST KNOWN value from before the disconnect rather
+   * than freshly-confirmed data. Soft-reset semantics: `slot-manager`'s
+   * `resetPrimarySlot` no longer wipes LiveState — it marks the snapshot
+   * stale and the bridge clears the flag once a real push lands.
+   */
+  staleSinceDisconnect?: string;
+  /**
+   * Convenience boolean mirroring `staleSinceDisconnect !== undefined`.
+   * Lets `channel-payloads` and resource-shape consumers branch on
+   * staleness without re-reading the timestamp.
+   */
+  isStale?: boolean;
 }
 
 /** Active session metadata. `setIds` accumulates as sets close. */
@@ -172,6 +185,14 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /**
+   * ISO timestamp captured by `markDisconnected`; cleared by `clearStaleness`
+   * once the bridge observes a fresh device push (typically the first
+   * `onSettingsUpdate` after reconnect). When non-null, every snapshot built
+   * from `device` carries `staleSinceDisconnect` so consumers can
+   * distinguish cached pre-disconnect state from freshly-confirmed data.
+   */
+  private _staleSinceDisconnect: string | undefined = undefined;
   /**
    * Internal analytics-set used to detect rep boundaries from the frame
    * stream. Mirrors the canonical mobile-app pipeline: `addSampleToSet`
@@ -406,18 +427,48 @@ export class LiveState {
   /**
    * Mark the device as disconnected. Propagates the timestamp to the active
    * session so `voltra://session/active` reflects the drop without waiting
-   * for a re-read of device state (R24).
+   * for a re-read of device state (R24). Also flags the device snapshot as
+   * stale (cached pre-disconnect data) so consumers can distinguish a
+   * resource read served from LiveState memory from a freshly-confirmed
+   * push. Cleared by `clearStaleness` once the bridge observes a real push.
    */
   markDisconnected(at: string): void {
     this.device = { ...this.device, connected: false, disconnectedAt: at };
+    this._staleSinceDisconnect = at;
     if (this.session !== undefined) {
       this.session = { ...this.session, disconnectedAt: at };
     }
   }
 
-  /** Return an independent copy of `device`. */
+  /**
+   * Clear the staleness flag. Called by the event-bridge on the first device
+   * push after a reconnect (typically `onSettingsUpdate`) so subsequent
+   * resource reads reflect freshly-confirmed values rather than the cached
+   * pre-disconnect snapshot.
+   */
+  clearStaleness(): void {
+    this._staleSinceDisconnect = undefined;
+  }
+
+  /** True when the snapshot is the last-known pre-disconnect state. */
+  isStale(): boolean {
+    return this._staleSinceDisconnect !== undefined;
+  }
+
+  /**
+   * Return an independent copy of `device`. Includes the soft-reset
+   * `staleSinceDisconnect` timestamp + `isStale` boolean when the snapshot
+   * is the cached pre-disconnect state, so resource consumers can distinguish
+   * cached data from freshly-confirmed pushes without inspecting LiveState
+   * internals.
+   */
   snapshotDevice(): DeviceSnapshot {
-    return { ...this.device };
+    const snap: DeviceSnapshot = { ...this.device };
+    if (this._staleSinceDisconnect !== undefined) {
+      snap.staleSinceDisconnect = this._staleSinceDisconnect;
+      snap.isStale = true;
+    }
+    return snap;
   }
 
   /** Return an independent copy of the active session, or `undefined`. */

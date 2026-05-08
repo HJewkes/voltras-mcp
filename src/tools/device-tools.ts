@@ -28,10 +28,9 @@
 //
 // ── `device.scan` options shape ───────────────────────────────────────────
 //
-// `manager.scan` accepts `ScanOptions` (`{ timeout?: number; ... }`). The
-// critic FIX #9 wording said "wrap in `{ timeoutMs }`" — that property name
-// is a typo against the actual SDK type. We accept `timeoutMs` on the input
-// schema (per spec R11) and forward it as the SDK's `timeout` field.
+// `manager.scan` accepts `ScanOptions` (`{ timeout?: number; ... }`). We
+// accept `timeoutMs` on the input schema (per spec R11) and forward it as
+// the SDK's `timeout` field.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode } from '@voltras/node-sdk';
@@ -203,8 +202,8 @@ export function registerDeviceTools(
   placeholders: Placeholders,
 ): void {
   // device.scan — manager-level discovery. Wraps the user's `timeoutMs` in
-  // a `ScanOptions` object so the SDK is never called with a bare number
-  // (critic FIX #9). Returns the discovered devices straight through.
+  // a `ScanOptions` object so the SDK is never called with a bare number.
+  // Returns the discovered devices straight through.
   install(
     placeholders,
     'device.scan',

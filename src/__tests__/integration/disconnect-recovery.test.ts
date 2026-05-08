@@ -344,7 +344,6 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
     expect(connect.isError).toBeUndefined();
     getSlot(h.state).live.applySettings({
       connected: true,
-      deviceId,
       weightLbs: 100,
       trainingMode: 'WeightTraining',
     });

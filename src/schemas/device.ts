@@ -241,8 +241,8 @@ export const DeviceGetStateOutput = z.object({
    * 8 = device idle sentinel. Absent until the first state-dump has fired.
    */
   assistMode: z.number().int().optional(),
-  /** Chains-active flag (0 or 1) from the last state-dump. Absent until first state-dump. */
-  chainsActive: z.number().int().min(0).max(1).optional(),
+  /** Chains-active count (0..7) from the last state-dump. Absent until first state-dump. */
+  chainsActive: z.number().int().min(0).max(7).optional(),
   /**
    * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
    * tenths of pounds.
