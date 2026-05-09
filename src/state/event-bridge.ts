@@ -107,7 +107,7 @@ import type {
   GuidedLoadState,
   InProgressEvent,
   PerRepEvent,
-  PreSummaryEvent,
+  SetSummaryEvent,
   SummaryEvent,
   TelemetryFrame,
 } from '@voltras/node-sdk';
@@ -193,14 +193,35 @@ const sessionUriForSlot = (slotId: string): string => `voltra://session/${slotId
 const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active`;
 
 /**
- * Suppression window after `set.start`: any `onInProgress` event that
- * arrives within this many milliseconds of the set's `startedAt` is
- * treated as the device's echo of our Workout.GO engage command rather
- * than a user-pressed Stop. The chosen 500ms is empirically wide enough
- * to swallow the BLE round-trip jitter (~80–250ms in normal conditions)
- * without overlapping with the shortest realistic user-driven Stop.
+ * Inactivity safety-net: the bridge finalizes an active set as `partial` /
+ * `inactivity_timeout` if no SDK activity (`onInProgress` / `onSetSummary` /
+ * WA rep boundary) lands on it for this many milliseconds. 90s is wide
+ * enough to cover heavy slow lifts (15s+ per rep) plus a brief mid-set
+ * pause, but short enough that a forgotten or disconnected set surfaces
+ * before the user starts a new session.
+ *
+ * In WT/RB/Damper modes the device's `onSetSummary` (`aa 85 5f`) is the
+ * canonical per-set close marker and the watchdog rarely fires. Modes that
+ * don't emit a per-set close (rowing, iso, custom-curves) fall through to
+ * this watchdog for v1.
+ *
+ * Replaces the legacy `SET_START_GRACE_MS = 500` heuristic, which used the
+ * first `onInProgress` outside a 500ms window after `set.start` as the
+ * close signal — wrong on noble + fast-tempo WT (the device fires
+ * `onInProgress` continuously during workout mode, so the post-grace event
+ * arrives well before the user finishes reps). See
+ * `coordination/integration-plans/mcp-rep-count-fix-2026-05-09.md` and
+ * `voltra-private/captures/sessions/validation-phase-6-set-boundaries-2026-05-06T20-12-57.events.json`.
  */
-const SET_START_GRACE_MS = 500;
+const SET_INACTIVITY_TIMEOUT_MS = 90_000;
+
+/**
+ * Polling cadence for the inactivity watchdog (per slot). 10s is far below
+ * the 90s timeout so worst-case detection latency is one tick. Cheap because
+ * we run it once per slot and it only inspects the active set's
+ * `lastActivityAt` field.
+ */
+const SET_INACTIVITY_POLL_MS = 10_000;
 
 /**
  * Bootstrap orchestrator: wire the bridge for every slot currently in
@@ -443,12 +464,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
   pushUnsub(
     unsubs,
-    client.onPreSummary((payload: PreSummaryEvent) => {
-      // Vendor `preSummary` frame — fires ~3s before the final rep with
-      // early access to `repDurationMs` + `repCount`. Publishes the
-      // `set_pre_summary` channel event so PT Claude can prep the
-      // rest-period coaching prompt while the user finishes the rep.
-      // Ghost preSummary after `set.end` already closed the set: silent
+    client.onSetSummary((payload: SetSummaryEvent) => {
+      // Vendor `aa 85 5f` set-summary frame — emitted by the device per-set
+      // in WT/RB/Damper after all reps complete (renamed from `preSummary`
+      // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
+      // a misnomer — see voltra-private/research/aa-subtype-catalog-2026-05-07-android-deep.md
+      // §7.5). Publishes the `set_pre_summary` channel event so PT Claude
+      // can hand the rest-period coaching prompt right at set close.
+      // Ghost setSummary after `set.end` already closed the set: silent
       // drop (the explicit tool finalize already cleared `live.set`).
       debug.events.push({
         capturedAt: Date.now(),
@@ -468,6 +491,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       }
       const device = live.snapshotDevice();
       slotChannels.publish(buildSetPreSummaryPayload(set, device, payload));
+      // Capture the typed payload onto the active set + close immediately.
+      // `aa 85 5f` is the canonical per-set close marker in WT/RB/Damper —
+      // it fires after all reps complete with the final rep count, not
+      // before. `finalizeSet` reads `consumeLatestSetSummary()` and threads
+      // the device's repCount/repDurationMs/targetWeightTenths into the
+      // persisted `set_ended_by_device` event payload.
+      //
+      // Modes that don't emit a per-set close (rowing, iso, custom-curves)
+      // fall through to the inactivity watchdog defined below
+      // (`SET_INACTIVITY_TIMEOUT_MS`).
+      live.applySetSummary(payload);
+      notifySlot(server, slotId, SET_URI, setUriForSlot);
+      void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
+        (err) => {
+          log.warn('event-bridge: set_ended_by_device finalize failed', err);
+        },
+      );
     }),
   );
 
@@ -475,9 +515,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     unsubs,
     client.onInProgress((payload: InProgressEvent) => {
       // Device emits this continuously during workout mode (~1 Hz
-      // heartbeat) — most are noise (the firmware's response to our
-      // Workout.GO engage command, fired ~immediately after
-      // `set.start`).
+      // heartbeat). The bridge no longer treats `onInProgress` as a
+      // close signal — that heuristic (`SET_START_GRACE_MS = 500ms`)
+      // terminated fast-tempo WT sets prematurely under noble (sets
+      // ended at 1–3s capturing 0–2 of 8–12 actual reps). Per-set
+      // close in WT/RB/Damper now flows through `onSetSummary`
+      // (`aa 85 5f`); modes without a per-set close marker fall
+      // through to the inactivity watchdog.
       //
       // Bug 24 — Isometric auto-telemetry stream policy (D1):
       // When the user sets Isometric mode without first calling
@@ -489,31 +533,20 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // policy: when there is no active SESSION at all, treat the
       // inProgress firehose as silent — drop without logging. We still
       // log when a session is active but no set is, because that case
-      // surfaces the explicit set.end race-condition guard (see the
-      // "outside the grace window with NO active set is a silent drop"
-      // test in event-bridge.test.ts).
+      // surfaces the explicit set.end race-condition guard.
       const activeSession = live.snapshotSession();
       if (activeSession === undefined) {
         return;
       }
-      //
-      // Apply the payload to live state FIRST so `set.live_metrics`
-      // reflects the most recent peak-force / velocity / target-weight
-      // tick even within the SET_START_GRACE_MS grace window. Missing
-      // the freshest tick on a Stop-press would lose the user's last
-      // heartbeat in the live snapshot for no reason.
-      //
-      // After capture, the existing grace-window logic decides whether
-      // the boundary represents the user pressing Stop on the unit
-      // (outside the grace window with an active set ⇒ finalize via
-      // `set_ended_by_device`) or just the firmware's echo (inside the
-      // grace window ⇒ no finalize). Race-condition guard: when the
-      // explicit `set.end` tool runs first, `live.snapshotSet()` is
-      // already `undefined` by the time the firmware's echoing
-      // Workout.STOP arrives, so the `if` below is a silent no-op.
+      // Apply the payload to live state so `set.live_metrics` reflects
+      // the freshest peak-force / velocity / target-weight tick.
       const activeSet = live.snapshotSet();
       if (activeSet !== undefined) {
         live.applyInProgress(payload, Date.now());
+        // Activity bump for the inactivity watchdog. Reset on every
+        // tick during an active set so the 90s timer effectively
+        // measures gap-since-last-frame, not gap-since-set-start.
+        live.markActivity(Date.now());
       }
       debug.events.push({
         capturedAt: Date.now(),
@@ -528,26 +561,33 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           rawLength: payload.raw.length,
         },
       });
-      if (activeSet === undefined) {
-        return;
-      }
-      const startedMs = Date.parse(activeSet.startedAt);
-      if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
-        return;
-      }
-      notifySlot(server, slotId, SET_URI, setUriForSlot);
-      // Fire-and-forget the persist + publish chain. The void-discard
-      // here is deliberate — the SDK callback signature is sync, and we
-      // don't want a slow store.putSet to block other event handlers.
-      // Errors are logged at warn so they're visible without crashing
-      // the bridge.
-      void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
-        (err) => {
-          log.warn('event-bridge: set_ended_by_device finalize failed', err);
-        },
-      );
     }),
   );
+
+  // Inactivity watchdog: per-slot polling timer that finalizes the active
+  // set as `partial` / `inactivity_timeout` if no SDK activity has landed
+  // for `SET_INACTIVITY_TIMEOUT_MS`. Activity = onInProgress, onSetSummary,
+  // or any WA rep boundary (each bumps `live.markActivity`). Fires on
+  // every tick of `SET_INACTIVITY_POLL_MS`; the test layer can replace
+  // `setInterval` via dependency injection if a deterministic clock is
+  // needed. Cleanup goes through the slot's `unsubs` list.
+  const inactivityTimer = setInterval(() => {
+    const set = live.snapshotSet();
+    if (set === undefined || set.lastActivityAt === undefined) {
+      return;
+    }
+    if (Date.now() - set.lastActivityAt < SET_INACTIVITY_TIMEOUT_MS) {
+      return;
+    }
+    void finalizeSet(state, slotId, {
+      cause: 'device_signal',
+      disengageMotor: false,
+      partialReason: 'inactivity_timeout',
+    }).catch((err) => {
+      log.warn('event-bridge: inactivity-timeout finalize failed', err);
+    });
+  }, SET_INACTIVITY_POLL_MS);
+  unsubs.push(() => clearInterval(inactivityTimer));
 
   // Guided-load (Phase 1g, SDK 0.6.3+, @experimental). Fires whenever the
   // SDK's polling loop decodes a fresh status-register read. The bridge's

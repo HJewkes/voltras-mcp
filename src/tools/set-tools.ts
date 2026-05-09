@@ -509,7 +509,7 @@ export async function finalizeSet(
   opts: {
     cause: SetEndedCause;
     disengageMotor: boolean;
-    partialReason?: 'auto_stopped';
+    partialReason?: 'auto_stopped' | 'inactivity_timeout';
     auto_stop_cause?: string;
   },
 ): Promise<StoredSet | undefined> {
@@ -536,6 +536,7 @@ export async function finalizeSet(
   // block; if it never arrived (mid-set disconnect, abrupt close), the
   // block is omitted.
   const deviceSummary = slot.live.consumeLatestSummary();
+  const deviceSetSummary = slot.live.consumeLatestSetSummary();
   const finalized = slot.live.endSet();
   if (finalized === undefined) {
     return undefined;
@@ -575,7 +576,13 @@ export async function finalizeSet(
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
-  const payload = buildSetEndedPayload(stored, opts.cause, opts.auto_stop_cause, deviceSummary);
+  const payload = buildSetEndedPayload(
+    stored,
+    opts.cause,
+    opts.auto_stop_cause,
+    deviceSummary,
+    deviceSetSummary,
+  );
   state.channels.forSlot(slotId).publish(payload);
   return stored;
 }
