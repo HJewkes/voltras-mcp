@@ -153,6 +153,10 @@ async function startSession(
     ...(exerciseName !== undefined ? { exerciseName } : {}),
   };
   slot.live.startSession(active);
+  // Clear idle-rep accumulators so the PT skill starts each session from a
+  // clean slate. Reps lifted before this session.start won't carry over
+  // into the new session's `idleRepCount` / `idleReps` on the session resource.
+  slot.live.clearIdleReps();
 
   const stored: StoredSession = {
     id: sessionId,

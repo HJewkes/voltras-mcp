@@ -26,7 +26,7 @@ import {
   getRepPeakLoad,
 } from '@voltras/workout-analytics';
 
-import type { ActiveSet, DeviceSnapshot } from './live-state.js';
+import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
 import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 
@@ -1007,6 +1007,51 @@ export function buildVoiceInputPayload(
     latency_ms: latencyMs,
     stt_model: sttModel,
     audio_duration_ms: audioDurationMs,
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for an `idle_rep` channel event. Fires when the
+ * bridge detects a rep boundary from the frame stream while no MCP set is
+ * armed — i.e., the user completed a rep between two `set.start` calls.
+ *
+ * `entry` is the `IdleRep` just recorded on `LiveState`. `idleRepCount` is
+ * the monotonic counter AFTER this rep (so `idleRepCount === 1` for the first
+ * idle rep in a session window). The PT skill can compare `idleRepCount` to
+ * `idleReps.length` from the session resource to detect buffer overflow.
+ *
+ * `vCon` and `rom` are null when the concentric phase had no movement samples
+ * (unusual — typically means the rep boundary fired on a very short burst with
+ * insufficient frames). The meta only includes them when non-null to avoid
+ * "null" strings in attribute filtering.
+ */
+export function buildIdleRepPayload(
+  entry: IdleRep,
+  idleRepCount: number,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'idle_rep',
+    slot: entry.slot,
+    idle_rep_count: String(idleRepCount),
+  };
+  if (entry.vCon !== null) {
+    meta.v_con = entry.vCon.toFixed(3);
+  }
+  const summary =
+    entry.vCon !== null
+      ? `Idle rep detected (no set armed): ${entry.vCon.toFixed(2)} m/s mean conc. Total idle: ${idleRepCount}.`
+      : `Idle rep detected (no set armed): no velocity data. Total idle: ${idleRepCount}.`;
+  const content = JSON.stringify({
+    summary,
+    idle_rep: {
+      ts: entry.ts,
+      v_con: entry.vCon,
+      rom: entry.rom,
+      slot: entry.slot,
+    },
+    idle_rep_count: idleRepCount,
   });
   return { meta, content };
 }
