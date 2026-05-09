@@ -314,7 +314,7 @@ function ensureSlotConnected(slotId: string, slot: ReturnType<typeof getSlot>): 
   if (!slot.client.isConnected) {
     throw new ToolError(
       'SLOT_NOT_BOUND',
-      `Slot \`${slotId}\` is not connected. Call device.connect first.`,
+      `Slot \`${slotId}\` is not connected. Connect a device first via device.connect.`,
     );
   }
 }

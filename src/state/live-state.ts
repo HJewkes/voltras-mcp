@@ -33,10 +33,8 @@ import {
   getPhaseRangeOfMotion,
 } from '@voltras/workout-analytics';
 
+import type { TrainingModeName } from '../schemas/common.js';
 import type { WatchConfig } from '../schemas/set.js';
-
-/** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
-export type TrainingModeName = string;
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {

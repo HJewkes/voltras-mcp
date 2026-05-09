@@ -22,7 +22,7 @@ import { SlotIdSchema } from './common.js';
  * Selectable training-mode names derived from the SDK enum.
  * Excludes `Idle` (not user-selectable) and any numeric reverse-mapping keys.
  */
-const SELECTABLE_MODE_NAMES = Object.keys(TrainingMode).filter(
+export const SELECTABLE_MODE_NAMES = Object.keys(TrainingMode).filter(
   (k) => isNaN(Number(k)) && k !== 'Idle',
 ) as [string, ...string[]];
 

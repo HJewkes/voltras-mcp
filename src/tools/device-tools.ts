@@ -54,6 +54,7 @@ import {
   DeviceEnterRowModeInput,
   DeviceStartRowInput,
   // </Bug-22>
+  SELECTABLE_MODE_NAMES,
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
@@ -127,14 +128,10 @@ const DeviceGetStateInput = z
 // `z.string()`) so an unknown-but-syntactically-valid slot id surfaces from
 // the handler as an INVALID_INPUT with the unbound slot listed by name —
 // more diagnostic than zod's per-element regex error.
-const SELECTABLE_MODE_NAMES_FOR_CASCADE = Object.keys(TrainingMode).filter(
-  (k) => isNaN(Number(k)) && k !== 'Idle',
-) as [string, ...string[]];
-
 const BilateralCascadeInput = z
   .object({
     slots: z.array(z.string().min(1)).optional(),
-    mode: z.enum(SELECTABLE_MODE_NAMES_FOR_CASCADE).optional(),
+    mode: z.enum(SELECTABLE_MODE_NAMES).optional(),
     weightLbs: z.number().int().min(5).max(200).optional(),
     eccentricPercent: z.number().int().min(-195).max(195).optional(),
     chainsLbs: z.number().int().min(0).max(100).optional(),

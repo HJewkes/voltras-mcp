@@ -53,8 +53,8 @@ export const IsometricMeasureMaxInput = z.object({
  * for within-session fatigue asymmetry per the IMTP literature.
  */
 export const IsometricMeasureImbalanceInput = z.object({
-  primarySlot: z.string().min(1),
-  secondarySlot: z.string().min(1),
+  primarySlot: SlotIdSchema.unwrap(),
+  secondarySlot: SlotIdSchema.unwrap(),
   primarySide: z.enum(['left', 'right']).optional().default('left'),
   durationMs: z.number().int().min(3_000).max(10_000).optional().default(DEFAULT_DURATION_MS),
   trials: z.number().int().min(2).max(5).optional().default(DEFAULT_TRIALS),
