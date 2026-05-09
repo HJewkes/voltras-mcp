@@ -31,7 +31,14 @@ export const SessionStartInput = z
 
 /**
  * Input for `session.list`. All fields optional; handler applies defaults
- * (`sort = 'startedAt:desc'`, `limit = 50`, `offset = 0`).
+ * (`sort = 'startedAt:desc'`, `limit = 50`, `offset = 0`, `detail = 'summary'`).
+ *
+ * `detail` controls how much data is returned per session:
+ *   - `'summary'` (default): existing session metadata PLUS aggregates
+ *     (setCount, totalReps, topWeightLbs, trainingModes, totalDurationMs).
+ *     Fires N `getSetsForSession` queries (one per session); acceptable for v1.
+ *   - `'full'`: same as `'summary'` but also includes the full `sets` array
+ *     with each set's `reps` array. Matches the old `session.get` payload shape.
  */
 export const SessionListInput = z.object({
   from: z.string().datetime().optional(),
@@ -40,6 +47,7 @@ export const SessionListInput = z.object({
   sort: z.enum(['startedAt:desc', 'startedAt:asc']).default('startedAt:desc').optional(),
   limit: z.number().int().min(1).max(200).default(50).optional(),
   offset: z.number().int().min(0).default(0).optional(),
+  detail: z.enum(['summary', 'full']).default('summary').optional(),
 });
 
 /** Input for `session.get` — fetches a single stored session by id. */
