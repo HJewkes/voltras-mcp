@@ -15,6 +15,7 @@ const { registerSystemTools, __resetSpeakState } = await import('../tts-tools.js
 import type { ChildProcess } from 'node:child_process';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MutableVoiceListener, VoiceListenerRef } from '../tts-tools.js';
 import type { ToolResult } from '../helpers.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
@@ -336,5 +337,168 @@ describe('system.speak — platform gating', () => {
     const result = await harness.invoke({ text: 'hello' });
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'TTS_NOT_AVAILABLE' });
+  });
+});
+
+// ── TTS ducking — mute/unmute integration ────────────────────────────────────
+
+function makeFakeVoiceListener(): MutableVoiceListener & { muteCalls: number; unmuteCalls: number } {
+  let muteCalls = 0;
+  let unmuteCalls = 0;
+  return {
+    get muteCalls() {
+      return muteCalls;
+    },
+    get unmuteCalls() {
+      return unmuteCalls;
+    },
+    mute: () => {
+      muteCalls += 1;
+    },
+    unmute: () => {
+      unmuteCalls += 1;
+    },
+  };
+}
+
+function buildDuckingHarness(voiceListener: MutableVoiceListener | null): {
+  invoke: Callback;
+  children: FakeChild[];
+  setNextChild: (child: FakeChild | null) => void;
+  setSpawnError: (err: Error | null) => void;
+} {
+  const children: FakeChild[] = [];
+  let nextChild: FakeChild | null = null;
+  let spawnError: Error | null = null;
+
+  const fakeSpawn = (command: string, args: ReadonlyArray<string>): ChildProcess => {
+    void command;
+    void args;
+    if (spawnError !== null) throw spawnError;
+    const child = nextChild ?? new FakeChild();
+    nextChild = null;
+    children.push(child);
+    return child as unknown as ChildProcess;
+  };
+
+  const ref: VoiceListenerRef = { listener: voiceListener };
+  const slot: { callback?: Callback } = {};
+  const placeholders = new Map<string, RegisteredTool>();
+  placeholders.set('system.speak', {
+    update: ({ callback }: { callback?: Callback }) => {
+      if (callback !== undefined) slot.callback = callback;
+    },
+  } as unknown as RegisteredTool);
+
+  registerSystemTools({} as McpServer, placeholders, { platform: 'darwin', spawn: fakeSpawn }, ref);
+
+  if (slot.callback === undefined) throw new Error('callback was not registered');
+
+  return {
+    invoke: slot.callback,
+    children,
+    setNextChild: (c) => {
+      nextChild = c;
+    },
+    setSpawnError: (e) => {
+      spawnError = e;
+    },
+  };
+}
+
+describe('system.speak — TTS ducking (mute/unmute)', () => {
+  afterEach(() => {
+    __resetSpeakState();
+  });
+
+  it('calls mute() before spawning say and unmute() after exit (fire-and-forget)', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    const child = new FakeChild();
+    harness.setNextChild(child);
+
+    await harness.invoke({ text: 'rest is up' });
+
+    // mute should have fired before spawn (call count 1 at this point)
+    expect(vl.muteCalls).toBe(1);
+    // unmute fires on child exit — not yet
+    expect(vl.unmuteCalls).toBe(0);
+
+    child.emitExit(0);
+    expect(vl.unmuteCalls).toBe(1);
+  });
+
+  it('calls unmute() after exit in blocking mode (success)', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    const child = new FakeChild();
+    harness.setNextChild(child);
+
+    const promise = harness.invoke({ text: 'two reps left', blocking: true });
+    expect(vl.muteCalls).toBe(1);
+
+    child.emitExit(0);
+    await promise;
+
+    expect(vl.unmuteCalls).toBe(1);
+  });
+
+  it('calls unmute() even when say exits with non-zero code (blocking)', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    const child = new FakeChild();
+    harness.setNextChild(child);
+
+    const promise = harness.invoke({ text: 'ease in', blocking: true });
+    child.emitExit(1);
+    const result = await promise;
+
+    expect(result.isError).toBe(true);
+    expect(vl.unmuteCalls).toBe(1);
+  });
+
+  it('calls unmute() when spawn fails (TTS_NOT_AVAILABLE path)', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    harness.setSpawnError(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+
+    const result = await harness.invoke({ text: 'hello' });
+
+    expect(result.isError).toBe(true);
+    expect(vl.muteCalls).toBe(1);
+    expect(vl.unmuteCalls).toBe(1);
+  });
+
+  it('works without a voice listener (no error thrown, null ref)', async () => {
+    const harness = buildDuckingHarness(null);
+    const child = new FakeChild();
+    harness.setNextChild(child);
+
+    const result = await harness.invoke({ text: 'hello' });
+    child.emitExit(0);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('works when registerSystemTools is called without a voiceListenerRef', async () => {
+    const slot: { callback?: Callback } = {};
+    const placeholders = new Map<string, RegisteredTool>();
+    const children: FakeChild[] = [];
+    placeholders.set('system.speak', {
+      update: ({ callback }: { callback?: Callback }) => {
+        if (callback !== undefined) slot.callback = callback;
+      },
+    } as unknown as RegisteredTool);
+
+    const fakeSpawn = (): ChildProcess => {
+      const child = new FakeChild();
+      children.push(child);
+      return child as unknown as ChildProcess;
+    };
+
+    registerSystemTools({} as McpServer, placeholders, { platform: 'darwin', spawn: fakeSpawn });
+
+    const result = await slot.callback!({ text: 'no listener' });
+    children[0]!.emitExit(0);
+    expect(result.isError).toBeUndefined();
   });
 });

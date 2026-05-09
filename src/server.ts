@@ -216,7 +216,7 @@ export async function runServer(): Promise<void> {
     registerTimerTools(server, state, placeholders);
     registerServerTools(server, state, placeholders);
     registerDebugTools(server, state, placeholders);
-    registerSystemTools(server, placeholders);
+    registerSystemTools(server, placeholders, undefined, state.voice);
     registerVoiceTools(server, state, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
