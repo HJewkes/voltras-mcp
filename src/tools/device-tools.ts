@@ -58,7 +58,7 @@ import {
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
 import type { DeviceSnapshot } from '../state/live-state.js';
-import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
+import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
@@ -99,6 +99,13 @@ const DeviceGetStateInput = z
     slot: SlotIdSchema,
   })
   .strict();
+
+// `slot.swap` accepts no arguments — there are exactly two slot positions
+// in the workspace today (PRIMARY_SLOT plus one user-allocated id), so the
+// swap is unambiguous. `.strict()` rejects unknown fields so a typo like
+// `{ slt: 'left' }` surfaces as INVALID_INPUT instead of being silently
+// dropped.
+const SlotSwapInput = z.object({}).strict();
 
 /**
  * Default scan timeout when the input omits `timeoutMs`. Mirrors the schema
@@ -731,6 +738,37 @@ export function registerDeviceTools(
       );
     }),
   );
+
+  // slot.swap — exchanges the device bindings between the two slots without
+  // any BLE work. Use case: the side-ID ritual reveals the slot↔side mapping
+  // is reversed; swapping in-memory collapses the otherwise ~6-call
+  // disconnect/scan/reconnect sequence into one. See `swapSlots` in
+  // `state/slot-manager.ts` for the mutation semantics.
+  install(
+    placeholders,
+    'slot.swap',
+    SlotSwapInput,
+    wrapHandler(SlotSwapInput, async () => {
+      swapSlots(state);
+      return { ok: true, bindings: snapshotSlotBindings(state) };
+    }),
+    'Swap the device bindings between the two slots in place. No BLE writes, no SDK calls — pure in-memory mutation. Requires both slots to be bound to a connected device. Returns the new binding map.',
+  );
+}
+
+/**
+ * Build a `{ [slotId]: { deviceId } }` map of the current slot bindings.
+ * Returned by `slot.swap` so the caller can confirm the post-swap mapping
+ * without a follow-up `device.get_state` per slot. Keyed by `slotId` (not
+ * by an ordered array) so the caller does not have to remember which slot
+ * key was at index 0 vs 1.
+ */
+function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: string | null }> {
+  const out: Record<string, { deviceId: string | null }> = {};
+  for (const slot of state.slots.values()) {
+    out[slot.slotId] = { deviceId: slot.client.connectedDeviceId };
+  }
+  return out;
 }
 
 /**

@@ -42,7 +42,9 @@ vi.mock('../event-bridge.js', () => ({
 const { VoltraClient } = await import('@voltras/node-sdk');
 const { LiveState } = await import('../live-state.js');
 const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
-const { createSlot, removeSlot, resetPrimarySlot } = await import('../slot-manager.js');
+const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import(
+  '../slot-manager.js'
+);
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's
@@ -198,5 +200,130 @@ describe('resetPrimarySlot', () => {
       disposed: boolean;
     };
     expect(freshClient.disposed).toBe(false);
+  });
+});
+
+describe('swapSlots', () => {
+  it('exchanges client/live/modeRevertGuard between the two slots while keeping slot keys stable', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    const leftClient = connectedClient();
+    createSlot(state, 'left', leftClient);
+    const primaryBefore = getSlot(state, PRIMARY_SLOT);
+    const leftBefore = getSlot(state, 'left');
+    const primaryClientBefore = primaryBefore.client;
+    const primaryLiveBefore = primaryBefore.live;
+    const primaryGuardBefore = primaryBefore.modeRevertGuard;
+    const leftLiveBefore = leftBefore.live;
+    const leftGuardBefore = leftBefore.modeRevertGuard;
+
+    swapSlots(state);
+
+    const primaryAfter = getSlot(state, PRIMARY_SLOT);
+    const leftAfter = getSlot(state, 'left');
+    // SlotState wrapper objects are mutated in place — same references, but
+    // their `client` / `live` / `modeRevertGuard` fields swap.
+    expect(primaryAfter).toBe(primaryBefore);
+    expect(leftAfter).toBe(leftBefore);
+    expect(primaryAfter.slotId).toBe(PRIMARY_SLOT);
+    expect(leftAfter.slotId).toBe('left');
+    // Bindings have flipped.
+    expect(primaryAfter.client).toBe(leftClient);
+    expect(leftAfter.client).toBe(primaryClientBefore);
+    expect(primaryAfter.live).toBe(leftLiveBefore);
+    expect(leftAfter.live).toBe(primaryLiveBefore);
+    expect(primaryAfter.modeRevertGuard).toBe(leftGuardBefore);
+    expect(leftAfter.modeRevertGuard).toBe(primaryGuardBefore);
+  });
+
+  it('rejects when only one slot is bound (primary connected, no second slot)', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    expect(() => swapSlots(state)).toThrow(/exactly two slots/i);
+  });
+
+  it('rejects when neither slot is connected', () => {
+    // Two slots in the map but neither has `isConnected: true`.
+    const state = makeStateWithPrimary();
+    createSlot(state, 'left', new VoltraClient());
+    expect(() => swapSlots(state)).toThrow(/both slots to be bound/i);
+  });
+
+  it('rejects when one slot is bound but the other is not', () => {
+    // Primary is connected; left is a fresh placeholder (isConnected=false).
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    createSlot(state, 'left', new VoltraClient());
+    expect(() => swapSlots(state)).toThrow(/both slots to be bound/i);
+  });
+
+  it('attaches a SWAP_REQUIRES_TWO_SLOTS code on the empty-second-slot rejection', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    let caught: unknown;
+    try {
+      swapSlots(state);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { code?: string }).code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+  });
+
+  it('attaches a SLOT_NOT_BOUND code when both slots exist but one is unbound', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    createSlot(state, 'left', new VoltraClient());
+    let caught: unknown;
+    try {
+      swapSlots(state);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { code?: string }).code).toBe('SLOT_NOT_BOUND');
+  });
+
+  it('is idempotent — two consecutive swaps return to the original mapping', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    const leftClient = connectedClient();
+    createSlot(state, 'left', leftClient);
+    const originalPrimaryClient = getSlot(state, PRIMARY_SLOT).client;
+    const originalLeftClient = getSlot(state, 'left').client;
+
+    swapSlots(state);
+    swapSlots(state);
+
+    expect(getSlot(state, PRIMARY_SLOT).client).toBe(originalPrimaryClient);
+    expect(getSlot(state, 'left').client).toBe(originalLeftClient);
+  });
+
+  it('unwires both bridges before the swap and re-wires after (no listeners on stale handles)', async () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    const { wireBridgeForSlot } = await import('../event-bridge.js');
+    const wireMock = wireBridgeForSlot as unknown as ReturnType<typeof vi.fn>;
+    // Track the unwire fns each `wireBridgeForSlot` invocation hands back so
+    // we can assert they fire when swapSlots tears the old bridge down.
+    const unwireCalls: string[] = [];
+    let counter = 0;
+    wireMock.mockImplementation(() => {
+      const id = `unwire-${++counter}`;
+      return vi.fn(() => {
+        unwireCalls.push(id);
+      });
+    });
+    // Primary already has its placeholder unwire from the earlier `vi.fn`
+    // mock at module load — replace it with a tracked one so assertions are
+    // about the bridge tear-down behavior of swapSlots itself.
+    const primary = getSlot(state, PRIMARY_SLOT);
+    primary.unwireBridge = vi.fn(() => {
+      unwireCalls.push('unwire-primary-pre');
+    });
+    const leftClient = connectedClient();
+    // createSlot will pull a fresh tracked unwire (`unwire-1` from the
+    // counter above, since the wireMock replacement is now in effect).
+    createSlot(state, 'left', leftClient);
+
+    wireMock.mockClear();
+    swapSlots(state);
+
+    // Both pre-swap unwires fired.
+    expect(unwireCalls).toContain('unwire-primary-pre');
+    expect(unwireCalls).toContain('unwire-1');
+    // Bridge re-wired exactly once per slot.
+    expect(wireMock).toHaveBeenCalledTimes(2);
   });
 });

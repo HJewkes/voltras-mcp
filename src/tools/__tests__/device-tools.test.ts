@@ -261,6 +261,7 @@ const DEVICE_TOOL_NAMES = [
   // </Bug-22>
   'device.get_state',
   'device.send_raw',
+  'slot.swap',
 ] as const;
 
 interface FakeLive {
