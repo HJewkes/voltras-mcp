@@ -77,6 +77,7 @@ const CORE_TOOL_NAMES = [
   'device.get_state',
   'device.send_raw',
   'bilateral.cascade',
+  'slot.swap',
   'session.start',
   'session.end',
   'session.list',
