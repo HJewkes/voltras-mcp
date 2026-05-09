@@ -72,6 +72,7 @@ const CORE_TOOL_NAMES = [
   // </Bug-22>
   'device.get_state',
   'device.send_raw',
+  'bilateral.cascade',
   'session.start',
   'session.end',
   'session.list',
