@@ -42,6 +42,7 @@ import { registerMockTools } from './tools/mock-tools.js';
 import { registerTimerTools } from './tools/timer-tools.js';
 import { registerServerTools } from './tools/server-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
+import { registerSystemTools } from './tools/tts-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -88,6 +89,7 @@ const CORE_TOOL_NAMES = [
   'debug.recent_frames',
   'debug.recent_events',
   'debug.push_test_channel',
+  'system.speak',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -211,6 +213,7 @@ export async function runServer(): Promise<void> {
     registerTimerTools(server, state, placeholders);
     registerServerTools(server, state, placeholders);
     registerDebugTools(server, state, placeholders);
+    registerSystemTools(server, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }
