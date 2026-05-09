@@ -147,6 +147,17 @@ const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
 const START_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.';
 
+const EXIT_GUIDED_LOAD_DESCRIPTION =
+  '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
+
+const DeviceExitGuidedLoadInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
+
+const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engaging', 'active']);
+
 const SEND_RAW_DESCRIPTION =
   'DIAGNOSTIC ONLY. Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.';
 
@@ -587,6 +598,31 @@ export function registerDeviceTools(
       return { ok: true };
     }),
     START_GUIDED_LOAD_DESCRIPTION,
+  );
+
+  // device.exit_guided_load (Phase 1g, @experimental) — wraps the SDK's
+  // `exitGuidedLoad`. Guards against calling exit when the device isn't in
+  // an active guided-load phase so callers get a structured error rather than
+  // a silent no-op write. The `onGuidedLoadState` bridge wiring already
+  // surfaces the resulting `exited` phase transition as a `guided_load_state`
+  // debug event, so no extra event emission is needed here.
+  install(
+    placeholders,
+    'device.exit_guided_load',
+    DeviceExitGuidedLoadInput,
+    wrapHandler(DeviceExitGuidedLoadInput, async (input) => {
+      const slot = getSlot(state, input.slot);
+      const { phase } = slot.client.guidedLoadState;
+      if (!GUIDED_LOAD_ACTIVE_PHASES.has(phase)) {
+        throwSdkLike(
+          'NOT_IN_GUIDED_LOAD',
+          `Slot \`${input.slot ?? PRIMARY_SLOT}\` is not in an active guided-load phase (current: "${phase}"). Call device.start_guided_load first.`,
+        );
+      }
+      await slot.client.exitGuidedLoad();
+      return { ok: true };
+    }),
+    EXIT_GUIDED_LOAD_DESCRIPTION,
   );
 
   // device.send_raw — DIAGNOSTIC byte-pipe. Reaches through `client.getAdapter()`

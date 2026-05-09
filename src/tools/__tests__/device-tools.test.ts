@@ -118,6 +118,12 @@ interface FakeClient {
       pollDurationMs?: number;
     }) => Promise<void>
   >;
+  exitGuidedLoad: Mock<() => Promise<void>>;
+  guidedLoadState: {
+    phase: 'idle' | 'armed' | 'countdown' | 'engaging' | 'active' | 'exited' | 'timeout';
+    countdownRemainingMs: number | null;
+    fitnessModeRaw: number | null;
+  };
   // <Bug-22>
   enterRowMode: Mock<() => Promise<void>>;
   startRow: Mock<(distance?: string) => Promise<void>>;
@@ -171,6 +177,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
     startGuidedLoad: vi.fn(async () => undefined),
+    exitGuidedLoad: vi.fn(async () => undefined),
+    guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
     // <Bug-22>
     enterRowMode: vi.fn(async () => undefined),
     startRow: vi.fn(async () => undefined),
@@ -255,6 +263,7 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
   'device.start_guided_load',
+  'device.exit_guided_load',
   // <Bug-22>
   'device.enter_row_mode',
   'device.start_row',
