@@ -23,7 +23,7 @@
 // The `applySettings` signature uses `Partial<DeviceSnapshot>` for the input
 // rather than the SDK's settings type so the caller (event-bridge) can keep
 // SDK-shape conversion at its own seam.
-import type { InProgressEvent, SummaryEvent } from '@voltras/node-sdk';
+import type { InProgressEvent, SetSummaryEvent, SummaryEvent } from '@voltras/node-sdk';
 import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
 import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
 
@@ -136,12 +136,22 @@ export interface ActiveSet {
    * Why the set ended in something other than a graceful tool call.
    *   * `'disconnect'`    — connection drop cascade
    *   * `'session_end'`   — explicit `session.end` cascade
-   *   * `'device_signal'` — user pressed Stop on the unit (autonomous
-   *     set_boundary outside the start-grace window)
+   *   * `'device_signal'` — device-driven close (`onSetSummary` lands on an
+   *     active set in WT/RB/Damper). Replaces the legacy `onInProgress`
+   *     heuristic that terminated sets prematurely under fast-tempo WT.
    *   * `'auto_stopped'`  — a server-evaluated `stopOn` trigger fired
    *     (rep count, velocity loss, or idle timeout); see WatchConfig.
+   *   * `'inactivity_timeout'` — no SDK activity (in-progress / per-rep /
+   *     set-summary) on the active set for `SET_INACTIVITY_TIMEOUT_MS`;
+   *     bridge watchdog finalized as partial. Safety net for modes that
+   *     don't emit a per-set close marker (rowing, iso, custom-curves).
    */
-  partialReason?: 'disconnect' | 'session_end' | 'device_signal' | 'auto_stopped';
+  partialReason?:
+    | 'disconnect'
+    | 'session_end'
+    | 'device_signal'
+    | 'auto_stopped'
+    | 'inactivity_timeout';
   /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
@@ -179,11 +189,37 @@ export interface ActiveSet {
    * finalized set carries it forward to the persisted payload exactly once.
    * If `endSet` runs without a prior `onSummary` (mid-set disconnect, no
    * graceful close), the finalized set has no summary block — never stale.
+   *
+   * Note: `aa 86 7d` "summary" is workout-end / post-STOP only and may not
+   * fire at all in WT/RB/Damper. Per-set device-driven close in those modes
+   * is signaled by `onSetSummary` (`aa 85 5f`) — see `latestSetSummary`.
    */
   latestSummary?: {
     repCount: number;
     schemaVersion: number;
   };
+  /**
+   * Most recent `onSetSummary` payload received during this set's lifetime.
+   * Captured by `applySetSummary`, read-and-cleared by `endSet` (via
+   * `consumeLatestSetSummary`). The bridge calls `finalizeSet` synchronously
+   * after the apply, so the captured payload is always consumed before
+   * `endSet` discards the active set.
+   */
+  latestSetSummary?: {
+    repCount: number;
+    repDurationMs: number;
+    targetWeightTenths: number;
+    schemaVersion: number;
+  };
+  /**
+   * Unix-ms timestamp of the most recent SDK activity on the active set
+   * (`onInProgress` / `onSetSummary` / WA rep boundary). The bridge's
+   * inactivity watchdog finalizes the set as `partial` /
+   * `inactivity_timeout` if this stays unchanged for
+   * `SET_INACTIVITY_TIMEOUT_MS`. Initialized to `set.startedAt` when
+   * `startSet` runs.
+   */
+  lastActivityAt?: number;
 }
 
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
@@ -294,9 +330,11 @@ export class LiveState {
     if (this.set !== undefined) {
       return;
     }
+    const startedMs = Date.parse(s.startedAt);
     this.set = {
       ...s,
       reps: [...s.reps],
+      lastActivityAt: Number.isFinite(startedMs) ? startedMs : Date.now(),
       ...(s.watch !== undefined ? { watch: s.watch, firedTriggers: new Set<string>() } : {}),
     };
     this._analyticsSet = createSet();
@@ -313,7 +351,9 @@ export class LiveState {
    * session is still tracked, so resource snapshots reflect the close
    * synchronously.
    */
-  endSet(reason?: 'disconnect' | 'session_end' | 'auto_stopped'): ActiveSet | undefined {
+  endSet(
+    reason?: 'disconnect' | 'session_end' | 'auto_stopped' | 'inactivity_timeout',
+  ): ActiveSet | undefined {
     const current = this.set;
     if (current === undefined) {
       return undefined;
@@ -442,6 +482,67 @@ export class LiveState {
     delete next.latestSummary;
     this.set = next;
     return summary;
+  }
+
+  /**
+   * Capture the most recent `onSetSummary` payload on the active set. The
+   * device emits this frame per-set in WT/RB/Damper after all reps complete;
+   * the bridge calls `finalizeSet` immediately after this so consumers see
+   * the rest-coaching prompt + persisted set close as one event sequence.
+   *
+   * `markActivity` is bumped here so the inactivity watchdog won't time
+   * the set out before `finalizeSet` discards it.
+   *
+   * No-op when no set is active (ghost setSummary after `set.end` already
+   * fired).
+   */
+  applySetSummary(payload: SetSummaryEvent, capturedAt: number = Date.now()): void {
+    if (this.set === undefined) {
+      return;
+    }
+    this.set = {
+      ...this.set,
+      lastActivityAt: capturedAt,
+      latestSetSummary: {
+        repCount: payload.repCount,
+        repDurationMs: payload.repDurationMs,
+        targetWeightTenths: payload.targetWeightTenths,
+        schemaVersion: payload.schemaVersion,
+      },
+    };
+  }
+
+  /**
+   * Read-and-clear the active set's `latestSetSummary`. Mirrors
+   * `consumeLatestSummary`: returns the captured payload (if any) and
+   * removes it in the same call so the finalized set carries the block
+   * forward exactly once.
+   */
+  consumeLatestSetSummary(): ActiveSet['latestSetSummary'] | undefined {
+    if (this.set === undefined) {
+      return undefined;
+    }
+    const setSummary = this.set.latestSetSummary;
+    if (setSummary === undefined) {
+      return undefined;
+    }
+    const next = { ...this.set };
+    delete next.latestSetSummary;
+    this.set = next;
+    return setSummary;
+  }
+
+  /**
+   * Bump the active set's `lastActivityAt` marker. Called by the bridge
+   * on every `onInProgress` / `onSetSummary` / WA rep boundary observed
+   * during the set, so the inactivity watchdog (`SET_INACTIVITY_TIMEOUT_MS`)
+   * has a fresh reference point. No-op when no set is active.
+   */
+  markActivity(now: number = Date.now()): void {
+    if (this.set === undefined) {
+      return;
+    }
+    this.set = { ...this.set, lastActivityAt: now };
   }
 
   /**

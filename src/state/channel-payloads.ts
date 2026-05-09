@@ -18,7 +18,7 @@
 // are silently dropped on serialization). Values must all be strings —
 // helpers `toFixed(N)` or `String(...)` numbers before assignment.
 
-import type { PreSummaryEvent } from '@voltras/node-sdk';
+import type { SetSummaryEvent } from '@voltras/node-sdk';
 import type { Rep } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
@@ -254,9 +254,27 @@ export type SetEndedCause = 'tool' | 'device_signal';
  * count without an extra retrieval. Optional — sets that ended without
  * ever receiving an `onSummary` (mid-set disconnect, abrupt close) omit
  * the block entirely.
+ *
+ * Note: `aa 86 7d` "summary" only fires at workout-end / post-STOP and
+ * may not fire at all in WT/RB/Damper. Per-set device close in those
+ * modes is captured via `DeviceSetSummaryBlock` below.
  */
 export interface DeviceSummaryBlock {
   repCount: number;
+  schemaVersion: number;
+}
+
+/**
+ * Device-asserted per-set summary metadata, harvested from the SDK's
+ * `onSetSummary` vendor frame (`aa 85 5f`) via
+ * `LiveState.consumeLatestSetSummary`. The canonical per-set close marker
+ * in WT/RB/Damper modes — fires after all reps complete with the final
+ * rep count. Threaded onto `set_ended_by_device` payloads when present.
+ */
+export interface DeviceSetSummaryBlock {
+  repCount: number;
+  repDurationMs: number;
+  targetWeightTenths: number;
   schemaVersion: number;
 }
 
@@ -287,6 +305,7 @@ export function buildSetEndedPayload(
   cause: SetEndedCause = 'tool',
   autoStopCause?: string,
   deviceSummary?: DeviceSummaryBlock,
+  deviceSetSummary?: DeviceSetSummaryBlock,
 ): {
   meta: Record<string, string>;
   content: string;
@@ -324,6 +343,16 @@ export function buildSetEndedPayload(
     meta.device_rep_count = String(deviceSummary.repCount);
     meta.device_schema_version = String(deviceSummary.schemaVersion);
   }
+  if (deviceSetSummary !== undefined) {
+    // Per-set device summary from `onSetSummary` (`aa 85 5f`). Distinct
+    // from `onSummary` above which is workout-end-only. Surfaced in meta
+    // for fast scanning + mismatch detection. Wins over `device_summary`
+    // when both happen to be present (rare; would require both frames in
+    // the same set's lifetime).
+    meta.device_rep_count = String(deviceSetSummary.repCount);
+    meta.device_set_rep_duration_ms = String(deviceSetSummary.repDurationMs);
+    meta.device_schema_version = String(deviceSetSummary.schemaVersion);
+  }
 
   const reps = stored.reps.map(serializeRepForPayload);
   const vbt = computeVbtSummary(stored.reps);
@@ -353,6 +382,16 @@ export function buildSetEndedPayload(
           device_summary: {
             rep_count: deviceSummary.repCount,
             schema_version: deviceSummary.schemaVersion,
+          },
+        }
+      : {}),
+    ...(deviceSetSummary !== undefined
+      ? {
+          device_set_summary: {
+            rep_count: deviceSetSummary.repCount,
+            rep_duration_ms: deviceSetSummary.repDurationMs,
+            target_weight_tenths: deviceSetSummary.targetWeightTenths,
+            schema_version: deviceSetSummary.schemaVersion,
           },
         }
       : {}),
@@ -425,9 +464,9 @@ function buildSetEndedSummary(
 
 /**
  * Build the meta + content for a `set_pre_summary` channel event. Fires
- * when the device's vendor `preSummary` frame lands (~3s before the final
- * rep) — gives PT Claude an early-warning hook for the rest period
- * coaching prompt without waiting for the set to fully close.
+ * when the device's vendor `aa 85 5f` set-summary frame lands (per-set,
+ * after all reps complete in WT/RB/Damper) — hands PT Claude the rest
+ * period coaching prompt right at set close.
  *
  * The `set_so_far` block mirrors the trigger-event shape so the model
  * parses mid-set context with the same schema across `set_target_reached`,
@@ -435,11 +474,16 @@ function buildSetEndedSummary(
  *
  * `payload.targetWeightTenths` is carried through as-is (raw tenths) for
  * completeness — the model can divide by 10 when it wants pounds.
+ *
+ * (The `set_pre_summary` channel-event name is preserved for now since it's
+ * stable wire shape; the SDK-side rename to `onSetSummary` happened in
+ * 0.9.0 but the MCP channel event keeps the legacy label until a future
+ * MCP-side rename PR.)
  */
 export function buildSetPreSummaryPayload(
   set: ActiveSet,
   device: DeviceSnapshot,
-  payload: PreSummaryEvent,
+  payload: SetSummaryEvent,
 ): { meta: Record<string, string>; content: string } {
   const meta: Record<string, string> = {
     source: 'voltras',

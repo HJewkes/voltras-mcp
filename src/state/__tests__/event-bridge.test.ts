@@ -98,8 +98,8 @@ interface SummaryEvent {
   raw: Uint8Array;
 }
 
-// Mirrors the SDK 0.6.0 `PreSummaryEvent` shape (~3s before final rep).
-interface PreSummaryEvent {
+// Mirrors the SDK 0.6.0 `SetSummaryEvent` shape (~3s before final rep).
+interface SetSummaryEvent {
   schemaVersion: number;
   targetWeightTenths: number;
   repCount: number;
@@ -122,7 +122,7 @@ interface StateDumpEvent {
 type PerRepListener = (event: PerRepEvent) => void;
 type InProgressListener = (event: InProgressEvent) => void;
 type SummaryListener = (event: SummaryEvent) => void;
-type PreSummaryListener = (event: PreSummaryEvent) => void;
+type SetSummaryListener = (event: SetSummaryEvent) => void;
 type SettingsUpdateListener = (settings: SdkSettings) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
 type StateDumpListener = (event: StateDumpEvent) => void;
@@ -141,7 +141,7 @@ interface FakeClient {
   onPerRep: Mock<(l: PerRepListener) => () => void>;
   onInProgress: Mock<(l: InProgressListener) => () => void>;
   onSummary: Mock<(l: SummaryListener) => () => void>;
-  onPreSummary: Mock<(l: PreSummaryListener) => () => void>;
+  onSetSummary: Mock<(l: SetSummaryListener) => () => void>;
   onSettingsUpdate: Mock<(l: SettingsUpdateListener) => () => void>;
   onConnectionStateChange: Mock<(l: ConnectionStateListener) => () => void>;
   onStateDump: Mock<(l: StateDumpListener) => () => void>;
@@ -160,7 +160,7 @@ interface FakeClient {
     perRep: (event?: PerRepEvent) => void;
     inProgress: (event?: InProgressEvent) => void;
     summary: (event?: SummaryEvent) => void;
-    preSummary: (event?: PreSummaryEvent) => void;
+    setSummary: (event?: SetSummaryEvent) => void;
     settingsUpdate: (settings: SdkSettings) => void;
     connectionStateChange: (state: ConnectionState) => void;
     stateDump: (event: StateDumpEvent) => void;
@@ -201,7 +201,7 @@ const makeSummaryEvent = (overrides: Partial<SummaryEvent> = {}): SummaryEvent =
   ...overrides,
 });
 
-const makePreSummaryEvent = (overrides: Partial<PreSummaryEvent> = {}): PreSummaryEvent => ({
+const makeSetSummaryEvent = (overrides: Partial<SetSummaryEvent> = {}): SetSummaryEvent => ({
   schemaVersion: 1,
   targetWeightTenths: 1000,
   repCount: 5,
@@ -227,7 +227,7 @@ function makeFakeClient(): FakeClient {
   let perRepCb: PerRepListener = () => undefined;
   let inProgressCb: InProgressListener = () => undefined;
   let summaryCb: SummaryListener = () => undefined;
-  let preSummaryCb: PreSummaryListener = () => undefined;
+  let setSummaryCb: SetSummaryListener = () => undefined;
   let settingsCb: SettingsUpdateListener = () => undefined;
   let connCb: ConnectionStateListener = () => undefined;
   let stateDumpCb: StateDumpListener = () => undefined;
@@ -244,8 +244,8 @@ function makeFakeClient(): FakeClient {
     summaryCb = l;
     return () => undefined;
   });
-  const onPreSummary = vi.fn((l: PreSummaryListener) => {
-    preSummaryCb = l;
+  const onSetSummary = vi.fn((l: SetSummaryListener) => {
+    setSummaryCb = l;
     return () => undefined;
   });
   const onSettingsUpdate = vi.fn((l: SettingsUpdateListener) => {
@@ -270,7 +270,7 @@ function makeFakeClient(): FakeClient {
     onPerRep,
     onInProgress,
     onSummary,
-    onPreSummary,
+    onSetSummary,
     onSettingsUpdate,
     onConnectionStateChange,
     onStateDump,
@@ -281,7 +281,7 @@ function makeFakeClient(): FakeClient {
       perRep: (e) => perRepCb(e ?? makePerRepEvent()),
       inProgress: (e) => inProgressCb(e ?? makeInProgressEvent()),
       summary: (e) => summaryCb(e ?? makeSummaryEvent()),
-      preSummary: (e) => preSummaryCb(e ?? makePreSummaryEvent()),
+      setSummary: (e) => setSummaryCb(e ?? makeSetSummaryEvent()),
       settingsUpdate: (s) => settingsCb(s),
       connectionStateChange: (s) => connCb(s),
       stateDump: (e) => stateDumpCb(e),
@@ -396,11 +396,11 @@ describe('wireEventBridge', () => {
   });
 
   describe('subscription surface', () => {
-    it('subscribes to onPerRep, onInProgress, onSummary, onPreSummary, onSettingsUpdate, onConnectionStateChange, and onStateDump', () => {
+    it('subscribes to onPerRep, onInProgress, onSummary, onSetSummary, onSettingsUpdate, onConnectionStateChange, and onStateDump', () => {
       expect(client.onPerRep).toHaveBeenCalledOnce();
       expect(client.onInProgress).toHaveBeenCalledOnce();
       expect(client.onSummary).toHaveBeenCalledOnce();
-      expect(client.onPreSummary).toHaveBeenCalledOnce();
+      expect(client.onSetSummary).toHaveBeenCalledOnce();
       expect(client.onSettingsUpdate).toHaveBeenCalledOnce();
       expect(client.onConnectionStateChange).toHaveBeenCalledOnce();
       expect(client.onStateDump).toHaveBeenCalledOnce();
@@ -660,7 +660,7 @@ describe('wireEventBridge', () => {
     // the active behavior end-to-end.
   });
 
-  describe('onInProgress → set_ended_by_device finalize', () => {
+  describe('onSetSummary → set_ended_by_device finalize', () => {
     // A second harness — the bridge needs `state` threaded so it can call
     // `finalizeSet`. We re-wire here with a minimal fake state shaped just
     // enough for the device-signal finalize path: live, store with a
@@ -748,10 +748,14 @@ describe('wireEventBridge', () => {
       });
     }
 
-    it('inside the grace window does NOT finalize (existing Workout.GO echo suppression)', async () => {
-      // startedAt = now → still within grace. The bridge must not call
-      // store.putSet / channels.publish.
-      startActiveSet({ startedAt: new Date().toISOString() });
+    it('onInProgress flood does NOT finalize (regression guard — was the SET_START_GRACE_MS bug)', async () => {
+      // The legacy bridge used `onInProgress` outside a 500ms grace as the
+      // close signal — broken under fast-tempo WT (sets ended at 1–3s with
+      // 0–2 reps captured). Now `onInProgress` never finalizes; close goes
+      // through `onSetSummary`. Fire many inProgress events to confirm.
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+      client.fire.inProgress();
+      client.fire.inProgress();
       client.fire.inProgress();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
@@ -759,10 +763,9 @@ describe('wireEventBridge', () => {
       expect(live.snapshotSet()).toBeDefined();
     });
 
-    it('outside the grace window with an active set persists, clears live state, and publishes set_ended_by_device', async () => {
-      // startedAt 2025-01-01 — far outside any grace window.
+    it('onSetSummary with an active set persists, clears live state, and publishes set_ended_by_device', async () => {
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
-      client.fire.inProgress();
+      client.fire.setSummary();
       await flushMicrotasks();
 
       expect(fakeState.store.putSet).toHaveBeenCalledTimes(1);
@@ -783,9 +786,12 @@ describe('wireEventBridge', () => {
       // LiveState's set is cleared.
       expect(live.snapshotSet()).toBeUndefined();
 
-      // Channel event matches the `set_ended_by_device` contract.
-      expect(channels.publish).toHaveBeenCalledTimes(1);
-      const event = channels.publish.mock.calls[0][0];
+      // Two channel events on a single onSetSummary fire: first the
+      // `set_pre_summary` rest-coaching prompt (kept for backwards-compat
+      // with PT-skill consumers), then the `set_ended_by_device` close.
+      expect(channels.publish).toHaveBeenCalledTimes(2);
+      expect(channels.publish.mock.calls[0][0].meta.event_type).toBe('set_pre_summary');
+      const event = channels.publish.mock.calls[1][0];
       expect(event.meta.event_type).toBe('set_ended_by_device');
       expect(event.meta.set_id).toBe('set-dev');
       expect(event.meta.session_id).toBe('sess-dev');
@@ -810,67 +816,93 @@ describe('wireEventBridge', () => {
       });
     });
 
-    it('outside the grace window with NO active set is a silent drop', async () => {
+    it('onSetSummary with NO active set is a silent drop', async () => {
       // No startSet invocation — `live.snapshotSet()` is undefined.
-      // Simulates the explicit `set.end` race: tool already ran, bridge's
-      // onInProgress fires from the device's Workout.STOP echo.
-      client.fire.inProgress();
+      // Simulates the explicit `set.end` race: tool already ran, then a
+      // late `aa 85 5f` setSummary frame arrives.
+      client.fire.setSummary();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      // The bridge's set_pre_summary publisher also short-circuits when
+      // there is no active set, so `channels.publish` stays untouched.
       expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
 
-    it('race-condition guard: live.endSet() before onInProgress is a silent drop', async () => {
-      // Reproduce the exact sequence the explicit `set.end` tool produces:
-      // LiveState.endSet() runs, then the device's Workout.STOP echo
-      // fires onInProgress. The bridge must observe the cleared live set
-      // and drop without re-finalizing.
+    it('race-condition guard: live.endSet() before onSetSummary is a silent drop', async () => {
+      // Reproduce the explicit `set.end` race: LiveState.endSet() runs
+      // first, then a late onSetSummary arrives. The bridge must observe
+      // the cleared live set and drop without re-finalizing.
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
       live.endSet();
-      client.fire.inProgress();
+      client.fire.setSummary();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
       expect(channels.publish).not.toHaveBeenCalled();
     });
 
-    it('attaches device_summary block to set_ended_by_device when an onSummary landed during the set', async () => {
+    it('attaches device_set_summary block to set_ended_by_device (the onSetSummary payload)', async () => {
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
-      // Summary lands first (the device's typical end-of-set vendor frame
-      // sequence is summary → inProgress(STOP echo)). PR-B captures it on
-      // live state via applySummary; PR-C harvests it at finalize time.
+      client.fire.setSummary({
+        schemaVersion: 1,
+        targetWeightTenths: 200,
+        repCount: 7,
+        repDurationMs: 5730,
+        raw: new Uint8Array(110),
+      });
+      await flushMicrotasks();
+
+      // First publish is `set_pre_summary`, second is `set_ended_by_device`.
+      expect(channels.publish).toHaveBeenCalledTimes(2);
+      const setEnded = channels.publish.mock.calls[1][0];
+      expect(setEnded.meta.event_type).toBe('set_ended_by_device');
+      expect(setEnded.meta.device_rep_count).toBe('7');
+      expect(setEnded.meta.device_set_rep_duration_ms).toBe('5730');
+      expect(setEnded.meta.device_schema_version).toBe('1');
+      const parsed = JSON.parse(setEnded.content) as {
+        device_set_summary: {
+          rep_count: number;
+          rep_duration_ms: number;
+          target_weight_tenths: number;
+          schema_version: number;
+        };
+      };
+      expect(parsed.device_set_summary).toEqual({
+        rep_count: 7,
+        rep_duration_ms: 5730,
+        target_weight_tenths: 200,
+        schema_version: 1,
+      });
+    });
+
+    it('combines device_summary and device_set_summary when both onSummary and onSetSummary fire', async () => {
+      // Edge case: the device occasionally emits both an `aa 86 7d` summary
+      // and an `aa 85 5f` setSummary in the same set lifetime (e.g., the
+      // workout-end summary replayed on reconnect). The bridge captures
+      // both and threads both blocks onto the close payload.
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
       client.fire.summary({
         schemaVersion: 4,
         setCounter: 1,
         repCount: 7,
         raw: new Uint8Array(140),
       });
-      client.fire.inProgress();
+      client.fire.setSummary({
+        schemaVersion: 1,
+        targetWeightTenths: 200,
+        repCount: 7,
+        repDurationMs: 5730,
+        raw: new Uint8Array(110),
+      });
       await flushMicrotasks();
 
-      expect(channels.publish).toHaveBeenCalledTimes(1);
-      const event = channels.publish.mock.calls[0][0];
-      expect(event.meta.event_type).toBe('set_ended_by_device');
-      expect(event.meta.device_rep_count).toBe('7');
-      expect(event.meta.device_schema_version).toBe('4');
-      const parsed = JSON.parse(event.content) as {
-        device_summary: { rep_count: number; schema_version: number };
+      const setEnded = channels.publish.mock.calls[channels.publish.mock.calls.length - 1][0];
+      const parsed = JSON.parse(setEnded.content) as {
+        device_summary?: { rep_count: number };
+        device_set_summary?: { rep_count: number };
       };
       expect(parsed.device_summary).toEqual({ rep_count: 7, schema_version: 4 });
-    });
-
-    it('omits device_summary block when no onSummary landed before the device-signal finalize', async () => {
-      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
-      // No summary fired — mid-set abrupt close path.
-      client.fire.inProgress();
-      await flushMicrotasks();
-
-      expect(channels.publish).toHaveBeenCalledTimes(1);
-      const event = channels.publish.mock.calls[0][0];
-      expect(event.meta.device_rep_count).toBeUndefined();
-      expect(event.meta.device_schema_version).toBeUndefined();
-      const parsed = JSON.parse(event.content) as { device_summary?: unknown };
-      expect(parsed.device_summary).toBeUndefined();
+      expect(parsed.device_set_summary?.rep_count).toBe(7);
     });
   });
 
@@ -1396,7 +1428,7 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onPreSummary → set_pre_summary channel event (PR-C)', () => {
+  describe('onSetSummary → set_pre_summary channel event (PR-C)', () => {
     function startSetNow(): void {
       live.startSession({
         sessionId: 'sess-pre',
@@ -1417,7 +1449,7 @@ describe('wireEventBridge', () => {
       startSetNow();
       live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
       channels.publish.mockClear();
-      client.fire.preSummary({
+      client.fire.setSummary({
         schemaVersion: 2,
         targetWeightTenths: 1500,
         repCount: 6,
@@ -1449,18 +1481,18 @@ describe('wireEventBridge', () => {
       // No startSet — simulates set.end already running before the device's
       // preSummary echo arrived.
       channels.publish.mockClear();
-      expect(() => client.fire.preSummary()).not.toThrow();
+      expect(() => client.fire.setSummary()).not.toThrow();
       expect(channels.publish).not.toHaveBeenCalled();
     });
 
     it('does not mutate live state on preSummary (read-only — set_so_far is a snapshot)', () => {
       startSetNow();
       const before = live.snapshotSet();
-      client.fire.preSummary();
+      client.fire.setSummary();
       const after = live.snapshotSet();
       expect(after?.setId).toBe(before?.setId);
       expect(after?.reps.length).toBe(before?.reps.length);
-      // latestSummary is owned by onSummary, not onPreSummary.
+      // latestSummary is owned by onSummary, not onSetSummary.
       expect(after?.latestSummary).toBeUndefined();
     });
   });
