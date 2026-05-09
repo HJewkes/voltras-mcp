@@ -900,3 +900,69 @@ function buildConnectionChangedSummary(
   }
   return `Voltra ${state}.`;
 }
+
+/**
+ * Build the meta + content for a `wake_word_detected` channel event. Fired
+ * by the voice listener as soon as the openWakeWord sidecar emits a `wake`
+ * event — gives PT Claude a chance to render an "I'm listening…" cue while
+ * whisper.cpp transcription is still in flight (typically 0.3-1.5 s on
+ * Apple Silicon for `base.en`).
+ *
+ * `confidence` is the openWakeWord softmax score in [0, 1]; the listener
+ * applies its own threshold before publishing, so values arriving here are
+ * already above the configured floor.
+ */
+export function buildWakeWordDetectedPayload(
+  wakeWord: string,
+  confidence: number,
+  capturedAtMs: number,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'wake_word_detected',
+    wake_word: wakeWord,
+    confidence: confidence.toFixed(3),
+  };
+  const summary = `Heard "${wakeWord}" (${confidence.toFixed(2)}) — listening for the next utterance.`;
+  const content = JSON.stringify({
+    summary,
+    wake_word: wakeWord,
+    confidence,
+    capture_started_at: capturedAtMs,
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a `voice_input` channel event. Fired by the
+ * voice listener after whisper.cpp returns a transcript for the post-wake
+ * audio buffer. This is the primary signal PT Claude reads — the model
+ * should treat the `transcript` body as a user utterance and decide whether
+ * to act (mode change, weight change, set start) or simply respond verbally.
+ *
+ * `latencyMs` is wake-word-fire → transcript-resolved end-to-end. The
+ * listener targets <2 s on Apple Silicon for `base.en`.
+ */
+export function buildVoiceInputPayload(
+  transcript: string,
+  latencyMs: number,
+  sttModel: string,
+  audioDurationMs: number,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'voice_input',
+    latency_ms: String(latencyMs),
+    stt_model: sttModel,
+    audio_duration_ms: String(audioDurationMs),
+  };
+  const summary = `User said: "${transcript}"`;
+  const content = JSON.stringify({
+    summary,
+    transcript,
+    latency_ms: latencyMs,
+    stt_model: sttModel,
+    audio_duration_ms: audioDurationMs,
+  });
+  return { meta, content };
+}
