@@ -3,16 +3,15 @@
 // per MCP server; lives on `ServerState.voice` and is allocated on first
 // `system.listen_start` call.
 //
-// State machine (idle → listening → wake → buffering → transcribing → idle):
+// State machine (idle → listening → buffering → transcribing → idle):
 //
 //   idle          : no sidecar, no mic. start() transitions to listening.
 //   listening     : sidecar + mic running, audio frames flowing into both
 //                   the sidecar's stdin and the local 30-s ring buffer.
-//   wake          : transient — sidecar emitted a `wake` event. We snapshot
-//                   the ring's last 1 s, then stay in `buffering` until the
-//                   utterance window closes.
 //   buffering     : actively appending forward audio for a configurable
 //                   window (default ~12 s) until silence or hard cap.
+//                   Entered atomically when the sidecar emits a `wake` event
+//                   (pre-wake context is snapshotted from the ring first).
 //   transcribing  : window closed; ship the wav buffer to whisper.cpp. While
 //                   we're here we keep listening for the NEXT wake (sidecar
 //                   stays warm). A second wake during transcription is
@@ -294,7 +293,7 @@ export class VoiceListener {
   private buffer: Buffer[] = [];
   private wakeFiredAt: number | null = null;
   private hardCapHandle: unknown = null;
-  private _muted: boolean = false;
+  private _muteDepth: number = 0;
   /** FIFO queue of captured audio buffers for wake events that arrived during
    * transcription. Capped at TRANSCRIPTION_QUEUE_CAP; oldest dropped when full. */
   private _transcriptionQueue: Buffer[] = [];
@@ -312,8 +311,9 @@ export class VoiceListener {
     return this.startArgs;
   }
 
-  isMuted(): boolean {
-    return this._muted;
+  /** True when any TTS call is still in flight (refcount > 0). */
+  get isMuted(): boolean {
+    return this._muteDepth > 0;
   }
 
   /**
@@ -321,9 +321,13 @@ export class VoiceListener {
    * The audio stream keeps flowing so no teardown latency occurs on unmute.
    * Any in-flight buffering/transcribing cycle runs to completion — we only
    * suppress NEW wake events while muted.
+   *
+   * Reference-counted: each mute() must be paired with an unmute(). The mic
+   * stays ducked until ALL concurrent TTS calls have finished — preventing the
+   * mute→unmute→mute race when two fire-and-forget speaks overlap.
    */
   mute(): void {
-    this._muted = true;
+    this._muteDepth++;
     log.debug('VoiceListener: muted (TTS ducking active)');
   }
 
@@ -331,9 +335,11 @@ export class VoiceListener {
    * Resume wake-event processing after TTS playback ends.
    * Does NOT replay audio buffered while muted — discarding TTS-sourced audio
    * is the whole point of ducking.
+   *
+   * Decrements the refcount; wake events resume only when depth reaches zero.
    */
   unmute(): void {
-    this._muted = false;
+    this._muteDepth = Math.max(0, this._muteDepth - 1);
     log.debug('VoiceListener: unmuted (TTS ducking lifted)');
   }
 
@@ -461,7 +467,7 @@ export class VoiceListener {
   }
 
   private handleWakeEvent(event: SidecarEventWake): void {
-    if (this._muted) {
+    if (this._muteDepth > 0) {
       log.debug('VoiceListener: wake event suppressed (muted — TTS ducking active)');
       return;
     }

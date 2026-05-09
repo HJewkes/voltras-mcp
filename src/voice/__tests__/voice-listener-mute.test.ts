@@ -66,7 +66,7 @@ describe('VoiceListener — mute/unmute state', () => {
       sidecarFactory: makeFakeSidecar,
       whisper: vi.fn(),
     });
-    expect(listener.isMuted()).toBe(false);
+    expect(listener.isMuted).toBe(false);
   });
 
   it('mute() sets isMuted() to true', () => {
@@ -76,7 +76,7 @@ describe('VoiceListener — mute/unmute state', () => {
       whisper: vi.fn(),
     });
     listener.mute();
-    expect(listener.isMuted()).toBe(true);
+    expect(listener.isMuted).toBe(true);
   });
 
   it('unmute() sets isMuted() to false', () => {
@@ -87,7 +87,7 @@ describe('VoiceListener — mute/unmute state', () => {
     });
     listener.mute();
     listener.unmute();
-    expect(listener.isMuted()).toBe(false);
+    expect(listener.isMuted).toBe(false);
   });
 
   it('mute() is idempotent — calling twice stays muted', () => {
@@ -98,7 +98,7 @@ describe('VoiceListener — mute/unmute state', () => {
     });
     listener.mute();
     listener.mute();
-    expect(listener.isMuted()).toBe(true);
+    expect(listener.isMuted).toBe(true);
   });
 
   it('unmute() is idempotent — calling twice on unmuted stays false', () => {
@@ -109,7 +109,7 @@ describe('VoiceListener — mute/unmute state', () => {
     });
     listener.unmute();
     listener.unmute();
-    expect(listener.isMuted()).toBe(false);
+    expect(listener.isMuted).toBe(false);
   });
 });
 
@@ -234,5 +234,61 @@ describe('VoiceListener — muted wake-event suppression', () => {
     // No whisper call — nothing was queued for transcription
     expect(whisper).not.toHaveBeenCalled();
     expect(listener.getState()).toBe('listening');
+  });
+
+  it('drops (does NOT queue) a wake event when both muted AND transcribing — mute guard wins', async () => {
+    // F5 regression: guards are ordered _muteDepth > 0 → state=transcribing → ...
+    // When both conditions apply, the mute guard fires first and the event is
+    // dropped rather than enqueued into _transcriptionQueue.
+    const sidecar = makeFakeSidecar();
+    let hardCapFn: (() => void) | null = null;
+    // whisper blocks until we resolve the deferred, so we can control state timing.
+    let resolveWhisper!: (v: { transcript: string }) => void;
+    const whisperDeferred = new Promise<{ transcript: string }>(
+      (res) => (resolveWhisper = res),
+    );
+    const whisper = vi.fn().mockReturnValue(whisperDeferred);
+    const onVoiceInput = vi.fn();
+
+    const listener = new VoiceListener(
+      {
+        audioFactory: makeFakeAudio,
+        sidecarFactory: () => sidecar,
+        whisper,
+        timers: {
+          setTimeout: (cb) => {
+            hardCapFn = cb;
+            return {};
+          },
+          clearTimeout: vi.fn(),
+        },
+      },
+      { onVoiceInput },
+    );
+
+    // Drive into transcribing: start → wake → fire hard cap
+    await listener.start(defaultArgs());
+    sidecar.emitWake();
+    await Promise.resolve();
+    expect(listener.getState()).toBe('buffering');
+
+    hardCapFn!(); // flush buffer → transcribing (whisper now in flight)
+    await Promise.resolve();
+    expect(listener.getState()).toBe('transcribing');
+
+    // Mute WHILE transcribing, then emit another wake event
+    listener.mute();
+    sidecar.emitWake();
+    await Promise.resolve();
+
+    // The mute guard must win: event dropped, NOT queued.
+    // Resolve whisper and drain — onVoiceInput fires once (original), no second call.
+    resolveWhisper({ transcript: 'first utterance' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onVoiceInput).toHaveBeenCalledTimes(1);
+    expect(listener.getState()).toBe('listening'); // queue was empty → returned to listening
   });
 });
