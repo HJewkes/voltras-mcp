@@ -169,6 +169,74 @@ describe('DASHBOARD_HTML — client-side state symbols', () => {
   });
 });
 
+// ── F1 regression: device snapshot saved alongside set snapshot ───────────────
+//
+// The set-log row must record weight/mode from the tick where the set was
+// active, not from the close-tick where the set is already null. We verify
+// this by checking that:
+//   1. A `lastActiveDeviceSnapshot` state variable exists (paired snapshot).
+//   2. The snapshot-save block writes BOTH snapshots at the same time.
+//   3. The set-close block reads from `lastActiveDeviceSnapshot` (the saved
+//      snapshot), not directly from `snapshot.devices` (the current tick).
+//
+// The JS runs client-side in a browser, so we assert on the raw HTML source
+// rather than executing it — consistent with the strategy used throughout
+// this test file.
+
+describe('DASHBOARD_HTML — F1: device snapshot saved at same tick as set snapshot', () => {
+  it('declares the lastActiveDeviceSnapshot state variable', () => {
+    expect(DASHBOARD_HTML).toContain('let lastActiveDeviceSnapshot');
+  });
+
+  it('saves lastActiveDeviceSnapshot when an active set is present', () => {
+    // The snapshot-save block must assign lastActiveDeviceSnapshot inside the
+    // activeSet-truthy branch so both snapshots share the same poll tick.
+    expect(DASHBOARD_HTML).toContain('lastActiveDeviceSnapshot = currentDevice');
+  });
+
+  it('clears lastActiveDeviceSnapshot when there is no active set', () => {
+    expect(DASHBOARD_HTML).toContain('lastActiveDeviceSnapshot = null');
+  });
+
+  it('reads savedDevice from lastActiveDeviceSnapshot on set-close, not from current snapshot', () => {
+    // The set-close branch must use the saved device, not snapshot.devices[0].device.
+    expect(DASHBOARD_HTML).toContain('const savedDevice = lastActiveDeviceSnapshot');
+  });
+
+  it('uses savedDevice.weightLbs (not current-tick device) for the set-log weight', () => {
+    expect(DASHBOARD_HTML).toContain('savedDevice && savedDevice.weightLbs != null');
+  });
+
+  it('uses savedDevice.trainingMode (not current-tick device) for the set-log mode', () => {
+    expect(DASHBOARD_HTML).toContain('savedDevice && savedDevice.trainingMode != null');
+  });
+});
+
+// ── F3: HTML-escape dynamic values inserted via innerHTML ─────────────────────
+
+describe('DASHBOARD_HTML — F3: escapeHtml used for dynamic innerHTML values', () => {
+  it('defines the escapeHtml helper function', () => {
+    expect(DASHBOARD_HTML).toContain('function escapeHtml(');
+  });
+
+  it('escapeHtml handles the five HTML special characters', () => {
+    // Verify the replacement map covers &, <, >, ", '
+    expect(DASHBOARD_HTML).toContain('&amp;');
+    expect(DASHBOARD_HTML).toContain('&lt;');
+    expect(DASHBOARD_HTML).toContain('&gt;');
+    expect(DASHBOARD_HTML).toContain('&quot;');
+    expect(DASHBOARD_HTML).toContain('&#39;');
+  });
+
+  it('wraps fmtMode output with escapeHtml in renderSetLog', () => {
+    expect(DASHBOARD_HTML).toContain('escapeHtml(fmtMode(entry.mode))');
+  });
+
+  it('wraps the rep label with escapeHtml in renderRepBars', () => {
+    expect(DASHBOARD_HTML).toContain('escapeHtml(label)');
+  });
+});
+
 describe('DASHBOARD_HTML — layout', () => {
   it('defines a two-column grid for the main element', () => {
     expect(DASHBOARD_HTML).toContain('grid-template-columns: 1fr 1fr');

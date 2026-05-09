@@ -327,10 +327,17 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
     let setLog = [];
     /** Snapshot of the active set from the previous poll tick (used on close). */
     let lastActiveSetSnapshot = null;
+    /** Device snapshot saved alongside lastActiveSetSnapshot (same tick). */
+    let lastActiveDeviceSnapshot = null;
     /** Session ID seen at the previous poll tick — detects session change. */
     let lastSnapshotSessionId = null;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+    /** Escape special HTML characters before inserting into innerHTML. */
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
     function fmtVelocity(cmPerSec) {
       if (cmPerSec == null) return '—';
       return cmPerSec.toFixed(1) + ' cm/s';
@@ -448,7 +455,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
         const label = rep ? rep.repNumber : '?';
         return (
           '<div class="rep-bar-row">' +
-            '<span class="rep-bar-label">' + label + '</span>' +
+            '<span class="rep-bar-label">' + escapeHtml(label) + '</span>' +
             '<div class="rep-bar-track">' +
               '<div class="rep-bar-fill" style="width:' + pct + '%;background:' + color + '"></div>' +
             '</div>' +
@@ -474,7 +481,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       elSetLogBody.innerHTML = setLog.map((entry, i) => {
         const idx     = i + 1;
         const weight  = entry.weightLbs != null ? fmtWeight(entry.weightLbs) : '—';
-        const mode    = fmtMode(entry.mode);
+        const mode    = escapeHtml(fmtMode(entry.mode));
         const reps    = entry.repCount;
         const peakVel = entry.bestPeakVelocity != null
           ? entry.bestPeakVelocity.toFixed(1) + ' cm/s'
@@ -531,7 +538,11 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       if (prevSetActive && !activeSet && lastActiveSetSnapshot !== null) {
         const s    = lastActiveSetSnapshot;
         const reps = Array.isArray(s.reps) ? s.reps : [];
-        const device = snapshot && snapshot.devices && snapshot.devices[0] && snapshot.devices[0].device;
+        // Use the device snapshot saved at the same tick as the set snapshot,
+        // not the current tick where the set is already null. This prevents
+        // recording the wrong weight if the device weight changes in the
+        // 500ms window between set-end and the next poll.
+        const savedDevice = lastActiveDeviceSnapshot;
 
         let bestPeak = null;
         for (const rep of reps) {
@@ -539,13 +550,13 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
           if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
         }
 
-        const weightLbs = device && device.weightLbs != null
-          ? device.weightLbs
+        const weightLbs = savedDevice && savedDevice.weightLbs != null
+          ? savedDevice.weightLbs
           : (s.latestInProgress && s.latestInProgress.targetWeightTenths != null
               ? s.latestInProgress.targetWeightTenths / 10
               : null);
 
-        const mode = device && device.trainingMode != null ? device.trainingMode : null;
+        const mode = savedDevice && savedDevice.trainingMode != null ? savedDevice.trainingMode : null;
 
         setLog.push({
           weightLbs,
@@ -555,8 +566,16 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
         });
       }
 
-      // Save latest active-set snapshot so we have it when the set closes.
-      lastActiveSetSnapshot = activeSet ? activeSet : null;
+      // Save both the active-set snapshot and the device snapshot at the same
+      // tick so they can be read together when the set closes next tick.
+      if (activeSet) {
+        const currentDevice = snapshot && snapshot.devices && snapshot.devices[0] && snapshot.devices[0].device;
+        lastActiveSetSnapshot = activeSet;
+        lastActiveDeviceSnapshot = currentDevice ?? null;
+      } else {
+        lastActiveSetSnapshot = null;
+        lastActiveDeviceSnapshot = null;
+      }
 
       renderSetLog();
       renderSessionProgress(snapshot);
