@@ -382,7 +382,7 @@ describe('buildSetEndedPayload', () => {
       expect(parsed.summary).toContain('Set ended by device');
       expect(parsed.summary).toContain('2 reps');
       expect(parsed.summary).toContain('90s');
-      expect(parsed.summary).toContain('user pressed Stop on the unit');
+      expect(parsed.summary).toContain('set ended automatically');
     });
 
     it('content payload is structurally identical to set_ended (reps + vbt_summary + set)', () => {
