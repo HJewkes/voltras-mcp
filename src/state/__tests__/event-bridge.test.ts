@@ -803,7 +803,7 @@ describe('wireEventBridge', () => {
       };
       expect(parsed.set.partial_reason).toBe('device_signal');
       expect(parsed.summary).toContain('Set ended by device');
-      expect(parsed.summary).toContain('user pressed Stop on the unit');
+      expect(parsed.summary).toContain('set ended automatically');
 
       // The bridge must NOT have called client.endSet — the device already
       // de-engaged on its own; an extra Workout.STOP would be churn.

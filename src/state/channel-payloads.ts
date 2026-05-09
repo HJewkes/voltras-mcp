@@ -239,10 +239,10 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
 /**
  * Cause of a `set_ended*` channel emission. `'tool'` is the explicit
  * `set.end` MCP-tool path; `'device_signal'` is the bridge's autonomous
- * finalize when the user pressed Stop on the unit (an out-of-grace
- * `onInProgress` event). The cause selects the meta `event_type` and tunes
- * the summary text — payload shape is identical between the two so PT
- * Claude can parse either with one schema.
+ * finalize triggered by the firmware emitting `aa 85 5f` (set-summary) on
+ * user disengage — the device has no Stop button. The cause selects the meta
+ * `event_type` and tunes the summary text — payload shape is identical
+ * between the two so PT Claude can parse either with one schema.
  */
 export type SetEndedCause = 'tool' | 'device_signal';
 
@@ -287,7 +287,7 @@ export interface DeviceSetSummaryBlock {
  * The `cause` argument selects between the two emission types:
  *   * `'tool'` → `event_type='set_ended'`. Default.
  *   * `'device_signal'` → `event_type='set_ended_by_device'`. Summary text
- *     also adds the "(user pressed Stop on the unit)" tail so the model can
+ *     also adds the "(set ended automatically)" tail so the model can
  *     distinguish the autonomous device finish from an explicit end. Caller
  *     is expected to have set `stored.partial=true` and
  *     `stored.partialReason='device_signal'` before invoking — those flow
@@ -459,7 +459,7 @@ function buildSetEndedSummary(
   const headline = cause === 'device_signal' ? 'Set ended by device' : 'Set ended';
   const base = `${headline}: ${repCount} reps in ${seconds}s`;
   const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
-  return cause === 'device_signal' ? `${withLoss} (user pressed Stop on the unit)` : withLoss;
+  return cause === 'device_signal' ? `${withLoss} (set ended automatically)` : withLoss;
 }
 
 /**
