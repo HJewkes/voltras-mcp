@@ -172,7 +172,7 @@ interface SdkSettingsUpdate {
 // 1 = WeightTraining, 2 = ResistanceBand); the bridge uses the SDK's
 // numeric `TrainingMode` enum for typed comparisons.
 interface SdkStateDump {
-  trainingMode: number;
+  trainingMode: TrainingMode;
   assistMode: number;
   weightLbsTenths: number;
   chainTargetForceTenths: number;
