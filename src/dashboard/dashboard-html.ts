@@ -5,8 +5,14 @@
 // Rest timer ticks every 1 s via its own setInterval, independent of the
 // poll loop so the display stays smooth even when the poll is slow.
 //
-// Layout: two-column above 700 px (current-set left, rest-timer right),
-// single-column below 700 px.
+// Layout: 2×2 grid above 700 px (current-set / rest-timer / set-log /
+// session-progress), single-column below 700 px.
+//
+// Set-log accumulation: when sets.active transitions from non-null to null,
+// the snapshot saved at the previous tick is pushed into the client-side
+// setLog array. Only completed sets count toward session totals; in-flight
+// reps in the currently-active set are deliberately excluded so the numbers
+// are stable until the set closes.
 
 export const DASHBOARD_HTML = /* html */ `<!doctype html>
 <html lang="en">
@@ -83,6 +89,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       flex: 1;
       display: grid;
       grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto;
       gap: 16px;
       padding: 16px;
       align-items: start;
@@ -181,6 +188,32 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       flex-shrink: 0;
     }
 
+    /* Set-log table */
+    #set-log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    #set-log-table th {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      text-align: right;
+      padding: 0 4px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    #set-log-table th:first-child { text-align: left; }
+    #set-log-table td {
+      text-align: right;
+      padding: 5px 4px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+    #set-log-table td:first-child { text-align: left; color: var(--text-muted); }
+    #set-log-table tbody tr:last-child td { border-bottom: none; }
+
     /* Rest timer */
     #rest-timer-display {
       font-size: 52px;
@@ -230,6 +263,26 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       <div id="rest-timer-display" class="na">—</div>
       <div id="rest-timer-since">since last set ended</div>
     </section>
+
+    <section id="set-log">
+      <h2>Sets this session</h2>
+      <div id="set-log-empty" class="empty">No sets yet</div>
+      <table id="set-log-table" hidden>
+        <thead><tr><th>#</th><th>Weight</th><th>Mode</th><th>Reps</th><th>Peak vel</th></tr></thead>
+        <tbody id="set-log-body"></tbody>
+      </table>
+    </section>
+
+    <section id="session-progress">
+      <h2>Session progress</h2>
+      <div id="session-progress-empty" class="empty">No active session</div>
+      <div id="session-progress-active" hidden>
+        <div class="kv"><span>Exercise</span><span id="sp-exercise">—</span></div>
+        <div class="kv"><span>Sets</span><span id="sp-sets">0</span></div>
+        <div class="kv"><span>Total reps</span><span id="sp-reps">0</span></div>
+        <div class="kv"><span>Total volume</span><span id="sp-volume">0 lb</span></div>
+      </div>
+    </section>
   </main>
 
   <script>
@@ -253,6 +306,15 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
     const elRepBarsList = document.getElementById('rep-bars-list');
     const elRestDisplay = document.getElementById('rest-timer-display');
     const elRestSince   = document.getElementById('rest-timer-since');
+    const elSetLogEmpty  = document.getElementById('set-log-empty');
+    const elSetLogTable  = document.getElementById('set-log-table');
+    const elSetLogBody   = document.getElementById('set-log-body');
+    const elSpEmpty      = document.getElementById('session-progress-empty');
+    const elSpActive     = document.getElementById('session-progress-active');
+    const elSpExercise   = document.getElementById('sp-exercise');
+    const elSpSets       = document.getElementById('sp-sets');
+    const elSpReps       = document.getElementById('sp-reps');
+    const elSpVolume     = document.getElementById('sp-volume');
 
     // ── State ────────────────────────────────────────────────────────────────
     /** Unix-ms when the last successful poll rendered. */
@@ -261,6 +323,12 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
     let restStartMs = null;
     /** Whether there was an active set at the previous poll tick. */
     let prevSetActive = false;
+    /** Completed sets accumulated client-side during the current session. */
+    let setLog = [];
+    /** Snapshot of the active set from the previous poll tick (used on close). */
+    let lastActiveSetSnapshot = null;
+    /** Session ID seen at the previous poll tick — detects session change. */
+    let lastSnapshotSessionId = null;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function fmtVelocity(cmPerSec) {
@@ -393,6 +461,107 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       elRepBars.hidden = false;
     }
 
+    // ── Set-log panel ────────────────────────────────────────────────────────
+    function renderSetLog() {
+      if (setLog.length === 0) {
+        elSetLogEmpty.hidden = false;
+        elSetLogTable.hidden = true;
+        elSetLogBody.innerHTML = '';
+        return;
+      }
+      elSetLogEmpty.hidden = true;
+      elSetLogTable.hidden = false;
+      elSetLogBody.innerHTML = setLog.map((entry, i) => {
+        const idx     = i + 1;
+        const weight  = entry.weightLbs != null ? fmtWeight(entry.weightLbs) : '—';
+        const mode    = fmtMode(entry.mode);
+        const reps    = entry.repCount;
+        const peakVel = entry.bestPeakVelocity != null
+          ? entry.bestPeakVelocity.toFixed(1) + ' cm/s'
+          : '—';
+        return (
+          '<tr>' +
+            '<td>' + idx + '</td>' +
+            '<td>' + weight + '</td>' +
+            '<td>' + mode + '</td>' +
+            '<td>' + reps + '</td>' +
+            '<td>' + peakVel + '</td>' +
+          '</tr>'
+        );
+      }).join('');
+    }
+
+    // ── Session-progress panel ───────────────────────────────────────────────
+    function renderSessionProgress(snapshot) {
+      const session = snapshot && snapshot.session;
+      if (!session) {
+        elSpEmpty.hidden  = false;
+        elSpActive.hidden = true;
+        return;
+      }
+      elSpEmpty.hidden  = true;
+      elSpActive.hidden = false;
+
+      elSpExercise.textContent = session.exerciseName || '—';
+      elSpSets.textContent     = setLog.length;
+
+      let totalReps   = 0;
+      let totalVolume = 0;
+      for (const entry of setLog) {
+        totalReps   += entry.repCount;
+        totalVolume += (entry.weightLbs ?? 0) * entry.repCount;
+      }
+      elSpReps.textContent   = totalReps;
+      elSpVolume.textContent = totalVolume.toFixed(1) + ' lb';
+    }
+
+    // Called by the poll loop to detect set-close transitions and accumulate log.
+    function updateSetLog(snapshot) {
+      const session    = snapshot && snapshot.session;
+      const sessionId  = session && session.sessionId;
+      const activeSet  = snapshot && snapshot.sets && snapshot.sets.active;
+
+      // Session changed (or ended) — clear the log.
+      if (sessionId !== lastSnapshotSessionId) {
+        setLog = [];
+        lastSnapshotSessionId = sessionId;
+      }
+
+      // Set just closed: push what we saw at the previous tick into the log.
+      if (prevSetActive && !activeSet && lastActiveSetSnapshot !== null) {
+        const s    = lastActiveSetSnapshot;
+        const reps = Array.isArray(s.reps) ? s.reps : [];
+        const device = snapshot && snapshot.devices && snapshot.devices[0] && snapshot.devices[0].device;
+
+        let bestPeak = null;
+        for (const rep of reps) {
+          const v = rep && rep.concentric ? rep.concentric.peakVelocity : null;
+          if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
+        }
+
+        const weightLbs = device && device.weightLbs != null
+          ? device.weightLbs
+          : (s.latestInProgress && s.latestInProgress.targetWeightTenths != null
+              ? s.latestInProgress.targetWeightTenths / 10
+              : null);
+
+        const mode = device && device.trainingMode != null ? device.trainingMode : null;
+
+        setLog.push({
+          weightLbs,
+          mode,
+          repCount: reps.length,
+          bestPeakVelocity: bestPeak,
+        });
+      }
+
+      // Save latest active-set snapshot so we have it when the set closes.
+      lastActiveSetSnapshot = activeSet ? activeSet : null;
+
+      renderSetLog();
+      renderSessionProgress(snapshot);
+    }
+
     // ── Rest-timer panel ─────────────────────────────────────────────────────
     function updateRestTimer() {
       if (restStartMs === null) {
@@ -437,6 +606,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
         setStatus('ok');
         updateLastUpdate();
         renderCurrentSet(snapshot);
+        updateSetLog(snapshot);
         updateRestState(snapshot);
       } catch (_err) {
         setStatus('error');
