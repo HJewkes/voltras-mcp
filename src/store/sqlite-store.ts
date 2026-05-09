@@ -141,6 +141,8 @@ const SCHEMA_SQL = `
     ON program_assignments(session_id);
   CREATE INDEX IF NOT EXISTS idx_program_assignments_planned
     ON program_assignments(planned_exercise_id);
+  CREATE INDEX IF NOT EXISTS idx_program_assignments_template
+    ON program_assignments(workout_template_id);
 `;
 
 /**
@@ -554,6 +556,15 @@ export class SqliteSessionStore implements SessionStore {
         `SELECT * FROM program_assignments WHERE session_id = ? ORDER BY assigned_at ASC`,
       )
       .all(sessionId) as unknown as ProgramAssignmentRow[];
+    return Promise.resolve(rows.map(rowToProgramAssignment));
+  }
+
+  async getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM program_assignments WHERE workout_template_id = ? ORDER BY assigned_at ASC`,
+      )
+      .all(templateId) as unknown as ProgramAssignmentRow[];
     return Promise.resolve(rows.map(rowToProgramAssignment));
   }
 

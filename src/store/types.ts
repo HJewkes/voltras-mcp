@@ -238,6 +238,12 @@ export interface SessionStore {
   putProgramAssignment(a: StoredProgramAssignment): Promise<void>;
   /** Return every assignment that links to a given session. */
   getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
+  /**
+   * Return every assignment that points at a given workout template (across
+   * any session). Used by `plan.next_workout` to detect which templates have
+   * already been completed in a program walk.
+   */
+  getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;

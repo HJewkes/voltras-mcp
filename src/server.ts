@@ -118,6 +118,11 @@ const CORE_TOOL_NAMES = [
   'plan.template.list_for_week',
   'plan.exercise.create',
   'plan.exercise.list_for_template',
+  // Progression / session-link tools (compose the CRUD layer above).
+  'plan.next_workout',
+  'plan.complete_workout',
+  'plan.attach_to_session',
+  'plan.suggest_progression',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */

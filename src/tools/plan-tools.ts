@@ -17,23 +17,28 @@ import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
 import {
+  PlanAttachToSessionInput,
   PlanBlockCreateInput,
   PlanBlockListForProgramInput,
+  PlanCompleteWorkoutInput,
   PlanExerciseCreateInput,
   PlanExerciseListForTemplateInput,
+  PlanNextWorkoutInput,
   PlanProgramArchiveInput,
   PlanProgramCreateInput,
   PlanProgramGetInput,
   PlanProgramListInput,
+  PlanSuggestProgressionInput,
   PlanTemplateCreateInput,
   PlanTemplateGetInput,
   PlanTemplateListForWeekInput,
   PlanWeekCreateInput,
   PlanWeekListForBlockInput,
 } from '../schemas/plan.js';
-import type { ServerState } from '../state/server-state.js';
+import { type ServerState, getSlot } from '../state/server-state.js';
 import type {
   StoredPlannedExercise,
+  StoredProgramAssignment,
   StoredTrainingBlock,
   StoredTrainingProgram,
   StoredTrainingWeek,
@@ -152,6 +157,32 @@ export function registerPlanTools(
     wrapHandler(PlanExerciseListForTemplateInput, (input) =>
       listPlannedExercisesForTemplate(state, input),
     ),
+  );
+
+  // progression / session-link tools
+  install(
+    placeholders,
+    'plan.next_workout',
+    PlanNextWorkoutInput,
+    wrapHandler(PlanNextWorkoutInput, (input) => nextWorkout(state, input)),
+  );
+  install(
+    placeholders,
+    'plan.complete_workout',
+    PlanCompleteWorkoutInput,
+    wrapHandler(PlanCompleteWorkoutInput, (input) => completeWorkout(state, input)),
+  );
+  install(
+    placeholders,
+    'plan.attach_to_session',
+    PlanAttachToSessionInput,
+    wrapHandler(PlanAttachToSessionInput, (input) => attachToSession(state, input)),
+  );
+  install(
+    placeholders,
+    'plan.suggest_progression',
+    PlanSuggestProgressionInput,
+    wrapHandler(PlanSuggestProgressionInput, (input) => suggestProgression(state, input)),
   );
 }
 
@@ -331,4 +362,363 @@ async function listPlannedExercisesForTemplate(
     input.workoutTemplateId,
   );
   return { plannedExercises };
+}
+
+// --- progression / session-link tools ---
+
+/**
+ * Per-set progression deltas in lbs. Fixed at +5 / 0 / -5 for v1 — the simple
+ * heuristic is "did the set hit the prescribed rep band?" Future revs may swap
+ * this for an RPE-aware load curve, but the contract is intentionally rigid
+ * so the suggestion is reproducible from a stored session alone.
+ */
+const PROGRESSION_INCREMENT_LBS = 5;
+const PROGRESSION_DECREMENT_LBS = -5;
+const PROGRESSION_HOLD_LBS = 0;
+
+/**
+ * Resolve the program a progression-tool call refers to. If `programId` is
+ * supplied, fetch + verify it exists. Otherwise, pick the most-recent
+ * non-archived program (the store returns rows ordered by `created_at DESC`).
+ * Throws `NO_PROGRAM_FOUND` when no eligible program exists.
+ */
+async function resolveDefaultProgram(
+  state: ServerState,
+  programId: string | undefined,
+): Promise<StoredTrainingProgram> {
+  if (programId !== undefined) {
+    const program = await state.store.getTrainingProgram(programId);
+    if (program === undefined) {
+      throw new ToolError('NOT_FOUND', `No training program with id "${programId}" exists.`);
+    }
+    return program;
+  }
+  const programs = await state.store.listTrainingPrograms({ includeArchived: false });
+  const latest = programs[0];
+  if (latest === undefined) {
+    throw new ToolError(
+      'NO_PROGRAM_FOUND',
+      'No training programs exist. Create one with plan.program.create.',
+    );
+  }
+  return latest;
+}
+
+async function nextWorkout(
+  state: ServerState,
+  input: z.infer<typeof PlanNextWorkoutInput>,
+): Promise<
+  | {
+      template: StoredWorkoutTemplate;
+      plannedExercises: StoredPlannedExercise[];
+      block: StoredTrainingBlock;
+      week: StoredTrainingWeek;
+    }
+  | { ok: true; completed: true }
+> {
+  const program = await resolveDefaultProgram(state, input.programId);
+  const blocks = await state.store.getTrainingBlocksForProgram(program.id);
+  for (const block of blocks) {
+    const weeks = await state.store.getTrainingWeeksForBlock(block.id);
+    for (const week of weeks) {
+      const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
+      for (const template of templates) {
+        const assignments = await state.store.getAssignmentsForTemplate(template.id);
+        if (assignments.length === 0) {
+          const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
+          return { template, plannedExercises, block, week };
+        }
+      }
+    }
+  }
+  return { ok: true, completed: true };
+}
+
+async function completeWorkout(
+  state: ServerState,
+  input: z.infer<typeof PlanCompleteWorkoutInput>,
+): Promise<{ assignment: StoredProgramAssignment }> {
+  const sessionId = input.sessionId ?? activeSessionIdOrNull(state);
+  if (sessionId === null) {
+    throw new ToolError(
+      'NO_ACTIVE_SESSION',
+      'No session is active. Pass sessionId or call session.start first.',
+    );
+  }
+  const template = await state.store.getWorkoutTemplate(input.workoutTemplateId);
+  if (template === undefined) {
+    throw new ToolError(
+      'NOT_FOUND',
+      `No workout template with id "${input.workoutTemplateId}" exists.`,
+    );
+  }
+  const session = await state.store.getSession(sessionId);
+  if (session === undefined) {
+    throw new ToolError('NOT_FOUND', `No session with id "${sessionId}" exists.`);
+  }
+  // Idempotency: if an assignment already exists for this (session, template)
+  // pair, return the existing row rather than writing a duplicate. The store
+  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
+  // (session_id, workout_template_id) tuple, so without this check we'd
+  // accumulate duplicate rows on retry.
+  const existing = await state.store.getAssignmentsForSession(sessionId);
+  const prior = existing.find((a) => a.workoutTemplateId === input.workoutTemplateId);
+  if (prior !== undefined) {
+    return { assignment: prior };
+  }
+  const assignment: StoredProgramAssignment = {
+    id: randomUUID(),
+    sessionId,
+    workoutTemplateId: input.workoutTemplateId,
+    assignedAt: new Date().toISOString(),
+  };
+  await state.store.putProgramAssignment(assignment);
+  return { assignment };
+}
+
+async function attachToSession(
+  state: ServerState,
+  input: z.infer<typeof PlanAttachToSessionInput>,
+): Promise<{ assignment: StoredProgramAssignment }> {
+  // The Zod refine guarantees exactly-one-of, so this branch is structural.
+  const session = await state.store.getSession(input.sessionId);
+  if (session === undefined) {
+    throw new ToolError('NOT_FOUND', `No session with id "${input.sessionId}" exists.`);
+  }
+  if (input.plannedExerciseId !== undefined) {
+    const planned = await findPlannedExerciseById(state, input.plannedExerciseId);
+    if (planned === undefined) {
+      throw new ToolError(
+        'NOT_FOUND',
+        `No planned exercise with id "${input.plannedExerciseId}" exists.`,
+      );
+    }
+    const assignment: StoredProgramAssignment = {
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      plannedExerciseId: input.plannedExerciseId,
+      assignedAt: new Date().toISOString(),
+    };
+    await state.store.putProgramAssignment(assignment);
+    return { assignment };
+  }
+  // workoutTemplateId branch — Zod's XOR refine guarantees this is defined
+  // when plannedExerciseId is not, but TS can't see through the refine.
+  const workoutTemplateId = input.workoutTemplateId as string;
+  const template = await state.store.getWorkoutTemplate(workoutTemplateId);
+  if (template === undefined) {
+    throw new ToolError(
+      'NOT_FOUND',
+      `No workout template with id "${workoutTemplateId}" exists.`,
+    );
+  }
+  const assignment: StoredProgramAssignment = {
+    id: randomUUID(),
+    sessionId: input.sessionId,
+    workoutTemplateId,
+    assignedAt: new Date().toISOString(),
+  };
+  await state.store.putProgramAssignment(assignment);
+  return { assignment };
+}
+
+async function suggestProgression(
+  state: ServerState,
+  input: z.infer<typeof PlanSuggestProgressionInput>,
+): Promise<{
+  plannedExercise: StoredPlannedExercise;
+  suggestion: { delta: number; reasoning: string; basedOnSessionId: string | null };
+}> {
+  const program = await resolveDefaultProgram(state, input.programId);
+  const planned = await findPlannedExerciseInProgram(state, program.id, input.exerciseId);
+  if (planned === undefined) {
+    throw new ToolError(
+      'NOT_FOUND',
+      `No planned exercise with exerciseId "${input.exerciseId}" exists in program "${program.id}".`,
+    );
+  }
+
+  // Pick the basis session: caller-supplied wins; otherwise the most-recent
+  // session for the exercise (any program — progression tracking is
+  // exercise-scoped, not program-scoped).
+  const basisSessionId = await resolveBasisSession(state, input);
+
+  if (basisSessionId === null) {
+    return {
+      plannedExercise: planned,
+      suggestion: {
+        delta: PROGRESSION_HOLD_LBS,
+        reasoning: 'No prior session for this exercise; no progression suggestion.',
+        basedOnSessionId: null,
+      },
+    };
+  }
+
+  const sets = await state.store.getSetsForSession(basisSessionId);
+  const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
+  return { plannedExercise: planned, suggestion };
+}
+
+/**
+ * Pick the session id whose stored sets the progression heuristic reads from.
+ * Caller-supplied `completedSessionId` wins (and must exist); otherwise the
+ * most-recent session that recorded the same `exerciseId`. Returns null when
+ * no candidate exists so the caller can short-circuit to a hold suggestion.
+ */
+async function resolveBasisSession(
+  state: ServerState,
+  input: z.infer<typeof PlanSuggestProgressionInput>,
+): Promise<string | null> {
+  if (input.completedSessionId !== undefined) {
+    const session = await state.store.getSession(input.completedSessionId);
+    if (session === undefined) {
+      throw new ToolError(
+        'NOT_FOUND',
+        `No session with id "${input.completedSessionId}" exists.`,
+      );
+    }
+    return input.completedSessionId;
+  }
+  const recent = await state.store.listSessions({
+    exerciseId: input.exerciseId,
+    sort: 'startedAt:desc',
+    limit: 1,
+  });
+  return recent[0]?.id ?? null;
+}
+
+/**
+ * Aggregate per-set rep counts against the planned rep band, then map to a
+ * single-step delta. Bands without `targetRepsLow` (i.e. plain "do X sets"
+ * prescriptions) collapse to a hold — there's no objective basis to bump.
+ */
+function computeProgressionDelta(
+  planned: StoredPlannedExercise,
+  sets: Array<{ reps: { length: number } | { length: number }[] } | { reps: unknown[] }>,
+  basisSessionId: string,
+): { delta: number; reasoning: string; basedOnSessionId: string | null } {
+  if (planned.targetRepsLow === undefined) {
+    return {
+      delta: PROGRESSION_HOLD_LBS,
+      reasoning: 'Planned exercise has no rep target; cannot suggest a load delta.',
+      basedOnSessionId: basisSessionId,
+    };
+  }
+  const setsCompleted = sets.length;
+  if (setsCompleted === 0) {
+    return {
+      delta: PROGRESSION_DECREMENT_LBS,
+      reasoning: `Prior session has 0 completed sets (target ${planned.targetSets}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
+      basedOnSessionId: basisSessionId,
+    };
+  }
+
+  const repsLow = planned.targetRepsLow;
+  const repsHigh = planned.targetRepsHigh ?? repsLow;
+  let hitHigh = 0;
+  let inBand = 0;
+  let missed = 0;
+  for (const set of sets) {
+    const reps = (set as { reps: unknown[] }).reps;
+    const count = Array.isArray(reps) ? reps.length : 0;
+    if (count >= repsHigh) hitHigh += 1;
+    else if (count >= repsLow) inBand += 1;
+    else missed += 1;
+  }
+
+  // "Most" = strict majority of completed sets. Ties (e.g. 1 hit / 1 miss)
+  // collapse to hold to avoid oscillating recommendations across sessions.
+  const majority = Math.floor(setsCompleted / 2) + 1;
+  const bandLabel =
+    repsLow === repsHigh
+      ? `${repsLow} reps`
+      : `${repsLow}-${repsHigh} reps`;
+  if (hitHigh >= majority) {
+    return {
+      delta: PROGRESSION_INCREMENT_LBS,
+      reasoning: `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel}); add ${PROGRESSION_INCREMENT_LBS} lb.`,
+      basedOnSessionId: basisSessionId,
+    };
+  }
+  if (missed >= majority) {
+    return {
+      delta: PROGRESSION_DECREMENT_LBS,
+      reasoning: `${missed}/${setsCompleted} sets missed ${repsLow} reps (target ${bandLabel}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
+      basedOnSessionId: basisSessionId,
+    };
+  }
+  return {
+    delta: PROGRESSION_HOLD_LBS,
+    reasoning: `${inBand}/${setsCompleted} sets landed in band (target ${bandLabel}); maintain load.`,
+    basedOnSessionId: basisSessionId,
+  };
+}
+
+/**
+ * Best-effort lookup of the active session id from the primary slot. Returns
+ * null when no slot is configured or no session is active so that callers
+ * (only `complete_workout` today) can surface a clean `NO_ACTIVE_SESSION`
+ * error rather than crashing on a missing slot.
+ */
+function activeSessionIdOrNull(state: ServerState): string | null {
+  try {
+    const slot = getSlot(state);
+    return slot.live.session?.sessionId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Walk a program's blocks/weeks/templates to find a planned exercise by the
+ * caller-supplied exerciseId. Returns the first match — block-periodization
+ * plans typically prescribe the same exercise across multiple weeks, but for
+ * progression purposes we only need ONE planned row to read targets from.
+ */
+async function findPlannedExerciseInProgram(
+  state: ServerState,
+  programId: string,
+  exerciseId: string,
+): Promise<StoredPlannedExercise | undefined> {
+  const blocks = await state.store.getTrainingBlocksForProgram(programId);
+  for (const block of blocks) {
+    const weeks = await state.store.getTrainingWeeksForBlock(block.id);
+    for (const week of weeks) {
+      const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
+      for (const template of templates) {
+        const planned = await state.store.getPlannedExercisesForTemplate(template.id);
+        const match = planned.find((p) => p.exerciseId === exerciseId);
+        if (match !== undefined) return match;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Locate a planned exercise by id without scanning every program. The store
+ * has no direct `getPlannedExercise(id)` method (kept narrow in W3 — only
+ * list-by-template was needed), so we walk every non-archived program. v1
+ * acceptable cost; if call volume rises a direct getter is the right fix.
+ */
+async function findPlannedExerciseById(
+  state: ServerState,
+  plannedExerciseId: string,
+): Promise<StoredPlannedExercise | undefined> {
+  const programs = await state.store.listTrainingPrograms({ includeArchived: true });
+  for (const program of programs) {
+    const blocks = await state.store.getTrainingBlocksForProgram(program.id);
+    for (const block of blocks) {
+      const weeks = await state.store.getTrainingWeeksForBlock(block.id);
+      for (const week of weeks) {
+        const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
+        for (const template of templates) {
+          const planned = await state.store.getPlannedExercisesForTemplate(template.id);
+          const match = planned.find((p) => p.id === plannedExerciseId);
+          if (match !== undefined) return match;
+        }
+      }
+    }
+  }
+  return undefined;
 }

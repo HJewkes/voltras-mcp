@@ -124,6 +124,7 @@ function makeStore(): SessionStore & {
     getPlannedExercisesForTemplate: vi.fn(async () => []),
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
+    getAssignmentsForTemplate: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }

@@ -69,6 +69,10 @@ const TOOL_NAMES = [
   'plan.template.list_for_week',
   'plan.exercise.create',
   'plan.exercise.list_for_template',
+  'plan.next_workout',
+  'plan.complete_workout',
+  'plan.attach_to_session',
+  'plan.suggest_progression',
 ];
 
 function makeFakePlaceholders(names: string[]): {
@@ -119,6 +123,7 @@ function makeStore(): SessionStore & {
   getPlannedExercisesForTemplate: ReturnType<typeof vi.fn>;
   putProgramAssignment: ReturnType<typeof vi.fn>;
   getAssignmentsForSession: ReturnType<typeof vi.fn>;
+  getAssignmentsForTemplate: ReturnType<typeof vi.fn>;
 } {
   return {
     putSession: vi.fn(async () => {}),
@@ -141,6 +146,7 @@ function makeStore(): SessionStore & {
     getPlannedExercisesForTemplate: vi.fn(async () => []),
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
+    getAssignmentsForTemplate: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }

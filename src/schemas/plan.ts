@@ -127,3 +127,64 @@ export const PlanExerciseListForTemplateInput = z
     workoutTemplateId: IdSchema,
   })
   .strict();
+
+// --- progression / session-link tools ---
+
+/**
+ * Walk a program's tree and return the first un-completed workout template.
+ * `programId` is optional — when omitted the handler picks the most-recent
+ * non-archived program from the store.
+ */
+export const PlanNextWorkoutInput = z
+  .object({
+    programId: IdSchema.optional(),
+  })
+  .strict();
+
+/**
+ * Mark a workout template as completed by writing a ProgramAssignment row
+ * linking the given session to the template. `sessionId` is optional — when
+ * omitted the handler uses the active session on the primary slot.
+ */
+export const PlanCompleteWorkoutInput = z
+  .object({
+    workoutTemplateId: IdSchema,
+    sessionId: IdSchema.optional(),
+  })
+  .strict();
+
+/**
+ * Bind a session to a planned exercise OR a workout template (XOR — supplying
+ * both or neither rejects as INVALID_INPUT). The caller picks which level of
+ * the plan tree the session belongs to: a single set against a planned
+ * exercise, or a whole workout against a template.
+ */
+export const PlanAttachToSessionInput = z
+  .object({
+    sessionId: IdSchema,
+    plannedExerciseId: IdSchema.optional(),
+    workoutTemplateId: IdSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      (v.plannedExerciseId !== undefined && v.workoutTemplateId === undefined) ||
+      (v.plannedExerciseId === undefined && v.workoutTemplateId !== undefined),
+    {
+      message: 'Provide exactly one of plannedExerciseId or workoutTemplateId.',
+    },
+  );
+
+/**
+ * Suggest a next-session weight delta for a planned exercise based on the
+ * most-recent completed session. `programId` is optional (defaults to the
+ * most-recent non-archived program); `completedSessionId` is optional
+ * (defaults to the most-recent session for the given exercise).
+ */
+export const PlanSuggestProgressionInput = z
+  .object({
+    programId: IdSchema.optional(),
+    exerciseId: IdSchema,
+    completedSessionId: IdSchema.optional(),
+  })
+  .strict();
