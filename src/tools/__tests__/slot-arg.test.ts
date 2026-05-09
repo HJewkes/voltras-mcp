@@ -152,6 +152,8 @@ interface FakeClient {
     battery: number | null;
   };
   setAdapter: ReturnType<typeof vi.fn>;
+  getAdapter: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
   setWeight: ReturnType<typeof vi.fn>;
   setMode: ReturnType<typeof vi.fn>;
   setChains: ReturnType<typeof vi.fn>;
@@ -181,6 +183,8 @@ function makeFakeClient(): FakeClient {
       battery: null,
     },
     setAdapter: vi.fn(),
+    getAdapter: vi.fn(() => null),
+    dispose: vi.fn(),
     setWeight: vi.fn(async () => undefined),
     setMode: vi.fn(async () => undefined),
     setChains: vi.fn(async () => undefined),

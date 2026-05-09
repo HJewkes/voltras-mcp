@@ -96,6 +96,16 @@ class FakeVoltraClient {
     this.connectionState = 'disconnected';
     this.connectedDeviceId = null;
   }
+  // Slot-routing fix (2026-05-08): defensive teardown calls these on the
+  // slot's client. Real `VoltraClient` exposes them; the fake needs to
+  // satisfy the structural surface so tool-layer paths don't TypeError.
+  getAdapter(): null {
+    return null;
+  }
+  dispose(): void {
+    // No-op fake — real `VoltraClient.dispose()` clears listeners + sets a
+    // disposed flag. Tests in this file don't exercise post-dispose use.
+  }
 }
 
 class FakeVoltraManager {

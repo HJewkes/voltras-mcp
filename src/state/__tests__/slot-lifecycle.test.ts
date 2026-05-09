@@ -19,6 +19,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@voltras/node-sdk', () => ({
   VoltraClient: class {
     isConnected = false;
+    disposed = false;
+    dispose(): void {
+      this.disposed = true;
+    }
   },
   VoltraManager: class {},
   TrainingMode: { Idle: 0 },
@@ -130,6 +134,18 @@ describe('removeSlot', () => {
     const state = makeStateWithPrimary();
     expect(() => removeSlot(state, 'phantom')).toThrow(/Unknown slot/i);
   });
+
+  // Slot-routing fix (2026-05-08) — defensive dispose. See
+  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  it('disposes the slot client to prevent stray writes through stale handles', () => {
+    const state = makeStateWithPrimary();
+    const client = new VoltraClient() as InstanceType<typeof VoltraClient> & { disposed: boolean };
+    createSlot(state, 'left', client);
+    expect(client.disposed).toBe(false);
+
+    removeSlot(state, 'left');
+    expect(client.disposed).toBe(true);
+  });
 });
 
 describe('resetPrimarySlot', () => {
@@ -164,5 +180,23 @@ describe('resetPrimarySlot', () => {
     expect(snap.connected).toBe(false);
     expect(after.live.isStale()).toBe(true);
     expect(snap.staleSinceDisconnect).toBeDefined();
+  });
+
+  // Slot-routing fix (2026-05-08) — defensive dispose. See
+  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  it('disposes the outgoing client before swapping in the fresh one', () => {
+    const state = makeStateWithPrimary();
+    const priorClient = getSlot(state).client as InstanceType<typeof VoltraClient> & {
+      disposed: boolean;
+    };
+    expect(priorClient.disposed).toBe(false);
+
+    resetPrimarySlot(state);
+    expect(priorClient.disposed).toBe(true);
+    // Fresh client takes over; it must not also be disposed.
+    const freshClient = getSlot(state).client as InstanceType<typeof VoltraClient> & {
+      disposed: boolean;
+    };
+    expect(freshClient.disposed).toBe(false);
   });
 });
