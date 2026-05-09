@@ -129,6 +129,20 @@ function makeStore(): SessionStore & {
     getSetsForSession: vi.fn(async (sessionId: string) =>
       SETS.filter((s) => s.sessionId === sessionId),
     ),
+    putTrainingProgram: vi.fn(async () => {}),
+    getTrainingProgram: vi.fn(async () => undefined),
+    listTrainingPrograms: vi.fn(async () => []),
+    putTrainingBlock: vi.fn(async () => {}),
+    getTrainingBlocksForProgram: vi.fn(async () => []),
+    putTrainingWeek: vi.fn(async () => {}),
+    getTrainingWeeksForBlock: vi.fn(async () => []),
+    putWorkoutTemplate: vi.fn(async () => {}),
+    getWorkoutTemplate: vi.fn(async () => undefined),
+    getWorkoutTemplatesForWeek: vi.fn(async () => []),
+    putPlannedExercise: vi.fn(async () => {}),
+    getPlannedExercisesForTemplate: vi.fn(async () => []),
+    putProgramAssignment: vi.fn(async () => {}),
+    getAssignmentsForSession: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }
