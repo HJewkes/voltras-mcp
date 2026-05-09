@@ -42,6 +42,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
 import type { StoredSession } from '../store/types.js';
@@ -107,21 +108,6 @@ interface SnapshotResponse {
   sets: { active: ActiveSet | null };
 }
 
-const PLACEHOLDER_HTML = [
-  '<!doctype html>',
-  '<html lang="en">',
-  '<head>',
-  '<meta charset="utf-8">',
-  '<meta name="viewport" content="width=device-width,initial-scale=1">',
-  '<title>Voltras MCP Dashboard</title>',
-  '</head>',
-  '<body>',
-  '<h1>Voltras MCP Dashboard</h1>',
-  '<p>Sidecar running. Panels TBD in follow-up tasks.</p>',
-  '</body>',
-  '</html>',
-  '',
-].join('\n');
 
 /**
  * Start the dashboard HTTP sidecar. Resolves once the server is listening on
@@ -201,7 +187,7 @@ async function handleRequest(
   const pathname = url.pathname;
 
   if (pathname === '/') {
-    sendHtml(res, 200, PLACEHOLDER_HTML);
+    sendHtml(res, 200, DASHBOARD_HTML);
     return;
   }
   if (pathname === '/api/health') {

@@ -124,14 +124,13 @@ describe('startDashboardServer', () => {
 });
 
 describe('GET /', () => {
-  it('returns the placeholder HTML page with text/html content-type', async () => {
+  it('returns 200 + text/html + dashboard title', async () => {
     const handle = await startWithFake(makeFakeState());
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/');
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/html/);
-    expect(res.body).toContain('Voltras MCP Dashboard');
-    expect(res.body).toContain('Sidecar running');
-    expect(res.body).toContain('Panels TBD');
+    expect(res.body).toContain('<title>Voltras MCP Dashboard</title>');
+    expect(res.body).toContain('id="current-set"');
   });
 });
 
