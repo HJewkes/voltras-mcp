@@ -516,6 +516,52 @@ describe('registerDeviceTools', () => {
       expect(client.dispose).toHaveBeenCalled();
       expect(state.slots.get('primary')!.client).not.toBe(client as unknown);
     });
+
+    it('calls setMode(Idle) before manager.disconnect on a connected device', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      const callOrder: string[] = [];
+      client.setMode.mockImplementation(async () => {
+        callOrder.push('setMode');
+      });
+      state.manager.disconnect.mockImplementation(async () => {
+        callOrder.push('managerDisconnect');
+      });
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(client.setMode).toHaveBeenCalledWith(FakeTrainingMode.Idle);
+      // setMode must precede the BLE teardown.
+      expect(callOrder.indexOf('setMode')).toBeLessThan(callOrder.indexOf('managerDisconnect'));
+    });
+
+    it('proceeds with BLE disconnect even when setMode(Idle) throws', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      client.setMode.mockRejectedValueOnce(new Error('link already dead'));
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError, payload } = await invoke(reg, {});
+      // Tool must succeed: best-effort setMode failure is swallowed.
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      // BLE teardown still ran despite setMode failure.
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      expect(client.dispose).toHaveBeenCalled();
+    });
+
+    it('skips setMode(Idle) when nothing is connected (graceful no-op path)', async () => {
+      // Client isConnected=false — the wasConnected guard must short-circuit
+      // both the setMode call and manager.disconnect.
+      const client = primaryClient(state);
+      client.isConnected = false;
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(client.setMode).not.toHaveBeenCalled();
+      expect(state.manager.disconnect).not.toHaveBeenCalled();
+    });
   });
 
   // ── Slot lifecycle (Step 3 of dual-Voltras) ───────────────────────────

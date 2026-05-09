@@ -62,6 +62,7 @@ import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
+import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
@@ -318,6 +319,17 @@ export function registerDeviceTools(
       // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md` and
       // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
       const adapterRef = slot.client.getAdapter();
+      // Best-effort: return the device to Idle before tearing down the BLE
+      // link so the device exits any active workout and shows its home screen.
+      // If the write fails (link already dead, device rejected it, etc.) we
+      // log at info level and proceed — this must never block teardown.
+      if (wasConnected) {
+        try {
+          await slot.client.setMode(TrainingMode.Idle);
+        } catch (e) {
+          log.info('device.disconnect: setMode(Idle) failed (best-effort, proceeding)', e);
+        }
+      }
       let managerDisconnectError: unknown = null;
       if (wasConnected) {
         try {
