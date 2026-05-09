@@ -499,6 +499,37 @@ describe('plan.attach_to_session', () => {
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('NOT_FOUND');
   });
+
+  it('is idempotent — calling twice with the same (sessionId, plannedExerciseId) returns the existing row without writing a duplicate', async () => {
+    const session: StoredSession = { id: 'sess-1', startedAt: '2025-02-10T00:00:00.000Z' };
+    h.store.getSession.mockResolvedValue(session);
+    // First call: no prior assignment; walk finds PE_BENCH.
+    h.store.getAssignmentsForSession.mockResolvedValueOnce([]);
+    h.store.listTrainingPrograms.mockResolvedValueOnce([PROGRAM_A]);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1]);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([PE_BENCH]);
+    const first = await h.invoke('plan.attach_to_session', {
+      sessionId: 'sess-1',
+      plannedExerciseId: 'pe-bench',
+    });
+    expect(first.isError).toBeUndefined();
+    const firstBody = parseResult(first) as { assignment: StoredProgramAssignment };
+    expect(h.store.putProgramAssignment).toHaveBeenCalledTimes(1);
+
+    // Second call: the prior assignment is returned by getAssignmentsForSession.
+    h.store.getAssignmentsForSession.mockResolvedValueOnce([firstBody.assignment]);
+    const second = await h.invoke('plan.attach_to_session', {
+      sessionId: 'sess-1',
+      plannedExerciseId: 'pe-bench',
+    });
+    expect(second.isError).toBeUndefined();
+    const secondBody = parseResult(second) as { assignment: StoredProgramAssignment };
+    // Same row returned, no additional write.
+    expect(secondBody.assignment).toEqual(firstBody.assignment);
+    expect(h.store.putProgramAssignment).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ─── plan.suggest_progression ──────────────────────────────────────────────

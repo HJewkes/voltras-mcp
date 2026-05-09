@@ -39,6 +39,7 @@ import { type ServerState, getSlot } from '../state/server-state.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
+  StoredSet,
   StoredTrainingBlock,
   StoredTrainingProgram,
   StoredTrainingWeek,
@@ -485,7 +486,17 @@ async function attachToSession(
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${input.sessionId}" exists.`);
   }
+  // Idempotency: check for an existing assignment before writing. The store
+  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
+  // (session_id, planned_exercise_id / workout_template_id) tuple, so without
+  // this guard a retry would accumulate a duplicate row. Mirrors the same
+  // guard in completeWorkout.
+  const existing = await state.store.getAssignmentsForSession(input.sessionId);
   if (input.plannedExerciseId !== undefined) {
+    const prior = existing.find((a) => a.plannedExerciseId === input.plannedExerciseId);
+    if (prior !== undefined) {
+      return { assignment: prior };
+    }
     const planned = await findPlannedExerciseById(state, input.plannedExerciseId);
     if (planned === undefined) {
       throw new ToolError(
@@ -505,6 +516,10 @@ async function attachToSession(
   // workoutTemplateId branch — Zod's XOR refine guarantees this is defined
   // when plannedExerciseId is not, but TS can't see through the refine.
   const workoutTemplateId = input.workoutTemplateId as string;
+  const priorTemplate = existing.find((a) => a.workoutTemplateId === workoutTemplateId);
+  if (priorTemplate !== undefined) {
+    return { assignment: priorTemplate };
+  }
   const template = await state.store.getWorkoutTemplate(workoutTemplateId);
   if (template === undefined) {
     throw new ToolError(
@@ -594,7 +609,7 @@ async function resolveBasisSession(
  */
 function computeProgressionDelta(
   planned: StoredPlannedExercise,
-  sets: Array<{ reps: { length: number } | { length: number }[] } | { reps: unknown[] }>,
+  sets: StoredSet[],
   basisSessionId: string,
 ): { delta: number; reasoning: string; basedOnSessionId: string | null } {
   if (planned.targetRepsLow === undefined) {
@@ -619,8 +634,7 @@ function computeProgressionDelta(
   let inBand = 0;
   let missed = 0;
   for (const set of sets) {
-    const reps = (set as { reps: unknown[] }).reps;
-    const count = Array.isArray(reps) ? reps.length : 0;
+    const count = set.reps.length;
     if (count >= repsHigh) hitHigh += 1;
     else if (count >= repsLow) inBand += 1;
     else missed += 1;
