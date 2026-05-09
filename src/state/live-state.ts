@@ -25,7 +25,13 @@
 // SDK-shape conversion at its own seam.
 import type { InProgressEvent, SetSummaryEvent, SummaryEvent } from '@voltras/node-sdk';
 import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
-import { createSet, addSampleToSet, completeSet } from '@voltras/workout-analytics';
+import {
+  createSet,
+  addSampleToSet,
+  completeSet,
+  getPhaseMeanVelocity,
+  getPhaseRangeOfMotion,
+} from '@voltras/workout-analytics';
 
 import type { WatchConfig } from '../schemas/set.js';
 
@@ -222,6 +228,26 @@ export interface ActiveSet {
   lastActivityAt?: number;
 }
 
+/**
+ * A rep captured while no MCP set was armed. Carries the minimal VBT shape
+ * needed for the PT skill to detect missed reps and optionally retroactively
+ * attach them to the next set. `vCon` is the mean concentric velocity in m/s;
+ * `rom` is the concentric range-of-motion in metres. Both are null when the
+ * concentric phase had no movement samples (rare; typically means the rep
+ * boundary fired mid-phase-transition before enough frames arrived).
+ */
+export interface IdleRep {
+  ts: number;
+  vCon: number | null;
+  rom: number | null;
+  slot: string;
+}
+
+/** Maximum entries retained in the `idleReps` ring buffer. Monotonic
+ *  `idleRepCount` continues past this cap so the PT skill can distinguish
+ *  "3 idle reps captured" from "23 idle reps, only last 20 buffered". */
+const IDLE_REP_BUFFER_CAP = 20;
+
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
 
 /**
@@ -234,6 +260,19 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /**
+   * Monotonic count of reps detected while no MCP set was armed. Increments
+   * without bound; `idleReps` is capped at `IDLE_REP_BUFFER_CAP`. The PT
+   * skill compares `idleRepCount > idleReps.length` to detect buffer overflow.
+   */
+  idleRepCount: number = 0;
+  /**
+   * Bounded ring of the most recent idle-arm reps (cap 20). Oldest entry
+   * dropped when the buffer is full. Each entry carries `ts` (Date.now()),
+   * `vCon` (mean concentric velocity, m/s), `rom` (concentric ROM, m), and
+   * `slot` (the slot that detected the rep).
+   */
+  idleReps: IdleRep[] = [];
   /**
    * ISO timestamp captured by `markDisconnected`; cleared by `clearStaleness`
    * once the bridge observes a fresh device push (typically the first
@@ -252,6 +291,15 @@ export class LiveState {
    * in-progress rep without waiting for set.end.
    */
   private _analyticsSet: AnalyticsSet | undefined = undefined;
+  /**
+   * Analytics set that runs in the background while no MCP set is armed.
+   * Detects rep boundaries from the frame stream so idle reps can be captured
+   * into `idleReps`. Distinct from `_analyticsSet` (which only runs when a
+   * set is active) so idle-arm tracking does not interfere with the active-set
+   * pipeline. Allocated lazily on the first idle-arm sample and cleared by
+   * `clearIdleReps()`.
+   */
+  private _idleAnalyticsSet: AnalyticsSet | undefined = undefined;
 
   /**
    * Merge partial device fields. Coerces `batteryPercent: null` to absent so
@@ -630,5 +678,74 @@ export class LiveState {
     }
     this.set.firedTriggers.add(key);
     return true;
+  }
+
+  /**
+   * Record one idle-arm rep (detected while no MCP set was armed). Appends
+   * to the bounded `idleReps` ring buffer (oldest dropped at cap) and
+   * increments the monotonic `idleRepCount`. `slot` identifies which device
+   * slot produced the boundary. `vCon` and `rom` are extracted from the
+   * just-closed rep's concentric phase; both are null when the concentric
+   * phase held no movement samples.
+   */
+  recordIdleRep(rep: Rep, slot: string): IdleRep {
+    const ts = Date.now();
+    const hasConcentric = rep.concentric._movementSampleCount > 0;
+    const entry: IdleRep = {
+      ts,
+      vCon: hasConcentric ? Number(getPhaseMeanVelocity(rep.concentric).toFixed(3)) : null,
+      rom: hasConcentric ? getPhaseRangeOfMotion(rep.concentric) : null,
+      slot,
+    };
+    this.idleRepCount += 1;
+    if (this.idleReps.length >= IDLE_REP_BUFFER_CAP) {
+      this.idleReps = [...this.idleReps.slice(1), entry];
+    } else {
+      this.idleReps = [...this.idleReps, entry];
+    }
+    return entry;
+  }
+
+  /**
+   * Reset the idle-rep counters and ring buffer. Called by `session.start`
+   * so the PT skill starts each session from a clean slate. Also clears
+   * the idle analytics set so stale phase state from a prior idle window
+   * does not bleed into the new session's idle window.
+   */
+  clearIdleReps(): void {
+    this.idleRepCount = 0;
+    this.idleReps = [];
+    this._idleAnalyticsSet = undefined;
+  }
+
+  /**
+   * Process a telemetry sample through the idle-arm analytics pipeline.
+   * Only runs when no set is active (`this.set === undefined`). Returns the
+   * index of the just-closed rep in the idle analytics set if a rep boundary
+   * was detected (i.e. `nextRepCount > prevRepCount && nextRepCount >= 2`),
+   * or `null` if no boundary fired. The caller is responsible for calling
+   * `recordIdleRep` on the returned rep and publishing the channel event.
+   *
+   * The idle analytics set is allocated lazily on the first call and
+   * discarded by `clearIdleReps()`. It is NOT discarded when an active set
+   * starts — the idle pipeline pauses while the set is active and resumes
+   * when the set ends (the caller gates on `this.set === undefined`).
+   */
+  processIdleSample(sample: WorkoutSample): Rep | null {
+    if (this.set !== undefined) {
+      return null;
+    }
+    if (this._idleAnalyticsSet === undefined) {
+      this._idleAnalyticsSet = createSet();
+    }
+    const prevCount = this._idleAnalyticsSet.reps.length;
+    this._idleAnalyticsSet = addSampleToSet(this._idleAnalyticsSet, sample);
+    const nextCount = this._idleAnalyticsSet.reps.length;
+    if (nextCount > prevCount && nextCount >= 2) {
+      // The rep at index `nextCount - 2` just closed (same logic as the
+      // active-set pipeline in event-bridge.ts).
+      return this._idleAnalyticsSet.reps[nextCount - 2];
+    }
+    return null;
   }
 }
