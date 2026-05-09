@@ -5,14 +5,14 @@ import type { Config } from '../../config.js';
 // noble) at unit-test time. We only need the two static factory methods used
 // by selectAdapter.
 const sentinelMock = { __kind: 'mock-manager' };
-const sentinelNode = { __kind: 'node-manager' };
+const sentinelNoble = { __kind: 'node-noble-manager' };
 const forMockSpy = vi.fn(() => sentinelMock);
-const forNodeSpy = vi.fn(() => sentinelNode);
+const forNodeNobleSpy = vi.fn(() => sentinelNoble);
 
 vi.mock('@voltras/node-sdk', () => ({
   VoltraManager: {
     forMock: forMockSpy,
-    forNode: forNodeSpy,
+    forNodeNoble: forNodeNobleSpy,
   },
 }));
 
@@ -29,20 +29,20 @@ const { selectAdapter } = await import('../select.js');
 describe('selectAdapter', () => {
   beforeEach(() => {
     forMockSpy.mockClear();
-    forNodeSpy.mockClear();
+    forNodeNobleSpy.mockClear();
   });
 
   it('returns VoltraManager.forMock() when adapter is "mock"', () => {
     const result = selectAdapter(baseConfig('mock'));
     expect(forMockSpy).toHaveBeenCalledTimes(1);
-    expect(forNodeSpy).not.toHaveBeenCalled();
+    expect(forNodeNobleSpy).not.toHaveBeenCalled();
     expect(result).toBe(sentinelMock);
   });
 
-  it('returns VoltraManager.forNode() when adapter is "node"', () => {
+  it('returns VoltraManager.forNodeNoble() when adapter is "node"', () => {
     const result = selectAdapter(baseConfig('node'));
-    expect(forNodeSpy).toHaveBeenCalledTimes(1);
+    expect(forNodeNobleSpy).toHaveBeenCalledTimes(1);
     expect(forMockSpy).not.toHaveBeenCalled();
-    expect(result).toBe(sentinelNode);
+    expect(result).toBe(sentinelNoble);
   });
 });
