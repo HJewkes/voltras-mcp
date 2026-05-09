@@ -35,8 +35,15 @@ export type TrainingModeName = string;
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
   connected: boolean;
+  /**
+   * Last-known BLE device id (e.g. `"V-097082"`). Captured from the SDK's
+   * `client.connectedDeviceId` on the first `onConnectionStateChange('connected')`
+   * after a connect, then preserved across the soft-reset disconnect window so
+   * `voltra://device/{slot}/current` and `device.get_state` can both surface
+   * which device was last bound to this slot even while `client` itself has
+   * been swapped to a fresh `VoltraClient` by `resetPrimarySlot`.
+   */
   deviceId?: string;
-  deviceName?: string;
   weightLbs?: number;
   trainingMode?: TrainingModeName;
   batteryPercent?: number;
@@ -52,30 +59,34 @@ export interface DeviceSnapshot {
    * first state-dump has been received.
    */
   assistMode?: number;
-  /** Chains-active flag from the last cmd=0x07 state-dump (0 or 1). */
-  chainsActive?: number;
   /**
-   * Raw value at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope, in
-   * tenths of pounds.
-   *
-   * **WARNING — decoder bug:** on-device testing on 2026-05-07 (Bug 23
-   * retest) showed that bytes [6-7] track `weight × 10`, **not** chain
-   * force at the cable. The actual effective chain force lives at bytes
-   * [8-9]. The field name (`chainTargetTenths`) and the naming of the
-   * underlying SDK field both originate from a misread of the envelope
-   * layout. Until the decoder fix lands (deferred pending the cmd=0x07
-   * variable-layout discriminator work — Option C in
-   * `voltra-private/research/HANDOFF-2026-05-08-post-0.7.2-followups.md`),
-   * this field is unreliable and effectively duplicates `weightLbs`.
-   *
-   * Prefer {@link chainSettingLbs} for the user's chains setting in lbs
-   * (sourced from the cmd=0x10 cascade, which IS correct).
-   *
-   * @deprecated Decoder reads the wrong byte offset; use `chainSettingLbs`
-   *   for the chains setting. This field will be repurposed once the
-   *   layout-discriminator fix lands.
+   * Active training mode raw byte from the last cmd=0x07 state-dump
+   * (0 = transitional / mid-mode-switch, 1 = WeightTraining,
+   * 2 = ResistanceBand). Distinct from {@link trainingMode} above, which is
+   * the string form sourced from the cmd=0x10 cascade. Absent until the
+   * first state-dump has fired.
    */
-  chainTargetTenths?: number;
+  trainingModeRaw?: number;
+  /**
+   * Effective chain target force at the cable in tenths of pounds, decoded
+   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
+   * `min(chains, weight) × 10` — the device silently caps chain setting at
+   * the active weight. For the user's chains setting in lbs prefer
+   * {@link chainSettingLbs} (sourced from the cmd=0x10 cascade).
+   */
+  chainTargetForceTenths?: number;
+  /**
+   * Active weight setting in tenths of pounds, decoded from bytes [6-7] of
+   * the cmd=0x07 inner `aa 80 25` envelope. Mirrors the cmd=0x10 cascade
+   * `baseWeight` × 10. Zero in non-WeightTraining modes.
+   */
+  weightLbsTenths?: number;
+  /**
+   * Eccentric overload setting in tenths of percent, decoded from bytes
+   * [10-11] of the cmd=0x07 inner `aa 80 25` envelope. Mirrors the cmd=0x10
+   * cascade `eccentric` × 10.
+   */
+  eccentricPercentTenths?: number;
   /**
    * User's chains setting in pounds, sourced from the cmd=0x10 cascade
    * `chains` field on `onSettingsUpdate`. This is the value the firmware
@@ -85,6 +96,21 @@ export interface DeviceSnapshot {
    * setting and is reliable.
    */
   chainSettingLbs?: number;
+  /**
+   * ISO timestamp set on disconnect and cleared on the first device push
+   * after the next reconnect. Consumers can read this to know the rest of
+   * the snapshot is the LAST KNOWN value from before the disconnect rather
+   * than freshly-confirmed data. Soft-reset semantics: `slot-manager`'s
+   * `resetPrimarySlot` no longer wipes LiveState — it marks the snapshot
+   * stale and the bridge clears the flag once a real push lands.
+   */
+  staleSinceDisconnect?: string;
+  /**
+   * Convenience boolean mirroring `staleSinceDisconnect !== undefined`.
+   * Lets `channel-payloads` and resource-shape consumers branch on
+   * staleness without re-reading the timestamp.
+   */
+  isStale?: boolean;
 }
 
 /** Active session metadata. `setIds` accumulates as sets close. */
@@ -173,6 +199,14 @@ export class LiveState {
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
   /**
+   * ISO timestamp captured by `markDisconnected`; cleared by `clearStaleness`
+   * once the bridge observes a fresh device push (typically the first
+   * `onSettingsUpdate` after reconnect). When non-null, every snapshot built
+   * from `device` carries `staleSinceDisconnect` so consumers can
+   * distinguish cached pre-disconnect state from freshly-confirmed data.
+   */
+  private _staleSinceDisconnect: string | undefined = undefined;
+  /**
    * Internal analytics-set used to detect rep boundaries from the frame
    * stream. Mirrors the canonical mobile-app pipeline: `addSampleToSet`
    * starts a new rep on each ECCENTRIC→CONCENTRIC transition, and IDLE/HOLD
@@ -209,7 +243,14 @@ export class LiveState {
    * through a separate settings-update path.
    */
   applyStateDump(
-    fields: Pick<DeviceSnapshot, 'assistMode' | 'chainsActive' | 'chainTargetTenths'>,
+    fields: Pick<
+      DeviceSnapshot,
+      | 'assistMode'
+      | 'trainingModeRaw'
+      | 'chainTargetForceTenths'
+      | 'weightLbsTenths'
+      | 'eccentricPercentTenths'
+    >,
   ): void {
     this.device = { ...this.device, ...fields };
   }
@@ -406,18 +447,48 @@ export class LiveState {
   /**
    * Mark the device as disconnected. Propagates the timestamp to the active
    * session so `voltra://session/active` reflects the drop without waiting
-   * for a re-read of device state (R24).
+   * for a re-read of device state (R24). Also flags the device snapshot as
+   * stale (cached pre-disconnect data) so consumers can distinguish a
+   * resource read served from LiveState memory from a freshly-confirmed
+   * push. Cleared by `clearStaleness` once the bridge observes a real push.
    */
   markDisconnected(at: string): void {
     this.device = { ...this.device, connected: false, disconnectedAt: at };
+    this._staleSinceDisconnect = at;
     if (this.session !== undefined) {
       this.session = { ...this.session, disconnectedAt: at };
     }
   }
 
-  /** Return an independent copy of `device`. */
+  /**
+   * Clear the staleness flag. Called by the event-bridge on the first device
+   * push after a reconnect (typically `onSettingsUpdate`) so subsequent
+   * resource reads reflect freshly-confirmed values rather than the cached
+   * pre-disconnect snapshot.
+   */
+  clearStaleness(): void {
+    this._staleSinceDisconnect = undefined;
+  }
+
+  /** True when the snapshot is the last-known pre-disconnect state. */
+  isStale(): boolean {
+    return this._staleSinceDisconnect !== undefined;
+  }
+
+  /**
+   * Return an independent copy of `device`. Includes the soft-reset
+   * `staleSinceDisconnect` timestamp + `isStale` boolean when the snapshot
+   * is the cached pre-disconnect state, so resource consumers can distinguish
+   * cached data from freshly-confirmed pushes without inspecting LiveState
+   * internals.
+   */
   snapshotDevice(): DeviceSnapshot {
-    return { ...this.device };
+    const snap: DeviceSnapshot = { ...this.device };
+    if (this._staleSinceDisconnect !== undefined) {
+      snap.staleSinceDisconnect = this._staleSinceDisconnect;
+      snap.isStale = true;
+    }
+    return snap;
   }
 
   /** Return an independent copy of the active session, or `undefined`. */

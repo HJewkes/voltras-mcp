@@ -262,10 +262,22 @@ const DEVICE_TOOL_NAMES = [
 interface FakeLive {
   snapshotDevice: () => {
     connected: boolean;
+    deviceId?: string;
+    weightLbs?: number;
+    trainingMode?: string;
+    batteryPercent?: number;
+    damperLevel?: number;
+    chainSettingLbs?: number;
     assistMode?: number;
-    chainsActive?: number;
-    chainTargetTenths?: number;
+    trainingModeRaw?: number;
+    chainTargetForceTenths?: number;
+    weightLbsTenths?: number;
+    eccentricPercentTenths?: number;
+    staleSinceDisconnect?: string;
+    isStale?: boolean;
+    disconnectedAt?: string;
   };
+  markDisconnected: (at: string) => void;
 }
 
 interface FakeSlot {
@@ -282,6 +294,7 @@ interface State {
 function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>> = {}): FakeLive {
   return {
     snapshotDevice: () => ({ connected: false, ...overrides }),
+    markDisconnected: vi.fn(),
   };
 }
 
@@ -302,11 +315,6 @@ function makeState(): State {
  */
 function primaryClient(state: State): FakeClient {
   return state.slots.get('primary')!.client;
-}
-
-function setPrimaryClient(state: State, client: FakeClient): void {
-  const slot = state.slots.get('primary')!;
-  slot.client = client;
 }
 
 // Helper: invoke a registered tool and parse the result envelope.
@@ -778,37 +786,26 @@ describe('registerDeviceTools', () => {
   });
 
   describe('device.get_state (AC-26)', () => {
-    it('composes the response from individual VoltraClient getters with a string trainingMode', async () => {
-      // Track which getters were read to satisfy AC-26's spy assertion.
-      const reads: string[] = [];
-      const tracked = {
-        ...primaryClient(state),
-        get isConnected() {
-          reads.push('isConnected');
-          return true;
-        },
-        get connectionState() {
-          reads.push('connectionState');
-          return 'connected' as const;
-        },
-        get connectedDeviceId() {
-          reads.push('connectedDeviceId');
-          return 'V-1';
-        },
-        get settings() {
-          reads.push('settings');
-          return {
-            weight: 75,
-            chains: 0,
-            inverseChains: 0,
-            eccentric: 0,
-            mode: FakeTrainingMode.WeightTraining,
-            battery: 80,
-          };
-        },
-      };
-      // Re-register with the tracked client so the closure sees it.
-      setPrimaryClient(state, tracked as unknown as FakeClient);
+    // Phase 0.5.2 reshape: device.get_state now reads its substantive fields
+    // (deviceId, weightLbs, trainingMode, damperLevel, chainSettingLbs, the
+    // cmd=0x07 state-dump fields, batteryPercent) from `live.snapshotDevice()`
+    // — the same source `voltra://device/{slot}/current` reads from. Only
+    // `connected`, `connectionState`, and `isRowingActive` come from the live
+    // client. This keeps the tool aligned with the resource across the
+    // disconnect window so callers see preserved last-known values during
+    // the soft-reset gap instead of post-cleanup defaults.
+
+    it('composes the response from live.snapshotDevice plus client live state', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({
+        deviceId: 'V-1',
+        weightLbs: 75,
+        trainingMode: 'WeightTraining',
+        batteryPercent: 80,
+      });
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectionState = 'connected';
       const localServer = makeFakeServer();
       const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
       registerDeviceTools(
@@ -816,7 +813,6 @@ describe('registerDeviceTools', () => {
         state as unknown as Parameters<typeof registerDeviceTools>[1],
         localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
       );
-
       const reg = localPlaceholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
@@ -828,35 +824,17 @@ describe('registerDeviceTools', () => {
         trainingMode: 'WeightTraining',
         batteryPercent: 80,
       });
-      // No raw enum number leaks into trainingMode.
       expect(typeof payload.trainingMode).toBe('string');
-      expect(payload.trainingMode).not.toBe(1);
-      // Reads from the four documented getters.
-      expect(reads).toContain('isConnected');
-      expect(reads).toContain('connectionState');
-      expect(reads).toContain('connectedDeviceId');
-      expect(reads).toContain('settings');
       // No `rssi` field leaks (no SDK source for connected RSSI).
       expect(payload.rssi).toBeUndefined();
     });
 
-    it('coerces battery=null to absent batteryPercent (FIX #6)', async () => {
-      const client = primaryClient(state);
-      client.isConnected = true;
-      client.connectionState = 'connected';
-      client.connectedDeviceId = 'V-2';
-      client.settings = {
-        weight: 5,
-        chains: 0,
-        inverseChains: 0,
-        eccentric: 0,
-        mode: FakeTrainingMode.WeightTraining,
-        battery: null,
-      };
+    it('omits batteryPercent when live.snapshotDevice has no battery (FIX #6)', async () => {
+      // The bridge's settingsToSnapshot drops null battery; the tool only
+      // surfaces values that survived that pass.
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
-      // Output schema disallows null. Field must be absent (not null).
       expect(payload).not.toHaveProperty('batteryPercent');
       expect(payload.batteryPercent).toBeUndefined();
     });
@@ -870,39 +848,23 @@ describe('registerDeviceTools', () => {
       expect(payload.deviceId).toBeUndefined();
     });
 
-    it('surfaces damperLevel when client.settings.damperLevel is set', async () => {
-      const client = primaryClient(state);
-      client.isConnected = true;
-      client.connectionState = 'connected';
-      client.connectedDeviceId = 'V-3';
-      client.settings = {
-        weight: 10,
-        chains: 0,
-        inverseChains: 0,
-        eccentric: 0,
-        mode: FakeTrainingMode.WeightTraining,
-        battery: 50,
-        damperLevel: 4,
-      };
-      const reg = placeholders.get('device.get_state')!;
+    it('surfaces damperLevel from live.snapshotDevice', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ damperLevel: 4 });
+      const localServer = makeFakeServer();
+      const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+      registerDeviceTools(
+        localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+        state as unknown as Parameters<typeof registerDeviceTools>[1],
+        localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+      );
+      const reg = localPlaceholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.damperLevel).toBe(4);
     });
 
-    it('omits damperLevel when client.settings.damperLevel is undefined', async () => {
-      const client = primaryClient(state);
-      client.isConnected = true;
-      client.connectionState = 'connected';
-      client.connectedDeviceId = 'V-4';
-      client.settings = {
-        weight: 10,
-        chains: 0,
-        inverseChains: 0,
-        eccentric: 0,
-        mode: FakeTrainingMode.WeightTraining,
-        battery: 50,
-      };
+    it('omits damperLevel when live.snapshotDevice has no damperLevel', async () => {
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
@@ -932,11 +894,16 @@ describe('registerDeviceTools', () => {
       expect(payload.isRowingActive).toBe(true);
     });
 
-    it('surfaces assistMode / chainsActive / chainTargetTenths from live.snapshotDevice (state-dump fields)', async () => {
+    it('surfaces cmd=0x07 state-dump fields from live.snapshotDevice', async () => {
       // Wire a fake live that returns state-dump fields.
       const slot = state.slots.get('primary')!;
-      slot.live = makeFakeLive({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 });
-      // Re-register tools so the new slot shape is captured by the closure.
+      slot.live = makeFakeLive({
+        assistMode: 2,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 250,
+        weightLbsTenths: 1000,
+        eccentricPercentTenths: 50,
+      });
       const localServer = makeFakeServer();
       const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
       registerDeviceTools(
@@ -948,10 +915,10 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.assistMode).toBe(2);
-      expect(payload.chainsActive).toBe(1);
-      // chainTargetTenths is preserved for back-compat (decoder-bug field —
-      // see schema JSDoc); consumers should prefer chainSettingLbs.
-      expect(payload.chainTargetTenths).toBe(250);
+      expect(payload.trainingModeRaw).toBe(1);
+      expect(payload.chainTargetForceTenths).toBe(250);
+      expect(payload.weightLbsTenths).toBe(1000);
+      expect(payload.eccentricPercentTenths).toBe(50);
     });
 
     it('omits state-dump fields when live.snapshotDevice returns them as undefined', async () => {
@@ -960,33 +927,97 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       // Default makeFakeLive returns no state-dump fields.
       expect(payload).not.toHaveProperty('assistMode');
-      expect(payload).not.toHaveProperty('chainsActive');
-      expect(payload).not.toHaveProperty('chainTargetTenths');
+      expect(payload).not.toHaveProperty('trainingModeRaw');
+      expect(payload).not.toHaveProperty('chainTargetForceTenths');
+      expect(payload).not.toHaveProperty('weightLbsTenths');
+      expect(payload).not.toHaveProperty('eccentricPercentTenths');
     });
 
-    it('surfaces chainSettingLbs from client.settings.chains (cmd=0x10 cascade source)', async () => {
-      const client = primaryClient(state);
-      client.isConnected = true;
-      client.connectionState = 'connected';
-      // SDK exposes the user's chains setting on `settings.chains` (post-cascade,
-      // post hardware cap). On-device 2026-05-07 this matched the user's last
-      // set_chains write capped at the current weight.
-      client.settings = { ...client.settings, chains: 50 };
-      const reg = placeholders.get('device.get_state')!;
+    it('surfaces chainSettingLbs from live.snapshotDevice', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ chainSettingLbs: 50 });
+      const localServer = makeFakeServer();
+      const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+      registerDeviceTools(
+        localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+        state as unknown as Parameters<typeof registerDeviceTools>[1],
+        localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+      );
+      const reg = localPlaceholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.chainSettingLbs).toBe(50);
     });
 
-    it('omits chainSettingLbs when client.settings is null (never connected)', async () => {
-      const client = primaryClient(state);
-      // Force settings to a falsy value so the outer `if (settings)` skips
-      // the entire weight/mode/battery/damper/chains block.
-      (client as unknown as { settings: unknown }).settings = null;
+    it('omits chainSettingLbs when live.snapshotDevice has no chainSettingLbs', async () => {
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload).not.toHaveProperty('chainSettingLbs');
+    });
+
+    it('returns the same preserved-state values as the resource during the disconnect window (Phase 0.5.2)', async () => {
+      // Pre-Phase-0.5.2 the tool read fields off `slot.client.settings`,
+      // which the SDK resets to defaults when `resetPrimarySlot` swaps in
+      // a fresh client. Meanwhile the resource path served from
+      // `live.snapshotDevice()` correctly preserved the last-known values.
+      // Both surfaces must agree across the soft-reset window.
+      const slot = state.slots.get('primary')!;
+      const resourceSnapshot = {
+        connected: false,
+        deviceId: 'V-097082',
+        weightLbs: 75,
+        trainingMode: 'WeightTraining',
+        damperLevel: 5,
+        chainSettingLbs: 23,
+        assistMode: 2,
+        trainingModeRaw: 1,
+        weightLbsTenths: 750,
+        chainTargetForceTenths: 230,
+        eccentricPercentTenths: 1020,
+        staleSinceDisconnect: '2026-05-08T00:00:00.000Z',
+        isStale: true,
+        disconnectedAt: '2026-05-08T00:00:00.000Z',
+      };
+      slot.live = makeFakeLive(resourceSnapshot);
+      // Simulate the post-soft-reset disconnect window: fresh client with
+      // default state, while LiveState retains the preserved snapshot.
+      // The tool now reads only `isConnected`/`connectionState`/`isRowingActive`
+      // from the client, so `settings` is irrelevant for this case.
+      const client = primaryClient(state);
+      client.isConnected = false;
+      client.connectionState = 'disconnected';
+      client.connectedDeviceId = null;
+      client.isRowingActive = false;
+      const localServer = makeFakeServer();
+      const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+      registerDeviceTools(
+        localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+        state as unknown as Parameters<typeof registerDeviceTools>[1],
+        localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+      );
+      const reg = localPlaceholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload).toMatchObject({
+        deviceId: 'V-097082',
+        weightLbs: 75,
+        trainingMode: 'WeightTraining',
+        damperLevel: 5,
+        chainSettingLbs: 23,
+        assistMode: 2,
+        trainingModeRaw: 1,
+        weightLbsTenths: 750,
+        chainTargetForceTenths: 230,
+        eccentricPercentTenths: 1020,
+        staleSinceDisconnect: '2026-05-08T00:00:00.000Z',
+        isStale: true,
+        disconnectedAt: '2026-05-08T00:00:00.000Z',
+      });
+      // Tool-only transients reflect LIVE client state, not the snapshot.
+      expect(payload.connected).toBe(false);
+      expect(payload.connectionState).toBe('disconnected');
+      expect(payload.isRowingActive).toBe(false);
     });
   });
 

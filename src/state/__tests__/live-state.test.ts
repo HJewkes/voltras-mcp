@@ -196,11 +196,13 @@ describe('LiveState', () => {
   describe('markDisconnected', () => {
     it('sets disconnectedAt on device only when no session is active', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceId: 'd1' });
+      live.applySettings({ connected: true, weightLbs: 80 });
       live.markDisconnected(TS_B);
       expect(live.snapshotDevice()).toMatchObject({
         connected: false,
         disconnectedAt: TS_B,
+        staleSinceDisconnect: TS_B,
+        isStale: true,
       });
       expect(live.snapshotSession()).toBeUndefined();
     });
@@ -211,6 +213,46 @@ describe('LiveState', () => {
       live.markDisconnected(TS_B);
       expect(live.snapshotSession()?.disconnectedAt).toBe(TS_B);
       expect(live.snapshotDevice().disconnectedAt).toBe(TS_B);
+    });
+  });
+
+  describe('soft-reset staleness (Phase 0.5.1)', () => {
+    it('preserves last-known device settings after markDisconnected', () => {
+      const live = new LiveState();
+      live.applySettings({
+        connected: true,
+        weightLbs: 100,
+        trainingMode: 'WeightTraining',
+        damperLevel: 3,
+      });
+      live.markDisconnected(TS_B);
+      const snap = live.snapshotDevice();
+      expect(snap.weightLbs).toBe(100);
+      expect(snap.trainingMode).toBe('WeightTraining');
+      expect(snap.damperLevel).toBe(3);
+      expect(snap.connected).toBe(false);
+      expect(snap.staleSinceDisconnect).toBe(TS_B);
+      expect(snap.isStale).toBe(true);
+      expect(live.isStale()).toBe(true);
+    });
+
+    it('clearStaleness drops the flag and the snapshot loses staleness fields', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, weightLbs: 80 });
+      live.markDisconnected(TS_B);
+      expect(live.isStale()).toBe(true);
+      live.clearStaleness();
+      expect(live.isStale()).toBe(false);
+      const snap = live.snapshotDevice();
+      expect(snap.staleSinceDisconnect).toBeUndefined();
+      expect(snap.isStale).toBeUndefined();
+      expect(snap.weightLbs).toBe(80);
+    });
+
+    it('isStale starts false on a fresh LiveState', () => {
+      const live = new LiveState();
+      expect(live.isStale()).toBe(false);
+      expect(live.snapshotDevice().staleSinceDisconnect).toBeUndefined();
     });
   });
 
@@ -245,11 +287,11 @@ describe('LiveState', () => {
 
     it('merges multiple partial updates additively', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceName: 'Voltra-1' });
+      live.applySettings({ connected: true, batteryPercent: 90 });
       live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
       expect(live.snapshotDevice()).toEqual({
         connected: true,
-        deviceName: 'Voltra-1',
+        batteryPercent: 90,
         weightLbs: 100,
         trainingMode: 'WeightTraining',
       });
@@ -388,10 +430,10 @@ describe('LiveState', () => {
   describe('snapshot independence', () => {
     it('snapshotDevice returns an independent copy', () => {
       const live = new LiveState();
-      live.applySettings({ connected: true, deviceName: 'Voltra-1' });
+      live.applySettings({ connected: true, trainingMode: 'WeightTraining' });
       const snap = live.snapshotDevice();
-      snap.deviceName = 'mutated';
-      expect(live.snapshotDevice().deviceName).toBe('Voltra-1');
+      snap.trainingMode = 'mutated';
+      expect(live.snapshotDevice().trainingMode).toBe('WeightTraining');
     });
 
     it('snapshotSession returns an independent copy with cloned setIds', () => {
@@ -417,19 +459,33 @@ describe('LiveState', () => {
   });
 
   describe('applyStateDump', () => {
-    it('merges assistMode, chainsActive, chainTargetTenths into device snapshot', () => {
+    it('merges assistMode + cmd=0x07 fields into device snapshot', () => {
       const live = new LiveState();
-      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 250 });
+      live.applyStateDump({
+        assistMode: 2,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 250,
+        weightLbsTenths: 250,
+        eccentricPercentTenths: 0,
+      });
       const snap = live.snapshotDevice();
       expect(snap.assistMode).toBe(2);
-      expect(snap.chainsActive).toBe(1);
-      expect(snap.chainTargetTenths).toBe(250);
+      expect(snap.trainingModeRaw).toBe(1);
+      expect(snap.chainTargetForceTenths).toBe(250);
+      expect(snap.weightLbsTenths).toBe(250);
+      expect(snap.eccentricPercentTenths).toBe(0);
     });
 
     it('does not clobber existing device fields (connected, weightLbs, etc.)', () => {
       const live = new LiveState();
       live.applySettings({ connected: true, weightLbs: 100, batteryPercent: 80 });
-      live.applyStateDump({ assistMode: 0, chainsActive: 0, chainTargetTenths: 0 });
+      live.applyStateDump({
+        assistMode: 0,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 0,
+        weightLbsTenths: 1000,
+        eccentricPercentTenths: 0,
+      });
       const snap = live.snapshotDevice();
       expect(snap.connected).toBe(true);
       expect(snap.weightLbs).toBe(100);
@@ -438,22 +494,48 @@ describe('LiveState', () => {
 
     it('updates assistMode to idle sentinel (8) without clobbering prior state-dump values', () => {
       const live = new LiveState();
-      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 300 });
-      live.applyStateDump({ assistMode: 8, chainsActive: 1, chainTargetTenths: 300 });
+      live.applyStateDump({
+        assistMode: 2,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 300,
+        weightLbsTenths: 300,
+        eccentricPercentTenths: 0,
+      });
+      live.applyStateDump({
+        assistMode: 8,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 300,
+        weightLbsTenths: 300,
+        eccentricPercentTenths: 0,
+      });
       const snap = live.snapshotDevice();
       expect(snap.assistMode).toBe(8);
-      expect(snap.chainsActive).toBe(1);
-      expect(snap.chainTargetTenths).toBe(300);
+      expect(snap.trainingModeRaw).toBe(1);
+      expect(snap.chainTargetForceTenths).toBe(300);
     });
 
     it('overwrites prior state-dump values on subsequent calls', () => {
       const live = new LiveState();
-      live.applyStateDump({ assistMode: 2, chainsActive: 1, chainTargetTenths: 100 });
-      live.applyStateDump({ assistMode: 0, chainsActive: 0, chainTargetTenths: 200 });
+      live.applyStateDump({
+        assistMode: 2,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 100,
+        weightLbsTenths: 100,
+        eccentricPercentTenths: 0,
+      });
+      live.applyStateDump({
+        assistMode: 0,
+        trainingModeRaw: 2,
+        chainTargetForceTenths: 200,
+        weightLbsTenths: 200,
+        eccentricPercentTenths: 50,
+      });
       const snap = live.snapshotDevice();
       expect(snap.assistMode).toBe(0);
-      expect(snap.chainsActive).toBe(0);
-      expect(snap.chainTargetTenths).toBe(200);
+      expect(snap.trainingModeRaw).toBe(2);
+      expect(snap.chainTargetForceTenths).toBe(200);
+      expect(snap.weightLbsTenths).toBe(200);
+      expect(snap.eccentricPercentTenths).toBe(50);
     });
 
     it('keeps chainSettingLbs (cmd=0x10 cascade source) distinct from state-dump fields', () => {
@@ -461,13 +543,18 @@ describe('LiveState', () => {
       // state-dump path is independent and updates separate fields.
       const live = new LiveState();
       live.applySettings({ chainSettingLbs: 50 });
-      live.applyStateDump({ assistMode: 0, chainsActive: 1, chainTargetTenths: 500 });
+      live.applyStateDump({
+        assistMode: 0,
+        trainingModeRaw: 1,
+        chainTargetForceTenths: 500,
+        weightLbsTenths: 500,
+        eccentricPercentTenths: 0,
+      });
       const snap = live.snapshotDevice();
       expect(snap.chainSettingLbs).toBe(50);
-      // chainTargetTenths is preserved here for back-compat / debug only;
-      // it is a known decoder-bug field (tracks weight×10, not chain force).
-      expect(snap.chainTargetTenths).toBe(500);
-      expect(snap.chainsActive).toBe(1);
+      // chainTargetForceTenths is the on-cable effective chain force.
+      expect(snap.chainTargetForceTenths).toBe(500);
+      expect(snap.trainingModeRaw).toBe(1);
     });
   });
 });

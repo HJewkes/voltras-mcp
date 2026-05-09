@@ -59,7 +59,14 @@
 //   onStateDump                 → applyStateDump + notify voltra://device/current.
 //                                 Synthesises a `settings_update` channel
 //                                 event for each field that transitions
-//                                 (assistMode, chainsActive, chainTargetTenths).
+//                                 (assistMode, trainingModeRaw,
+//                                 chainTargetForceTenths, weightLbsTenths,
+//                                 eccentricPercentTenths). Frames where
+//                                 `trainingMode === Idle (0)` are dropped
+//                                 entirely — these are the transitional
+//                                 mid-mode-switch frames that produce
+//                                 `assistMode 2↔0↔2` burst noise without
+//                                 carrying any stable post-switch state.
 //                                 assistMode=8 is the device's idle sentinel
 //                                 (no active fitness mode) — surfaced as-is in
 //                                 channel events and `device.get_state` so
@@ -104,8 +111,7 @@ import type {
   SummaryEvent,
   TelemetryFrame,
 } from '@voltras/node-sdk';
-import { TrainingModeNames } from '@voltras/node-sdk';
-import type { TrainingMode } from '@voltras/node-sdk';
+import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
@@ -140,8 +146,7 @@ const SDK_PHASE_UNKNOWN = -1;
 //
 // `damperLevel` was added in SDK 0.6.0's `VoltraDeviceSettings` and surfaces
 // through this same callback when the cmd=0x10 cascade carries paramID
-// 0x0351 (Bug 27 / B4 SDK PR #41 corrected the paramID from `5103` to
-// `0351` at the decoder layer).
+// 0x0351.
 interface SdkSettingsUpdate {
   baseWeight?: number;
   weight?: number;
@@ -154,30 +159,38 @@ interface SdkSettingsUpdate {
   damperLevel?: number;
 }
 
-// Structural mirror of SDK 0.7.0's `StateDumpEvent` (from the internal
+// Structural mirror of SDK 0.7.x's `StateDumpEvent` (from the internal
 // `src/voltra/protocol/types.ts`). Not imported from the public entry
 // because `StateDumpEvent` is not re-exported from `@voltras/node-sdk`'s
 // root `index.ts` — the bridge only consumes it via the `onStateDump`
 // callback, so the structural alias is sufficient and keeps the bridge
 // decoupled from the SDK's private module paths.
+//
+// Field offsets validated on-device in session E (2026-05-07); see
+// `voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md`.
+// `trainingMode` here is a raw byte (0 = transitional / mid-mode-switch,
+// 1 = WeightTraining, 2 = ResistanceBand); the bridge uses the SDK's
+// numeric `TrainingMode` enum for typed comparisons.
 interface SdkStateDump {
-  chainsActive: number;
+  trainingMode: TrainingMode;
   assistMode: number;
-  /**
-   * Raw u16 at bytes [6-7] of the cmd=0x07 inner `aa 80 25` envelope.
-   * On-device testing 2026-05-07 (Bug 23 retest) showed this tracks
-   * `weight × 10`, NOT chain force at the cable. The actual effective
-   * chain force lives at bytes [8-9] and is currently undecoded. Field
-   * is preserved for back-compat; consumers should prefer the user's
-   * chains setting via `chainSettingLbs` on LiveState (cmd=0x10 cascade).
-   */
-  chainTargetTenths: number;
+  weightLbsTenths: number;
+  chainTargetForceTenths: number;
+  eccentricPercentTenths: number;
   raw: Uint8Array;
 }
 
 const DEVICE_URI = 'voltra://device/current';
 const SESSION_URI = 'voltra://session/active';
 const SET_URI = 'voltra://set/active';
+
+// Per-slot URI builders. The legacy static URIs above remain as
+// primary-slot aliases (Phase 0.5.2 backwards-compat); every notify also
+// fans out to the templated `voltra://<kind>/{slot}/<sub>` form so
+// bilateral consumers subscribing to the templated URI receive pushes too.
+const deviceUriForSlot = (slotId: string): string => `voltra://device/${slotId}/current`;
+const sessionUriForSlot = (slotId: string): string => `voltra://session/${slotId}/active`;
+const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active`;
 
 /**
  * Suppression window after `set.start`: any `onInProgress` event that
@@ -250,8 +263,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
   let lastAssistMode: number | undefined = undefined;
-  let lastChainsActive: number | undefined = undefined;
-  let lastChainTargetTenths: number | undefined = undefined;
+  let lastTrainingModeRaw: number | undefined = undefined;
+  let lastChainTargetForceTenths: number | undefined = undefined;
+  let lastWeightLbsTenths: number | undefined = undefined;
+  let lastEccentricPercentTenths: number | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -311,12 +326,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         timestamp: frame.timestamp,
         phase: phase as unknown as WorkoutSample['phase'],
         position: frame.position,
-        velocity: Math.abs(frame.velocity),
-        force: Math.abs(frame.force),
+        velocity: frame.velocity,
+        force: frame.force,
       });
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
-        notify(server, SET_URI);
+        notifySlot(server, slotId, SET_URI, setUriForSlot);
         // Publish a `rep_finalized` channel event only when a rep has
         // actually closed. Per workout-analytics's `addSampleToSet`:
         //   - The first CONCENTRIC sample creates rep 1 in-progress
@@ -520,7 +535,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (!Number.isFinite(startedMs) || Date.now() - startedMs < SET_START_GRACE_MS) {
         return;
       }
-      notify(server, SET_URI);
+      notifySlot(server, slotId, SET_URI, setUriForSlot);
       // Fire-and-forget the persist + publish chain. The void-discard
       // here is deliberate — the SDK callback signature is sync, and we
       // don't want a slow store.putSet to block other event handlers.
@@ -594,11 +609,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           ),
         },
       });
+      const wasStale = live.isStale();
       live.applySettings(settingsToSnapshot(settings));
-      notify(server, DEVICE_URI);
+      notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
 
-      // Bug 22 — feed the mode-revert guard. The guard ignores updates that
-      // don't carry a trainingMode field; this call is safe to invoke
+      // Phase 0.5.1 soft-reset: the first device push after a reconnect
+      // clears the staleness flag and emits a `connection_changed` event
+      // with the freshly-confirmed device snapshot. Distinguishes "we have
+      // a live cable" from "we cached pre-disconnect state".
+      if (wasStale) {
+        live.clearStaleness();
+        const refreshedDevice = live.snapshotDevice();
+        const payload = buildConnectionChangedPayload('connected', refreshedDevice, null);
+        slotChannels.publish(payload);
+      }
+
+      // Feed the mode-revert guard. The guard ignores updates that don't
+      // carry a trainingMode field; this call is safe to invoke
       // unconditionally regardless of which paramIDs the cascade actually
       // surfaced. `mode` and `trainingMode` are aliases at the wire layer
       // (different SDK versions used different field names); we collapse
@@ -606,14 +633,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // Bug 27 — synthesize a `settings_update` channel event when
-      // damperLevel transitions. The cmd=0x10 cascade carrying paramID
-      // 0x0351 routes through this same callback (B4's SDK PR #41 corrects
-      // the paramID from `5103` to `0351` at the decoder layer); we
-      // observe the field on `settings.damperLevel` and only publish
-      // when the value actually changes. The `__all` block in the payload
-      // snapshots every monitored field at emission time so consumers
-      // don't have to merge against a prior settings_update.
+      // Synthesize a `settings_update` channel event when damperLevel
+      // transitions. The cmd=0x10 cascade carrying paramID 0x0351 routes
+      // through this same callback; we observe the field on
+      // `settings.damperLevel` and only publish when the value actually
+      // changes. The `__all` block in the payload snapshots every monitored
+      // field at emission time so consumers don't have to merge against a
+      // prior settings_update.
       if (settings.damperLevel !== undefined && settings.damperLevel !== lastDamperLevel) {
         lastDamperLevel = settings.damperLevel;
         const device = live.snapshotDevice();
@@ -627,10 +653,18 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
-  // cmd=0x07 state-dump — exposes assist mode, chains-active flag, and chain
-  // target weight. SDK 0.7.0 routes this through `onStateDump` (PR #41).
-  // `onStateDump` is absent on older builds; the optional-chain guard keeps
-  // backward compatibility with any pre-0.7.0 test fixtures.
+  // cmd=0x07 state-dump — exposes assist mode, active training mode, weight,
+  // effective chain target force, and eccentric overload. SDK 0.7.0+ routes
+  // this through `onStateDump`. `onStateDump` is absent on older builds; the
+  // optional-chain guard keeps backward compatibility with any pre-0.7.0
+  // test fixtures.
+  //
+  // Mode-switch bursts emit ~4 cmd=0x07 frames in ~130ms; two carry the new
+  // mode value, two carry transitional `trainingMode=0` (Idle) frames with
+  // assistMode flicker. Suppress the transitional frames entirely (no
+  // LiveState mutation, no channel events, no resource notify) so consumers
+  // never see the `assistMode 2↔0↔2` oscillation. Investigation:
+  // voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md.
   if (typeof client.onStateDump === 'function') {
     pushUnsub(
       unsubs,
@@ -640,27 +674,49 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           type: 'state_dump',
           payload: {
             assistMode: dump.assistMode,
-            chainsActive: dump.chainsActive,
-            chainTargetTenths: dump.chainTargetTenths,
+            trainingMode: dump.trainingMode,
+            weightLbsTenths: dump.weightLbsTenths,
+            chainTargetForceTenths: dump.chainTargetForceTenths,
+            eccentricPercentTenths: dump.eccentricPercentTenths,
           },
         });
+
+        // Drop transitional / mid-mode-switch burst frames before any
+        // observable side effect. The next ~130ms will carry the stable
+        // post-switch frame; suppressing here keeps `device.get_state`
+        // and the `voltra://device/current` resource showing the last
+        // stable state instead of momentarily flipping to zeroes.
+        if (dump.trainingMode === TrainingMode.Idle) {
+          return;
+        }
+
         live.applyStateDump({
           assistMode: dump.assistMode,
-          chainsActive: dump.chainsActive,
-          chainTargetTenths: dump.chainTargetTenths,
+          trainingModeRaw: dump.trainingMode,
+          weightLbsTenths: dump.weightLbsTenths,
+          chainTargetForceTenths: dump.chainTargetForceTenths,
+          eccentricPercentTenths: dump.eccentricPercentTenths,
         });
-        notify(server, DEVICE_URI);
+        notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
 
         synthStateDumpTransitions(
           dump,
-          { lastAssistMode, lastChainsActive, lastChainTargetTenths },
+          {
+            lastAssistMode,
+            lastTrainingModeRaw,
+            lastChainTargetForceTenths,
+            lastWeightLbsTenths,
+            lastEccentricPercentTenths,
+          },
           lastDamperLevel,
           live,
           slotChannels,
         );
         lastAssistMode = dump.assistMode;
-        lastChainsActive = dump.chainsActive;
-        lastChainTargetTenths = dump.chainTargetTenths;
+        lastTrainingModeRaw = dump.trainingMode;
+        lastChainTargetForceTenths = dump.chainTargetForceTenths;
+        lastWeightLbsTenths = dump.weightLbsTenths;
+        lastEccentricPercentTenths = dump.eccentricPercentTenths;
       }),
     );
   }
@@ -679,12 +735,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // LiveState, but taking the snapshot up front future-proofs
       // against that ordering changing.
       const activeSetBefore = live.snapshotSet();
-      live.applySettings({ connected: connState === 'connected' });
-      notify(server, DEVICE_URI);
+      // Capture the device id alongside `connected: true` so the resource
+      // and `device.get_state` can surface which device was last bound to
+      // this slot even after `resetPrimarySlot` swaps in a fresh client and
+      // wipes `client.connectedDeviceId`. On 'disconnected' we leave the
+      // last-known id in place — the snapshot is explicitly stale.
+      const settingsDelta: Partial<DeviceSnapshot> = {
+        connected: connState === 'connected',
+      };
+      if (connState === 'connected' && typeof client.connectedDeviceId === 'string') {
+        settingsDelta.deviceId = client.connectedDeviceId;
+      }
+      live.applySettings(settingsDelta);
+      notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
       if (connState === 'disconnected') {
         live.markDisconnected(new Date().toISOString());
-        notify(server, SESSION_URI);
-        notify(server, SET_URI);
+        notifySlot(server, slotId, SESSION_URI, sessionUriForSlot);
+        notifySlot(server, slotId, SET_URI, setUriForSlot);
       }
       // Build the channel payload AFTER the LiveState mutations so the
       // device snapshot reflects post-transition state (notably the
@@ -708,26 +775,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
-  // D4 — replay SDK-retained settings into LiveState synchronously after
-  // wiring all listeners. SDK 0.7.0 (Bug 17 fix) no longer resets
-  // `_settings` on `cleanup()`, so `client.settings` carries the last known
-  // state across reconnect. Without this replay, `voltra://device/current`
-  // shows a blank snapshot until the first `onSettingsUpdate` fires (which
-  // requires the device to push a settings cascade — not guaranteed on
-  // reconnect alone).
-  //
-  // Note: the SDK's `settings` getter returns `{ ...this._settings }` and
-  // never returns null, so this branch always executes. On a truly-fresh
-  // connect (no prior cascade), `_settings` equals `DEFAULT_SETTINGS` and
-  // we apply those defaults to LiveState; subsequent cascades overwrite via
-  // the standard `onSettingsUpdate` path. SDK 0.7.1 also replays the cached
-  // protocol-layer cascade through `onSettingsUpdate` at listener-attach
-  // time (b3e3dc3), so this explicit call is redundant on reconnect but
-  // remains the canonical entry point for non-cascade-driven snapshots.
-  const initialSettings = (client as unknown as { settings?: SdkSettingsUpdate | null }).settings;
-  if (initialSettings != null) {
-    live.applySettings(settingsToSnapshot(initialSettings));
-  }
+  // SDK 0.7.1+ replays the cached settings cascade through `onSettingsUpdate`
+  // at listener-attach time, so the bridge does not need an explicit
+  // `client.settings` read here — every fresh wire-up receives the last-
+  // known cascade through the standard event path.
 
   return () => {
     for (const u of unsubs) {
@@ -756,6 +807,25 @@ function notify(server: McpServer | undefined, uri: string): void {
   // channel publishes — a missing server skips the resource hint.
   if (server === undefined) return;
   void server.server.sendResourceUpdated({ uri });
+}
+
+/**
+ * Fire a resource-updated hint for the slot's templated URI AND, when
+ * `slotId === 'primary'`, also for the legacy static URI alias. This lets
+ * pre-Phase-0.5.2 callers that subscribed to `voltra://device/current`
+ * keep receiving pushes while bilateral consumers of
+ * `voltra://device/{slot}/current` get a per-slot push.
+ */
+function notifySlot(
+  server: McpServer | undefined,
+  slotId: string,
+  legacyUri: string,
+  buildSlotUri: (slotId: string) => string,
+): void {
+  notify(server, buildSlotUri(slotId));
+  if (slotId === 'primary') {
+    notify(server, legacyUri);
+  }
 }
 
 /**
@@ -985,8 +1055,10 @@ function synthStateDumpTransitions(
   dump: SdkStateDump,
   prev: {
     lastAssistMode: number | undefined;
-    lastChainsActive: number | undefined;
-    lastChainTargetTenths: number | undefined;
+    lastTrainingModeRaw: number | undefined;
+    lastChainTargetForceTenths: number | undefined;
+    lastWeightLbsTenths: number | undefined;
+    lastEccentricPercentTenths: number | undefined;
   },
   knownDamperLevel: number | undefined,
   live: LiveState,
@@ -995,8 +1067,10 @@ function synthStateDumpTransitions(
   const device = live.snapshotDevice();
   const all: SettingsUpdateAll = {
     assistMode: dump.assistMode,
-    chainsActive: dump.chainsActive,
-    chainTargetTenths: dump.chainTargetTenths,
+    trainingModeRaw: dump.trainingMode,
+    chainTargetForceTenths: dump.chainTargetForceTenths,
+    weightLbsTenths: dump.weightLbsTenths,
+    eccentricPercentTenths: dump.eccentricPercentTenths,
   };
   if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
   if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
@@ -1005,11 +1079,31 @@ function synthStateDumpTransitions(
   if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
 
   publishIfTransition('assistMode', dump.assistMode, prev.lastAssistMode, all, channels);
-  publishIfTransition('chainsActive', dump.chainsActive, prev.lastChainsActive, all, channels);
   publishIfTransition(
-    'chainTargetTenths',
-    dump.chainTargetTenths,
-    prev.lastChainTargetTenths,
+    'trainingModeRaw',
+    dump.trainingMode,
+    prev.lastTrainingModeRaw,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'chainTargetForceTenths',
+    dump.chainTargetForceTenths,
+    prev.lastChainTargetForceTenths,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'weightLbsTenths',
+    dump.weightLbsTenths,
+    prev.lastWeightLbsTenths,
+    all,
+    channels,
+  );
+  publishIfTransition(
+    'eccentricPercentTenths',
+    dump.eccentricPercentTenths,
+    prev.lastEccentricPercentTenths,
     all,
     channels,
   );

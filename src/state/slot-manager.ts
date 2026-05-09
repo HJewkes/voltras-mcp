@@ -88,17 +88,20 @@ export function removeSlot(state: ServerState, slotId: string): void {
 }
 
 /**
- * Reset the primary slot back to its bootstrap shape: a fresh
- * parameter-less `VoltraClient` (so `device.connect` can rebind it) and a
- * fresh `LiveState` (so a stale session/set from the prior connection can't
- * leak into the next one). The slot itself stays in `state.slots` because
- * a single-device flow never calls `device.connect` with an explicit slot
- * id, so the entry must remain resolvable for the default lookup.
+ * Soft-reset the primary slot ahead of the next connect cycle. Swaps in a
+ * fresh `VoltraClient` (so `device.connect` can rebind), but PRESERVES the
+ * existing `LiveState` instance — only marking it stale via
+ * `markDisconnected` so the next resource read returns the last-known
+ * device snapshot tagged with `staleSinceDisconnect`. The bridge clears
+ * staleness on the first device push after reconnect (Phase 0.5.1 soft-
+ * reset; replaces the prior LiveState wipe that returned a blank snapshot
+ * during the reconnect window).
  *
- * Unwires the existing bridge before swapping client / LiveState so listeners
- * on the old handle can't fire mid-rebind, then re-wires the bridge against
- * the fresh shape. The `slot.unwireBridge` field is replaced with the new
- * tear-down hook.
+ * Unwires the existing bridge before swapping the client so listeners on
+ * the old handle can't fire mid-rebind, then re-wires against the fresh
+ * client. The `slot.unwireBridge` field is replaced with the new tear-down
+ * hook. The mode-revert guard is replaced so a stale latched abort can't
+ * block the first set.start of the new connection.
  */
 export function resetPrimarySlot(state: ServerState): void {
   const slot = state.slots.get(PRIMARY_SLOT);
@@ -107,9 +110,7 @@ export function resetPrimarySlot(state: ServerState): void {
   }
   slot.unwireBridge?.();
   slot.client = new VoltraClient();
-  slot.live = new LiveState();
-  // Replace the guard so a stale latched abort from the prior connection
-  // can't block the first set.start of the new connection.
+  slot.live.markDisconnected(new Date().toISOString());
   slot.modeRevertGuard = new ModeRevertGuard();
   slot.unwireBridge = wireBridgeForSlot(state, slot);
 }

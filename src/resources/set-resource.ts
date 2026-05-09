@@ -1,50 +1,79 @@
-// `voltra://set/active` — active set with rep buffer, served from
-// `LiveState`. Returns `{ active: false }` when no set is active — not
-// `null`, not `{}`. Clients poll this URI on every `sendResourceUpdated`
-// hint emitted by the event-bridge to track in-progress reps.
+// `voltra://set/{slot}/active` — active set with rep buffer for a slot,
+// served from that slot's `LiveState`. The legacy URI `voltra://set/active`
+// is preserved as a primary-slot alias.
 //
-// Polling-first per R13. The event-bridge emits
-// `sendResourceUpdated({ uri: 'voltra://set/active' })` on every rep boundary
-// (and on disconnect cascade per R24); this handler just serves the latest
-// snapshot on each read.
-//
-// TODO(Wave 4): wire `registerSetResource(server, state)` from `runServer`
-// after `bootstrapState` resolves.
+// Returns `{ active: false }` when no set is active. Clients poll this URI
+// on every `sendResourceUpdated` hint emitted by the event-bridge to track
+// in-progress reps.
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  ResourceTemplate,
+  type McpServer,
+  type ReadResourceTemplateCallback,
+} from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ListResourcesResult } from '@modelcontextprotocol/sdk/types.js';
 
 import type { LiveState } from '../state/live-state.js';
 
-const URI = 'voltra://set/active';
+const LEGACY_URI = 'voltra://set/active';
+const TEMPLATE_URI = 'voltra://set/{slot}/active';
 
 /** Minimal slice of `ServerState` required by this resource. */
-interface SetResourceState {
-  live: LiveState;
+export interface SetResourceState {
+  liveForSlot: (slotId: string) => LiveState | undefined;
+  slotIds: () => string[];
+}
+
+function setUriForSlot(slotId: string): string {
+  return `voltra://set/${slotId}/active`;
 }
 
 /**
- * Register the `voltra://set/active` resource on `server`. The handler
- * captures `state.live` by reference; subsequent `live` mutations (including
- * `appendRep`) are visible to every read.
+ * Register the templated per-slot set resource and the legacy alias.
  */
 export function registerSetResource(server: McpServer, state: SetResourceState): void {
+  const readBody = (slotId: string): string => {
+    const live = state.liveForSlot(slotId);
+    return JSON.stringify(live?.snapshotSet() ?? { active: false });
+  };
+
+  const templateRead: ReadResourceTemplateCallback = (uri, variables) => ({
+    contents: [
+      { uri: uri.toString(), mimeType: 'application/json', text: readBody(String(variables.slot)) },
+    ],
+  });
+
   server.registerResource(
     'set-active',
-    URI,
+    new ResourceTemplate(TEMPLATE_URI, {
+      list: (): ListResourcesResult => ({
+        resources: state.slotIds().map((slotId) => ({
+          uri: setUriForSlot(slotId),
+          name: `set-active-${slotId}`,
+          title: `Active set (${slotId})`,
+          mimeType: 'application/json',
+        })),
+      }),
+    }),
     {
-      title: 'Active set with rep buffer',
+      title: 'Active set with rep buffer (per slot)',
       description:
-        'Polling snapshot of the in-progress set (setId, sessionId, startedAt, reps[]). Returns { active: false } when no set is in progress.',
+        'Polling snapshot of the in-progress set (setId, sessionId, startedAt, reps[]). Templated by {slot}. Returns { active: false } when no set is in progress.',
+      mimeType: 'application/json',
+    },
+    templateRead,
+  );
+
+  server.registerResource(
+    'set-active-legacy',
+    LEGACY_URI,
+    {
+      title: 'Active set (primary slot, legacy alias)',
+      description: 'Backwards-compatible alias for `voltra://set/primary/active`.',
       mimeType: 'application/json',
     },
     () => ({
-      contents: [
-        {
-          uri: URI,
-          mimeType: 'application/json',
-          text: JSON.stringify(state.live.snapshotSet() ?? { active: false }),
-        },
-      ],
+      contents: [{ uri: LEGACY_URI, mimeType: 'application/json', text: readBody('primary') }],
     }),
   );
 }

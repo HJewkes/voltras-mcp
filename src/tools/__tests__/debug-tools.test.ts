@@ -149,8 +149,8 @@ describe('debug.recent_events', () => {
     });
     buffers.events.push({
       capturedAt: 2,
-      type: 'cycle_complete',
-      payload: { repNumber: 1, sampleCount: 50 },
+      type: 'summary',
+      payload: { repCount: 1, schemaVersion: 1 },
     });
     buffers.events.push({
       capturedAt: 3,
@@ -162,7 +162,7 @@ describe('debug.recent_events', () => {
     const body = JSON.parse(r.content[0].text) as {
       events: Array<{ type: string; capturedAt: number }>;
     };
-    expect(body.events.map((e) => e.type)).toEqual(['cycle_complete', 'set_boundary']);
+    expect(body.events.map((e) => e.type)).toEqual(['summary', 'set_boundary']);
   });
 });
 

@@ -260,10 +260,6 @@ async function getSession(
 /**
  * Build a `StoredSet` from a finalized `ActiveSet` and the device snapshot
  * captured at set start (or at session-end-cascade time).
- *
- * `chainsLbs` and `eccentricPercent` are intentionally omitted: the
- * `DeviceSnapshot` shape (Wave 1) does not carry them. They land in a future
- * wave once the SDK exposes the corresponding settings reads.
  */
 function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
   const reps: StoredRep[] = active.reps.map((rep, index) => ({

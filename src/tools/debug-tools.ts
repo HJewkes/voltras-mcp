@@ -6,8 +6,8 @@
 //     via `client.onFrame`. Strictly numeric / typed values; never any raw
 //     protocol bytes.
 //   * `debug.recent_events(n)` — last N bridge-level events (rep_boundary,
-//     set_boundary, settings_update, connection_state_change, cycle_complete)
-//     with timestamps and lightweight structured payloads.
+//     set_boundary, settings_update, connection_state_change) with timestamps
+//     and lightweight structured payloads.
 //   * `debug.push_test_channel({ content, meta })` — fires a single
 //     `claude/channel` notification through the publisher so a developer
 //     can verify channel delivery (host launched with `--channels`) without

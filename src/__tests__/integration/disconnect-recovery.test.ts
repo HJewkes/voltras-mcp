@@ -224,14 +224,9 @@ async function buildHarness(): Promise<Harness> {
 
   const stateBox: { value?: ServerState } = {};
   const lazyState = {
-    live: {
-      snapshotDevice: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
-      snapshotSession: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
-      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
-    },
-  } as Parameters<typeof registerDeviceResource>[1];
+    liveForSlot: (slotId: string) => stateBox.value?.slots.get(slotId)?.live,
+    slotIds: () => (stateBox.value ? [...stateBox.value.slots.keys()] : []),
+  };
   registerDeviceResource(server, lazyState);
   registerSessionResource(server, lazyState);
   registerSetResource(server, lazyState);
@@ -344,7 +339,6 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
     expect(connect.isError).toBeUndefined();
     getSlot(h.state).live.applySettings({
       connected: true,
-      deviceId,
       weightLbs: 100,
       trainingMode: 'WeightTraining',
     });

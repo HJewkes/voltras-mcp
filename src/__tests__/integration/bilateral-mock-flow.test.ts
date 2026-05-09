@@ -264,14 +264,9 @@ async function buildHarness(): Promise<Harness> {
 
   const stateBox: { value?: ServerState } = {};
   const lazyState = {
-    live: {
-      snapshotDevice: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
-      snapshotSession: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
-      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
-    },
-  } as Parameters<typeof registerDeviceResource>[1];
+    liveForSlot: (slotId: string) => stateBox.value?.slots.get(slotId)?.live,
+    slotIds: () => (stateBox.value ? [...stateBox.value.slots.keys()] : []),
+  };
   registerDeviceResource(server, lazyState);
   registerSessionResource(server, lazyState);
   registerSetResource(server, lazyState);
@@ -417,13 +412,11 @@ describe('VMCP bilateral mock-adapter flow (integration)', () => {
     // `left` must NOT bleed into `right`.
     getSlot(h.state, 'left').live.applySettings({
       connected: true,
-      deviceId: leftDeviceId,
       weightLbs: 35,
       trainingMode: 'WeightTraining',
     });
     getSlot(h.state, 'right').live.applySettings({
       connected: true,
-      deviceId: rightDeviceId,
       weightLbs: 40,
       trainingMode: 'WeightTraining',
     });

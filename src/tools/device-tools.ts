@@ -28,10 +28,9 @@
 //
 // ── `device.scan` options shape ───────────────────────────────────────────
 //
-// `manager.scan` accepts `ScanOptions` (`{ timeout?: number; ... }`). The
-// critic FIX #9 wording said "wrap in `{ timeoutMs }`" — that property name
-// is a typo against the actual SDK type. We accept `timeoutMs` on the input
-// schema (per spec R11) and forward it as the SDK's `timeout` field.
+// `manager.scan` accepts `ScanOptions` (`{ timeout?: number; ... }`). We
+// accept `timeoutMs` on the input schema (per spec R11) and forward it as
+// the SDK's `timeout` field.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode } from '@voltras/node-sdk';
@@ -58,6 +57,7 @@ import {
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
+import type { DeviceSnapshot } from '../state/live-state.js';
 import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
@@ -203,8 +203,8 @@ export function registerDeviceTools(
   placeholders: Placeholders,
 ): void {
   // device.scan — manager-level discovery. Wraps the user's `timeoutMs` in
-  // a `ScanOptions` object so the SDK is never called with a bare number
-  // (critic FIX #9). Returns the discovered devices straight through.
+  // a `ScanOptions` object so the SDK is never called with a bare number.
+  // Returns the discovered devices straight through.
   install(
     placeholders,
     'device.scan',
@@ -664,78 +664,89 @@ export function registerDeviceTools(
     SEND_RAW_DESCRIPTION,
   );
 
-  // device.get_state — composes the response from the four documented
-  // getters (AC-26). Numeric `mode` is converted to its enum NAME via the
-  // SDK's reverse mapping; an unknown value falls through as undefined.
-  // `battery: null` from the SDK collapses to absent (FIX #6). RSSI is
-  // omitted because the SDK has no RSSI getter on a connected client.
+  // device.get_state — composes the response from `live.snapshotDevice()`
+  // (the same source `voltra://device/{slot}/current` reads from) so the two
+  // surfaces stay in lockstep across the disconnect window. Pre-Phase-0.5.2
+  // this read fields directly off `slot.client.settings`, which the SDK
+  // resets to defaults on cleanup — leaving the tool returning weightLbs:0
+  // / trainingMode:"Idle" while the resource still served the preserved
+  // last-known values (Bug filed 2026-05-08 dual-Voltra test).
   install(
     placeholders,
     'device.get_state',
     DeviceGetStateInput,
     wrapHandler(DeviceGetStateInput, async (input) => {
       const slot = getSlot(state, input.slot);
-      const isConnected = slot.client.isConnected;
-      const connectionState = slot.client.connectionState;
-      const deviceId = slot.client.connectedDeviceId;
-      const settings = slot.client.settings;
-      const out: Record<string, unknown> = {
-        connected: isConnected,
-        connectionState,
-      };
-      if (deviceId !== null && deviceId !== undefined) {
-        out.deviceId = deviceId;
-      }
-      if (settings) {
-        if (typeof settings.weight === 'number') {
-          out.weightLbs = settings.weight;
-        }
-        if (typeof settings.mode === 'number') {
-          const name = (TrainingMode as unknown as Record<number, string>)[settings.mode];
-          if (typeof name === 'string') {
-            out.trainingMode = name;
-          }
-        }
-        if (settings.battery !== null && settings.battery !== undefined) {
-          out.batteryPercent = settings.battery;
-        }
-        if (typeof settings.damperLevel === 'number') {
-          out.damperLevel = settings.damperLevel;
-        }
-        // The user's chains setting in lbs (= what `set_chains` wrote, after
-        // the firmware's silent chains≤weight cap) lives on the cmd=0x10
-        // cascade `chains` field, which the SDK exposes on `client.settings`.
-        // On-device testing 2026-05-07 confirmed this matches the user's
-        // last write; the bridge's `chainTargetTenths` (decoded from the
-        // cmd=0x07 envelope) is currently a known decoder bug and should NOT
-        // be used as the chains setting.
-        if (typeof (settings as { chains?: number }).chains === 'number') {
-          out.chainSettingLbs = (settings as { chains: number }).chains;
-        }
-      }
-      out.isRowingActive = slot.client.isRowingActive;
-      // State-dump fields (assistMode, chainsActive, chainTargetTenths) are
-      // not available from client.settings — they arrive via cmd=0x07 and
-      // are stored in LiveState by the event-bridge. Read from the snapshot
-      // so the tool reflects the last-known state-dump without requiring a
-      // fresh BLE read.
-      //
-      // NOTE: `chainTargetTenths` is preserved here for back-compat but is a
-      // known decoder bug (reads weight×10, not chain force) — see schema
-      // JSDoc. Consumers should prefer `chainSettingLbs` above.
-      const liveDevice = slot.live.snapshotDevice();
-      if (typeof liveDevice.assistMode === 'number') {
-        out.assistMode = liveDevice.assistMode;
-      }
-      if (typeof liveDevice.chainsActive === 'number') {
-        out.chainsActive = liveDevice.chainsActive;
-      }
-      if (typeof liveDevice.chainTargetTenths === 'number') {
-        out.chainTargetTenths = liveDevice.chainTargetTenths;
-      }
-      return out;
+      // `connected` and `connectionState` reflect the LIVE client state — they
+      // must flip to false/`disconnected` immediately on a drop, so we do not
+      // route them through the preserved snapshot.
+      return buildDeviceGetStateResponse(
+        slot.client.isConnected,
+        slot.client.connectionState,
+        slot.client.isRowingActive,
+        slot.live.snapshotDevice(),
+      );
     }),
   );
+}
+
+/**
+ * Compose the `device.get_state` tool response from a preserved
+ * `DeviceSnapshot` plus three transient client-only fields. Mirrors the
+ * field shape of `voltra://device/{slot}/current` so callers get identical
+ * preserved-state values across both surfaces during the disconnect window
+ * (deviceId, weightLbs, trainingMode, damperLevel, chainSettingLbs, plus
+ * the cmd=0x07 state-dump fields). Tool-only additions: `connectionState`
+ * and `isRowingActive` (both transient, not preserved).
+ */
+function buildDeviceGetStateResponse(
+  isConnected: boolean,
+  connectionState: string,
+  isRowingActive: boolean,
+  device: DeviceSnapshot,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    connected: isConnected,
+    connectionState,
+  };
+  copyDefinedFields(out, device, [
+    'deviceId',
+    'weightLbs',
+    'trainingMode',
+    'batteryPercent',
+    'damperLevel',
+    'chainSettingLbs',
+    'assistMode',
+    'trainingModeRaw',
+    'chainTargetForceTenths',
+    'weightLbsTenths',
+    'eccentricPercentTenths',
+    'staleSinceDisconnect',
+    'isStale',
+    'disconnectedAt',
+  ] as const);
+  out.isRowingActive = isRowingActive;
+  return out;
+}
+
+/**
+ * Copy each named field from `src` into `dst` only when the value is defined
+ * (not null, not undefined). Keeps the response shape free of explicit
+ * nulls — the tool's documented contract is "field absent when unknown",
+ * matching the resource's `JSON.stringify(snapshot)` behavior which drops
+ * undefined keys but would emit any null verbatim.
+ */
+function copyDefinedFields<K extends keyof DeviceSnapshot>(
+  dst: Record<string, unknown>,
+  src: DeviceSnapshot,
+  keys: readonly K[],
+): void {
+  for (const key of keys) {
+    const value = src[key];
+    if (value !== undefined && value !== null) {
+      dst[key as string] = value;
+    }
+  }
 }
 
 /**

@@ -59,8 +59,6 @@ export interface StoredSet {
   partialReason?: string;
   trainingMode: TrainingModeName;
   weightLbs: number;
-  chainsLbs?: number;
-  eccentricPercent?: number;
   reps: StoredRep[];
 }
 

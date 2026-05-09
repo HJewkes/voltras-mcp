@@ -28,7 +28,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
-import { bootstrapState, getSlot } from './state/server-state.js';
+import { bootstrapState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
 import { McpChannelPublisher } from './state/channel-publisher.js';
 import { z } from 'zod';
@@ -161,20 +161,16 @@ export async function runServer(): Promise<void> {
 
   // Resources must be registered BEFORE `server.connect()` because
   // `registerResource` extends server capabilities, which the SDK forbids
-  // after transport connect. We pass a lazy `live` proxy that resolves
+  // after transport connect. We pass a lazy slot-aware proxy that resolves
   // through `stateBox.value` at callback time — populated after bootstrap.
-  // The proxy reads from the primary slot, which is the only slot Step 1
-  // wires up; resource fan-out across slots is a later wave.
+  // The proxy enumerates whatever slots exist at read time, so bilateral
+  // flows that allocate `'left'`/`'right'` after bootstrap surface in the
+  // resource list automatically.
   const stateBox: { value?: Awaited<ReturnType<typeof bootstrapState>> } = {};
   const lazyState = {
-    live: {
-      snapshotDevice: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotDevice() : { connected: false },
-      snapshotSession: () =>
-        stateBox.value ? getSlot(stateBox.value).live.snapshotSession() : undefined,
-      snapshotSet: () => (stateBox.value ? getSlot(stateBox.value).live.snapshotSet() : undefined),
-    },
-  } as Parameters<typeof registerDeviceResource>[1];
+    liveForSlot: (slotId: string) => stateBox.value?.slots.get(slotId)?.live,
+    slotIds: () => (stateBox.value ? [...stateBox.value.slots.keys()] : []),
+  };
   registerDeviceResource(server, lazyState);
   registerSessionResource(server, lazyState);
   registerSetResource(server, lazyState);
