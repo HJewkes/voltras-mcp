@@ -45,9 +45,25 @@ type SpawnFn = (
   options?: SpawnOptions,
 ) => ChildProcess;
 
+/** Minimal surface we need from VoiceListener — avoids a circular import. */
+export interface MutableVoiceListener {
+  mute(): void;
+  unmute(): void;
+}
+
+/**
+ * Holder that the speak callback reads at call time so it always sees the
+ * current listener even if it was armed after `registerSystemTools` ran.
+ */
+export interface VoiceListenerRef {
+  readonly listener: MutableVoiceListener | null;
+}
+
 interface SpeakDeps {
   readonly platform: NodeJS.Platform;
   readonly spawn: SpawnFn;
+  /** Optional — resolved at call time so late-armed listeners are seen. */
+  readonly voiceListenerRef?: VoiceListenerRef | null;
 }
 
 const DEFAULT_DEPS: SpeakDeps = {
@@ -78,20 +94,27 @@ const TOOL_DESCRIPTION = [
 /**
  * Hot-swap the `system.speak` placeholder with the real handler. Mirrors the
  * install pattern used by the other tool registries.
+ *
+ * Pass `voiceListenerRef` so `system.speak` can mute/unmute around TTS
+ * playback — the ref is read at call time so listeners armed after registration
+ * are included. When absent or null, speak still works; muting is a no-op.
  */
 export function registerSystemTools(
   _server: McpServer,
   placeholders: PlaceholderTools,
   deps: SpeakDeps = DEFAULT_DEPS,
+  voiceListenerRef?: VoiceListenerRef | null,
 ): void {
   const tool = placeholders.get('system.speak');
   if (tool === undefined) {
     throw new Error('tool placeholder not registered: system.speak');
   }
+  const effectiveDeps: SpeakDeps =
+    voiceListenerRef != null ? { ...deps, voiceListenerRef } : deps;
   tool.update({
     description: TOOL_DESCRIPTION,
     paramsSchema: SystemSpeakInput.shape,
-    callback: makeSpeakCallback(deps),
+    callback: makeSpeakCallback(effectiveDeps),
   });
 }
 
@@ -124,8 +147,12 @@ function buildSayArgs(input: SystemSpeakInputType): string[] {
 async function runSay(input: SystemSpeakInputType, deps: SpeakDeps): Promise<ToolResult> {
   if (input.interrupt) interruptInFlight();
 
+  const voiceListener = deps.voiceListenerRef?.listener ?? null;
+  voiceListener?.mute();
+
   const child = trySpawn(deps, buildSayArgs(input));
   if (child === null) {
+    voiceListener?.unmute();
     return errorResult({
       code: 'TTS_NOT_AVAILABLE',
       message: '`say` binary not found on PATH; macOS TTS is unavailable.',
@@ -140,8 +167,27 @@ async function runSay(input: SystemSpeakInputType, deps: SpeakDeps): Promise<Too
   });
 
   if (input.blocking) {
-    return awaitExit(child);
+    // awaitExit resolves after child exits (success or error). Unmute in a
+    // finally so mute leaks are impossible regardless of exit code or thrown error.
+    try {
+      return await awaitExit(child);
+    } finally {
+      voiceListener?.unmute();
+    }
   }
+
+  // Fire-and-forget: unmute when the child process exits. We register a
+  // dedicated 'exit' listener (separate from the in-flight tracking one
+  // already registered above) so unmute fires even if the caller ignores the
+  // result. 'error' also triggers unmute because spawn-ENOENT surfaces as an
+  // 'error' event and the child never emits 'exit'.
+  child.once('exit', () => {
+    voiceListener?.unmute();
+  });
+  child.once('error', () => {
+    voiceListener?.unmute();
+  });
+
   return textResult({ ok: true });
 }
 

@@ -20,13 +20,11 @@
 //                   On transcription complete: emit voice_input + return to
 //                   listening.
 //
-// TODO(phase-1.5): TTS-ducking. While `system.speak` is producing audio the
-// host's mic re-hears the speaker output ("coach" appearing inside a TTS
-// response self-triggers the listener). The mitigation is a `mute()`/`unmute()`
-// pair driven by the speak tool. Deliberately deferred from the MVP to keep
-// this module a single, reviewable surface — all the integration points
-// (sidecar IPC, ring buffer, STT invocation) need to stabilize before we
-// thread a global mute state through them.
+// TTS-ducking: `mute()`/`unmute()` let `system.speak` block wake-event
+// processing while the speaker output is live. The pre-wake ring buffer
+// keeps filling during mute (audio stream stays warm); buffered audio that
+// arrived during the muted window is intentionally discarded — we must not
+// transcribe what the TTS read aloud. See `handleWakeEvent` for the guard.
 //
 // TODO(future): wake-word swap. The shipped default is openWakeWord's built-in
 // `hey_jarvis`; the user's preferred `hey coach` requires a custom-trained
@@ -36,6 +34,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable } from 'node:stream';
 
+import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
 
 /** Default whisper.cpp model. ~150 MB; sub-second p50 on M-series. */
@@ -289,6 +288,7 @@ export class VoiceListener {
   private buffer: Buffer[] = [];
   private wakeFiredAt: number | null = null;
   private hardCapHandle: unknown = null;
+  private _muted: boolean = false;
 
   constructor(deps: VoiceListenerDeps, events: VoiceListenerEvents = {}) {
     this.deps = { now: () => Date.now(), timers: DEFAULT_TIMERS, ...deps };
@@ -301,6 +301,31 @@ export class VoiceListener {
 
   getStartArgs(): StartArgs | null {
     return this.startArgs;
+  }
+
+  isMuted(): boolean {
+    return this._muted;
+  }
+
+  /**
+   * Block wake-event processing. Call before TTS playback starts.
+   * The audio stream keeps flowing so no teardown latency occurs on unmute.
+   * Any in-flight buffering/transcribing cycle runs to completion — we only
+   * suppress NEW wake events while muted.
+   */
+  mute(): void {
+    this._muted = true;
+    log.debug('VoiceListener: muted (TTS ducking active)');
+  }
+
+  /**
+   * Resume wake-event processing after TTS playback ends.
+   * Does NOT replay audio buffered while muted — discarding TTS-sourced audio
+   * is the whole point of ducking.
+   */
+  unmute(): void {
+    this._muted = false;
+    log.debug('VoiceListener: unmuted (TTS ducking lifted)');
   }
 
   /** Bring the listener up. Idempotent — second call returns the same state. */
@@ -426,6 +451,10 @@ export class VoiceListener {
 
   private handleWakeEvent(event: SidecarEventWake): void {
     if (this.state !== 'listening') return;
+    if (this._muted) {
+      log.debug('VoiceListener: wake event suppressed (muted — TTS ducking active)');
+      return;
+    }
     const now = this.deps.now!();
     this.state = 'buffering';
     this.wakeFiredAt = now;
