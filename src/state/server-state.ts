@@ -36,6 +36,7 @@
 
 import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
+import { setCatalog } from '@voltras/workout-analytics';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { Config } from '../config.js';
@@ -44,6 +45,7 @@ import { LiveState, type DeviceSnapshot } from './live-state.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
+import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
 import { SetWatchdog } from './set-watchdog.js';
@@ -206,6 +208,14 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
   }
 
   try {
+    // Seed the analytics exercise catalog before constructing the service so
+    // the first `exercise.search` call has data to return. The shipped
+    // `@voltras/workout-analytics` catalog.json is empty (its collection
+    // pipeline hasn't been run + published), so without this injection
+    // every search returns []. `setCatalog` is global module-state inside
+    // the analytics package; calling once at boot is sufficient. When the
+    // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
+    setCatalog(SEED_CABLE_EXERCISES);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
