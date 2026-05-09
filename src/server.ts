@@ -46,6 +46,7 @@ import { registerSystemTools } from './tools/tts-tools.js';
 import { registerVoiceTools } from './tools/voice-tools.js';
 import { registerSlotTools } from './tools/slot-tools.js';
 import { registerProgressionTools } from './tools/progression-tools.js';
+import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -99,6 +100,8 @@ const CORE_TOOL_NAMES = [
   'system.listen_stop',
   'slot.identify',
   'progression.get_for_exercise',
+  'isometric.measure_max',
+  'isometric.measure_imbalance',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -226,6 +229,7 @@ export async function runServer(): Promise<void> {
     registerVoiceTools(server, state, placeholders);
     registerSlotTools(server, state, placeholders);
     registerProgressionTools(server, state, placeholders);
+    registerIsometricTools(server, state, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }
