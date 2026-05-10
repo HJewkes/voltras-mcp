@@ -129,6 +129,21 @@ function makeStore(): SessionStore & {
     getSetsForSession: vi.fn(async (sessionId: string) =>
       SETS.filter((s) => s.sessionId === sessionId),
     ),
+    putTrainingProgram: vi.fn(async () => {}),
+    getTrainingProgram: vi.fn(async () => undefined),
+    listTrainingPrograms: vi.fn(async () => []),
+    putTrainingBlock: vi.fn(async () => {}),
+    getTrainingBlocksForProgram: vi.fn(async () => []),
+    putTrainingWeek: vi.fn(async () => {}),
+    getTrainingWeeksForBlock: vi.fn(async () => []),
+    putWorkoutTemplate: vi.fn(async () => {}),
+    getWorkoutTemplate: vi.fn(async () => undefined),
+    getWorkoutTemplatesForWeek: vi.fn(async () => []),
+    putPlannedExercise: vi.fn(async () => {}),
+    getPlannedExercisesForTemplate: vi.fn(async () => []),
+    putProgramAssignment: vi.fn(async () => {}),
+    getAssignmentsForSession: vi.fn(async () => []),
+    getAssignmentsForTemplate: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }
@@ -210,10 +225,20 @@ describe('session.list', () => {
     expect(filter.to).toBe('2025-01-31T23:59:59.999Z');
   });
 
-  it('returns the rows produced by the store as a JSON array payload', async () => {
+  it('returns summary entries with aggregate fields for each session (additive superset)', async () => {
     const r = await h.invoke('session.list', {});
-    const body = parseResult(r) as StoredSession[];
-    expect(body).toEqual(SESSIONS);
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as Array<Record<string, unknown>>;
+    expect(body).toHaveLength(SESSIONS.length);
+    // Existing StoredSession fields are preserved
+    expect(body[0].id).toBe('s1');
+    expect(body[0].exerciseId).toBe('bench-press');
+    // New aggregate fields are present
+    expect(typeof body[0].setCount).toBe('number');
+    expect(typeof body[0].totalReps).toBe('number');
+    expect(Array.isArray(body[0].trainingModes)).toBe(true);
+    // sets array is NOT present on the summary tier
+    expect(body[0].sets).toBeUndefined();
   });
 });
 

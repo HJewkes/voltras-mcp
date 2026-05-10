@@ -137,6 +137,77 @@ export function resetPrimarySlot(state: ServerState): void {
 }
 
 /**
+ * Swap the device bindings between the two connected slots in place.
+ *
+ * Use case: the side-ID ritual reveals that `'primary'` is bound to the
+ * device the user wants on the other slot (and vice versa). Without this
+ * helper the only fix is `device.disconnect` both → re-scan → re-connect
+ * in opposite order: ~5-6 tool calls and ~15-20s of BLE churn. This helper
+ * collapses that into one in-memory mutation — no SDK calls, no BLE writes.
+ *
+ * The slot keys in `state.slots` (and each entry's `slotId` field) are
+ * preserved; only the slot-scoped bindings — `client`, `live`,
+ * `modeRevertGuard` — are exchanged. The event bridge is unwired from each
+ * slot before the swap and re-wired against the post-swap clients so the
+ * `slot.slotId` captured in the bridge's closures continues to label
+ * outbound channel events with the slot key the consumer expects (the slot
+ * that *now* owns the device).
+ *
+ * Preconditions: exactly two slots exist and BOTH have a connected client.
+ * A swap against fewer than two connected slots is a no-op the caller would
+ * misinterpret as "swap succeeded," so we throw with a structured `code`
+ * field that the tool layer surfaces as a typed error.
+ */
+export function swapSlots(state: ServerState): void {
+  const entries = [...state.slots.values()];
+  if (entries.length !== 2) {
+    throw makeCodedError(
+      'SWAP_REQUIRES_TWO_SLOTS',
+      `slot.swap requires exactly two slots; found ${entries.length}.`,
+    );
+  }
+  const [a, b] = entries;
+  if (!a.client.isConnected || !b.client.isConnected) {
+    const unbound = [a, b]
+      .filter((s) => !s.client.isConnected)
+      .map((s) => `\`${s.slotId}\``)
+      .join(', ');
+    throw makeCodedError(
+      'SLOT_NOT_BOUND',
+      `slot.swap requires both slots to be bound to a connected device; ${unbound} is not.`,
+    );
+  }
+  // Unwire BOTH bridges before mutating either slot — a half-swapped state
+  // (one bridge unwired, one still firing against its old client) would let
+  // a stray notification land mid-rebind and route to the wrong slot.
+  a.unwireBridge?.();
+  b.unwireBridge?.();
+  const tmpClient = a.client;
+  const tmpLive = a.live;
+  const tmpGuard = a.modeRevertGuard;
+  a.client = b.client;
+  a.live = b.live;
+  a.modeRevertGuard = b.modeRevertGuard;
+  b.client = tmpClient;
+  b.live = tmpLive;
+  b.modeRevertGuard = tmpGuard;
+  a.unwireBridge = wireBridgeForSlot(state, a);
+  b.unwireBridge = wireBridgeForSlot(state, b);
+}
+
+/**
+ * Build an `Error` carrying a structured `code` field. The tool layer's
+ * `wrapHandler` → `mapSdkError` chain passes a `code` property through
+ * unchanged when it appears on a thrown error, surfacing it as the tool
+ * response's structured error code.
+ */
+function makeCodedError(code: string, message: string): Error {
+  const err = new Error(message) as Error & { code: string };
+  err.code = code;
+  return err;
+}
+
+/**
  * Count slots whose underlying client is actively connected to a device.
  * The bootstrap primary slot starts with a parameter-less `VoltraClient`
  * (`isConnected === false`), so it's invisible to the cap until the user

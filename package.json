@@ -31,8 +31,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@voltras/node-sdk": "^0.9.0",
-    "@voltras/workout-analytics": "^1.1.0",
+    "@voltras/node-sdk": "^0.10.1",
+    "@voltras/workout-analytics": "^1.2.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
     "zod": "^4.4.2"

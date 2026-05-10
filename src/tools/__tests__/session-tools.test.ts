@@ -117,6 +117,21 @@ function makeStore(): SessionStore & {
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
+    putTrainingProgram: vi.fn(async () => {}),
+    getTrainingProgram: vi.fn(async () => undefined),
+    listTrainingPrograms: vi.fn(async () => []),
+    putTrainingBlock: vi.fn(async () => {}),
+    getTrainingBlocksForProgram: vi.fn(async () => []),
+    putTrainingWeek: vi.fn(async () => {}),
+    getTrainingWeeksForBlock: vi.fn(async () => []),
+    putWorkoutTemplate: vi.fn(async () => {}),
+    getWorkoutTemplate: vi.fn(async () => undefined),
+    getWorkoutTemplatesForWeek: vi.fn(async () => []),
+    putPlannedExercise: vi.fn(async () => {}),
+    getPlannedExercisesForTemplate: vi.fn(async () => []),
+    putProgramAssignment: vi.fn(async () => {}),
+    getAssignmentsForSession: vi.fn(async () => []),
+    getAssignmentsForTemplate: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }
@@ -385,5 +400,172 @@ describe('session.end', () => {
     const finalRow = h.store.putSession.mock.calls[0][0] as StoredSession;
     expect(finalRow.id).toBe(sessionId);
     expect(typeof finalRow.endedAt).toBe('string');
+  });
+});
+
+// ── session.list detail enum ────────────────────────────────────────────────
+
+function makeStoredSet(
+  id: string,
+  sessionId: string,
+  overrides: Partial<StoredSet> = {},
+): StoredSet {
+  return {
+    id,
+    sessionId,
+    startedAt: '2025-01-01T10:00:00.000Z',
+    endedAt: '2025-01-01T10:30:00.000Z',
+    partial: false,
+    trainingMode: 'WeightTraining',
+    weightLbs: 135,
+    reps: [
+      {
+        id: `rep-${id}`,
+        setId: id,
+        index: 0,
+        repNumber: 1,
+        concentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+        eccentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+describe('session.list', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('defaults to detail=summary and returns aggregate fields', async () => {
+    const session: StoredSession = {
+      id: 'sess-1',
+      startedAt: '2025-01-01T10:00:00.000Z',
+      endedAt: '2025-01-01T11:00:00.000Z',
+    };
+    const set = makeStoredSet('set-1', 'sess-1', { weightLbs: 135 });
+    h.store.listSessions.mockResolvedValueOnce([session]);
+    h.store.getSetsForSession.mockResolvedValueOnce([set]);
+
+    const r = await h.invoke('session.list', {});
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as Array<Record<string, unknown>>;
+    expect(body).toHaveLength(1);
+    const entry = body[0];
+
+    // Existing session fields preserved
+    expect(entry.id).toBe('sess-1');
+    expect(entry.startedAt).toBe('2025-01-01T10:00:00.000Z');
+
+    // New aggregate fields present
+    expect(entry.setCount).toBe(1);
+    expect(entry.totalReps).toBe(1);
+    expect(entry.topWeightLbs).toBe(135);
+    expect(entry.trainingModes).toEqual(['WeightTraining']);
+    expect(typeof entry.totalDurationMs).toBe('number');
+
+    // Sets array must NOT be present in summary tier
+    expect(entry.sets).toBeUndefined();
+  });
+
+  it('calls getSetsForSession for each listed session (N+1)', async () => {
+    const sessions: StoredSession[] = [
+      { id: 'sess-a', startedAt: '2025-01-01T10:00:00.000Z' },
+      { id: 'sess-b', startedAt: '2025-01-02T10:00:00.000Z' },
+    ];
+    h.store.listSessions.mockResolvedValueOnce(sessions);
+    h.store.getSetsForSession
+      .mockResolvedValueOnce([makeStoredSet('s1', 'sess-a')])
+      .mockResolvedValueOnce([]);
+
+    await h.invoke('session.list', {});
+    expect(h.store.getSetsForSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('detail=summary does not include sets array', async () => {
+    const session: StoredSession = { id: 'sess-1', startedAt: '2025-01-01T10:00:00.000Z' };
+    h.store.listSessions.mockResolvedValueOnce([session]);
+    h.store.getSetsForSession.mockResolvedValueOnce([makeStoredSet('s1', 'sess-1')]);
+
+    const r = await h.invoke('session.list', { detail: 'summary' });
+    const body = parseResult(r) as Array<Record<string, unknown>>;
+    expect(body[0].sets).toBeUndefined();
+  });
+
+  it('detail=full includes sets array with reps', async () => {
+    const session: StoredSession = { id: 'sess-1', startedAt: '2025-01-01T10:00:00.000Z' };
+    const set = makeStoredSet('s1', 'sess-1');
+    h.store.listSessions.mockResolvedValueOnce([session]);
+    h.store.getSetsForSession.mockResolvedValueOnce([set]);
+
+    const r = await h.invoke('session.list', { detail: 'full' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as Array<Record<string, unknown>>;
+    expect(body[0].sets).toBeDefined();
+    expect(Array.isArray(body[0].sets)).toBe(true);
+    const sets = body[0].sets as Array<Record<string, unknown>>;
+    expect(sets).toHaveLength(1);
+    expect(sets[0].id).toBe('s1');
+    expect(Array.isArray(sets[0].reps)).toBe(true);
+  });
+
+  it('detail=full also includes summary aggregate fields', async () => {
+    const session: StoredSession = {
+      id: 'sess-1',
+      startedAt: '2025-01-01T10:00:00.000Z',
+      endedAt: '2025-01-01T11:00:00.000Z',
+    };
+    const set = makeStoredSet('s1', 'sess-1', { weightLbs: 200 });
+    h.store.listSessions.mockResolvedValueOnce([session]);
+    h.store.getSetsForSession.mockResolvedValueOnce([set]);
+
+    const r = await h.invoke('session.list', { detail: 'full' });
+    const body = parseResult(r) as Array<Record<string, unknown>>;
+    const entry = body[0];
+    expect(entry.setCount).toBe(1);
+    expect(entry.totalReps).toBe(1);
+    expect(entry.topWeightLbs).toBe(200);
+  });
+
+  it('returns INVALID_INPUT for an unknown detail value', async () => {
+    const r = await h.invoke('session.list', { detail: 'bogus' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('empty session list returns empty array', async () => {
+    h.store.listSessions.mockResolvedValueOnce([]);
+    const r = await h.invoke('session.list', {});
+    expect(r.isError).toBeUndefined();
+    expect(parseResult(r)).toEqual([]);
   });
 });

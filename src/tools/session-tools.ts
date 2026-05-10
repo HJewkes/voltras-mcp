@@ -38,6 +38,12 @@ import {
 } from '../schemas/session.js';
 import type { StoredRep, StoredSession, StoredSet } from '../store/types.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../state/live-state.js';
+import {
+  aggregateSession,
+  aggregateSessionFull,
+  type SessionListEntrySummary,
+  type SessionListEntryFull,
+} from '../state/session-list-aggregator.js';
 import { wrapHandler } from './helpers.js';
 
 /**
@@ -147,6 +153,10 @@ async function startSession(
     ...(exerciseName !== undefined ? { exerciseName } : {}),
   };
   slot.live.startSession(active);
+  // Clear idle-rep accumulators so the PT skill starts each session from a
+  // clean slate. Reps lifted before this session.start won't carry over
+  // into the new session's `idleRepCount` / `idleReps` on the session resource.
+  slot.live.clearIdleReps();
 
   const stored: StoredSession = {
     id: sessionId,
@@ -230,7 +240,7 @@ async function endSession(state: ServerState, slotId: string | undefined): Promi
 async function listSessions(
   state: ServerState,
   input: z.infer<typeof SessionListInput>,
-): Promise<StoredSession[]> {
+): Promise<SessionListEntrySummary[] | SessionListEntryFull[]> {
   // R19: default sort is `startedAt:desc`. The schema declares the default
   // but marks the field optional, so an undefined value still reaches us
   // when the caller omits it.
@@ -242,7 +252,22 @@ async function listSessions(
     limit: input.limit ?? 50,
     offset: input.offset ?? 0,
   };
-  return state.store.listSessions(filter);
+  const sessions = await state.store.listSessions(filter);
+
+  // N+1: one getSetsForSession per session. Acceptable for v1 (N ≤ 200,
+  // in-process SQLite). Future optimisation: add listSessionAggregates() to
+  // the store interface for a single SQL aggregate query.
+  const detail = input.detail ?? 'summary';
+  const results = await Promise.all(
+    sessions.map(async (session) => {
+      const sets = await state.store.getSetsForSession(session.id);
+      return detail === 'full'
+        ? aggregateSessionFull(session, sets)
+        : aggregateSession(session, sets);
+    }),
+  );
+
+  return results as SessionListEntrySummary[] | SessionListEntryFull[];
 }
 
 async function getSession(
