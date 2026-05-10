@@ -44,6 +44,9 @@ import { registerServerTools } from './tools/server-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
 import { registerSystemTools } from './tools/tts-tools.js';
 import { registerVoiceTools } from './tools/voice-tools.js';
+import { registerSlotTools } from './tools/slot-tools.js';
+import { registerProgressionTools } from './tools/progression-tools.js';
+import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -66,12 +69,15 @@ const CORE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
   'device.start_guided_load',
+  'device.exit_guided_load',
   // <Bug-22> Rowing two-stage entry — replaces device.set_mode with mode=Rowing.
   'device.enter_row_mode',
   'device.start_row',
   // </Bug-22>
   'device.get_state',
   'device.send_raw',
+  'bilateral.cascade',
+  'slot.swap',
   'session.start',
   'session.end',
   'session.list',
@@ -93,6 +99,10 @@ const CORE_TOOL_NAMES = [
   'system.speak',
   'system.listen_start',
   'system.listen_stop',
+  'slot.identify',
+  'progression.get_for_exercise',
+  'isometric.measure_max',
+  'isometric.measure_imbalance',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -218,6 +228,9 @@ export async function runServer(): Promise<void> {
     registerDebugTools(server, state, placeholders);
     registerSystemTools(server, placeholders);
     registerVoiceTools(server, state, placeholders);
+    registerSlotTools(server, state, placeholders);
+    registerProgressionTools(server, state, placeholders);
+    registerIsometricTools(server, state, placeholders);
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }

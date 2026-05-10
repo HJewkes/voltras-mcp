@@ -175,6 +175,7 @@ const ALL_DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_overload_weight',
   'device.get_state',
   'device.send_raw',
+  'slot.swap',
 ];
 
 function setup(

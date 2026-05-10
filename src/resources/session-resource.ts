@@ -32,12 +32,32 @@ function sessionUriForSlot(slotId: string): string {
 }
 
 /**
+ * Build the session resource body for a given slot. When a session is active,
+ * includes `idleRepCount` and `idleReps` alongside the session fields so the
+ * PT skill can detect reps lifted between `set.start` calls. When no session
+ * is active, still includes idle counts since idle reps accumulate
+ * independently of whether a session is open.
+ */
+function buildSessionBody(live: LiveState | undefined): string {
+  if (live === undefined) {
+    return JSON.stringify({ active: false });
+  }
+  const session = live.snapshotSession();
+  const idleRepCount = live.idleRepCount;
+  const idleReps = [...live.idleReps];
+  if (session === undefined) {
+    return JSON.stringify({ active: false, idleRepCount, idleReps });
+  }
+  return JSON.stringify({ ...session, idleRepCount, idleReps });
+}
+
+/**
  * Register the templated per-slot session resource and the legacy alias.
  */
 export function registerSessionResource(server: McpServer, state: SessionResourceState): void {
   const readBody = (slotId: string): string => {
     const live = state.liveForSlot(slotId);
-    return JSON.stringify(live?.snapshotSession() ?? { active: false });
+    return buildSessionBody(live);
   };
 
   const templateRead: ReadResourceTemplateCallback = (uri, variables) => ({

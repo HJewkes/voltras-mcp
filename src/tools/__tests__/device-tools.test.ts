@@ -118,6 +118,12 @@ interface FakeClient {
       pollDurationMs?: number;
     }) => Promise<void>
   >;
+  exitGuidedLoad: Mock<() => Promise<void>>;
+  guidedLoadState: {
+    phase: 'idle' | 'armed' | 'countdown' | 'engaging' | 'active' | 'exited' | 'timeout';
+    countdownRemainingMs: number | null;
+    fitnessModeRaw: number | null;
+  };
   // <Bug-22>
   enterRowMode: Mock<() => Promise<void>>;
   startRow: Mock<(distance?: string) => Promise<void>>;
@@ -171,6 +177,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
     startGuidedLoad: vi.fn(async () => undefined),
+    exitGuidedLoad: vi.fn(async () => undefined),
+    guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
     // <Bug-22>
     enterRowMode: vi.fn(async () => undefined),
     startRow: vi.fn(async () => undefined),
@@ -255,12 +263,14 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
   'device.start_guided_load',
+  'device.exit_guided_load',
   // <Bug-22>
   'device.enter_row_mode',
   'device.start_row',
   // </Bug-22>
   'device.get_state',
   'device.send_raw',
+  'slot.swap',
 ] as const;
 
 interface FakeLive {
@@ -515,6 +525,52 @@ describe('registerDeviceTools', () => {
       // adapter close was attempted, primary slot was reset to a fresh client.
       expect(client.dispose).toHaveBeenCalled();
       expect(state.slots.get('primary')!.client).not.toBe(client as unknown);
+    });
+
+    it('calls setMode(Idle) before manager.disconnect on a connected device', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      const callOrder: string[] = [];
+      client.setMode.mockImplementation(async () => {
+        callOrder.push('setMode');
+      });
+      state.manager.disconnect.mockImplementation(async () => {
+        callOrder.push('managerDisconnect');
+      });
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(client.setMode).toHaveBeenCalledWith(FakeTrainingMode.Idle);
+      // setMode must precede the BLE teardown.
+      expect(callOrder.indexOf('setMode')).toBeLessThan(callOrder.indexOf('managerDisconnect'));
+    });
+
+    it('proceeds with BLE disconnect even when setMode(Idle) throws', async () => {
+      const client = primaryClient(state);
+      client.isConnected = true;
+      client.connectedDeviceId = 'V-1';
+      client.setMode.mockRejectedValueOnce(new Error('link already dead'));
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError, payload } = await invoke(reg, {});
+      // Tool must succeed: best-effort setMode failure is swallowed.
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      // BLE teardown still ran despite setMode failure.
+      expect(state.manager.disconnect).toHaveBeenCalledWith('V-1');
+      expect(client.dispose).toHaveBeenCalled();
+    });
+
+    it('skips setMode(Idle) when nothing is connected (graceful no-op path)', async () => {
+      // Client isConnected=false — the wasConnected guard must short-circuit
+      // both the setMode call and manager.disconnect.
+      const client = primaryClient(state);
+      client.isConnected = false;
+      const reg = placeholders.get('device.disconnect')!;
+      const { isError } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(client.setMode).not.toHaveBeenCalled();
+      expect(state.manager.disconnect).not.toHaveBeenCalled();
     });
   });
 

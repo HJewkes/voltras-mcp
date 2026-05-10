@@ -286,13 +286,16 @@ describe('voltras-mcp resources', () => {
   });
 
   describe('voltra://session/active (legacy alias)', () => {
-    it('returns { active: false } when no session is active (EC-10)', async () => {
+    it('returns { active: false } with idle counters when no session is active (EC-10)', async () => {
       const result = await readResource(server, 'voltra://session/active');
-      const body = jsonText(result);
-      // Explicit assertion: not null, not {}, exactly { active: false }.
-      expect(body).toEqual({ active: false });
+      const body = jsonText(result) as Record<string, unknown>;
+      // `active: false` must be present; idle counters are now also included
+      // (additive change — idle reps accumulate independently of session state).
+      expect(body.active).toBe(false);
+      expect(body.idleRepCount).toBe(0);
+      expect(Array.isArray(body.idleReps)).toBe(true);
+      expect((body.idleReps as unknown[]).length).toBe(0);
       expect(body).not.toBeNull();
-      expect(Object.keys(body as object)).toEqual(['active']);
     });
 
     it('returns sessionId and startedAt when a session is active', async () => {
@@ -310,6 +313,105 @@ describe('voltras-mcp resources', () => {
       const a = await readResource(server, 'voltra://session/active');
       const b = await readResource(server, 'voltra://session/active');
       expect(a.contents?.[0]?.text).toBe(b.contents?.[0]?.text);
+    });
+
+    it('includes idleRepCount=0 and idleReps=[] on a fresh active session', async () => {
+      primary.startSession(makeSession({ sessionId: 'sess-1' }));
+      const result = await readResource(server, 'voltra://session/active');
+      const body = jsonText(result) as Record<string, unknown>;
+      expect(body.sessionId).toBe('sess-1');
+      expect(body.idleRepCount).toBe(0);
+      expect(Array.isArray(body.idleReps)).toBe(true);
+      expect((body.idleReps as unknown[]).length).toBe(0);
+    });
+
+    it('reflects idleRepCount + idleReps after recordIdleRep is called', async () => {
+      primary.startSession(makeSession({ sessionId: 'sess-1' }));
+      // Simulate two idle reps recorded directly on live state.
+      const fakeRep = {
+        repNumber: 1,
+        concentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+        eccentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+      };
+      primary.recordIdleRep(fakeRep as Parameters<LiveState['recordIdleRep']>[0], 'primary');
+      primary.recordIdleRep(fakeRep as Parameters<LiveState['recordIdleRep']>[0], 'primary');
+
+      const result = await readResource(server, 'voltra://session/active');
+      const body = jsonText(result) as Record<string, unknown>;
+      expect(body.idleRepCount).toBe(2);
+      expect((body.idleReps as unknown[]).length).toBe(2);
+    });
+
+    it('clearIdleReps resets counters visible in the resource', async () => {
+      primary.startSession(makeSession({ sessionId: 'sess-1' }));
+      const fakeRep = {
+        repNumber: 1,
+        concentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+        eccentric: {
+          samples: [],
+          startTime: 0,
+          endTime: 0,
+          startPosition: 0,
+          endPosition: 0,
+          _totalVelocity: 0,
+          _totalForce: 0,
+          _totalLoad: 0,
+          _movementSampleCount: 0,
+          _totalHoldDuration: 0,
+          peakVelocity: 0,
+          peakForce: 0,
+          peakLoad: 0,
+        },
+      };
+      primary.recordIdleRep(fakeRep as Parameters<LiveState['recordIdleRep']>[0], 'primary');
+      expect(primary.idleRepCount).toBe(1);
+      primary.clearIdleReps();
+      const result = await readResource(server, 'voltra://session/active');
+      const body = jsonText(result) as Record<string, unknown>;
+      expect(body.idleRepCount).toBe(0);
+      expect((body.idleReps as unknown[]).length).toBe(0);
     });
   });
 
