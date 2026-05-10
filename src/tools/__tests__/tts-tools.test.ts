@@ -342,7 +342,10 @@ describe('system.speak — platform gating', () => {
 
 // ── TTS ducking — mute/unmute integration ────────────────────────────────────
 
-function makeFakeVoiceListener(): MutableVoiceListener & { muteCalls: number; unmuteCalls: number } {
+function makeFakeVoiceListener(): MutableVoiceListener & {
+  muteCalls: number;
+  unmuteCalls: number;
+} {
   let muteCalls = 0;
   let unmuteCalls = 0;
   return {

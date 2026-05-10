@@ -193,7 +193,7 @@ describe('VoiceListener — transcription overlap queue', () => {
 
     // Wakes #2 and #3 arrive during transcription
     sidecar.emitJson({ event: 'wake', ts: 200, score: 0.85 });
-    sidecar.emitJson({ event: 'wake', ts: 300, score: 0.80 });
+    sidecar.emitJson({ event: 'wake', ts: 300, score: 0.8 });
     expect(whisper).toHaveBeenCalledTimes(1); // no new whisper yet
 
     // Resolve whisper #1

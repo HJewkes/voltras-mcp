@@ -244,9 +244,7 @@ describe('VoiceListener — muted wake-event suppression', () => {
     let hardCapFn: (() => void) | null = null;
     // whisper blocks until we resolve the deferred, so we can control state timing.
     let resolveWhisper!: (v: { transcript: string }) => void;
-    const whisperDeferred = new Promise<{ transcript: string }>(
-      (res) => (resolveWhisper = res),
-    );
+    const whisperDeferred = new Promise<{ transcript: string }>((res) => (resolveWhisper = res));
     const whisper = vi.fn().mockReturnValue(whisperDeferred);
     const onVoiceInput = vi.fn();
 

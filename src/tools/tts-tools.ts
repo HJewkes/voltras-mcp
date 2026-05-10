@@ -109,8 +109,7 @@ export function registerSystemTools(
   if (tool === undefined) {
     throw new Error('tool placeholder not registered: system.speak');
   }
-  const effectiveDeps: SpeakDeps =
-    voiceListenerRef != null ? { ...deps, voiceListenerRef } : deps;
+  const effectiveDeps: SpeakDeps = voiceListenerRef != null ? { ...deps, voiceListenerRef } : deps;
   tool.update({
     description: TOOL_DESCRIPTION,
     paramsSchema: SystemSpeakInput.shape,
