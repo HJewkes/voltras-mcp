@@ -120,6 +120,7 @@ import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
+  buildIdleRepPayload,
   buildRepFinalizedPayload,
   buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
@@ -336,20 +337,35 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         force: frame.force,
       });
 
-      if (live.snapshotSet() === undefined) return;
-
       const phase = frame.phase as unknown as number;
       if (phase === SDK_PHASE_UNKNOWN) return;
 
-      const previousRepCount = live.snapshotSet()?.reps.length ?? 0;
-      live.processSample({
+      const sample: WorkoutSample = {
         sequence: frame.sequence,
         timestamp: frame.timestamp,
         phase: phase as unknown as WorkoutSample['phase'],
         position: frame.position,
         velocity: frame.velocity,
         force: frame.force,
-      });
+      };
+
+      // ── Idle-arm rep detection ────────────────────────────────────────────
+      // When no MCP set is active, route frames through the idle analytics
+      // pipeline. A rep boundary in the idle pipeline means the user lifted
+      // a rep that will NOT be captured by any `set.start`/`set.end` pair.
+      // We record it on LiveState and emit an `idle_rep` channel event so
+      // the PT skill can detect the gap and surface it to the user.
+      if (live.set === undefined) {
+        const idleRep = live.processIdleSample(sample);
+        if (idleRep !== null) {
+          const entry = live.recordIdleRep(idleRep, slotId);
+          slotChannels.publish(buildIdleRepPayload(entry, live.idleRepCount));
+        }
+        return;
+      }
+
+      const previousRepCount = live.snapshotSet()?.reps.length ?? 0;
+      live.processSample(sample);
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
       if (nextRepCount !== previousRepCount) {
         notifySlot(server, slotId, SET_URI, setUriForSlot);

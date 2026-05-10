@@ -54,14 +54,21 @@ import {
   DeviceEnterRowModeInput,
   DeviceStartRowInput,
   // </Bug-22>
+  SELECTABLE_MODE_NAMES,
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
 import type { DeviceSnapshot } from '../state/live-state.js';
-import { createSlot, removeSlot, resetPrimarySlot } from '../state/slot-manager.js';
+import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
+import {
+  cascadeAcrossSlots,
+  type CascadePlan,
+  type SlotResult,
+} from '../state/bilateral-cascade.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
+import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
 // to honor Task 10's file-ownership boundary (we may not modify Wave 1
@@ -99,6 +106,51 @@ const DeviceGetStateInput = z
     slot: SlotIdSchema,
   })
   .strict();
+
+// ── bilateral.cascade input ───────────────────────────────────────────────
+//
+// Bundles up to four device setters across one-or-more slots. Each setter
+// field is optional and only fires when explicitly provided. At least one
+// of `mode`/`weightLbs`/`eccentricPercent`/`chainsLbs` MUST be present —
+// the handler enforces this at runtime (zod's `.refine()` would still
+// match the empty `{}` and fan out zero setters, which is just confusing;
+// runtime check produces a tighter INVALID_INPUT message).
+//
+// Field unit notes:
+//   * `eccentricPercent` mirrors the underlying `client.setEccentric(percent)`
+//     SDK shape (-195..+195, integer). The briefing called this `eccentricLbs`
+//     but the SDK setter is a percent — renaming aligns the MCP surface
+//     with the device's actual eccentric-overload control.
+//   * `chainsLbs` is pounds (0..100), same range as `device.set_chains`.
+//   * `weightLbs` is pounds (5..200), same range as `device.set_weight`.
+//
+// `slots` lacks the per-element `SlotIdSchema` regex (we use a permissive
+// `z.string()`) so an unknown-but-syntactically-valid slot id surfaces from
+// the handler as an INVALID_INPUT with the unbound slot listed by name —
+// more diagnostic than zod's per-element regex error.
+const BilateralCascadeInput = z
+  .object({
+    slots: z.array(z.string().min(1)).optional(),
+    mode: z.enum(SELECTABLE_MODE_NAMES).optional(),
+    weightLbs: z.number().int().min(5).max(200).optional(),
+    eccentricPercent: z.number().int().min(-195).max(195).optional(),
+    chainsLbs: z.number().int().min(0).max(100).optional(),
+    abortOnFirstFailure: z.boolean().optional().default(false),
+  })
+  .strict();
+
+const BILATERAL_CASCADE_DESCRIPTION =
+  'Apply up to four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
+  'Within each slot the requested setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
+  'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with `applied.<setter>` keys present iff that setter was requested.';
+
+// `slot.swap` accepts no arguments — there are exactly two slot positions
+// in the workspace today (PRIMARY_SLOT plus one user-allocated id), so the
+// swap is unambiguous. `.strict()` rejects unknown fields so a typo like
+// `{ slt: 'left' }` surfaces as INVALID_INPUT instead of being silently
+// dropped.
+const SlotSwapInput = z.object({}).strict();
 
 /**
  * Default scan timeout when the input omits `timeoutMs`. Mirrors the schema
@@ -146,6 +198,17 @@ const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
 
 const START_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.';
+
+const EXIT_GUIDED_LOAD_DESCRIPTION =
+  '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
+
+const DeviceExitGuidedLoadInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
+
+const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engaging', 'active']);
 
 const SEND_RAW_DESCRIPTION =
   'DIAGNOSTIC ONLY. Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.';
@@ -318,6 +381,17 @@ export function registerDeviceTools(
       // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md` and
       // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
       const adapterRef = slot.client.getAdapter();
+      // Best-effort: return the device to Idle before tearing down the BLE
+      // link so the device exits any active workout and shows its home screen.
+      // If the write fails (link already dead, device rejected it, etc.) we
+      // log at info level and proceed — this must never block teardown.
+      if (wasConnected) {
+        try {
+          await slot.client.setMode(TrainingMode.Idle);
+        } catch (e) {
+          log.info('device.disconnect: setMode(Idle) failed (best-effort, proceeding)', e);
+        }
+      }
       let managerDisconnectError: unknown = null;
       if (wasConnected) {
         try {
@@ -589,6 +663,31 @@ export function registerDeviceTools(
     START_GUIDED_LOAD_DESCRIPTION,
   );
 
+  // device.exit_guided_load (Phase 1g, @experimental) — wraps the SDK's
+  // `exitGuidedLoad`. Guards against calling exit when the device isn't in
+  // an active guided-load phase so callers get a structured error rather than
+  // a silent no-op write. The `onGuidedLoadState` bridge wiring already
+  // surfaces the resulting `exited` phase transition as a `guided_load_state`
+  // debug event, so no extra event emission is needed here.
+  install(
+    placeholders,
+    'device.exit_guided_load',
+    DeviceExitGuidedLoadInput,
+    wrapHandler(DeviceExitGuidedLoadInput, async (input) => {
+      const slot = getSlot(state, input.slot);
+      const { phase } = slot.client.guidedLoadState;
+      if (!GUIDED_LOAD_ACTIVE_PHASES.has(phase)) {
+        throwSdkLike(
+          'NOT_IN_GUIDED_LOAD',
+          `Slot \`${input.slot ?? PRIMARY_SLOT}\` is not in an active guided-load phase (current: "${phase}"). Call device.start_guided_load first.`,
+        );
+      }
+      await slot.client.exitGuidedLoad();
+      return { ok: true };
+    }),
+    EXIT_GUIDED_LOAD_DESCRIPTION,
+  );
+
   // device.send_raw — DIAGNOSTIC byte-pipe. Reaches through `client.getAdapter()`
   // (a public SDK method) to the BLE adapter's `write(Uint8Array)`. No opcode
   // validation, no semantic checks — the caller owns byte semantics.
@@ -731,6 +830,150 @@ export function registerDeviceTools(
       );
     }),
   );
+
+  // bilateral.cascade — bundle 1..4 device setters across 1..N slots into
+  // one tool call. Replaces the 4-8 sequential setter calls a PT skill would
+  // otherwise need to configure both Voltras at the start of a bilateral set.
+  install(
+    placeholders,
+    'bilateral.cascade',
+    BilateralCascadeInput,
+    wrapHandler(BilateralCascadeInput, async (input) => {
+      const targetSlotIds = resolveCascadeSlotIds(state, input.slots);
+      const plan = buildCascadePlan(input);
+      const targets = targetSlotIds.map((slotId) => ({
+        slotId,
+        client: getSlot(state, slotId).client,
+      }));
+      const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
+      return { ok: cascadeAllOk(results), results };
+    }),
+    BILATERAL_CASCADE_DESCRIPTION,
+  );
+
+  // slot.swap — exchanges the device bindings between the two slots without
+  // any BLE work. Use case: the side-ID ritual reveals the slot↔side mapping
+  // is reversed; swapping in-memory collapses the otherwise ~6-call
+  // disconnect/scan/reconnect sequence into one. See `swapSlots` in
+  // `state/slot-manager.ts` for the mutation semantics.
+  install(
+    placeholders,
+    'slot.swap',
+    SlotSwapInput,
+    wrapHandler(SlotSwapInput, async () => {
+      swapSlots(state);
+      return { ok: true, bindings: snapshotSlotBindings(state) };
+    }),
+    'Swap the device bindings between the two slots in place. No BLE writes, no SDK calls — pure in-memory mutation. Requires both slots to be bound to a connected device. Returns the new binding map.',
+  );
+}
+
+/**
+ * Resolve the list of slot ids the cascade should fan out across. Throws a
+ * structured INVALID_INPUT before any setter fires when:
+ *   * the explicit list is empty (would make the tool a no-op);
+ *   * any explicit slot id is not currently bound + connected.
+ *
+ * When `inputSlots` is omitted, returns every currently-connected slot in
+ * natural map-iteration order (insertion order — primary first when bound,
+ * then any explicit slots in the order they were allocated).
+ */
+function resolveCascadeSlotIds(state: ServerState, inputSlots: string[] | undefined): string[] {
+  if (inputSlots === undefined) {
+    const connected: string[] = [];
+    for (const [slotId, slot] of state.slots) {
+      if (slot.client.isConnected) connected.push(slotId);
+    }
+    if (connected.length === 0) {
+      throwSdkLike(
+        'INVALID_INPUT',
+        'No slots are currently connected — connect at least one device via device.connect first, or pass an explicit `slots` list.',
+      );
+    }
+    return connected;
+  }
+  if (inputSlots.length === 0) {
+    throwSdkLike(
+      'INVALID_INPUT',
+      '`slots` cannot be empty — omit the field to fan out across every connected slot, or pass at least one slot id.',
+    );
+  }
+  const unbound: string[] = [];
+  for (const slotId of inputSlots) {
+    const slot = state.slots.get(slotId);
+    if (slot === undefined || !slot.client.isConnected) {
+      unbound.push(slotId);
+    }
+  }
+  if (unbound.length > 0) {
+    throwSdkLike(
+      'INVALID_INPUT',
+      `Unbound or disconnected slot(s): ${unbound.map((s) => `\`${s}\``).join(', ')}. Connect each slot via device.connect before invoking bilateral.cascade.`,
+    );
+  }
+  return inputSlots;
+}
+
+/**
+ * Translate the validated tool input into a `CascadePlan` and verify at
+ * least one setter was requested. The mode-name → numeric-enum map mirrors
+ * `device.set_mode`'s handler so both tools agree on the SDK-call shape.
+ */
+function buildCascadePlan(input: {
+  mode?: string | undefined;
+  weightLbs?: number | undefined;
+  eccentricPercent?: number | undefined;
+  chainsLbs?: number | undefined;
+}): CascadePlan {
+  const plan: CascadePlan = {};
+  if (input.mode !== undefined) {
+    plan.mode = (TrainingMode as unknown as Record<string, number>)[input.mode] as TrainingMode;
+  }
+  if (input.weightLbs !== undefined) plan.weightLbs = input.weightLbs;
+  if (input.eccentricPercent !== undefined) plan.eccentricPercent = input.eccentricPercent;
+  if (input.chainsLbs !== undefined) plan.chainsLbs = input.chainsLbs;
+  if (
+    plan.mode === undefined &&
+    plan.weightLbs === undefined &&
+    plan.eccentricPercent === undefined &&
+    plan.chainsLbs === undefined
+  ) {
+    throwSdkLike(
+      'INVALID_INPUT',
+      'bilateral.cascade requires at least one of `mode`, `weightLbs`, `eccentricPercent`, or `chainsLbs`.',
+    );
+  }
+  return plan;
+}
+
+/**
+ * `ok: true` iff every slot succeeded on every requested setter. Iterates
+ * the dense `applied` map (no fixed setter list) so adding a new setter
+ * field later does not require updating this aggregator.
+ */
+function cascadeAllOk(results: SlotResult[]): boolean {
+  for (const result of results) {
+    for (const outcome of Object.values(result.applied)) {
+      if (outcome === undefined) continue;
+      if (!outcome.ok) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Build a `{ [slotId]: { deviceId } }` map of the current slot bindings.
+ * Returned by `slot.swap` so the caller can confirm the post-swap mapping
+ * without a follow-up `device.get_state` per slot. Keyed by `slotId` (not
+ * by an ordered array) so the caller does not have to remember which slot
+ * key was at index 0 vs 1.
+ */
+function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: string | null }> {
+  const out: Record<string, { deviceId: string | null }> = {};
+  for (const slot of state.slots.values()) {
+    out[slot.slotId] = { deviceId: slot.client.connectedDeviceId };
+  }
+  return out;
 }
 
 /**
