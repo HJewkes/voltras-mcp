@@ -253,7 +253,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     expect(e.code).toBe('SCHEMA_INCOMPATIBLE');
     expect(e.message).toContain(dbPath);
     expect(e.message).toContain('99');
-    expect(e.message).toContain('2');
+    expect(e.message).toContain('3');
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -286,7 +286,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(2);
+      expect(version.user_version).toBe(3);
     } finally {
       await store.close();
     }

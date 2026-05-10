@@ -102,6 +102,75 @@ export interface StoredDeviceTelemetry {
 }
 
 /**
+ * Mesocycle focus tag. Open-typed via the `string` member so callers can
+ * persist freeform labels (e.g. `'volume-accumulation'`) when the canonical
+ * tags aren't a fit.
+ */
+export type TrainingFocus = 'hypertrophy' | 'strength' | 'peaking' | 'deload' | string;
+
+/** A multi-week training program (the top-level planning container). */
+export interface StoredTrainingProgram {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  archivedAt?: string;
+}
+
+/** A mesocycle within a program (e.g. a 4-week hypertrophy block). */
+export interface StoredTrainingBlock {
+  id: string;
+  programId: string;
+  orderIndex: number;
+  name: string;
+  focus?: TrainingFocus;
+  weeksCount: number;
+  notes?: string;
+}
+
+/** A single week within a block. */
+export interface StoredTrainingWeek {
+  id: string;
+  blockId: string;
+  orderIndex: number;
+  name?: string;
+}
+
+/** A planned workout within a week (e.g. "Upper A"). */
+export interface StoredWorkoutTemplate {
+  id: string;
+  weekId: string;
+  dayLabel?: string;
+  name: string;
+  notes?: string;
+  orderIndex: number;
+}
+
+/** A planned exercise within a workout template (sets/reps/weight prescription). */
+export interface StoredPlannedExercise {
+  id: string;
+  workoutTemplateId: string;
+  exerciseId: string;
+  orderIndex: number;
+  targetSets: number;
+  targetRepsLow?: number;
+  targetRepsHigh?: number;
+  targetWeightLbs?: number;
+  targetRpe?: number;
+  restSec?: number;
+  notes?: string;
+}
+
+/** Links a completed session to a planned exercise / workout template. */
+export interface StoredProgramAssignment {
+  id: string;
+  sessionId: string;
+  plannedExerciseId?: string;
+  workoutTemplateId?: string;
+  assignedAt: string;
+}
+
+/**
  * Persistence boundary for VMCP. The SQLite implementation in
  * `src/store/sqlite-store.ts` opens a `node:sqlite` database; consumers depend
  * only on this interface.
@@ -133,6 +202,48 @@ export interface SessionStore {
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
+
+  // --- Block-periodization planning (v3 schema) ---
+
+  /** Upsert a training program (top-level planning container). */
+  putTrainingProgram(p: StoredTrainingProgram): Promise<void>;
+  /** Look up a training program by id. */
+  getTrainingProgram(id: string): Promise<StoredTrainingProgram | undefined>;
+  /** List training programs; archived rows are excluded by default. */
+  listTrainingPrograms(opts?: { includeArchived?: boolean }): Promise<StoredTrainingProgram[]>;
+
+  /** Upsert a block (mesocycle) within a program. */
+  putTrainingBlock(b: StoredTrainingBlock): Promise<void>;
+  /** Return every block in a program, ordered by `orderIndex` ascending. */
+  getTrainingBlocksForProgram(programId: string): Promise<StoredTrainingBlock[]>;
+
+  /** Upsert a week within a block. */
+  putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
+  /** Return every week in a block, ordered by `orderIndex` ascending. */
+  getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]>;
+
+  /** Upsert a workout template within a week. */
+  putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void>;
+  /** Look up a workout template by id. */
+  getWorkoutTemplate(id: string): Promise<StoredWorkoutTemplate | undefined>;
+  /** Return every template in a week, ordered by `orderIndex` ascending. */
+  getWorkoutTemplatesForWeek(weekId: string): Promise<StoredWorkoutTemplate[]>;
+
+  /** Upsert a planned exercise within a workout template. */
+  putPlannedExercise(e: StoredPlannedExercise): Promise<void>;
+  /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
+  getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+
+  /** Upsert a session-to-plan link. */
+  putProgramAssignment(a: StoredProgramAssignment): Promise<void>;
+  /** Return every assignment that links to a given session. */
+  getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
+  /**
+   * Return every assignment that points at a given workout template (across
+   * any session). Used by `plan.next_workout` to detect which templates have
+   * already been completed in a program walk.
+   */
+  getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;
