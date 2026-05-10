@@ -428,9 +428,11 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(row ? rowToTrainingProgram(row) : undefined);
   }
 
-  async listTrainingPrograms(opts: {
-    includeArchived?: boolean;
-  } = {}): Promise<StoredTrainingProgram[]> {
+  async listTrainingPrograms(
+    opts: {
+      includeArchived?: boolean;
+    } = {},
+  ): Promise<StoredTrainingProgram[]> {
     const sql = opts.includeArchived
       ? `SELECT * FROM training_programs ORDER BY created_at DESC`
       : `SELECT * FROM training_programs WHERE archived_at IS NULL ORDER BY created_at DESC`;
@@ -552,9 +554,7 @@ export class SqliteSessionStore implements SessionStore {
 
   async getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]> {
     const rows = this.db
-      .prepare(
-        `SELECT * FROM program_assignments WHERE session_id = ? ORDER BY assigned_at ASC`,
-      )
+      .prepare(`SELECT * FROM program_assignments WHERE session_id = ? ORDER BY assigned_at ASC`)
       .all(sessionId) as unknown as ProgramAssignmentRow[];
     return Promise.resolve(rows.map(rowToProgramAssignment));
   }

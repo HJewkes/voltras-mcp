@@ -522,10 +522,7 @@ async function attachToSession(
   }
   const template = await state.store.getWorkoutTemplate(workoutTemplateId);
   if (template === undefined) {
-    throw new ToolError(
-      'NOT_FOUND',
-      `No workout template with id "${workoutTemplateId}" exists.`,
-    );
+    throw new ToolError('NOT_FOUND', `No workout template with id "${workoutTemplateId}" exists.`);
   }
   const assignment: StoredProgramAssignment = {
     id: randomUUID(),
@@ -587,10 +584,7 @@ async function resolveBasisSession(
   if (input.completedSessionId !== undefined) {
     const session = await state.store.getSession(input.completedSessionId);
     if (session === undefined) {
-      throw new ToolError(
-        'NOT_FOUND',
-        `No session with id "${input.completedSessionId}" exists.`,
-      );
+      throw new ToolError('NOT_FOUND', `No session with id "${input.completedSessionId}" exists.`);
     }
     return input.completedSessionId;
   }
@@ -643,10 +637,7 @@ function computeProgressionDelta(
   // "Most" = strict majority of completed sets. Ties (e.g. 1 hit / 1 miss)
   // collapse to hold to avoid oscillating recommendations across sessions.
   const majority = Math.floor(setsCompleted / 2) + 1;
-  const bandLabel =
-    repsLow === repsHigh
-      ? `${repsLow} reps`
-      : `${repsLow}-${repsHigh} reps`;
+  const bandLabel = repsLow === repsHigh ? `${repsLow} reps` : `${repsLow}-${repsHigh} reps`;
   if (hitHigh >= majority) {
     return {
       delta: PROGRESSION_INCREMENT_LBS,

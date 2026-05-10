@@ -545,7 +545,10 @@ describe('plan.suggest_progression', () => {
       trainingMode: 'WeightTraining',
       weightLbs: 135,
       // Each rep is opaque to the suggestion math — only the array length matters.
-      reps: Array.from({ length: repCount }, (_, i) => ({ id: `r${i}`, setId, index: i }) as StoredSet['reps'][number]),
+      reps: Array.from(
+        { length: repCount },
+        (_, i) => ({ id: `r${i}`, setId, index: i }) as StoredSet['reps'][number],
+      ),
     };
   }
 
