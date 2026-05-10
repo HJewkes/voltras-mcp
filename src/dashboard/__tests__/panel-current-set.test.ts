@@ -69,7 +69,11 @@ async function startWithFake(state: DashboardServerState): Promise<DashboardServ
   return handle;
 }
 
-function fetchPath(host: string, port: number, path: string): Promise<{ status: number; headers: IncomingMessage['headers']; body: string }> {
+function fetchPath(
+  host: string,
+  port: number,
+  path: string,
+): Promise<{ status: number; headers: IncomingMessage['headers']; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest({ host, port, path, method: 'GET' }, (res) => {
       const chunks: Buffer[] = [];
@@ -170,7 +174,7 @@ describe('GET / — HTTP response', () => {
     expect(bytes).toBeLessThan(50 * 1024);
   });
 
-  it("body includes the snapshot poll fetch call", async () => {
+  it('body includes the snapshot poll fetch call', async () => {
     const handle = await startWithFake(makeFakeState());
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/');
     expect(res.body).toContain("fetch('/api/snapshot')");

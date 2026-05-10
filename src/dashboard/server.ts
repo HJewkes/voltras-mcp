@@ -108,7 +108,6 @@ interface SnapshotResponse {
   sets: { active: ActiveSet | null };
 }
 
-
 /**
  * Start the dashboard HTTP sidecar. Resolves once the server is listening on
  * the resolved port; rejects on bind failure (port-in-use, EACCES, etc.).

@@ -67,7 +67,10 @@ async function startWithFake(state: DashboardServerState): Promise<DashboardServ
   return handle;
 }
 
-function fetchRoot(host: string, port: number): Promise<{ status: number; headers: IncomingMessage['headers']; body: string }> {
+function fetchRoot(
+  host: string,
+  port: number,
+): Promise<{ status: number; headers: IncomingMessage['headers']; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest({ host, port, path: '/', method: 'GET' }, (res) => {
       const chunks: Buffer[] = [];
