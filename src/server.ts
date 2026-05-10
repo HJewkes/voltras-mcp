@@ -51,6 +51,12 @@ import { registerPlanTools } from './tools/plan-tools.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
+import {
+  startDashboardServer,
+  DEFAULT_DASHBOARD_PORT,
+  DEFAULT_DASHBOARD_HOST,
+  type DashboardServerHandle,
+} from './dashboard/server.js';
 
 /** Canonical list of every tool name VMCP exposes (R9, R11). */
 const CORE_TOOL_NAMES = [
@@ -127,6 +133,22 @@ const CORE_TOOL_NAMES = [
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
 const MOCK_TOOL_NAMES = ['mock.configure', 'mock.inject_error'] as const;
+
+/**
+ * Resolve the dashboard sidecar port from `VMCP_DASHBOARD_PORT`. Returns
+ * `null` when the user has explicitly disabled the sidecar (`'off'` or
+ * `'0'`); returns the parsed port otherwise. Invalid / non-numeric values
+ * fall back to {@link DEFAULT_DASHBOARD_PORT} so a typo doesn't silently
+ * disable the dashboard.
+ */
+function resolveDashboardPort(env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = env.VMCP_DASHBOARD_PORT;
+  if (raw === undefined || raw === '') return DEFAULT_DASHBOARD_PORT;
+  if (raw === 'off' || raw === '0') return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DASHBOARD_PORT;
+  return parsed;
+}
 
 /** Single shared `STARTING` response — produced once, returned by every placeholder. */
 function startingResult(): ToolResult {
@@ -255,9 +277,52 @@ export async function runServer(): Promise<void> {
     if (state.config.adapter === 'mock') {
       registerMockTools(server, state, placeholders);
     }
+
+    // Bring up the local dashboard HTTP sidecar (loopback only). Disabled
+    // when `VMCP_DASHBOARD_PORT=off` (or `=0`). Bind failure is logged
+    // but not fatal — the MCP server itself stays up so a stuck dashboard
+    // port (e.g., a leftover process) doesn't block all tool use.
+    const dashboardPort = resolveDashboardPort();
+    let dashboardHandle: DashboardServerHandle | undefined;
+    if (dashboardPort !== null) {
+      try {
+        dashboardHandle = await startDashboardServer({ port: dashboardPort, state });
+        log.info(
+          `dashboard sidecar listening at http://${DEFAULT_DASHBOARD_HOST}:${dashboardHandle.port}`,
+        );
+      } catch (err) {
+        log.warn('dashboard sidecar failed to start', err);
+      }
+    }
+
+    // Register a one-shot shutdown hook so the dashboard releases its port
+    // on SIGINT/SIGTERM. The MCP server itself runs on stdio and exits
+    // when the parent closes the pipe, so we don't need to manage its
+    // lifecycle here — only the sidecar needs explicit teardown.
+    if (dashboardHandle !== undefined) {
+      installShutdownHook(dashboardHandle);
+    }
   } catch (err) {
     log.error('bootstrap failed', err);
     await server.close();
     process.exit(1);
   }
+}
+
+function installShutdownHook(handle: DashboardServerHandle): void {
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    handle
+      .close()
+      .catch((err) => log.warn('dashboard sidecar close failed', err))
+      .finally(() => {
+        // Don't process.exit — let the host's signal handler propagate so
+        // stdio teardown happens cleanly. The signal handler is just here
+        // to release the listening socket promptly.
+      });
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
