@@ -32,7 +32,11 @@ function makeRep(repNumber: number): Rep {
   return { repNumber, concentric: phase, eccentric: phase };
 }
 
-function makeSession(id: string, startedAt: string, exerciseId = 'cable-chest-press'): StoredSession {
+function makeSession(
+  id: string,
+  startedAt: string,
+  exerciseId = 'cable-chest-press',
+): StoredSession {
   return { id, startedAt, exerciseId };
 }
 
@@ -106,7 +110,7 @@ describe('aggregateProgression — single session', () => {
   it('treats partial sets correctly: totalReps counts them, completedReps excludes them', () => {
     const session = makeSession('s1', '2025-01-10T00:00:00.000Z');
     const sets = [
-      makeSet('set-a', 's1', 100, 5, false),         // complete — 5 reps
+      makeSet('set-a', 's1', 100, 5, false), // complete — 5 reps
       makeSet('set-b', 's1', 110, 3, true, 'device_signal'), // partial — 3 reps
     ];
     const setsBySession = new Map([['s1', sets]]);
@@ -114,8 +118,8 @@ describe('aggregateProgression — single session', () => {
     const result = aggregateProgression(EX_ID, WINDOW_START, NOW, [session], setsBySession);
 
     const summary = result.sessions[0];
-    expect(summary.totalReps).toBe(8);       // 5 + 3
-    expect(summary.completedReps).toBe(5);   // only from non-partial set
+    expect(summary.totalReps).toBe(8); // 5 + 3
+    expect(summary.completedReps).toBe(5); // only from non-partial set
   });
 });
 
@@ -128,8 +132,8 @@ describe('aggregateProgression — multi-session positive trend', () => {
     const s3 = makeSession('s3', '2025-01-15T00:00:00.000Z');
 
     const setsBySession = new Map([
-      ['s1', [makeSet('a1', 's1', 80, 5)]],  // vol = 400
-      ['s2', [makeSet('a2', 's2', 90, 5)]],  // vol = 450
+      ['s1', [makeSet('a1', 's1', 80, 5)]], // vol = 400
+      ['s2', [makeSet('a2', 's2', 90, 5)]], // vol = 450
       ['s3', [makeSet('a3', 's3', 100, 5)]], // vol = 500
     ]);
 
@@ -198,7 +202,7 @@ describe('aggregateProgression — zero delta', () => {
     const s2 = makeSession('s2', '2025-01-08T00:00:00.000Z');
 
     const setsBySession = new Map([
-      ['s1', []],                              // no sets → volume = 0
+      ['s1', []], // no sets → volume = 0
       ['s2', [makeSet('a2', 's2', 100, 5)]],
     ]);
 
@@ -236,8 +240,8 @@ describe('aggregateProgression — estimatedTotalVolumeLbs', () => {
   it('sums weight * reps across all sets correctly', () => {
     const session = makeSession('s1', '2025-01-10T00:00:00.000Z');
     const sets = [
-      makeSet('a1', 's1', 50, 10),   //  500
-      makeSet('a2', 's1', 60, 8),    //  480
+      makeSet('a1', 's1', 50, 10), //  500
+      makeSet('a2', 's1', 60, 8), //  480
       makeSet('a3', 's1', 65, 6, true), // 390 (partial)
     ];
     const setsBySession = new Map([['s1', sets]]);

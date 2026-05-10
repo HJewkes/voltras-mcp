@@ -56,7 +56,14 @@ const { registerDeviceTools } = await import('../device-tools.js');
 
 // ── Fakes ─────────────────────────────────────────────────────────────────
 
-type GuidedLoadPhase = 'idle' | 'armed' | 'countdown' | 'engaging' | 'active' | 'exited' | 'timeout';
+type GuidedLoadPhase =
+  | 'idle'
+  | 'armed'
+  | 'countdown'
+  | 'engaging'
+  | 'active'
+  | 'exited'
+  | 'timeout';
 
 interface FakeGuidedLoadState {
   phase: GuidedLoadPhase;
@@ -169,7 +176,9 @@ function makeFakeLive(): FakeLive {
 
 interface FakeRegisteredTool {
   callback: (args: unknown, extra?: unknown) => Promise<unknown>;
-  update: Mock<(updates: { callback?: (args: unknown, extra?: unknown) => Promise<unknown> }) => void>;
+  update: Mock<
+    (updates: { callback?: (args: unknown, extra?: unknown) => Promise<unknown> }) => void
+  >;
 }
 
 interface State {
@@ -231,7 +240,10 @@ function makePlaceholders(): Map<string, FakeRegisteredTool> {
   const placeholders = new Map<string, FakeRegisteredTool>();
   for (const name of ALL_TOOL_NAMES) {
     const reg: FakeRegisteredTool = {
-      callback: async () => ({ content: [{ type: 'text', text: '{"code":"STARTING"}' }], isError: true }),
+      callback: async () => ({
+        content: [{ type: 'text', text: '{"code":"STARTING"}' }],
+        isError: true,
+      }),
       update: vi.fn((updates) => {
         if (updates.callback) reg.callback = updates.callback;
       }),
@@ -284,7 +296,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('calls exitGuidedLoad and returns ok:true when slot is in countdown phase', async () => {
-    client.guidedLoadState = { phase: 'countdown', countdownRemainingMs: 2500, fitnessModeRaw: 0x0026 };
+    client.guidedLoadState = {
+      phase: 'countdown',
+      countdownRemainingMs: 2500,
+      fitnessModeRaw: 0x0026,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
     expect(payload).toEqual({ ok: true });
@@ -292,7 +308,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('calls exitGuidedLoad and returns ok:true when slot is in engaging phase', async () => {
-    client.guidedLoadState = { phase: 'engaging', countdownRemainingMs: null, fitnessModeRaw: 0x0026 };
+    client.guidedLoadState = {
+      phase: 'engaging',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0026,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
     expect(payload).toEqual({ ok: true });
@@ -300,7 +320,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('calls exitGuidedLoad and returns ok:true when slot is in active phase', async () => {
-    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 };
+    client.guidedLoadState = {
+      phase: 'active',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0027,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
     expect(payload).toEqual({ ok: true });
@@ -316,7 +340,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('returns NOT_IN_GUIDED_LOAD when slot is in exited phase — exitGuidedLoad not called', async () => {
-    client.guidedLoadState = { phase: 'exited', countdownRemainingMs: null, fitnessModeRaw: 0x0004 };
+    client.guidedLoadState = {
+      phase: 'exited',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0004,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBe(true);
     expect(payload.code).toBe('NOT_IN_GUIDED_LOAD');
@@ -332,7 +360,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it("routes to primary slot when 'slot' is omitted (default-slot test)", async () => {
-    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 };
+    client.guidedLoadState = {
+      phase: 'active',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0027,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
     expect(payload).toEqual({ ok: true });
@@ -340,7 +372,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it("routes to primary slot when slot: 'primary' is explicit", async () => {
-    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 };
+    client.guidedLoadState = {
+      phase: 'active',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0027,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {
       slot: 'primary',
     });
@@ -350,7 +386,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('returns an error (Unknown slot message) for an unknown slot id — exitGuidedLoad not called', async () => {
-    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 };
+    client.guidedLoadState = {
+      phase: 'active',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0027,
+    };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {
       slot: 'phantom',
     });
@@ -369,7 +409,11 @@ describe('device.exit_guided_load', () => {
   });
 
   it('surfaces SDK error code when exitGuidedLoad rejects', async () => {
-    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 };
+    client.guidedLoadState = {
+      phase: 'active',
+      countdownRemainingMs: null,
+      fitnessModeRaw: 0x0027,
+    };
     client.exitGuidedLoad.mockRejectedValueOnce(
       new FakeVoltraSDKError('BLE write failed', 'COMMAND_ERROR'),
     );

@@ -62,7 +62,9 @@ function buildPlaceholders(names: readonly string[]): {
   const callbacks = new Map<string, { cb: Callback }>();
   const placeholders = new Map<string, RegisteredTool>();
   for (const name of names) {
-    const slot = { cb: async () => ({ content: [{ type: 'text' as const, text: 'placeholder' }] }) };
+    const slot = {
+      cb: async () => ({ content: [{ type: 'text' as const, text: 'placeholder' }] }),
+    };
     callbacks.set(name, slot);
     placeholders.set(name, {
       update: ({ callback }: { callback?: Callback }) => {

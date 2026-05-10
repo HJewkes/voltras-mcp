@@ -123,7 +123,11 @@ function makeSet(id: string, sessionId: string, weightLbs: number, repCount: num
   };
 }
 
-function makeSession(id: string, startedAt: string, exerciseId = 'cable-chest-press'): StoredSession {
+function makeSession(
+  id: string,
+  startedAt: string,
+  exerciseId = 'cable-chest-press',
+): StoredSession {
   return { id, startedAt, exerciseId };
 }
 
@@ -334,7 +338,7 @@ describe('progression.get_for_exercise — happy path', () => {
   it('returns correct shape with trend when >= 2 sessions', async () => {
     const s1 = makeSession('s1', recentDate(14));
     const s2 = makeSession('s2', recentDate(7));
-    const sets1 = [makeSet('a1', 's1', 80, 5)];  // vol = 400
+    const sets1 = [makeSet('a1', 's1', 80, 5)]; // vol = 400
     const sets2 = [makeSet('a2', 's2', 100, 5)]; // vol = 500
 
     const h = setup([s1, s2], { s1: sets1, s2: sets2 });

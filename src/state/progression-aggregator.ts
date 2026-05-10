@@ -124,8 +124,7 @@ function computeTrend(summaries: ProgressionSessionSummary[]): ProgressionTrend 
   const topWeightLbsDeltaPct =
     first.topWeightLbs === 0 ? 0 : (topWeightLbsDelta / first.topWeightLbs) * 100;
 
-  const estimatedTotalVolumeDelta =
-    last.estimatedTotalVolumeLbs - first.estimatedTotalVolumeLbs;
+  const estimatedTotalVolumeDelta = last.estimatedTotalVolumeLbs - first.estimatedTotalVolumeLbs;
   const estimatedTotalVolumeDeltaPct =
     first.estimatedTotalVolumeLbs === 0
       ? 0

@@ -390,7 +390,11 @@ describe('session.end', () => {
 
 // ── session.list detail enum ────────────────────────────────────────────────
 
-function makeStoredSet(id: string, sessionId: string, overrides: Partial<StoredSet> = {}): StoredSet {
+function makeStoredSet(
+  id: string,
+  sessionId: string,
+  overrides: Partial<StoredSet> = {},
+): StoredSet {
   return {
     id,
     sessionId,

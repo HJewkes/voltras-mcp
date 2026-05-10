@@ -5,10 +5,7 @@
 // cases: empty sessions, single/multi-set shapes, deduplication, duration math.
 import { describe, it, expect } from 'vitest';
 import type { StoredSession, StoredSet, StoredRep } from '../../store/types.js';
-import {
-  aggregateSession,
-  aggregateSessionFull,
-} from '../session-list-aggregator.js';
+import { aggregateSession, aggregateSessionFull } from '../session-list-aggregator.js';
 
 const TS_START = '2025-01-01T10:00:00.000Z';
 const TS_END = '2025-01-01T11:00:00.000Z'; // 3 600 000 ms later

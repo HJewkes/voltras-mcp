@@ -81,10 +81,11 @@ interface State {
   slots: Map<string, FakeSlot>;
 }
 
-function makeStateWithBoth(opts: {
-  primaryConnected: boolean;
-  leftConnected: boolean;
-}): { state: State; primaryClient: FakeClient; leftClient: FakeClient } {
+function makeStateWithBoth(opts: { primaryConnected: boolean; leftConnected: boolean }): {
+  state: State;
+  primaryClient: FakeClient;
+  leftClient: FakeClient;
+} {
   const primaryClient = makeFakeClient({
     connected: opts.primaryConnected,
     deviceId: 'V-PRI',

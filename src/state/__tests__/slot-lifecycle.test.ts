@@ -42,9 +42,7 @@ vi.mock('../event-bridge.js', () => ({
 const { VoltraClient } = await import('@voltras/node-sdk');
 const { LiveState } = await import('../live-state.js');
 const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
-const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import(
-  '../slot-manager.js'
-);
+const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import('../slot-manager.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's

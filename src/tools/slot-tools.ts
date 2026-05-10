@@ -155,10 +155,7 @@ export function registerSlotTools(
       try {
         await client.setMode(prevModeValue as TrainingMode);
       } catch (revertErr) {
-        const msg =
-          revertErr instanceof Error
-            ? revertErr.message
-            : String(revertErr);
+        const msg = revertErr instanceof Error ? revertErr.message : String(revertErr);
         // Log loudly — device is stuck in Damper and the user needs to know.
         console.error(
           `slot.identify: revert to ${previousModeName} failed for slot \`${slotId}\`: ${msg}`,
