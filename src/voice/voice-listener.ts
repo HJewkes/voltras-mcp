@@ -3,30 +3,30 @@
 // per MCP server; lives on `ServerState.voice` and is allocated on first
 // `system.listen_start` call.
 //
-// State machine (idle → listening → wake → buffering → transcribing → idle):
+// State machine (idle → listening → buffering → transcribing → idle):
 //
 //   idle          : no sidecar, no mic. start() transitions to listening.
 //   listening     : sidecar + mic running, audio frames flowing into both
 //                   the sidecar's stdin and the local 30-s ring buffer.
-//   wake          : transient — sidecar emitted a `wake` event. We snapshot
-//                   the ring's last 1 s, then stay in `buffering` until the
-//                   utterance window closes.
 //   buffering     : actively appending forward audio for a configurable
 //                   window (default ~12 s) until silence or hard cap.
+//                   Entered atomically when the sidecar emits a `wake` event
+//                   (pre-wake context is snapshotted from the ring first).
 //   transcribing  : window closed; ship the wav buffer to whisper.cpp. While
 //                   we're here we keep listening for the NEXT wake (sidecar
-//                   stays warm), but a second wake during transcription is
-//                   queued — we don't currently support overlapping whispers.
-//                   On transcription complete: emit voice_input + return to
-//                   listening.
+//                   stays warm). A second wake during transcription is
+//                   enqueued in `_transcriptionQueue` (FIFO, cap 5). When the
+//                   current whisper finishes the next queued buffer is
+//                   immediately dispatched to whisper without requiring a new
+//                   wake event.
+//                   On transcription complete: emit voice_input + either
+//                   process next queued buffer or return to listening.
 //
-// TODO(phase-1.5): TTS-ducking. While `system.speak` is producing audio the
-// host's mic re-hears the speaker output ("coach" appearing inside a TTS
-// response self-triggers the listener). The mitigation is a `mute()`/`unmute()`
-// pair driven by the speak tool. Deliberately deferred from the MVP to keep
-// this module a single, reviewable surface — all the integration points
-// (sidecar IPC, ring buffer, STT invocation) need to stabilize before we
-// thread a global mute state through them.
+// TTS-ducking: `mute()`/`unmute()` let `system.speak` block wake-event
+// processing while the speaker output is live. The pre-wake ring buffer
+// keeps filling during mute (audio stream stays warm); buffered audio that
+// arrived during the muted window is intentionally discarded — we must not
+// transcribe what the TTS read aloud. See `handleWakeEvent` for the guard.
 //
 // TODO(future): wake-word swap. The shipped default is openWakeWord's built-in
 // `hey_jarvis`; the user's preferred `hey coach` requires a custom-trained
@@ -36,6 +36,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable } from 'node:stream';
 
+import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
 
 /** Default whisper.cpp model. ~150 MB; sub-second p50 on M-series. */
@@ -275,6 +276,9 @@ interface SidecarEventReady {
 }
 type SidecarEvent = SidecarEventWake | SidecarEventReady | { event: string; [k: string]: unknown };
 
+/** Maximum number of queued transcription buffers to prevent unbounded growth. */
+const TRANSCRIPTION_QUEUE_CAP = 5;
+
 /**
  * Voice listener — owns the sidecar + recorder lifecycle and the post-wake
  * STT pipeline. One instance is enough; `listen_start` is idempotent.
@@ -289,6 +293,10 @@ export class VoiceListener {
   private buffer: Buffer[] = [];
   private wakeFiredAt: number | null = null;
   private hardCapHandle: unknown = null;
+  private _muteDepth: number = 0;
+  /** FIFO queue of captured audio buffers for wake events that arrived during
+   * transcription. Capped at TRANSCRIPTION_QUEUE_CAP; oldest dropped when full. */
+  private _transcriptionQueue: Buffer[] = [];
 
   constructor(deps: VoiceListenerDeps, events: VoiceListenerEvents = {}) {
     this.deps = { now: () => Date.now(), timers: DEFAULT_TIMERS, ...deps };
@@ -301,6 +309,38 @@ export class VoiceListener {
 
   getStartArgs(): StartArgs | null {
     return this.startArgs;
+  }
+
+  /** True when any TTS call is still in flight (refcount > 0). */
+  get isMuted(): boolean {
+    return this._muteDepth > 0;
+  }
+
+  /**
+   * Block wake-event processing. Call before TTS playback starts.
+   * The audio stream keeps flowing so no teardown latency occurs on unmute.
+   * Any in-flight buffering/transcribing cycle runs to completion — we only
+   * suppress NEW wake events while muted.
+   *
+   * Reference-counted: each mute() must be paired with an unmute(). The mic
+   * stays ducked until ALL concurrent TTS calls have finished — preventing the
+   * mute→unmute→mute race when two fire-and-forget speaks overlap.
+   */
+  mute(): void {
+    this._muteDepth++;
+    log.debug('VoiceListener: muted (TTS ducking active)');
+  }
+
+  /**
+   * Resume wake-event processing after TTS playback ends.
+   * Does NOT replay audio buffered while muted — discarding TTS-sourced audio
+   * is the whole point of ducking.
+   *
+   * Decrements the refcount; wake events resume only when depth reaches zero.
+   */
+  unmute(): void {
+    this._muteDepth = Math.max(0, this._muteDepth - 1);
+    log.debug('VoiceListener: unmuted (TTS ducking lifted)');
   }
 
   /** Bring the listener up. Idempotent — second call returns the same state. */
@@ -322,7 +362,8 @@ export class VoiceListener {
     this.wireSidecarReader();
   }
 
-  /** Tear everything down. Idempotent. */
+  /** Tear everything down. Idempotent. Drains the overlap queue without
+   * firing whisper for any pending entries. */
   async stop(): Promise<void> {
     if (this.state === 'idle') return;
     this.cancelHardCap();
@@ -333,6 +374,7 @@ export class VoiceListener {
     this.buffer = [];
     this.wakeFiredAt = null;
     this.startArgs = null;
+    this._transcriptionQueue = [];
     this.state = 'idle';
   }
 
@@ -425,8 +467,33 @@ export class VoiceListener {
   }
 
   private handleWakeEvent(event: SidecarEventWake): void {
-    if (this.state !== 'listening') return;
+    if (this._muteDepth > 0) {
+      log.debug('VoiceListener: wake event suppressed (muted — TTS ducking active)');
+      return;
+    }
     const now = this.deps.now!();
+    if (this.state === 'transcribing') {
+      // A previous utterance is in flight. Snapshot the current ring buffer
+      // (pre-wake context) as the queued entry so it transcribes after the
+      // current whisper call finishes. The sidecar stays warm; no audio is lost.
+      const snapshot = Buffer.concat(this.buffer);
+      if (this._transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
+        // Drop the oldest to prevent unbounded growth (busy room / false wakes).
+        this._transcriptionQueue.shift();
+        this.emitError({
+          code: 'QUEUE_OVERFLOW',
+          message: 'Transcription queue full — oldest queued utterance dropped.',
+        });
+      }
+      this._transcriptionQueue.push(snapshot);
+      this.events.onWakeWord?.({
+        wakeWord: event.model ?? this.startArgs?.wakeWord ?? DEFAULT_WAKE_WORD,
+        confidence: event.score,
+        capturedAtMs: now,
+      });
+      return;
+    }
+    if (this.state !== 'listening') return;
     this.state = 'buffering';
     this.wakeFiredAt = now;
     this.events.onWakeWord?.({
@@ -460,8 +527,15 @@ export class VoiceListener {
     this.state = 'transcribing';
     const audio = Buffer.concat(this.buffer);
     this.buffer = [];
+    await this.transcribeBuffer(audio, startArgs);
+  }
+
+  /** Transcribe one audio buffer and, when done, process any queued buffers
+   * in FIFO order before returning to the listening state. */
+  private async transcribeBuffer(audio: Buffer, startArgs: StartArgs): Promise<void> {
     const audioDurationMs = pcmDurationMs(audio.length);
     const wakeAt = this.wakeFiredAt ?? this.deps.now!();
+    this.wakeFiredAt = null;
     try {
       const { transcript } = await this.deps.whisper(audio, startArgs.sttModel);
       const latencyMs = this.deps.now!() - wakeAt;
@@ -476,8 +550,22 @@ export class VoiceListener {
         code: 'STT_FAILED',
         message: err instanceof Error ? err.message : String(err),
       });
-    } finally {
-      this.wakeFiredAt = null;
+    }
+
+    // After finishing, drain the overlap queue in FIFO order before returning
+    // to `listening`. Each queued entry is a snapshot taken at wake-time, so
+    // wakeAt for latency measurement is approximated as now (the enqueue time
+    // is not stored to avoid a parallel data structure).
+    //
+    // Guard: stop() may have been called while whisper was in flight (state
+    // would be `idle`). In that case the queue is already drained by stop() —
+    // don't re-enter `listening` or process any more buffers.
+    if (this.state !== 'transcribing') return;
+    const next = this._transcriptionQueue.shift();
+    if (next !== undefined) {
+      // Stay in `transcribing`; tail-call into the next buffer.
+      await this.transcribeBuffer(next, startArgs);
+    } else {
       this.state = 'listening';
     }
   }

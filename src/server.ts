@@ -246,7 +246,7 @@ export async function runServer(): Promise<void> {
     registerTimerTools(server, state, placeholders);
     registerServerTools(server, state, placeholders);
     registerDebugTools(server, state, placeholders);
-    registerSystemTools(server, placeholders);
+    registerSystemTools(server, placeholders, undefined, state.voice);
     registerVoiceTools(server, state, placeholders);
     registerSlotTools(server, state, placeholders);
     registerProgressionTools(server, state, placeholders);
