@@ -22,7 +22,7 @@
 
 import { VoltraClient } from '@voltras/node-sdk';
 
-import { LiveState } from './live-state.js';
+import { LiveState, type DeviceSnapshot } from './live-state.js';
 import { wireBridgeForSlot } from './event-bridge.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { PRIMARY_SLOT, MAX_SLOTS, type ServerState, type SlotState } from './server-state.js';
@@ -62,6 +62,7 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
   };
   state.slots.set(slotId, slot);
   slot.unwireBridge = wireBridgeForSlot(state, slot);
+  seedConnectedState(slot);
   return slot;
 }
 
@@ -134,6 +135,28 @@ export function resetPrimarySlot(state: ServerState): void {
   slot.live.markDisconnected(new Date().toISOString());
   slot.modeRevertGuard = new ModeRevertGuard();
   slot.unwireBridge = wireBridgeForSlot(state, slot);
+  seedConnectedState(slot);
+}
+
+/**
+ * Seed LiveState with `{connected, deviceId}` if the slot's client is
+ * already connected at slot-creation time. The bridge's
+ * `onConnectionStateChange` listener is wired AFTER the SDK's initial
+ * connect event has already fired, so without this seed LiveState never
+ * sees the initial transition and `snapshotDevice().connected` stays
+ * `false`. The field shape mirrors the `settingsDelta` produced in
+ * `event-bridge.ts` (search for `onConnectionStateChange`).
+ *
+ * VMCP-01.26 (F12).
+ */
+function seedConnectedState(slot: SlotState): void {
+  const { client, live } = slot;
+  if (!client.isConnected) return;
+  const initial: Partial<DeviceSnapshot> = { connected: true };
+  if (typeof client.connectedDeviceId === 'string') {
+    initial.deviceId = client.connectedDeviceId;
+  }
+  live.applySettings(initial);
 }
 
 /**
