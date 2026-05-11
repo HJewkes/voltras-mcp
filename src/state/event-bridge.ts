@@ -1066,6 +1066,7 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       setIds: [],
       status: 'active',
       exerciseName: 'Guided Load (auto)',
+      autoCreatedBy: 'guided_load',
     });
     // Persist the row so a downstream `metrics.compute` / `session.list`
     // can find it. Errors are logged; the in-memory session is the
@@ -1093,6 +1094,12 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       reps: [],
       status: 'active',
     });
+    // F4 (VMCP-01.19): the start-snapshot is captured here but the
+    // device's `weightLbs` hasn't yet propagated from the guided-load
+    // target write — settings_update lands a tick or two later. The
+    // exit-reap path in `device.exit_guided_load` lazily re-snapshots
+    // from `slot.live.snapshotDevice()` so the persisted row reflects
+    // the target weight, not the pre-guided-load value.
     state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
     void slotId; // slotId reserved for future per-slot channel notification
   }

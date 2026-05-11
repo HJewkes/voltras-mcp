@@ -126,6 +126,15 @@ export interface ActiveSession {
   setIds: string[];
   status: 'active' | 'ended';
   disconnectedAt?: string;
+  /**
+   * Marks sessions the bridge minted on the user's behalf (vs sessions
+   * explicitly started via `session.start`). Today only the guided-load
+   * Phase 1g bootstrap auto-creates a session; the tag exists so the
+   * `device.exit_guided_load` reap path can distinguish "tear down my own
+   * scaffold" from "leave the explicit session alone" without string-
+   * matching on `exerciseName`. F8 (VMCP-01.24).
+   */
+  autoCreatedBy?: 'guided_load';
 }
 
 /** Active set with its live rep buffer. `endedAt`/`partialReason` set on close. */
@@ -149,13 +158,18 @@ export interface ActiveSet {
    *     set-summary) on the active set for `SET_INACTIVITY_TIMEOUT_MS`;
    *     bridge watchdog finalized as partial. Safety net for modes that
    *     don't emit a per-set close marker (rowing, iso, custom-curves).
+   *   * `'guided_load_exited'` — `device.exit_guided_load` reaped the
+   *     auto-created set the Phase 1g bootstrap had minted on `armed`.
+   *     F4 (VMCP-01.19) — closes the 93s inactivity_timeout leak that
+   *     followed every guided-load demo.
    */
   partialReason?:
     | 'disconnect'
     | 'session_end'
     | 'device_signal'
     | 'auto_stopped'
-    | 'inactivity_timeout';
+    | 'inactivity_timeout'
+    | 'guided_load_exited';
   /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
@@ -406,7 +420,12 @@ export class LiveState {
    * synchronously.
    */
   endSet(
-    reason?: 'disconnect' | 'session_end' | 'auto_stopped' | 'inactivity_timeout',
+    reason?:
+      | 'disconnect'
+      | 'session_end'
+      | 'auto_stopped'
+      | 'inactivity_timeout'
+      | 'guided_load_exited',
     opts: { dropTrailingInProgress?: boolean } = {},
   ): ActiveSet | undefined {
     const current = this.set;

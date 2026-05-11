@@ -509,7 +509,7 @@ export async function finalizeSet(
   opts: {
     cause: SetEndedCause;
     disengageMotor: boolean;
-    partialReason?: 'auto_stopped' | 'inactivity_timeout';
+    partialReason?: 'auto_stopped' | 'inactivity_timeout' | 'guided_load_exited';
     auto_stop_cause?: string;
   },
 ): Promise<StoredSet | undefined> {
@@ -566,7 +566,18 @@ export async function finalizeSet(
 
   // Use the snapshot captured at `set.start`; fall back to the current
   // snapshot if it was somehow missing (defensive — should not happen).
-  const device = state.setStartDeviceSnapshots.get(setId) ?? slot.live.snapshotDevice();
+  //
+  // F4 (VMCP-01.19): the guided-load auto-create path snapshots at
+  // `armed` time, before the device's settings_update has propagated
+  // the target weight. Re-snapshot live for that finalize path so the
+  // persisted row reflects the guided-load target rather than the
+  // pre-armed value. Symmetric with how trigger DSL / device-signal
+  // paths fall back when no start-snapshot exists.
+  const startSnapshot = state.setStartDeviceSnapshots.get(setId);
+  const device =
+    opts.partialReason === 'guided_load_exited'
+      ? slot.live.snapshotDevice()
+      : (startSnapshot ?? slot.live.snapshotDevice());
   state.setStartDeviceSnapshots.delete(setId);
 
   // Pick the partial-reason stamp (if any). Auto-stop wins when supplied;
