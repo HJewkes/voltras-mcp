@@ -148,6 +148,23 @@ describe('buildRepFinalizedPayload', () => {
     expect(meta.weight_lbs).toBeUndefined();
   });
 
+  it('F6 (VMCP-01.21): peak_force reads phase.peakForce, not the never-populated peakLoad', () => {
+    // Hardware capture 2026-05-11: 5 reps at 20 lb of pull, every
+    // `rep_finalized.rep.peak_force === 0`. Root cause: bridge built
+    // WorkoutSample with `force` populated but no `load`, then read the
+    // payload via getRepPeakLoad (zero) instead of getRepPeakForce
+    // (populated). This regression test asserts the field now reads
+    // `peakForce` so the bug stays fixed.
+    const rep: Rep = {
+      repNumber: 1,
+      concentric: { ...makePhase({ samples: 2, peakVelocity: 600 }), peakForce: 22.5 },
+      eccentric: { ...makePhase({ samples: 2, peakVelocity: 500 }), peakForce: 18 },
+    };
+    const { content } = buildRepFinalizedPayload(rep, 0, set, device, 1);
+    const parsed = JSON.parse(content);
+    expect(parsed.rep.peak_force).toBe(22.5);
+  });
+
   it('emits content as JSON with summary first + rep phase data + set_context', () => {
     // 710 mm/s peak conc → 0.71 m/s after boundary conversion.
     const rep = makeRep(2, 710, 550);
@@ -323,7 +340,7 @@ describe('buildSetEndedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.summary).toContain('2 reps');
     expect(parsed.summary).toContain('90s');
-    expect(parsed.summary).toContain('velocity loss');
+    expect(parsed.summary).toContain('slower last-vs-first');
     expect(parsed.set).toMatchObject({
       set_id: 'set-end',
       session_id: 'sess-1',
@@ -342,16 +359,16 @@ describe('buildSetEndedPayload', () => {
       first_rep_v: 0.85,
       last_rep_v: 0.5,
       // (850 - 500) / 850 * 100 = 41.176... => 41.2 (unit-invariant)
-      velocity_loss_pct: 41.2,
+      velocity_delta_pct: 41.2,
       mean_velocity: 0.675,
     });
   });
 
-  it('vbt_summary.velocity_loss_pct is null when fewer than 2 reps', () => {
+  it('vbt_summary.velocity_delta_pct is null when fewer than 2 reps', () => {
     const reps = [makeRep(1, 600, 400)];
     const { content } = buildSetEndedPayload(buildStored(reps));
     const parsed = JSON.parse(content);
-    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+    expect(parsed.vbt_summary.velocity_delta_pct).toBeNull();
     expect(parsed.vbt_summary.first_rep_v).toBe(0.6);
     expect(parsed.vbt_summary.last_rep_v).toBe(0.6);
   });
@@ -364,7 +381,7 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.vbt_summary).toEqual({
       first_rep_v: null,
       last_rep_v: null,
-      velocity_loss_pct: null,
+      velocity_delta_pct: null,
       mean_velocity: null,
     });
   });
@@ -373,8 +390,8 @@ describe('buildSetEndedPayload', () => {
     // Hardware capture 2026-05-11: 5 complete reps then a watch trigger
     // fired auto-stop. Pre-fix, a single-sample concentric-only rep 6 was
     // persisted (peakVelocity=982 mm/s) and last_rep_v reflected that
-    // bogus value, flipping velocity_loss_pct positive when the real
-    // rep1→rep5 loss was negative. Post-fix, the bridge drops the
+    // bogus value, flipping velocity_delta_pct positive when the real
+    // rep1→rep5 trend was negative. Post-fix, the bridge drops the
     // trailing in-progress rep before persistence, so the StoredSet that
     // reaches `buildSetEndedPayload` contains only 5 reps and
     // last_rep_v correctly reflects rep 5's concentric peak.
@@ -393,10 +410,10 @@ describe('buildSetEndedPayload', () => {
     // last_rep_v — NOT some bogus value from a never-completed rep 6.
     expect(parsed.vbt_summary.last_rep_v).toBe(0.85);
     expect(parsed.vbt_summary.first_rep_v).toBe(0.7);
-    // velocity_loss_pct on (700→850) is negative — set was accelerating,
+    // velocity_delta_pct on (700→850) is negative — set was accelerating,
     // exactly the inversion the bogus rep-6 value masked in the field
     // capture.
-    expect(parsed.vbt_summary.velocity_loss_pct).toBeLessThan(0);
+    expect(parsed.vbt_summary.velocity_delta_pct).toBeLessThan(0);
   });
 
   describe('cause = "device_signal" → set_ended_by_device', () => {
@@ -438,14 +455,14 @@ describe('buildSetEndedPayload', () => {
       expect(devicePayload.set.partial_reason).toBe('device_signal');
     });
 
-    it('summary still surfaces velocity loss when the set has at least 2 reps', () => {
+    it('summary still surfaces the velocity delta when the set has at least 2 reps', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps, { reason: 'device_signal' });
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
-      // velocity_loss_pct is computed identically to the tool path.
-      expect(parsed.vbt_summary.velocity_loss_pct).toBeCloseTo(41.2, 1);
-      expect(parsed.summary).toContain('41.2% velocity loss');
+      // velocity_delta_pct is computed identically to the tool path.
+      expect(parsed.vbt_summary.velocity_delta_pct).toBeCloseTo(41.2, 1);
+      expect(parsed.summary).toContain('41.2% slower last-vs-first');
     });
   });
 });
