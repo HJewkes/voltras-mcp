@@ -295,13 +295,19 @@ export async function runServer(): Promise<void> {
       }
     }
 
-    // Register a one-shot shutdown hook so the dashboard releases its port
-    // on SIGINT/SIGTERM. The MCP server itself runs on stdio and exits
-    // when the parent closes the pipe, so we don't need to manage its
-    // lifecycle here — only the sidecar needs explicit teardown.
-    if (dashboardHandle !== undefined) {
-      installShutdownHook(dashboardHandle);
-    }
+    // Register the shutdown hook regardless of whether the dashboard came
+    // up — the process still needs to exit on SIGINT/SIGTERM and on stdin
+    // EOF, even when the dashboard is disabled (`VMCP_DASHBOARD_PORT=off`)
+    // or failed to bind. See VMCP-01.25 (F11): Claude Code abandons the
+    // stdio pipe on reconnect rather than closing it cleanly, so we can't
+    // rely on stdio teardown to propagate exit.
+    installShutdownHook(dashboardHandle);
+
+    // Single-line ready signal emitted once bootstrap is fully done and
+    // the shutdown hook is armed. Used by the spawn-based lifecycle
+    // tests to know when SIGTERM/stdin-close should produce a clean
+    // exit. Cheap log; safe to leave on at info level.
+    log.info('voltras-mcp ready');
   } catch (err) {
     log.error('bootstrap failed', err);
     await server.close();
@@ -309,20 +315,37 @@ export async function runServer(): Promise<void> {
   }
 }
 
-function installShutdownHook(handle: DashboardServerHandle): void {
+/**
+ * Install signal + stdin handlers that close the dashboard sidecar (if
+ * present) and exit the process. The MCP server's stdio transport does NOT
+ * reliably terminate the process when the parent (e.g., Claude Code on
+ * reconnect) abandons the pipe rather than closing it, so we must drive
+ * the exit ourselves. The `shuttingDown` guard makes double-signal /
+ * signal-plus-stdin-close idempotent.
+ */
+function installShutdownHook(handle: DashboardServerHandle | undefined): void {
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    handle
-      .close()
-      .catch((err) => log.warn('dashboard sidecar close failed', err))
-      .finally(() => {
-        // Don't process.exit — let the host's signal handler propagate so
-        // stdio teardown happens cleanly. The signal handler is just here
-        // to release the listening socket promptly.
-      });
+    // Hard timeout in case dashboard close hangs — VMCP-01.25 (F11).
+    // The non-zero exit code distinguishes "we had to bail out" from
+    // the normal clean-exit path.
+    const hardTimeout = setTimeout(() => process.exit(1), 2000);
+    hardTimeout.unref();
+    const closePromise = handle
+      ? handle.close().catch((err) => log.warn('dashboard sidecar close failed', err))
+      : Promise.resolve();
+    closePromise.finally(() => {
+      process.exit(0);
+    });
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+  // Claude Code may abandon the stdio pipe rather than closing it
+  // cleanly; the 'end' / 'close' events on stdin fire when the parent
+  // does close the write side, and let us exit promptly in that path
+  // too. See VMCP-01.25 (F11).
+  process.stdin.once('end', shutdown);
+  process.stdin.once('close', shutdown);
 }

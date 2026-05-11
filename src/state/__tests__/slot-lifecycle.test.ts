@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@voltras/node-sdk', () => ({
   VoltraClient: class {
     isConnected = false;
+    connectedDeviceId: string | null = null;
     disposed = false;
     dispose(): void {
       this.disposed = true;
@@ -110,6 +111,49 @@ describe('createSlot', () => {
     expect(state.slots.size).toBe(3);
     expect(MAX_SLOTS).toBe(2);
   });
+
+  // VMCP-01.26 (F12) — bridge listener is wired AFTER the SDK has already
+  // fired its initial onConnectionStateChange('connected'), so createSlot
+  // must seed LiveState from the already-connected client's getters or
+  // `snapshotDevice().connected` stays false until the next change event
+  // (which may never come, since the device is already in steady state).
+  it('seeds LiveState from an already-connected client (initial connect event)', () => {
+    const state = makeStateWithPrimary();
+    const client = new VoltraClient() as InstanceType<typeof VoltraClient> & {
+      isConnected: boolean;
+      connectedDeviceId: string | null;
+    };
+    client.isConnected = true;
+    client.connectedDeviceId = 'mock-device';
+
+    const slot = createSlot(state, 'left', client);
+
+    // Synchronous — no event-loop tick required.
+    const snap = slot.live.snapshotDevice();
+    expect(snap.connected).toBe(true);
+    expect(snap.deviceId).toBe('mock-device');
+  });
+
+  it('does not seed LiveState when the client is not yet connected', () => {
+    const state = makeStateWithPrimary();
+    const slot = createSlot(state, 'left', new VoltraClient());
+    expect(slot.live.snapshotDevice().connected).toBe(false);
+  });
+
+  it('omits deviceId from the seed when the client has no connectedDeviceId yet', () => {
+    const state = makeStateWithPrimary();
+    const client = new VoltraClient() as InstanceType<typeof VoltraClient> & {
+      isConnected: boolean;
+      connectedDeviceId: string | null;
+    };
+    client.isConnected = true;
+    // connectedDeviceId stays null (matches SDK getter return for
+    // a partially-bootstrapped client).
+    const slot = createSlot(state, 'left', client);
+    const snap = slot.live.snapshotDevice();
+    expect(snap.connected).toBe(true);
+    expect(snap.deviceId).toBeUndefined();
+  });
 });
 
 describe('removeSlot', () => {
@@ -180,6 +224,20 @@ describe('resetPrimarySlot', () => {
     expect(snap.connected).toBe(false);
     expect(after.live.isStale()).toBe(true);
     expect(snap.staleSinceDisconnect).toBeDefined();
+  });
+
+  // VMCP-01.26 (F12) — resetPrimarySlot is the other path that swaps in a
+  // fresh client. The fresh client starts disconnected so the seed is a
+  // no-op here; the regression test pins the absence of seeding so a
+  // future change that pre-binds a connected client wouldn't silently
+  // overwrite the soft-reset's `markDisconnected` stale-flag.
+  it('does not seed connected state on the fresh post-reset client (which starts disconnected)', () => {
+    const state = makeStateWithPrimary();
+    resetPrimarySlot(state);
+    const after = getSlot(state);
+    const snap = after.live.snapshotDevice();
+    expect(snap.connected).toBe(false);
+    expect(after.live.isStale()).toBe(true);
   });
 
   // Slot-routing fix (2026-05-08) — defensive dispose. See
