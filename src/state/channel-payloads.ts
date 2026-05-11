@@ -266,12 +266,18 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
 }
 
 /**
- * Cause of a `set_ended*` channel emission. `'tool'` is the explicit
- * `set.end` MCP-tool path; `'device_signal'` is the bridge's autonomous
- * finalize triggered by the firmware emitting `aa 85 5f` (set-summary) on
- * user disengage — the device has no Stop button. The cause selects the meta
- * `event_type` and tunes the summary text — payload shape is identical
- * between the two so PT Claude can parse either with one schema.
+ * Cause of a `set_ended` channel emission. `'tool'` covers tool-driven
+ * closes (explicit `set.end`, inactivity-watchdog finalize, guided-load
+ * reap); `'device_signal'` is the bridge's autonomous finalize triggered
+ * by the firmware emitting `aa 85 5f` (set-summary) on user disengage —
+ * the device has no Stop button.
+ *
+ * F14/F15 rewrite: the two emissions previously diverged on `event_type`
+ * (`set_ended` vs `set_ended_by_device`). They're now unified to a single
+ * `event_type: 'set_ended'` with a `meta.closed_by` discriminator. PT
+ * Claude reads one schema, filters on `closed_by` if it cares which path
+ * fired. Summary text retains the "ended automatically" tail for
+ * device-signal closes so the voice surface still distinguishes them.
  */
 export type SetEndedCause = 'tool' | 'device_signal';
 
@@ -308,31 +314,31 @@ export interface DeviceSetSummaryBlock {
 }
 
 /**
- * Build the meta + content for a `set_ended` (or `set_ended_by_device`)
- * channel event. Carries the full per-rep array plus a pre-computed VBT
- * summary so the model can skip the `set.get` + `metrics.compute vbt.set`
- * follow-up calls that almost every set close currently triggers.
+ * Build the meta + content for a `set_ended` channel event. Carries the
+ * full per-rep array plus a pre-computed VBT summary so the model can skip
+ * the `set.get` + `metrics.compute vbt.set` follow-up calls that almost
+ * every set close currently triggers.
  *
- * The `cause` argument selects between the two emission types:
- *   * `'tool'` → `event_type='set_ended'`. Default.
- *   * `'device_signal'` → `event_type='set_ended_by_device'`. Summary text
- *     also adds the "(set ended automatically)" tail so the model can
- *     distinguish the autonomous device finish from an explicit end. Caller
- *     is expected to have set `stored.partial=true` and
- *     `stored.partialReason='device_signal'` before invoking — those flow
- *     unchanged into the payload.
+ * F14/F15 rewrite: the previously-distinct `set_ended_by_device` event
+ * type has been folded into a unified `set_ended`. The `meta.closed_by`
+ * discriminator carries the close cause:
+ *   * `'device'`             — autonomous `aa 85 5f` close (`cause='device_signal'`).
+ *   * `'inactivity_timeout'` — bridge watchdog tripped after no activity.
+ *   * `'disconnect'`         — connection loss cascade.
+ *   * `'session_end'`        — explicit `session.end` cascade.
+ *   * `'guided_load_exited'` — `device.exit_guided_load` reap path.
+ *   * `'tool'`               — explicit `set.end` MCP-tool path.
  *
  * The optional `deviceSummary` carries the device-asserted rep count +
  * schema version harvested from the SDK's `onSummary` frame at finalize
  * time. When supplied, meta gains `device_rep_count` + `device_schema_version`
  * and content gains a `device_summary` block. When absent (mid-set
  * disconnect, no graceful close, no summary frame received) the payload
- * omits both — backwards-compatible with pre-PR-C consumers.
+ * omits both.
  */
 export function buildSetEndedPayload(
   stored: StoredSet,
   cause: SetEndedCause = 'tool',
-  autoStopCause?: string,
   deviceSummary?: DeviceSummaryBlock,
   deviceSetSummary?: DeviceSetSummaryBlock,
 ): {
@@ -344,25 +350,19 @@ export function buildSetEndedPayload(
   const durationMs =
     Number.isFinite(startedMs) && Number.isFinite(endedMs) ? endedMs - startedMs : 0;
   const safeDurationMs = Math.max(0, durationMs);
-  const eventType = cause === 'device_signal' ? 'set_ended_by_device' : 'set_ended';
+  const closedBy = closedByFor(cause, stored.partialReason);
 
   const meta: Record<string, string> = {
     source: 'voltras',
-    event_type: eventType,
+    event_type: 'set_ended',
     set_id: stored.id,
     session_id: stored.sessionId,
     rep_count: String(stored.reps.length),
     duration_ms: String(safeDurationMs),
+    closed_by: closedBy,
   };
   if (stored.partial && stored.partialReason !== undefined) {
     meta.partial_reason = stored.partialReason;
-  }
-  if (autoStopCause !== undefined) {
-    // Distinguishes auto-stop sub-causes (`rep_count_reached`,
-    // `velocity_loss_exceeded`, `idle_timeout_ms`) within set_ended without
-    // forcing the model to re-parse the partial_reason enum. Carried in
-    // both meta (for fast scanning) and content (under `set.auto_stop_cause`).
-    meta.auto_stop_cause = autoStopCause;
   }
   if (deviceSummary !== undefined) {
     // Device-asserted canonical counts harvested from the SDK's `onSummary`
@@ -402,7 +402,7 @@ export function buildSetEndedPayload(
       started_at: stored.startedAt,
       ended_at: stored.endedAt,
       partial_reason: stored.partialReason ?? null,
-      ...(autoStopCause !== undefined ? { auto_stop_cause: autoStopCause } : {}),
+      closed_by: closedBy,
     },
     reps,
     vbt_summary: vbt,
@@ -426,6 +426,34 @@ export function buildSetEndedPayload(
       : {}),
   });
   return { meta, content };
+}
+
+/**
+ * Possible `closed_by` discriminators on a unified `set_ended` payload.
+ */
+export type SetClosedBy =
+  | 'device'
+  | 'tool'
+  | 'inactivity_timeout'
+  | 'disconnect'
+  | 'session_end'
+  | 'guided_load_exited';
+
+/**
+ * Map a finalize `cause` + `partialReason` to the unified `closed_by`
+ * discriminator. Device-signal close maps to `'device'`; otherwise we
+ * prefer the partial reason (it's more specific than the generic tool
+ * path); otherwise `'tool'` (graceful explicit close).
+ */
+function closedByFor(cause: SetEndedCause, partialReason: string | undefined): SetClosedBy {
+  if (cause === 'device_signal') {
+    return 'device';
+  }
+  if (partialReason === 'inactivity_timeout') return 'inactivity_timeout';
+  if (partialReason === 'disconnect') return 'disconnect';
+  if (partialReason === 'session_end') return 'session_end';
+  if (partialReason === 'guided_load_exited') return 'guided_load_exited';
+  return 'tool';
 }
 
 /**
@@ -607,9 +635,10 @@ export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): 
  * Build the meta + content for a `set_target_reached` channel event
  * (`rep_count_reached` trigger match). `target` is the configured rep
  * count; `actualReps` is the just-finalized rep number (1-indexed). The
- * `autoStopped` flag is `true` when the trigger came from `stopOn` (the
- * bridge will call `finalizeSet` after publishing this) and `false` when
- * from `notifyOn` (set continues).
+ * `autoStopped` is retained on the payload for backwards-compat with
+ * consumers that filter on it. After the F14/F15 rewrite the bridge
+ * always passes `false` — triggers are advisory cues only; the set
+ * continues until the device signals close or the user calls `set.end`.
  */
 export function buildSetTargetReachedPayload(
   set: ActiveSet,
@@ -749,17 +778,9 @@ export function buildIdleTimeoutPayload(
 }
 
 /**
- * Cause discriminator for trigger-fire channel events, mirroring how the
- * spec is registered (stopOn vs notifyOn). Currently only used for the
- * `auto_stopped` meta flag — the payload shape is identical between the
- * two cases.
- */
-export type TriggerFireCause = 'stop' | 'notify';
-
-/**
  * Compute the dedupe key for a trigger spec. Used by the bridge's
- * `tryFireTrigger` ledger so identical specs across `stopOn`/`notifyOn`
- * collapse to one event while distinct thresholds fire independently.
+ * `tryFireTrigger` ledger so identical specs in `notifyOn` collapse to
+ * one event while distinct thresholds fire independently.
  */
 export function triggerDedupeKey(spec: TriggerSpec): string {
   switch (spec.type) {
@@ -767,8 +788,6 @@ export function triggerDedupeKey(spec: TriggerSpec): string {
       return `${spec.type}:${spec.value}`;
     case 'velocity_loss_exceeded':
       return `${spec.type}:${spec.pct}`;
-    case 'idle_timeout_ms':
-      return `${spec.type}:${spec.value}`;
   }
 }
 

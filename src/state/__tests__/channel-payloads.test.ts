@@ -387,11 +387,12 @@ describe('buildSetEndedPayload', () => {
   });
 
   it('F14 (VMCP-01.28): vbt_summary uses last complete rep when partial trailing rep is dropped pre-payload', () => {
-    // Hardware capture 2026-05-11: 5 complete reps then a watch trigger
-    // fired auto-stop. Pre-fix, a single-sample concentric-only rep 6 was
-    // persisted (peakVelocity=982 mm/s) and last_rep_v reflected that
-    // bogus value, flipping velocity_delta_pct positive when the real
-    // rep1→rep5 trend was negative. Post-fix, the bridge drops the
+    // Hardware capture 2026-05-11: 5 complete reps then the inactivity
+    // watchdog (or a disconnect) force-closed mid-rep-6. Pre-fix, a
+    // single-sample concentric-only rep 6 was persisted (peakVelocity=982
+    // mm/s) and last_rep_v reflected that bogus value, flipping
+    // velocity_delta_pct positive when the real rep1→rep5 trend was
+    // negative. Post-fix, the inactivity-timeout finalize path drops the
     // trailing in-progress rep before persistence, so the StoredSet that
     // reaches `buildSetEndedPayload` contains only 5 reps and
     // last_rep_v correctly reflects rep 5's concentric peak.
@@ -402,8 +403,8 @@ describe('buildSetEndedPayload', () => {
       makeRep(4, 800, 530),
       makeRep(5, 850, 540), // last complete rep — real "last_rep_v"
     ];
-    const stored = buildStored(reps, { reason: 'auto_stopped' });
-    const { content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached');
+    const stored = buildStored(reps, { reason: 'inactivity_timeout' });
+    const { content } = buildSetEndedPayload(stored, 'tool');
     const parsed = JSON.parse(content);
     expect(parsed.reps).toHaveLength(5);
     // Rep 5's peak concentric velocity (850 mm/s → 0.85 m/s) is the
@@ -416,25 +417,31 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.vbt_summary.velocity_delta_pct).toBeLessThan(0);
   });
 
-  describe('cause = "device_signal" → set_ended_by_device', () => {
-    it('emits meta.event_type=set_ended_by_device with the same scalar fields as set_ended', () => {
+  describe('cause = "device_signal" → unified set_ended with closed_by="device"', () => {
+    // F14/F15 rewrite: the formerly-distinct `set_ended_by_device` event
+    // type has been folded into a single `set_ended`. The
+    // `meta.closed_by` discriminator carries which path closed the set.
+    // Device-signal close is no longer "partial" — it's the canonical
+    // natural close.
+    it('emits meta.event_type=set_ended with closed_by=device', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
-      const stored = buildStored(reps, { reason: 'device_signal' });
+      const stored = buildStored(reps); // not partial
       const { meta } = buildSetEndedPayload(stored, 'device_signal');
       expect(meta).toMatchObject({
         source: 'voltras',
-        event_type: 'set_ended_by_device',
+        event_type: 'set_ended',
         set_id: 'set-end',
         session_id: 'sess-1',
         rep_count: '2',
         duration_ms: '90000',
-        partial_reason: 'device_signal',
+        closed_by: 'device',
       });
+      expect(meta.partial_reason).toBeUndefined();
     });
 
     it('summary text headlines "Set ended by device" and tails the user-pressed-Stop note', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
-      const stored = buildStored(reps, { reason: 'device_signal' });
+      const stored = buildStored(reps);
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
       expect(parsed.summary).toContain('Set ended by device');
@@ -443,21 +450,22 @@ describe('buildSetEndedPayload', () => {
       expect(parsed.summary).toContain('set ended automatically');
     });
 
-    it('content payload is structurally identical to set_ended (reps + vbt_summary + set)', () => {
+    it('content payload is structurally identical to tool-driven set_ended (reps + vbt_summary + set)', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
-      const stored = buildStored(reps, { reason: 'device_signal' });
+      const stored = buildStored(reps);
       const toolPayload = JSON.parse(buildSetEndedPayload(stored, 'tool').content);
       const devicePayload = JSON.parse(buildSetEndedPayload(stored, 'device_signal').content);
       // Same shape — the same model can parse either with one schema.
       expect(Object.keys(devicePayload).sort()).toEqual(Object.keys(toolPayload).sort());
       expect(devicePayload.reps).toEqual(toolPayload.reps);
       expect(devicePayload.vbt_summary).toEqual(toolPayload.vbt_summary);
-      expect(devicePayload.set.partial_reason).toBe('device_signal');
+      expect(devicePayload.set.closed_by).toBe('device');
+      expect(toolPayload.set.closed_by).toBe('tool');
     });
 
     it('summary still surfaces the velocity delta when the set has at least 2 reps', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
-      const stored = buildStored(reps, { reason: 'device_signal' });
+      const stored = buildStored(reps);
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
       // velocity_delta_pct is computed identically to the tool path.
@@ -577,11 +585,9 @@ describe('triggerDedupeKey', () => {
     );
   });
 
-  it('uses (type, value) for idle_timeout_ms', () => {
-    expect(triggerDedupeKey({ type: 'idle_timeout_ms', value: 30_000 })).toBe(
-      'idle_timeout_ms:30000',
-    );
-  });
+  // F14/F15 rewrite removed the `idle_timeout_ms` trigger spec — inactivity
+  // is now governed by `WatchConfig.inactivityTimeoutMs` and has no trigger
+  // dedupe key. Test deleted.
 });
 
 describe('summarizeSetForTrigger', () => {
@@ -818,35 +824,71 @@ describe('buildIdleTimeoutPayload', () => {
   });
 });
 
-describe('buildSetEndedPayload — auto_stop_cause', () => {
-  function buildStored(reps: Rep[], partialReason: string): StoredSet {
+describe('buildSetEndedPayload — closed_by discriminator', () => {
+  // F14/F15 rewrite: `auto_stop_cause` is gone (watch triggers no longer
+  // force-close). The unified payload uses `meta.closed_by` to discriminate
+  // close paths.
+  function buildStored(reps: Rep[], partialReason?: string): StoredSet {
     return {
       id: 'set-auto',
       sessionId: 'sess-1',
       startedAt: '2025-01-01T00:00:00.000Z',
       endedAt: '2025-01-01T00:01:30.000Z',
-      partial: true,
-      partialReason,
+      partial: partialReason !== undefined,
+      ...(partialReason !== undefined ? { partialReason } : {}),
       trainingMode: 'WeightTraining',
       weightLbs: 100,
       reps: reps.map((r, i) => ({ ...r, id: `r${i}`, setId: 'set-auto', index: i })),
     };
   }
 
-  it('flows auto_stop_cause through to meta and content.set when supplied', () => {
-    const stored = buildStored([makeRep(1, 800, 500)], 'auto_stopped');
-    const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached');
-    expect(meta.auto_stop_cause).toBe('rep_count_reached');
-    expect(meta.partial_reason).toBe('auto_stopped');
-    const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
-    expect(parsed.set.auto_stop_cause).toBe('rep_count_reached');
+  it('closed_by="inactivity_timeout" when stored.partialReason is inactivity_timeout', () => {
+    const stored = buildStored([makeRep(1, 800, 500)], 'inactivity_timeout');
+    const { meta, content } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.closed_by).toBe('inactivity_timeout');
+    expect(meta.partial_reason).toBe('inactivity_timeout');
+    const parsed = JSON.parse(content) as { set: { closed_by: string } };
+    expect(parsed.set.closed_by).toBe('inactivity_timeout');
   });
 
-  it('omits auto_stop_cause from meta and content when absent', () => {
+  it('closed_by="disconnect" when partialReason is disconnect', () => {
     const stored = buildStored([makeRep(1, 800, 500)], 'disconnect');
+    const { meta } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.closed_by).toBe('disconnect');
+  });
+
+  it('closed_by="session_end" when partialReason is session_end', () => {
+    const stored = buildStored([makeRep(1, 800, 500)], 'session_end');
+    const { meta } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.closed_by).toBe('session_end');
+  });
+
+  it('closed_by="guided_load_exited" when partialReason is guided_load_exited', () => {
+    const stored = buildStored([makeRep(1, 800, 500)], 'guided_load_exited');
+    const { meta } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.closed_by).toBe('guided_load_exited');
+  });
+
+  it('closed_by="tool" for graceful set.end (no partial reason)', () => {
+    const stored = buildStored([makeRep(1, 800, 500)]);
+    const { meta, content } = buildSetEndedPayload(stored, 'tool');
+    expect(meta.closed_by).toBe('tool');
+    expect(meta.partial_reason).toBeUndefined();
+    const parsed = JSON.parse(content) as { set: { closed_by: string } };
+    expect(parsed.set.closed_by).toBe('tool');
+  });
+
+  it('closed_by="device" for device-signal close even when partialReason is unset', () => {
+    const stored = buildStored([makeRep(1, 800, 500)]);
+    const { meta } = buildSetEndedPayload(stored, 'device_signal');
+    expect(meta.closed_by).toBe('device');
+  });
+
+  it('content payload never carries an auto_stop_cause field', () => {
+    const stored = buildStored([makeRep(1, 800, 500)]);
     const { meta, content } = buildSetEndedPayload(stored, 'tool');
     expect(meta.auto_stop_cause).toBeUndefined();
-    const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
+    const parsed = JSON.parse(content) as { set: Record<string, unknown> };
     expect(parsed.set.auto_stop_cause).toBeUndefined();
   });
 });
@@ -867,7 +909,7 @@ describe('buildSetEndedPayload — device_summary', () => {
 
   it('flows deviceSummary into meta keys + content.device_summary block when supplied', () => {
     const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
-    const { meta, content } = buildSetEndedPayload(stored, 'tool', undefined, {
+    const { meta, content } = buildSetEndedPayload(stored, 'tool', {
       repCount: 2,
       schemaVersion: 1,
     });
@@ -888,13 +930,16 @@ describe('buildSetEndedPayload — device_summary', () => {
     expect(parsed.device_summary).toBeUndefined();
   });
 
-  it('attaches device_summary to set_ended_by_device just like set_ended (cause-agnostic)', () => {
+  it('attaches device_summary to device-signal close (cause-agnostic)', () => {
     const stored = buildStored([makeRep(1, 800, 500)]);
-    const { meta, content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
+    const { meta, content } = buildSetEndedPayload(stored, 'device_signal', {
       repCount: 1,
       schemaVersion: 3,
     });
-    expect(meta.event_type).toBe('set_ended_by_device');
+    // F14/F15 rewrite: event_type is unified `set_ended`; meta.closed_by
+    // carries the cause.
+    expect(meta.event_type).toBe('set_ended');
+    expect(meta.closed_by).toBe('device');
     expect(meta.device_rep_count).toBe('1');
     expect(meta.device_schema_version).toBe('3');
     const parsed = JSON.parse(content) as {
@@ -903,29 +948,13 @@ describe('buildSetEndedPayload — device_summary', () => {
     expect(parsed.device_summary).toEqual({ rep_count: 1, schema_version: 3 });
   });
 
-  it('coexists with auto_stop_cause without losing either field', () => {
-    const stored = buildStored([makeRep(1, 800, 500)]);
-    const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached', {
-      repCount: 1,
-      schemaVersion: 2,
-    });
-    expect(meta.auto_stop_cause).toBe('rep_count_reached');
-    expect(meta.device_rep_count).toBe('1');
-    const parsed = JSON.parse(content) as {
-      set: { auto_stop_cause?: string };
-      device_summary: { rep_count: number };
-    };
-    expect(parsed.set.auto_stop_cause).toBe('rep_count_reached');
-    expect(parsed.device_summary.rep_count).toBe(1);
-  });
-
-  it('does not break parse for pre-PR-C consumers reading only set + reps + vbt_summary', () => {
+  it('does not break parse for pre-rewrite consumers reading only set + reps + vbt_summary', () => {
     // Backwards-compatibility shape check: the original keys must still be
     // present and structurally identical regardless of whether the new
     // device_summary block was included.
     const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
     const withSummary = JSON.parse(
-      buildSetEndedPayload(stored, 'tool', undefined, { repCount: 2, schemaVersion: 1 }).content,
+      buildSetEndedPayload(stored, 'tool', { repCount: 2, schemaVersion: 1 }).content,
     );
     const withoutSummary = JSON.parse(buildSetEndedPayload(stored, 'tool').content);
     expect(withSummary.summary).toBe(withoutSummary.summary);

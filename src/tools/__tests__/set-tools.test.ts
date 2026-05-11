@@ -322,14 +322,18 @@ describe('set.start', () => {
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     const r = await h.invoke('set.start', {
       watch: {
-        stopOn: [{ type: 'rep_count_reached', value: 8 }],
-        notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }],
+        notifyOn: [
+          { type: 'rep_count_reached', value: 8 },
+          { type: 'velocity_loss_exceeded', pct: 25 },
+        ],
       },
     });
     expect(r.isError).toBeUndefined();
     expect(h.live.set?.watch).toBeDefined();
-    expect(h.live.set?.watch?.stopOn).toEqual([{ type: 'rep_count_reached', value: 8 }]);
-    expect(h.live.set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    expect(h.live.set?.watch?.notifyOn).toEqual([
+      { type: 'rep_count_reached', value: 8 },
+      { type: 'velocity_loss_exceeded', pct: 25 },
+    ]);
     // A fresh dedupe ledger is provisioned alongside the watch config.
     expect(h.live.set?.firedTriggers).toBeInstanceOf(Set);
     expect(h.live.set?.firedTriggers?.size).toBe(0);
@@ -654,12 +658,13 @@ describe('set.end', () => {
     expect(parsed.vbt_summary.velocity_delta_pct).toBeNull();
   });
 
-  it('explicit set.end produces set_ended (not set_ended_by_device) — bridge-driven event_type is unaffected', async () => {
-    // Regression guard for the sprint 1B refactor: the autonomous
-    // `set_ended_by_device` event lives on the bridge's onInProgress
-    // path. The tool path (this test) MUST keep emitting `set_ended` with
-    // no `partial_reason` so analytics consumers don't see a spurious
-    // partial flag on graceful set ends.
+  it('explicit set.end produces unified set_ended with closed_by=tool', async () => {
+    // Regression guard: the tool-driven set.end path emits the unified
+    // `set_ended` event with `closed_by='tool'` and no `partial_reason`
+    // so analytics consumers don't see a spurious partial flag on
+    // graceful set ends. The autonomous device-signal close also uses
+    // `set_ended` but with `closed_by='device'` (covered in event-bridge
+    // tests).
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {});
@@ -672,13 +677,17 @@ describe('set.end', () => {
       content: string;
     };
     expect(event.meta.event_type).toBe('set_ended');
+    expect(event.meta.closed_by).toBe('tool');
     expect(event.meta.partial_reason).toBeUndefined();
-    const parsed = JSON.parse(event.content) as { set: { partial_reason: unknown } };
+    const parsed = JSON.parse(event.content) as {
+      set: { partial_reason: unknown; closed_by: string };
+    };
     expect(parsed.set.partial_reason).toBeNull();
+    expect(parsed.set.closed_by).toBe('tool');
   });
 
   it('attaches device_summary to set_ended when an onSummary landed during the set', async () => {
-    // Tool-driven set.end path symmetry with the bridge's set_ended_by_device:
+    // Tool-driven set.end path symmetry with the device-signal close:
     // if applySummary fired during the set's lifetime, finalizeSet harvests
     // the captured summary via consumeLatestSummary and threads it into the
     // payload's device_summary block.
@@ -839,10 +848,10 @@ describe('set.live_metrics', () => {
 
   it('does not surface latestSummary through set.live_metrics (PR-C surface)', async () => {
     // latestSummary is captured on the active set but is intentionally
-    // private — the persisted-set surface is what consumes it. PR-C will
-    // route it through `set_ended_by_device`. Until then, even though the
-    // field is on the snapshot, this test pins the contract that PR-B's
-    // live_metrics output does not include it as a coaching read.
+    // private — the persisted-set surface is what consumes it (the
+    // unified `set_ended` payload's `device_summary` block). This test
+    // pins the contract that live_metrics output does not include it as
+    // a coaching read.
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {});
@@ -935,53 +944,24 @@ describe('set.start — idle_timeout_ms watchdog', () => {
     }
   }
 
-  it('does not arm a watchdog when watch config has no idle_timeout_ms specs', async () => {
+  it('does not arm a watchdog when watch config has no inactivityTimeoutMs', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     const r = await h.invoke('set.start', {
-      watch: { stopOn: [{ type: 'rep_count_reached', value: 5 }] },
+      watch: { notifyOn: [{ type: 'rep_count_reached', value: 5 }] },
     });
     const id = (parseResult(r) as { setId: string }).setId;
     expect((h.state.setWatchdog as { has: (s: string) => boolean }).has(id)).toBe(false);
   });
 
-  it('notifyOn idle_timeout fires the channel event but does not auto-stop', async () => {
+  it('inactivityTimeoutMs arms the watchdog and force-closes on expiry', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     const r = await h.invoke('set.start', {
-      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+      watch: { inactivityTimeoutMs: 45_000 },
     });
     const setId = (parseResult(r) as { setId: string }).setId;
     expect((h.state.setWatchdog as { has: (id: string) => boolean }).has(setId)).toBe(true);
-    h.channels.publish.mockClear();
-
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(h.channels.publish).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await flushMicrotasks();
-
-    const idleEvent = h.channels.publish.mock.calls
-      .map((c) => c[0] as { meta: Record<string, string>; content: string })
-      .find((e) => e.meta.event_type === 'idle_timeout');
-    expect(idleEvent).toBeDefined();
-    expect(idleEvent!.meta).toMatchObject({
-      set_id: setId,
-      threshold_ms: '30000',
-      idle_ms: '30000',
-      auto_stopped: 'false',
-      last_rep_count: '0',
-    });
-    // Set still active — notifyOn does not finalize.
-    expect(h.live.set?.setId).toBe(setId);
-    expect(h.store.putSet).not.toHaveBeenCalled();
-  });
-
-  it('stopOn idle_timeout fires event AND auto-stops via finalizeSet', async () => {
-    startSession(h.live);
-    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
-    await h.invoke('set.start', {
-      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 45_000 }] },
-    });
     h.channels.publish.mockClear();
 
     await vi.advanceTimersByTimeAsync(45_000);
@@ -996,24 +976,28 @@ describe('set.start — idle_timeout_ms watchdog', () => {
     expect(idleIdx).toBeGreaterThan(-1);
     expect(endedIdx).toBeGreaterThan(idleIdx);
 
-    // Set finalized with auto_stopped partial reason + idle cause.
+    // Inactivity is the one remaining force-close path: row stamped
+    // partial with `inactivity_timeout`. Unified payload meta.closed_by
+    // discriminator carries the close cause; the legacy auto_stop_cause
+    // field is gone.
     expect(h.live.set).toBeUndefined();
     expect(h.store.putSet).toHaveBeenCalledTimes(1);
     const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
     expect(stored.partial).toBe(true);
-    expect(stored.partialReason).toBe('auto_stopped');
+    expect(stored.partialReason).toBe('inactivity_timeout');
 
     const setEnded = h.channels.publish.mock.calls
       .map((c) => c[0] as { meta: Record<string, string> })
       .find((e) => e.meta.event_type === 'set_ended');
-    expect(setEnded?.meta.auto_stop_cause).toBe('idle_timeout_ms');
+    expect(setEnded?.meta.closed_by).toBe('inactivity_timeout');
+    expect(setEnded?.meta.auto_stop_cause).toBeUndefined();
   });
 
   it('rep finalization resets the watchdog so an active lifter does not trip it', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     const r = await h.invoke('set.start', {
-      watch: { notifyOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+      watch: { inactivityTimeoutMs: 30_000 },
     });
     const setId = (parseResult(r) as { setId: string }).setId;
     h.channels.publish.mockClear();
@@ -1048,7 +1032,7 @@ describe('set.start — idle_timeout_ms watchdog', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {
-      watch: { stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }] },
+      watch: { inactivityTimeoutMs: 30_000 },
     });
     h.channels.publish.mockClear();
 
@@ -1061,40 +1045,5 @@ describe('set.start — idle_timeout_ms watchdog', () => {
       (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
     );
     expect(idleEvents).toHaveLength(0);
-  });
-
-  it('smallest threshold wins across stopOn + notifyOn — fires once at smallest timeout', async () => {
-    startSession(h.live);
-    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
-    await h.invoke('set.start', {
-      watch: {
-        stopOn: [{ type: 'idle_timeout_ms', value: 30_000 }],
-        notifyOn: [{ type: 'idle_timeout_ms', value: 60_000 }],
-      },
-    });
-    h.channels.publish.mockClear();
-
-    await vi.advanceTimersByTimeAsync(30_000);
-    await flushMicrotasks();
-
-    // Smallest (30s) fires; auto_stopped=true because stopOn threshold won.
-    const idleEvents = h.channels.publish.mock.calls.filter(
-      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
-    );
-    expect(idleEvents).toHaveLength(1);
-    expect((idleEvents[0][0] as { meta: Record<string, string> }).meta).toMatchObject({
-      threshold_ms: '30000',
-      auto_stopped: 'true',
-    });
-    // Set finalized — so the 60s timer would never fire even if armed.
-    expect(h.live.set).toBeUndefined();
-
-    // Advance further to confirm no second fire.
-    await vi.advanceTimersByTimeAsync(60_000);
-    await flushMicrotasks();
-    const idleEventsAfter = h.channels.publish.mock.calls.filter(
-      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
-    );
-    expect(idleEventsAfter).toHaveLength(1);
   });
 });

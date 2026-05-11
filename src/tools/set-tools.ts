@@ -34,7 +34,6 @@ import {
   SetGetInput,
   SetLiveMetricsInput,
   SetStartInput,
-  type TriggerSpec,
   type WatchConfig,
 } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
@@ -261,10 +260,12 @@ async function startSet(
   // tell left-arm from right-arm at a glance. Single-device flows still
   // see meta.slot = 'primary' (a meta-key addition, not a behavior change).
   state.channels.forSlot(slotId).publish(payload);
-  // Arm the idle-timeout watchdog if any idle_timeout_ms spec is in the
-  // watch config. Smallest threshold wins (one watchdog per set) — see
-  // SetWatchdog for the rationale. Reset happens in the bridge on every
-  // rep_finalized; cancel happens in finalizeSet.
+  // Arm the idle-timeout watchdog when the watch config supplies an
+  // `inactivityTimeoutMs`. Reset happens in the bridge on every
+  // rep_finalized; cancel happens in finalizeSet. The watchdog fire path
+  // ALWAYS finalizes the set as `partial` / `inactivity_timeout` and
+  // disengages the motor — inactivity is the one remaining force-close
+  // case (the user has truly walked away).
   if (watch !== undefined) {
     armIdleWatchdog(state, setId, startedAt, watch, slotId);
   }
@@ -272,18 +273,16 @@ async function startSet(
 }
 
 /**
- * Arm the idle-timeout watchdog for `setId`. Picks the smallest
- * `idle_timeout_ms` threshold across `stopOn` + `notifyOn` (the larger
- * thresholds would never get to fire because the smallest wakes the
- * model first; see SetWatchdog for the policy). Returns silently when
- * no idle_timeout_ms specs are registered — the watch config may carry
- * only synchronous trigger types, in which case there's no watchdog to
- * arm.
+ * Arm the inactivity watchdog for `setId` if the watch config supplies an
+ * `inactivityTimeoutMs`. Returns silently when no inactivity threshold is
+ * configured — the bridge's default `SET_INACTIVITY_TIMEOUT_MS` safety net
+ * still applies via a separate per-slot timer in event-bridge.
  *
  * `onFire` reads the current LiveState snapshot at fire time so the
  * payload reflects whichever reps managed to land before the timeout
- * (or none, if the user pulled their hand back at startup). Auto-stop
- * is governed by whether the smallest threshold is on `stopOn`.
+ * (or none, if the user pulled their hand back at startup). The watchdog
+ * always finalizes as `partial` / `inactivity_timeout`; in the F14/F15
+ * rewrite there is no longer a "notify-only" inactivity variant.
  */
 export function armIdleWatchdog(
   state: ServerState,
@@ -292,40 +291,30 @@ export function armIdleWatchdog(
   watch: WatchConfig,
   slotId: string = PRIMARY_SLOT,
 ): void {
-  const smallest = smallestIdleSpec(watch);
-  if (smallest === undefined) {
+  if (watch.inactivityTimeoutMs === undefined) {
     return;
   }
-  const idleMs = smallest.spec.value;
+  const idleMs = watch.inactivityTimeoutMs;
   state.setWatchdog.register(setId, idleMs, () => {
-    fireIdleTimeout(state, setId, setStartedAt, smallest.spec, smallest.isStopOn, slotId);
+    fireIdleTimeout(state, setId, setStartedAt, idleMs, slotId);
   });
 }
 
 /**
  * Reset the watchdog deadline for `setId`. Called by the bridge after
  * every rep_finalized boundary so an active lifter never trips the
- * idle alarm. No-op when the set didn't register an idle spec.
+ * idle alarm. No-op when the set didn't register an inactivity timeout.
  */
 export function resetIdleWatchdog(state: ServerState, setId: string, watch?: WatchConfig): void {
-  if (watch === undefined) return;
-  const smallest = smallestIdleSpec(watch);
-  if (smallest === undefined) return;
-  const idleMs = smallest.spec.value;
+  if (watch === undefined || watch.inactivityTimeoutMs === undefined) return;
+  const idleMs = watch.inactivityTimeoutMs;
   // Re-arm with the same onFire — read-time snapshot still works because
-  // the closure captures setId and the spec, not stale rep data. The
-  // watchdog is registered per-set and setIds are unique across slots
-  // (LiveState mints them) so the bridge can re-arm without threading a
-  // slot id; fireIdleTimeout discovers the right slot from the setId.
+  // the closure captures setId, not stale rep data. The watchdog is
+  // registered per-set and setIds are unique across slots (LiveState mints
+  // them) so the bridge can re-arm without threading a slot id;
+  // fireIdleTimeout discovers the right slot from the setId.
   state.setWatchdog.reset(setId, idleMs, () => {
-    fireIdleTimeout(
-      state,
-      setId,
-      /* setStartedAt — recomputed below */ '',
-      smallest.spec,
-      smallest.isStopOn,
-      slotForSetId(state, setId),
-    );
+    fireIdleTimeout(state, setId, '', idleMs, slotForSetId(state, setId));
   });
 }
 
@@ -346,47 +335,22 @@ function slotForSetId(state: ServerState, setId: string): string {
   return PRIMARY_SLOT;
 }
 
-interface SmallestIdleSpec {
-  spec: Extract<TriggerSpec, { type: 'idle_timeout_ms' }>;
-  isStopOn: boolean;
-}
-
-/**
- * Pick the spec with the smallest threshold across stopOn + notifyOn.
- * `isStopOn=true` if the winning threshold appears in stopOn (a
- * stopOn:30s + notifyOn:60s registers the 30s as stopOn, since 30 < 60).
- * If the same threshold appears in both arrays, stopOn wins so the
- * coach's "abandon and end" intent takes priority over the soft notify.
- */
-function smallestIdleSpec(watch: WatchConfig): SmallestIdleSpec | undefined {
-  let best: SmallestIdleSpec | undefined;
-  const consider = (spec: TriggerSpec, isStopOn: boolean): void => {
-    if (spec.type !== 'idle_timeout_ms') return;
-    if (best === undefined || spec.value < best.spec.value) {
-      best = { spec, isStopOn };
-    } else if (spec.value === best.spec.value && isStopOn) {
-      // stopOn wins on tie — auto-stop intent dominates notify-only.
-      best = { spec, isStopOn };
-    }
-  };
-  for (const spec of watch.stopOn) consider(spec, true);
-  for (const spec of watch.notifyOn) consider(spec, false);
-  return best;
-}
-
 /**
  * Build + publish the `idle_timeout` channel event for the active set,
- * then auto-stop if the firing spec was on stopOn. Reads the current
- * LiveState snapshot so the payload reflects whichever reps closed
- * before the timeout. The dedupe key prevents double-fire if a stray
- * reset somehow re-arms the timer after expiry — defensive.
+ * then force-close as `partial` / `inactivity_timeout`. Reads the current
+ * LiveState snapshot so the payload reflects whichever reps closed before
+ * the timeout. The dedupe key prevents double-fire if a stray reset
+ * somehow re-arms the timer after expiry — defensive.
+ *
+ * F14/F15 rewrite: inactivity is the only retained force-close path. The
+ * user has truly abandoned the set; freeing the slot is a server-side
+ * resource-management responsibility, not a coaching decision.
  */
 function fireIdleTimeout(
   state: ServerState,
   setId: string,
   _setStartedAt: string,
-  spec: Extract<TriggerSpec, { type: 'idle_timeout_ms' }>,
-  isStopOn: boolean,
+  thresholdMs: number,
   slotId: string,
 ): void {
   const slot = getSlot(state, slotId);
@@ -396,7 +360,7 @@ function fireIdleTimeout(
     // and this callback — silent drop.
     return;
   }
-  const dedupeKey = `idle_timeout_ms:${spec.value}`;
+  const dedupeKey = `inactivity_timeout:${thresholdMs}`;
   if (!slot.live.tryFireTrigger(dedupeKey)) {
     return;
   }
@@ -416,18 +380,15 @@ function fireIdleTimeout(
     }
     return set.startedAt;
   })();
-  const payload = buildIdleTimeoutPayload(set, device, spec.value, spec.value, lastRepAt, isStopOn);
+  const payload = buildIdleTimeoutPayload(set, device, thresholdMs, thresholdMs, lastRepAt, true);
   state.channels.forSlot(slotId).publish(payload);
-  if (isStopOn) {
-    void finalizeSet(state, slotId, {
-      cause: 'tool',
-      disengageMotor: true,
-      partialReason: 'auto_stopped',
-      auto_stop_cause: 'idle_timeout_ms',
-    }).catch((err) => {
-      log.warn('set-tools: idle_timeout auto-stop finalize failed', err);
-    });
-  }
+  void finalizeSet(state, slotId, {
+    cause: 'tool',
+    disengageMotor: true,
+    partialReason: 'inactivity_timeout',
+  }).catch((err) => {
+    log.warn('set-tools: inactivity-timeout finalize failed', err);
+  });
 }
 
 async function fetchPreviousSetSummary(
@@ -477,31 +438,32 @@ async function endSetTool(
 }
 
 /**
- * Shared finalize sequence used by the explicit `set.end` tool, the
- * bridge's autonomous `set_ended_by_device` handler, AND the trigger DSL
- * `stopOn` auto-stop path. Returns the persisted set on success, or
- * `undefined` when no set was active (the device-signal / auto-stop callers
- * treat this as a silent drop; the tool caller turns it into NO_ACTIVE_SET).
+ * Shared finalize sequence used by the explicit `set.end` tool, the bridge's
+ * autonomous device-signal handler, the inactivity-watchdog force-close,
+ * AND the `device.exit_guided_load` reap path. Returns the persisted set on
+ * success, or `undefined` when no set was active (autonomous callers treat
+ * this as a silent drop; the tool caller turns it into NO_ACTIVE_SET).
  *
- * `disengageMotor` should be `true` for the tool / auto-stop paths (we
+ * F14/F15 rewrite: there is no longer a watch-trigger force-close path.
+ * Watch triggers publish advisory channel events only; the canonical set
+ * close comes from the device's `aa 85 5f` disengage signal or the user's
+ * explicit `set.end` tool call. The only remaining force-close paths are
+ * inactivity (the user walked away), disconnect, session_end cascade, and
+ * the guided-load reap.
+ *
+ * `disengageMotor` should be `true` for the tool / inactivity paths (we
  * explicitly stop recording so the cable goes free for rest) and `false`
- * for the device signal path — the device has already de-engaged on its
+ * for the device-signal path — the device has already de-engaged on its
  * own, and an extra `Workout.STOP` would be a no-op at best and a
  * connection-state churn at worst.
  *
- * `cause` selects the channel `event_type` (`set_ended` vs
- * `set_ended_by_device`) and, for the device-signal path, also stamps the
- * stored row with `partial=true` and `partialReason='device_signal'`.
+ * `cause` is `'tool'` for tool / auto-create reap / inactivity paths and
+ * `'device_signal'` for the autonomous device-signal close. In the unified
+ * payload (`event_type='set_ended'`) it flows through to `meta.closed_by`.
  *
- * `partialReason` overrides the LiveState-derived stamp (used by the
- * trigger DSL auto-stop path to mark the row as `'auto_stopped'`). When
- * absent, the device-signal path keeps stamping `'device_signal'`, and the
- * tool path keeps the graceful-close `partial=false`.
- *
- * `auto_stop_cause` flows through to the `set_ended` payload's meta and
- * content as `auto_stop_cause` so the model can distinguish auto-stop
- * sub-causes (`rep_count_reached`, `velocity_loss_exceeded`,
- * `idle_timeout_ms`) without re-parsing the partial_reason enum.
+ * `partialReason` flags the row as partial. `'device_signal'` is no longer
+ * a partial reason — a device-driven close is the canonical natural close.
+ * The tool path with no partialReason is a graceful close.
  */
 export async function finalizeSet(
   state: ServerState,
@@ -509,8 +471,7 @@ export async function finalizeSet(
   opts: {
     cause: SetEndedCause;
     disengageMotor: boolean;
-    partialReason?: 'auto_stopped' | 'inactivity_timeout' | 'guided_load_exited';
-    auto_stop_cause?: string;
+    partialReason?: 'inactivity_timeout' | 'guided_load_exited';
   },
 ): Promise<StoredSet | undefined> {
   const slot = getSlot(state, slotId);
@@ -537,19 +498,16 @@ export async function finalizeSet(
   // block is omitted.
   const deviceSummary = slot.live.consumeLatestSummary();
   const deviceSetSummary = slot.live.consumeLatestSetSummary();
-  // F14 (VMCP-01.28): when the auto-stop / inactivity-timeout path fires
-  // (watch / trigger DSL matched or idle watchdog tripped), the
-  // rep_finalized convention guarantees `reps[length-1]` is the
-  // just-started in-progress next rep — concentric samples only, eccentric
-  // never opened. Drop it before persistence so the StoredSet's rep_count
-  // matches the user's intent (`rep_count_reached: N` persists N reps, not
-  // N+1) and vbt_summary.last_rep_v isn't poisoned by a single-sample
-  // concentric peak. Device-signal close and graceful tool close both
-  // leave the trailing rep alone — the SDK / explicit-tool paths handle
-  // those cases on their own (F7 keeps the graceful-tool trailing rep as
-  // documented deferred work).
-  const dropTrailingInProgress =
-    opts.partialReason === 'auto_stopped' || opts.partialReason === 'inactivity_timeout';
+  // F14 (VMCP-01.28): inactivity-timeout force-close fires while a rep is
+  // potentially in-progress; the trailing rep in the analytics-set may be
+  // concentric-only with no eccentric phase (`addSampleToSet` opens a new
+  // rep on the eccentric→concentric edge). Persisting it inflates the
+  // rep count and pollutes vbt_summary.last_rep_v. Drop before persistence
+  // only for the inactivity-timeout path. Device-signal close, graceful
+  // tool close, and the guided-load reap all leave the trailing rep alone
+  // — those are intentional close moments where the analytics output is
+  // already the right shape.
+  const dropTrailingInProgress = opts.partialReason === 'inactivity_timeout';
   const finalized = slot.live.endSet(undefined, { dropTrailingInProgress });
   if (finalized === undefined) {
     return undefined;
@@ -580,18 +538,15 @@ export async function finalizeSet(
       : (startSnapshot ?? slot.live.snapshotDevice());
   state.setStartDeviceSnapshots.delete(setId);
 
-  // Pick the partial-reason stamp (if any). Auto-stop wins when supplied;
-  // device-signal wins when no auto-stop reason is set; otherwise the
-  // graceful tool-end path leaves the row non-partial.
-  const finalizedWithCause: ActiveSet = (() => {
-    if (opts.partialReason !== undefined) {
-      return { ...finalized, status: 'partial', partialReason: opts.partialReason };
-    }
-    if (opts.cause === 'device_signal') {
-      return { ...finalized, status: 'partial', partialReason: 'device_signal' };
-    }
-    return finalized;
-  })();
+  // Stamp partial only when an explicit reason was supplied. F14/F15
+  // rewrite: device-signal close is no longer "partial" — it's the
+  // canonical natural set close. The old logic stamped
+  // `partialReason='device_signal'` on every onSetSummary close, which
+  // mislabeled the intentional disengage as something went wrong.
+  const finalizedWithCause: ActiveSet =
+    opts.partialReason !== undefined
+      ? { ...finalized, status: 'partial', partialReason: opts.partialReason }
+      : finalized;
   const stored = toStoredSet(finalizedWithCause, device);
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
@@ -600,13 +555,7 @@ export async function finalizeSet(
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
-  const payload = buildSetEndedPayload(
-    stored,
-    opts.cause,
-    opts.auto_stop_cause,
-    deviceSummary,
-    deviceSetSummary,
-  );
+  const payload = buildSetEndedPayload(stored, opts.cause, deviceSummary, deviceSetSummary);
   state.channels.forSlot(slotId).publish(payload);
   return stored;
 }
