@@ -23,7 +23,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
   getPhaseRangeOfMotion,
-  getRepPeakLoad,
+  getRepPeakForce,
 } from '@voltras/workout-analytics';
 
 import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
@@ -143,7 +143,7 @@ export function buildRepFinalizedPayload(
         mean_velocity: eccMean,
         duration_ms: phaseMovementDurationMs(finalizedRep.eccentric),
       },
-      peak_force: getRepPeakLoad(finalizedRep),
+      peak_force: getRepPeakForce(finalizedRep),
       rom_m: repRangeOfMotion(finalizedRep),
     },
     set_context: {
@@ -388,7 +388,7 @@ export function buildSetEndedPayload(
   const summary = buildSetEndedSummary(
     stored.reps.length,
     safeDurationMs,
-    vbt.velocity_loss_pct,
+    vbt.velocity_delta_pct,
     cause,
   );
 
@@ -457,27 +457,34 @@ function serializeRepForPayload(rep: Rep): {
 interface VbtSummary {
   first_rep_v: number | null;
   last_rep_v: number | null;
-  velocity_loss_pct: number | null;
+  /**
+   * `(first - last) / first × 100`. Positive when the set decelerated
+   * (typical "velocity loss"); negative when reps got faster across the set
+   * (e.g. potentiation, warm-up sets, technical improvement). Renamed from
+   * the prior `velocity_loss_pct` so the sign is interpretable without an
+   * implicit "loss" framing.
+   */
+  velocity_delta_pct: number | null;
   mean_velocity: number | null;
 }
 
 function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   if (reps.length === 0) {
-    return { first_rep_v: null, last_rep_v: null, velocity_loss_pct: null, mean_velocity: null };
+    return { first_rep_v: null, last_rep_v: null, velocity_delta_pct: null, mean_velocity: null };
   }
-  // Loss% is computed on the native scale (ratio is unit-invariant); first
+  // Delta% is computed on the native scale (ratio is unit-invariant); first
   // and last velocity values get converted to m/s for the payload so the
   // field labels match. `meanConcentricPeakVelocity` already converts.
   const firstRaw = reps[0].concentric.peakVelocity;
   const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
-  const lossPct =
+  const deltaPct =
     reps.length < 2 || firstRaw <= 0
       ? null
       : Number((100 * ((firstRaw - lastRaw) / firstRaw)).toFixed(1));
   return {
     first_rep_v: mmsToMps(firstRaw),
     last_rep_v: mmsToMps(lastRaw),
-    velocity_loss_pct: lossPct,
+    velocity_delta_pct: deltaPct,
     mean_velocity: meanConcentricPeakVelocity(reps),
   };
 }
@@ -485,14 +492,25 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
 function buildSetEndedSummary(
   repCount: number,
   durationMs: number,
-  lossPct: number | null,
+  deltaPct: number | null,
   cause: SetEndedCause,
 ): string {
   const seconds = Math.round(durationMs / 1000);
   const headline = cause === 'device_signal' ? 'Set ended by device' : 'Set ended';
   const base = `${headline}: ${repCount} reps in ${seconds}s`;
-  const withLoss = lossPct === null ? base : `${base}, ${lossPct}% velocity loss`;
-  return cause === 'device_signal' ? `${withLoss} (set ended automatically)` : withLoss;
+  // Phrase the delta in the direction the user actually moved: positive →
+  // "slower" (typical fatigue), negative → "faster" (potentiation / warm-up),
+  // zero → no qualifier. Avoids the prior "-36.1% velocity loss" wording
+  // that confused readers when reps got faster across the set (F9).
+  const withDelta =
+    deltaPct === null
+      ? base
+      : deltaPct > 0
+        ? `${base}, ${deltaPct.toFixed(1)}% slower last-vs-first`
+        : deltaPct < 0
+          ? `${base}, ${Math.abs(deltaPct).toFixed(1)}% faster last-vs-first`
+          : base;
+  return cause === 'device_signal' ? `${withDelta} (set ended automatically)` : withDelta;
 }
 
 /**
