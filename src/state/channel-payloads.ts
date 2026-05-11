@@ -31,6 +31,27 @@ import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 
 /**
+ * Convert a velocity from workout-analytics's native scale (mm/s, despite
+ * the upstream m/s docstring — confirmed on hardware 2026-05-11) into m/s
+ * for serialization. Three decimal places preserve mm/s granularity. The
+ * conversion happens at the channel-payload boundary, NOT inside WA, so the
+ * analytics layer's canonical unit stays untouched.
+ */
+function mmsToMps(mms: number): number {
+  return Number((mms / 1000).toFixed(3));
+}
+
+/**
+ * Convert a range-of-motion value from workout-analytics's native scale
+ * (millimetres) into metres for the `rom_m` payload field. Three decimals
+ * preserve millimetre granularity. Same boundary-conversion rule as
+ * `mmsToMps`.
+ */
+function mmToM(mm: number): number {
+  return Number((mm / 1000).toFixed(3));
+}
+
+/**
  * Phase movement duration in milliseconds. Workout-analytics's
  * `getPhaseMovementDuration` returns seconds; we want milliseconds in the
  * channel payload so the model doesn't have to divide.
@@ -47,16 +68,20 @@ function phaseMovementDurationMs(phase: Rep['concentric']): number {
 }
 
 /**
- * Return ROM in meters when the phase has samples, otherwise null. ROM is
+ * Return ROM in metres when the phase has samples, otherwise null. ROM is
  * the absolute position delta across the phase; we expose it on the rep
  * payload as a single value (concentric ROM is the canonical "lift
  * distance") so the model gets a single ROM number per rep.
+ *
+ * Workout-analytics returns ROM in millimetres (despite some upstream m/s
+ * docstrings claiming metres — verified on hardware 2026-05-11). We convert
+ * here so the payload field name (`rom_m`) matches the value.
  */
 function repRangeOfMotion(rep: Rep): number | null {
   if (rep.concentric.samples.length === 0) {
     return null;
   }
-  return getPhaseRangeOfMotion(rep.concentric);
+  return mmToM(getPhaseRangeOfMotion(rep.concentric));
 }
 
 /**
@@ -78,10 +103,14 @@ export function buildRepFinalizedPayload(
   repsLengthIncludingInProgress: number,
 ): { meta: Record<string, string>; content: string } {
   const repNumber = finalizedIndex + 1;
-  const concPeak = finalizedRep.concentric.peakVelocity;
-  const eccPeak = finalizedRep.eccentric.peakVelocity;
-  const concMean = getPhaseMeanVelocity(finalizedRep.concentric);
-  const eccMean = getPhaseMeanVelocity(finalizedRep.eccentric);
+  // WA delivers velocities in mm/s; we convert to m/s at the serialization
+  // boundary so the payload-field labels (`peak_velocity`, `mean_velocity`,
+  // m/s by convention) match the values without disturbing WA's internal
+  // canonical unit. See `mmsToMps`.
+  const concPeak = mmsToMps(finalizedRep.concentric.peakVelocity);
+  const eccPeak = mmsToMps(finalizedRep.eccentric.peakVelocity);
+  const concMean = mmsToMps(getPhaseMeanVelocity(finalizedRep.concentric));
+  const eccMean = mmsToMps(getPhaseMeanVelocity(finalizedRep.eccentric));
 
   const meta: Record<string, string> = {
     source: 'voltras',
@@ -106,12 +135,12 @@ export function buildRepFinalizedPayload(
       rep_number: repNumber,
       concentric: {
         peak_velocity: concPeak,
-        mean_velocity: Number(concMean.toFixed(3)),
+        mean_velocity: concMean,
         duration_ms: phaseMovementDurationMs(finalizedRep.concentric),
       },
       eccentric: {
         peak_velocity: eccPeak,
-        mean_velocity: Number(eccMean.toFixed(3)),
+        mean_velocity: eccMean,
         duration_ms: phaseMovementDurationMs(finalizedRep.eccentric),
       },
       peak_force: getRepPeakLoad(finalizedRep),
@@ -154,10 +183,10 @@ export interface PreviousSetSummary {
 }
 
 /**
- * Aggregate per-rep concentric peak velocities and return the simple mean.
- * Returns null when no reps have any concentric movement (would otherwise
- * be 0 — and we want the model to distinguish "we don't know" from "it was
- * a zero set").
+ * Aggregate per-rep concentric peak velocities and return the simple mean
+ * in m/s (converted from WA's native mm/s at the boundary). Returns null
+ * when no reps have any concentric movement (would otherwise be 0 — and we
+ * want the model to distinguish "we don't know" from "it was a zero set").
  */
 export function meanConcentricPeakVelocity(reps: readonly Rep[]): number | null {
   let total = 0;
@@ -171,7 +200,7 @@ export function meanConcentricPeakVelocity(reps: readonly Rep[]): number | null 
   if (count === 0) {
     return null;
   }
-  return Number((total / count).toFixed(3));
+  return mmsToMps(total / count);
 }
 
 /** Build the previous-set summary from the most recent `StoredSet` in a session. */
@@ -414,12 +443,12 @@ function serializeRepForPayload(rep: Rep): {
   return {
     rep_number: rep.repNumber,
     concentric: {
-      peak_velocity: rep.concentric.peakVelocity,
-      mean_velocity: Number(getPhaseMeanVelocity(rep.concentric).toFixed(3)),
+      peak_velocity: mmsToMps(rep.concentric.peakVelocity),
+      mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.concentric)),
     },
     eccentric: {
-      peak_velocity: rep.eccentric.peakVelocity,
-      mean_velocity: Number(getPhaseMeanVelocity(rep.eccentric).toFixed(3)),
+      peak_velocity: mmsToMps(rep.eccentric.peakVelocity),
+      mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.eccentric)),
     },
     rom_m: repRangeOfMotion(rep),
   };
@@ -436,16 +465,20 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   if (reps.length === 0) {
     return { first_rep_v: null, last_rep_v: null, velocity_loss_pct: null, mean_velocity: null };
   }
-  const first = reps[0].concentric.peakVelocity;
-  const last = reps[reps.length - 1].concentric.peakVelocity;
-  const mean = meanConcentricPeakVelocity(reps);
+  // Loss% is computed on the native scale (ratio is unit-invariant); first
+  // and last velocity values get converted to m/s for the payload so the
+  // field labels match. `meanConcentricPeakVelocity` already converts.
+  const firstRaw = reps[0].concentric.peakVelocity;
+  const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
   const lossPct =
-    reps.length < 2 || first <= 0 ? null : Number((100 * ((first - last) / first)).toFixed(1));
+    reps.length < 2 || firstRaw <= 0
+      ? null
+      : Number((100 * ((firstRaw - lastRaw) / firstRaw)).toFixed(1));
   return {
-    first_rep_v: first,
-    last_rep_v: last,
+    first_rep_v: mmsToMps(firstRaw),
+    last_rep_v: mmsToMps(lastRaw),
     velocity_loss_pct: lossPct,
-    mean_velocity: mean,
+    mean_velocity: meanConcentricPeakVelocity(reps),
   };
 }
 
@@ -610,6 +643,12 @@ export function buildVelocityLossExceededPayload(
   actualReps: number,
   autoStopped: boolean,
 ): { meta: Record<string, string>; content: string } {
+  // `baseline` and `current` arrive in WA's native mm/s — convert at the
+  // serialization boundary so the labels (`baseline_velocity`,
+  // `current_velocity`, m/s in the summary) match the values. Loss% is
+  // unit-invariant so the caller's pre-computed `pct` is passed through.
+  const baselineMps = mmsToMps(baseline);
+  const currentMps = mmsToMps(current);
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'velocity_loss_exceeded',
@@ -617,14 +656,14 @@ export function buildVelocityLossExceededPayload(
     session_id: set.sessionId,
     velocity_loss_pct: pct.toFixed(1),
     threshold_pct: String(threshold),
-    baseline_velocity: baseline.toFixed(3),
-    current_velocity: current.toFixed(3),
+    baseline_velocity: baselineMps.toFixed(3),
+    current_velocity: currentMps.toFixed(3),
     rep_count_at_threshold: String(actualReps),
     auto_stopped: autoStopped ? 'true' : 'false',
   };
   const summary =
-    `Velocity dropped ${pct.toFixed(1)}% (${baseline.toFixed(2)} -> ` +
-    `${current.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%${
+    `Velocity dropped ${pct.toFixed(1)}% (${baselineMps.toFixed(2)} -> ` +
+    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%${
       autoStopped ? ' — auto-stopping' : ''
     }.`;
   const content = JSON.stringify({
@@ -633,8 +672,8 @@ export function buildVelocityLossExceededPayload(
       type: 'velocity_loss_exceeded',
       threshold_pct: threshold,
       actual_pct: Number(pct.toFixed(1)),
-      baseline_velocity: baseline,
-      current_velocity: current,
+      baseline_velocity: baselineMps,
+      current_velocity: currentMps,
       baseline_rep_number: baselineRepNumber,
     },
     set_so_far: summarizeSetForTrigger(set, device),
