@@ -434,13 +434,15 @@ describe('wireEventBridge', () => {
   });
 
   describe('frame-driven cycle detection', () => {
+    // velocity is in WA's native mm/s — the channel-payload boundary divides
+    // by 1000 on the way out so a 500 mm/s sample lands as `peak_velocity: 0.5`.
     function feedFrame(seq: number, phase: number): void {
       client.fire.frame({
         sequence: seq,
         timestamp: 1000 + seq,
         phase,
         position: 0.1 * seq,
-        velocity: 0.5,
+        velocity: 500,
         force: 50,
       });
     }

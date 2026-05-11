@@ -29,6 +29,11 @@ import {
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
 
+// Note on units: `peakVelocity` and `totalVelocity` here are in WA's native
+// scale (mm/s) — the channel-payload builders divide by 1000 on the way out
+// so the serialized values land as m/s. Similarly `startPos`/`endPos` are
+// in mm so `rom_m` lands as metres. Tests below pass values like `850`
+// (= 0.85 m/s) and `600` (= 0.6 m ROM) accordingly.
 function makePhase(
   overrides: Partial<{
     samples: number;
@@ -71,6 +76,8 @@ function makePhase(
   };
 }
 
+// `concPeak` and `eccPeak` are in mm/s (WA's native unit). Positions are in
+// mm — 600 here = 0.6 m ROM after the payload-boundary conversion.
 function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
   return {
     repNumber,
@@ -81,8 +88,8 @@ function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
       movementSampleCount: 4,
       startTime: 1000,
       endTime: 1400,
-      startPos: 0.0,
-      endPos: 0.6,
+      startPos: 0,
+      endPos: 600,
     }),
     eccentric: makePhase({
       samples: 4,
@@ -91,8 +98,8 @@ function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
       movementSampleCount: 4,
       startTime: 1400,
       endTime: 1900,
-      startPos: 0.6,
-      endPos: 0.0,
+      startPos: 600,
+      endPos: 0,
     }),
   };
 }
@@ -112,7 +119,9 @@ describe('buildRepFinalizedPayload', () => {
   };
 
   it('emits meta with source/event_type/set_id/rep_count + scalar peak velocities and weight', () => {
-    const rep = makeRep(1, 0.85, 0.62);
+    // makeRep peakVelocity is in WA's native mm/s; the payload converts at
+    // the boundary so meta surfaces m/s (`850 mm/s` → `'0.850'`).
+    const rep = makeRep(1, 850, 620);
     const { meta } = buildRepFinalizedPayload(rep, 0, set, device, 2);
     expect(meta).toMatchObject({
       source: 'voltras',
@@ -133,14 +142,15 @@ describe('buildRepFinalizedPayload', () => {
   });
 
   it('omits weight_lbs meta when the device has no recorded weight', () => {
-    const rep = makeRep(1, 0.5, 0.4);
+    const rep = makeRep(1, 500, 400);
     const noWeight: DeviceSnapshot = { connected: true };
     const { meta } = buildRepFinalizedPayload(rep, 0, set, noWeight, 2);
     expect(meta.weight_lbs).toBeUndefined();
   });
 
   it('emits content as JSON with summary first + rep phase data + set_context', () => {
-    const rep = makeRep(2, 0.71, 0.55);
+    // 710 mm/s peak conc → 0.71 m/s after boundary conversion.
+    const rep = makeRep(2, 710, 550);
     const { content } = buildRepFinalizedPayload(rep, 1, set, device, 3);
     const parsed = JSON.parse(content);
     expect(parsed.summary).toBe('Rep 2: 0.71 m/s peak conc, 135 lbs');
@@ -165,7 +175,7 @@ describe('buildRepFinalizedPayload', () => {
   });
 
   it('uses a weight-less summary when device weight is unknown', () => {
-    const rep = makeRep(1, 0.5, 0.4);
+    const rep = makeRep(1, 500, 400);
     const noWeight: DeviceSnapshot = { connected: true };
     const { content } = buildRepFinalizedPayload(rep, 0, set, noWeight, 2);
     const parsed = JSON.parse(content);
@@ -177,7 +187,8 @@ describe('buildRepFinalizedPayload', () => {
 
 describe('meanConcentricPeakVelocity', () => {
   it('averages concentric peak velocity across reps with concentric samples', () => {
-    const reps = [makeRep(1, 0.6, 0.4), makeRep(2, 0.7, 0.5), makeRep(3, 0.8, 0.6)];
+    // Native mm/s in, m/s out: mean of 600/700/800 mm/s = 700 mm/s = 0.7 m/s.
+    const reps = [makeRep(1, 600, 400), makeRep(2, 700, 500), makeRep(3, 800, 600)];
     expect(meanConcentricPeakVelocity(reps)).toBeCloseTo(0.7, 3);
   });
 
@@ -206,8 +217,8 @@ describe('summarizePreviousSet', () => {
       trainingMode: 'WeightTraining',
       weightLbs: 100,
       reps: [
-        { ...makeRep(1, 0.8, 0.5), id: 'r1', setId: 'prev-1', index: 0 },
-        { ...makeRep(2, 0.6, 0.4), id: 'r2', setId: 'prev-1', index: 1 },
+        { ...makeRep(1, 800, 500), id: 'r1', setId: 'prev-1', index: 0 },
+        { ...makeRep(2, 600, 400), id: 'r2', setId: 'prev-1', index: 1 },
       ],
     };
     expect(summarizePreviousSet(stored)).toEqual({
@@ -289,7 +300,7 @@ describe('buildSetEndedPayload', () => {
   }
 
   it('meta includes rep_count, duration_ms, partial_reason when applicable', () => {
-    const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.7, 0.5)];
+    const reps = [makeRep(1, 850, 500), makeRep(2, 700, 500)];
     const stored = buildStored(reps);
     const { meta } = buildSetEndedPayload(stored);
     expect(meta).toMatchObject({
@@ -306,7 +317,7 @@ describe('buildSetEndedPayload', () => {
   });
 
   it('content has summary + set + reps array + vbt_summary', () => {
-    const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+    const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
     const stored = buildStored(reps);
     const { content } = buildSetEndedPayload(stored);
     const parsed = JSON.parse(content);
@@ -330,14 +341,14 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.vbt_summary).toEqual({
       first_rep_v: 0.85,
       last_rep_v: 0.5,
-      // (0.85 - 0.5) / 0.85 * 100 = 41.176... => 41.2
+      // (850 - 500) / 850 * 100 = 41.176... => 41.2 (unit-invariant)
       velocity_loss_pct: 41.2,
       mean_velocity: 0.675,
     });
   });
 
   it('vbt_summary.velocity_loss_pct is null when fewer than 2 reps', () => {
-    const reps = [makeRep(1, 0.6, 0.4)];
+    const reps = [makeRep(1, 600, 400)];
     const { content } = buildSetEndedPayload(buildStored(reps));
     const parsed = JSON.parse(content);
     expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
@@ -360,7 +371,7 @@ describe('buildSetEndedPayload', () => {
 
   describe('cause = "device_signal" → set_ended_by_device', () => {
     it('emits meta.event_type=set_ended_by_device with the same scalar fields as set_ended', () => {
-      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps, { reason: 'device_signal' });
       const { meta } = buildSetEndedPayload(stored, 'device_signal');
       expect(meta).toMatchObject({
@@ -375,7 +386,7 @@ describe('buildSetEndedPayload', () => {
     });
 
     it('summary text headlines "Set ended by device" and tails the user-pressed-Stop note', () => {
-      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps, { reason: 'device_signal' });
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
@@ -386,7 +397,7 @@ describe('buildSetEndedPayload', () => {
     });
 
     it('content payload is structurally identical to set_ended (reps + vbt_summary + set)', () => {
-      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps, { reason: 'device_signal' });
       const toolPayload = JSON.parse(buildSetEndedPayload(stored, 'tool').content);
       const devicePayload = JSON.parse(buildSetEndedPayload(stored, 'device_signal').content);
@@ -398,7 +409,7 @@ describe('buildSetEndedPayload', () => {
     });
 
     it('summary still surfaces velocity loss when the set has at least 2 reps', () => {
-      const reps = [makeRep(1, 0.85, 0.5), makeRep(2, 0.5, 0.4)];
+      const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps, { reason: 'device_signal' });
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
@@ -538,7 +549,7 @@ describe('summarizeSetForTrigger', () => {
       setId: 'set-1',
       sessionId: 'sess-1',
       startedAt: '2025-01-01T00:00:00.000Z',
-      reps: [makeRep(1, 0.85, 0.5), makeRep(2, 0.7, 0.45)],
+      reps: [makeRep(1, 850, 500), makeRep(2, 700, 450)],
       status: 'active',
     };
     const summary = summarizeSetForTrigger(set, device);
@@ -591,7 +602,7 @@ describe('buildSetTargetReachedPayload', () => {
   }
 
   it('notifyOn match: meta.auto_stopped="false", summary lacks auto-stop tail', () => {
-    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.7, 0.45)]);
+    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 700, 450)]);
     const { meta, content } = buildSetTargetReachedPayload(set, device, 8, 2, false);
     expect(meta).toMatchObject({
       source: 'voltras',
@@ -615,7 +626,7 @@ describe('buildSetTargetReachedPayload', () => {
   });
 
   it('stopOn match: meta.auto_stopped="true", summary tails the auto-stop note', () => {
-    const set = activeSet([makeRep(1, 0.85, 0.5)]);
+    const set = activeSet([makeRep(1, 850, 500)]);
     const { meta, content } = buildSetTargetReachedPayload(set, device, 5, 5, true);
     expect(meta.auto_stopped).toBe('true');
     expect(JSON.parse(content).summary).toContain('auto-stopping');
@@ -639,14 +650,17 @@ describe('buildVelocityLossExceededPayload', () => {
   }
 
   it('exposes scalar velocity context in meta and trigger details in content', () => {
-    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.8, 0.5), makeRep(3, 0.55, 0.4)]);
+    // baseline/current arrive in WA's native mm/s; builder converts to m/s
+    // for the payload labels. Pre-computed `pct` is unit-invariant and
+    // passes through unchanged.
+    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 800, 500), makeRep(3, 550, 400)]);
     const { meta, content } = buildVelocityLossExceededPayload(
       set,
       device,
       25,
       35.3,
-      0.85,
-      0.55,
+      850,
+      550,
       1,
       3,
       true,
@@ -677,14 +691,14 @@ describe('buildVelocityLossExceededPayload', () => {
   });
 
   it('notifyOn variant flips auto_stopped meta to false', () => {
-    const set = activeSet([makeRep(1, 0.85, 0.5), makeRep(2, 0.55, 0.4)]);
+    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 550, 400)]);
     const { meta, content } = buildVelocityLossExceededPayload(
       set,
       device,
       25,
       35.3,
-      0.85,
-      0.55,
+      850,
+      550,
       1,
       2,
       false,
@@ -707,7 +721,7 @@ describe('buildIdleTimeoutPayload', () => {
   }
 
   it('emits the standard meta scalars with idle/threshold ms', () => {
-    const set = activeSet([makeRep(1, 0.6, 0.4), makeRep(2, 0.5, 0.4)]);
+    const set = activeSet([makeRep(1, 600, 400), makeRep(2, 500, 400)]);
     const { meta, content } = buildIdleTimeoutPayload(
       set,
       device,
@@ -773,7 +787,7 @@ describe('buildSetEndedPayload — auto_stop_cause', () => {
   }
 
   it('flows auto_stop_cause through to meta and content.set when supplied', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5)], 'auto_stopped');
+    const stored = buildStored([makeRep(1, 800, 500)], 'auto_stopped');
     const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached');
     expect(meta.auto_stop_cause).toBe('rep_count_reached');
     expect(meta.partial_reason).toBe('auto_stopped');
@@ -782,7 +796,7 @@ describe('buildSetEndedPayload — auto_stop_cause', () => {
   });
 
   it('omits auto_stop_cause from meta and content when absent', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5)], 'disconnect');
+    const stored = buildStored([makeRep(1, 800, 500)], 'disconnect');
     const { meta, content } = buildSetEndedPayload(stored, 'tool');
     expect(meta.auto_stop_cause).toBeUndefined();
     const parsed = JSON.parse(content) as { set: { auto_stop_cause?: string } };
@@ -805,7 +819,7 @@ describe('buildSetEndedPayload — device_summary', () => {
   }
 
   it('flows deviceSummary into meta keys + content.device_summary block when supplied', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5), makeRep(2, 0.6, 0.4)]);
+    const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
     const { meta, content } = buildSetEndedPayload(stored, 'tool', undefined, {
       repCount: 2,
       schemaVersion: 1,
@@ -819,7 +833,7 @@ describe('buildSetEndedPayload — device_summary', () => {
   });
 
   it('omits device_summary keys + block when deviceSummary is undefined', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const stored = buildStored([makeRep(1, 800, 500)]);
     const { meta, content } = buildSetEndedPayload(stored);
     expect(meta.device_rep_count).toBeUndefined();
     expect(meta.device_schema_version).toBeUndefined();
@@ -828,7 +842,7 @@ describe('buildSetEndedPayload — device_summary', () => {
   });
 
   it('attaches device_summary to set_ended_by_device just like set_ended (cause-agnostic)', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const stored = buildStored([makeRep(1, 800, 500)]);
     const { meta, content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
       repCount: 1,
       schemaVersion: 3,
@@ -843,7 +857,7 @@ describe('buildSetEndedPayload — device_summary', () => {
   });
 
   it('coexists with auto_stop_cause without losing either field', () => {
-    const stored = buildStored([makeRep(1, 0.8, 0.5)]);
+    const stored = buildStored([makeRep(1, 800, 500)]);
     const { meta, content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached', {
       repCount: 1,
       schemaVersion: 2,
@@ -862,7 +876,7 @@ describe('buildSetEndedPayload — device_summary', () => {
     // Backwards-compatibility shape check: the original keys must still be
     // present and structurally identical regardless of whether the new
     // device_summary block was included.
-    const stored = buildStored([makeRep(1, 0.8, 0.5), makeRep(2, 0.6, 0.4)]);
+    const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
     const withSummary = JSON.parse(
       buildSetEndedPayload(stored, 'tool', undefined, { repCount: 2, schemaVersion: 1 }).content,
     );
@@ -891,7 +905,7 @@ describe('buildSetPreSummaryPayload', () => {
   }
 
   it('emits the standard meta scalars with device rep count + final-rep duration', () => {
-    const set = activeSet([makeRep(1, 0.8, 0.5), makeRep(2, 0.7, 0.5)]);
+    const set = activeSet([makeRep(1, 800, 500), makeRep(2, 700, 500)]);
     const { meta, content } = buildSetPreSummaryPayload(set, device, {
       schemaVersion: 1,
       targetWeightTenths: 1000,
@@ -951,7 +965,7 @@ describe('buildSetPreSummaryPayload', () => {
   });
 
   it('passes through large repDurationMs values without truncation', () => {
-    const set = activeSet([makeRep(1, 0.8, 0.5)]);
+    const set = activeSet([makeRep(1, 800, 500)]);
     const { meta, content } = buildSetPreSummaryPayload(set, device, {
       schemaVersion: 1,
       targetWeightTenths: 1500,
@@ -967,7 +981,7 @@ describe('buildSetPreSummaryPayload', () => {
   });
 
   it.each([1, 2, 3, 4])('carries schemaVersion=%i through meta + content', (sv) => {
-    const set = activeSet([makeRep(1, 0.7, 0.5)]);
+    const set = activeSet([makeRep(1, 700, 500)]);
     const { meta, content } = buildSetPreSummaryPayload(set, device, {
       schemaVersion: sv,
       targetWeightTenths: 1000,
@@ -981,7 +995,7 @@ describe('buildSetPreSummaryPayload', () => {
   });
 
   it('preserves target_weight_tenths raw value (PT Claude divides by 10 if it wants pounds)', () => {
-    const set = activeSet([makeRep(1, 0.8, 0.5)]);
+    const set = activeSet([makeRep(1, 800, 500)]);
     const { content } = buildSetPreSummaryPayload(set, device, {
       schemaVersion: 1,
       targetWeightTenths: 1357,
