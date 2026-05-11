@@ -537,7 +537,20 @@ export async function finalizeSet(
   // block is omitted.
   const deviceSummary = slot.live.consumeLatestSummary();
   const deviceSetSummary = slot.live.consumeLatestSetSummary();
-  const finalized = slot.live.endSet();
+  // F14 (VMCP-01.28): when the auto-stop / inactivity-timeout path fires
+  // (watch / trigger DSL matched or idle watchdog tripped), the
+  // rep_finalized convention guarantees `reps[length-1]` is the
+  // just-started in-progress next rep — concentric samples only, eccentric
+  // never opened. Drop it before persistence so the StoredSet's rep_count
+  // matches the user's intent (`rep_count_reached: N` persists N reps, not
+  // N+1) and vbt_summary.last_rep_v isn't poisoned by a single-sample
+  // concentric peak. Device-signal close and graceful tool close both
+  // leave the trailing rep alone — the SDK / explicit-tool paths handle
+  // those cases on their own (F7 keeps the graceful-tool trailing rep as
+  // documented deferred work).
+  const dropTrailingInProgress =
+    opts.partialReason === 'auto_stopped' || opts.partialReason === 'inactivity_timeout';
+  const finalized = slot.live.endSet(undefined, { dropTrailingInProgress });
   if (finalized === undefined) {
     return undefined;
   }

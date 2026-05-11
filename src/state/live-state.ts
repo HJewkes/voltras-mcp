@@ -407,6 +407,7 @@ export class LiveState {
    */
   endSet(
     reason?: 'disconnect' | 'session_end' | 'auto_stopped' | 'inactivity_timeout',
+    opts: { dropTrailingInProgress?: boolean } = {},
   ): ActiveSet | undefined {
     const current = this.set;
     if (current === undefined) {
@@ -419,7 +420,22 @@ export class LiveState {
     // practice; whichever produced reps wins.
     const analyticsReps =
       this._analyticsSet === undefined ? [] : completeSet(this._analyticsSet).reps;
-    const finalReps = analyticsReps.length > 0 ? analyticsReps : current.reps;
+    const rawReps = analyticsReps.length > 0 ? analyticsReps : current.reps;
+    // F14 (VMCP-01.28): when an auto-stop / watch-trigger fires the finalize,
+    // the trigger evaluation in event-bridge runs against `reps[length-2]`
+    // while `reps[length-1]` is the just-started in-progress next rep
+    // (concentric samples only, no eccentric phase, ROM=0). Persisting it
+    // inflates the rep count by one and pollutes vbt_summary.last_rep_v with
+    // a single-sample peak. Drop the trailing rep only when (a) the caller
+    // signaled `dropTrailingInProgress` AND (b) the rep is provably
+    // incomplete (eccentric phase never started). Both guards are required:
+    // graceful `set.end` keeps trailing-rep data intact (F7 deferral) and a
+    // legitimately complete rep N — eccentric closed before the trigger
+    // fired — must not be discarded.
+    const finalReps =
+      opts.dropTrailingInProgress === true && isTrailingRepIncomplete(rawReps)
+        ? rawReps.slice(0, -1)
+        : rawReps;
     const endedAt = new Date().toISOString();
     const finalized: ActiveSet = {
       ...current,
@@ -754,4 +770,19 @@ export class LiveState {
     }
     return null;
   }
+}
+
+/**
+ * F14 helper: the trailing rep is "incomplete" when its eccentric phase
+ * carries no samples. The analytics-set pipeline only opens a new rep on an
+ * eccentric→concentric transition, so a rep with concentric-only samples is
+ * always the in-progress rep mid-cycle — never a completed rep. Returns
+ * false on an empty rep array so the caller short-circuits to a no-op slice.
+ */
+function isTrailingRepIncomplete(reps: readonly Rep[]): boolean {
+  if (reps.length === 0) {
+    return false;
+  }
+  const last = reps[reps.length - 1];
+  return last.eccentric.samples.length === 0;
 }
