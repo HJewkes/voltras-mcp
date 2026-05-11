@@ -45,6 +45,7 @@ const { LiveState } = await import('../live-state.js');
 const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
 const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import('../slot-manager.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
+const { CoercionWatch } = await import('../coercion-watch.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's
  * isConnected check). Slot-cap tests need slots whose clients claim to be
@@ -65,6 +66,7 @@ function makeStateWithPrimary(opts: { primaryConnected?: boolean } = {}): Server
     client,
     live: new LiveState(),
     modeRevertGuard: new ModeRevertGuard(),
+    coercionWatch: new CoercionWatch(),
   });
   return { slots } as unknown as ServerState;
 }

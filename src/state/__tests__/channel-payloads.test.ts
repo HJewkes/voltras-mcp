@@ -19,6 +19,7 @@ import {
   buildSetEndedPayload,
   buildSetPreSummaryPayload,
   buildSetStartedPayload,
+  buildSettingCoercedPayload,
   buildSetTargetReachedPayload,
   buildVelocityLossExceededPayload,
   meanConcentricPeakVelocity,
@@ -26,6 +27,7 @@ import {
   summarizeSetForTrigger,
   triggerDedupeKey,
 } from '../channel-payloads.js';
+import type { PendingCoercionCheck } from '../coercion-watch.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
 
@@ -1054,5 +1056,152 @@ describe('buildSetPreSummaryPayload', () => {
       pre_summary: { target_weight_tenths: number };
     };
     expect(parsed.pre_summary.target_weight_tenths).toBe(1357);
+  });
+});
+
+describe('buildSettingCoercedPayload', () => {
+  const baseCheck: PendingCoercionCheck = {
+    setterName: 'device.set_eccentric',
+    field: 'eccentricPercentTenths',
+    requested: 0,
+    setterReturnedAt: 1_000_000,
+  };
+  const device: DeviceSnapshot = {
+    connected: true,
+    weightLbs: 30,
+    trainingMode: 'WeightTraining',
+    assistMode: 2,
+  };
+
+  it('meta carries every load-bearing field as a string', () => {
+    const { meta } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      setId: null,
+      sessionId: null,
+    });
+    expect(meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'setting_coerced',
+      field: 'eccentricPercentTenths',
+      requested_value: '0',
+      device_value: '320',
+      source_setter: 'device.set_eccentric',
+      coercion_delta: '320',
+      coercion_window_ms: '240',
+    });
+    expect(meta.set_id).toBeUndefined();
+    expect(meta.session_id).toBeUndefined();
+  });
+
+  it('content surfaces field-specific eccentric summary when assistMode=on', () => {
+    const { content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      setId: null,
+      sessionId: null,
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe(
+      'Device coerced ecc 0% -> 32% after device.set_eccentric. assistMode=on enforces a non-zero ecc floor.',
+    );
+    expect(parsed).toMatchObject({
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      device: 320,
+      delta: 320,
+      source_setter: 'device.set_eccentric',
+      coercion_window_ms: 240,
+    });
+    expect(parsed.set_context).toEqual({
+      set_id: null,
+      session_id: null,
+      weight_lbs: 30,
+      training_mode: 'WeightTraining',
+    });
+  });
+
+  it('omits the assistMode-on tail when the device snapshot is assistMode off', () => {
+    const offDevice: DeviceSnapshot = { ...device, assistMode: 0 };
+    const { content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, offDevice, {
+      setId: null,
+      sessionId: null,
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe('Device coerced ecc 0% -> 32% after device.set_eccentric.');
+  });
+
+  it('emits set_id + session_id meta when context is populated', () => {
+    const { meta, content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      setId: 'set-x',
+      sessionId: 'sess-y',
+    });
+    expect(meta.set_id).toBe('set-x');
+    expect(meta.session_id).toBe('sess-y');
+    const parsed = JSON.parse(content);
+    expect(parsed.set_context.set_id).toBe('set-x');
+    expect(parsed.set_context.session_id).toBe('sess-y');
+  });
+
+  it('renders chains-specific summary in lbs', () => {
+    const check: PendingCoercionCheck = {
+      setterName: 'device.start_guided_load',
+      field: 'chainTargetForceTenths',
+      requested: 100, // 10 lbs
+      setterReturnedAt: 1_000_000,
+    };
+    const { content } = buildSettingCoercedPayload(
+      check,
+      20, // 2 lbs
+      1_000_500,
+      device,
+      { setId: null, sessionId: null },
+    );
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe(
+      'Device coerced chains 10 -> 2 lbs after device.start_guided_load.',
+    );
+  });
+
+  it('renders weight-specific summary in lbs', () => {
+    const check: PendingCoercionCheck = {
+      setterName: 'device.set_weight',
+      field: 'weightLbsTenths',
+      requested: 500,
+      setterReturnedAt: 1_000_000,
+    };
+    const { content } = buildSettingCoercedPayload(check, 450, 1_000_300, device, {
+      setId: null,
+      sessionId: null,
+    });
+    expect(JSON.parse(content).summary).toBe(
+      'Device coerced weight 50 -> 45 lbs after device.set_weight.',
+    );
+  });
+
+  it('falls back to generic phrasing for unknown fields', () => {
+    const check: PendingCoercionCheck = {
+      setterName: 'device.set_isokinetic_target_speed',
+      field: 'isokineticTargetSpeed',
+      requested: 1000,
+      setterReturnedAt: 1_000_000,
+    };
+    const { content } = buildSettingCoercedPayload(check, 500, 1_000_300, device, {
+      setId: null,
+      sessionId: null,
+    });
+    expect(JSON.parse(content).summary).toBe(
+      'Device coerced isokineticTargetSpeed 1000 -> 500 after device.set_isokinetic_target_speed.',
+    );
+  });
+
+  it('signed coercion_delta reports negative when device value is below requested', () => {
+    const check: PendingCoercionCheck = {
+      setterName: 'device.start_guided_load',
+      field: 'chainTargetForceTenths',
+      requested: 100,
+      setterReturnedAt: 1_000_000,
+    };
+    const { meta } = buildSettingCoercedPayload(check, 20, 1_000_300, device, {
+      setId: null,
+      sessionId: null,
+    });
+    expect(meta.coercion_delta).toBe('-80');
   });
 });

@@ -29,6 +29,7 @@ import {
 import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
 import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
+import type { PendingCoercionCheck } from './coercion-watch.js';
 
 /**
  * Convert a velocity from workout-analytics's native scale (mm/s, despite
@@ -1006,6 +1007,120 @@ function buildConnectionChangedSummary(
     return `Voltra disconnected mid-set (rep ${activeSet.rep_count_so_far} of set ${setIdShort}, ${weight} lbs).`;
   }
   return `Voltra ${state}.`;
+}
+
+/**
+ * Build the meta + content for a `setting_coerced` channel event (F2+F3).
+ *
+ * Fires when the bridge correlates a recent setter return against a
+ * subsequent state-dump / settings-update field value whose device value
+ * differs from the user-requested value. The payload is advisory only —
+ * per memory rule `feedback_no_force_stop_set_close.md` the bridge does
+ * NOT retry the setter, disconnect, or otherwise auto-recover. It informs
+ * PT Claude that the device silently rewrote a setting so the model can
+ * explain the coercion to the user.
+ *
+ * Meta keys are XML attributes (strings only). Content JSON carries the
+ * structured detail. `summary` is field-specific where helpful (see
+ * `coercionSummaryFor`); unknown fields fall back to a generic phrasing.
+ */
+export interface CoercionSetContext {
+  setId: string | null;
+  sessionId: string | null;
+}
+
+export function buildSettingCoercedPayload(
+  check: PendingCoercionCheck,
+  deviceValue: number,
+  now: number,
+  device: DeviceSnapshot,
+  context: CoercionSetContext,
+): { meta: Record<string, string>; content: string } {
+  const coercionDelta = deviceValue - check.requested;
+  const coercionWindowMs = now - check.setterReturnedAt;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'setting_coerced',
+    field: check.field,
+    requested_value: String(check.requested),
+    device_value: String(deviceValue),
+    source_setter: check.setterName,
+    coercion_delta: String(coercionDelta),
+    coercion_window_ms: String(coercionWindowMs),
+  };
+  if (context.setId !== null) {
+    meta.set_id = context.setId;
+  }
+  if (context.sessionId !== null) {
+    meta.session_id = context.sessionId;
+  }
+  const summary = coercionSummaryFor(check, deviceValue, device);
+  const content = JSON.stringify({
+    summary,
+    field: check.field,
+    requested: check.requested,
+    device: deviceValue,
+    delta: coercionDelta,
+    source_setter: check.setterName,
+    coercion_window_ms: coercionWindowMs,
+    set_context: {
+      set_id: context.setId,
+      session_id: context.sessionId,
+      weight_lbs: device.weightLbs ?? null,
+      training_mode: device.trainingMode ?? null,
+    },
+  });
+  return { meta, content };
+}
+
+/**
+ * Pick a field-specific phrasing for the summary line. The eccentric +
+ * assist + chains + weight branches name the safety constraint or behavior
+ * the model can explain to the user; everything else falls back to the
+ * generic phrasing per the design doc.
+ */
+function coercionSummaryFor(
+  check: PendingCoercionCheck,
+  deviceValue: number,
+  device: DeviceSnapshot,
+): string {
+  switch (check.field) {
+    case 'eccentricPercentTenths':
+      return eccCoercionSummary(check, deviceValue, device);
+    case 'chainTargetForceTenths':
+      return chainsCoercionSummary(check, deviceValue, device);
+    case 'weightLbsTenths':
+      return `Device coerced weight ${tenthsToLbs(check.requested)} -> ${tenthsToLbs(deviceValue)} lbs after ${check.setterName}.`;
+    case 'assistMode':
+      return `Device coerced assist mode ${check.requested} -> ${deviceValue} after ${check.setterName}.`;
+    case 'damperLevel':
+      return `Device coerced damper level ${check.requested} -> ${deviceValue} after ${check.setterName}.`;
+    default:
+      return `Device coerced ${check.field} ${check.requested} -> ${deviceValue} after ${check.setterName}.`;
+  }
+}
+
+function eccCoercionSummary(
+  check: PendingCoercionCheck,
+  deviceValue: number,
+  device: DeviceSnapshot,
+): string {
+  const reqPct = check.requested / 10;
+  const devPct = deviceValue / 10;
+  const tail = device.assistMode === 2 ? ' assistMode=on enforces a non-zero ecc floor.' : '';
+  return `Device coerced ecc ${reqPct}% -> ${devPct}% after ${check.setterName}.${tail}`;
+}
+
+function chainsCoercionSummary(
+  check: PendingCoercionCheck,
+  deviceValue: number,
+  _device: DeviceSnapshot,
+): string {
+  return `Device coerced chains ${tenthsToLbs(check.requested)} -> ${tenthsToLbs(deviceValue)} lbs after ${check.setterName}.`;
+}
+
+function tenthsToLbs(tenths: number): number {
+  return Number((tenths / 10).toFixed(1));
 }
 
 /**

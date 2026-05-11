@@ -65,6 +65,8 @@ const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
+const { CoercionWatch } = await import('../coercion-watch.js');
+type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -371,6 +373,7 @@ function makeBareState(opts: {
     client: opts.client,
     live: opts.live,
     modeRevertGuard: new ModeRevertGuard(),
+    coercionWatch: new CoercionWatch(),
   });
   return { slots, channels: opts.channels, server: opts.server };
 }
@@ -673,6 +676,7 @@ describe('wireEventBridge', () => {
       live: LiveStateT;
       client: FakeClient;
       modeRevertGuard: ModeRevertGuardT;
+      coercionWatch: CoercionWatchT;
     }
     interface FakeState {
       slots: Map<string, FakeSlot>;
@@ -713,6 +717,7 @@ describe('wireEventBridge', () => {
         live,
         client: client as unknown as FakeSlot['client'],
         modeRevertGuard: new ModeRevertGuard(),
+        coercionWatch: new CoercionWatch(),
       });
       fakeState = {
         slots,
@@ -927,6 +932,7 @@ describe('wireEventBridge', () => {
       live: LiveStateT;
       client: FakeClient;
       modeRevertGuard: ModeRevertGuardT;
+      coercionWatch: CoercionWatchT;
     }
     interface FakeStateForTrigger {
       slots: Map<string, FakeSlotForTrigger>;
@@ -956,6 +962,7 @@ describe('wireEventBridge', () => {
         live,
         client,
         modeRevertGuard: new ModeRevertGuard(),
+        coercionWatch: new CoercionWatch(),
       });
       fakeState = {
         slots,
@@ -1943,6 +1950,7 @@ describe('wireEventBridge', () => {
         client: freshClient,
         live: freshLive,
         modeRevertGuard: new ModeRevertGuard(),
+        coercionWatch: new CoercionWatch(),
       };
       const slots = new Map([['primary', slot]]);
       const fresh = { slots, channels: freshChannels, server: undefined };
@@ -1975,6 +1983,7 @@ describe('wireEventBridge', () => {
         client: freshClient,
         live: freshLive,
         modeRevertGuard: new ModeRevertGuard(),
+        coercionWatch: new CoercionWatch(),
       };
       const slots = new Map([['primary', slot]]);
       const fresh = { slots, channels: freshChannels, server: undefined };
@@ -2552,5 +2561,192 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     // 2→2 dedupe = at least 2). With suppression the assist value never
     // changes from the consumer's perspective.
     expect(assistCalls).toHaveLength(0);
+  });
+});
+
+describe('setting_coerced channel event (F2+F3)', () => {
+  let live: LiveStateT;
+  let client: FakeClient;
+  let server: FakeServer;
+  let channels: FakeChannels;
+  let watch: CoercionWatchT;
+
+  function pickCoercionPublish(): { meta: Record<string, string>; content: string } | undefined {
+    return channels.publish.mock.calls
+      .map((c) => c[0])
+      .find((event) => event.meta.event_type === 'setting_coerced');
+  }
+
+  function pickAllCoercionPublishes(): Array<{ meta: Record<string, string>; content: string }> {
+    return channels.publish.mock.calls
+      .map((c) => c[0])
+      .filter((event) => event.meta.event_type === 'setting_coerced');
+  }
+
+  beforeEach(() => {
+    live = new LiveState();
+    client = makeFakeClient();
+    server = makeFakeServer();
+    channels = makeFakeChannels();
+    watch = new CoercionWatch();
+    const slots = new Map<string, unknown>();
+    slots.set('primary', {
+      slotId: 'primary',
+      client,
+      live,
+      modeRevertGuard: new ModeRevertGuard(),
+      coercionWatch: watch,
+    });
+    const state = { slots, channels, server };
+    wireBridgeForSlot(
+      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+  });
+
+  it('F2 repro: ecc setter coerced — event fires with requested=0, device=320', () => {
+    // Pretend `device.set_eccentric { percent: 0 }` just resolved.
+    watch.register({
+      setterName: 'device.set_eccentric',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now(),
+    });
+    // Device pushes a state-dump with the coerced eccentric value.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        trainingMode: 1,
+        assistMode: 2,
+        eccentricPercentTenths: 320,
+      }),
+    );
+    const event = pickCoercionPublish();
+    expect(event).toBeDefined();
+    expect(event!.meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'setting_coerced',
+      field: 'eccentricPercentTenths',
+      requested_value: '0',
+      device_value: '320',
+      source_setter: 'device.set_eccentric',
+      coercion_delta: '320',
+    });
+    const parsed = JSON.parse(event!.content);
+    expect(parsed.summary).toContain('Device coerced ecc 0% -> 32%');
+    expect(parsed.summary).toContain('assistMode=on enforces a non-zero ecc floor');
+  });
+
+  it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events', () => {
+    const stamp = Date.now();
+    // Pretend `device.start_guided_load { targetWeightLbs: 5 }` registered
+    // three checks: weight=50 (target), chains=100 (carry-over), ecc=500.
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'weightLbsTenths',
+      requested: 50,
+      setterReturnedAt: stamp,
+    });
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'chainTargetForceTenths',
+      requested: 100,
+      setterReturnedAt: stamp,
+    });
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'eccentricPercentTenths',
+      requested: 500,
+      setterReturnedAt: stamp,
+    });
+    // Device-driven state-dump: weight matched (no event), chains coerced
+    // 100→20, ecc coerced 500→80.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        trainingMode: 1,
+        weightLbsTenths: 50,
+        chainTargetForceTenths: 20,
+        eccentricPercentTenths: 80,
+      }),
+    );
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(2);
+    const fields = events.map((e) => e.meta.field).sort();
+    expect(fields).toEqual(['chainTargetForceTenths', 'eccentricPercentTenths']);
+    for (const e of events) {
+      expect(e.meta.source_setter).toBe('device.start_guided_load');
+    }
+  });
+
+  it('negative — value matches: state-dump echoes the requested value → no event', () => {
+    watch.register({
+      setterName: 'device.set_eccentric',
+      field: 'eccentricPercentTenths',
+      requested: 500,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 500 }));
+    expect(pickCoercionPublish()).toBeUndefined();
+    expect(watch.size()).toBe(0); // exact echo also clears the pending check
+  });
+
+  it('negative — window expired: state-dump after window → no event', () => {
+    watch.register({
+      setterName: 'device.set_eccentric',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now() - 5_000, // well past 2500ms window
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    expect(pickCoercionPublish()).toBeUndefined();
+  });
+
+  it('edge — same-field eviction: newest setter wins on subsequent state-dump', () => {
+    watch.register({
+      setterName: 'first',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now(),
+    });
+    watch.register({
+      setterName: 'second',
+      field: 'eccentricPercentTenths',
+      requested: 100,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    const event = pickCoercionPublish();
+    expect(event).toBeDefined();
+    expect(event!.meta.requested_value).toBe('100');
+    expect(event!.meta.source_setter).toBe('second');
+  });
+
+  it('edge — state-dump burst: two coerced frames in succession → exactly one event', () => {
+    watch.register({
+      setterName: 'device.set_eccentric',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    expect(pickAllCoercionPublishes()).toHaveLength(1);
+  });
+
+  it('edge — coercion mid-set: set_id + session_id are populated in meta', () => {
+    startSet(live);
+    watch.register({
+      setterName: 'device.set_eccentric',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    const event = pickCoercionPublish();
+    expect(event).toBeDefined();
+    expect(event!.meta.set_id).toBe('set-1');
+    expect(event!.meta.session_id).toBe('sess-1');
+    const parsed = JSON.parse(event!.content);
+    expect(parsed.set_context.set_id).toBe('set-1');
+    expect(parsed.set_context.session_id).toBe('sess-1');
   });
 });

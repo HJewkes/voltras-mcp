@@ -25,6 +25,7 @@ import { VoltraClient } from '@voltras/node-sdk';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
 import { wireBridgeForSlot } from './event-bridge.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
+import { CoercionWatch } from './coercion-watch.js';
 import { PRIMARY_SLOT, MAX_SLOTS, type ServerState, type SlotState } from './server-state.js';
 
 /**
@@ -59,6 +60,7 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
     client,
     live: new LiveState(),
     modeRevertGuard: new ModeRevertGuard(),
+    coercionWatch: new CoercionWatch(),
   };
   state.slots.set(slotId, slot);
   slot.unwireBridge = wireBridgeForSlot(state, slot);
@@ -134,6 +136,10 @@ export function resetPrimarySlot(state: ServerState): void {
   slot.client = new VoltraClient();
   slot.live.markDisconnected(new Date().toISOString());
   slot.modeRevertGuard = new ModeRevertGuard();
+  // Drop any pending coercion checks from the outgoing client so they can't
+  // fire against a state-dump on the fresh one. The new connection's first
+  // setter call will re-register from scratch.
+  slot.coercionWatch.clear();
   slot.unwireBridge = wireBridgeForSlot(state, slot);
   seedConnectedState(slot);
 }
@@ -208,12 +214,15 @@ export function swapSlots(state: ServerState): void {
   const tmpClient = a.client;
   const tmpLive = a.live;
   const tmpGuard = a.modeRevertGuard;
+  const tmpWatch = a.coercionWatch;
   a.client = b.client;
   a.live = b.live;
   a.modeRevertGuard = b.modeRevertGuard;
+  a.coercionWatch = b.coercionWatch;
   b.client = tmpClient;
   b.live = tmpLive;
   b.modeRevertGuard = tmpGuard;
+  b.coercionWatch = tmpWatch;
   a.unwireBridge = wireBridgeForSlot(state, a);
   b.unwireBridge = wireBridgeForSlot(state, b);
 }
