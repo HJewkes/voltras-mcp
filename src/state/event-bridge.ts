@@ -921,10 +921,7 @@ function evaluateRepTriggers(
     if (spec.type === 'rep_count_reached') {
       if (actualReps !== spec.value) continue;
       if (!live.tryFireTrigger(key)) continue;
-      // `auto_stopped: false` retained on the meta for backwards-compat
-      // with any consumer that filtered on it; future PR may strip the
-      // field once we're sure no downstream relies on it.
-      const payload = buildSetTargetReachedPayload(set, device, spec.value, actualReps, false);
+      const payload = buildSetTargetReachedPayload(set, device, spec.value, actualReps);
       channels.publish(payload);
       continue;
     }
@@ -947,7 +944,6 @@ function evaluateRepTriggers(
         current,
         baselineRepNumber,
         actualReps,
-        false,
       );
       channels.publish(payload);
       continue;

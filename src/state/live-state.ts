@@ -417,9 +417,9 @@ export class LiveState {
    * (`'guided_load_exited'`). Returns the finalized set for the caller to
    * persist, or `undefined` when none was active.
    *
-   * As of the F14/F15 rewrite the `'auto_stopped'` reason is gone — watch
-   * triggers (`rep_count_reached`, `velocity_loss_exceeded`) no longer
-   * force-close the set; they publish advisory channel events only.
+   * Watch triggers (`rep_count_reached`, `velocity_loss_exceeded`) are
+   * advisory cues and never force-close the set — the only remaining
+   * force-close path is the bridge inactivity watchdog.
    *
    * The set's `setId` is appended to the active session's `setIds` if a
    * session is still tracked, so resource snapshots reflect the close
@@ -452,9 +452,8 @@ export class LiveState {
     // intact (F7 deferral) and a legitimately complete rep N — eccentric
     // closed before the close — must not be discarded.
     //
-    // F15 rewrite: pre-rewrite this fired for `'auto_stopped'` too. Watch
-    // triggers no longer force-close, so the inactivity-watchdog path is
-    // the only remaining force-close caller of `dropTrailingInProgress`.
+    // The inactivity-watchdog path is the only force-close caller of
+    // `dropTrailingInProgress` — watch triggers are advisory.
     const finalReps =
       opts.dropTrailingInProgress === true && isTrailingRepIncomplete(rawReps)
         ? rawReps.slice(0, -1)
