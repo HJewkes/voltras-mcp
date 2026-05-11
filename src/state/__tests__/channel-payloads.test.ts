@@ -654,9 +654,9 @@ describe('buildSetTargetReachedPayload', () => {
     };
   }
 
-  it('notifyOn match: meta.auto_stopped="false", summary lacks auto-stop tail', () => {
+  it('emits advisory cue meta + content with set_so_far block', () => {
     const set = activeSet([makeRep(1, 850, 500), makeRep(2, 700, 450)]);
-    const { meta, content } = buildSetTargetReachedPayload(set, device, 8, 2, false);
+    const { meta, content } = buildSetTargetReachedPayload(set, device, 8, 2);
     expect(meta).toMatchObject({
       source: 'voltras',
       event_type: 'set_target_reached',
@@ -664,11 +664,10 @@ describe('buildSetTargetReachedPayload', () => {
       session_id: 'sess-1',
       target_rep_count: '8',
       actual_rep_count: '2',
-      auto_stopped: 'false',
     });
+    expect(meta.auto_stopped).toBeUndefined();
     const parsed = JSON.parse(content);
-    expect(parsed.summary).toContain('Target reached: 2/8 reps');
-    expect(parsed.summary).not.toContain('auto-stopping');
+    expect(parsed.summary).toBe('Target reached: 2/8 reps on set set-targ.');
     expect(parsed.trigger).toEqual({
       type: 'rep_count_reached',
       target: 8,
@@ -676,13 +675,6 @@ describe('buildSetTargetReachedPayload', () => {
     });
     expect(parsed.set_so_far.set.set_id).toBe('set-target-12345678');
     expect(parsed.set_so_far.reps).toHaveLength(2);
-  });
-
-  it('stopOn match: meta.auto_stopped="true", summary tails the auto-stop note', () => {
-    const set = activeSet([makeRep(1, 850, 500)]);
-    const { meta, content } = buildSetTargetReachedPayload(set, device, 5, 5, true);
-    expect(meta.auto_stopped).toBe('true');
-    expect(JSON.parse(content).summary).toContain('auto-stopping');
   });
 });
 
@@ -716,7 +708,6 @@ describe('buildVelocityLossExceededPayload', () => {
       550,
       1,
       3,
-      true,
     );
     expect(meta).toMatchObject({
       event_type: 'velocity_loss_exceeded',
@@ -726,12 +717,12 @@ describe('buildVelocityLossExceededPayload', () => {
       baseline_velocity: '0.850',
       current_velocity: '0.550',
       rep_count_at_threshold: '3',
-      auto_stopped: 'true',
     });
+    expect(meta.auto_stopped).toBeUndefined();
     const parsed = JSON.parse(content);
     expect(parsed.summary).toContain('35.3%');
     expect(parsed.summary).toContain('rep 3');
-    expect(parsed.summary).toContain('auto-stopping');
+    expect(parsed.summary).not.toContain('auto-stopping');
     expect(parsed.trigger).toMatchObject({
       type: 'velocity_loss_exceeded',
       threshold_pct: 25,
@@ -741,23 +732,6 @@ describe('buildVelocityLossExceededPayload', () => {
       baseline_rep_number: 1,
     });
     expect(parsed.set_so_far.reps).toHaveLength(3);
-  });
-
-  it('notifyOn variant flips auto_stopped meta to false', () => {
-    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 550, 400)]);
-    const { meta, content } = buildVelocityLossExceededPayload(
-      set,
-      device,
-      25,
-      35.3,
-      850,
-      550,
-      1,
-      2,
-      false,
-    );
-    expect(meta.auto_stopped).toBe('false');
-    expect(JSON.parse(content).summary).not.toContain('auto-stopping');
   });
 });
 
@@ -781,7 +755,6 @@ describe('buildIdleTimeoutPayload', () => {
       30_000,
       31_500,
       '2025-01-01T00:00:30.000Z',
-      true,
     );
     expect(meta).toMatchObject({
       event_type: 'idle_timeout',
@@ -790,11 +763,12 @@ describe('buildIdleTimeoutPayload', () => {
       idle_ms: '31500',
       threshold_ms: '30000',
       last_rep_count: '2',
-      auto_stopped: 'true',
     });
+    expect(meta.auto_stopped).toBeUndefined();
     const parsed = JSON.parse(content);
     expect(parsed.summary).toContain('No reps for 32s');
     expect(parsed.summary).toContain('threshold 30s');
+    // Inactivity watchdog is the only force-close path; summary tails it.
     expect(parsed.summary).toContain('auto-stopping');
     expect(parsed.trigger).toEqual({
       type: 'idle_timeout_ms',
@@ -814,13 +788,10 @@ describe('buildIdleTimeoutPayload', () => {
       45_000,
       45_000,
       '2025-01-01T00:00:00.000Z',
-      false,
     );
     expect(meta.last_rep_count).toBe('0');
-    expect(meta.auto_stopped).toBe('false');
     const parsed = JSON.parse(content);
     expect(parsed.set_so_far).toBeNull();
-    expect(parsed.summary).not.toContain('auto-stopping');
   });
 });
 

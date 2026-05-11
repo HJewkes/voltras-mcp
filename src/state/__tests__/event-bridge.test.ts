@@ -1076,8 +1076,8 @@ describe('wireEventBridge', () => {
           set_id: 'set-trig',
           target_rep_count: '2',
           actual_rep_count: '2',
-          auto_stopped: 'false',
         });
+        expect(trigger?.meta.auto_stopped).toBeUndefined();
         // Set is still active — notifyOn does not finalize.
         expect(live.snapshotSet()).toBeDefined();
         expect(fakeState.store.putSet).not.toHaveBeenCalled();
@@ -1096,16 +1096,15 @@ describe('wireEventBridge', () => {
         startNextRep(3, 0.6);
         await flushMicrotasks();
 
-        // Trigger cue fires — `auto_stopped: false` retained on the meta
-        // (the field is now always false, kept for back-compat consumers).
+        // Trigger cue fires — advisory only, no auto_stopped meta.
         const trigger = lastTriggerEvent();
         expect(trigger).toBeDefined();
         expect(trigger?.meta).toMatchObject({
           event_type: 'set_target_reached',
           target_rep_count: '2',
           actual_rep_count: '2',
-          auto_stopped: 'false',
         });
+        expect(trigger?.meta.auto_stopped).toBeUndefined();
 
         // Critical assertion: the set is STILL ACTIVE. No `set_ended`
         // event was published; the bridge did not call `finalizeSet`.
@@ -1246,7 +1245,7 @@ describe('wireEventBridge', () => {
         // Loss = (1.0 - 0.5)/1.0 * 100 = 50% ≥ 30% — cue fires.
         const trigger = lastTriggerEvent();
         expect(trigger?.meta.event_type).toBe('velocity_loss_exceeded');
-        expect(trigger?.meta.auto_stopped).toBe('false');
+        expect(trigger?.meta.auto_stopped).toBeUndefined();
         expect(parseFloat(trigger!.meta.velocity_loss_pct)).toBeCloseTo(50.0, 1);
         expect(trigger?.meta.threshold_pct).toBe('30');
 

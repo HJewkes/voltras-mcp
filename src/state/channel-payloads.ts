@@ -634,18 +634,14 @@ export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): 
 /**
  * Build the meta + content for a `set_target_reached` channel event
  * (`rep_count_reached` trigger match). `target` is the configured rep
- * count; `actualReps` is the just-finalized rep number (1-indexed). The
- * `autoStopped` is retained on the payload for backwards-compat with
- * consumers that filter on it. After the F14/F15 rewrite the bridge
- * always passes `false` — triggers are advisory cues only; the set
- * continues until the device signals close or the user calls `set.end`.
+ * count; `actualReps` is the just-finalized rep number (1-indexed).
+ * Advisory cue only — the set keeps running.
  */
 export function buildSetTargetReachedPayload(
   set: ActiveSet,
   device: DeviceSnapshot,
   target: number,
   actualReps: number,
-  autoStopped: boolean,
 ): { meta: Record<string, string>; content: string } {
   const setIdShort = set.setId.slice(0, 8);
   const meta: Record<string, string> = {
@@ -655,11 +651,8 @@ export function buildSetTargetReachedPayload(
     session_id: set.sessionId,
     target_rep_count: String(target),
     actual_rep_count: String(actualReps),
-    auto_stopped: autoStopped ? 'true' : 'false',
   };
-  const summary = `Target reached: ${actualReps}/${target} reps on set ${setIdShort}${
-    autoStopped ? ' — auto-stopping' : ''
-  }.`;
+  const summary = `Target reached: ${actualReps}/${target} reps on set ${setIdShort}.`;
   const content = JSON.stringify({
     summary,
     trigger: {
@@ -688,7 +681,6 @@ export function buildVelocityLossExceededPayload(
   current: number,
   baselineRepNumber: number,
   actualReps: number,
-  autoStopped: boolean,
 ): { meta: Record<string, string>; content: string } {
   // `baseline` and `current` arrive in WA's native mm/s — convert at the
   // serialization boundary so the labels (`baseline_velocity`,
@@ -706,13 +698,10 @@ export function buildVelocityLossExceededPayload(
     baseline_velocity: baselineMps.toFixed(3),
     current_velocity: currentMps.toFixed(3),
     rep_count_at_threshold: String(actualReps),
-    auto_stopped: autoStopped ? 'true' : 'false',
   };
   const summary =
     `Velocity dropped ${pct.toFixed(1)}% (${baselineMps.toFixed(2)} -> ` +
-    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%${
-      autoStopped ? ' — auto-stopping' : ''
-    }.`;
+    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%.`;
   const content = JSON.stringify({
     summary,
     trigger: {
@@ -746,7 +735,6 @@ export function buildIdleTimeoutPayload(
   thresholdMs: number,
   actualIdleMs: number,
   lastRepAt: string,
-  autoStopped: boolean,
 ): { meta: Record<string, string>; content: string } {
   const setIdShort = set.setId.slice(0, 8);
   const lastRepCount = set.reps.length;
@@ -758,11 +746,10 @@ export function buildIdleTimeoutPayload(
     idle_ms: String(Math.round(actualIdleMs)),
     threshold_ms: String(thresholdMs),
     last_rep_count: String(lastRepCount),
-    auto_stopped: autoStopped ? 'true' : 'false',
   };
   const summary =
     `No reps for ${(actualIdleMs / 1000).toFixed(0)}s on set ${setIdShort} ` +
-    `(threshold ${thresholdMs / 1000}s)${autoStopped ? ' — auto-stopping' : ''}.`;
+    `(threshold ${thresholdMs / 1000}s) — auto-stopping.`;
   const content = JSON.stringify({
     summary,
     trigger: {

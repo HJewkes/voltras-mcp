@@ -380,7 +380,7 @@ function fireIdleTimeout(
     }
     return set.startedAt;
   })();
-  const payload = buildIdleTimeoutPayload(set, device, thresholdMs, thresholdMs, lastRepAt, true);
+  const payload = buildIdleTimeoutPayload(set, device, thresholdMs, thresholdMs, lastRepAt);
   state.channels.forSlot(slotId).publish(payload);
   void finalizeSet(state, slotId, {
     cause: 'tool',
