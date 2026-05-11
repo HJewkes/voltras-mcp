@@ -864,7 +864,7 @@ export function registerDeviceTools(
       swapSlots(state);
       return { ok: true, bindings: snapshotSlotBindings(state) };
     }),
-    'Swap the device bindings between the two slots in place. No BLE writes, no SDK calls — pure in-memory mutation. Requires both slots to be bound to a connected device. Returns the new binding map.',
+    'Swap the device bindings between the two connected slots in place. No BLE writes, no SDK calls — pure in-memory mutation. Requires exactly two slots whose client is currently connected (unconnected placeholder slots are ignored). Returns the new binding map.',
   );
 }
 

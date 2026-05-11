@@ -291,23 +291,23 @@ describe('swapSlots', () => {
     expect(leftAfter.modeRevertGuard).toBe(primaryGuardBefore);
   });
 
-  it('rejects when only one slot is bound (primary connected, no second slot)', () => {
+  it('rejects when only one slot is connected (primary connected, no second slot)', () => {
     const state = makeStateWithPrimary({ primaryConnected: true });
-    expect(() => swapSlots(state)).toThrow(/exactly two slots/i);
+    expect(() => swapSlots(state)).toThrow(/found 1 connected/i);
   });
 
   it('rejects when neither slot is connected', () => {
     // Two slots in the map but neither has `isConnected: true`.
     const state = makeStateWithPrimary();
     createSlot(state, 'left', new VoltraClient());
-    expect(() => swapSlots(state)).toThrow(/both slots to be bound/i);
+    expect(() => swapSlots(state)).toThrow(/found 0 connected/i);
   });
 
   it('rejects when one slot is bound but the other is not', () => {
     // Primary is connected; left is a fresh placeholder (isConnected=false).
     const state = makeStateWithPrimary({ primaryConnected: true });
     createSlot(state, 'left', new VoltraClient());
-    expect(() => swapSlots(state)).toThrow(/both slots to be bound/i);
+    expect(() => swapSlots(state)).toThrow(/found 1 connected/i);
   });
 
   it('attaches a SWAP_REQUIRES_TWO_SLOTS code on the empty-second-slot rejection', () => {
@@ -321,7 +321,7 @@ describe('swapSlots', () => {
     expect((caught as { code?: string }).code).toBe('SWAP_REQUIRES_TWO_SLOTS');
   });
 
-  it('attaches a SLOT_NOT_BOUND code when both slots exist but one is unbound', () => {
+  it('attaches a SWAP_REQUIRES_TWO_SLOTS code when both slots exist but one is unbound', () => {
     const state = makeStateWithPrimary({ primaryConnected: true });
     createSlot(state, 'left', new VoltraClient());
     let caught: unknown;
@@ -330,7 +330,51 @@ describe('swapSlots', () => {
     } catch (e) {
       caught = e;
     }
-    expect((caught as { code?: string }).code).toBe('SLOT_NOT_BOUND');
+    expect((caught as { code?: string }).code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+  });
+
+  // F1 / VMCP-01.18: explicit left+right with the bootstrap primary
+  // placeholder unconnected must succeed (count is over CONNECTED slots, not
+  // all entries in state.slots).
+  it('swaps left↔right when an unconnected bootstrap primary is also present', () => {
+    const state = makeStateWithPrimary();
+    const leftClient = connectedClient();
+    const rightClient = connectedClient();
+    createSlot(state, 'left', leftClient);
+    createSlot(state, 'right', rightClient);
+    expect(state.slots.size).toBe(3);
+
+    swapSlots(state);
+
+    expect(getSlot(state, 'left').client).toBe(rightClient);
+    expect(getSlot(state, 'right').client).toBe(leftClient);
+    // The unconnected primary is untouched by the swap.
+    expect(getSlot(state, PRIMARY_SLOT).client.isConnected).toBe(false);
+  });
+
+  it('rejects with "found 0 connected" when no slot is connected', () => {
+    const state = makeStateWithPrimary();
+    let caught: unknown;
+    try {
+      swapSlots(state);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as Error).message).toMatch(/found 0 connected/);
+    expect((caught as { code?: string }).code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+  });
+
+  it('rejects with "found 1 connected" when only one slot is connected', () => {
+    const state = makeStateWithPrimary({ primaryConnected: true });
+    createSlot(state, 'left', new VoltraClient());
+    let caught: unknown;
+    try {
+      swapSlots(state);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as Error).message).toMatch(/found 1 connected/);
+    expect((caught as { code?: string }).code).toBe('SWAP_REQUIRES_TWO_SLOTS');
   });
 
   it('is idempotent — two consecutive swaps return to the original mapping', () => {

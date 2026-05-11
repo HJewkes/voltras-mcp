@@ -176,30 +176,30 @@ function seedConnectedState(slot: SlotState): void {
  * outbound channel events with the slot key the consumer expects (the slot
  * that *now* owns the device).
  *
- * Preconditions: exactly two slots exist and BOTH have a connected client.
- * A swap against fewer than two connected slots is a no-op the caller would
- * misinterpret as "swap succeeded," so we throw with a structured `code`
- * field that the tool layer surfaces as a typed error.
+ * Preconditions: exactly two slots whose client is `isConnected` must be
+ * present. The count is intentionally over *connected* slots, not all
+ * entries in `state.slots`, because bootstrap leaves an unconnected
+ * `'primary'` placeholder behind when the user runs `device.connect`
+ * against explicit `'left'` + `'right'` slot ids (F1 / VMCP-01.18). The
+ * placeholder gives the implicit-primary flow a target to bind into and
+ * must not be allowed to block a swap of the two real connections.
+ *
+ * A swap against fewer (or more) than two connected slots is a no-op the
+ * caller would misinterpret as "swap succeeded," so we throw with a
+ * structured `SWAP_REQUIRES_TWO_SLOTS` code that the tool layer surfaces
+ * as a typed error — the message reports the connected-slot count so
+ * callers who pre-allocated slot ids aren't surprised by a "found 3"-
+ * style message that ignored their unconnected entries.
  */
 export function swapSlots(state: ServerState): void {
-  const entries = [...state.slots.values()];
-  if (entries.length !== 2) {
+  const connected = [...state.slots.values()].filter((s) => s.client.isConnected);
+  if (connected.length !== 2) {
     throw makeCodedError(
       'SWAP_REQUIRES_TWO_SLOTS',
-      `slot.swap requires exactly two slots; found ${entries.length}.`,
+      `slot.swap requires exactly two connected slots; found ${connected.length} connected.`,
     );
   }
-  const [a, b] = entries;
-  if (!a.client.isConnected || !b.client.isConnected) {
-    const unbound = [a, b]
-      .filter((s) => !s.client.isConnected)
-      .map((s) => `\`${s.slotId}\``)
-      .join(', ');
-    throw makeCodedError(
-      'SLOT_NOT_BOUND',
-      `slot.swap requires both slots to be bound to a connected device; ${unbound} is not.`,
-    );
-  }
+  const [a, b] = connected;
   // Unwire BOTH bridges before mutating either slot — a half-swapped state
   // (one bridge unwired, one still firing against its old client) would let
   // a stray notification land mid-rebind and route to the wrong slot.
