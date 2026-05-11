@@ -217,42 +217,40 @@ describe('slot.swap tool', () => {
     expect(state.slots.get('left')?.client).toBe(primaryClient);
   });
 
-  it('rejects with SLOT_NOT_BOUND when only the primary slot is bound', async () => {
+  it('rejects with SWAP_REQUIRES_TWO_SLOTS — found 1 connected — when only the primary slot is connected', async () => {
     const { state } = makeStateWithBoth({ primaryConnected: true, leftConnected: false });
     const { invoke } = setup(state);
 
     const r = await invoke('slot.swap', {});
 
     expect(r.isError).toBe(true);
-    expect(r.payload.code).toBe('SLOT_NOT_BOUND');
-    expect(String(r.payload.message)).toMatch(/`left`/);
+    expect(r.payload.code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+    expect(String(r.payload.message)).toMatch(/found 1 connected/);
   });
 
-  it('rejects with SLOT_NOT_BOUND when only the secondary slot is bound', async () => {
+  it('rejects with SWAP_REQUIRES_TWO_SLOTS — found 1 connected — when only the secondary slot is connected', async () => {
     const { state } = makeStateWithBoth({ primaryConnected: false, leftConnected: true });
     const { invoke } = setup(state);
 
     const r = await invoke('slot.swap', {});
 
     expect(r.isError).toBe(true);
-    expect(r.payload.code).toBe('SLOT_NOT_BOUND');
-    expect(String(r.payload.message)).toMatch(/`primary`/);
+    expect(r.payload.code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+    expect(String(r.payload.message)).toMatch(/found 1 connected/);
   });
 
-  it('rejects with SLOT_NOT_BOUND when neither slot is bound', async () => {
+  it('rejects with SWAP_REQUIRES_TWO_SLOTS — found 0 connected — when neither slot is connected', async () => {
     const { state } = makeStateWithBoth({ primaryConnected: false, leftConnected: false });
     const { invoke } = setup(state);
 
     const r = await invoke('slot.swap', {});
 
     expect(r.isError).toBe(true);
-    expect(r.payload.code).toBe('SLOT_NOT_BOUND');
-    // Both slot ids appear in the message.
-    expect(String(r.payload.message)).toMatch(/`primary`/);
-    expect(String(r.payload.message)).toMatch(/`left`/);
+    expect(r.payload.code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+    expect(String(r.payload.message)).toMatch(/found 0 connected/);
   });
 
-  it('rejects with SWAP_REQUIRES_TWO_SLOTS when only the primary slot exists (no second slot allocated)', async () => {
+  it('rejects with SWAP_REQUIRES_TWO_SLOTS when only the primary slot exists and is connected (no second slot allocated)', async () => {
     // Single-slot state — primary is connected, but no second slot has
     // been allocated via device.connect.
     const slots = new Map<string, FakeSlot>();
@@ -275,6 +273,61 @@ describe('slot.swap tool', () => {
 
     expect(r.isError).toBe(true);
     expect(r.payload.code).toBe('SWAP_REQUIRES_TWO_SLOTS');
+    expect(String(r.payload.message)).toMatch(/found 1 connected/);
+  });
+
+  // F1 / VMCP-01.18 — repro: bootstrap leaves an unconnected `primary` slot in
+  // state.slots; the user runs `device.connect {slot: 'left'}` then
+  // `device.connect {slot: 'right'}`. `slot.swap` must count only connected
+  // slots (left + right = 2) and ignore the unconnected primary placeholder.
+  it('swaps left↔right when an unconnected bootstrap primary placeholder is also present (F1 repro)', async () => {
+    const slots = new Map<string, FakeSlot>();
+    const primaryClient = makeFakeClient({ connected: false });
+    const leftClient = makeFakeClient({ connected: true, deviceId: 'V-097082' });
+    const rightClient = makeFakeClient({ connected: true, deviceId: 'V-212006' });
+    slots.set('primary', {
+      slotId: 'primary',
+      client: primaryClient,
+      live: new LiveState(),
+      modeRevertGuard: new ModeRevertGuard(),
+      unwireBridge: vi.fn(),
+    });
+    slots.set('left', {
+      slotId: 'left',
+      client: leftClient,
+      live: new LiveState(),
+      modeRevertGuard: new ModeRevertGuard(),
+      unwireBridge: vi.fn(),
+    });
+    slots.set('right', {
+      slotId: 'right',
+      client: rightClient,
+      live: new LiveState(),
+      modeRevertGuard: new ModeRevertGuard(),
+      unwireBridge: vi.fn(),
+    });
+    const state: State = {
+      config: { adapter: 'node', dbPath: '/tmp/test.sqlite', logLevel: 'info' },
+      manager: {},
+      slots,
+    };
+    const { invoke } = setup(state);
+
+    const r = await invoke('slot.swap', {});
+
+    expect(r.isError).toBeUndefined();
+    expect(r.payload.ok).toBe(true);
+    // The connected pair swapped — primary stays unconnected (deviceId: null)
+    // and is included in the bindings snapshot since it lives in state.slots.
+    expect(r.payload.bindings).toEqual({
+      primary: { deviceId: null },
+      left: { deviceId: 'V-212006' },
+      right: { deviceId: 'V-097082' },
+    });
+    expect(state.slots.get('left')?.client).toBe(rightClient);
+    expect(state.slots.get('right')?.client).toBe(leftClient);
+    // Primary's unconnected placeholder is untouched by the swap.
+    expect(state.slots.get('primary')?.client).toBe(primaryClient);
   });
 
   it('rejects unknown input fields with INVALID_INPUT (.strict() schema)', async () => {
