@@ -555,8 +555,7 @@ describe('device.exit_guided_load — F4 / F8 lifecycle reap', () => {
     expect(h.putSet).toHaveBeenCalledTimes(1);
     const stored = h.putSet.mock.calls[0][0] as { reps: Array<{ index: number }> };
     // Both reps persist; finalizeSet's dropTrailingInProgress predicate
-    // only fires for auto_stopped / inactivity_timeout, NOT
-    // guided_load_exited.
+    // only fires for inactivity_timeout, NOT guided_load_exited.
     expect(stored.reps.length).toBe(2);
   });
 });

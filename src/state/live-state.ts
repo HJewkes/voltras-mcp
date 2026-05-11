@@ -149,15 +149,17 @@ export interface ActiveSet {
    * Why the set ended in something other than a graceful tool call.
    *   * `'disconnect'`    — connection drop cascade
    *   * `'session_end'`   — explicit `session.end` cascade
-   *   * `'device_signal'` — device-driven close (`onSetSummary` lands on an
-   *     active set in WT/RB/Damper). Replaces the legacy `onInProgress`
-   *     heuristic that terminated sets prematurely under fast-tempo WT.
-   *   * `'auto_stopped'`  — a server-evaluated `stopOn` trigger fired
-   *     (rep count, velocity loss, or idle timeout); see WatchConfig.
+   *   * `'device_signal'` — historical: device-driven close
+   *     (`onSetSummary` lands on an active set in WT/RB/Damper). The
+   *     F14/F15 rewrite treats this as the canonical natural close (not
+   *     partial). Retained here for any callers that still pass it for
+   *     historical reasons.
    *   * `'inactivity_timeout'` — no SDK activity (in-progress / per-rep /
    *     set-summary) on the active set for `SET_INACTIVITY_TIMEOUT_MS`;
-   *     bridge watchdog finalized as partial. Safety net for modes that
-   *     don't emit a per-set close marker (rowing, iso, custom-curves).
+   *     bridge watchdog finalized as partial. The user truly abandoned the
+   *     set; the bridge force-closes to free resources. Safety net for
+   *     modes that don't emit a per-set close marker (rowing, iso,
+   *     custom-curves) AND for any mode where the user walks away.
    *   * `'guided_load_exited'` — `device.exit_guided_load` reaped the
    *     auto-created set the Phase 1g bootstrap had minted on `armed`.
    *     F4 (VMCP-01.19) — closes the 93s inactivity_timeout leak that
@@ -167,7 +169,6 @@ export interface ActiveSet {
     | 'disconnect'
     | 'session_end'
     | 'device_signal'
-    | 'auto_stopped'
     | 'inactivity_timeout'
     | 'guided_load_exited';
   /**
@@ -179,9 +180,9 @@ export interface ActiveSet {
   watch?: WatchConfig;
   /**
    * Dedupe ledger for trigger firings. Keys take the form
-   * `${type}:${value or pct}` so identical specs across `stopOn`/`notifyOn`
-   * collapse to one event, while distinct thresholds (e.g., 15%, 25%, 40%
-   * velocity loss) all fire independently as the set progresses.
+   * `${type}:${value or pct}` so identical specs collapse to one event,
+   * while distinct thresholds (e.g., 15%, 25%, 40% velocity loss) all
+   * fire independently as the set progresses.
    */
   firedTriggers?: Set<string>;
   /**
@@ -411,21 +412,21 @@ export class LiveState {
   /**
    * Close out the active set. `reason` distinguishes graceful close
    * (`undefined`), explicit `session.end` cascade (`'session_end'`),
-   * connection loss (`'disconnect'`), and a server-evaluated trigger DSL
-   * `stopOn` match (`'auto_stopped'`). Returns the finalized set for the
-   * caller to persist, or `undefined` when none was active.
+   * connection loss (`'disconnect'`), bridge inactivity-watchdog force-close
+   * (`'inactivity_timeout'`), and the guided-load reap path
+   * (`'guided_load_exited'`). Returns the finalized set for the caller to
+   * persist, or `undefined` when none was active.
+   *
+   * As of the F14/F15 rewrite the `'auto_stopped'` reason is gone — watch
+   * triggers (`rep_count_reached`, `velocity_loss_exceeded`) no longer
+   * force-close the set; they publish advisory channel events only.
    *
    * The set's `setId` is appended to the active session's `setIds` if a
    * session is still tracked, so resource snapshots reflect the close
    * synchronously.
    */
   endSet(
-    reason?:
-      | 'disconnect'
-      | 'session_end'
-      | 'auto_stopped'
-      | 'inactivity_timeout'
-      | 'guided_load_exited',
+    reason?: 'disconnect' | 'session_end' | 'inactivity_timeout' | 'guided_load_exited',
     opts: { dropTrailingInProgress?: boolean } = {},
   ): ActiveSet | undefined {
     const current = this.set;
@@ -440,17 +441,20 @@ export class LiveState {
     const analyticsReps =
       this._analyticsSet === undefined ? [] : completeSet(this._analyticsSet).reps;
     const rawReps = analyticsReps.length > 0 ? analyticsReps : current.reps;
-    // F14 (VMCP-01.28): when an auto-stop / watch-trigger fires the finalize,
-    // the trigger evaluation in event-bridge runs against `reps[length-2]`
-    // while `reps[length-1]` is the just-started in-progress next rep
-    // (concentric samples only, no eccentric phase, ROM=0). Persisting it
-    // inflates the rep count by one and pollutes vbt_summary.last_rep_v with
-    // a single-sample peak. Drop the trailing rep only when (a) the caller
-    // signaled `dropTrailingInProgress` AND (b) the rep is provably
-    // incomplete (eccentric phase never started). Both guards are required:
-    // graceful `set.end` keeps trailing-rep data intact (F7 deferral) and a
-    // legitimately complete rep N — eccentric closed before the trigger
-    // fired — must not be discarded.
+    // F14 (VMCP-01.28): when the inactivity watchdog force-closes, the
+    // trailing rep in `_analyticsSet.reps` may be the just-started
+    // in-progress next rep (concentric samples only, no eccentric phase,
+    // ROM=0). Persisting it inflates the rep count by one and pollutes
+    // vbt_summary.last_rep_v with a single-sample peak. Drop the trailing
+    // rep only when (a) the caller signaled `dropTrailingInProgress` AND
+    // (b) the rep is provably incomplete (eccentric phase never started).
+    // Both guards are required: graceful `set.end` keeps trailing-rep data
+    // intact (F7 deferral) and a legitimately complete rep N — eccentric
+    // closed before the close — must not be discarded.
+    //
+    // F15 rewrite: pre-rewrite this fired for `'auto_stopped'` too. Watch
+    // triggers no longer force-close, so the inactivity-watchdog path is
+    // the only remaining force-close caller of `dropTrailingInProgress`.
     const finalReps =
       opts.dropTrailingInProgress === true && isTrailingRepIncomplete(rawReps)
         ? rawReps.slice(0, -1)

@@ -658,11 +658,11 @@ describe('wireEventBridge', () => {
     // in Step 4 of P0 dual-Voltras: the bridge now always operates with a
     // ServerState (the per-slot wirer takes one as a required argument),
     // so the "missing-state silent drop" branch no longer exists. The
-    // dedicated `set_ended_by_device finalize` describe block below covers
-    // the active behavior end-to-end.
+    // dedicated `set_ended` device-signal finalize describe block below
+    // covers the active behavior end-to-end.
   });
 
-  describe('onSetSummary → set_ended_by_device finalize', () => {
+  describe('onSetSummary → set_ended with closed_by=device', () => {
     // A second harness — the bridge needs `state` threaded so it can call
     // `finalizeSet`. We re-wire here with a minimal fake state shaped just
     // enough for the device-signal finalize path: live, store with a
@@ -765,7 +765,7 @@ describe('wireEventBridge', () => {
       expect(live.snapshotSet()).toBeDefined();
     });
 
-    it('onSetSummary with an active set persists, clears live state, and publishes set_ended_by_device', async () => {
+    it('onSetSummary with an active set persists, clears live state, and publishes set_ended (closed_by=device)', async () => {
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
       client.fire.setSummary();
       await flushMicrotasks();
@@ -779,8 +779,12 @@ describe('wireEventBridge', () => {
         trainingMode: string;
       };
       expect(stored.id).toBe('set-dev');
-      expect(stored.partial).toBe(true);
-      expect(stored.partialReason).toBe('device_signal');
+      // F14/F15 rewrite: device-signal close is the canonical natural
+      // close — NOT partial. The old `partial=true` /
+      // `partialReason='device_signal'` stamp mislabeled an intentional
+      // disengage as something went wrong.
+      expect(stored.partial).toBe(false);
+      expect(stored.partialReason).toBeUndefined();
       // Device snapshot from `set.start` is honored.
       expect(stored.weightLbs).toBe(135);
       expect(stored.trainingMode).toBe('WeightTraining');
@@ -790,20 +794,23 @@ describe('wireEventBridge', () => {
 
       // Two channel events on a single onSetSummary fire: first the
       // `set_pre_summary` rest-coaching prompt (kept for backwards-compat
-      // with PT-skill consumers), then the `set_ended_by_device` close.
+      // with PT-skill consumers), then the unified `set_ended` event
+      // with `closed_by='device'`.
       expect(channels.publish).toHaveBeenCalledTimes(2);
       expect(channels.publish.mock.calls[0][0].meta.event_type).toBe('set_pre_summary');
       const event = channels.publish.mock.calls[1][0];
-      expect(event.meta.event_type).toBe('set_ended_by_device');
+      expect(event.meta.event_type).toBe('set_ended');
+      expect(event.meta.closed_by).toBe('device');
       expect(event.meta.set_id).toBe('set-dev');
       expect(event.meta.session_id).toBe('sess-dev');
-      expect(event.meta.partial_reason).toBe('device_signal');
+      expect(event.meta.partial_reason).toBeUndefined();
 
       const parsed = JSON.parse(event.content) as {
         summary: string;
-        set: { partial_reason: string };
+        set: { partial_reason: string | null; closed_by: string };
       };
-      expect(parsed.set.partial_reason).toBe('device_signal');
+      expect(parsed.set.partial_reason).toBeNull();
+      expect(parsed.set.closed_by).toBe('device');
       expect(parsed.summary).toContain('Set ended by device');
       expect(parsed.summary).toContain('set ended automatically');
 
@@ -843,7 +850,7 @@ describe('wireEventBridge', () => {
       expect(channels.publish).not.toHaveBeenCalled();
     });
 
-    it('attaches device_set_summary block to set_ended_by_device (the onSetSummary payload)', async () => {
+    it('attaches device_set_summary block to set_ended (the onSetSummary payload)', async () => {
       startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
       client.fire.setSummary({
         schemaVersion: 1,
@@ -854,10 +861,12 @@ describe('wireEventBridge', () => {
       });
       await flushMicrotasks();
 
-      // First publish is `set_pre_summary`, second is `set_ended_by_device`.
+      // First publish is `set_pre_summary`, second is unified `set_ended`
+      // with `closed_by='device'`.
       expect(channels.publish).toHaveBeenCalledTimes(2);
       const setEnded = channels.publish.mock.calls[1][0];
-      expect(setEnded.meta.event_type).toBe('set_ended_by_device');
+      expect(setEnded.meta.event_type).toBe('set_ended');
+      expect(setEnded.meta.closed_by).toBe('device');
       expect(setEnded.meta.device_rep_count).toBe('7');
       expect(setEnded.meta.device_set_rep_duration_ms).toBe('5730');
       expect(setEnded.meta.device_schema_version).toBe('1');
@@ -964,15 +973,9 @@ describe('wireEventBridge', () => {
     });
 
     interface WatchSpec {
-      stopOn?: Array<
-        | { type: 'rep_count_reached'; value: number }
-        | { type: 'velocity_loss_exceeded'; pct: number }
-        | { type: 'idle_timeout_ms'; value: number }
-      >;
       notifyOn?: Array<
         | { type: 'rep_count_reached'; value: number }
         | { type: 'velocity_loss_exceeded'; pct: number }
-        | { type: 'idle_timeout_ms'; value: number }
       >;
     }
 
@@ -993,7 +996,6 @@ describe('wireEventBridge', () => {
         ...(watch !== undefined
           ? {
               watch: {
-                stopOn: watch.stopOn ?? [],
                 notifyOn: watch.notifyOn ?? [],
               },
             }
@@ -1081,52 +1083,67 @@ describe('wireEventBridge', () => {
         expect(fakeState.store.putSet).not.toHaveBeenCalled();
       });
 
-      it('stopOn fires set_target_reached AND auto-stops via finalizeSet', async () => {
-        startWatchedSet({ stopOn: [{ type: 'rep_count_reached', value: 2 }] });
+      it('F14/F15 rewrite: rep_count_reached is advisory — fires cue but DOES NOT finalize the set', async () => {
+        // Hardware capture 2026-05-11: a `stopOn: rep_count_reached: 5`
+        // trigger fired after rep 5, wrote `Workout.STOP` mid-rep-6 and
+        // ripped the cable mid-eccentric. The user dropped force-stop
+        // entirely; triggers are now advisory cues only. The model
+        // voice-coaches "rack it — that's your 5", the user finishes
+        // naturally, and `aa 85 5f` becomes the canonical close.
+        startWatchedSet({ notifyOn: [{ type: 'rep_count_reached', value: 2 }] });
         driveRep(1, 0.6);
         driveRep(2, 0.6);
         startNextRep(3, 0.6);
         await flushMicrotasks();
 
+        // Trigger cue fires — `auto_stopped: false` retained on the meta
+        // (the field is now always false, kept for back-compat consumers).
         const trigger = lastTriggerEvent();
-        expect(trigger?.meta.auto_stopped).toBe('true');
+        expect(trigger).toBeDefined();
+        expect(trigger?.meta).toMatchObject({
+          event_type: 'set_target_reached',
+          target_rep_count: '2',
+          actual_rep_count: '2',
+          auto_stopped: 'false',
+        });
 
-        // Set finalized.
-        expect(live.snapshotSet()).toBeUndefined();
-        expect(fakeState.store.putSet).toHaveBeenCalledTimes(1);
-        const stored = fakeState.store.putSet.mock.calls[0][0] as {
-          partial: boolean;
-          partialReason?: string;
-          reps: ReadonlyArray<{
-            concentric: { samples: readonly unknown[]; peakVelocity: number };
-            eccentric: { samples: readonly unknown[]; peakVelocity: number };
-          }>;
-        };
-        expect(stored.partial).toBe(true);
-        expect(stored.partialReason).toBe('auto_stopped');
-        // F14 (VMCP-01.28): the in-progress rep 3 must not be persisted —
-        // user asked for `rep_count_reached: 2` and did exactly 2 complete
-        // cycles. The bookkeeping rep at `reps[length-1]` (concentric-only
-        // from `startNextRep(3)`) is dropped before persistence.
-        expect(stored.reps.length).toBe(2);
-        for (const rep of stored.reps) {
-          expect(rep.eccentric.samples.length).toBeGreaterThan(0);
-        }
-
-        // set_ended channel event carries auto_stop_cause meta.
-        const setEnded = channels.publish.mock.calls
-          .map((c) => c[0])
-          .find((e) => e.meta.event_type === 'set_ended');
-        expect(setEnded).toBeDefined();
-        expect(setEnded?.meta.auto_stop_cause).toBe('rep_count_reached');
-        expect(setEnded?.meta.partial_reason).toBe('auto_stopped');
-
-        // Trigger event publishes BEFORE set_ended.
+        // Critical assertion: the set is STILL ACTIVE. No `set_ended`
+        // event was published; the bridge did not call `finalizeSet`.
+        expect(live.snapshotSet()).toBeDefined();
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
         const eventTypes = channels.publish.mock.calls.map((c) => c[0].meta.event_type);
-        const triggerIdx = eventTypes.indexOf('set_target_reached');
-        const endedIdx = eventTypes.indexOf('set_ended');
-        expect(triggerIdx).toBeGreaterThan(-1);
-        expect(endedIdx).toBeGreaterThan(triggerIdx);
+        expect(eventTypes).not.toContain('set_ended');
+      });
+
+      it('F15 advisory-only: rep_count_reached fires once even with 4 actual reps and target=3', async () => {
+        // Coverage scenario from the brief: with target=3, finalize 4
+        // reps → expect 1 cue, NO set_ended from the bridge.
+        startWatchedSet({ notifyOn: [{ type: 'rep_count_reached', value: 3 }] });
+        driveRep(1, 0.6);
+        driveRep(2, 0.6);
+        driveRep(3, 0.6);
+        startNextRep(4, 0.6); // closes rep 3 — cue fires here
+        client.fire.frame({
+          sequence: 41,
+          timestamp: 1500,
+          phase: 3, // ECCENTRIC
+          position: 0.4,
+          velocity: 0.6,
+          force: 50,
+        });
+        startNextRep(5, 0.6); // closes rep 4 — cue must NOT re-fire
+        await flushMicrotasks();
+
+        const cues = channels.publish.mock.calls.filter(
+          (c) => c[0].meta.event_type === 'set_target_reached',
+        );
+        expect(cues).toHaveLength(1);
+        const setEndedCalls = channels.publish.mock.calls.filter(
+          (c) => c[0].meta.event_type === 'set_ended',
+        );
+        expect(setEndedCalls).toHaveLength(0);
+        expect(live.snapshotSet()).toBeDefined();
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
       });
 
       it('fires exactly once even when reps continue past the target (notifyOn)', async () => {
@@ -1207,8 +1224,8 @@ describe('wireEventBridge', () => {
         expect(eventTypes).not.toContain('velocity_loss_exceeded');
       });
 
-      it('fires when rep 2 has lower peak concentric velocity than rep 1 (stopOn)', async () => {
-        startWatchedSet({ stopOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      it('F15 advisory-only: velocity_loss_exceeded fires cue without finalizing', async () => {
+        startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
         // Rep 1 peak conc = 1.0
         driveRep(1, 1.0);
         // Open rep 2 at velocity 0.5 — that single CONCENTRIC sample
@@ -1226,19 +1243,16 @@ describe('wireEventBridge', () => {
         startNextRep(3, 0.5);
         await flushMicrotasks();
 
-        // Loss = (1.0 - 0.5)/1.0 * 100 = 50% ≥ 30% — fires.
+        // Loss = (1.0 - 0.5)/1.0 * 100 = 50% ≥ 30% — cue fires.
         const trigger = lastTriggerEvent();
         expect(trigger?.meta.event_type).toBe('velocity_loss_exceeded');
-        expect(trigger?.meta.auto_stopped).toBe('true');
+        expect(trigger?.meta.auto_stopped).toBe('false');
         expect(parseFloat(trigger!.meta.velocity_loss_pct)).toBeCloseTo(50.0, 1);
         expect(trigger?.meta.threshold_pct).toBe('30');
 
-        // stopOn ⇒ set is finalized.
-        expect(live.snapshotSet()).toBeUndefined();
-        const setEnded = channels.publish.mock.calls
-          .map((c) => c[0])
-          .find((e) => e.meta.event_type === 'set_ended');
-        expect(setEnded?.meta.auto_stop_cause).toBe('velocity_loss_exceeded');
+        // Set remains active — advisory only.
+        expect(live.snapshotSet()).toBeDefined();
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
       });
 
       it('does not re-fire after a stronger rep raises the baseline (no false-positive)', async () => {
@@ -1294,10 +1308,13 @@ describe('wireEventBridge', () => {
       });
     });
 
-    describe('combined stopOn behavior', () => {
-      it('multiple stopOn matches in same rep publish each trigger event then auto-stop once', async () => {
+    describe('combined notifyOn behavior', () => {
+      it('multiple matches in same rep publish each trigger event WITHOUT finalizing', async () => {
+        // F15 advisory-only: both rep_count_reached:2 and
+        // velocity_loss_exceeded:30 match on rep 2's close. Both fire as
+        // cues; the set stays active.
         startWatchedSet({
-          stopOn: [
+          notifyOn: [
             { type: 'rep_count_reached', value: 2 },
             { type: 'velocity_loss_exceeded', pct: 30 },
           ],
@@ -1326,12 +1343,13 @@ describe('wireEventBridge', () => {
           );
         expect(triggerEvents).toHaveLength(2);
 
-        // finalizeSet runs exactly once.
-        expect(fakeState.store.putSet).toHaveBeenCalledTimes(1);
+        // Set stays active — no finalize.
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
         const setEnded = channels.publish.mock.calls
           .map((c) => c[0])
           .filter((e) => e.meta.event_type === 'set_ended');
-        expect(setEnded).toHaveLength(1);
+        expect(setEnded).toHaveLength(0);
+        expect(live.snapshotSet()).toBeDefined();
       });
     });
   });
@@ -2012,9 +2030,7 @@ describe('wireEventBridge', () => {
       }
       const repEvents = channels.publish.mock.calls
         .map((c) => c[0])
-        .filter((e) =>
-          ['rep_finalized', 'set_boundary', 'set_ended_by_device'].includes(e.meta.event_type),
-        );
+        .filter((e) => ['rep_finalized', 'set_boundary', 'set_ended'].includes(e.meta.event_type));
       expect(repEvents).toHaveLength(0);
     });
 

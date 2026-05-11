@@ -225,7 +225,7 @@ describe('LiveState', () => {
       // Sanity: pre-finalize the analytics path reflects the in-progress rep.
       expect(live.snapshotSet()?.reps.length).toBe(6);
 
-      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
       expect(finalized).toBeDefined();
       expect(finalized?.reps.length).toBe(5);
       // Every persisted rep has an eccentric phase (real, completed rep).
@@ -234,7 +234,7 @@ describe('LiveState', () => {
       }
       // Status + partialReason still threaded correctly.
       expect(finalized?.status).toBe('partial');
-      expect(finalized?.partialReason).toBe('auto_stopped');
+      expect(finalized?.partialReason).toBe('inactivity_timeout');
     });
 
     it('preserves the trailing rep on graceful endSet (no drop flag) — F7 regression guard', () => {
@@ -252,21 +252,22 @@ describe('LiveState', () => {
     });
 
     it('leaves a complete trailing rep alone even when dropTrailingInProgress is set', () => {
-      // The auto-stop watcher fires *before* the next concentric sample for
-      // an "every rep" stopOn, so the trailing rep is the just-completed rep
-      // N (with eccentric samples). The predicate must not drop it.
+      // The inactivity watchdog can fire *after* the user finishes a rep
+      // cycle (eccentric closed) but before they start the next rep. The
+      // trailing rep is the just-completed rep N with eccentric samples.
+      // The predicate must not drop it.
       const live = new LiveState();
       live.startSet(makeSet());
       driveSamples(live, 3, 0, 0.6);
       const before = live.snapshotSet()?.reps.length ?? 0;
-      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
       expect(finalized?.reps.length).toBe(before);
     });
 
     it('is a no-op on an empty rep array', () => {
       const live = new LiveState();
       live.startSet(makeSet());
-      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
       expect(finalized?.reps.length).toBe(0);
     });
   });

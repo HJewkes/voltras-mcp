@@ -16,8 +16,8 @@
 // `resetPrimarySlot`), which import `wireBridgeForSlot` directly. Each
 // per-slot wirer captures the originating `slot.slotId` in its closures,
 // so every published channel event is tagged with `slot: <slotId>` (via
-// `state.channels.forSlot(...)`) and the autonomous `set_ended_by_device`
-// finalize knows which slot's set to close.
+// `state.channels.forSlot(...)`) and the autonomous device-signal finalize
+// knows which slot's set to close.
 //
 // ── Event mapping ─────────────────────────────────────────────────────────
 //
@@ -36,19 +36,17 @@
 //                                 in-progress events in response to our
 //                                 Workout.GO engage command, which would
 //                                 otherwise reset the rep counter mid-set).
-//                                 Outside the grace window WITH an active
-//                                 set, the heartbeat is treated as the user
-//                                 pressing Stop on the Voltra UI — the
-//                                 bridge finalizes the set via the shared
-//                                 `finalizeSet` helper, which persists,
-//                                 clears live state, and emits the
-//                                 `set_ended_by_device` channel event.
-//                                 Outside the grace window with NO active
-//                                 set, the event is a silent drop (the
-//                                 explicit `set.end` tool already finalized;
-//                                 LiveState's set is undefined and double-
-//                                 firing is the race-condition guard).
-//                                 (Critic gap Q6.)
+//                                 The pre-noble heuristic ("first
+//                                 onInProgress after the grace window
+//                                 finalizes the set") was retired —
+//                                 onInProgress now only refreshes
+//                                 LiveState's `latestInProgress` for
+//                                 `set.live_metrics` reads. Canonical
+//                                 per-set close in WT/RB/Damper flows
+//                                 through `onSetSummary` (`aa 85 5f`)
+//                                 and emits `set_ended` with
+//                                 `meta.closed_by='device'`. (Critic gap
+//                                 Q6.)
 //   onSettingsUpdate            → applySettings + notify voltra://device/current.
 //                                 Also feeds the per-slot ModeRevertGuard
 //                                 (Bug 22) so trainingMode drift inside the
@@ -132,7 +130,6 @@ import {
   type SettingsUpdateField,
 } from './channel-payloads.js';
 import type { ServerState, SlotState } from './server-state.js';
-import type { TriggerSpec } from '../schemas/set.js';
 import { finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { log } from '../logger.js';
 
@@ -413,19 +410,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             resetIdleWatchdog(state, set.setId, set.watch);
           }
           // Evaluate any registered trigger DSL specs against the
-          // finalized rep. Trigger events publish BEFORE finalizeSet
-          // (which publishes set_ended) so PT Claude reads
-          // `<set_target_reached>` / `<velocity_loss_exceeded>` first
-          // and `<set_ended>` second.
-          evaluateRepTriggers(
-            live,
-            slotChannels,
-            finalizedIndex,
-            finalizedRep,
-            device,
-            state,
-            slotId,
-          );
+          // finalized rep. F14/F15 rewrite: triggers are advisory cues
+          // only — they publish channel events so the model can voice-
+          // coach the user, but they never force-close the set. The
+          // canonical set close comes from the device's `aa 85 5f`
+          // disengage signal or the user's explicit `set.end` tool call.
+          evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
         }
       }
     }),
@@ -512,7 +502,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // it fires after all reps complete with the final rep count, not
       // before. `finalizeSet` reads `consumeLatestSetSummary()` and threads
       // the device's repCount/repDurationMs/targetWeightTenths into the
-      // persisted `set_ended_by_device` event payload.
+      // persisted `set_ended` event payload (with `meta.closed_by='device'`).
       //
       // Modes that don't emit a per-set close (rowing, iso, custom-curves)
       // fall through to the inactivity watchdog defined below
@@ -596,8 +586,8 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       return;
     }
     void finalizeSet(state, slotId, {
-      cause: 'device_signal',
-      disengageMotor: false,
+      cause: 'tool',
+      disengageMotor: true,
       partialReason: 'inactivity_timeout',
     }).catch((err) => {
       log.warn('event-bridge: inactivity-timeout finalize failed', err);
@@ -885,20 +875,23 @@ function notifySlot(
 }
 
 /**
- * Evaluate the active set's `watch` config against the just-finalized rep.
- * Publishes one channel event per matching spec (deduped via the active
- * set's `firedTriggers` ledger) and, if any `stopOn` spec matched, calls
- * `finalizeSet(partialReason='auto_stopped')` once after publishing.
+ * Evaluate the active set's `watch.notifyOn` config against the just-
+ * finalized rep. Publishes one channel event per matching spec (deduped
+ * via the active set's `firedTriggers` ledger). Does NOT finalize the set.
+ *
+ * F14/F15 rewrite: in the prior design, `stopOn` specs auto-finalized the
+ * set when matched. Hardware capture 2026-05-11 showed this racing with
+ * user motion — a `rep_count_reached: 5` trigger fired after rep 5,
+ * wrote `Workout.STOP` mid-rep-6, and ripped the cable mid-eccentric.
+ * The user dropped the auto-stop semantics entirely; triggers are now
+ * advisory cues. The model voice-coaches the user to "rack it — that's
+ * your 5", the user finishes their cycle naturally, and the device's
+ * `aa 85 5f` disengage signal becomes the canonical set close.
  *
  * Synchronous trigger types only: `rep_count_reached` and
- * `velocity_loss_exceeded`. The `idle_timeout_ms` spec is handled via the
- * watchdog (sprint 2 commit 2), wired in `set-tools.ts:startSet`.
- *
- * Why publish before finalize: the channel ordering matters — the model
- * should see the trigger explanation (`<set_target_reached>`) BEFORE the
- * resulting `<set_ended>` so it can reason about why the set ended without
- * post-hoc inference. The finalize happens last, exactly once per rep,
- * even when multiple stopOn specs match.
+ * `velocity_loss_exceeded`. Inactivity timeout is handled via the
+ * watchdog wired in `set-tools.ts:startSet` — that's still a force-close
+ * because abandonment frees server resources.
  */
 function evaluateRepTriggers(
   live: LiveState,
@@ -906,8 +899,6 @@ function evaluateRepTriggers(
   finalizedIndex: number,
   finalizedRep: Rep,
   device: DeviceSnapshot,
-  state: ServerState,
-  slotId: string,
 ): void {
   const set = live.snapshotSet();
   if (set === undefined || set.watch === undefined) {
@@ -924,36 +915,28 @@ function evaluateRepTriggers(
   const baseline = peakConcentricBaseline(finalizedReps);
   const current = finalizedRep.concentric.peakVelocity;
 
-  let stopFired = false;
-  let stopCause: string | undefined;
-
-  const evaluateSpec = (spec: TriggerSpec, isStopOn: boolean): void => {
-    // Only the synchronous specs run in the rep_finalized loop. The
-    // idle_timeout_ms spec arms a watchdog at set.start (commit 2) and
-    // does not participate in this evaluator.
-    if (spec.type === 'idle_timeout_ms') return;
+  for (const spec of set.watch.notifyOn) {
     const key = triggerDedupeKey(spec);
 
     if (spec.type === 'rep_count_reached') {
-      if (actualReps !== spec.value) return;
-      if (!live.tryFireTrigger(key)) return;
-      const payload = buildSetTargetReachedPayload(set, device, spec.value, actualReps, isStopOn);
+      if (actualReps !== spec.value) continue;
+      if (!live.tryFireTrigger(key)) continue;
+      // `auto_stopped: false` retained on the meta for backwards-compat
+      // with any consumer that filtered on it; future PR may strip the
+      // field once we're sure no downstream relies on it.
+      const payload = buildSetTargetReachedPayload(set, device, spec.value, actualReps, false);
       channels.publish(payload);
-      if (isStopOn) {
-        stopFired = true;
-        stopCause = stopCause ?? spec.type;
-      }
-      return;
+      continue;
     }
 
     if (spec.type === 'velocity_loss_exceeded') {
       // baseline must be a real positive velocity for loss% to be defined.
       // current >= baseline ⇒ loss <= 0 ⇒ no fire (covers the just-set-a-
       // new-max case explicitly).
-      if (baseline <= 0 || current >= baseline) return;
+      if (baseline <= 0 || current >= baseline) continue;
       const lossPct = (100 * (baseline - current)) / baseline;
-      if (lossPct < spec.pct) return;
-      if (!live.tryFireTrigger(key)) return;
+      if (lossPct < spec.pct) continue;
+      if (!live.tryFireTrigger(key)) continue;
       const baselineRepNumber = baselineRepNumberFor(finalizedReps);
       const payload = buildVelocityLossExceededPayload(
         set,
@@ -964,33 +947,11 @@ function evaluateRepTriggers(
         current,
         baselineRepNumber,
         actualReps,
-        isStopOn,
+        false,
       );
       channels.publish(payload);
-      if (isStopOn) {
-        stopFired = true;
-        stopCause = stopCause ?? spec.type;
-      }
-      return;
+      continue;
     }
-  };
-
-  for (const spec of set.watch.notifyOn) {
-    evaluateSpec(spec, false);
-  }
-  for (const spec of set.watch.stopOn) {
-    evaluateSpec(spec, true);
-  }
-
-  if (stopFired && stopCause !== undefined) {
-    void finalizeSet(state, slotId, {
-      cause: 'tool',
-      disengageMotor: true,
-      partialReason: 'auto_stopped',
-      auto_stop_cause: stopCause,
-    }).catch((err) => {
-      log.warn('event-bridge: trigger DSL auto-stop finalize failed', err);
-    });
   }
 }
 

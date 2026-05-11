@@ -1,36 +1,30 @@
-// Per-set idle-timeout watchdog. Backs the trigger DSL's
-// `idle_timeout_ms` spec — a coach can ask the server to fire a channel
-// event (`idle_timeout`) and optionally auto-stop the set when no rep has
-// finalized for N milliseconds.
+// Per-set inactivity watchdog. Backs `WatchConfig.inactivityTimeoutMs` —
+// a coach can ask the server to fire a channel event (`idle_timeout`) AND
+// force-close the set when no rep has finalized for N milliseconds.
 //
 // Lifecycle (one watchdog per active set, max one timer per set):
 //   * `set.start` calls `register(setId, idleMs, onFire)` once if the
-//     watch config has at least one `idle_timeout_ms` spec.
+//     watch config supplies `inactivityTimeoutMs`.
 //   * Every rep_finalized boundary in the bridge calls `reset(setId,
 //     idleMs, onFire)` to bump the deadline forward.
-//   * `finalizeSet` (any termination path — explicit set.end, device-
-//     signal, auto-stop, disconnect cascade) calls `cancel(setId)` so a
-//     stale timer never publishes after the set has closed.
+//   * `finalizeSet` (any termination path — explicit set.end,
+//     device-signal, inactivity force-close, disconnect cascade) calls
+//     `cancel(setId)` so a stale timer never publishes after the set
+//     has closed.
 //
-// Smallest-wins idle threshold:
-//   When a set registers multiple `idle_timeout_ms` specs (across
-//   `stopOn` + `notifyOn`), only the smallest threshold ever arms a
-//   timer — the later, larger thresholds would never get a chance to
-//   fire because the smaller one always wakes the model first. This
-//   keeps the watchdog to ONE timer per set and matches the typical
-//   coaching pattern (a single "abandonment" threshold, not a layered
-//   nudge cascade). The bridge's onFire callback resolves which specific
-//   spec to publish for. Per-spec timers would be a larger model;
-//   chosen this simpler shape because the user-visible difference is a
-//   single channel event either way.
+// F14/F15 rewrite: previously this watchdog could be configured as
+// notify-only (`notifyOn: [idle_timeout_ms]`) or auto-stop
+// (`stopOn: [idle_timeout_ms]`). Inactivity is the one remaining
+// force-close path — the user has truly abandoned the set, and the
+// server must free the slot. The watchdog now always force-closes.
 
 /**
  * Callback the watchdog invokes when its timer expires. Implementation
  * is owned by `set-tools.ts:startSet` — it builds the `idle_timeout`
- * payload, publishes the channel event, and calls `finalizeSet` if any
- * registered idle_timeout spec was on `stopOn`. Errors thrown from this
- * callback are caught and logged at the call site so the watchdog never
- * leaves an unhandled rejection trail.
+ * payload, publishes the channel event, and calls `finalizeSet` with
+ * `partialReason='inactivity_timeout'`. Errors thrown from this callback
+ * are caught and logged at the call site so the watchdog never leaves an
+ * unhandled rejection trail.
  */
 export type WatchdogFireCallback = () => void;
 
