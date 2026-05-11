@@ -5,7 +5,7 @@
 // pair plus a final group for cross-cutting invariants (independence of
 // snapshots, stale-rep drop, null battery coercion).
 import { describe, expect, it } from 'vitest';
-import type { Rep } from '@voltras/workout-analytics';
+import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { LiveState, type ActiveSession, type ActiveSet } from '../live-state.js';
 
 const TS_A = '2025-01-01T00:00:00.000Z';
@@ -171,6 +171,103 @@ describe('LiveState', () => {
       live.startSet(makeSet());
       live.endSet();
       expect(live.snapshotSession()).toBeUndefined();
+    });
+  });
+
+  describe('endSet — dropTrailingInProgress (F14 / VMCP-01.28)', () => {
+    // Phase enum values from @voltras/workout-analytics:
+    //   1 = CONCENTRIC, 3 = ECCENTRIC. Building samples by literal so the
+    //   test stays decoupled from internal enum-value drift in the analytics
+    //   package; the contract is the integer wire value the SDK emits.
+    const CONCENTRIC = 1;
+    const ECCENTRIC = 3;
+
+    function sample(seq: number, phase: number, velocity: number): WorkoutSample {
+      return {
+        sequence: seq,
+        timestamp: 1000 + seq * 50,
+        phase: phase as WorkoutSample['phase'],
+        position: seq * 0.01,
+        velocity,
+        force: 50,
+      };
+    }
+
+    /**
+     * Drive N complete rep cycles (each: 1 concentric + 1 eccentric frame)
+     * then `extraConcentricSamples` extra concentric samples after the last
+     * eccentric — simulating the in-progress next rep that the bridge has
+     * appended at index N when the watch trigger fires.
+     */
+    function driveSamples(
+      live: LiveState,
+      completeReps: number,
+      extraConcentricSamples: number,
+      velocity: number,
+    ): number {
+      let seq = 0;
+      for (let i = 0; i < completeReps; i++) {
+        live.processSample(sample(seq++, CONCENTRIC, velocity));
+        live.processSample(sample(seq++, ECCENTRIC, velocity));
+      }
+      for (let i = 0; i < extraConcentricSamples; i++) {
+        live.processSample(sample(seq++, CONCENTRIC, velocity));
+      }
+      return seq;
+    }
+
+    it('drops the trailing in-progress rep when called with dropTrailingInProgress', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      // 5 complete cycles + the next concentric sample → analytics-set has
+      // 6 reps where reps[5] has concentric samples only (eccentric empty).
+      driveSamples(live, 5, 1, 0.6);
+      // Sanity: pre-finalize the analytics path reflects the in-progress rep.
+      expect(live.snapshotSet()?.reps.length).toBe(6);
+
+      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      expect(finalized).toBeDefined();
+      expect(finalized?.reps.length).toBe(5);
+      // Every persisted rep has an eccentric phase (real, completed rep).
+      for (const rep of finalized!.reps) {
+        expect(rep.eccentric.samples.length).toBeGreaterThan(0);
+      }
+      // Status + partialReason still threaded correctly.
+      expect(finalized?.status).toBe('partial');
+      expect(finalized?.partialReason).toBe('auto_stopped');
+    });
+
+    it('preserves the trailing rep on graceful endSet (no drop flag) — F7 regression guard', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      driveSamples(live, 5, 1, 0.6);
+      // Graceful tool path: no reason, no drop flag.
+      const finalized = live.endSet();
+      expect(finalized).toBeDefined();
+      // Trailing in-progress rep stays — F7 deferred work, the graceful
+      // path's behavior is intentionally unchanged.
+      expect(finalized?.reps.length).toBe(6);
+      expect(finalized?.reps[5].eccentric.samples.length).toBe(0);
+      expect(finalized?.status).toBe('ended');
+    });
+
+    it('leaves a complete trailing rep alone even when dropTrailingInProgress is set', () => {
+      // The auto-stop watcher fires *before* the next concentric sample for
+      // an "every rep" stopOn, so the trailing rep is the just-completed rep
+      // N (with eccentric samples). The predicate must not drop it.
+      const live = new LiveState();
+      live.startSet(makeSet());
+      driveSamples(live, 3, 0, 0.6);
+      const before = live.snapshotSet()?.reps.length ?? 0;
+      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      expect(finalized?.reps.length).toBe(before);
+    });
+
+    it('is a no-op on an empty rep array', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      const finalized = live.endSet('auto_stopped', { dropTrailingInProgress: true });
+      expect(finalized?.reps.length).toBe(0);
     });
   });
 

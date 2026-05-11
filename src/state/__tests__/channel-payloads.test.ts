@@ -369,6 +369,36 @@ describe('buildSetEndedPayload', () => {
     });
   });
 
+  it('F14 (VMCP-01.28): vbt_summary uses last complete rep when partial trailing rep is dropped pre-payload', () => {
+    // Hardware capture 2026-05-11: 5 complete reps then a watch trigger
+    // fired auto-stop. Pre-fix, a single-sample concentric-only rep 6 was
+    // persisted (peakVelocity=982 mm/s) and last_rep_v reflected that
+    // bogus value, flipping velocity_loss_pct positive when the real
+    // rep1→rep5 loss was negative. Post-fix, the bridge drops the
+    // trailing in-progress rep before persistence, so the StoredSet that
+    // reaches `buildSetEndedPayload` contains only 5 reps and
+    // last_rep_v correctly reflects rep 5's concentric peak.
+    const reps = [
+      makeRep(1, 700, 500), // first
+      makeRep(2, 720, 520),
+      makeRep(3, 760, 510),
+      makeRep(4, 800, 530),
+      makeRep(5, 850, 540), // last complete rep — real "last_rep_v"
+    ];
+    const stored = buildStored(reps, { reason: 'auto_stopped' });
+    const { content } = buildSetEndedPayload(stored, 'tool', 'rep_count_reached');
+    const parsed = JSON.parse(content);
+    expect(parsed.reps).toHaveLength(5);
+    // Rep 5's peak concentric velocity (850 mm/s → 0.85 m/s) is the
+    // last_rep_v — NOT some bogus value from a never-completed rep 6.
+    expect(parsed.vbt_summary.last_rep_v).toBe(0.85);
+    expect(parsed.vbt_summary.first_rep_v).toBe(0.7);
+    // velocity_loss_pct on (700→850) is negative — set was accelerating,
+    // exactly the inversion the bogus rep-6 value masked in the field
+    // capture.
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeLessThan(0);
+  });
+
   describe('cause = "device_signal" → set_ended_by_device', () => {
     it('emits meta.event_type=set_ended_by_device with the same scalar fields as set_ended', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];

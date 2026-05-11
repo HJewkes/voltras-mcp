@@ -1097,9 +1097,21 @@ describe('wireEventBridge', () => {
         const stored = fakeState.store.putSet.mock.calls[0][0] as {
           partial: boolean;
           partialReason?: string;
+          reps: ReadonlyArray<{
+            concentric: { samples: readonly unknown[]; peakVelocity: number };
+            eccentric: { samples: readonly unknown[]; peakVelocity: number };
+          }>;
         };
         expect(stored.partial).toBe(true);
         expect(stored.partialReason).toBe('auto_stopped');
+        // F14 (VMCP-01.28): the in-progress rep 3 must not be persisted —
+        // user asked for `rep_count_reached: 2` and did exactly 2 complete
+        // cycles. The bookkeeping rep at `reps[length-1]` (concentric-only
+        // from `startNextRep(3)`) is dropped before persistence.
+        expect(stored.reps.length).toBe(2);
+        for (const rep of stored.reps) {
+          expect(rep.eccentric.samples.length).toBeGreaterThan(0);
+        }
 
         // set_ended channel event carries auto_stop_cause meta.
         const setEnded = channels.publish.mock.calls
