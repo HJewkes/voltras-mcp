@@ -252,7 +252,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
         <div class="kv"><span>Latest peak velocity</span><span id="cs-peak-vel">—</span></div>
         <div class="kv"><span>Target weight</span><span id="cs-target">—</span></div>
         <div id="rep-bars" hidden>
-          <div id="rep-bars-title">Peak velocity per rep (cm/s)</div>
+          <div id="rep-bars-title">Peak velocity per rep (m/s)</div>
           <div id="rep-bars-list"></div>
         </div>
       </div>
@@ -338,9 +338,12 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
       return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
-    function fmtVelocity(cmPerSec) {
-      if (cmPerSec == null) return '—';
-      return cmPerSec.toFixed(1) + ' cm/s';
+    // WA-derived peak/mean velocities arrive in mm/s (see channel-payloads'
+    // mmsToMps helper / F18 / VMCP-01.32). Dashboard tiles render m/s to
+    // match the channel-event surface PT Claude reads.
+    function fmtVelocity(mmPerSec) {
+      if (mmPerSec == null) return '—';
+      return (mmPerSec / 1000).toFixed(2) + ' m/s';
     }
 
     function fmtWeight(lbs) {
@@ -459,7 +462,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
             '<div class="rep-bar-track">' +
               '<div class="rep-bar-fill" style="width:' + pct + '%;background:' + color + '"></div>' +
             '</div>' +
-            '<span class="rep-bar-val">' + (vel != null ? vel.toFixed(1) : '—') + ' cm/s</span>' +
+            '<span class="rep-bar-val">' + (vel != null ? (vel / 1000).toFixed(2) : '—') + ' m/s</span>' +
           '</div>'
         );
       });
@@ -484,7 +487,7 @@ export const DASHBOARD_HTML = /* html */ `<!doctype html>
         const mode    = escapeHtml(fmtMode(entry.mode));
         const reps    = entry.repCount;
         const peakVel = entry.bestPeakVelocity != null
-          ? entry.bestPeakVelocity.toFixed(1) + ' cm/s'
+          ? (entry.bestPeakVelocity / 1000).toFixed(2) + ' m/s'
           : '—';
         return (
           '<tr>' +

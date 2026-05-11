@@ -229,14 +229,22 @@ export interface ActiveSet {
 /**
  * A rep captured while no MCP set was armed. Carries the minimal VBT shape
  * needed for the PT skill to detect missed reps and optionally retroactively
- * attach them to the next set. `vCon` is the mean concentric velocity in m/s;
- * `rom` is the concentric range-of-motion in metres. Both are null when the
+ * attach them to the next set.
+ *
+ * UNITS: stored on this struct in the raw scale workout-analytics returns —
+ * `vCon` is the mean concentric velocity in **mm/s** (from
+ * `getPhaseMeanVelocity`), and `rom` is the concentric range-of-motion in
+ * **mm** (from `getPhaseRangeOfMotion`). The `idle_rep` channel payload and
+ * the session resource convert both to m/s and metres respectively at the
+ * serialization boundary (F18 / VMCP-01.32). Both are null when the
  * concentric phase had no movement samples (rare; typically means the rep
  * boundary fired mid-phase-transition before enough frames arrived).
  */
 export interface IdleRep {
   ts: number;
+  /** Mean concentric velocity in mm/s. Converted to m/s at the channel/resource boundary. */
   vCon: number | null;
+  /** Concentric range-of-motion in mm. Converted to metres at the channel/resource boundary. */
   rom: number | null;
   slot: string;
 }
