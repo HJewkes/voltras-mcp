@@ -67,6 +67,7 @@ import {
   type CascadePlan,
   type SlotResult,
 } from '../state/bilateral-cascade.js';
+import { trackedSetterCall, type TrackedFieldSpec } from '../state/coercion-watch.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import { finalizeSet } from './set-tools.js';
 import type { StoredSession } from '../store/types.js';
@@ -453,12 +454,21 @@ export function registerDeviceTools(
 
   // device.set_weight — direct passthrough to the SDK; the schema clamps
   // input to the device-allowed range so the SDK never sees out-of-band lbs.
+  // Wrapped in `trackedSetterCall` so the bridge can correlate a subsequent
+  // state-dump value at `weightLbsTenths !== input.lbs × 10` into a
+  // `setting_coerced` channel event (F2/F3).
   install(
     placeholders,
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
-      await getSlot(state, input.slot).client.setWeight(input.lbs);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_weight',
+        [{ field: 'weightLbsTenths', requested: input.lbs * 10 }],
+        () => slot.client.setWeight(input.lbs),
+      );
       return { ok: true };
     }),
   );
@@ -520,24 +530,41 @@ export function registerDeviceTools(
   );
   // </Bug-22>
 
-  // device.set_chains — passthrough; schema enforces 0–100 lbs.
+  // device.set_chains — passthrough; schema enforces 0–100 lbs. Wrapped in
+  // `trackedSetterCall`: the firmware silently caps chains at weight, so a
+  // request of 60 lbs against a 50-lb weight surfaces as `chainTargetForceTenths
+  // = 500` not 600 — that mismatch is exactly the F3 coercion signal.
   install(
     placeholders,
     'device.set_chains',
     DeviceSetChainsInput,
     wrapHandler(DeviceSetChainsInput, async (input) => {
-      await getSlot(state, input.slot).client.setChains(input.lbs);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_chains',
+        [{ field: 'chainTargetForceTenths', requested: input.lbs * 10 }],
+        () => slot.client.setChains(input.lbs),
+      );
       return { ok: true };
     }),
   );
 
   // device.set_eccentric — passthrough; schema enforces -195..+195 percent.
+  // Wrapped in `trackedSetterCall`: assistMode=on enforces a non-zero ecc
+  // floor, so a `setEccentric(0)` request surfaces as a coerced value (F2).
   install(
     placeholders,
     'device.set_eccentric',
     DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
-      await getSlot(state, input.slot).client.setEccentric(input.percent);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_eccentric',
+        [{ field: 'eccentricPercentTenths', requested: input.percent * 10 }],
+        () => slot.client.setEccentric(input.percent),
+      );
       return { ok: true };
     }),
   );
@@ -555,7 +582,13 @@ export function registerDeviceTools(
     'device.set_damper_level',
     DeviceSetDamperLevelInput,
     wrapHandler(DeviceSetDamperLevelInput, async (input) => {
-      await getSlot(state, input.slot).client.setDamperLevel(input.level);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_damper_level',
+        [{ field: 'damperLevel', requested: input.level }],
+        () => slot.client.setDamperLevel(input.level),
+      );
       return { ok: true };
     }),
     DAMPER_LEVEL_DESCRIPTION,
@@ -566,18 +599,40 @@ export function registerDeviceTools(
     'device.set_assist_mode',
     DeviceSetAssistModeInput,
     wrapHandler(DeviceSetAssistModeInput, async (input) => {
-      await getSlot(state, input.slot).client.setAssistMode(input.mode);
+      // Device reports assistMode as 0 (off) / 2 (on) / 8 (idle sentinel)
+      // in state-dump frames. Translate the user enum to the device's
+      // 0/2 representation so coercion comparison stays apples-to-apples.
+      const slot = getSlot(state, input.slot);
+      const requested = input.mode === 'on' ? 2 : 0;
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_assist_mode',
+        [{ field: 'assistMode', requested }],
+        () => slot.client.setAssistMode(input.mode),
+      );
       return { ok: true };
     }),
     ASSIST_MODE_DESCRIPTION,
   );
 
+  // band-max-force / isokinetic setters: the SDK explicitly notes the
+  // device does NOT echo these in settings-update / state-dump frames
+  // (see SDK voltra-client.d.ts comments on `setBandMaxForce`). The
+  // tracked-setter call still registers a check so future protocol
+  // versions that surface them would auto-light up; today the check
+  // silently expires after `COERCION_WINDOW_MS`.
   install(
     placeholders,
     'device.set_band_max_force',
     DeviceSetBandMaxForceInput,
     wrapHandler(DeviceSetBandMaxForceInput, async (input) => {
-      await getSlot(state, input.slot).client.setBandMaxForce(input.lbs);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_band_max_force',
+        [{ field: 'bandMaxForceLbsTenths', requested: input.lbs * 10 }],
+        () => slot.client.setBandMaxForce(input.lbs),
+      );
       return { ok: true };
     }),
     BAND_MAX_FORCE_DESCRIPTION,
@@ -588,7 +643,13 @@ export function registerDeviceTools(
     'device.set_isokinetic_target_speed',
     DeviceSetIsokineticTargetSpeedInput,
     wrapHandler(DeviceSetIsokineticTargetSpeedInput, async (input) => {
-      await getSlot(state, input.slot).client.setIsokineticTargetSpeed(input.mmPerSec);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_isokinetic_target_speed',
+        [{ field: 'isokineticTargetSpeedMmPerSec', requested: input.mmPerSec }],
+        () => slot.client.setIsokineticTargetSpeed(input.mmPerSec),
+      );
       return { ok: true };
     }),
     ISOKINETIC_TARGET_SPEED_DESCRIPTION,
@@ -599,7 +660,18 @@ export function registerDeviceTools(
     'device.set_isokinetic_ecc_mode',
     DeviceSetIsokineticEccModeInput,
     wrapHandler(DeviceSetIsokineticEccModeInput, async (input) => {
-      await getSlot(state, input.slot).client.setIsokineticEccMode(input.mode);
+      // Mode is an enum string. The CoercionWatch compares numeric
+      // device values, so we use a fingerprint: 0 = 'isokinetic',
+      // 1 = 'constant'. Device doesn't echo this today; the check
+      // silently expires.
+      const slot = getSlot(state, input.slot);
+      const requested = input.mode === 'constant' ? 1 : 0;
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_isokinetic_ecc_mode',
+        [{ field: 'isokineticEccMode', requested }],
+        () => slot.client.setIsokineticEccMode(input.mode),
+      );
       return { ok: true };
     }),
     ISOKINETIC_ECC_MODE_DESCRIPTION,
@@ -610,7 +682,13 @@ export function registerDeviceTools(
     'device.set_isokinetic_ecc_speed_limit',
     DeviceSetIsokineticEccSpeedLimitInput,
     wrapHandler(DeviceSetIsokineticEccSpeedLimitInput, async (input) => {
-      await getSlot(state, input.slot).client.setIsokineticEccSpeedLimit(input.mmPerSec);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_isokinetic_ecc_speed_limit',
+        [{ field: 'isokineticEccSpeedLimitMmPerSec', requested: input.mmPerSec }],
+        () => slot.client.setIsokineticEccSpeedLimit(input.mmPerSec),
+      );
       return { ok: true };
     }),
     ISOKINETIC_ECC_SPEED_LIMIT_DESCRIPTION,
@@ -621,7 +699,13 @@ export function registerDeviceTools(
     'device.set_isokinetic_ecc_const_weight',
     DeviceSetIsokineticEccConstWeightInput,
     wrapHandler(DeviceSetIsokineticEccConstWeightInput, async (input) => {
-      await getSlot(state, input.slot).client.setIsokineticEccConstWeight(input.lbs);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_isokinetic_ecc_const_weight',
+        [{ field: 'isokineticEccConstWeightLbsTenths', requested: input.lbs * 10 }],
+        () => slot.client.setIsokineticEccConstWeight(input.lbs),
+      );
       return { ok: true };
     }),
     ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION,
@@ -632,7 +716,13 @@ export function registerDeviceTools(
     'device.set_isokinetic_ecc_overload_weight',
     DeviceSetIsokineticEccOverloadWeightInput,
     wrapHandler(DeviceSetIsokineticEccOverloadWeightInput, async (input) => {
-      await getSlot(state, input.slot).client.setIsokineticEccOverloadWeight(input.lbs);
+      const slot = getSlot(state, input.slot);
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.set_isokinetic_ecc_overload_weight',
+        [{ field: 'isokineticEccOverloadWeightLbsTenths', requested: input.lbs * 10 }],
+        () => slot.client.setIsokineticEccOverloadWeight(input.lbs),
+      );
       return { ok: true };
     }),
     ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION,
@@ -659,7 +749,35 @@ export function registerDeviceTools(
       if (typeof input.pollDurationMs === 'number') {
         opts.pollDurationMs = input.pollDurationMs;
       }
-      await getSlot(state, input.slot).client.startGuidedLoad(opts);
+      const slot = getSlot(state, input.slot);
+      // F3 coercion correlation: guided-load runs a firmware safety
+      // sequence that can silently floor chains + eccentric to safe
+      // minimums on a low target weight (e.g. 5 lb target → chains
+      // capped at 2 lb, ecc capped at 8%). The setter writes the target
+      // weight directly, so the chains/ecc "requested" values are
+      // whatever the user had previously configured — read from the
+      // live snapshot at call time. Fields with no prior configured
+      // value are skipped (the bridge has no requested-baseline to
+      // compare against).
+      const preDevice = slot.live.snapshotDevice();
+      const fields: TrackedFieldSpec[] = [
+        { field: 'weightLbsTenths', requested: input.targetWeightLbs * 10 },
+      ];
+      if (typeof preDevice.chainTargetForceTenths === 'number') {
+        fields.push({
+          field: 'chainTargetForceTenths',
+          requested: preDevice.chainTargetForceTenths,
+        });
+      }
+      if (typeof preDevice.eccentricPercentTenths === 'number') {
+        fields.push({
+          field: 'eccentricPercentTenths',
+          requested: preDevice.eccentricPercentTenths,
+        });
+      }
+      await trackedSetterCall(slot.coercionWatch, 'device.start_guided_load', fields, () =>
+        slot.client.startGuidedLoad(opts),
+      );
       return { ok: true };
     }),
     START_GUIDED_LOAD_DESCRIPTION,
@@ -858,10 +976,14 @@ export function registerDeviceTools(
     wrapHandler(BilateralCascadeInput, async (input) => {
       const targetSlotIds = resolveCascadeSlotIds(state, input.slots);
       const plan = buildCascadePlan(input);
-      const targets = targetSlotIds.map((slotId) => ({
-        slotId,
-        client: getSlot(state, slotId).client,
-      }));
+      const targets = targetSlotIds.map((slotId) => {
+        const slot = getSlot(state, slotId);
+        return {
+          slotId,
+          client: slot.client,
+          coercionWatch: slot.coercionWatch,
+        };
+      });
       const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
       return { ok: cascadeAllOk(results), results };
     }),

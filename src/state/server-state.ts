@@ -50,6 +50,7 @@ import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
+import { CoercionWatch } from './coercion-watch.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
 
@@ -76,6 +77,19 @@ export interface SlotState {
    * `mode-revert-guard.ts` for the state machine.
    */
   modeRevertGuard: ModeRevertGuard;
+  /**
+   * Per-slot ledger of recently-fired setters awaiting a device echo. Powers
+   * the F2/F3 `setting_coerced` channel event: setter tool handlers wrap
+   * their SDK call in `trackedSetterCall`, which registers a pending check
+   * with the user-requested device-unit value. The bridge's `onStateDump`
+   * / `onSettingsUpdate` handlers walk reported fields, call
+   * `coercionWatch.observe`, and on a hit publish `setting_coerced` so the
+   * model can explain the firmware's silent rewrite to the user.
+   *
+   * Cleared on slot teardown / reset so a pending registration on the
+   * outgoing client can't fire against a stale frame on the new one.
+   */
+  coercionWatch: CoercionWatch;
   /**
    * Tear-down hook returned by the per-slot event-bridge wirer. Set when the
    * bridge subscribes to this slot's `client`; calling it unsubscribes every
@@ -232,6 +246,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       client,
       live,
       modeRevertGuard: new ModeRevertGuard(),
+      coercionWatch: new CoercionWatch(),
     });
     return {
       config,

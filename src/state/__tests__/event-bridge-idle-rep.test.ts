@@ -45,6 +45,7 @@ type LiveStateT = InstanceType<typeof LiveState>;
 const { wireBridgeForSlot } = await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
+const { CoercionWatch } = await import('../coercion-watch.js');
 
 interface FakeChannels {
   publish: Mock<(event: { content: string; meta: Record<string, string> }) => void>;
@@ -124,6 +125,7 @@ function makeBareState(opts: {
     client: opts.client,
     live: opts.live,
     modeRevertGuard: new ModeRevertGuard(),
+    coercionWatch: new CoercionWatch(),
   });
   return { slots, channels: opts.channels, server: opts.server, setWatchdog: new SetWatchdog() };
 }

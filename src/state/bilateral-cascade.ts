@@ -31,6 +31,8 @@
 
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
+import type { CoercionWatch } from './coercion-watch.js';
+
 /**
  * Per-setter outcome shape. `value` echoes the requested value back so the
  * caller has a single payload to read for both success ("here is what was
@@ -74,9 +76,16 @@ export interface CascadePlan {
   chainsLbs?: number;
 }
 
-interface SlotTarget {
+export interface SlotTarget {
   slotId: string;
   client: Pick<VoltraClient, 'setMode' | 'setWeight' | 'setEccentric' | 'setChains'>;
+  /**
+   * Per-slot coercion ledger threaded in so successful setters register a
+   * pending F2/F3 check. Optional so existing test fixtures + non-coercion-
+   * aware callers stay forward-compatible — when absent, setter success is
+   * a silent passthrough on the coercion path.
+   */
+  coercionWatch?: CoercionWatch;
 }
 
 /**
@@ -123,11 +132,19 @@ async function runSlotPlan(
 
   // Build typed step descriptors. Keeping them as data lets us run the
   // sequential and concurrent paths without duplicating the branch ladder.
-  const steps: Array<{
+  // Each step also carries an optional `coercionField` + `coercionRequested`
+  // pair so a successful setter registers a pending F2/F3 coercion check
+  // against the slot's watch. The string-valued `mode` setter has no
+  // coercion correlation today (the device's training-mode echo doesn't
+  // route through CoercionWatch).
+  interface CascadeStep {
     key: keyof SlotResult['applied'];
     invoke: () => Promise<void>;
     value: number | string;
-  }> = [];
+    coercionField?: string;
+    coercionRequested?: number;
+  }
+  const steps: CascadeStep[] = [];
   if (plan.mode !== undefined) {
     const modeValue = plan.mode;
     steps.push({
@@ -142,6 +159,8 @@ async function runSlotPlan(
       key: 'weightLbs',
       invoke: () => target.client.setWeight(weightValue),
       value: weightValue,
+      coercionField: 'weightLbsTenths',
+      coercionRequested: weightValue * 10,
     });
   }
   if (plan.eccentricPercent !== undefined) {
@@ -150,6 +169,8 @@ async function runSlotPlan(
       key: 'eccentricPercent',
       invoke: () => target.client.setEccentric(eccValue),
       value: eccValue,
+      coercionField: 'eccentricPercentTenths',
+      coercionRequested: eccValue * 10,
     });
   }
   if (plan.chainsLbs !== undefined) {
@@ -158,6 +179,8 @@ async function runSlotPlan(
       key: 'chainsLbs',
       invoke: () => target.client.setChains(chainsValue),
       value: chainsValue,
+      coercionField: 'chainTargetForceTenths',
+      coercionRequested: chainsValue * 10,
     });
   }
 
@@ -170,6 +193,7 @@ async function runSlotPlan(
       if (abortFlag.aborted) break;
       const outcome = await runSetter(step.invoke, step.value, true, abortFlag);
       applied[step.key] = outcome;
+      maybeRegisterCoercion(target.coercionWatch, step, outcome);
     }
   } else {
     // Concurrent within a slot — `runSetter` converts rejections into
@@ -177,11 +201,43 @@ async function runSlotPlan(
     // reject.
     await Promise.all(
       steps.map(async (step) => {
-        applied[step.key] = await runSetter(step.invoke, step.value, false, abortFlag);
+        const outcome = await runSetter(step.invoke, step.value, false, abortFlag);
+        applied[step.key] = outcome;
+        maybeRegisterCoercion(target.coercionWatch, step, outcome);
       }),
     );
   }
   return { slot: target.slotId, applied };
+}
+
+/**
+ * Register a pending F2/F3 coercion check when the setter succeeded and
+ * the step carried a coercion-field mapping. Failed setters never register
+ * a check (the device didn't receive the write); steps without a
+ * `coercionField` (today: `setMode`) are skipped.
+ */
+function maybeRegisterCoercion(
+  watch: CoercionWatch | undefined,
+  step: {
+    coercionField?: string;
+    coercionRequested?: number;
+  },
+  outcome: SetterOutcome,
+): void {
+  if (
+    watch === undefined ||
+    !outcome.ok ||
+    step.coercionField === undefined ||
+    step.coercionRequested === undefined
+  ) {
+    return;
+  }
+  watch.register({
+    setterName: 'bilateral.cascade',
+    field: step.coercionField,
+    requested: step.coercionRequested,
+    setterReturnedAt: Date.now(),
+  });
 }
 
 /**

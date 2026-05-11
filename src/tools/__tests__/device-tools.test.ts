@@ -76,6 +76,8 @@ vi.mock('../../state/event-bridge.js', () => ({
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
+const { CoercionWatch } = await import('../../state/coercion-watch.js');
+type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -298,6 +300,7 @@ interface FakeSlot {
   slotId: string;
   client: FakeClient;
   live: FakeLive;
+  coercionWatch: CoercionWatchT;
 }
 
 interface State {
@@ -314,7 +317,12 @@ function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>>
 
 function makeState(): State {
   const slots = new Map<string, FakeSlot>();
-  slots.set('primary', { slotId: 'primary', client: makeFakeClient(), live: makeFakeLive() });
+  slots.set('primary', {
+    slotId: 'primary',
+    client: makeFakeClient(),
+    live: makeFakeLive(),
+    coercionWatch: new CoercionWatch(),
+  });
   return {
     manager: makeFakeManager(),
     slots,

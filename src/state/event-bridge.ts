@@ -122,13 +122,16 @@ import {
   buildRepFinalizedPayload,
   buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
+  buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
   triggerDedupeKey,
   type ActiveSetAtDisconnect,
+  type CoercionSetContext,
   type SettingsUpdateAll,
   type SettingsUpdateField,
 } from './channel-payloads.js';
+import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { log } from '../logger.js';
@@ -696,6 +699,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         const payload = buildSettingsUpdatePayload('damperLevel', settings.damperLevel, all);
         slotChannels.publish(payload);
       }
+
+      // F2/F3 coercion correlation: walk every field the SDK surfaced and
+      // ask the slot's CoercionWatch whether it matches a recently-fired
+      // setter at a coerced value. The fields exposed via onSettingsUpdate
+      // are the cmd=0x10 cascade subset (damperLevel + the user-set chain
+      // pounds); state-dump-only fields are observed in `onStateDump`
+      // below to avoid double-firing on the same event burst.
+      observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels);
     }),
   );
 
@@ -763,6 +774,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         lastChainTargetForceTenths = dump.chainTargetForceTenths;
         lastWeightLbsTenths = dump.weightLbsTenths;
         lastEccentricPercentTenths = dump.eccentricPercentTenths;
+
+        // F2/F3 coercion correlation for state-dump fields. Run after
+        // applyStateDump so the device snapshot embedded in the published
+        // payload reflects post-frame state.
+        observeStateDumpCoercions(dump, slot.coercionWatch, live, slotChannels);
       }),
     );
   }
@@ -1138,6 +1154,75 @@ function publishIfTransition(
 ): void {
   if (current === prev) return;
   channels.publish(buildSettingsUpdatePayload(field, current, all));
+}
+
+/**
+ * Walk an `onSettingsUpdate` payload's coercion-eligible fields and ask the
+ * slot's CoercionWatch whether any of them matches a recently-fired setter
+ * at a coerced value. Publishes one `setting_coerced` channel event per hit.
+ *
+ * Only the fields exposed through the cmd=0x10 cascade are inspected here:
+ *   * `damperLevel` — direct passthrough (no unit conversion).
+ *
+ * State-dump-only fields (`assistMode`, `weightLbsTenths`,
+ * `chainTargetForceTenths`, `eccentricPercentTenths`) are observed in the
+ * `onStateDump` handler instead — observing them on both paths would double-
+ * fire when a setter write triggers both cascades in the same window.
+ */
+function observeSettingsUpdateCoercions(
+  settings: SdkSettingsUpdate,
+  watch: CoercionWatch,
+  live: LiveState,
+  channels: ChannelPublisher,
+): void {
+  if (typeof settings.damperLevel === 'number') {
+    observeCoercion('damperLevel', settings.damperLevel, watch, live, channels);
+  }
+}
+
+/**
+ * Walk an `onStateDump` payload's coercion-eligible fields. Publishes one
+ * `setting_coerced` event per hit. The fields here correspond to the F2/F3
+ * setters whose user intent flows through state-dump frames (ecc, chains,
+ * weight, assist).
+ */
+function observeStateDumpCoercions(
+  dump: SdkStateDump,
+  watch: CoercionWatch,
+  live: LiveState,
+  channels: ChannelPublisher,
+): void {
+  observeCoercion('eccentricPercentTenths', dump.eccentricPercentTenths, watch, live, channels);
+  observeCoercion('chainTargetForceTenths', dump.chainTargetForceTenths, watch, live, channels);
+  observeCoercion('weightLbsTenths', dump.weightLbsTenths, watch, live, channels);
+  observeCoercion('assistMode', dump.assistMode, watch, live, channels);
+}
+
+/**
+ * Single-field coercion observation step. Sweeps expired checks, asks the
+ * watch whether `deviceValue` matches a pending setter at a coerced value,
+ * and on a hit publishes the channel event with set/session context pulled
+ * from the slot's LiveState.
+ */
+function observeCoercion(
+  field: string,
+  deviceValue: number,
+  watch: CoercionWatch,
+  live: LiveState,
+  channels: ChannelPublisher,
+): void {
+  const now = Date.now();
+  const hit = watch.observe(field, deviceValue, now);
+  if (hit === null) return;
+  const set = live.snapshotSet();
+  const session = live.snapshotSession();
+  const context: CoercionSetContext = {
+    setId: set?.setId ?? null,
+    sessionId: session?.sessionId ?? null,
+  };
+  channels.publish(
+    buildSettingCoercedPayload(hit, deviceValue, now, live.snapshotDevice(), context),
+  );
 }
 
 export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot> {
