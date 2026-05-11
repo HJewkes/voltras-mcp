@@ -1069,25 +1069,31 @@ export function buildIdleRepPayload(
   entry: IdleRep,
   idleRepCount: number,
 ): { meta: Record<string, string>; content: string } {
+  // LiveState stores `vCon` in mm/s and `rom` in mm (the raw scale WA
+  // returns from `getPhaseMeanVelocity` / `getPhaseRangeOfMotion`). The
+  // channel payload documents both as m/s and metres respectively, so
+  // convert at the emit boundary (F18 / VMCP-01.32).
+  const vConMps = entry.vCon !== null ? mmsToMps(entry.vCon) : null;
+  const romM = entry.rom !== null ? mmToM(entry.rom) : null;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'idle_rep',
     slot: entry.slot,
     idle_rep_count: String(idleRepCount),
   };
-  if (entry.vCon !== null) {
-    meta.v_con = entry.vCon.toFixed(3);
+  if (vConMps !== null) {
+    meta.v_con = vConMps.toFixed(3);
   }
   const summary =
-    entry.vCon !== null
-      ? `Idle rep detected (no set armed): ${entry.vCon.toFixed(2)} m/s mean conc. Total idle: ${idleRepCount}.`
+    vConMps !== null
+      ? `Idle rep detected (no set armed): ${vConMps.toFixed(2)} m/s mean conc. Total idle: ${idleRepCount}.`
       : `Idle rep detected (no set armed): no velocity data. Total idle: ${idleRepCount}.`;
   const content = JSON.stringify({
     summary,
     idle_rep: {
       ts: entry.ts,
-      v_con: entry.vCon,
-      rom: entry.rom,
+      v_con: vConMps,
+      rom: romM,
       slot: entry.slot,
     },
     idle_rep_count: idleRepCount,
