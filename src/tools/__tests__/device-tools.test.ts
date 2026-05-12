@@ -119,7 +119,7 @@ interface FakeClient {
   setMode: Mock<(mode: number) => Promise<void>>;
   setChains: Mock<(lbs: number) => Promise<void>>;
   setEccentric: Mock<(overloadLbs: number) => Promise<void>>;
-  unloadDevice: Mock<(interFrameDelayMs?: number) => Promise<void>>;
+  unloadDevice: Mock<() => Promise<void>>;
   setDamperLevel: Mock<(level: number) => Promise<void>>;
   setAssistMode: Mock<(mode: 'off' | 'on') => Promise<void>>;
   setBandMaxForce: Mock<(lbs: number) => Promise<void>>;
