@@ -100,7 +100,7 @@ const IDENTIFY_DESCRIPTION =
 
 const SLOT_BIND_DESCRIPTION =
   'Persist a deviceId ↔ physical-side (left/right) mapping across MCP sessions. ' +
-  "Write once after the user confirms the side via slot.identify; subsequent " +
+  'Write once after the user confirms the side via slot.identify; subsequent ' +
   "device.connect calls with slot: 'auto' will route the device to the same " +
   'side without re-running the ritual. Overwrites any existing binding for the ' +
   'same deviceId. Storage: ~/.voltras/slot-bindings.json.';

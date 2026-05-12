@@ -60,7 +60,10 @@ const { CoercionWatch } = await import('../../state/coercion-watch.js');
 const { registerSlotTools } = await import('../slot-tools.js');
 const { registerDeviceTools } = await import('../device-tools.js');
 
-type Callback = (args: unknown, extra?: unknown) => Promise<{
+type Callback = (
+  args: unknown,
+  extra?: unknown,
+) => Promise<{
   content: { text: string }[];
   isError?: boolean;
 }>;
@@ -97,7 +100,9 @@ interface FakeClient {
   dispose: Mock<() => void>;
 }
 
-function makeFakeClient(opts: { connected: boolean; deviceId?: string } = { connected: false }): FakeClient {
+function makeFakeClient(
+  opts: { connected: boolean; deviceId?: string } = { connected: false },
+): FakeClient {
   return {
     isConnected: opts.connected,
     connectionState: opts.connected ? 'connected' : 'disconnected',
@@ -145,7 +150,10 @@ const SLOT_TOOL_NAMES = [
 function makeState(bindingsPath: string): {
   state: ReturnType<typeof buildBareState>;
   bindingsStore: InstanceType<typeof SlotBindingsStore>;
-  invoke: (name: string, args: unknown) => Promise<{
+  invoke: (
+    name: string,
+    args: unknown,
+  ) => Promise<{
     isError?: boolean;
     payload: Record<string, unknown>;
   }>;
@@ -374,7 +382,9 @@ describe("device.connect with slot: 'auto'", () => {
   it('preserves backwards-compat — explicit slot keeps the legacy { ok, deviceId } response', async () => {
     const { state, invoke } = makeState(bindingsPath);
     state.manager.devices = [{ id: 'V-1', name: 'Voltra-1', rssi: -50 }];
-    state.manager.connect.mockResolvedValueOnce(makeFakeClient({ connected: true, deviceId: 'V-1' }));
+    state.manager.connect.mockResolvedValueOnce(
+      makeFakeClient({ connected: true, deviceId: 'V-1' }),
+    );
 
     const r = await invoke('device.connect', { deviceId: 'V-1', slot: 'left' });
     expect(r.isError).toBeUndefined();
