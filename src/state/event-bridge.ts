@@ -769,7 +769,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // are the cmd=0x10 cascade subset (damperLevel + the user-set chain
       // pounds); state-dump-only fields are observed in `onStateDump`
       // below to avoid double-firing on the same event burst.
-      observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels);
+      observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels, slotId);
     }),
   );
 
@@ -841,7 +841,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         // F2/F3 coercion correlation for state-dump fields. Run after
         // applyStateDump so the device snapshot embedded in the published
         // payload reflects post-frame state.
-        observeStateDumpCoercions(dump, slot.coercionWatch, live, slotChannels);
+        observeStateDumpCoercions(dump, slot.coercionWatch, live, slotChannels, slotId);
       }),
     );
   }
@@ -1258,9 +1258,10 @@ function observeSettingsUpdateCoercions(
   watch: CoercionWatch,
   live: LiveState,
   channels: ChannelPublisher,
+  slotId: string,
 ): void {
   if (typeof settings.damperLevel === 'number') {
-    observeCoercion('damperLevel', settings.damperLevel, watch, live, channels);
+    observeCoercion('damperLevel', settings.damperLevel, watch, live, channels, slotId);
   }
 }
 
@@ -1275,11 +1276,26 @@ function observeStateDumpCoercions(
   watch: CoercionWatch,
   live: LiveState,
   channels: ChannelPublisher,
+  slotId: string,
 ): void {
-  observeCoercion('eccentricPercentTenths', dump.eccentricPercentTenths, watch, live, channels);
-  observeCoercion('chainTargetForceTenths', dump.chainTargetForceTenths, watch, live, channels);
-  observeCoercion('weightLbsTenths', dump.weightLbsTenths, watch, live, channels);
-  observeCoercion('assistMode', dump.assistMode, watch, live, channels);
+  observeCoercion(
+    'eccentricPercentTenths',
+    dump.eccentricPercentTenths,
+    watch,
+    live,
+    channels,
+    slotId,
+  );
+  observeCoercion(
+    'chainTargetForceTenths',
+    dump.chainTargetForceTenths,
+    watch,
+    live,
+    channels,
+    slotId,
+  );
+  observeCoercion('weightLbsTenths', dump.weightLbsTenths, watch, live, channels, slotId);
+  observeCoercion('assistMode', dump.assistMode, watch, live, channels, slotId);
 }
 
 /**
@@ -1294,19 +1310,22 @@ function observeCoercion(
   watch: CoercionWatch,
   live: LiveState,
   channels: ChannelPublisher,
+  slotId: string,
 ): void {
   const now = Date.now();
-  const hit = watch.observe(field, deviceValue, now);
-  if (hit === null) return;
+  const hits = watch.observe(field, deviceValue, now);
+  if (hits.length === 0) return;
   const set = live.snapshotSet();
   const session = live.snapshotSession();
   const context: CoercionSetContext = {
+    slotId,
     setId: set?.setId ?? null,
     sessionId: session?.sessionId ?? null,
   };
-  channels.publish(
-    buildSettingCoercedPayload(hit, deviceValue, now, live.snapshotDevice(), context),
-  );
+  const device = live.snapshotDevice();
+  for (const hit of hits) {
+    channels.publish(buildSettingCoercedPayload(hit, deviceValue, now, device, context));
+  }
 }
 
 export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot> {

@@ -1075,6 +1075,7 @@ describe('buildSettingCoercedPayload', () => {
 
   it('meta carries every load-bearing field as a string', () => {
     const { meta } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
@@ -1087,6 +1088,7 @@ describe('buildSettingCoercedPayload', () => {
       source_setter: 'device.set_eccentric',
       coercion_delta: '320',
       coercion_window_ms: '240',
+      slot_id: 'primary',
     });
     expect(meta.set_id).toBeUndefined();
     expect(meta.session_id).toBeUndefined();
@@ -1100,6 +1102,7 @@ describe('buildSettingCoercedPayload', () => {
     // setpoint — the original 320 reading was a transient mid-cascade
     // observation, not a sticky floor).
     const { content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
@@ -1114,6 +1117,7 @@ describe('buildSettingCoercedPayload', () => {
       coercion_window_ms: 240,
     });
     expect(parsed.set_context).toEqual({
+      slot_id: 'primary',
       set_id: null,
       session_id: null,
       weight_lbs: 30,
@@ -1124,6 +1128,7 @@ describe('buildSettingCoercedPayload', () => {
   it('omits the assistMode-on tail when the device snapshot is assistMode off', () => {
     const offDevice: DeviceSnapshot = { ...device, assistMode: 0 };
     const { content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, offDevice, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
@@ -1133,6 +1138,7 @@ describe('buildSettingCoercedPayload', () => {
 
   it('emits set_id + session_id meta when context is populated', () => {
     const { meta, content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      slotId: 'primary',
       setId: 'set-x',
       sessionId: 'sess-y',
     });
@@ -1141,6 +1147,17 @@ describe('buildSettingCoercedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.set_context.set_id).toBe('set-x');
     expect(parsed.set_context.session_id).toBe('sess-y');
+  });
+
+  it('threads slotId into meta and set_context (VMCP-01.38)', () => {
+    const { meta, content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
+      slotId: 'right',
+      setId: 'set-r',
+      sessionId: 'sess-r',
+    });
+    expect(meta.slot_id).toBe('right');
+    const parsed = JSON.parse(content);
+    expect(parsed.set_context.slot_id).toBe('right');
   });
 
   it('renders chains-specific summary in lbs', () => {
@@ -1155,7 +1172,7 @@ describe('buildSettingCoercedPayload', () => {
       20, // 2 lbs
       1_000_500,
       device,
-      { setId: null, sessionId: null },
+      { slotId: 'primary', setId: null, sessionId: null },
     );
     const parsed = JSON.parse(content);
     expect(parsed.summary).toBe(
@@ -1171,6 +1188,7 @@ describe('buildSettingCoercedPayload', () => {
       setterReturnedAt: 1_000_000,
     };
     const { content } = buildSettingCoercedPayload(check, 450, 1_000_300, device, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
@@ -1187,6 +1205,7 @@ describe('buildSettingCoercedPayload', () => {
       setterReturnedAt: 1_000_000,
     };
     const { content } = buildSettingCoercedPayload(check, 500, 1_000_300, device, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
@@ -1203,6 +1222,7 @@ describe('buildSettingCoercedPayload', () => {
       setterReturnedAt: 1_000_000,
     };
     const { meta } = buildSettingCoercedPayload(check, 20, 1_000_300, device, {
+      slotId: 'primary',
       setId: null,
       sessionId: null,
     });
