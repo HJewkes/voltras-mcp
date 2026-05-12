@@ -135,6 +135,16 @@ export interface ActiveSession {
    * matching on `exerciseName`. F8 (VMCP-01.24).
    */
   autoCreatedBy?: 'guided_load';
+  /**
+   * Debug opt-in: when true, the bridge emits an `idle_rep` channel event
+   * for every individual idle rep detected during this session (legacy
+   * behavior). When false/undefined (default), the bridge accumulates idle
+   * reps and emits a single `idle_rep_summary` event every 5s. The flag is
+   * scoped to the session lifetime — `session.end` (which calls
+   * `endSession`) drops the entire ActiveSession so the next session-start
+   * gets a fresh default. VMCP-02.11.
+   */
+  verboseIdleReps?: boolean;
 }
 
 /** Active set with its live rep buffer. `endedAt`/`partialReason` set on close. */

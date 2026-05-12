@@ -119,6 +119,7 @@ import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
   buildIdleRepPayload,
+  buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
   buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
@@ -225,6 +226,19 @@ const SET_INACTIVITY_TIMEOUT_MS = 90_000;
 const SET_INACTIVITY_POLL_MS = 10_000;
 
 /**
+ * Cadence for the batched `idle_rep_summary` channel event (VMCP-02.11).
+ * The bridge accumulates idle-rep boundaries detected while no MCP set is
+ * armed and emits a single summary per window so the channel doesn't drown
+ * in per-rep noise during long rests. Empty windows are skipped — the
+ * timer fires every 5s but only publishes when at least one idle rep was
+ * recorded in the window.
+ *
+ * Verbose mode (`session.start { verboseIdleReps: true }`) bypasses the
+ * batch entirely and emits per-occurrence `idle_rep` events as before.
+ */
+const IDLE_REP_SUMMARY_WINDOW_MS = 5_000;
+
+/**
  * Bootstrap orchestrator: wire the bridge for every slot currently in
  * `state.slots` and populate each slot's `unwireBridge` tear-down hook in
  * place. Each slot's listeners persist for the slot's lifetime and are torn
@@ -281,6 +295,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // event — without that, cold-start consumers would never see the initial
   // damper value and would have to call `device.get_state` to discover it.
   let lastDamperLevel: number | undefined = undefined;
+  // Per-slot accumulator for the batched `idle_rep_summary` emission
+  // (VMCP-02.11). `sinceMs` is set when the first rep of a window lands
+  // (Date.now() at that moment); the timer below reads + resets the batch
+  // every IDLE_REP_SUMMARY_WINDOW_MS. Verbose mode bypasses the accumulator
+  // entirely (count stays 0).
+  const idleRepBatch = { count: 0, sinceMs: 0 };
   // Latest known state-dump values; transitions synthesize `settings_update`
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
@@ -353,13 +373,30 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // When no MCP set is active, route frames through the idle analytics
       // pipeline. A rep boundary in the idle pipeline means the user lifted
       // a rep that will NOT be captured by any `set.start`/`set.end` pair.
-      // We record it on LiveState and emit an `idle_rep` channel event so
-      // the PT skill can detect the gap and surface it to the user.
+      // We record it on LiveState so the PT skill can detect the gap and
+      // surface it to the user.
+      //
+      // Emission policy (VMCP-02.11):
+      //   * Default: accumulate into `idleRepBatch`; the 5s timer below
+      //     publishes a single `idle_rep_summary` per window.
+      //   * Verbose (`session.start { verboseIdleReps: true }`): emit a
+      //     per-occurrence `idle_rep` event as before AND suppress the
+      //     summary path (the batch counter stays at 0 so the timer
+      //     no-ops). Single source of truth: the session's
+      //     `verboseIdleReps` flag read fresh on every rep so a future
+      //     mid-session toggle would take effect immediately.
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
           const entry = live.recordIdleRep(idleRep, slotId);
-          slotChannels.publish(buildIdleRepPayload(entry, live.idleRepCount));
+          if (live.session?.verboseIdleReps === true) {
+            slotChannels.publish(buildIdleRepPayload(entry, live.idleRepCount));
+          } else {
+            if (idleRepBatch.count === 0) {
+              idleRepBatch.sinceMs = Date.now();
+            }
+            idleRepBatch.count += 1;
+          }
         }
         return;
       }
@@ -597,6 +634,32 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     });
   }, SET_INACTIVITY_POLL_MS);
   unsubs.push(() => clearInterval(inactivityTimer));
+
+  // Idle-rep summary timer (VMCP-02.11). Fires every
+  // IDLE_REP_SUMMARY_WINDOW_MS; emits a single `idle_rep_summary` channel
+  // event when `idleRepBatch.count > 0`, then resets the counter. Empty
+  // windows are intentionally silent (no zero-count summaries) so a long
+  // rest produces one summary per active 5s segment, not a steady stream
+  // of empties. The verbose path never increments `count` so this timer
+  // stays a quiet no-op when `verboseIdleReps` is on.
+  const idleRepSummaryTimer = setInterval(() => {
+    if (idleRepBatch.count === 0) {
+      return;
+    }
+    const now = Date.now();
+    const payload = buildIdleRepSummaryPayload({
+      slot: slotId,
+      count: idleRepBatch.count,
+      idleRepCount: live.idleRepCount,
+      sinceMs: idleRepBatch.sinceMs,
+      untilMs: now,
+      windowMs: IDLE_REP_SUMMARY_WINDOW_MS,
+    });
+    slotChannels.publish(payload);
+    idleRepBatch.count = 0;
+    idleRepBatch.sinceMs = 0;
+  }, IDLE_REP_SUMMARY_WINDOW_MS);
+  unsubs.push(() => clearInterval(idleRepSummaryTimer));
 
   // Guided-load (Phase 1g, SDK 0.6.3+, @experimental). Fires whenever the
   // SDK's polling loop decodes a fresh status-register read. The bridge's

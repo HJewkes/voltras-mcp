@@ -151,6 +151,7 @@ async function startSession(
     status: 'active',
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
+    ...(input.verboseIdleReps === true ? { verboseIdleReps: true } : {}),
   };
   slot.live.startSession(active);
   // Clear idle-rep accumulators so the PT skill starts each session from a
