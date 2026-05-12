@@ -2310,6 +2310,39 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(live.snapshotSet()).toBeDefined();
     expect(state.store.putSession).not.toHaveBeenCalled();
   });
+
+  // ── VMCP-02.15: tunable inactivity watchdog on auto-created set ──
+  it('VMCP-02.15: arms the inactivity watchdog when slot.pendingGuidedLoadInactivityMs is set', () => {
+    const slot = state.slots.get('primary') as unknown as {
+      slotId: string;
+      live: LiveStateT;
+      client: GuidedFakeClient;
+      pendingGuidedLoadInactivityMs?: number;
+    };
+    slot.pendingGuidedLoadInactivityMs = 30_000;
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const set = live.snapshotSet();
+    expect(set).toBeDefined();
+    // Watchdog should have a deadline registered for the new setId.
+    expect(state.setWatchdog.has(set!.setId)).toBe(true);
+    // Single-shot — field cleared after consumption.
+    expect(slot.pendingGuidedLoadInactivityMs).toBeUndefined();
+    // Drain the timer so a leftover 30s setTimeout doesn't trail into
+    // later test files. The real `finalizeSet` cancels via the same
+    // path; we shortcut it here because we never closed the auto-set.
+    state.setWatchdog.clearAll();
+  });
+
+  it('VMCP-02.15: skips watchdog arming when no pending inactivity is set (rare unit-direct path)', () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+    const set = live.snapshotSet();
+    expect(set).toBeDefined();
+    // No tool-side stash, so no per-set watchdog registered (bridge's
+    // default SET_INACTIVITY_TIMEOUT_MS still provides the safety net).
+    expect(state.setWatchdog.has(set!.setId)).toBe(false);
+  });
 });
 
 // ── onStateDump (cmd=0x07 — Bug 26 / Gap C1) ───────────────────────────────

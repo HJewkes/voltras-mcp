@@ -541,6 +541,64 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
         .startRecording,
     ).toHaveBeenCalled();
   });
+
+  // ── VMCP-02.14: matched-mode cascade auto-clears the latch ─────────
+  it('VMCP-02.14: a matched-mode setter cascade auto-clears the latch before set.start is retried', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    arm(slot as never, 7); // Isokinetic requested
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT — latches the abort
+    expect(
+      (slot as never as { modeRevertGuard: { isAborted: () => boolean } }).modeRevertGuard.isAborted(),
+    ).toBe(true);
+
+    // User re-issues the setter cascade for Isokinetic. The device echoes
+    // back Isokinetic within the window — the guard auto-clears the
+    // latch (VMCP-02.14 recovery path) without anyone calling
+    // session.end or consuming the abort via a refused set.start.
+    arm(slot as never, 7); // Isokinetic re-armed
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(7); // Isokinetic echo → auto-clear
+
+    expect(
+      (slot as never as { modeRevertGuard: { isAborted: () => boolean } }).modeRevertGuard.isAborted(),
+    ).toBe(false);
+
+    // set.start now proceeds normally — no refusal, motor engages.
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  // ── VMCP-02.14: error message documents recovery paths ──────────────
+  it('VMCP-02.14: SET_ABORTED_BY_MODE_REVERT message describes both recovery paths', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    arm(slot as never, 3); // Rowing requested
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // WT — latch
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBe(true);
+    const body = parseResult(r) as { code: string; message: string };
+    expect(body.code).toBe('SET_ABORTED_BY_MODE_REVERT');
+    // Mentions the matched-mode cascade auto-clear recovery path.
+    expect(body.message).toMatch(/re-issue the setter cascade/i);
+    expect(body.message).toMatch(/auto-clears/i);
+    // Mentions the session reset fallback.
+    expect(body.message).toMatch(/session\.end \+ session\.start/i);
+    // Points callers at get_state for inspection.
+    expect(body.message).toMatch(/device\.get_state/);
+    expect(body.message).toMatch(/mode_revert_latched/);
+  });
 });
 
 describe('set.end', () => {

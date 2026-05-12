@@ -33,7 +33,7 @@
 // the SDK's `timeout` field.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { TrainingMode } from '@voltras/node-sdk';
+import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import {
@@ -59,6 +59,7 @@ import {
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
 import type { DeviceSnapshot } from '../state/live-state.js';
+import type { ModeRevertAbort } from '../state/mode-revert-guard.js';
 import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
@@ -113,6 +114,15 @@ const DeviceGetStateInput = z
     slot: SlotIdSchema,
   })
   .strict();
+
+/**
+ * Default inactivity-watchdog threshold for guided-load AUTO-created sets
+ * (VMCP-02.15). 30s is short enough to reap a failed engagement quickly
+ * but accommodates the firmware's ~10-18s armed → active ceremony plus a
+ * brief settle. Manual `set.start` callers control their own inactivity
+ * via `watch.inactivityTimeoutMs` and remain unaffected.
+ */
+const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
 
 // ── bilateral.cascade input ───────────────────────────────────────────────
 //
@@ -758,6 +768,16 @@ export function registerDeviceTools(
         opts.pollDurationMs = input.pollDurationMs;
       }
       const slot = getSlot(state, input.slot);
+      // VMCP-02.15: stash the requested inactivity timeout on the slot so
+      // the bridge's auto-create path can pick it up when it mints the
+      // guided-load set on the `armed` phase. Defaults to 30s — short
+      // enough to reap a failed engagement quickly, long enough to cover
+      // the firmware's 10-15s armed → countdown → engaging → active
+      // ceremony. Cleared by the bridge once consumed (single-shot).
+      slot.pendingGuidedLoadInactivityMs =
+        typeof input.inactivityTimeoutSeconds === 'number'
+          ? input.inactivityTimeoutSeconds * 1000
+          : GUIDED_LOAD_DEFAULT_INACTIVITY_MS;
       // F3 coercion correlation: guided-load runs a firmware safety
       // sequence that can silently floor chains + eccentric to safe
       // minimums on a low target weight (e.g. 5 lb target → chains
@@ -988,6 +1008,7 @@ export function registerDeviceTools(
         slot.client.connectionState,
         slot.client.isRowingActive,
         slot.live.snapshotDevice(),
+        slot.modeRevertGuard.peekAbort(),
       );
     }),
   );
@@ -1147,14 +1168,20 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  * field shape of `voltra://device/{slot}/current` so callers get identical
  * preserved-state values across both surfaces during the disconnect window
  * (deviceId, weightLbs, trainingMode, damperLevel, chainSettingLbs, plus
- * the cmd=0x07 state-dump fields). Tool-only additions: `connectionState`
- * and `isRowingActive` (both transient, not preserved).
+ * the cmd=0x07 state-dump fields). Tool-only additions: `connectionState`,
+ * `isRowingActive` (both transient, not preserved), and
+ * `mode_revert_latched` — exposes the slot's mode-revert guard state so
+ * callers can see at a glance whether the next `set.start` will be refused
+ * with `SET_ABORTED_BY_MODE_REVERT` (VMCP-02.14). Absent ⇒ no abort
+ * latched; present ⇒ the guard is holding an abort that will block
+ * `set.start` until cleared via a matched-mode cascade or session reset.
  */
 function buildDeviceGetStateResponse(
   isConnected: boolean,
   connectionState: string,
   isRowingActive: boolean,
   device: DeviceSnapshot,
+  modeRevertLatched: ModeRevertAbort | null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {
     connected: isConnected,
@@ -1177,6 +1204,15 @@ function buildDeviceGetStateResponse(
     'disconnectedAt',
   ] as const);
   out.isRowingActive = isRowingActive;
+  if (modeRevertLatched !== null) {
+    out.mode_revert_latched = {
+      requested_mode:
+        TrainingModeNames[modeRevertLatched.requested] ?? String(modeRevertLatched.requested),
+      actual_mode:
+        TrainingModeNames[modeRevertLatched.actual] ?? String(modeRevertLatched.actual),
+      timestamp_ms: modeRevertLatched.timestampMs,
+    };
+  }
   return out;
 }
 

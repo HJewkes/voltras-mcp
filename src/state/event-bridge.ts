@@ -133,7 +133,7 @@ import {
 } from './channel-payloads.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
-import { finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
+import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -1074,7 +1074,28 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     // from `slot.live.snapshotDevice()` so the persisted row reflects
     // the target weight, not the pre-guided-load value.
     state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
-    void slotId; // slotId reserved for future per-slot channel notification
+    // VMCP-02.15: arm a tight per-set inactivity watchdog so a failed
+    // guided-load engagement reaps quickly instead of leaving a zombie
+    // set sitting for ~90s (the bridge's default safety net) or 120s+
+    // (legacy default). The threshold is the value the `start_guided_load`
+    // tool stashed on `slot.pendingGuidedLoadInactivityMs` (defaults to
+    // 30s, caller-overridable). Single-shot — clear after consumption so
+    // a subsequent set.start on this slot uses its own watch config.
+    // When the field is absent (rare path: armed-without-tool, e.g.
+    // user triggered guided load directly on the unit), fall back to no
+    // extra watchdog — the bridge's default `SET_INACTIVITY_TIMEOUT_MS`
+    // safety net still applies.
+    const guidedInactivityMs = slot.pendingGuidedLoadInactivityMs;
+    if (typeof guidedInactivityMs === 'number') {
+      armIdleWatchdog(
+        state,
+        setId,
+        startedAt,
+        { notifyOn: [], inactivityTimeoutMs: guidedInactivityMs },
+        slotId,
+      );
+      delete slot.pendingGuidedLoadInactivityMs;
+    }
   }
 }
 

@@ -82,10 +82,11 @@ export class ModeRevertGuard {
    * trainingMode differs from `mode` will latch an abort.
    *
    * Calling `arm` while an abort is already latched does NOT clear the
-   * abort — only `consumeAbort()` does — but DOES reset the requested
-   * entry to the new mode so a fresh detection cycle starts. This keeps
-   * the latch behavior simple: the safety abort persists until the
-   * consumer (set.start) explicitly handles it.
+   * abort by itself — only an in-window matched-mode echo (see
+   * `onSettingsUpdate`) or `consumeAbort()` does — but DOES reset the
+   * requested entry to the new mode so a fresh detection cycle starts.
+   * This keeps the abort surface live until either the user's setter
+   * cascade is corroborated by the device or set.start consumes it.
    */
   arm(mode: TrainingMode): void {
     this.requested = { mode, at: this.now() };
@@ -95,6 +96,15 @@ export class ModeRevertGuard {
    * Process a settings_update event. If we have an in-flight requested
    * mode, the window has not expired, AND the incoming trainingMode
    * differs from the requested value, latch an abort.
+   *
+   * VMCP-02.14: when the device echoes back the requested mode inside
+   * the detection window, ANY previously latched abort is also cleared.
+   * A matched-mode cascade is the user's recovery signal — the
+   * underlying revert has been resolved (e.g., the user re-engaged the
+   * intended mode on the unit) and subsequent `set.start` calls should
+   * no longer be blocked. Without this, the latch would only clear via
+   * `session_end → session_start`, forcing callers to drop the session
+   * to recover.
    *
    * `trainingMode` is the value lifted from the SDK's
    * `DeviceSettings.trainingMode` field (the high-level setting after
@@ -114,8 +124,11 @@ export class ModeRevertGuard {
     }
     if (trainingMode === this.requested.mode) {
       // Confirmed: device echoes back the requested mode. Clear the
-      // entry; no further watching needed for this request.
+      // entry AND any previously latched abort — a matched-mode cascade
+      // is the recovery signal that supersedes the prior revert
+      // (VMCP-02.14).
       this.requested = null;
+      this.aborted = null;
       return;
     }
     // Divergence inside the window — latch the abort. Keep the requested
@@ -132,6 +145,18 @@ export class ModeRevertGuard {
   /** True if a mode revert has been detected and not yet consumed. */
   isAborted(): boolean {
     return this.aborted !== null;
+  }
+
+  /**
+   * Peek at the latched abort state without consuming it. Returns a
+   * snapshot (defensive copy) of the latched abort or `null` when no
+   * abort is pending. Used by `device.get_state` so callers can see
+   * whether the next `set.start` will be refused without triggering the
+   * consume side effect that the actual `set.start` path relies on.
+   */
+  peekAbort(): ModeRevertAbort | null {
+    if (this.aborted === null) return null;
+    return { ...this.aborted };
   }
 
   /**

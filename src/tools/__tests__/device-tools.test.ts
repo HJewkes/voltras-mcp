@@ -56,8 +56,20 @@ const FakeTrainingMode = {
   8: 'Isometric',
 } as const;
 
+const FakeTrainingModeNames: Record<number, string> = {
+  0: 'Idle',
+  1: 'WeightTraining',
+  2: 'ResistanceBand',
+  3: 'Rowing',
+  4: 'Damper',
+  6: 'CustomCurves',
+  7: 'Isokinetic',
+  8: 'Isometric',
+};
+
 vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: FakeTrainingMode,
+  TrainingModeNames: FakeTrainingModeNames,
   VoltraSDKError: FakeVoltraSDKError,
   // Stubbed for `resetPrimarySlot`, which constructs a fresh placeholder
   // client when an actually-connected primary slot disconnects (Step 3 of
@@ -78,6 +90,8 @@ vi.mock('../../state/event-bridge.js', () => ({
 const { registerDeviceTools } = await import('../device-tools.js');
 const { CoercionWatch } = await import('../../state/coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -301,6 +315,8 @@ interface FakeSlot {
   client: FakeClient;
   live: FakeLive;
   coercionWatch: CoercionWatchT;
+  modeRevertGuard: ModeRevertGuardT;
+  pendingGuidedLoadInactivityMs?: number;
 }
 
 interface State {
@@ -322,6 +338,7 @@ function makeState(): State {
     client: makeFakeClient(),
     live: makeFakeLive(),
     coercionWatch: new CoercionWatch(),
+    modeRevertGuard: new ModeRevertGuard(),
   });
   return {
     manager: makeFakeManager(),
@@ -1131,6 +1148,45 @@ describe('registerDeviceTools', () => {
       expect(payload.connectionState).toBe('disconnected');
       expect(payload.isRowingActive).toBe(false);
     });
+
+    // ── VMCP-02.14: mode-revert latch state surfaced via get_state ──
+    describe('VMCP-02.14 — mode_revert_latched exposure', () => {
+      it('omits mode_revert_latched when the guard is idle', async () => {
+        const reg = placeholders.get('device.get_state')!;
+        const { isError, payload } = await invoke(reg, {});
+        expect(isError).toBeUndefined();
+        expect(payload).not.toHaveProperty('mode_revert_latched');
+      });
+
+      it('surfaces requested/actual modes + timestamp when an abort is latched', async () => {
+        const slot = state.slots.get('primary')!;
+        // Drive the guard into a latched state: arm Rowing, then observe a WT echo.
+        slot.modeRevertGuard.arm(3 /* TrainingMode.Rowing */);
+        slot.modeRevertGuard.onSettingsUpdate(1 /* TrainingMode.WeightTraining */);
+
+        const reg = placeholders.get('device.get_state')!;
+        const { isError, payload } = await invoke(reg, {});
+        expect(isError).toBeUndefined();
+        expect(payload.mode_revert_latched).toBeDefined();
+        expect(payload.mode_revert_latched.requested_mode).toBe('Rowing');
+        expect(payload.mode_revert_latched.actual_mode).toBe('WeightTraining');
+        expect(typeof payload.mode_revert_latched.timestamp_ms).toBe('number');
+      });
+
+      it('get_state inspection does NOT consume the latch (peek-only)', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.modeRevertGuard.arm(3);
+        slot.modeRevertGuard.onSettingsUpdate(1);
+
+        const reg = placeholders.get('device.get_state')!;
+        await invoke(reg, {});
+        // Latch must still be present on a second call.
+        const { payload } = await invoke(reg, {});
+        expect(payload.mode_revert_latched).toBeDefined();
+        // And consumeAbort still returns the latch (it was never cleared).
+        expect(slot.modeRevertGuard.isAborted()).toBe(true);
+      });
+    });
   });
 
   // ── SDK 0.6.0 mode-config setters ─────────────────────────────────────
@@ -1159,7 +1215,13 @@ describe('registerDeviceTools', () => {
 
     it('routes to the slot-specified client (slot:left)', async () => {
       const leftClient = makeFakeClient();
-      state.slots.set('left', { slotId: 'left', client: leftClient, live: {} });
+      state.slots.set('left', {
+        slotId: 'left',
+        client: leftClient,
+        live: {},
+        coercionWatch: new CoercionWatch(),
+        modeRevertGuard: new ModeRevertGuard(),
+      } as never as FakeSlot);
       const reg = placeholders.get('device.set_damper_level')!;
       const { isError } = await invoke(reg, { level: 3, slot: 'left' });
       expect(isError).toBeUndefined();
@@ -1418,6 +1480,37 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_SETTING');
+    });
+
+    // ── VMCP-02.15: inactivity-timeout default + override ────────────
+    it('VMCP-02.15: stashes default 30s pendingGuidedLoadInactivityMs on the slot', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      const slot = state.slots.get('primary')!;
+      expect(slot.pendingGuidedLoadInactivityMs).toBe(30_000);
+    });
+
+    it('VMCP-02.15: caller can override the inactivity timeout via inactivityTimeoutSeconds', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, {
+        targetWeightLbs: 50,
+        inactivityTimeoutSeconds: 10,
+      });
+      expect(isError).toBeUndefined();
+      const slot = state.slots.get('primary')!;
+      expect(slot.pendingGuidedLoadInactivityMs).toBe(10_000);
+    });
+
+    it('VMCP-02.15: rejects out-of-range inactivityTimeoutSeconds (0) with INVALID_INPUT', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, {
+        targetWeightLbs: 50,
+        inactivityTimeoutSeconds: 0,
+      });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
     });
   });
 
