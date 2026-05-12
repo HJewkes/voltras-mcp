@@ -51,6 +51,7 @@ import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { CoercionWatch } from './coercion-watch.js';
+import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
 
@@ -195,6 +196,14 @@ export interface ServerState {
    * arms it. See `tools/voice-tools.ts` for the start/stop wiring.
    */
   voice: VoiceListenerHolder;
+  /**
+   * Persistent deviceId ↔ physical-side bindings (VMCP-02.05). Loaded at
+   * bootstrap from `config.slotBindingsPath` and written through on every
+   * `slot.bind` call. When a known deviceId reconnects, `device.connect`
+   * with `slot: 'auto'` resolves the target slot from this store instead
+   * of running the side-ID ritual on every session.
+   */
+  slotBindings: SlotBindingsStore;
 }
 
 /**
@@ -248,6 +257,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       modeRevertGuard: new ModeRevertGuard(),
       coercionWatch: new CoercionWatch(),
     });
+    const slotBindings = SlotBindingsStore.open(config.slotBindingsPath);
     return {
       config,
       manager,
@@ -259,6 +269,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       setStartDeviceSnapshots,
       setWatchdog,
       voice: makeVoiceHolder(),
+      slotBindings,
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');

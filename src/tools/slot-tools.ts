@@ -1,10 +1,16 @@
-// `slot.*` tool registry — visual side-identification and slot utilities.
+// `slot.*` tool registry — visual side-identification, slot utilities, and
+// persistent deviceId ↔ physical-side bindings.
 //
 // `slot.identify` briefly switches the named slot's device into Damper mode
 // (the device screen visibly changes) then reverts to its prior mode. This
 // collapses the PT-skill's manual 4-call side-identification ritual into one
 // call: the user watches which physical Voltra changes its display to confirm
 // which slot it is bound to.
+//
+// `slot.bind` (VMCP-02.05) writes a deviceId ↔ physical_side mapping to
+// `~/.voltras/slot-bindings.json` so subsequent sessions can skip the
+// ritual: `device.connect {slot: 'auto'}` resolves the slot from the
+// persisted binding when the deviceId is known.
 //
 // All BLE interaction flows through the slot's `client` — AC-14 forbids any
 // direct BLE-adapter library references in this file.
@@ -33,6 +39,28 @@ const SlotIdentifyInput = z.object({
     .optional()
     .default(DEFAULT_IDENTIFY_DURATION_MS),
 });
+
+// ── slot.bind schema (VMCP-02.05) ─────────────────────────────────────────
+//
+// `physicalSide` is the user-facing left/right label; the schema deliberately
+// keeps the enum free of the bookkeeping slot ids (`primary`, etc.) — those
+// are an MCP-internal concept, while `left`/`right` are what the user sees
+// and reports to the model. The mapping from physicalSide → slotId for the
+// auto-connect path lives in `device.connect`.
+const SlotBindInput = z
+  .object({
+    deviceId: z.string().min(1),
+    physicalSide: z.enum(['left', 'right']),
+  })
+  .strict();
+
+const SlotBindingsListInput = z.object({}).strict();
+
+const SlotUnbindInput = z
+  .object({
+    deviceId: z.string().min(1),
+  })
+  .strict();
 
 // ── Placeholder-swap helper ────────────────────────────────────────────────
 
@@ -69,6 +97,23 @@ const IDENTIFY_DESCRIPTION =
   "which device's display changes. Default hold: 3 s, configurable 500–10 000 ms. " +
   'Returns ALREADY_IN_DAMPER if the slot is already in Damper mode (no change ' +
   'made). Returns SLOT_NOT_BOUND if the slot is unknown.';
+
+const SLOT_BIND_DESCRIPTION =
+  'Persist a deviceId ↔ physical-side (left/right) mapping across MCP sessions. ' +
+  "Write once after the user confirms the side via slot.identify; subsequent " +
+  "device.connect calls with slot: 'auto' will route the device to the same " +
+  'side without re-running the ritual. Overwrites any existing binding for the ' +
+  'same deviceId. Storage: ~/.voltras/slot-bindings.json.';
+
+const SLOT_BINDINGS_LIST_DESCRIPTION =
+  'List every persisted deviceId ↔ physical-side binding. Returns an array ' +
+  'sorted by deviceId — useful for the PT skill to decide whether the side-ID ' +
+  'ritual can be skipped for the currently-connected devices.';
+
+const SLOT_UNBIND_DESCRIPTION =
+  'Remove the persisted binding for `deviceId`. The next device.connect with ' +
+  "slot: 'auto' against that device will fall back to the manual side-ID " +
+  'ritual. Returns the removed binding, or null if the deviceId was unbound.';
 
 // ── Private helpers ───────────────────────────────────────────────────────
 
@@ -177,5 +222,42 @@ export function registerSlotTools(
       };
     }),
     IDENTIFY_DESCRIPTION,
+  );
+
+  // slot.bind (VMCP-02.05) — persist deviceId ↔ physical-side. Best paired
+  // with slot.identify: once the user confirms which physical Voltra
+  // changed its display, the model calls slot.bind to lock the mapping in
+  // so the next session can skip the ritual entirely. No BLE I/O — pure
+  // local state.
+  install(
+    placeholders,
+    'slot.bind',
+    SlotBindInput,
+    wrapHandler(SlotBindInput, async (input) => {
+      const binding = state.slotBindings.bind(input.deviceId, input.physicalSide);
+      return { ok: true, binding };
+    }),
+    SLOT_BIND_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'slot.bindings_list',
+    SlotBindingsListInput,
+    wrapHandler(SlotBindingsListInput, async () => {
+      return { bindings: state.slotBindings.list() };
+    }),
+    SLOT_BINDINGS_LIST_DESCRIPTION,
+  );
+
+  install(
+    placeholders,
+    'slot.unbind',
+    SlotUnbindInput,
+    wrapHandler(SlotUnbindInput, async (input) => {
+      const removed = state.slotBindings.remove(input.deviceId);
+      return { ok: true, removed };
+    }),
+    SLOT_UNBIND_DESCRIPTION,
   );
 }

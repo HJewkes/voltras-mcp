@@ -79,6 +79,23 @@ interface State {
   config: { adapter: 'node' | 'mock'; dbPath: string; logLevel: 'info' };
   manager: Record<string, unknown>;
   slots: Map<string, FakeSlot>;
+  slotBindings: {
+    get: Mock<(deviceId: string) => null>;
+    bind: Mock<(deviceId: string, side: 'left' | 'right') => unknown>;
+    touch: Mock<(deviceId: string) => void>;
+    remove: Mock<(deviceId: string) => unknown>;
+    list: Mock<() => unknown[]>;
+  };
+}
+
+function makeFakeSlotBindings(): State['slotBindings'] {
+  return {
+    get: vi.fn(() => null),
+    bind: vi.fn(),
+    touch: vi.fn(),
+    remove: vi.fn(() => null),
+    list: vi.fn(() => []),
+  };
 }
 
 function makeStateWithBoth(opts: { primaryConnected: boolean; leftConnected: boolean }): {
@@ -114,6 +131,7 @@ function makeStateWithBoth(opts: { primaryConnected: boolean; leftConnected: boo
       config: { adapter: 'node', dbPath: '/tmp/test.sqlite', logLevel: 'info' },
       manager: {},
       slots,
+      slotBindings: makeFakeSlotBindings(),
     },
     primaryClient,
     leftClient,
@@ -266,6 +284,7 @@ describe('slot.swap tool', () => {
       config: { adapter: 'node', dbPath: '/tmp/test.sqlite', logLevel: 'info' },
       manager: {},
       slots,
+      slotBindings: makeFakeSlotBindings(),
     };
     const { invoke } = setup(state);
 
@@ -310,6 +329,7 @@ describe('slot.swap tool', () => {
       config: { adapter: 'node', dbPath: '/tmp/test.sqlite', logLevel: 'info' },
       manager: {},
       slots,
+      slotBindings: makeFakeSlotBindings(),
     };
     const { invoke } = setup(state);
 
