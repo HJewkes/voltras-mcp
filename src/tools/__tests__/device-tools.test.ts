@@ -303,9 +303,28 @@ interface FakeSlot {
   coercionWatch: CoercionWatchT;
 }
 
+interface FakeSlotBindings {
+  get: Mock<(deviceId: string) => { physicalSide: 'left' | 'right' } | null>;
+  bind: Mock<(deviceId: string, side: 'left' | 'right') => unknown>;
+  touch: Mock<(deviceId: string) => void>;
+  remove: Mock<(deviceId: string) => unknown>;
+  list: Mock<() => unknown[]>;
+}
+
 interface State {
   manager: FakeManager;
   slots: Map<string, FakeSlot>;
+  slotBindings: FakeSlotBindings;
+}
+
+function makeFakeSlotBindings(): FakeSlotBindings {
+  return {
+    get: vi.fn(() => null),
+    bind: vi.fn(),
+    touch: vi.fn(),
+    remove: vi.fn(() => null),
+    list: vi.fn(() => []),
+  };
 }
 
 function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>> = {}): FakeLive {
@@ -326,6 +345,7 @@ function makeState(): State {
   return {
     manager: makeFakeManager(),
     slots,
+    slotBindings: makeFakeSlotBindings(),
   };
 }
 

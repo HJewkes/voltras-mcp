@@ -1,9 +1,10 @@
 // Configuration loader for voltras-mcp.
 //
-// Reads the three runtime env vars that govern the entire server:
-//   - VOLTRA_ADAPTER  (R7) — 'mock' | 'node', default 'node'.
-//   - VMCP_DB_PATH    (R8) — sqlite path, default ~/.voltras/vmcp.sqlite.
-//   - VMCP_LOG_LEVEL        — 'debug' | 'info' | 'warn' | 'error', default 'info'.
+// Reads the runtime env vars that govern the entire server:
+//   - VOLTRA_ADAPTER             (R7) — 'mock' | 'node', default 'node'.
+//   - VMCP_DB_PATH               (R8) — sqlite path, default ~/.voltras/vmcp.sqlite.
+//   - VMCP_SLOT_BINDINGS_PATH         — slot-bindings JSON, default ~/.voltras/slot-bindings.json.
+//   - VMCP_LOG_LEVEL                  — 'debug' | 'info' | 'warn' | 'error', default 'info'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER is set to an unrecognized value so
@@ -17,6 +18,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
+  readonly slotBindingsPath: string;
   readonly logLevel: LogLevel;
 }
 
@@ -31,6 +33,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return Object.freeze({
     adapter: raw,
     dbPath: env.VMCP_DB_PATH ?? `${home}/.voltras/vmcp.sqlite`,
+    slotBindingsPath: env.VMCP_SLOT_BINDINGS_PATH ?? `${home}/.voltras/slot-bindings.json`,
     logLevel: (env.VMCP_LOG_LEVEL as LogLevel | undefined) ?? 'info',
   }) satisfies Config;
 }

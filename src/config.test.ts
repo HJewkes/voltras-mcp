@@ -6,15 +6,27 @@ describe('loadConfig', () => {
     const cfg = loadConfig({
       VOLTRA_ADAPTER: 'mock',
       VMCP_DB_PATH: '/tmp/vmcp-test.sqlite',
+      VMCP_SLOT_BINDINGS_PATH: '/tmp/vmcp-test-bindings.json',
       VMCP_LOG_LEVEL: 'debug',
     });
 
     expect(cfg).toEqual({
       adapter: 'mock',
       dbPath: '/tmp/vmcp-test.sqlite',
+      slotBindingsPath: '/tmp/vmcp-test-bindings.json',
       logLevel: 'debug',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
+  });
+
+  it('defaults VMCP_SLOT_BINDINGS_PATH to ~/.voltras/slot-bindings.json', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.slotBindingsPath).toBe('/home/test/.voltras/slot-bindings.json');
+  });
+
+  it('honors VMCP_SLOT_BINDINGS_PATH when provided', () => {
+    const cfg = loadConfig({ VMCP_SLOT_BINDINGS_PATH: '/elsewhere/b.json', HOME: '/home/t' });
+    expect(cfg.slotBindingsPath).toBe('/elsewhere/b.json');
   });
 
   it('defaults to the "node" adapter when VOLTRA_ADAPTER is unset', () => {

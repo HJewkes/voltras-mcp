@@ -87,10 +87,24 @@ import { log } from '../logger.js';
 // `device.disconnect` and `device.get_state` were `.strict()` before Step 2;
 // they remain strict so unknown fields still fail INVALID_INPUT, and `slot`
 // is the only non-error addition.
+// `slot: 'auto'` (VMCP-02.05) — resolve the target slot id from the persisted
+// deviceId ↔ physical-side bindings. The handler maps `physicalSide: 'left'`
+// → slot id `'left'` and `'right'` → `'right'`. When no binding exists for
+// the deviceId, the handler surfaces NO_PERSISTED_BINDING so the caller can
+// fall back to the explicit slot-id flow (and the side-ID ritual).
 const DeviceConnectInput = z.object({
   deviceId: z.string().min(1),
   slot: SlotIdSchema,
 });
+
+const DEVICE_CONNECT_DESCRIPTION =
+  'Connect to a device discovered by a prior device.scan. `slot` identifies ' +
+  "which slot the device binds to (default: 'primary'). Pass slot: 'auto' to " +
+  'resolve the slot from the persisted deviceId ↔ physical-side binding ' +
+  '(written by slot.bind) — the device routes to slot `left` or `right` ' +
+  'based on the saved side. Returns NO_PERSISTED_BINDING when the deviceId ' +
+  "has no saved binding and slot is 'auto'; fall back to an explicit slot id " +
+  'plus the side-ID ritual in that case.';
 
 const DeviceDisconnectInput = z
   .object({
@@ -308,7 +322,7 @@ export function registerDeviceTools(
     'device.connect',
     DeviceConnectInput,
     wrapHandler(DeviceConnectInput, async (input) => {
-      const slotId = input.slot ?? PRIMARY_SLOT;
+      const slotId = resolveConnectSlotId(state, input.slot, input.deviceId);
       const isNewSlot = !state.slots.has(slotId);
       if (!isNewSlot) {
         const existing = getSlot(state, slotId);
@@ -356,8 +370,24 @@ export function registerDeviceTools(
         slot.client = client;
         slot.unwireBridge = wireBridgeForSlot(state, slot);
       }
+      // Refresh lastSeen on the persisted binding (if any) so a stale entry
+      // surfaces in slot.bindings_list — VMCP-02.05.
+      state.slotBindings.touch(input.deviceId);
+      // For backwards compatibility we omit `slot` from the response when
+      // the caller didn't pass `slot: 'auto'` — the existing single-device
+      // contract was `{ ok: true, deviceId }`. The `auto` path surfaces the
+      // resolved slot so the model can see which side the device routed to.
+      if (input.slot === AUTO_SLOT) {
+        return {
+          ok: true,
+          deviceId: input.deviceId,
+          slot: slotId,
+          resolvedFrom: 'persisted_binding',
+        };
+      }
       return { ok: true, deviceId: input.deviceId };
     }),
+    DEVICE_CONNECT_DESCRIPTION,
   );
 
   // device.disconnect — graceful no-op when nothing is connected, otherwise
@@ -1210,6 +1240,47 @@ function throwSdkLike(code: string, message: string): never {
   const err = new Error(message) as Error & { code: string };
   err.code = code;
   throw err;
+}
+
+/**
+ * Sentinel `slot` value (`'auto'`) accepted by `device.connect` — resolves
+ * the actual slot id from the persisted deviceId ↔ physical-side binding
+ * (VMCP-02.05). Kept as a const so the comparison in
+ * `resolveConnectSlotId` stays in lockstep with the description text.
+ */
+const AUTO_SLOT = 'auto' as const;
+
+/**
+ * Map a `device.connect` `slot` argument to the concrete slot id the
+ * handler should bind into:
+ *   * `undefined`            → `PRIMARY_SLOT` (single-device default).
+ *   * any literal slot id    → that id verbatim.
+ *   * `'auto'`               → resolved from the persisted binding for
+ *                              `deviceId`. NO_PERSISTED_BINDING surfaces
+ *                              when no binding exists, telling the caller
+ *                              to fall back to an explicit slot + ritual.
+ *
+ * The physical-side → slot-id mapping is the natural identity (`'left'` →
+ * slot `'left'`, `'right'` → slot `'right'`). The PT-session skill drives
+ * bilateral sessions with those exact slot ids; if a future surface adopts
+ * different slot keys it should set bindings against the same physicalSide
+ * names and let this mapping convert.
+ */
+function resolveConnectSlotId(
+  state: ServerState,
+  inputSlot: string | undefined,
+  deviceId: string,
+): string {
+  if (inputSlot === undefined) return PRIMARY_SLOT;
+  if (inputSlot !== AUTO_SLOT) return inputSlot;
+  const binding = state.slotBindings.get(deviceId);
+  if (binding === null) {
+    throwSdkLike(
+      'NO_PERSISTED_BINDING',
+      `Device ${JSON.stringify(deviceId)} has no persisted side binding. Connect with an explicit slot (e.g. \`slot: 'left'\`), run the side-ID ritual, then slot.bind to save it for next time.`,
+    );
+  }
+  return binding.physicalSide;
 }
 
 /**
