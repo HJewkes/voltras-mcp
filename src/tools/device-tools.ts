@@ -34,6 +34,7 @@
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
+import type { GuidedLoadState } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import {
@@ -58,8 +59,9 @@ import {
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
-import type { DeviceSnapshot } from '../state/live-state.js';
+import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
 import type { ModeRevertAbort } from '../state/mode-revert-guard.js';
+import type { SlotBinding } from '../state/slot-bindings.js';
 import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
@@ -1033,12 +1035,22 @@ export function registerDeviceTools(
       // `connected` and `connectionState` reflect the LIVE client state — they
       // must flip to false/`disconnected` immediately on a drop, so we do not
       // route them through the preserved snapshot.
+      const device = slot.live.snapshotDevice();
+      // Persisted-binding lookup uses the preserved deviceId so the binding
+      // remains visible across the disconnect window (matches the rest of
+      // the response, which prefers preserved values for routability).
+      const slotBinding =
+        typeof device.deviceId === 'string' ? state.slotBindings.get(device.deviceId) : null;
       return buildDeviceGetStateResponse(
         slot.client.isConnected,
         slot.client.connectionState,
         slot.client.isRowingActive,
-        slot.live.snapshotDevice(),
+        slot.client.isRecording,
+        slot.client.guidedLoadState,
+        device,
         slot.modeRevertGuard.peekAbort(),
+        slot.live.snapshotSet(),
+        slotBinding,
       );
     }),
   );
@@ -1194,24 +1206,45 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
 
 /**
  * Compose the `device.get_state` tool response from a preserved
- * `DeviceSnapshot` plus three transient client-only fields. Mirrors the
- * field shape of `voltra://device/{slot}/current` so callers get identical
- * preserved-state values across both surfaces during the disconnect window
- * (deviceId, weightLbs, trainingMode, damperLevel, chainSettingLbs, plus
- * the cmd=0x07 state-dump fields). Tool-only additions: `connectionState`,
- * `isRowingActive` (both transient, not preserved), and
- * `mode_revert_latched` — exposes the slot's mode-revert guard state so
- * callers can see at a glance whether the next `set.start` will be refused
- * with `SET_ABORTED_BY_MODE_REVERT` (VMCP-02.14). Absent ⇒ no abort
- * latched; present ⇒ the guard is holding an abort that will block
- * `set.start` until cleared via a matched-mode cascade or session reset.
+ * `DeviceSnapshot` plus the client's live transient fields and server-side
+ * context. Mirrors the field shape of `voltra://device/{slot}/current` for
+ * the preserved-state portion so callers get identical values across both
+ * surfaces during the disconnect window (deviceId, weightLbs, trainingMode,
+ * damperLevel, chainSettingLbs, plus the cmd=0x07 state-dump fields).
+ *
+ * Tool-only additions (transient, not preserved):
+ *   * `connectionState`
+ *   * `isRowingActive`
+ *   * `is_recording` — `client.isRecording`, true between Workout.GO and STOP.
+ *   * `guided_load` — `{ phase, countdown_remaining_ms, fitness_mode_raw }`
+ *     from `client.guidedLoadState`. The phase is the firmware direct-load
+ *     state machine: idle → armed → countdown → engaging → active → exited.
+ *   * `load_state` — derived 'loaded' | 'unloaded' summary, true when the
+ *     cable is physically engaged (guided-load phase 'engaging'/'active'
+ *     or rowing two-stage active). Designed so a coach surface can ask
+ *     "is the cable hot?" in one read, without reasoning about
+ *     guided-load phase + rowing flag separately. VMCP-01.39.
+ *   * `active_set` — `{ set_id, session_id, started_at, rep_count, status }`
+ *     for the slot's currently-active set (null when no set is open).
+ *     Lets the agent see whether the device is mid-set without a follow-up
+ *     `set.get` call.
+ *   * `slot_binding` — persisted `{ physical_side, bound_at, last_seen }`
+ *     for the connected deviceId (null when unbound). Lets the agent
+ *     decide whether the side-ID ritual is needed.
+ *   * `mode_revert_latched` — VMCP-02.14: present when the mode-revert
+ *     guard is holding a safety abort that will block the next set.start
+ *     with SET_ABORTED_BY_MODE_REVERT. Absent ⇒ no abort latched.
  */
 function buildDeviceGetStateResponse(
   isConnected: boolean,
   connectionState: string,
   isRowingActive: boolean,
+  isRecording: boolean,
+  guidedLoadState: GuidedLoadState,
   device: DeviceSnapshot,
   modeRevertLatched: ModeRevertAbort | null,
+  activeSet: ActiveSet | undefined,
+  slotBinding: SlotBinding | null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {
     connected: isConnected,
@@ -1234,6 +1267,31 @@ function buildDeviceGetStateResponse(
     'disconnectedAt',
   ] as const);
   out.isRowingActive = isRowingActive;
+  out.is_recording = isRecording;
+  out.guided_load = {
+    phase: guidedLoadState.phase,
+    countdown_remaining_ms: guidedLoadState.countdownRemainingMs,
+    fitness_mode_raw: guidedLoadState.fitnessModeRaw,
+  };
+  out.load_state = deriveLoadState(isConnected, guidedLoadState, isRowingActive);
+  out.active_set =
+    activeSet === undefined
+      ? null
+      : {
+          set_id: activeSet.setId,
+          session_id: activeSet.sessionId,
+          started_at: activeSet.startedAt,
+          rep_count: activeSet.reps.length,
+          status: activeSet.status,
+        };
+  out.slot_binding =
+    slotBinding === null
+      ? null
+      : {
+          physical_side: slotBinding.physicalSide,
+          bound_at: slotBinding.boundAt,
+          last_seen: slotBinding.lastSeen ?? null,
+        };
   if (modeRevertLatched !== null) {
     out.mode_revert_latched = {
       requested_mode:
@@ -1243,6 +1301,32 @@ function buildDeviceGetStateResponse(
     };
   }
   return out;
+}
+
+/**
+ * Map the slot's transient client state to a single `'loaded' | 'unloaded'`
+ * verdict. Sources, in priority order:
+ *   1. Disconnected → `'unloaded'` (no cable engaged from our POV).
+ *   2. Guided-load phase is `'engaging'` or `'active'` → `'loaded'`
+ *      (the firmware direct-load state machine has the cable hot).
+ *   3. `isRowingActive` → `'loaded'` (rowing two-stage engaged).
+ *   4. Otherwise → `'unloaded'`.
+ *
+ * The function deliberately ignores `isRecording` — Workout.GO can be live
+ * across rests and short user pauses where the cable is slack, and the
+ * coach surface should treat those moments as unloaded. Callers that need
+ * a finer-grained answer can inspect `is_recording` + `guided_load.phase`
+ * + telemetry force directly.
+ */
+function deriveLoadState(
+  isConnected: boolean,
+  guidedLoadState: GuidedLoadState,
+  isRowingActive: boolean,
+): 'loaded' | 'unloaded' {
+  if (!isConnected) return 'unloaded';
+  if (guidedLoadState.phase === 'engaging' || guidedLoadState.phase === 'active') return 'loaded';
+  if (isRowingActive) return 'loaded';
+  return 'unloaded';
 }
 
 /**
