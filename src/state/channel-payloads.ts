@@ -1210,6 +1210,54 @@ export function buildVoiceInputPayload(
  * insufficient frames). The meta only includes them when non-null to avoid
  * "null" strings in attribute filtering.
  */
+/**
+ * Build the meta + content for an `idle_rep_summary` channel event (VMCP-02.11).
+ * Replaces the per-occurrence `idle_rep` stream by default so the channel
+ * doesn't drown in noise when the user rests between real sets.
+ *
+ * Emitted once per 5s window when at least one idle rep was observed during
+ * the window. Empty windows are skipped (no zero-count summaries). The
+ * verbose path (`session.start { verboseIdleReps: true }`) suppresses
+ * summaries entirely.
+ *
+ * `count` is the number of idle reps detected in this window. `idleRepCount`
+ * is the session-monotonic total AFTER this window (matches the resource
+ * counter). `sinceMs` / `untilMs` bound the window in wall-clock ms; the
+ * model can use them to attribute the count to a specific rest interval.
+ * `windowMs` is the configured cadence (5000ms today; documented so a future
+ * tuning is observable from the wire).
+ */
+export function buildIdleRepSummaryPayload(args: {
+  slot: string;
+  count: number;
+  idleRepCount: number;
+  sinceMs: number;
+  untilMs: number;
+  windowMs: number;
+}): { meta: Record<string, string>; content: string } {
+  const { slot, count, idleRepCount, sinceMs, untilMs, windowMs } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'idle_rep_summary',
+    slot,
+    count: String(count),
+    idle_rep_count: String(idleRepCount),
+  };
+  const summary = `${count} idle rep${count === 1 ? '' : 's'} in last ${Math.round(windowMs / 1000)}s (no set armed). Session total idle: ${idleRepCount}.`;
+  const content = JSON.stringify({
+    summary,
+    idle_rep_summary: {
+      count,
+      since_ms: sinceMs,
+      until_ms: untilMs,
+      window_ms: windowMs,
+      slot,
+    },
+    idle_rep_count: idleRepCount,
+  });
+  return { meta, content };
+}
+
 export function buildIdleRepPayload(
   entry: IdleRep,
   idleRepCount: number,

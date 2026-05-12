@@ -24,6 +24,16 @@ export const SessionStartInput = z
     exerciseId: z.string().optional(),
     exerciseName: z.string().optional(),
     slot: SlotIdSchema,
+    /**
+     * Debug opt-in (VMCP-02.11). Default `false`: the bridge batches idle
+     * reps into a single `idle_rep_summary` channel event every 5s instead
+     * of emitting one `idle_rep` per occurrence. Set `true` to restore the
+     * legacy per-occurrence emission (useful for protocol-debug sessions
+     * where each idle rep needs to be inspected individually). When
+     * verbose mode is on, summary events are suppressed to avoid
+     * double-emission.
+     */
+    verboseIdleReps: z.boolean().optional(),
   })
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',

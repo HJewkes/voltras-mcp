@@ -317,6 +317,34 @@ describe('session.start', () => {
     ).toBe(true);
   });
 
+  // ── VMCP-02.11 — verboseIdleReps opt-in plumbing ──────────────────────
+  it('defaults verboseIdleReps to undefined (= batched summary)', async () => {
+    const r = await h.invoke('session.start', { exerciseName: 'Test' });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.verboseIdleReps).toBeUndefined();
+  });
+
+  it('persists verboseIdleReps=true on the active session when requested', async () => {
+    const r = await h.invoke('session.start', {
+      exerciseName: 'Test',
+      verboseIdleReps: true,
+    });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.verboseIdleReps).toBe(true);
+  });
+
+  it('omits verboseIdleReps from the active session when explicitly false', async () => {
+    const r = await h.invoke('session.start', {
+      exerciseName: 'Test',
+      verboseIdleReps: false,
+    });
+    expect(r.isError).toBeUndefined();
+    // We intentionally only set the field when explicitly true so that the
+    // default + explicit-false paths converge on the same downstream check
+    // (`session?.verboseIdleReps === true`).
+    expect(h.live.session?.verboseIdleReps).toBeUndefined();
+  });
+
   it('does NOT arm the guard when the device has no recognised training mode', async () => {
     // Fresh device: applySettings has not run yet, so trainingMode is undefined.
     const slot = h.state.slots.get('primary')!;
