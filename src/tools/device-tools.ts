@@ -1208,8 +1208,7 @@ function buildDeviceGetStateResponse(
     out.mode_revert_latched = {
       requested_mode:
         TrainingModeNames[modeRevertLatched.requested] ?? String(modeRevertLatched.requested),
-      actual_mode:
-        TrainingModeNames[modeRevertLatched.actual] ?? String(modeRevertLatched.actual),
+      actual_mode: TrainingModeNames[modeRevertLatched.actual] ?? String(modeRevertLatched.actual),
       timestamp_ms: modeRevertLatched.timestampMs,
     };
   }

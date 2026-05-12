@@ -552,7 +552,9 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
       slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
     ).modeRevertGuard.onSettingsUpdate(1); // WT — latches the abort
     expect(
-      (slot as never as { modeRevertGuard: { isAborted: () => boolean } }).modeRevertGuard.isAborted(),
+      (
+        slot as never as { modeRevertGuard: { isAborted: () => boolean } }
+      ).modeRevertGuard.isAborted(),
     ).toBe(true);
 
     // User re-issues the setter cascade for Isokinetic. The device echoes
@@ -565,7 +567,9 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
     ).modeRevertGuard.onSettingsUpdate(7); // Isokinetic echo → auto-clear
 
     expect(
-      (slot as never as { modeRevertGuard: { isAborted: () => boolean } }).modeRevertGuard.isAborted(),
+      (
+        slot as never as { modeRevertGuard: { isAborted: () => boolean } }
+      ).modeRevertGuard.isAborted(),
     ).toBe(false);
 
     // set.start now proceeds normally — no refusal, motor engages.
