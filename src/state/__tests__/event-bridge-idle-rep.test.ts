@@ -419,8 +419,7 @@ describe('idle-rep batched summary (default, VMCP-02.11)', () => {
     feedIdleRepCycle(client, 20);
     // No summary yet — timer hasn't tripped.
     expect(
-      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary')
-        .length,
+      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary').length,
     ).toBe(0);
 
     vi.advanceTimersByTime(5_000);
@@ -474,15 +473,13 @@ describe('idle-rep batched summary (default, VMCP-02.11)', () => {
     feedIdleRepCycle(client, 10);
     vi.advanceTimersByTime(5_000);
     expect(
-      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary')
-        .length,
+      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary').length,
     ).toBe(1);
 
     // Second window has no reps — no second summary.
     vi.advanceTimersByTime(5_000);
     expect(
-      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary')
-        .length,
+      channels.publish.mock.calls.filter((c) => c[0].meta.event_type === 'idle_rep_summary').length,
     ).toBe(1);
   });
 
