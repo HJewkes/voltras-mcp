@@ -1103,12 +1103,18 @@ function coercionSummaryFor(
 function eccCoercionSummary(
   check: PendingCoercionCheck,
   deviceValue: number,
-  device: DeviceSnapshot,
+  _device: DeviceSnapshot,
 ): string {
+  // Original 2026-05-11 capture hypothesized "assistMode=on enforces a
+  // non-zero ecc floor" and we appended that to the summary when
+  // device.assistMode === 2. Hardware re-validation 2026-05-11 evening
+  // disproved this — vendor docs confirm assist mode is a mid-rep
+  // automated spotter, unrelated to the ecc setpoint, and the original
+  // 320 reading was a transient mid-cascade observation rather than a
+  // sticky floor. We no longer claim a cause in the summary.
   const reqPct = check.requested / 10;
   const devPct = deviceValue / 10;
-  const tail = device.assistMode === 2 ? ' assistMode=on enforces a non-zero ecc floor.' : '';
-  return `Device coerced ecc ${reqPct}% -> ${devPct}% after ${check.setterName}.${tail}`;
+  return `Device coerced ecc ${reqPct}% -> ${devPct}% after ${check.setterName}.`;
 }
 
 function chainsCoercionSummary(

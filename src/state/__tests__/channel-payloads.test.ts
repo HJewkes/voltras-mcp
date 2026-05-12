@@ -1092,15 +1092,19 @@ describe('buildSettingCoercedPayload', () => {
     expect(meta.session_id).toBeUndefined();
   });
 
-  it('content surfaces field-specific eccentric summary when assistMode=on', () => {
+  it('content surfaces field-specific eccentric summary', () => {
+    // Original payload appended "assistMode=on enforces a non-zero ecc floor"
+    // when device.assistMode === 2; that suffix was retracted 2026-05-11
+    // after hardware re-validation disproved the hypothesis (vendor docs
+    // describe assist as a mid-rep automated spotter, unrelated to ecc
+    // setpoint — the original 320 reading was a transient mid-cascade
+    // observation, not a sticky floor).
     const { content } = buildSettingCoercedPayload(baseCheck, 320, 1_000_240, device, {
       setId: null,
       sessionId: null,
     });
     const parsed = JSON.parse(content);
-    expect(parsed.summary).toBe(
-      'Device coerced ecc 0% -> 32% after device.set_eccentric. assistMode=on enforces a non-zero ecc floor.',
-    );
+    expect(parsed.summary).toBe('Device coerced ecc 0% -> 32% after device.set_eccentric.');
     expect(parsed).toMatchObject({
       field: 'eccentricPercentTenths',
       requested: 0,

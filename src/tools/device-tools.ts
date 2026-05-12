@@ -67,7 +67,11 @@ import {
   type CascadePlan,
   type SlotResult,
 } from '../state/bilateral-cascade.js';
-import { trackedSetterCall, type TrackedFieldSpec } from '../state/coercion-watch.js';
+import {
+  trackedSetterCall,
+  COERCION_WINDOW_MS_GUIDED_LOAD,
+  type TrackedFieldSpec,
+} from '../state/coercion-watch.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import { finalizeSet } from './set-tools.js';
 import type { StoredSession } from '../store/types.js';
@@ -551,8 +555,12 @@ export function registerDeviceTools(
   );
 
   // device.set_eccentric — passthrough; schema enforces -195..+195 percent.
-  // Wrapped in `trackedSetterCall`: assistMode=on enforces a non-zero ecc
-  // floor, so a `setEccentric(0)` request surfaces as a coerced value (F2).
+  // Wrapped in `trackedSetterCall` so a device-side coercion (firmware
+  // safety ramp, etc.) surfaces as a `setting_coerced` channel event when
+  // the post-write state-dump disagrees with the requested value. The
+  // earlier "assistMode=on enforces an ecc floor" hypothesis (F2 original
+  // PM finding) was retracted 2026-05-11 after hardware re-validation —
+  // see VMCP-01.35.
   install(
     placeholders,
     'device.set_eccentric',
@@ -760,23 +768,41 @@ export function registerDeviceTools(
       // value are skipped (the bridge has no requested-baseline to
       // compare against).
       const preDevice = slot.live.snapshotDevice();
+      // weightLbsTenths uses 'exact' mode: the user's explicit target is
+      // the new value the firmware should converge on. chains + ecc use
+      // 'guard' mode: the user's PRIOR setting is the baseline they
+      // expect to persist across the guided-load entry, and the firmware
+      // ramping them to safe minimums (chains 100→20, ecc 500→80 at low
+      // targets — hardware capture 2026-05-11) is the coercion we want
+      // to surface. The longer GUIDED_LOAD window accommodates the
+      // firmware's ~10s internal safety-ramp settle.
       const fields: TrackedFieldSpec[] = [
-        { field: 'weightLbsTenths', requested: input.targetWeightLbs * 10 },
+        {
+          field: 'weightLbsTenths',
+          requested: input.targetWeightLbs * 10,
+          mode: 'exact',
+        },
       ];
       if (typeof preDevice.chainTargetForceTenths === 'number') {
         fields.push({
           field: 'chainTargetForceTenths',
           requested: preDevice.chainTargetForceTenths,
+          mode: 'guard',
         });
       }
       if (typeof preDevice.eccentricPercentTenths === 'number') {
         fields.push({
           field: 'eccentricPercentTenths',
           requested: preDevice.eccentricPercentTenths,
+          mode: 'guard',
         });
       }
-      await trackedSetterCall(slot.coercionWatch, 'device.start_guided_load', fields, () =>
-        slot.client.startGuidedLoad(opts),
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.start_guided_load',
+        fields,
+        () => slot.client.startGuidedLoad(opts),
+        { windowMs: COERCION_WINDOW_MS_GUIDED_LOAD },
       );
       return { ok: true };
     }),

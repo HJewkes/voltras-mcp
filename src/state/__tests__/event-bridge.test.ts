@@ -2604,7 +2604,7 @@ describe('setting_coerced channel event (F2+F3)', () => {
     );
   });
 
-  it('F2 repro: ecc setter coerced — event fires with requested=0, device=320', () => {
+  it('F2 repro: ecc setter coerced — event fires after stability confirms', () => {
     // Pretend `device.set_eccentric { percent: 0 }` just resolved.
     watch.register({
       setterName: 'device.set_eccentric',
@@ -2612,14 +2612,19 @@ describe('setting_coerced channel event (F2+F3)', () => {
       requested: 0,
       setterReturnedAt: Date.now(),
     });
-    // Device pushes a state-dump with the coerced eccentric value.
-    client.fire.stateDump(
-      makeStateDumpEvent({
-        trainingMode: 1,
-        assistMode: 2,
-        eccentricPercentTenths: 320,
-      }),
-    );
+    // Two consecutive state-dumps with the same coerced value: stability
+    // check requires the second to fire. The hardware-re-validation
+    // 2026-05-11 retraction of "assistMode enforces ecc floor" doesn't
+    // remove the bridge's ability to surface ecc coercion — it just
+    // means the firmware's cause isn't documented in the summary.
+    const coerced = makeStateDumpEvent({
+      trainingMode: 1,
+      assistMode: 2,
+      eccentricPercentTenths: 320,
+    });
+    client.fire.stateDump(coerced);
+    expect(pickCoercionPublish()).toBeUndefined();
+    client.fire.stateDump(coerced);
     const event = pickCoercionPublish();
     expect(event).toBeDefined();
     expect(event!.meta).toMatchObject({
@@ -2632,42 +2637,47 @@ describe('setting_coerced channel event (F2+F3)', () => {
       coercion_delta: '320',
     });
     const parsed = JSON.parse(event!.content);
-    expect(parsed.summary).toContain('Device coerced ecc 0% -> 32%');
-    expect(parsed.summary).toContain('assistMode=on enforces a non-zero ecc floor');
+    expect(parsed.summary).toBe('Device coerced ecc 0% -> 32% after device.set_eccentric.');
   });
 
-  it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events', () => {
+  it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events (guard mode + stability)', () => {
     const stamp = Date.now();
     // Pretend `device.start_guided_load { targetWeightLbs: 5 }` registered
-    // three checks: weight=50 (target), chains=100 (carry-over), ecc=500.
+    // three checks: weight=50 (target, exact mode), chains=100 (carry-over
+    // baseline, guard mode), ecc=500 (carry-over baseline, guard mode).
     watch.register({
       setterName: 'device.start_guided_load',
       field: 'weightLbsTenths',
       requested: 50,
       setterReturnedAt: stamp,
+      mode: 'exact',
     });
     watch.register({
       setterName: 'device.start_guided_load',
       field: 'chainTargetForceTenths',
       requested: 100,
       setterReturnedAt: stamp,
+      mode: 'guard',
     });
     watch.register({
       setterName: 'device.start_guided_load',
       field: 'eccentricPercentTenths',
       requested: 500,
       setterReturnedAt: stamp,
+      mode: 'guard',
     });
-    // Device-driven state-dump: weight matched (no event), chains coerced
-    // 100→20, ecc coerced 500→80.
-    client.fire.stateDump(
-      makeStateDumpEvent({
-        trainingMode: 1,
-        weightLbsTenths: 50,
-        chainTargetForceTenths: 20,
-        eccentricPercentTenths: 80,
-      }),
-    );
+    // Two consecutive state-dumps with weight matched (no event for it —
+    // exact mode echo clears) and chains+ecc coerced. Stability fires on
+    // the second matching observation.
+    const coerced = makeStateDumpEvent({
+      trainingMode: 1,
+      weightLbsTenths: 50,
+      chainTargetForceTenths: 20,
+      eccentricPercentTenths: 80,
+    });
+    client.fire.stateDump(coerced);
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    client.fire.stateDump(coerced);
     const events = pickAllCoercionPublishes();
     expect(events).toHaveLength(2);
     const fields = events.map((e) => e.meta.field).sort();
@@ -2713,7 +2723,9 @@ describe('setting_coerced channel event (F2+F3)', () => {
       requested: 100,
       setterReturnedAt: Date.now(),
     });
-    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    const coerced = makeStateDumpEvent({ eccentricPercentTenths: 320 });
+    client.fire.stateDump(coerced);
+    client.fire.stateDump(coerced);
     const event = pickCoercionPublish();
     expect(event).toBeDefined();
     expect(event!.meta.requested_value).toBe('100');
@@ -2740,7 +2752,9 @@ describe('setting_coerced channel event (F2+F3)', () => {
       requested: 0,
       setterReturnedAt: Date.now(),
     });
-    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    const coerced = makeStateDumpEvent({ eccentricPercentTenths: 320 });
+    client.fire.stateDump(coerced);
+    client.fire.stateDump(coerced);
     const event = pickCoercionPublish();
     expect(event).toBeDefined();
     expect(event!.meta.set_id).toBe('set-1');
@@ -2748,5 +2762,89 @@ describe('setting_coerced channel event (F2+F3)', () => {
     const parsed = JSON.parse(event!.content);
     expect(parsed.set_context.set_id).toBe('set-1');
     expect(parsed.set_context.session_id).toBe('sess-1');
+  });
+
+  it('cascade transient defused: pre-state echo → mid-settle transient → final match → NO event', () => {
+    // Hardware repro 2026-05-11 evening: cascade { ecc: 0 } against a
+    // post-guided-load pre-state (ecc=80) produces a state-dump sequence
+    // ecc 80 → 320 → 0. Before the stability fix, the bridge fired
+    // setting_coerced { requested=0, device=320 } on the transient 320.
+    // After the fix, the streak resets between 80 and 320, and the final
+    // exact-mode echo at 0 clears the check. No event fires.
+    watch.register({
+      setterName: 'bilateral.cascade',
+      field: 'eccentricPercentTenths',
+      requested: 0,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 80 }));
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 320 }));
+    client.fire.stateDump(makeStateDumpEvent({ eccentricPercentTenths: 0 }));
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    expect(watch.size()).toBe(0);
+  });
+
+  it('guided-load: baseline echoes do not clear guard-mode check; coercion stabilizes after settle', () => {
+    // Hardware repro 2026-05-11: start_guided_load{target=5} against
+    // chains=10/ecc=50 produces state-dump bursts that echo the prior
+    // chains=100 + ecc=500 values BEFORE the firmware's safety ramp
+    // pushes them to 20 + 80. Guard mode keeps the checks alive across
+    // the echoes; stability fires only after two consecutive observations
+    // of the same coerced value.
+    const stamp = Date.now();
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'chainTargetForceTenths',
+      requested: 100,
+      setterReturnedAt: stamp,
+      mode: 'guard',
+      windowMs: 15_000,
+    });
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'eccentricPercentTenths',
+      requested: 500,
+      setterReturnedAt: stamp,
+      mode: 'guard',
+      windowMs: 15_000,
+    });
+    // Burst 1: pre-settle echo (no coercion observed yet).
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        chainTargetForceTenths: 100,
+        eccentricPercentTenths: 500,
+      }),
+    );
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // Burst 2: chains coerced, ecc still echoing. Stability primed.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        chainTargetForceTenths: 20,
+        eccentricPercentTenths: 500,
+      }),
+    );
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // Burst 3: both fields at their settled coerced values. Chains streak
+    // confirms (fires); ecc streak primes at 80.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        chainTargetForceTenths: 20,
+        eccentricPercentTenths: 80,
+      }),
+    );
+    let events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.meta.field).toBe('chainTargetForceTenths');
+    // Burst 4: ecc streak confirms (cumulative event count = 2).
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        chainTargetForceTenths: 20,
+        eccentricPercentTenths: 80,
+      }),
+    );
+    events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(2);
+    expect(events[1]!.meta.field).toBe('eccentricPercentTenths');
+    expect(events[1]!.meta.source_setter).toBe('device.start_guided_load');
   });
 });
