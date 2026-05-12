@@ -171,4 +171,67 @@ describe('ModeRevertGuard', () => {
     guard.onSettingsUpdate(TrainingMode.WeightTraining);
     expect(guard.isAborted()).toBe(true);
   });
+
+  // ── VMCP-02.14: latch auto-clear on matched-mode cascade ────────────────
+  describe('VMCP-02.14 — auto-clear on matched-mode cascade', () => {
+    it('clears a previously latched abort when a subsequent arm() + matched-mode echo lands', () => {
+      const { guard, setNow } = makeGuard();
+      // Initial revert: requested Rowing, device reverted to WT.
+      guard.arm(TrainingMode.Rowing);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+
+      // User re-issues the cascade requesting Rowing. The device now
+      // echoes Rowing back inside the window — the latch should clear
+      // automatically (the recovery signal from VMCP-02.14).
+      setNow(1_001_000);
+      guard.arm(TrainingMode.Rowing);
+      setNow(1_001_100);
+      guard.onSettingsUpdate(TrainingMode.Rowing);
+      expect(guard.isAborted()).toBe(false);
+      expect(guard.consumeAbort()).toBeNull();
+    });
+
+    it('a non-matching echo does NOT auto-clear; it re-latches with the new revert', () => {
+      const { guard, setNow } = makeGuard();
+      guard.arm(TrainingMode.Rowing);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+
+      // User re-arms for Isokinetic, device reverts again — the latch
+      // must STAY latched (re-armed with the new requested/actual pair).
+      setNow(1_001_000);
+      guard.arm(TrainingMode.Isokinetic);
+      setNow(1_001_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+      const abort = guard.consumeAbort();
+      expect(abort!.requested).toBe(TrainingMode.Isokinetic);
+      expect(abort!.actual).toBe(TrainingMode.WeightTraining);
+    });
+
+    it('peekAbort returns a copy without clearing the latch', () => {
+      const { guard, setNow } = makeGuard();
+      guard.arm(TrainingMode.Rowing);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+
+      const peeked = guard.peekAbort();
+      expect(peeked).not.toBeNull();
+      expect(peeked!.requested).toBe(TrainingMode.Rowing);
+      expect(peeked!.actual).toBe(TrainingMode.WeightTraining);
+      // Still latched after peek.
+      expect(guard.isAborted()).toBe(true);
+      // Mutating the returned object must not affect internal state.
+      peeked!.actual = TrainingMode.Idle;
+      expect(guard.peekAbort()!.actual).toBe(TrainingMode.WeightTraining);
+    });
+
+    it('peekAbort returns null when no abort is latched', () => {
+      const { guard } = makeGuard();
+      expect(guard.peekAbort()).toBeNull();
+    });
+  });
 });

@@ -155,11 +155,21 @@ export const DeviceStartRowInput = z.object({
  * 18 seconds post-trigger; both intervals are overridable for diagnostics
  * but rarely need adjustment. `targetWeightLbs` reuses the SDK's standard
  * BP_BASE_WEIGHT range (5..200).
+ *
+ * `inactivityTimeoutSeconds` (VMCP-02.15) — the inactivity watchdog
+ * threshold for the AUTO-CREATED set the bridge mints on `armed`.
+ * Defaults to 30s: guided-load auto-sets are speculative, and a failed
+ * engagement should reap quickly rather than leave a zombie set sitting
+ * for ~90s (the bridge's normal safety net) or 120s+ (the value used in
+ * 2026-05-12 captures). Manual `set.start` callers control their own
+ * inactivity via `watch.inactivityTimeoutMs` and are unaffected. Range
+ * matches `WatchConfig.inactivityTimeoutMs`: 1..600s.
  */
 export const DeviceStartGuidedLoadInput = z.object({
   targetWeightLbs: z.number().int().min(5).max(200),
   pollIntervalMs: z.number().int().min(100).max(2000).optional(),
   pollDurationMs: z.number().int().min(1000).max(60000).optional(),
+  inactivityTimeoutSeconds: z.number().int().min(1).max(600).optional(),
   slot: SlotIdSchema,
 });
 

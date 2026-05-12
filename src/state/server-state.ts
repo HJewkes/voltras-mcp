@@ -102,6 +102,16 @@ export interface SlotState {
    * server startup (or in test setup).
    */
   unwireBridge?: () => void;
+  /**
+   * Inactivity-watchdog threshold (in ms) for the next bridge-minted
+   * guided-load auto-set. Set by `device.start_guided_load` before the
+   * SDK trigger fires; read once and cleared by the bridge's
+   * `onGuidedLoadState`-driven auto-create in `ensureGuidedLoadSessionAndSet`.
+   * Defaults to 30s when the tool caller doesn't override (VMCP-02.15).
+   * Optional because explicit `set.start` callers bring their own watch
+   * config and the bridge has no auto-create path outside guided-load.
+   */
+  pendingGuidedLoadInactivityMs?: number;
 }
 
 export const PRIMARY_SLOT = 'primary' as const;

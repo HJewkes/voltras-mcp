@@ -200,7 +200,11 @@ async function startSet(
     throw new ToolError(
       'SET_ABORTED_BY_MODE_REVERT',
       `Set aborted: device reverted from ${requestedName} to ${actualName} after the user requested ${requestedName}. ` +
-        `Motor not engaged. Re-select ${requestedName} on the unit and retry.`,
+        `Motor not engaged. Recovery: (1) re-issue the setter cascade that targets ${requestedName} ` +
+        `(e.g. device.set_mode); the latch auto-clears as soon as the device echoes back ${requestedName} ` +
+        `within the detection window. (2) Or call session.end + session.start to drop the latched session ` +
+        `state and start fresh. The current device mode is ${actualName} — use device.get_state to inspect ` +
+        `the mode_revert_latched block before retrying.`,
     );
   }
 
