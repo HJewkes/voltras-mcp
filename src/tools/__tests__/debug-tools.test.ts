@@ -164,6 +164,168 @@ describe('debug.recent_events', () => {
     };
     expect(body.events.map((e) => e.type)).toEqual(['summary', 'set_boundary']);
   });
+
+  // VMCP-02.10: by default the no-args call excludes raw_frame entries.
+  // This is the intentional behavior change — prior behavior was firehose.
+  it('excludes raw_frame entries by default (parsed-only)', async () => {
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
+    const buffers = getDebugBuffers();
+    buffers.events.push({
+      capturedAt: 1,
+      type: 'rep_boundary',
+      payload: {},
+    });
+    buffers.events.push({
+      capturedAt: 2,
+      type: 'raw_frame',
+      payload: { bytesHex: 'aabb', bytesLength: 2 },
+    });
+    buffers.events.push({
+      capturedAt: 3,
+      type: 'summary',
+      payload: { repCount: 1 },
+    });
+
+    const r = await invoke('debug.recent_events', {});
+    const body = JSON.parse(r.content[0].text) as {
+      events: Array<{ type: string; capturedAt: number }>;
+      returned: number;
+    };
+    expect(body.events.map((e) => e.type)).toEqual(['rep_boundary', 'summary']);
+    expect(body.returned).toBe(2);
+  });
+
+  it('filters by `types` allowlist and ignores other parsed events', async () => {
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
+    const buffers = getDebugBuffers();
+    buffers.events.push({
+      capturedAt: 1,
+      type: 'rep_boundary',
+      payload: {},
+    });
+    buffers.events.push({
+      capturedAt: 2,
+      type: 'settings_update',
+      payload: { weightLbs: 50 },
+    });
+    buffers.events.push({
+      capturedAt: 3,
+      type: 'summary',
+      payload: { repCount: 1 },
+    });
+    buffers.events.push({
+      capturedAt: 4,
+      type: 'settings_update',
+      payload: { weightLbs: 60 },
+    });
+
+    const r = await invoke('debug.recent_events', { types: ['settings_update'] });
+    const body = JSON.parse(r.content[0].text) as {
+      events: Array<{ type: string; capturedAt: number }>;
+    };
+    expect(body.events.map((e) => e.capturedAt)).toEqual([2, 4]);
+    expect(body.events.every((e) => e.type === 'settings_update')).toBe(true);
+  });
+
+  it('returns raw_frame entries when `includeRawFrames: true`', async () => {
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
+    const buffers = getDebugBuffers();
+    buffers.events.push({
+      capturedAt: 1,
+      type: 'rep_boundary',
+      payload: {},
+    });
+    buffers.events.push({
+      capturedAt: 2,
+      type: 'raw_frame',
+      payload: { bytesHex: 'aabb', bytesLength: 2 },
+    });
+
+    const r = await invoke('debug.recent_events', { includeRawFrames: true });
+    const body = JSON.parse(r.content[0].text) as {
+      events: Array<{ type: string; capturedAt: number }>;
+    };
+    expect(body.events.map((e) => e.type)).toEqual(['rep_boundary', 'raw_frame']);
+  });
+
+  it('combines `types` and `includeRawFrames` filters', async () => {
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
+    const buffers = getDebugBuffers();
+    buffers.events.push({
+      capturedAt: 1,
+      type: 'rep_boundary',
+      payload: {},
+    });
+    buffers.events.push({
+      capturedAt: 2,
+      type: 'raw_frame',
+      payload: { bytesHex: 'aabb', bytesLength: 2 },
+    });
+    buffers.events.push({
+      capturedAt: 3,
+      type: 'summary',
+      payload: { repCount: 1 },
+    });
+    buffers.events.push({
+      capturedAt: 4,
+      type: 'raw_frame',
+      payload: { bytesHex: 'ccdd', bytesLength: 2 },
+    });
+
+    // types includes raw_frame AND includeRawFrames=true → raw frames pass through.
+    const r1 = await invoke('debug.recent_events', {
+      types: ['raw_frame'],
+      includeRawFrames: true,
+    });
+    const body1 = JSON.parse(r1.content[0].text) as {
+      events: Array<{ type: string; capturedAt: number }>;
+    };
+    expect(body1.events.map((e) => e.capturedAt)).toEqual([2, 4]);
+
+    // types includes raw_frame BUT includeRawFrames=false (default) → raw frames
+    // stripped first, then type filter on the remainder yields zero matches.
+    const r2 = await invoke('debug.recent_events', { types: ['raw_frame'] });
+    const body2 = JSON.parse(r2.content[0].text) as {
+      events: unknown[];
+      returned: number;
+    };
+    expect(body2.events).toEqual([]);
+    expect(body2.returned).toBe(0);
+  });
+
+  it('applies `n` truncation AFTER filtering so matches are not lost to raw_frame noise', async () => {
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish: vi.fn() }), placeholders as never);
+    const buffers = getDebugBuffers();
+    // Older parsed event followed by a swarm of raw frames. With the
+    // filter applied AFTER slicing, the parsed event would be invisible
+    // unless n covers the full noise window. Applying the filter first
+    // surfaces it regardless of how much raw-frame churn followed.
+    buffers.events.push({
+      capturedAt: 1,
+      type: 'summary',
+      payload: { repCount: 1 },
+    });
+    for (let i = 0; i < 30; i += 1) {
+      buffers.events.push({
+        capturedAt: 100 + i,
+        type: 'raw_frame',
+        payload: { bytesHex: '00', bytesLength: 1 },
+      });
+    }
+
+    const r = await invoke('debug.recent_events', { n: 5 });
+    const body = JSON.parse(r.content[0].text) as {
+      events: Array<{ type: string }>;
+      returned: number;
+    };
+    expect(body.returned).toBe(1);
+    expect(body.events[0].type).toBe('summary');
+  });
 });
 
 describe('debug.push_test_channel', () => {

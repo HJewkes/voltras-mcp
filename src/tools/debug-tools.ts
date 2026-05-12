@@ -5,9 +5,12 @@
 //   * `debug.recent_frames(n)` — last N telemetry frames the bridge captured
 //     via `client.onFrame`. Strictly numeric / typed values; never any raw
 //     protocol bytes.
-//   * `debug.recent_events(n)` — last N bridge-level events (rep_boundary,
-//     set_boundary, settings_update, connection_state_change) with timestamps
-//     and lightweight structured payloads.
+//   * `debug.recent_events(n, types?, includeRawFrames?)` — last N bridge-level
+//     events (rep_boundary, set_boundary, settings_update, connection_state_change,
+//     etc.) with timestamps and lightweight structured payloads. Supports a
+//     `types` allowlist and an `includeRawFrames` opt-in for the pre-decode
+//     raw BLE frame channel (excluded by default — at 40 Hz it dominates the
+//     buffer and was the firehose problem VMCP-02.10 fixed).
 //   * `debug.push_test_channel({ content, meta })` — fires a single
 //     `claude/channel` notification through the publisher so a developer
 //     can verify channel delivery (host launched with `--channels`) without
@@ -38,13 +41,31 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
+
+const RECENT_EVENTS_DESCRIPTION =
+  'Returns the most recent bridge-level events from the diagnostic ring buffer (rep_boundary, set_boundary, summary, settings_update, connection_state_change, guided_load_state, raw_frame, etc.). ' +
+  'Optional `types` filters to only events whose `type` field matches one of the supplied strings. ' +
+  'Optional `includeRawFrames` (default `false`) controls whether raw BLE `raw_frame` entries are included — they are excluded by default because at 40 Hz they dominate the buffer. ' +
+  'Examples: ' +
+  '`{}` returns parsed events only; ' +
+  '`{ types: ["rep_finalized"] }` returns only rep-finalized events; ' +
+  '`{ types: ["setting_coerced", "mode_diverged"] }` returns only those two parser-emitted divergence events; ' +
+  '`{ includeRawFrames: true }` restores the legacy firehose (parsed events + raw frames).';
 
 /**
  * Hot-swap the `debug.*` placeholders with their real handlers. The
@@ -79,7 +100,20 @@ export function registerDebugTools(
     DebugRecentEventsInput,
     wrapHandler(DebugRecentEventsInput, (input) => {
       const buffers = getDebugBuffers();
-      const events = buffers.events.recent(input.n);
+      // Walk the full retained buffer first so the type/raw-frame filters
+      // operate over every event the bridge captured, then take the most
+      // recent `n` of the matching subset. Slicing by `n` before filtering
+      // would silently drop matches when raw_frame entries dominate the
+      // tail of the buffer (the firehose case this filter exists to fix).
+      const all = buffers.events.recent(buffers.events.length());
+      const typeFilter =
+        Array.isArray(input.types) && input.types.length > 0 ? new Set(input.types) : undefined;
+      const filtered = all.filter((event) => {
+        if (!input.includeRawFrames && event.type === 'raw_frame') return false;
+        if (typeFilter !== undefined && !typeFilter.has(event.type)) return false;
+        return true;
+      });
+      const events = filtered.slice(-input.n);
       return Promise.resolve({
         capacity: buffers.capacity,
         size: buffers.events.length(),
@@ -87,6 +121,7 @@ export function registerDebugTools(
         events,
       });
     }),
+    RECENT_EVENTS_DESCRIPTION,
   );
   install(
     placeholders,

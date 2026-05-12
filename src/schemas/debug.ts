@@ -13,9 +13,25 @@ export const DebugRecentFramesInput = z.object({
   n: z.number().int().min(1).max(10_000).optional().default(DEFAULT_N),
 });
 
-/** Input for `debug.recent_events` — last N bridge-level events. */
+/**
+ * Input for `debug.recent_events` — last N bridge-level events.
+ *
+ * `types` (optional): when supplied, only events whose `type` field matches
+ * one of the strings in the array are returned. Empty array or omitted means
+ * "no type filter."
+ *
+ * `includeRawFrames` (optional, default `false`): controls whether raw BLE
+ * frame entries (events with `type === 'raw_frame'`, captured pre-decode via
+ * `client.onRawFrame`) are included. Raw frames are debug-of-debug noise;
+ * default is parsed-only. The default value is intentionally non-backward-
+ * compatible — pre-VMCP-02.10 callers received raw frames mixed in, and that
+ * was the firehose problem this filter solves. Pass `includeRawFrames: true`
+ * to restore the legacy behavior.
+ */
 export const DebugRecentEventsInput = z.object({
   n: z.number().int().min(1).max(10_000).optional().default(DEFAULT_N),
+  types: z.array(z.string()).optional(),
+  includeRawFrames: z.boolean().optional().default(false),
 });
 
 /**
