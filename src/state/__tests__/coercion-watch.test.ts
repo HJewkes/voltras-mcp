@@ -30,32 +30,32 @@ describe('CoercionWatch.observe — single-observation cases', () => {
   it('does NOT fire on the first non-matching observation (stability check)', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 0 }));
-    const hit = watch.observe('eccentricPercentTenths', 320, 1_000_500);
-    expect(hit).toBeNull();
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_500);
+    expect(hits).toEqual([]);
     // Check still pending — the observation primed the stability counter.
     expect(watch.size()).toBe(1);
   });
 
-  it('returns null and clears the check on an exact-mode device echo (no event)', () => {
+  it('returns empty and clears the check on an exact-mode device echo (no event)', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 500 }));
-    const hit = watch.observe('eccentricPercentTenths', 500, 1_000_100);
-    expect(hit).toBeNull();
+    const hits = watch.observe('eccentricPercentTenths', 500, 1_000_100);
+    expect(hits).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 
-  it('returns null when no pending check exists for the field', () => {
+  it('returns empty when no pending check exists for the field', () => {
     const watch = new CoercionWatch();
-    const hit = watch.observe('eccentricPercentTenths', 320, 1_000_100);
-    expect(hit).toBeNull();
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_100);
+    expect(hits).toEqual([]);
   });
 
-  it('returns null and sweeps the check when the window has elapsed', () => {
+  it('returns empty and sweeps the check when the window has elapsed', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ setterReturnedAt: 1_000_000 }));
     const expiredNow = 1_000_000 + COERCION_WINDOW_MS;
-    const hit = watch.observe('eccentricPercentTenths', 320, expiredNow);
-    expect(hit).toBeNull();
+    const hits = watch.observe('eccentricPercentTenths', 320, expiredNow);
+    expect(hits).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 
@@ -72,7 +72,7 @@ describe('CoercionWatch.observe — single-observation cases', () => {
         setterReturnedAt: 1_000_000,
       }),
     );
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_200)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_200)).toEqual([]);
     expect(watch.size()).toBe(2);
   });
 });
@@ -81,11 +81,11 @@ describe('CoercionWatch.observe — stability counter', () => {
   it('fires after two consecutive observations of the same coerced value', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 0 }));
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_500)).toBeNull();
-    const hit = watch.observe('eccentricPercentTenths', 320, 1_000_600);
-    expect(hit).not.toBeNull();
-    expect(hit?.requested).toBe(0);
-    expect(hit?.setterName).toBe('device.set_eccentric');
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_500)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_600);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(0);
+    expect(hits[0].setterName).toBe('device.set_eccentric');
     expect(watch.size()).toBe(0);
   });
 
@@ -97,11 +97,11 @@ describe('CoercionWatch.observe — stability counter', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 0 }));
     // Pre-state echo (80) — non-matching, primes the streak at 80.
-    expect(watch.observe('eccentricPercentTenths', 80, 1_000_100)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 80, 1_000_100)).toEqual([]);
     // Transient mid-cascade (320) — different value, resets streak to 320.
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_200)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_200)).toEqual([]);
     // Final settle (0) — exact echo, clears the check.
-    expect(watch.observe('eccentricPercentTenths', 0, 1_000_300)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 0, 1_000_300)).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 
@@ -110,20 +110,20 @@ describe('CoercionWatch.observe — stability counter', () => {
     watch.register(makeRegister({ requested: 0 }));
     // Observe 100 (one tick of streak), then 200 (reset), then 200 again
     // (confirms). Fires with deviceValue=200.
-    expect(watch.observe('eccentricPercentTenths', 100, 1_000_100)).toBeNull();
-    expect(watch.observe('eccentricPercentTenths', 200, 1_000_200)).toBeNull();
-    const hit = watch.observe('eccentricPercentTenths', 200, 1_000_300);
-    expect(hit).not.toBeNull();
-    expect(hit?.requested).toBe(0);
+    expect(watch.observe('eccentricPercentTenths', 100, 1_000_100)).toEqual([]);
+    expect(watch.observe('eccentricPercentTenths', 200, 1_000_200)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 200, 1_000_300);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(0);
   });
 
   it('a matching echo resets the streak (exact mode); subsequent coercion needs two more', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 0 }));
     // Coerced 320 (streak=1).
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_100)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_100)).toEqual([]);
     // Echo at 0 — exact mode clears the check entirely.
-    expect(watch.observe('eccentricPercentTenths', 0, 1_000_200)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 0, 1_000_200)).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 });
@@ -139,7 +139,7 @@ describe('CoercionWatch.observe — guard mode', () => {
         field: 'chainTargetForceTenths',
       }),
     );
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_100)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 100, 1_000_100)).toEqual([]);
     expect(watch.size()).toBe(1);
   });
 
@@ -157,12 +157,12 @@ describe('CoercionWatch.observe — guard mode', () => {
         field: 'chainTargetForceTenths',
       }),
     );
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_100)).toBeNull();
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_200)).toBeNull();
-    const hit = watch.observe('chainTargetForceTenths', 20, 1_000_300);
-    expect(hit).not.toBeNull();
-    expect(hit?.requested).toBe(100);
-    expect(hit?.setterName).toBe('device.start_guided_load');
+    expect(watch.observe('chainTargetForceTenths', 100, 1_000_100)).toEqual([]);
+    expect(watch.observe('chainTargetForceTenths', 20, 1_000_200)).toEqual([]);
+    const hits = watch.observe('chainTargetForceTenths', 20, 1_000_300);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(100);
+    expect(hits[0].setterName).toBe('device.start_guided_load');
     expect(watch.size()).toBe(0);
   });
 
@@ -177,14 +177,14 @@ describe('CoercionWatch.observe — guard mode', () => {
       }),
     );
     // Coerced 20 (streak=1).
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_100)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 20, 1_000_100)).toEqual([]);
     // Baseline echo (100) — guard mode does NOT clear; streak resets.
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_200)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 100, 1_000_200)).toEqual([]);
     expect(watch.size()).toBe(1);
     // Two more coerced observations are needed to fire.
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_300)).toBeNull();
-    const hit = watch.observe('chainTargetForceTenths', 20, 1_000_400);
-    expect(hit).not.toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 20, 1_000_300)).toEqual([]);
+    const hits = watch.observe('chainTargetForceTenths', 20, 1_000_400);
+    expect(hits).toHaveLength(1);
   });
 
   it('guard-mode check expires by window even if no coercion is ever observed', () => {
@@ -199,11 +199,11 @@ describe('CoercionWatch.observe — guard mode', () => {
       }),
     );
     // Only baseline echoes within the window.
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_500)).toBeNull();
-    expect(watch.observe('chainTargetForceTenths', 100, 1_001_000)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 100, 1_000_500)).toEqual([]);
+    expect(watch.observe('chainTargetForceTenths', 100, 1_001_000)).toEqual([]);
     // Window elapses; subsequent observe sweeps the check.
     const expiredNow = 1_000_000 + COERCION_WINDOW_MS;
-    expect(watch.observe('chainTargetForceTenths', 20, expiredNow)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 20, expiredNow)).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 });
@@ -220,9 +220,9 @@ describe('CoercionWatch.observe — per-check windowMs', () => {
     );
     // 10 seconds after setter — would be expired under default 2500 ms.
     const lateButWithinExtended = 1_000_000 + 10_000;
-    expect(watch.observe('eccentricPercentTenths', 320, lateButWithinExtended)).toBeNull();
-    const hit = watch.observe('eccentricPercentTenths', 320, lateButWithinExtended + 100);
-    expect(hit).not.toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 320, lateButWithinExtended)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 320, lateButWithinExtended + 100);
+    expect(hits).toHaveLength(1);
   });
 
   it('sweeps based on the per-check window, not the default', () => {
@@ -246,20 +246,64 @@ describe('CoercionWatch.observe — per-check windowMs', () => {
   });
 });
 
-describe('CoercionWatch.register', () => {
-  it('evicts a prior pending check on the same field (newest setter wins)', () => {
+describe('CoercionWatch.register — composite (setterName, field) keying', () => {
+  it('evicts a prior pending check on the same (setterName, field) pair', () => {
+    // Same setter re-registering the same field is "newest user intent
+    // wins" — the second call's `requested` replaces the first.
     const watch = new CoercionWatch();
     watch.register(
-      makeRegister({ requested: 50, setterReturnedAt: 1_000_000, setterName: 'first' }),
+      makeRegister({
+        requested: 50,
+        setterReturnedAt: 1_000_000,
+        setterName: 'device.set_eccentric',
+      }),
     );
     watch.register(
-      makeRegister({ requested: 100, setterReturnedAt: 1_000_300, setterName: 'second' }),
+      makeRegister({
+        requested: 100,
+        setterReturnedAt: 1_000_300,
+        setterName: 'device.set_eccentric',
+      }),
     );
     expect(watch.size()).toBe(1);
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_500)).toBeNull();
-    const hit = watch.observe('eccentricPercentTenths', 320, 1_000_600);
-    expect(hit?.requested).toBe(100);
-    expect(hit?.setterName).toBe('second');
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_500)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_600);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(100);
+    expect(hits[0].setterName).toBe('device.set_eccentric');
+  });
+
+  it('keeps checks for the same field but different setterNames independent (VMCP-01.38)', () => {
+    // Two different setters touching the same field within the window
+    // must both retain a pending check so each can fire its own
+    // setting_coerced event. The prior field-only keying lost the first
+    // setter's check when the second registered.
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        field: 'chainTargetForceTenths',
+        requested: 500,
+        setterName: 'device.set_chains',
+        setterReturnedAt: 1_000_000,
+      }),
+    );
+    watch.register(
+      makeRegister({
+        field: 'chainTargetForceTenths',
+        requested: 800,
+        setterName: 'bilateral.cascade',
+        setterReturnedAt: 1_000_100,
+      }),
+    );
+    expect(watch.size()).toBe(2);
+    // First observation primes both stability counters at 300.
+    expect(watch.observe('chainTargetForceTenths', 300, 1_000_500)).toEqual([]);
+    // Second observation fires both checks — one event per setter.
+    const hits = watch.observe('chainTargetForceTenths', 300, 1_000_600);
+    expect(hits).toHaveLength(2);
+    const setterNames = hits.map((h) => h.setterName).sort();
+    expect(setterNames).toEqual(['bilateral.cascade', 'device.set_chains']);
+    expect(watch.size()).toBe(0);
   });
 
   it('keeps checks for distinct fields independent', () => {
@@ -273,7 +317,9 @@ describe('CoercionWatch.register', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ setterReturnedAt: 1_000_000 }));
     // At the default boundary the check is expired.
-    expect(watch.observe('eccentricPercentTenths', 320, 1_000_000 + COERCION_WINDOW_MS)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_000 + COERCION_WINDOW_MS)).toEqual(
+      [],
+    );
     expect(watch.size()).toBe(0);
   });
 
@@ -281,7 +327,7 @@ describe('CoercionWatch.register', () => {
     const watch = new CoercionWatch();
     watch.register(makeRegister({ requested: 50 }));
     // Echo at requested clears the check (exact mode).
-    expect(watch.observe('eccentricPercentTenths', 50, 1_000_100)).toBeNull();
+    expect(watch.observe('eccentricPercentTenths', 50, 1_000_100)).toEqual([]);
     expect(watch.size()).toBe(0);
   });
 });
@@ -293,9 +339,9 @@ describe('CoercionWatch.sweep', () => {
     watch.register(makeRegister({ field: 'fresh', setterReturnedAt: 1_002_000 }));
     watch.sweep(1_000_000 + COERCION_WINDOW_MS + 1);
     expect(watch.size()).toBe(1);
-    expect(watch.observe('fresh', 99, 1_002_100)).toBeNull();
-    const hit = watch.observe('fresh', 99, 1_002_200);
-    expect(hit).not.toBeNull();
+    expect(watch.observe('fresh', 99, 1_002_100)).toEqual([]);
+    const hits = watch.observe('fresh', 99, 1_002_200);
+    expect(hits).toHaveLength(1);
   });
 
   it('is a no-op when no checks are pending', () => {
@@ -371,10 +417,10 @@ describe('trackedSetterCall', () => {
     );
     const observedNow = Date.now() + 100;
     // Stability requires a second matching observation to fire.
-    expect(watch.observe('weightLbsTenths', 99, observedNow)).toBeNull();
-    expect(watch.observe('chainTargetForceTenths', 20, observedNow)).toBeNull();
-    expect(watch.observe('weightLbsTenths', 99, observedNow + 10)).not.toBeNull();
-    expect(watch.observe('chainTargetForceTenths', 20, observedNow + 10)).not.toBeNull();
+    expect(watch.observe('weightLbsTenths', 99, observedNow)).toEqual([]);
+    expect(watch.observe('chainTargetForceTenths', 20, observedNow)).toEqual([]);
+    expect(watch.observe('weightLbsTenths', 99, observedNow + 10)).toHaveLength(1);
+    expect(watch.observe('chainTargetForceTenths', 20, observedNow + 10)).toHaveLength(1);
   });
 
   it('opts.windowMs propagates to every registered check', async () => {
@@ -391,8 +437,8 @@ describe('trackedSetterCall', () => {
     );
     // Both checks survive 10s after setter — would have expired at 2.5s.
     const lateNow = Date.now() + 10_000;
-    expect(watch.observe('weightLbsTenths', 5, lateNow)).toBeNull();
-    expect(watch.observe('chainTargetForceTenths', 20, lateNow)).toBeNull();
+    expect(watch.observe('weightLbsTenths', 5, lateNow)).toEqual([]);
+    expect(watch.observe('chainTargetForceTenths', 20, lateNow)).toEqual([]);
     expect(watch.size()).toBe(2);
   });
 
@@ -408,9 +454,9 @@ describe('trackedSetterCall', () => {
       async () => undefined,
     );
     // exact: echo at 50 clears.
-    expect(watch.observe('weightLbsTenths', 50, Date.now() + 100)).toBeNull();
+    expect(watch.observe('weightLbsTenths', 50, Date.now() + 100)).toEqual([]);
     // guard: echo at 100 does NOT clear.
-    expect(watch.observe('chainTargetForceTenths', 100, Date.now() + 100)).toBeNull();
+    expect(watch.observe('chainTargetForceTenths', 100, Date.now() + 100)).toEqual([]);
     expect(watch.size()).toBe(1);
   });
 });

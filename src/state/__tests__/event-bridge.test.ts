@@ -2743,15 +2743,19 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(pickCoercionPublish()).toBeUndefined();
   });
 
-  it('edge — same-field eviction: newest setter wins on subsequent state-dump', () => {
+  it('edge — same (setterName, field) re-register: newest pending check wins on subsequent state-dump', () => {
+    // Two registers from the SAME setter on the same field — the second
+    // evicts the first ("newest user intent wins"). Distinct setters
+    // touching the same field are independent (covered by the
+    // bilateral-style test below).
     watch.register({
-      setterName: 'first',
+      setterName: 'device.set_eccentric',
       field: 'eccentricPercentTenths',
       requested: 0,
       setterReturnedAt: Date.now(),
     });
     watch.register({
-      setterName: 'second',
+      setterName: 'device.set_eccentric',
       field: 'eccentricPercentTenths',
       requested: 100,
       setterReturnedAt: Date.now(),
@@ -2759,10 +2763,36 @@ describe('setting_coerced channel event (F2+F3)', () => {
     const coerced = makeStateDumpEvent({ eccentricPercentTenths: 320 });
     client.fire.stateDump(coerced);
     client.fire.stateDump(coerced);
-    const event = pickCoercionPublish();
-    expect(event).toBeDefined();
-    expect(event!.meta.requested_value).toBe('100');
-    expect(event!.meta.source_setter).toBe('second');
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0].meta.requested_value).toBe('100');
+    expect(events[0].meta.source_setter).toBe('device.set_eccentric');
+  });
+
+  it('edge — distinct setters touching the same field both fire (VMCP-01.38)', () => {
+    // Bilateral-style scenario: `device.set_chains` and `bilateral.cascade`
+    // both register a `chainTargetForceTenths` check within the window.
+    // Each must surface its own setting_coerced event when the device
+    // settles at a coerced value.
+    watch.register({
+      setterName: 'device.set_chains',
+      field: 'chainTargetForceTenths',
+      requested: 500,
+      setterReturnedAt: Date.now(),
+    });
+    watch.register({
+      setterName: 'bilateral.cascade',
+      field: 'chainTargetForceTenths',
+      requested: 800,
+      setterReturnedAt: Date.now(),
+    });
+    const coerced = makeStateDumpEvent({ chainTargetForceTenths: 300 });
+    client.fire.stateDump(coerced);
+    client.fire.stateDump(coerced);
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(2);
+    const sourceSetters = events.map((e) => e.meta.source_setter).sort();
+    expect(sourceSetters).toEqual(['bilateral.cascade', 'device.set_chains']);
   });
 
   it('edge — state-dump burst: two coerced frames in succession → exactly one event', () => {
@@ -2879,5 +2909,66 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(events).toHaveLength(2);
     expect(events[1]!.meta.field).toBe('eccentricPercentTenths');
     expect(events[1]!.meta.source_setter).toBe('device.start_guided_load');
+  });
+
+  it('bilateral: two slots each fire their own setting_coerced with distinct slot_id (VMCP-01.38)', () => {
+    // Wire a second slot ('right') into the existing state so both
+    // slots share the channels publisher but have independent watches +
+    // clients. Fires the same coerced state-dump on each client and
+    // asserts each surfaces a distinct event with its own slot_id meta.
+    const rightClient = makeFakeClient();
+    const rightLive = new LiveState();
+    const rightWatch = new CoercionWatch();
+    const rightSlot = {
+      slotId: 'right',
+      client: rightClient,
+      live: rightLive,
+      modeRevertGuard: new ModeRevertGuard(),
+      coercionWatch: rightWatch,
+    };
+    // Reach into the same state the beforeEach already constructed — both
+    // slots share `channels` + `server` so events from either land on the
+    // single `channels.publish` recorder.
+    const rightState = {
+      slots: new Map<string, unknown>([
+        ['primary', { slotId: 'primary', client, live, coercionWatch: watch }],
+        ['right', rightSlot],
+      ]),
+      channels,
+      server,
+    };
+    wireBridgeForSlot(
+      rightState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      rightSlot as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+
+    const stamp = Date.now();
+    watch.register({
+      setterName: 'device.set_chains',
+      field: 'chainTargetForceTenths',
+      requested: 500,
+      setterReturnedAt: stamp,
+    });
+    rightWatch.register({
+      setterName: 'device.set_chains',
+      field: 'chainTargetForceTenths',
+      requested: 500,
+      setterReturnedAt: stamp,
+    });
+    const coerced = makeStateDumpEvent({ chainTargetForceTenths: 300 });
+    // First state-dump on each primes its slot's stability counter.
+    client.fire.stateDump(coerced);
+    rightClient.fire.stateDump(coerced);
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // Second state-dump on each fires its slot's event.
+    client.fire.stateDump(coerced);
+    rightClient.fire.stateDump(coerced);
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(2);
+    const slotIds = events.map((e) => e.meta.slot_id).sort();
+    expect(slotIds).toEqual(['primary', 'right']);
+    // Slot-scoped publisher also injects `slot` meta (forSlot wrapper).
+    const slotMeta = events.map((e) => e.meta.slot).sort();
+    expect(slotMeta).toEqual(['primary', 'right']);
   });
 });

@@ -114,22 +114,30 @@ export interface PendingCoercionRegister {
 }
 
 /**
- * Per-slot pending-coercion ledger. One outstanding check per `field` at
- * any time — a fresh `register` for the same field evicts the prior pending
- * check. Newest setter wins (the most recent user intent is the
- * authoritative requested value).
+ * Per-slot pending-coercion ledger keyed by `(setterName, field)`. One
+ * outstanding check per `(setterName, field)` pair at any time — a fresh
+ * `register` for the same pair evicts the prior pending check. Distinct
+ * setters touching the SAME field (e.g., `device.set_chains` and
+ * `bilateral.cascade` both writing `chainTargetForceTenths` within the
+ * window) keep independent checks, so each can fire its own
+ * `setting_coerced` event without one eviction silencing the other.
+ *
+ * The composite key was introduced to fix VMCP-01.38, where the prior
+ * field-only keying could let a back-to-back register from a different
+ * setter overwrite an in-flight check and surface only one
+ * `setting_coerced` event for what was actually two distinct coercions.
  */
 export class CoercionWatch {
   private readonly pending = new Map<string, PendingCoercionCheck>();
 
   /**
-   * Stash a pending check for the given `field`. Evicts any prior pending
-   * check on the same field. The caller has already converted `requested`
-   * to device units. `windowMs` defaults to `COERCION_WINDOW_MS`; `mode`
-   * defaults to `'exact'`.
+   * Stash a pending check for `(setterName, field)`. Evicts any prior
+   * pending check on the same pair. The caller has already converted
+   * `requested` to device units. `windowMs` defaults to
+   * `COERCION_WINDOW_MS`; `mode` defaults to `'exact'`.
    */
   register(spec: PendingCoercionRegister): void {
-    this.pending.set(spec.field, {
+    this.pending.set(makeKey(spec.setterName, spec.field), {
       setterName: spec.setterName,
       field: spec.field,
       requested: spec.requested,
@@ -141,57 +149,64 @@ export class CoercionWatch {
   }
 
   /**
-   * Compare a device-reported `deviceValue` for `field` against the pending
-   * check. Returns the matched check (caller publishes `setting_coerced`)
-   * and clears it from the ledger when:
-   *   - a pending check for `field` exists,
+   * Compare a device-reported `deviceValue` for `field` against EVERY
+   * pending check on that field (regardless of which setter registered
+   * it). Returns one fired check per setter whose stability streak hit
+   * the threshold on this observation — caller publishes one
+   * `setting_coerced` event per entry. An empty array means no same-field
+   * check fired (either none pending, all still primarying their
+   * stability counter, or all were echo-cleared).
+   *
+   * Within a single check, the firing rules are:
    *   - `now - check.setterReturnedAt < check.windowMs`,
    *   - `deviceValue !== check.requested`,
    *   - this is the SECOND consecutive observation of the same
    *     `deviceValue` (the stability check that defuses mid-cascade
    *     transient state-dumps).
    *
-   * Returns `null` otherwise. Always sweeps expired checks first so a stale
-   * entry on a different field cannot leak through subsequent observes.
+   * Always sweeps expired checks first so a stale entry on a different
+   * field cannot leak through subsequent observes.
    *
    * For `mode: 'exact'`, an echo at `deviceValue === check.requested`
    * clears the check (legitimate success). For `mode: 'guard'`, the echo
    * is "no change yet" and the check is held until a genuine coercion is
    * observed or the window expires.
    */
-  observe(field: string, deviceValue: number, now: number): PendingCoercionCheck | null {
+  observe(field: string, deviceValue: number, now: number): PendingCoercionCheck[] {
     this.sweep(now);
-    const check = this.pending.get(field);
-    if (check === undefined) {
-      return null;
-    }
-    if (deviceValue === check.requested) {
-      if (check.mode === 'exact') {
-        // Legitimate success echo — clear so a later (coerced) state-dump
-        // in a different burst doesn't accidentally fire.
-        this.pending.delete(field);
-        return null;
+    const fired: PendingCoercionCheck[] = [];
+    for (const [key, check] of this.pending) {
+      if (check.field !== field) continue;
+      if (deviceValue === check.requested) {
+        if (check.mode === 'exact') {
+          // Legitimate success echo — clear so a later (coerced) state-
+          // dump in a different burst doesn't accidentally fire.
+          this.pending.delete(key);
+          continue;
+        }
+        // `'guard'`: leave the check pending; this echo means "device
+        // hasn't touched the baseline yet". A later coerced value can
+        // still match. Reset any in-flight stability streak — a matching
+        // echo invalidates the prior non-matching observation as a
+        // transient.
+        delete check.observedDeviceValue;
+        check.observedCount = 0;
+        continue;
       }
-      // `'guard'`: leave the check pending; this echo means "device hasn't
-      // touched the baseline yet". A later coerced value can still match.
-      // Reset any in-flight stability streak — a matching echo invalidates
-      // the prior non-matching observation as a transient.
-      delete check.observedDeviceValue;
-      check.observedCount = 0;
-      return null;
+      // deviceValue !== requested — track stability before firing.
+      if (check.observedDeviceValue !== deviceValue) {
+        check.observedDeviceValue = deviceValue;
+        check.observedCount = 1;
+        continue;
+      }
+      check.observedCount += 1;
+      if (check.observedCount < COERCION_STABILITY_THRESHOLD) {
+        continue;
+      }
+      this.pending.delete(key);
+      fired.push(check);
     }
-    // deviceValue !== requested — track stability before firing.
-    if (check.observedDeviceValue !== deviceValue) {
-      check.observedDeviceValue = deviceValue;
-      check.observedCount = 1;
-      return null;
-    }
-    check.observedCount += 1;
-    if (check.observedCount < COERCION_STABILITY_THRESHOLD) {
-      return null;
-    }
-    this.pending.delete(field);
-    return check;
+    return fired;
   }
 
   /**
@@ -201,9 +216,9 @@ export class CoercionWatch {
    * (typically 0-3).
    */
   sweep(now: number): void {
-    for (const [field, check] of this.pending) {
+    for (const [key, check] of this.pending) {
       if (now - check.setterReturnedAt >= check.windowMs) {
-        this.pending.delete(field);
+        this.pending.delete(key);
       }
     }
   }
@@ -225,6 +240,10 @@ export class CoercionWatch {
   size(): number {
     return this.pending.size;
   }
+}
+
+function makeKey(setterName: string, field: string): string {
+  return `${setterName} ${field}`;
 }
 
 /**

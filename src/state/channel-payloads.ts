@@ -1025,6 +1025,15 @@ function buildConnectionChangedSummary(
  * `coercionSummaryFor`); unknown fields fall back to a generic phrasing.
  */
 export interface CoercionSetContext {
+  /**
+   * Slot the coercion was observed on. The slot-scoped publisher already
+   * folds this into the outgoing channel meta as `slot`, so the
+   * payload-builder echoes the value into the content JSON's
+   * `set_context.slot_id` (and into meta as `slot_id` for parity with the
+   * other set/session id keys) so JSON-only consumers don't have to read
+   * the wrapper attribute to attribute the event.
+   */
+  slotId: string;
   setId: string | null;
   sessionId: string | null;
 }
@@ -1047,6 +1056,7 @@ export function buildSettingCoercedPayload(
     source_setter: check.setterName,
     coercion_delta: String(coercionDelta),
     coercion_window_ms: String(coercionWindowMs),
+    slot_id: context.slotId,
   };
   if (context.setId !== null) {
     meta.set_id = context.setId;
@@ -1064,6 +1074,7 @@ export function buildSettingCoercedPayload(
     source_setter: check.setterName,
     coercion_window_ms: coercionWindowMs,
     set_context: {
+      slot_id: context.slotId,
       set_id: context.setId,
       session_id: context.sessionId,
       weight_lbs: device.weightLbs ?? null,
