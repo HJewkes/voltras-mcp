@@ -145,6 +145,7 @@ interface FakeClient {
   startRow: Mock<(distance?: string) => Promise<void>>;
   isRowingActive: boolean;
   // </Bug-22>
+  isRecording: boolean;
   onPerRep: Mock<(cb: (event: unknown) => void) => void>;
   onInProgress: Mock<(cb: (event: unknown) => void) => void>;
   onSummary: Mock<(cb: (event: unknown) => void) => void>;
@@ -200,6 +201,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     startRow: vi.fn(async () => undefined),
     isRowingActive: false,
     // </Bug-22>
+    isRecording: false,
     onPerRep: vi.fn(() => undefined),
     onInProgress: vi.fn(() => undefined),
     onSummary: vi.fn(() => undefined),
@@ -307,6 +309,15 @@ interface FakeLive {
     isStale?: boolean;
     disconnectedAt?: string;
   };
+  snapshotSet: () =>
+    | undefined
+    | {
+        setId: string;
+        sessionId: string;
+        startedAt: string;
+        reps: unknown[];
+        status: 'active' | 'ended' | 'partial';
+      };
   markDisconnected: (at: string) => void;
 }
 
@@ -320,7 +331,14 @@ interface FakeSlot {
 }
 
 interface FakeSlotBindings {
-  get: Mock<(deviceId: string) => { physicalSide: 'left' | 'right' } | null>;
+  get: Mock<
+    (deviceId: string) => {
+      deviceId: string;
+      physicalSide: 'left' | 'right';
+      boundAt: string;
+      lastSeen?: string;
+    } | null
+  >;
   bind: Mock<(deviceId: string, side: 'left' | 'right') => unknown>;
   touch: Mock<(deviceId: string) => void>;
   remove: Mock<(deviceId: string) => unknown>;
@@ -346,6 +364,7 @@ function makeFakeSlotBindings(): FakeSlotBindings {
 function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>> = {}): FakeLive {
   return {
     snapshotDevice: () => ({ connected: false, ...overrides }),
+    snapshotSet: () => undefined,
     markDisconnected: vi.fn(),
   };
 }
@@ -1205,6 +1224,172 @@ describe('registerDeviceTools', () => {
         expect(payload.mode_revert_latched).toBeDefined();
         // And consumeAbort still returns the latch (it was never cleared).
         expect(slot.modeRevertGuard.isAborted()).toBe(true);
+      });
+    });
+
+    // ── VMCP-01.39: comprehensive get_state surface ────────────────────────
+    describe('VMCP-01.39 — comprehensive surface', () => {
+      it('always emits guided_load, load_state, is_recording, active_set, slot_binding', async () => {
+        const reg = placeholders.get('device.get_state')!;
+        const { isError, payload } = await invoke(reg, {});
+        expect(isError).toBeUndefined();
+        expect(payload.guided_load).toEqual({
+          phase: 'idle',
+          countdown_remaining_ms: null,
+          fitness_mode_raw: null,
+        });
+        expect(payload.is_recording).toBe(false);
+        expect(payload.load_state).toBe('unloaded');
+        expect(payload.active_set).toBeNull();
+        expect(payload.slot_binding).toBeNull();
+      });
+
+      it("load_state='loaded' when guided_load.phase is 'active'", async () => {
+        const client = primaryClient(state);
+        client.isConnected = true;
+        client.connectionState = 'connected';
+        client.guidedLoadState = {
+          phase: 'active',
+          countdownRemainingMs: null,
+          fitnessModeRaw: 0x0027,
+        };
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.load_state).toBe('loaded');
+        expect(payload.guided_load.phase).toBe('active');
+        expect(payload.guided_load.fitness_mode_raw).toBe(0x0027);
+      });
+
+      it("load_state='loaded' when guided_load.phase is 'engaging'", async () => {
+        const client = primaryClient(state);
+        client.isConnected = true;
+        client.connectionState = 'connected';
+        client.guidedLoadState = {
+          phase: 'engaging',
+          countdownRemainingMs: null,
+          fitnessModeRaw: 0x0026,
+        };
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.load_state).toBe('loaded');
+      });
+
+      it("load_state='loaded' when rowing two-stage is active", async () => {
+        const client = primaryClient(state);
+        client.isConnected = true;
+        client.connectionState = 'connected';
+        client.isRowingActive = true;
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.load_state).toBe('loaded');
+      });
+
+      it("load_state='unloaded' when disconnected even if other flags would say loaded", async () => {
+        const client = primaryClient(state);
+        client.isConnected = false;
+        client.connectionState = 'disconnected';
+        client.isRowingActive = true;
+        client.guidedLoadState = {
+          phase: 'active',
+          countdownRemainingMs: null,
+          fitnessModeRaw: 0x0027,
+        };
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.load_state).toBe('unloaded');
+      });
+
+      it('is_recording reflects client.isRecording', async () => {
+        const client = primaryClient(state);
+        client.isConnected = true;
+        client.connectionState = 'connected';
+        client.isRecording = true;
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.is_recording).toBe(true);
+        // is_recording alone does NOT promote load_state to loaded.
+        expect(payload.load_state).toBe('unloaded');
+      });
+
+      it('active_set carries setId/sessionId/repCount when a set is open', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live.snapshotSet = () => ({
+          setId: 'set-42',
+          sessionId: 'sess-7',
+          startedAt: '2026-05-12T20:00:00.000Z',
+          reps: [{}, {}, {}],
+          status: 'active',
+        });
+        const reg = placeholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.active_set).toEqual({
+          set_id: 'set-42',
+          session_id: 'sess-7',
+          started_at: '2026-05-12T20:00:00.000Z',
+          rep_count: 3,
+          status: 'active',
+        });
+      });
+
+      it('slot_binding carries physical_side + bound_at when the deviceId is bound', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ deviceId: 'V-097082' });
+        state.slotBindings.get.mockImplementation((id) =>
+          id === 'V-097082'
+            ? {
+                deviceId: id,
+                physicalSide: 'left',
+                boundAt: '2026-05-01T12:00:00.000Z',
+                lastSeen: '2026-05-12T20:00:00.000Z',
+              }
+            : null,
+        );
+        const localServer = makeFakeServer();
+        const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+        registerDeviceTools(
+          localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+          state as unknown as Parameters<typeof registerDeviceTools>[1],
+          localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+        );
+        const reg = localPlaceholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.slot_binding).toEqual({
+          physical_side: 'left',
+          bound_at: '2026-05-01T12:00:00.000Z',
+          last_seen: '2026-05-12T20:00:00.000Z',
+        });
+        expect(state.slotBindings.get).toHaveBeenCalledWith('V-097082');
+      });
+
+      it('slot_binding stays visible across the disconnect window via preserved deviceId', async () => {
+        // Disconnect-window scenario: client is disconnected, but the
+        // preserved DeviceSnapshot still carries the deviceId so the
+        // binding lookup keeps working.
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ deviceId: 'V-097082', isStale: true });
+        const client = primaryClient(state);
+        client.isConnected = false;
+        client.connectionState = 'disconnected';
+        client.connectedDeviceId = null;
+        state.slotBindings.get.mockImplementation(() => ({
+          deviceId: 'V-097082',
+          physicalSide: 'right',
+          boundAt: '2026-05-01T12:00:00.000Z',
+        }));
+        const localServer = makeFakeServer();
+        const localPlaceholders = buildPlaceholderMap(localServer, [...DEVICE_TOOL_NAMES]);
+        registerDeviceTools(
+          localServer as unknown as Parameters<typeof registerDeviceTools>[0],
+          state as unknown as Parameters<typeof registerDeviceTools>[1],
+          localPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+        );
+        const reg = localPlaceholders.get('device.get_state')!;
+        const { payload } = await invoke(reg, {});
+        expect(payload.slot_binding).toEqual({
+          physical_side: 'right',
+          bound_at: '2026-05-01T12:00:00.000Z',
+          last_seen: null,
+        });
       });
     });
   });
