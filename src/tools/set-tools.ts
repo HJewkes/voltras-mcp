@@ -264,6 +264,12 @@ async function startSet(
   // tell left-arm from right-arm at a glance. Single-device flows still
   // see meta.slot = 'primary' (a meta-key addition, not a behavior change).
   state.channels.forSlot(slotId).publish(payload);
+  // VMCP-02.08: the next set has begun → cancel any in-flight rest_status
+  // timer for this slot. No-op when no rest was active (cold start, or the
+  // 5-minute cap already disposed it). Sits AFTER the set_started publish
+  // so the lifecycle ordering on the channel is unambiguous: every
+  // rest_status event for set-N lands before the set_started for set-N+1.
+  state.restTimers.cancel(slotId, 'next_set');
   // Arm the idle-timeout watchdog when the watch config supplies an
   // `inactivityTimeoutMs`. Reset happens in the bridge on every
   // rep_finalized; cancel happens in finalizeSet. The watchdog fire path
@@ -560,7 +566,18 @@ export async function finalizeSet(
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
   const payload = buildSetEndedPayload(stored, opts.cause, deviceSummary, deviceSetSummary);
-  state.channels.forSlot(slotId).publish(payload);
+  const slotChannels = state.channels.forSlot(slotId);
+  slotChannels.publish(payload);
+  // VMCP-02.08: kick off the passive rest_status emission cycle. Starts
+  // AFTER the set_ended publish so a channel-consumer receives both the
+  // set_ended and the initial (t=0) rest_status in deterministic order.
+  // Skipped only when the set was force-closed by disconnect — the
+  // event-bridge disconnect handler cancels its slot's rest timer
+  // explicitly, but a finalize-during-disconnect would re-arm it; gating
+  // by `partialReason !== 'inactivity_timeout'` would still allow that
+  // re-arm. Cheaper to always start here and let the disconnect handler's
+  // explicit cancel win on the lifecycle.
+  state.restTimers.start(slotId, stored.id, slotChannels);
   return stored;
 }
 

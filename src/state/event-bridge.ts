@@ -877,6 +877,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         live.markDisconnected(new Date().toISOString());
         notifySlot(server, slotId, SESSION_URI, sessionUriForSlot);
         notifySlot(server, slotId, SET_URI, setUriForSlot);
+        // VMCP-02.08: kill any in-flight rest_status timer for this slot —
+        // the trainer is no longer in a rest period if the device is gone.
+        // Idempotent no-op when no rest was active.
+        state.restTimers.cancel(slotId, 'disconnect');
       }
       // Build the channel payload AFTER the LiveState mutations so the
       // device snapshot reflects post-transition state (notably the

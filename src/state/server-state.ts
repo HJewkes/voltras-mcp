@@ -51,6 +51,7 @@ import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { CoercionWatch } from './coercion-watch.js';
+import { RestTimerRegistry } from './rest-timer.js';
 import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
@@ -187,6 +188,14 @@ export interface ServerState {
    */
   setWatchdog: SetWatchdog;
   /**
+   * Per-slot passive rest-timer registry (VMCP-02.08). Started at
+   * `finalizeSet` time so the PT skill receives a periodic `rest_status`
+   * channel event while the trainer rests between sets; cancelled when the
+   * next `set_started` fires for the slot, on disconnect, or at the 5-minute
+   * cap. Tests inject a fake scheduler via the constructor.
+   */
+  restTimers: RestTimerRegistry;
+  /**
    * Live `McpServer` handle, set by `runServer` once the server is
    * constructed. The event bridge needs this to publish
    * `notifications/resource_updated` hints to the host. Optional because
@@ -259,6 +268,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const timers = new Map<string, PushTimer>();
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
     const setWatchdog = new SetWatchdog();
+    const restTimers = new RestTimerRegistry();
     const slots = new Map<string, SlotState>();
     slots.set(PRIMARY_SLOT, {
       slotId: PRIMARY_SLOT,
@@ -278,6 +288,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       timers,
       setStartDeviceSnapshots,
       setWatchdog,
+      restTimers,
       voice: makeVoiceHolder(),
       slotBindings,
     };
