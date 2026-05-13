@@ -131,10 +131,9 @@ const DeviceSetEccentricInput = z
     percent: z.number().int().min(-195).max(195).optional(),
     slot: SlotIdSchema,
   })
-  .refine(
-    (v) => v.overloadLbs !== undefined || v.percent !== undefined,
-    { message: 'device.set_eccentric requires `overloadLbs` (preferred) or `percent` (deprecated).' },
-  );
+  .refine((v) => v.overloadLbs !== undefined || v.percent !== undefined, {
+    message: 'device.set_eccentric requires `overloadLbs` (preferred) or `percent` (deprecated).',
+  });
 
 const DeviceGetStateInput = z
   .object({
@@ -193,10 +192,10 @@ const BilateralCascadeInput = z
     abortOnFirstFailure: z.boolean().optional().default(false),
   })
   .strict()
-  .refine(
-    (v) => !(v.eccentricOverloadLbs !== undefined && v.eccentricPercent !== undefined),
-    { message: 'bilateral.cascade accepts `eccentricOverloadLbs` (preferred) OR `eccentricPercent` (deprecated), not both.' },
-  );
+  .refine((v) => !(v.eccentricOverloadLbs !== undefined && v.eccentricPercent !== undefined), {
+    message:
+      'bilateral.cascade accepts `eccentricOverloadLbs` (preferred) OR `eccentricPercent` (deprecated), not both.',
+  });
 
 const BILATERAL_CASCADE_DESCRIPTION =
   'Apply up to four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
@@ -265,13 +264,13 @@ const EXIT_GUIDED_LOAD_DESCRIPTION =
 const SET_ECCENTRIC_DESCRIPTION =
   'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
   'The legacy `percent` param is accepted as a deprecated alias for one release and will be removed in the next major; the value semantics are identical (it was mis-named — the underlying SDK call has always taken pounds, not a percent of base weight). ' +
-  'No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device\'s `eccentricPercentTenths` echo within COERCION_WINDOW_MS.';
+  "No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device's `eccentricPercentTenths` echo within COERCION_WINDOW_MS.";
 
 const UNLOAD_DESCRIPTION =
   'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
-  'This is the prerequisite for `device.start_guided_load`\'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. ' +
+  "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. " +
   'Mechanism: writes two `BP_SET_FITNESS_MODE` frames back-to-back (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
-  'A single `FITNESS_WORKOUT_STATE=0` write (used by rowing\'s `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. ' +
+  "A single `FITNESS_WORKOUT_STATE=0` write (used by rowing's `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. " +
   'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`.';
 
 const DeviceExitGuidedLoadInput = z
