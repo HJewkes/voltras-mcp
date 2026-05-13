@@ -51,6 +51,7 @@ import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { CoercionWatch } from './coercion-watch.js';
+import { createPassiveScanState, type PassiveScanState } from './passive-scanner.js';
 import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
@@ -214,6 +215,15 @@ export interface ServerState {
    * of running the side-ID ritual on every session.
    */
   slotBindings: SlotBindingsStore;
+  /**
+   * Background BLE scanner state (VMCP-02.19). Off-by-default at server
+   * start; toggled by `device.set_passive_scan`. The scanner emits a
+   * `voltras_available` channel event when newly-seen Voltras appear in
+   * the BLE scan results. Scan windows are auto-skipped when any slot
+   * is currently connected (BLE conflict avoidance with noble's write
+   * mutex). See `state/passive-scanner.ts`.
+   */
+  passiveScan: PassiveScanState;
 }
 
 /**
@@ -280,6 +290,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       setWatchdog,
       voice: makeVoiceHolder(),
       slotBindings,
+      passiveScan: createPassiveScanState(),
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');

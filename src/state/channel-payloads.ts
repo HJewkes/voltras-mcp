@@ -1304,3 +1304,41 @@ export function buildIdleRepPayload(
   });
   return { meta, content };
 }
+
+/**
+ * Build the meta + content for a `voltras_available` channel event
+ * (VMCP-02.19). Fires from the passive scanner when one or more Voltras
+ * appear in the BLE scan results that weren't there on the prior tick.
+ * Advisory only — the agent decides whether to call `device.connect`.
+ *
+ * Meta keys are XML attributes (strings only). `content` JSON carries
+ * the structured detail (device id list, optional RSSI map).
+ */
+export function buildVoltrasAvailablePayload(
+  devices: ReadonlyArray<{ id: string; rssi?: number }>,
+): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const ids = devices.map((d) => d.id);
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'voltras_available',
+    device_count: String(devices.length),
+    device_ids: ids.join(','),
+  };
+  const rssiByDeviceId: Record<string, number> = {};
+  for (const d of devices) {
+    if (d.rssi !== undefined) rssiByDeviceId[d.id] = d.rssi;
+  }
+  const summary =
+    devices.length === 1
+      ? `Voltra ${ids[0]} is now reachable. Use device.connect to bind it to a slot.`
+      : `${devices.length} Voltras are now reachable: ${ids.join(', ')}. Use device.connect to bind each to a slot.`;
+  const content = JSON.stringify({
+    summary,
+    device_ids: ids,
+    rssi_by_device_id: rssiByDeviceId,
+  });
+  return { meta, content };
+}

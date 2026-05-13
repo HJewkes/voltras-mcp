@@ -61,6 +61,7 @@ import {
 /** Canonical list of every tool name VMCP exposes (R9, R11). */
 const CORE_TOOL_NAMES = [
   'device.scan',
+  'device.set_passive_scan',
   'device.connect',
   'device.disconnect',
   'device.set_weight',
