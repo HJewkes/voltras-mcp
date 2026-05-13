@@ -6,22 +6,38 @@
 // `PendingCoercionCheck` carrying the user-requested device-unit value plus
 // the wall-clock timestamp. The bridge's `onStateDump` / `onSettingsUpdate`
 // handlers walk the reported fields and call `observe(field, deviceValue,
-// now)`; a coerced device value that holds steady across two consecutive
-// observations within the per-check `windowMs` returns the check (caller
-// publishes the channel event) and clears it. Exact-value echoes are no-ops
-// (silent success) for `mode: 'exact'` checks; `mode: 'guard'` checks treat
-// echoes-at-the-requested-baseline as "no change yet" and wait for either a
-// real coercion or window-expiry. Window-expired checks are swept on every
-// observe pass so the map can't grow without bound.
+// now)`; once the stability threshold for that field is satisfied the check
+// fires (caller publishes the channel event) and clears. Exact-value echoes
+// are no-ops (silent success) for `mode: 'exact'` checks; `mode: 'guard'`
+// checks treat echoes-at-the-requested-baseline as "no change yet" and wait
+// for either a real coercion or window-expiry. Window-expired checks are
+// swept on every observe pass so the map can't grow without bound.
 //
-// Why a stability counter and not single-shot: hardware capture 2026-05-11
-// showed firmware-emitted state-dump bursts during cascade settling can pass
-// through an intermediate value (e.g. ecc 80 → 320 → 0) before reaching the
-// final state. Firing on the first non-matching observation false-positives
-// on these transients. Requiring TWO consecutive observations of the same
-// coerced value before firing defuses transient bursts while still catching
-// genuine post-settle coercions (which produce many subsequent state-dumps
-// at the coerced value).
+// Stability threshold is PER FIELD (see `STABILITY_BY_FIELD`):
+//
+//   * `eccentricPercentTenths` requires TWO consecutive observations of the
+//     same coerced value. Hardware capture 2026-05-11 showed cascade-settle
+//     bursts pass through transient values (e.g. ecc 80 → 320 → 0) before
+//     reaching the final state; firing on the first non-matching observation
+//     false-positives on the 320 transient. The 2-of-2 check defuses this.
+//
+//   * `chainTargetForceTenths`, `weightLbsTenths`, `assistMode`,
+//     `damperLevel` fire on the FIRST non-matching observation. No
+//     transient-burst pattern is documented for these fields — and the
+//     2-of-2 default actively prevents firing in cases like bilateral
+//     chains coercion (VMCP-01.38, hardware repro 2026-05-12), where the
+//     slow-settling slot oscillates between distinct non-matching values
+//     (e.g. 300 ↔ 200) during settle. The 2-of-2 counter never reaches
+//     stability inside the 2500ms window and the slot's setting_coerced
+//     channel event is silently dropped. Firing on the first non-matching
+//     observation reports the coercion fact correctly at the cost of
+//     possibly carrying a mid-oscillation value instead of the post-settle
+//     value (the F2/F3 event surface treats the value as advisory — the
+//     fact-of-coercion is the load-bearing payload).
+//
+//   * Unknown / unmapped fields fall back to the conservative 2-of-2
+//     default so a newly tracked field is never a silent false-positive
+//     risk until it has been classified.
 //
 // Memory rule `feedback_no_force_stop_set_close.md`: emitting the
 // `setting_coerced` event is the ONLY action this module enables. There is
@@ -48,14 +64,41 @@ export const COERCION_WINDOW_MS = 2500;
 export const COERCION_WINDOW_MS_GUIDED_LOAD = 15000;
 
 /**
- * Number of consecutive observations of the SAME coerced device value
- * required before `observe` returns the pending check (publishing the
- * channel event). Tunes false-positive rate vs. responsiveness — 2 is the
- * minimum that filters mid-cascade transient state-dumps without missing
- * genuine post-settle coercions (which produce many repeating state-dumps
- * at the same coerced value).
+ * Default stability threshold for fields without a `STABILITY_BY_FIELD`
+ * entry. Used as the fallback in `stabilityFor` so newly-tracked fields
+ * are conservative until classified. See the file header for the
+ * per-field rationale.
  */
 export const COERCION_STABILITY_THRESHOLD = 2;
+
+/**
+ * Per-field override for the stability threshold consumed by
+ * `observe()`. A value of 1 means "fire on the first non-matching
+ * observation" — used for fields with no documented transient-burst
+ * pattern (chains, weight, assist, damper) where the conservative 2-of-2
+ * default actively prevents firing in noisy-settle cases like the
+ * bilateral chains oscillation captured in VMCP-01.38. Fields with known
+ * transients (`eccentricPercentTenths`) keep the 2-of-2 default so the
+ * 80→320→0 cascade-settle burst doesn't false-positive at 320.
+ *
+ * Unmapped fields fall through to `COERCION_STABILITY_THRESHOLD` (2) via
+ * `stabilityFor`.
+ */
+export const STABILITY_BY_FIELD: Readonly<Record<string, number>> = Object.freeze({
+  eccentricPercentTenths: 2,
+  chainTargetForceTenths: 1,
+  weightLbsTenths: 1,
+  assistMode: 1,
+  damperLevel: 1,
+});
+
+/**
+ * Resolve the stability threshold for `field`, falling back to the
+ * conservative default for any field not in `STABILITY_BY_FIELD`.
+ */
+export function stabilityFor(field: string): number {
+  return STABILITY_BY_FIELD[field] ?? COERCION_STABILITY_THRESHOLD;
+}
 
 /**
  * How `observe` interprets an exact-value echo of `requested`:
@@ -122,10 +165,11 @@ export interface PendingCoercionRegister {
  * window) keep independent checks, so each can fire its own
  * `setting_coerced` event without one eviction silencing the other.
  *
- * The composite key was introduced to fix VMCP-01.38, where the prior
- * field-only keying could let a back-to-back register from a different
- * setter overwrite an in-flight check and surface only one
- * `setting_coerced` event for what was actually two distinct coercions.
+ * The composite key was introduced to fix VMCP-01.38's cross-setter
+ * eviction case (a back-to-back register from a different setter
+ * overwriting an in-flight check). The bilateral-asymmetry case of the
+ * same ticket is fixed by the per-field stability threshold in
+ * `STABILITY_BY_FIELD` (see file header).
  */
 export class CoercionWatch {
   private readonly pending = new Map<string, PendingCoercionCheck>();
@@ -152,17 +196,18 @@ export class CoercionWatch {
    * Compare a device-reported `deviceValue` for `field` against EVERY
    * pending check on that field (regardless of which setter registered
    * it). Returns one fired check per setter whose stability streak hit
-   * the threshold on this observation — caller publishes one
+   * its per-field threshold on this observation — caller publishes one
    * `setting_coerced` event per entry. An empty array means no same-field
-   * check fired (either none pending, all still primarying their
-   * stability counter, or all were echo-cleared).
+   * check fired (either none pending, all still priming their stability
+   * counter, or all were echo-cleared).
    *
    * Within a single check, the firing rules are:
    *   - `now - check.setterReturnedAt < check.windowMs`,
    *   - `deviceValue !== check.requested`,
-   *   - this is the SECOND consecutive observation of the same
-   *     `deviceValue` (the stability check that defuses mid-cascade
-   *     transient state-dumps).
+   *   - the stability streak (consecutive observations of the same
+   *     `deviceValue`) has reached `stabilityFor(field)` — see
+   *     `STABILITY_BY_FIELD`. Threshold=1 fires on the first non-matching
+   *     observation; threshold=2 defuses mid-cascade transient bursts.
    *
    * Always sweeps expired checks first so a stale entry on a different
    * field cannot leak through subsequent observes.
@@ -175,6 +220,7 @@ export class CoercionWatch {
   observe(field: string, deviceValue: number, now: number): PendingCoercionCheck[] {
     this.sweep(now);
     const fired: PendingCoercionCheck[] = [];
+    const threshold = stabilityFor(field);
     for (const [key, check] of this.pending) {
       if (check.field !== field) continue;
       if (deviceValue === check.requested) {
@@ -197,10 +243,14 @@ export class CoercionWatch {
       if (check.observedDeviceValue !== deviceValue) {
         check.observedDeviceValue = deviceValue;
         check.observedCount = 1;
+        if (check.observedCount >= threshold) {
+          this.pending.delete(key);
+          fired.push(check);
+        }
         continue;
       }
       check.observedCount += 1;
-      if (check.observedCount < COERCION_STABILITY_THRESHOLD) {
+      if (check.observedCount < threshold) {
         continue;
       }
       this.pending.delete(key);

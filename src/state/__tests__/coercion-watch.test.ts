@@ -128,6 +128,140 @@ describe('CoercionWatch.observe — stability counter', () => {
   });
 });
 
+describe('CoercionWatch.observe — per-field stability threshold (VMCP-01.38)', () => {
+  // Hardware repro 2026-05-12 (bilateral.cascade chains coerce): the
+  // slow-settling slot's chainTargetForceTenths oscillates between two
+  // non-matching values (e.g. 300↔200) during the firmware settle window;
+  // the 2-of-2 consecutive-identical default never reaches stability and
+  // the slot's setting_coerced event is silently dropped within the 2500ms
+  // window. The per-field override lets fields with no documented
+  // transient-burst pattern (chains, weight, assist, damper) fire on the
+  // first non-matching observation while preserving the 2-of-2 default for
+  // fields that do (eccentricPercentTenths — 80→320→0 transient).
+  it('chainTargetForceTenths fires on the FIRST non-matching observation', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'bilateral.cascade',
+        field: 'chainTargetForceTenths',
+        requested: 800, // user asked for 80 lbs
+      }),
+    );
+    // Single firmware echo at 500 (=50 lbs, capped at weight=50) — should
+    // fire immediately without waiting for a second consecutive observation.
+    const hits = watch.observe('chainTargetForceTenths', 500, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(800);
+    expect(hits[0].setterName).toBe('bilateral.cascade');
+    expect(watch.size()).toBe(0);
+  });
+
+  it('weightLbsTenths fires on the FIRST non-matching observation', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.set_weight',
+        field: 'weightLbsTenths',
+        requested: 2000,
+      }),
+    );
+    const hits = watch.observe('weightLbsTenths', 1500, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(2000);
+  });
+
+  it('assistMode fires on the FIRST non-matching observation', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.set_assist_mode',
+        field: 'assistMode',
+        requested: 3,
+      }),
+    );
+    const hits = watch.observe('assistMode', 0, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(3);
+  });
+
+  it('damperLevel fires on the FIRST non-matching observation', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.set_damper_level',
+        field: 'damperLevel',
+        requested: 10,
+      }),
+    );
+    const hits = watch.observe('damperLevel', 6, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(10);
+  });
+
+  it('eccentricPercentTenths STILL requires two consecutive observations (transient defense preserved)', () => {
+    // Regression guard for PR #43's stability counter motivation: the
+    // 80→320→0 ecc transient burst must not fire a spurious setting_coerced
+    // at the transient value. Threshold=2 stays in place for this field.
+    const watch = new CoercionWatch();
+    watch.register(makeRegister({ requested: 0 }));
+    // First observation at 320 — should NOT fire (one-shot transient).
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_100)).toEqual([]);
+    // Second observation at the same coerced value — NOW fires.
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_200);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(0);
+  });
+
+  it('an unknown / unmapped field defaults to the conservative 2-of-2 threshold', () => {
+    // Forward-compat: any new device-level field we haven't classified yet
+    // gets the safer default (requires stability), so adding new tracked
+    // fields without an entry in STABILITY_BY_FIELD is never a silent
+    // false-positive risk.
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.set_future',
+        field: 'someFutureField',
+        requested: 0,
+      }),
+    );
+    expect(watch.observe('someFutureField', 99, 1_000_100)).toEqual([]);
+    const hits = watch.observe('someFutureField', 99, 1_000_200);
+    expect(hits).toHaveLength(1);
+  });
+
+  it('bilateral scenario: two independent watches each fire on a single chains coerce', () => {
+    // Models the VMCP-01.38 hardware repro: bilateral.cascade { chainsLbs }
+    // on both slots; each slot's per-slot CoercionWatch receives one
+    // chainTargetForceTenths state-dump at the coerced value (the
+    // post-settle echo) within the window. Before the fix, neither slot's
+    // 2-of-2 counter reached stability and both events were dropped. After
+    // the fix, both slots' channels fire.
+    const left = new CoercionWatch();
+    const right = new CoercionWatch();
+    left.register(
+      makeRegister({
+        setterName: 'bilateral.cascade',
+        field: 'chainTargetForceTenths',
+        requested: 800,
+      }),
+    );
+    right.register(
+      makeRegister({
+        setterName: 'bilateral.cascade',
+        field: 'chainTargetForceTenths',
+        requested: 800,
+      }),
+    );
+    const leftHits = left.observe('chainTargetForceTenths', 500, 1_000_100);
+    const rightHits = right.observe('chainTargetForceTenths', 500, 1_000_110);
+    expect(leftHits).toHaveLength(1);
+    expect(rightHits).toHaveLength(1);
+    expect(left.size()).toBe(0);
+    expect(right.size()).toBe(0);
+  });
+});
+
 describe('CoercionWatch.observe — guard mode', () => {
   it('does NOT clear the check on a baseline-echo (echo === requested)', () => {
     const watch = new CoercionWatch();
@@ -144,46 +278,51 @@ describe('CoercionWatch.observe — guard mode', () => {
   });
 
   it('fires after a coercion stabilizes following a baseline-echo (guided-load shape)', () => {
-    // Hardware repro 2026-05-11: start_guided_load{target=5} against
-    // pre-state chains=10/ecc=50 — state-dump trace passes 100 (echo)
-    // → 20 (coerced) → 20 (stable). Guard mode preserves the check
-    // across the echo so the eventual coercion fires.
+    // Hardware repro 2026-05-11: start_guided_load against pre-state
+    // ecc=50 — state-dump trace passes 500 (echo) → 200 (coerced) → 200
+    // (stable). Guard mode preserves the check across the echo so the
+    // eventual coercion fires once the streak satisfies the field's
+    // stability threshold. Use eccentricPercentTenths to exercise the
+    // 2-of-2 threshold; the chains-mode analog under threshold=1 fires
+    // on the first non-matching observation (covered separately).
     const watch = new CoercionWatch();
     watch.register(
       makeRegister({
-        requested: 100,
+        requested: 500,
         mode: 'guard',
         setterName: 'device.start_guided_load',
-        field: 'chainTargetForceTenths',
+        field: 'eccentricPercentTenths',
       }),
     );
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_100)).toEqual([]);
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_200)).toEqual([]);
-    const hits = watch.observe('chainTargetForceTenths', 20, 1_000_300);
+    expect(watch.observe('eccentricPercentTenths', 500, 1_000_100)).toEqual([]);
+    expect(watch.observe('eccentricPercentTenths', 200, 1_000_200)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 200, 1_000_300);
     expect(hits).toHaveLength(1);
-    expect(hits[0].requested).toBe(100);
+    expect(hits[0].requested).toBe(500);
     expect(hits[0].setterName).toBe('device.start_guided_load');
     expect(watch.size()).toBe(0);
   });
 
   it('a baseline-echo arriving AFTER a coerced observation resets the streak (guard mode)', () => {
+    // Uses eccentricPercentTenths so the 2-of-2 stability threshold
+    // applies — the streak-reset path is unobservable under threshold=1.
     const watch = new CoercionWatch();
     watch.register(
       makeRegister({
-        requested: 100,
+        requested: 500,
         mode: 'guard',
-        field: 'chainTargetForceTenths',
+        field: 'eccentricPercentTenths',
         setterName: 'device.start_guided_load',
       }),
     );
-    // Coerced 20 (streak=1).
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_100)).toEqual([]);
-    // Baseline echo (100) — guard mode does NOT clear; streak resets.
-    expect(watch.observe('chainTargetForceTenths', 100, 1_000_200)).toEqual([]);
+    // Coerced 200 (streak=1).
+    expect(watch.observe('eccentricPercentTenths', 200, 1_000_100)).toEqual([]);
+    // Baseline echo (500) — guard mode does NOT clear; streak resets.
+    expect(watch.observe('eccentricPercentTenths', 500, 1_000_200)).toEqual([]);
     expect(watch.size()).toBe(1);
     // Two more coerced observations are needed to fire.
-    expect(watch.observe('chainTargetForceTenths', 20, 1_000_300)).toEqual([]);
-    const hits = watch.observe('chainTargetForceTenths', 20, 1_000_400);
+    expect(watch.observe('eccentricPercentTenths', 200, 1_000_300)).toEqual([]);
+    const hits = watch.observe('eccentricPercentTenths', 200, 1_000_400);
     expect(hits).toHaveLength(1);
   });
 
@@ -277,32 +416,34 @@ describe('CoercionWatch.register — composite (setterName, field) keying', () =
     // Two different setters touching the same field within the window
     // must both retain a pending check so each can fire its own
     // setting_coerced event. The prior field-only keying lost the first
-    // setter's check when the second registered.
+    // setter's check when the second registered. Use eccentricPercent-
+    // Tenths (threshold=2) so the keying-independence assertion isn't
+    // conflated with the immediate-fire behavior of threshold=1 fields.
     const watch = new CoercionWatch();
     watch.register(
       makeRegister({
-        field: 'chainTargetForceTenths',
-        requested: 500,
-        setterName: 'device.set_chains',
+        field: 'eccentricPercentTenths',
+        requested: 0,
+        setterName: 'device.set_eccentric',
         setterReturnedAt: 1_000_000,
       }),
     );
     watch.register(
       makeRegister({
-        field: 'chainTargetForceTenths',
-        requested: 800,
+        field: 'eccentricPercentTenths',
+        requested: 500,
         setterName: 'bilateral.cascade',
         setterReturnedAt: 1_000_100,
       }),
     );
     expect(watch.size()).toBe(2);
-    // First observation primes both stability counters at 300.
-    expect(watch.observe('chainTargetForceTenths', 300, 1_000_500)).toEqual([]);
+    // First observation primes both stability counters at 320.
+    expect(watch.observe('eccentricPercentTenths', 320, 1_000_500)).toEqual([]);
     // Second observation fires both checks — one event per setter.
-    const hits = watch.observe('chainTargetForceTenths', 300, 1_000_600);
+    const hits = watch.observe('eccentricPercentTenths', 320, 1_000_600);
     expect(hits).toHaveLength(2);
     const setterNames = hits.map((h) => h.setterName).sort();
-    expect(setterNames).toEqual(['bilateral.cascade', 'device.set_chains']);
+    expect(setterNames).toEqual(['bilateral.cascade', 'device.set_eccentric']);
     expect(watch.size()).toBe(0);
   });
 
@@ -405,40 +546,54 @@ describe('trackedSetterCall', () => {
   });
 
   it('stamps every registered check with the same setterReturnedAt', async () => {
+    // Uses chainTargetForceTenths (threshold=1, fires on first
+    // non-matching observation) AND eccentricPercentTenths (threshold=2,
+    // needs two matching observations) to confirm setterReturnedAt is
+    // identical across both even though their fire timing differs.
     const watch = new CoercionWatch();
     await trackedSetterCall(
       watch,
       'bilateral.cascade',
       [
-        { field: 'weightLbsTenths', requested: 50 },
         { field: 'chainTargetForceTenths', requested: 100 },
+        { field: 'eccentricPercentTenths', requested: 0 },
       ],
       async () => undefined,
     );
     const observedNow = Date.now() + 100;
-    // Stability requires a second matching observation to fire.
-    expect(watch.observe('weightLbsTenths', 99, observedNow)).toEqual([]);
-    expect(watch.observe('chainTargetForceTenths', 20, observedNow)).toEqual([]);
-    expect(watch.observe('weightLbsTenths', 99, observedNow + 10)).toHaveLength(1);
-    expect(watch.observe('chainTargetForceTenths', 20, observedNow + 10)).toHaveLength(1);
+    // chains: threshold=1 — fires on the first observation.
+    const chainsHits = watch.observe('chainTargetForceTenths', 20, observedNow);
+    expect(chainsHits).toHaveLength(1);
+    // ecc: threshold=2 — primes on the first, fires on the second.
+    expect(watch.observe('eccentricPercentTenths', 320, observedNow)).toEqual([]);
+    const eccHits = watch.observe('eccentricPercentTenths', 320, observedNow + 10);
+    expect(eccHits).toHaveLength(1);
+    // Both fired checks share the SAME setterReturnedAt.
+    expect(chainsHits[0].setterReturnedAt).toBe(eccHits[0].setterReturnedAt);
   });
 
   it('opts.windowMs propagates to every registered check', async () => {
+    // Uses fields with threshold=2 (eccentricPercentTenths,
+    // eccentricPercentTenths-guard via different setters keying) so the
+    // single-observation probes below don't fire the checks — the test
+    // is about window survival, not about when stability is reached.
     const watch = new CoercionWatch();
     await trackedSetterCall(
       watch,
       'device.start_guided_load',
       [
-        { field: 'weightLbsTenths', requested: 50 },
-        { field: 'chainTargetForceTenths', requested: 100, mode: 'guard' },
+        { field: 'eccentricPercentTenths', requested: 0 },
+        { field: 'someUnclassifiedField', requested: 0, mode: 'guard' },
       ],
       async () => undefined,
       { windowMs: COERCION_WINDOW_MS_GUIDED_LOAD },
     );
     // Both checks survive 10s after setter — would have expired at 2.5s.
+    // Single non-matching observations don't fire either check (ecc is
+    // threshold=2, the unclassified field falls back to threshold=2).
     const lateNow = Date.now() + 10_000;
-    expect(watch.observe('weightLbsTenths', 5, lateNow)).toEqual([]);
-    expect(watch.observe('chainTargetForceTenths', 20, lateNow)).toEqual([]);
+    expect(watch.observe('eccentricPercentTenths', 320, lateNow)).toEqual([]);
+    expect(watch.observe('someUnclassifiedField', 99, lateNow)).toEqual([]);
     expect(watch.size()).toBe(2);
   });
 

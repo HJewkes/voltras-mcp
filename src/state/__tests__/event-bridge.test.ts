@@ -2673,7 +2673,7 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(parsed.summary).toBe('Device coerced ecc 0% -> 32% after device.set_eccentric.');
   });
 
-  it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events (guard mode + stability)', () => {
+  it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events (per-field stability)', () => {
     const stamp = Date.now();
     // Pretend `device.start_guided_load { targetWeightLbs: 5 }` registered
     // three checks: weight=50 (target, exact mode), chains=100 (carry-over
@@ -2700,8 +2700,10 @@ describe('setting_coerced channel event (F2+F3)', () => {
       mode: 'guard',
     });
     // Two consecutive state-dumps with weight matched (no event for it —
-    // exact mode echo clears) and chains+ecc coerced. Stability fires on
-    // the second matching observation.
+    // exact mode echo clears) and chains+ecc coerced. Chains fires on the
+    // first non-matching observation (threshold=1); ecc fires on the
+    // second (threshold=2 — transient defense). By burst 2 both events
+    // have fired.
     const coerced = makeStateDumpEvent({
       trainingMode: 1,
       weightLbsTenths: 50,
@@ -2709,8 +2711,12 @@ describe('setting_coerced channel event (F2+F3)', () => {
       eccentricPercentTenths: 80,
     });
     client.fire.stateDump(coerced);
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // chains fires on burst 1; ecc still priming.
+    const afterBurst1 = pickAllCoercionPublishes();
+    expect(afterBurst1).toHaveLength(1);
+    expect(afterBurst1[0]!.meta.field).toBe('chainTargetForceTenths');
     client.fire.stateDump(coerced);
+    // ecc fires on burst 2; chains already cleared on burst 1.
     const events = pickAllCoercionPublishes();
     expect(events).toHaveLength(2);
     const fields = events.map((e) => e.meta.field).sort();
@@ -2847,13 +2853,14 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(watch.size()).toBe(0);
   });
 
-  it('guided-load: baseline echoes do not clear guard-mode check; coercion stabilizes after settle', () => {
+  it('guided-load: baseline echoes do not clear guard-mode check; coercion fires per per-field threshold', () => {
     // Hardware repro 2026-05-11: start_guided_load{target=5} against
     // chains=10/ecc=50 produces state-dump bursts that echo the prior
     // chains=100 + ecc=500 values BEFORE the firmware's safety ramp
     // pushes them to 20 + 80. Guard mode keeps the checks alive across
-    // the echoes; stability fires only after two consecutive observations
-    // of the same coerced value.
+    // the echoes. Chains fires on the first coerced observation
+    // (threshold=1); ecc requires two consecutive matching observations
+    // (threshold=2 — transient defense).
     const stamp = Date.now();
     watch.register({
       setterName: 'device.start_guided_load',
@@ -2871,7 +2878,8 @@ describe('setting_coerced channel event (F2+F3)', () => {
       mode: 'guard',
       windowMs: 15_000,
     });
-    // Burst 1: pre-settle echo (no coercion observed yet).
+    // Burst 1: pre-settle echo (no coercion observed yet — both fields
+    // echo their baselines, which guard mode preserves).
     client.fire.stateDump(
       makeStateDumpEvent({
         chainTargetForceTenths: 100,
@@ -2879,25 +2887,25 @@ describe('setting_coerced channel event (F2+F3)', () => {
       }),
     );
     expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Burst 2: chains coerced, ecc still echoing. Stability primed.
+    // Burst 2: chains coerced (fires immediately at threshold=1); ecc
+    // still echoing baseline (guard mode preserves).
     client.fire.stateDump(
       makeStateDumpEvent({
         chainTargetForceTenths: 20,
         eccentricPercentTenths: 500,
       }),
     );
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Burst 3: both fields at their settled coerced values. Chains streak
-    // confirms (fires); ecc streak primes at 80.
-    client.fire.stateDump(
-      makeStateDumpEvent({
-        chainTargetForceTenths: 20,
-        eccentricPercentTenths: 80,
-      }),
-    );
     let events = pickAllCoercionPublishes();
     expect(events).toHaveLength(1);
     expect(events[0]!.meta.field).toBe('chainTargetForceTenths');
+    // Burst 3: ecc finally lands at coerced value; streak primes at 80.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        chainTargetForceTenths: 20, // no-op — check already cleared
+        eccentricPercentTenths: 80,
+      }),
+    );
+    expect(pickAllCoercionPublishes()).toHaveLength(1);
     // Burst 4: ecc streak confirms (cumulative event count = 2).
     client.fire.stateDump(
       makeStateDumpEvent({
@@ -2956,11 +2964,12 @@ describe('setting_coerced channel event (F2+F3)', () => {
       setterReturnedAt: stamp,
     });
     const coerced = makeStateDumpEvent({ chainTargetForceTenths: 300 });
-    // First state-dump on each primes its slot's stability counter.
-    client.fire.stateDump(coerced);
-    rightClient.fire.stateDump(coerced);
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Second state-dump on each fires its slot's event.
+    // chainTargetForceTenths is threshold=1, so each slot fires on its
+    // FIRST non-matching observation. Pre-fix (per-field threshold=2
+    // for all fields), the slow-settling slot's oscillating state-dump
+    // sequence (300↔200) never reached stability inside the 2500ms
+    // window, silently dropping the bilateral event. This is the
+    // VMCP-01.38 hardware repro.
     client.fire.stateDump(coerced);
     rightClient.fire.stateDump(coerced);
     const events = pickAllCoercionPublishes();
