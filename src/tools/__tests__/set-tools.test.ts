@@ -50,6 +50,7 @@ const { LiveState } = await import('../../state/live-state.js');
 const { registerSetTools } = await import('../set-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -205,6 +206,7 @@ function setup(): Harness {
     channels,
     setStartDeviceSnapshots: new Map(),
     setWatchdog: new SetWatchdog(),
+    restTimers: new RestTimerRegistry(),
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -678,8 +680,14 @@ describe('set.end', () => {
     h.channels.publish.mockClear();
 
     await h.invoke('set.end', {});
-    expect(h.channels.publish).toHaveBeenCalledTimes(1);
-    const event = h.channels.publish.mock.calls[0][0] as {
+    // set.end publishes both `set_ended` AND the initial passive
+    // `rest_status` (VMCP-02.08) before this assertion runs. Filter to the
+    // set_ended event for this test's intent.
+    const setEndedCalls = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'set_ended',
+    );
+    expect(setEndedCalls).toHaveLength(1);
+    const event = setEndedCalls[0][0] as {
       content: string;
       meta: Record<string, string>;
     };
@@ -1107,5 +1115,62 @@ describe('set.start — idle_timeout_ms watchdog', () => {
       (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'idle_timeout',
     );
     expect(idleEvents).toHaveLength(0);
+  });
+});
+
+describe('rest_status wiring (VMCP-02.08)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('set.end publishes a rest_status (elapsed=0) immediately after set_ended', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const startResult = await h.invoke('set.start', {});
+    const setId = (parseResult(startResult) as { setId: string }).setId;
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+    // Expect: [set_ended, rest_status] (in that order — set_ended publishes
+    // first, then the registry's initial emit).
+    const eventTypes = h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    expect(eventTypes).toEqual(['set_ended', 'rest_status']);
+    const restCall = h.channels.publish.mock.calls.find(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'rest_status',
+    );
+    expect(restCall).toBeDefined();
+    const restEvent = restCall![0] as { meta: Record<string, string> };
+    expect(restEvent.meta).toMatchObject({
+      event_type: 'rest_status',
+      slot: 'primary',
+      set_id: setId,
+      elapsed_seconds: '0',
+    });
+  });
+
+  it('set.start cancels any in-flight rest_status before publishing set_started', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    // Run a full set.start → set.end cycle to arm the rest timer.
+    await h.invoke('set.start', {});
+    await h.invoke('set.end', {});
+    expect(h.state.restTimers.has('primary')).toBe(true);
+
+    // Next set.start cancels the in-flight rest timer for the slot.
+    h.channels.publish.mockClear();
+    await h.invoke('set.start', {});
+    expect(h.state.restTimers.has('primary')).toBe(false);
+
+    // The cancel runs AFTER the set_started publish, so the call sequence
+    // observed on the channel during set.start is just `[set_started]`.
+    const eventTypes = h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    expect(eventTypes).toEqual(['set_started']);
   });
 });

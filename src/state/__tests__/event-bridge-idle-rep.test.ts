@@ -46,6 +46,7 @@ const { wireBridgeForSlot } = await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 const { CoercionWatch } = await import('../coercion-watch.js');
+const { RestTimerRegistry } = await import('../rest-timer.js');
 
 interface FakeChannels {
   publish: Mock<(event: { content: string; meta: Record<string, string> }) => void>;
@@ -127,7 +128,13 @@ function makeBareState(opts: {
     modeRevertGuard: new ModeRevertGuard(),
     coercionWatch: new CoercionWatch(),
   });
-  return { slots, channels: opts.channels, server: opts.server, setWatchdog: new SetWatchdog() };
+  return {
+    slots,
+    channels: opts.channels,
+    server: opts.server,
+    setWatchdog: new SetWatchdog(),
+    restTimers: new RestTimerRegistry(),
+  };
 }
 
 /** Feed a single frame directly into the wired client. Phase values: 0=IDLE, 1=CONC, 3=ECC. */

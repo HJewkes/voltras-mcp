@@ -74,6 +74,7 @@ vi.mock('../../state/event-bridge.js', () => ({
 const { LiveState } = await import('../../state/live-state.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 const { registerDeviceTools } = await import('../device-tools.js');
 const { registerSetTools } = await import('../set-tools.js');
 
@@ -303,6 +304,7 @@ function setup(): Harness {
     channels,
     setStartDeviceSnapshots: new Map(),
     setWatchdog: new SetWatchdog(),
+    restTimers: new RestTimerRegistry(),
   };
   const placeholders = makePlaceholders();
   const server = { tool: vi.fn() };
