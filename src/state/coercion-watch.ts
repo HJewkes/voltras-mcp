@@ -13,7 +13,15 @@
 // for either a real coercion or window-expiry. Window-expired checks are
 // swept on every observe pass so the map can't grow without bound.
 //
-// Stability threshold is PER FIELD (see `STABILITY_BY_FIELD`):
+// Stability threshold is PER FIELD (see `STABILITY_BY_FIELD`), with an
+// optional PER-CALL override on `PendingCoercionRegister.stabilityOverride`
+// for setters whose field-default would false-positive on a known transient
+// burst specific to that setter's firmware sequence (e.g.
+// `device.start_guided_load`'s Damper→WeightTraining mode-bounce floors the
+// weight register to ~5 lb for one state-dump before settling — the field
+// default of 1 fires a spurious `setting_coerced`; the setter passes
+// `stability: 2` to defuse it without touching the bilateral.cascade path,
+// which relies on the default-of-1 for chains-oscillation correctness).
 //
 //   * `eccentricPercentTenths` requires TWO consecutive observations of the
 //     same coerced value. Hardware capture 2026-05-11 showed cascade-settle
@@ -133,19 +141,31 @@ export interface PendingCoercionCheck {
   /** Echo interpretation. Defaults to `'exact'` at registration. */
   mode: CoercionMode;
   /**
+   * Per-check stability threshold that wins over `stabilityFor(field)`. Set
+   * by setters whose firmware sequence produces a known transient burst on
+   * `field` — e.g. `device.start_guided_load` passes `2` for
+   * `weightLbsTenths` to defuse the mode-bounce floor (one state-dump at
+   * ~5 lb during Damper→WeightTraining) without bumping the field default,
+   * which `bilateral.cascade` relies on for the chains-oscillation case
+   * (VMCP-01.38).
+   */
+  stabilityOverride?: number;
+  /**
    * Internal stability tracking. Set by `observe` to the device value
    * observed on the prior non-matching pass; reset when a different value
    * arrives. Not part of the public registration API — callers pass field
-   * + requested + (optional) mode/windowMs and let `register` initialize.
+   * + requested + (optional) mode/windowMs/stabilityOverride and let
+   * `register` initialize.
    */
   observedDeviceValue?: number;
   observedCount: number;
 }
 
 /**
- * Caller-supplied registration shape. `windowMs` and `mode` are optional;
- * `observedDeviceValue` / `observedCount` are internal stability state and
- * must NOT be supplied by callers (they're initialized by `register`).
+ * Caller-supplied registration shape. `windowMs`, `mode`, and
+ * `stabilityOverride` are optional; `observedDeviceValue` / `observedCount`
+ * are internal stability state and must NOT be supplied by callers
+ * (they're initialized by `register`).
  */
 export interface PendingCoercionRegister {
   setterName: string;
@@ -154,6 +174,7 @@ export interface PendingCoercionRegister {
   setterReturnedAt: number;
   windowMs?: number;
   mode?: CoercionMode;
+  stabilityOverride?: number;
 }
 
 /**
@@ -181,7 +202,7 @@ export class CoercionWatch {
    * `COERCION_WINDOW_MS`; `mode` defaults to `'exact'`.
    */
   register(spec: PendingCoercionRegister): void {
-    this.pending.set(makeKey(spec.setterName, spec.field), {
+    const stored: PendingCoercionCheck = {
       setterName: spec.setterName,
       field: spec.field,
       requested: spec.requested,
@@ -189,7 +210,11 @@ export class CoercionWatch {
       windowMs: spec.windowMs ?? COERCION_WINDOW_MS,
       mode: spec.mode ?? 'exact',
       observedCount: 0,
-    });
+    };
+    if (spec.stabilityOverride !== undefined) {
+      stored.stabilityOverride = spec.stabilityOverride;
+    }
+    this.pending.set(makeKey(spec.setterName, spec.field), stored);
   }
 
   /**
@@ -220,9 +245,9 @@ export class CoercionWatch {
   observe(field: string, deviceValue: number, now: number): PendingCoercionCheck[] {
     this.sweep(now);
     const fired: PendingCoercionCheck[] = [];
-    const threshold = stabilityFor(field);
     for (const [key, check] of this.pending) {
       if (check.field !== field) continue;
+      const threshold = check.stabilityOverride ?? stabilityFor(field);
       if (deviceValue === check.requested) {
         if (check.mode === 'exact') {
           // Legitimate success echo — clear so a later (coerced) state-
@@ -309,6 +334,16 @@ export interface TrackedFieldSpec {
   field: string;
   requested: number;
   mode?: CoercionMode;
+  /**
+   * Per-call stability override forwarded to the registered
+   * `PendingCoercionCheck`. Use sparingly — the field default in
+   * `STABILITY_BY_FIELD` is the right answer for most paths. Pass a value
+   * only when the calling setter has a documented transient burst on the
+   * field that the default would false-positive on (currently:
+   * `device.start_guided_load`'s mode-bounce weight floor — see file
+   * header).
+   */
+  stability?: number;
 }
 
 /**
@@ -361,6 +396,9 @@ export async function trackedSetterCall<T>(
     }
     if (spec.mode !== undefined) {
       reg.mode = spec.mode;
+    }
+    if (spec.stability !== undefined) {
+      reg.stabilityOverride = spec.stability;
     }
     watch.register(reg);
   }

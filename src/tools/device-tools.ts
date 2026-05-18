@@ -828,11 +828,22 @@ export function registerDeviceTools(
       // targets — hardware capture 2026-05-11) is the coercion we want
       // to surface. The longer GUIDED_LOAD window accommodates the
       // firmware's ~10s internal safety-ramp settle.
+      //
+      // VMCP-02.21: bump weight stability to 2 just for this setter. The
+      // Damper→WeightTraining mode-bounce that runs immediately after the
+      // trigger emits a transient state-dump with weightLbsTenths at the
+      // mode-floor (~50 = 5 lb) for one tick before the firmware settles
+      // on the target. The weightLbsTenths field default (1) would fire a
+      // spurious setting_coerced with a large negative delta on that
+      // transient. Defusing the burst with the 2-of-2 requirement is
+      // local to this setter — bilateral.cascade's weight path keeps the
+      // default-of-1 stability for the chains-oscillation case.
       const fields: TrackedFieldSpec[] = [
         {
           field: 'weightLbsTenths',
           requested: input.targetWeightLbs * 10,
           mode: 'exact',
+          stability: 2,
         },
       ];
       if (typeof preDevice.chainTargetForceTenths === 'number') {

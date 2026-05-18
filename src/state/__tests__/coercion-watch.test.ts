@@ -262,6 +262,105 @@ describe('CoercionWatch.observe — per-field stability threshold (VMCP-01.38)',
   });
 });
 
+describe('CoercionWatch.observe — per-call stabilityOverride (VMCP-02.21)', () => {
+  // Hardware repro 2026-05-18 (bench session, every device.start_guided_load
+  // call): the Damper→WeightTraining mode-bounce emits a transient
+  // state-dump with weightLbsTenths at the mode-floor (50 = 5 lb) for one
+  // tick before the firmware settles on the user's target. The field
+  // default of 1 fires a spurious setting_coerced with a large negative
+  // delta on that transient. start_guided_load passes stabilityOverride: 2
+  // to require a 2-of-2 streak before firing, defusing the burst. The
+  // override is per-check — bilateral.cascade's chainTargetForceTenths
+  // path keeps the default-of-1 stability for the chains-oscillation case.
+  it('does NOT fire on a single non-matching observation when stabilityOverride is 2', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.start_guided_load',
+        field: 'weightLbsTenths',
+        requested: 550, // target = 55 lb
+        stabilityOverride: 2,
+      }),
+    );
+    // Mode-bounce transient: weightLbsTenths floors to 50 (5 lb) for one
+    // state-dump. With the override in place, this single non-matching
+    // observation primes the streak but does not fire.
+    const hits = watch.observe('weightLbsTenths', 50, 1_000_100);
+    expect(hits).toEqual([]);
+    expect(watch.size()).toBe(1);
+  });
+
+  it('fires after two consecutive matching non-matching observations when stabilityOverride is 2', () => {
+    // Real firmware coercion (not a transient) reads the same coerced
+    // value across two consecutive state-dumps; that meets the 2-of-2
+    // streak and the event fires.
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.start_guided_load',
+        field: 'weightLbsTenths',
+        requested: 550,
+        stabilityOverride: 2,
+      }),
+    );
+    expect(watch.observe('weightLbsTenths', 400, 1_000_100)).toEqual([]);
+    const hits = watch.observe('weightLbsTenths', 400, 1_000_110);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].setterName).toBe('device.start_guided_load');
+    expect(hits[0].requested).toBe(550);
+    expect(watch.size()).toBe(0);
+  });
+
+  it('stabilityOverride applies per-check — other pending checks on the same field keep the field default', () => {
+    // Co-existence: a start_guided_load check (override=2) and a
+    // bilateral.cascade check (default=1, no override) for weightLbsTenths
+    // are both pending. A single non-matching observation should fire the
+    // cascade check (threshold=1) but NOT the guided-load check
+    // (threshold=2, requires two consecutive).
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        setterName: 'device.start_guided_load',
+        field: 'weightLbsTenths',
+        requested: 550,
+        stabilityOverride: 2,
+      }),
+    );
+    watch.register(
+      makeRegister({
+        setterName: 'bilateral.cascade',
+        field: 'weightLbsTenths',
+        requested: 800,
+      }),
+    );
+    const hits = watch.observe('weightLbsTenths', 50, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].setterName).toBe('bilateral.cascade');
+    // The guided-load check is still pending (streak primed, not fired).
+    expect(watch.size()).toBe(1);
+  });
+
+  it('stabilityOverride threads through trackedSetterCall via TrackedFieldSpec.stability', async () => {
+    // End-to-end wiring: the tool-layer setter passes `stability: 2` on
+    // the TrackedFieldSpec, trackedSetterCall forwards it as
+    // stabilityOverride on the PendingCoercionRegister, and observe()
+    // honors the override. This pins the contract device-tools.ts relies
+    // on for VMCP-02.21.
+    const watch = new CoercionWatch();
+    await trackedSetterCall(
+      watch,
+      'device.start_guided_load',
+      [{ field: 'weightLbsTenths', requested: 550, stability: 2 }],
+      async () => undefined,
+    );
+    const now = Date.now() + 100;
+    expect(watch.observe('weightLbsTenths', 50, now)).toEqual([]);
+    const hits = watch.observe('weightLbsTenths', 50, now + 10);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].setterName).toBe('device.start_guided_load');
+  });
+});
+
 describe('CoercionWatch.observe — guard mode', () => {
   it('does NOT clear the check on a baseline-echo (echo === requested)', () => {
     const watch = new CoercionWatch();
