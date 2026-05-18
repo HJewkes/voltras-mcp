@@ -67,6 +67,8 @@ const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
 const { CoercionWatch } = await import('../coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
+const { RestTimerRegistry } = await import('../rest-timer.js');
+type RestTimerRegistryT = InstanceType<typeof RestTimerRegistry>;
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -366,7 +368,12 @@ function makeBareState(opts: {
   live: LiveStateT;
   server: FakeServer;
   channels: FakeChannels;
-}): { slots: Map<string, unknown>; channels: FakeChannels; server: FakeServer } {
+}): {
+  slots: Map<string, unknown>;
+  channels: FakeChannels;
+  server: FakeServer;
+  restTimers: RestTimerRegistryT;
+} {
   const slots = new Map<string, unknown>();
   slots.set('primary', {
     slotId: 'primary',
@@ -375,7 +382,12 @@ function makeBareState(opts: {
     modeRevertGuard: new ModeRevertGuard(),
     coercionWatch: new CoercionWatch(),
   });
-  return { slots, channels: opts.channels, server: opts.server };
+  return {
+    slots,
+    channels: opts.channels,
+    server: opts.server,
+    restTimers: new RestTimerRegistry(),
+  };
 }
 
 describe('wireEventBridge', () => {
@@ -383,6 +395,7 @@ describe('wireEventBridge', () => {
   let client: FakeClient;
   let server: FakeServer;
   let channels: FakeChannels;
+  let bareState: ReturnType<typeof makeBareState>;
 
   beforeEach(() => {
     live = new LiveState();
@@ -391,10 +404,10 @@ describe('wireEventBridge', () => {
     channels = makeFakeChannels();
     // Cast through unknown to keep test-only types decoupled from the SDK
     // module — the bridge accepts the structural surface we provide.
-    const state = makeBareState({ client, live, server, channels });
+    bareState = makeBareState({ client, live, server, channels });
     wireBridgeForSlot(
-      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
-      state.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      bareState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      bareState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
     );
   });
 
@@ -688,6 +701,7 @@ describe('wireEventBridge', () => {
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
       setWatchdog: SetWatchdogT;
+      restTimers: RestTimerRegistryT;
     }
     let fakeState: FakeState;
 
@@ -726,6 +740,7 @@ describe('wireEventBridge', () => {
         server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
+        restTimers: new RestTimerRegistry(),
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(
@@ -797,14 +812,16 @@ describe('wireEventBridge', () => {
       // LiveState's set is cleared.
       expect(live.snapshotSet()).toBeUndefined();
 
-      // Two channel events on a single onSetSummary fire: first the
+      // Three channel events on a single onSetSummary fire: first the
       // `set_pre_summary` rest-coaching prompt (kept for backwards-compat
       // with PT-skill consumers), then the unified `set_ended` event
-      // with `closed_by='device'`.
-      expect(channels.publish).toHaveBeenCalledTimes(2);
+      // with `closed_by='device'`, then the initial passive `rest_status`
+      // (VMCP-02.08) at t=0 of the rest period.
+      expect(channels.publish).toHaveBeenCalledTimes(3);
       expect(channels.publish.mock.calls[0][0].meta.event_type).toBe('set_pre_summary');
       const event = channels.publish.mock.calls[1][0];
       expect(event.meta.event_type).toBe('set_ended');
+      expect(channels.publish.mock.calls[2][0].meta.event_type).toBe('rest_status');
       expect(event.meta.closed_by).toBe('device');
       expect(event.meta.set_id).toBe('set-dev');
       expect(event.meta.session_id).toBe('sess-dev');
@@ -867,8 +884,9 @@ describe('wireEventBridge', () => {
       await flushMicrotasks();
 
       // First publish is `set_pre_summary`, second is unified `set_ended`
-      // with `closed_by='device'`.
-      expect(channels.publish).toHaveBeenCalledTimes(2);
+      // with `closed_by='device'`, third is the initial `rest_status`
+      // (VMCP-02.08) at t=0 of the rest period.
+      expect(channels.publish).toHaveBeenCalledTimes(3);
       const setEnded = channels.publish.mock.calls[1][0];
       expect(setEnded.meta.event_type).toBe('set_ended');
       expect(setEnded.meta.closed_by).toBe('device');
@@ -912,7 +930,13 @@ describe('wireEventBridge', () => {
       });
       await flushMicrotasks();
 
-      const setEnded = channels.publish.mock.calls[channels.publish.mock.calls.length - 1][0];
+      // Filter for the unified `set_ended` payload — call order is now
+      // [set_pre_summary, set_ended, rest_status] (VMCP-02.08).
+      const setEndedCall = channels.publish.mock.calls.find(
+        (c) => c[0].meta.event_type === 'set_ended',
+      );
+      expect(setEndedCall).toBeDefined();
+      const setEnded = setEndedCall![0];
       const parsed = JSON.parse(setEnded.content) as {
         device_summary?: { rep_count: number };
         device_set_summary?: { rep_count: number };
@@ -944,6 +968,7 @@ describe('wireEventBridge', () => {
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
       setWatchdog: SetWatchdogT;
+      restTimers: RestTimerRegistryT;
     }
     let fakeState: FakeStateForTrigger;
 
@@ -971,6 +996,7 @@ describe('wireEventBridge', () => {
         server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
+        restTimers: new RestTimerRegistry(),
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(
@@ -1762,6 +1788,19 @@ describe('wireEventBridge', () => {
       expect(live.snapshotDevice().connected).toBe(false);
     });
 
+    it("VMCP-02.08: on 'disconnected' cancels any in-flight rest_status timer for the slot", () => {
+      // Arm a rest timer directly on the registry — production flow does
+      // this via `finalizeSet`, but the bridge's disconnect cancel must
+      // work regardless of how the timer got armed.
+      const noop = { publish: () => undefined, forSlot: () => noop };
+      bareState.restTimers.start('primary', 'set-x', noop);
+      expect(bareState.restTimers.has('primary')).toBe(true);
+
+      client.fire.connectionStateChange('disconnected');
+
+      expect(bareState.restTimers.has('primary')).toBe(false);
+    });
+
     describe('connection_changed channel event', () => {
       it("publishes connection_changed with state=connected and device snapshot on 'connected'", () => {
         live.applySettings({
@@ -2222,6 +2261,7 @@ describe('wireEventBridge — guided-load auto-create', () => {
     server: FakeServer;
     setStartDeviceSnapshots: Map<string, unknown>;
     setWatchdog: SetWatchdogT;
+    restTimers: RestTimerRegistryT;
   }
 
   let live: LiveStateT;
@@ -2243,6 +2283,7 @@ describe('wireEventBridge — guided-load auto-create', () => {
       server: makeFakeServer(),
       setStartDeviceSnapshots: new Map(),
       setWatchdog: new SetWatchdog(),
+      restTimers: new RestTimerRegistry(),
     };
     wireBridgeForSlot(
       state as unknown as Parameters<typeof wireBridgeForSlot>[0],

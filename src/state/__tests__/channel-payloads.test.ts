@@ -16,6 +16,7 @@ import {
   buildConnectionChangedPayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
+  buildRestStatusPayload,
   buildSetEndedPayload,
   buildSetPreSummaryPayload,
   buildSetStartedPayload,
@@ -1227,5 +1228,81 @@ describe('buildSettingCoercedPayload', () => {
       sessionId: null,
     });
     expect(meta.coercion_delta).toBe('-80');
+  });
+});
+
+describe('buildRestStatusPayload (VMCP-02.08)', () => {
+  it('tags meta with the lifecycle attributes the channel filters on', () => {
+    const { meta } = buildRestStatusPayload({
+      slotId: 'primary',
+      setId: 'set-abc',
+      elapsedSeconds: 30,
+      capSeconds: 300,
+      final: false,
+    });
+    expect(meta).toMatchObject({
+      source: 'voltras',
+      event_type: 'rest_status',
+      slot: 'primary',
+      set_id: 'set-abc',
+      elapsed_seconds: '30',
+    });
+    // Non-final emits omit the `final` attribute so meta filters can
+    // target it explicitly.
+    expect(meta.final).toBeUndefined();
+  });
+
+  it('flags meta.final on the terminal cap emit', () => {
+    const { meta } = buildRestStatusPayload({
+      slotId: 'primary',
+      setId: 'set-abc',
+      elapsedSeconds: 300,
+      capSeconds: 300,
+      final: true,
+    });
+    expect(meta.final).toBe('true');
+  });
+
+  it('renders the summary line + structured rest_status block in content', () => {
+    const { content } = buildRestStatusPayload({
+      slotId: 'right',
+      setId: '12345678-aaaa-bbbb-cccc-dddddddddddd',
+      elapsedSeconds: 45,
+      capSeconds: 300,
+      final: false,
+    });
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      rest_status: {
+        slot: string;
+        set_id: string;
+        elapsed_seconds: number;
+        cap_seconds: number;
+        final: boolean;
+      };
+    };
+    // Summary mentions elapsed seconds and the truncated setId for
+    // skimmability without dumping the whole UUID.
+    expect(parsed.summary).toContain('45s');
+    expect(parsed.summary).toContain('12345678');
+    expect(parsed.rest_status).toEqual({
+      slot: 'right',
+      set_id: '12345678-aaaa-bbbb-cccc-dddddddddddd',
+      elapsed_seconds: 45,
+      cap_seconds: 300,
+      final: false,
+    });
+  });
+
+  it('summary on the final cap emit signals the cap was reached', () => {
+    const { content } = buildRestStatusPayload({
+      slotId: 'primary',
+      setId: 'set-1',
+      elapsedSeconds: 300,
+      capSeconds: 300,
+      final: true,
+    });
+    const parsed = JSON.parse(content) as { summary: string };
+    expect(parsed.summary.toLowerCase()).toContain('cap');
   });
 });
