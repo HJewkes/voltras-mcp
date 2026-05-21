@@ -48,14 +48,46 @@ export const COERCION_WINDOW_MS = 2500;
 export const COERCION_WINDOW_MS_GUIDED_LOAD = 15000;
 
 /**
- * Number of consecutive observations of the SAME coerced device value
- * required before `observe` returns the pending check (publishing the
- * channel event). Tunes false-positive rate vs. responsiveness — 2 is the
- * minimum that filters mid-cascade transient state-dumps without missing
- * genuine post-settle coercions (which produce many repeating state-dumps
- * at the same coerced value).
+ * Default stability threshold for fields without a `STABILITY_BY_FIELD`
+ * entry. The 2-of-2 default filters mid-cascade transient state-dumps (the
+ * documented 80→320→0 ecc burst). Fields fed by single-shot frames (cmd=0x10
+ * cascade echoes) must override to 1 — they only ever arrive once per
+ * setter write so a 2-of-2 requirement would never reach stability.
  */
 export const COERCION_STABILITY_THRESHOLD = 2;
+
+/**
+ * Per-field override for the stability threshold consumed by `observe()`. A
+ * value of 1 means "fire on the first non-matching observation" — used for
+ * fields fed by single-shot frames (cmd=0x10 cascade echoes, which arrive
+ * exactly once per setter write). Fields with documented transient bursts
+ * (notably `eccentricPercentTenths`'s 80→320→0 cascade-settle pattern) keep
+ * the 2-of-2 default so the transient doesn't false-positive.
+ *
+ * VMCP-02.40: chains and baseWeight (cmd=0x10 cascade) routed at 1 so a
+ * coerced echo fires immediately. The state-dump-sourced equivalents
+ * (`chainTargetForceTenths`, `weightLbsTenths`) are no longer observed for
+ * coercion at all — see `observeSettingsUpdateCoercions` /
+ * `observeStateDumpCoercions` in `event-bridge.ts`.
+ *
+ * Unmapped fields fall through to `COERCION_STABILITY_THRESHOLD` (2) via
+ * `stabilityFor`.
+ */
+export const STABILITY_BY_FIELD: Readonly<Record<string, number>> = Object.freeze({
+  damperLevel: 1,
+  chains: 1,
+  baseWeight: 1,
+  eccentricPercentTenths: 2,
+  assistMode: 1,
+});
+
+/**
+ * Resolve the stability threshold for `field`, falling back to the
+ * conservative default for any field not in `STABILITY_BY_FIELD`.
+ */
+export function stabilityFor(field: string): number {
+  return STABILITY_BY_FIELD[field] ?? COERCION_STABILITY_THRESHOLD;
+}
 
 /**
  * How `observe` interprets an exact-value echo of `requested`:
@@ -175,6 +207,7 @@ export class CoercionWatch {
   observe(field: string, deviceValue: number, now: number): PendingCoercionCheck[] {
     this.sweep(now);
     const fired: PendingCoercionCheck[] = [];
+    const threshold = stabilityFor(field);
     for (const [key, check] of this.pending) {
       if (check.field !== field) continue;
       if (deviceValue === check.requested) {
@@ -197,10 +230,14 @@ export class CoercionWatch {
       if (check.observedDeviceValue !== deviceValue) {
         check.observedDeviceValue = deviceValue;
         check.observedCount = 1;
+        if (check.observedCount >= threshold) {
+          this.pending.delete(key);
+          fired.push(check);
+        }
         continue;
       }
       check.observedCount += 1;
-      if (check.observedCount < COERCION_STABILITY_THRESHOLD) {
+      if (check.observedCount < threshold) {
         continue;
       }
       this.pending.delete(key);

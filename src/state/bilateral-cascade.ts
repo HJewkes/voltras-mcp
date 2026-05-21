@@ -159,8 +159,10 @@ async function runSlotPlan(
       key: 'weightLbs',
       invoke: () => target.client.setWeight(weightValue),
       value: weightValue,
-      coercionField: 'weightLbsTenths',
-      coercionRequested: weightValue * 10,
+      // VMCP-02.40: coercion source switched from state-dump
+      // `weightLbsTenths` (×10, lazy) to cmd=0x10 `baseWeight` (whole lbs).
+      coercionField: 'baseWeight',
+      coercionRequested: weightValue,
     });
   }
   if (plan.eccentricPercent !== undefined) {
@@ -169,6 +171,9 @@ async function runSlotPlan(
       key: 'eccentricPercent',
       invoke: () => target.client.setEccentric(eccValue),
       value: eccValue,
+      // Eccentric stays on the state-dump path for now — has a documented
+      // 80→320→0 transient burst that the 2-of-2 stability counter
+      // defuses. A separate pass may route this through cmd=0x10.
       coercionField: 'eccentricPercentTenths',
       coercionRequested: eccValue * 10,
     });
@@ -179,8 +184,10 @@ async function runSlotPlan(
       key: 'chainsLbs',
       invoke: () => target.client.setChains(chainsValue),
       value: chainsValue,
-      coercionField: 'chainTargetForceTenths',
-      coercionRequested: chainsValue * 10,
+      // VMCP-02.40: coercion source switched from state-dump
+      // `chainTargetForceTenths` (×10, lazy) to cmd=0x10 `chains` (whole lbs).
+      coercionField: 'chains',
+      coercionRequested: chainsValue,
     });
   }
 

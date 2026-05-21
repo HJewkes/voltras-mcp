@@ -946,8 +946,14 @@ export type SettingsUpdateField =
   | 'damperLevel'
   | 'assistMode'
   | 'trainingModeRaw'
-  | 'chainTargetForceTenths'
-  | 'weightLbsTenths'
+  // VMCP-02.40: chain + weight transitions now publish from the cmd=0x10
+  // cascade path under the user-facing field names. The state-dump-derived
+  // `chainTargetForceTenths` / `weightLbsTenths` no longer emit per-field
+  // settings_update channel events (they remain in the `__all` payload for
+  // diagnostic context) — they're the firmware's lazily-computed
+  // effective-force values and false-positive on mode-bounce transients.
+  | 'chainSettingLbs'
+  | 'weightLbs'
   | 'eccentricPercentTenths';
 
 export function buildSettingsUpdatePayload(
