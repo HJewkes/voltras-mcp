@@ -40,6 +40,7 @@ import { z } from 'zod';
 import {
   DeviceScanInput,
   DeviceSendRawInput,
+  DeviceSetPassiveScanInput,
   DeviceSetWeightInput,
   DeviceSetModeInput,
   DeviceSetDamperLevelInput,
@@ -75,6 +76,13 @@ import {
   COERCION_WINDOW_MS_GUIDED_LOAD,
   type TrackedFieldSpec,
 } from '../state/coercion-watch.js';
+import {
+  makeManagerScan,
+  startPassiveScan,
+  stopPassiveScan,
+  type PassiveScanContext,
+} from '../state/passive-scanner.js';
+import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import { finalizeSet } from './set-tools.js';
 import type { StoredSession } from '../store/types.js';
@@ -309,6 +317,39 @@ export function registerDeviceTools(
       const timeout = input.timeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS;
       const devices = await state.manager.scan({ timeout });
       return { devices };
+    }),
+  );
+
+  // device.set_passive_scan — toggle the background BLE scanner that
+  // emits `voltras_available` channel events when newly-seen Voltras
+  // appear (VMCP-02.19). Off-by-default at server start. Coexists with
+  // the manual `device.scan` tool; the passive scanner skips its window
+  // when any slot is currently connected (BLE-adapter conflict
+  // avoidance — see passive-scanner.ts for rationale).
+  install(
+    placeholders,
+    'device.set_passive_scan',
+    DeviceSetPassiveScanInput,
+    wrapHandler(DeviceSetPassiveScanInput, async (input) => {
+      if (input.enabled) {
+        const ctx: PassiveScanContext = {
+          isAnyDeviceConnected: () => countConnectedSlots(state) > 0,
+          scan: makeManagerScan(state.manager),
+          onNewlySeen: (devices) => {
+            state.channels.publish(buildVoltrasAvailablePayload(devices));
+          },
+        };
+        const intervalMs =
+          input.intervalSeconds !== undefined ? input.intervalSeconds * 1000 : undefined;
+        startPassiveScan(state.passiveScan, ctx, intervalMs);
+        return {
+          ok: true,
+          enabled: true,
+          intervalSeconds: Math.round(state.passiveScan.intervalMs / 1000),
+        };
+      }
+      stopPassiveScan(state.passiveScan);
+      return { ok: true, enabled: false };
     }),
   );
 

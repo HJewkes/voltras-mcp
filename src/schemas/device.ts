@@ -231,6 +231,21 @@ export const DeviceSendRawInput = z.object({
 });
 
 /**
+ * Input for `device.set_passive_scan` (VMCP-02.19). Toggles the
+ * background BLE scanner that emits `voltras_available` channel events
+ * when newly-seen Voltras appear. Default is OFF on server start.
+ *
+ * `intervalSeconds` is the cadence between scans (clamped to 5-600s).
+ * Omitting it on enable preserves the prior cadence (default 30s on a
+ * fresh server). Each scan window is ~5s and is automatically SKIPPED
+ * if any slot is currently connected (BLE conflict avoidance).
+ */
+export const DeviceSetPassiveScanInput = z.object({
+  enabled: z.boolean(),
+  intervalSeconds: z.number().int().min(5).max(600).optional(),
+});
+
+/**
  * Output shape for `device.get_state`. The handler composes this from
  * individual `VoltraClient` getters — the SDK has no `getState()` method.
  *
