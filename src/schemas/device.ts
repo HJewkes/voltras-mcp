@@ -170,6 +170,13 @@ export const DeviceStartGuidedLoadInput = z.object({
   pollIntervalMs: z.number().int().min(100).max(2000).optional(),
   pollDurationMs: z.number().int().min(1000).max(60000).optional(),
   inactivityTimeoutSeconds: z.number().int().min(1).max(600).optional(),
+  /**
+   * Skip the auto-unload that precedes the direct-load trigger (VMCP-02.06).
+   * Default `false` — the tool auto-invokes the unload primitive because the
+   * firmware ceremony requires a mechanically-unloaded cable. Set to `true`
+   * for diagnostic flows that need to reproduce the no-unload short-circuit.
+   */
+  skipUnload: z.boolean().optional(),
   slot: SlotIdSchema,
 });
 

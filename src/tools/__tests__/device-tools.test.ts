@@ -118,7 +118,8 @@ interface FakeClient {
   setWeight: Mock<(lbs: number) => Promise<void>>;
   setMode: Mock<(mode: number) => Promise<void>>;
   setChains: Mock<(lbs: number) => Promise<void>>;
-  setEccentric: Mock<(percent: number) => Promise<void>>;
+  setEccentric: Mock<(overloadLbs: number) => Promise<void>>;
+  unloadDevice: Mock<() => Promise<void>>;
   setDamperLevel: Mock<(level: number) => Promise<void>>;
   setAssistMode: Mock<(mode: 'off' | 'on') => Promise<void>>;
   setBandMaxForce: Mock<(lbs: number) => Promise<void>>;
@@ -185,6 +186,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setMode: vi.fn(async () => undefined),
     setChains: vi.fn(async () => undefined),
     setEccentric: vi.fn(async () => undefined),
+    unloadDevice: vi.fn(async () => undefined),
     setDamperLevel: vi.fn(async () => undefined),
     setAssistMode: vi.fn(async () => undefined),
     setBandMaxForce: vi.fn(async () => undefined),
@@ -280,6 +282,7 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_speed_limit',
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
+  'device.unload',
   'device.start_guided_load',
   'device.exit_guided_load',
   // <Bug-22>
@@ -937,7 +940,15 @@ describe('registerDeviceTools', () => {
   });
 
   describe('device.set_eccentric', () => {
-    it('forwards percent to client.setEccentric', async () => {
+    it('forwards overloadLbs to client.setEccentric (preferred param name)', async () => {
+      const reg = placeholders.get('device.set_eccentric')!;
+      const { isError, payload } = await invoke(reg, { overloadLbs: -50 });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
+    });
+
+    it('accepts the deprecated `percent` alias and still forwards to client.setEccentric', async () => {
       const reg = placeholders.get('device.set_eccentric')!;
       const { isError, payload } = await invoke(reg, { percent: -50 });
       expect(isError).toBeUndefined();
@@ -945,11 +956,28 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
     });
 
-    it('rejects percent outside [-195, 195] with INVALID_INPUT', async () => {
+    it('rejects overloadLbs outside [-195, 195] with INVALID_INPUT', async () => {
       const reg = placeholders.get('device.set_eccentric')!;
-      const { isError, payload } = await invoke(reg, { percent: 300 });
+      const { isError, payload } = await invoke(reg, { overloadLbs: 300 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
+    });
+
+    it('rejects when neither overloadLbs nor percent supplied', async () => {
+      const reg = placeholders.get('device.set_eccentric')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+    });
+  });
+
+  describe('device.unload (VMCP-02.06)', () => {
+    it('forwards to client.unloadDevice and returns ok:true', async () => {
+      const reg = placeholders.get('device.unload')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      expect(primaryClient(state).unloadDevice).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1643,6 +1671,31 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).startGuidedLoad).toHaveBeenCalledWith({
         targetWeightLbs: 50,
       });
+    });
+
+    // VMCP-02.06 — auto-unload precedes the direct-load trigger by default.
+    it('auto-invokes client.unloadDevice before startGuidedLoad', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const client = primaryClient(state);
+      const callOrder: string[] = [];
+      client.unloadDevice.mockImplementationOnce(async () => {
+        callOrder.push('unloadDevice');
+      });
+      client.startGuidedLoad.mockImplementationOnce(async () => {
+        callOrder.push('startGuidedLoad');
+      });
+      const { isError } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(callOrder).toEqual(['unloadDevice', 'startGuidedLoad']);
+    });
+
+    it('skips auto-unload when skipUnload:true is passed', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const client = primaryClient(state);
+      const { isError } = await invoke(reg, { targetWeightLbs: 50, skipUnload: true });
+      expect(isError).toBeUndefined();
+      expect(client.unloadDevice).not.toHaveBeenCalled();
+      expect(client.startGuidedLoad).toHaveBeenCalled();
     });
 
     it('forwards optional pollIntervalMs and pollDurationMs when supplied', async () => {

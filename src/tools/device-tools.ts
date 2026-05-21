@@ -128,10 +128,20 @@ const DeviceSetChainsInput = z.object({
   slot: SlotIdSchema,
 });
 
-const DeviceSetEccentricInput = z.object({
-  percent: z.number().int().min(-195).max(195),
-  slot: SlotIdSchema,
-});
+// `device.set_eccentric` — the underlying SDK call (`client.setEccentric`) takes
+// a value in POUNDS, not percent. The historic param name `percent` was a
+// misnomer carried over from the firmware doc; VMCP-02.04 renames to
+// `overloadLbs` and keeps `percent` as a deprecated alias for one release so
+// pre-rename callers continue to work with a logged warning.
+const DeviceSetEccentricInput = z
+  .object({
+    overloadLbs: z.number().int().min(-195).max(195).optional(),
+    percent: z.number().int().min(-195).max(195).optional(),
+    slot: SlotIdSchema,
+  })
+  .refine((v) => v.overloadLbs !== undefined || v.percent !== undefined, {
+    message: 'device.set_eccentric requires `overloadLbs` (preferred) or `percent` (deprecated).',
+  });
 
 const DeviceGetStateInput = z
   .object({
@@ -147,6 +157,12 @@ const DeviceGetStateInput = z
  * via `watch.inactivityTimeoutMs` and remain unaffected.
  */
 const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
+
+const DeviceUnloadInput = z
+  .object({
+    slot: SlotIdSchema,
+  })
+  .strict();
 
 // ── bilateral.cascade input ───────────────────────────────────────────────
 //
@@ -169,22 +185,32 @@ const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
 // `z.string()`) so an unknown-but-syntactically-valid slot id surfaces from
 // the handler as an INVALID_INPUT with the unbound slot listed by name —
 // more diagnostic than zod's per-element regex error.
+//
+// `eccentricOverloadLbs` (preferred) and `eccentricPercent` (deprecated alias
+// kept for one release per VMCP-02.04) both forward to the same SDK call;
+// both cannot be present simultaneously.
 const BilateralCascadeInput = z
   .object({
     slots: z.array(z.string().min(1)).optional(),
     mode: z.enum(SELECTABLE_MODE_NAMES).optional(),
     weightLbs: z.number().int().min(5).max(200).optional(),
+    eccentricOverloadLbs: z.number().int().min(-195).max(195).optional(),
     eccentricPercent: z.number().int().min(-195).max(195).optional(),
     chainsLbs: z.number().int().min(0).max(100).optional(),
     abortOnFirstFailure: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict()
+  .refine((v) => !(v.eccentricOverloadLbs !== undefined && v.eccentricPercent !== undefined), {
+    message:
+      'bilateral.cascade accepts `eccentricOverloadLbs` (preferred) OR `eccentricPercent` (deprecated), not both.',
+  });
 
 const BILATERAL_CASCADE_DESCRIPTION =
   'Apply up to four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
   'Within each slot the requested setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
   'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
-  'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with `applied.<setter>` keys present iff that setter was requested.';
+  'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with `applied.<setter>` keys present iff that setter was requested. ' +
+  'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release.';
 
 // `slot.swap` accepts no arguments — there are exactly two slot positions
 // in the workspace today (PRIMARY_SLOT plus one user-allocated id), so the
@@ -238,10 +264,22 @@ const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
   'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
 
 const START_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Unload prerequisite (required for the visible countdown ceremony):** The device must be in a fully unloaded state before calling this tool, or the firmware short-circuits the state machine — the bridge reports `phase: active` immediately with no countdown and no assisted-eccentric ramp. Calling `device_exit_guided_load` first is NOT sufficient: it clears the software state but leaves the cable mechanically at the setpoint.\n\nRecipe: perform a mode-bounce on each slot before calling `start_guided_load` — issue `device_set_mode(Damper)` then `device_set_mode(WeightTraining)`. This drives the SDK through its idle/unload transition sequence and physically releases cable tension. After the bounce, `start_guided_load` will fire the full `armed → countdown → engaging → active` ceremony.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony. Attempt another mode-bounce and re-trigger.';
+  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
+
+const SET_ECCENTRIC_DESCRIPTION =
+  'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
+  'The legacy `percent` param is accepted as a deprecated alias for one release and will be removed in the next major; the value semantics are identical (it was mis-named — the underlying SDK call has always taken pounds, not a percent of base weight). ' +
+  "No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device's `eccentricPercentTenths` echo within COERCION_WINDOW_MS.";
+
+const UNLOAD_DESCRIPTION =
+  'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
+  "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. " +
+  'Mechanism: writes two `BP_SET_FITNESS_MODE` frames back-to-back (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
+  "A single `FITNESS_WORKOUT_STATE=0` write (used by rowing's `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. " +
+  'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`.';
 
 const DeviceExitGuidedLoadInput = z
   .object({
@@ -643,27 +681,37 @@ export function registerDeviceTools(
     }),
   );
 
-  // device.set_eccentric — passthrough; schema enforces -195..+195 percent.
-  // Wrapped in `trackedSetterCall` so a device-side coercion (firmware
+  // device.set_eccentric — passthrough; schema enforces -195..+195 in pound
+  // steps. Wrapped in `trackedSetterCall` so a device-side coercion (firmware
   // safety ramp, etc.) surfaces as a `setting_coerced` channel event when
   // the post-write state-dump disagrees with the requested value. The
   // earlier "assistMode=on enforces an ecc floor" hypothesis (F2 original
   // PM finding) was retracted 2026-05-11 after hardware re-validation —
   // see VMCP-01.35.
+  //
+  // VMCP-02.04 — preferred input is `overloadLbs`; `percent` is accepted as
+  // a deprecated alias for one release and logs a warning on use.
   install(
     placeholders,
     'device.set_eccentric',
     DeviceSetEccentricInput,
     wrapHandler(DeviceSetEccentricInput, async (input) => {
       const slot = getSlot(state, input.slot);
+      const value = input.overloadLbs ?? (input.percent as number);
+      if (input.overloadLbs === undefined && input.percent !== undefined) {
+        log.warn(
+          'device.set_eccentric: `percent` param is deprecated, use `overloadLbs` instead. The legacy alias will be removed in the next release.',
+        );
+      }
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_eccentric',
-        [{ field: 'eccentricPercentTenths', requested: input.percent * 10 }],
-        () => slot.client.setEccentric(input.percent),
+        [{ field: 'eccentricPercentTenths', requested: value * 10 }],
+        () => slot.client.setEccentric(value),
       );
       return { ok: true };
     }),
+    SET_ECCENTRIC_DESCRIPTION,
   );
 
   // ── SDK 0.6.0 mode-config setters ──────────────────────────────────────
@@ -825,11 +873,37 @@ export function registerDeviceTools(
     ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION,
   );
 
+  // device.unload (VMCP-02.06) — drives the device into a fully-unloaded
+  // mechanical state via mode-bounce (Damper → WeightTraining). Required
+  // before `device.start_guided_load` for the visible countdown ceremony to
+  // fire; idempotent. `start_guided_load` auto-invokes this primitive by
+  // default — explicit `device.unload` is for callers driving custom flows.
+  install(
+    placeholders,
+    'device.unload',
+    DeviceUnloadInput,
+    wrapHandler(DeviceUnloadInput, async (input) => {
+      const slot = getSlot(state, input.slot);
+      await slot.client.unloadDevice();
+      return { ok: true };
+    }),
+    UNLOAD_DESCRIPTION,
+  );
+
   // device.start_guided_load (Phase 1g, @experimental) — wraps the SDK's
   // `startGuidedLoad`. Resolves once the trigger frame has been written and
   // the SDK's polling loop is armed; downstream phase transitions surface
   // through the event-bridge's `guided_load_state` debug events plus the
   // auto-created session/set context (closes Bugs 28/29).
+  //
+  // VMCP-02.06 — auto-invokes the unload mode-bounce before the trigger
+  // unless `skipUnload: true`. The firmware ceremony short-circuits to
+  // `phase: active` if the cable is mechanically loaded at trigger time;
+  // pre-unloading is idempotent and makes the tool reliable from any slot
+  // state. The unload is NOT routed through `trackedSetterCall` because
+  // the two mode writes intentionally pass through the device's mode-echo
+  // path — a guided-load-attributed coercion check would false-positive on
+  // the transient Damper observation.
   install(
     placeholders,
     'device.start_guided_load',
@@ -857,6 +931,12 @@ export function registerDeviceTools(
         typeof input.inactivityTimeoutSeconds === 'number'
           ? input.inactivityTimeoutSeconds * 1000
           : GUIDED_LOAD_DEFAULT_INACTIVITY_MS;
+      // VMCP-02.06: drive the cable to a mechanically-unloaded state before
+      // the trigger so the firmware emits the countdown ceremony. Caller
+      // can opt out via `skipUnload` for diagnostic flows.
+      if (input.skipUnload !== true) {
+        await slot.client.unloadDevice();
+      }
       // F3 coercion correlation: guided-load runs a firmware safety
       // sequence that can silently floor chains + eccentric to safe
       // minimums on a low target weight (e.g. 5 lb target → chains
@@ -1205,6 +1285,7 @@ function resolveCascadeSlotIds(state: ServerState, inputSlots: string[] | undefi
 function buildCascadePlan(input: {
   mode?: string | undefined;
   weightLbs?: number | undefined;
+  eccentricOverloadLbs?: number | undefined;
   eccentricPercent?: number | undefined;
   chainsLbs?: number | undefined;
 }): CascadePlan {
@@ -1213,7 +1294,18 @@ function buildCascadePlan(input: {
     plan.mode = (TrainingMode as unknown as Record<string, number>)[input.mode] as TrainingMode;
   }
   if (input.weightLbs !== undefined) plan.weightLbs = input.weightLbs;
-  if (input.eccentricPercent !== undefined) plan.eccentricPercent = input.eccentricPercent;
+  // VMCP-02.04: prefer `eccentricOverloadLbs`; fall back to the deprecated
+  // alias and log a warning. The CascadePlan's interior name remains
+  // `eccentricPercent` for one release to avoid touching state/ + tests not
+  // owned by this agent; the SDK call is the same regardless.
+  if (input.eccentricOverloadLbs !== undefined) {
+    plan.eccentricPercent = input.eccentricOverloadLbs;
+  } else if (input.eccentricPercent !== undefined) {
+    plan.eccentricPercent = input.eccentricPercent;
+    log.warn(
+      'bilateral.cascade: `eccentricPercent` param is deprecated, use `eccentricOverloadLbs` instead. The legacy alias will be removed in the next release.',
+    );
+  }
   if (input.chainsLbs !== undefined) plan.chainsLbs = input.chainsLbs;
   if (
     plan.mode === undefined &&
@@ -1223,7 +1315,7 @@ function buildCascadePlan(input: {
   ) {
     throwSdkLike(
       'INVALID_INPUT',
-      'bilateral.cascade requires at least one of `mode`, `weightLbs`, `eccentricPercent`, or `chainsLbs`.',
+      'bilateral.cascade requires at least one of `mode`, `weightLbs`, `eccentricOverloadLbs`, or `chainsLbs`.',
     );
   }
   return plan;
