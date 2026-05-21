@@ -26,7 +26,7 @@ import {
   getRepPeakForce,
 } from '@voltras/workout-analytics';
 
-import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
+import type { ActiveSet, DeviceSnapshot, FirmwareRep, IdleRep } from './live-state.js';
 import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
@@ -116,6 +116,7 @@ export function buildRepFinalizedPayload(
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'rep_finalized',
+    rep_source: 'analytics',
     set_id: set.setId,
     rep_count: String(repNumber),
   };
@@ -153,6 +154,53 @@ export function buildRepFinalizedPayload(
       // The caller passes the current `set.reps.length`; the in-progress
       // new rep sits at the end of that array, so subtract one.
       rep_count_so_far: Math.max(0, repsLengthIncludingInProgress - 1),
+    },
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a firmware-anchored `rep_finalized` channel
+ * event. Fires from the SDK's `onPerRep` 'return' phase event (one per real
+ * rep). Phase 1 (VMCP-02.29) carries no per-phase velocities — those
+ * require slicing the bridge's per-slot sample buffer between firmware
+ * boundaries, which is the Phase 2 follow-up. The meta key
+ * `rep_source: 'firmware'` distinguishes this stream from the analytics-
+ * derived `rep_finalized` so `debug.compare_rep_streams` (and any future
+ * consumer) can tell the two pipelines apart.
+ */
+export function buildFirmwareRepFinalizedPayload(
+  firmwareRep: FirmwareRep,
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  firmwareRepsCountSoFar: number,
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'rep_finalized',
+    rep_source: 'firmware',
+    set_id: set.setId,
+    rep_count: String(firmwareRep.repNumber),
+  };
+  if (device.weightLbs !== undefined && device.weightLbs > 0) {
+    meta.weight_lbs = String(device.weightLbs);
+  }
+  const summary = `Rep ${firmwareRep.repNumber} (firmware)${
+    device.weightLbs !== undefined && device.weightLbs > 0 ? `, ${device.weightLbs} lbs` : ''
+  }`;
+  const content = JSON.stringify({
+    summary,
+    rep: {
+      rep_number: firmwareRep.repNumber,
+      set_counter: firmwareRep.setCounter,
+      frame_counter: firmwareRep.frameCounter,
+      target_weight_tenths: firmwareRep.targetWeightTenths,
+      captured_at_ms: firmwareRep.ts,
+    },
+    set_context: {
+      weight_lbs: device.weightLbs ?? null,
+      training_mode: device.trainingMode ?? null,
+      firmware_rep_count_so_far: firmwareRepsCountSoFar,
     },
   });
   return { meta, content };

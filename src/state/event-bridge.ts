@@ -118,6 +118,7 @@ import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
+  buildFirmwareRepFinalizedPayload,
   buildIdleRepPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
@@ -226,6 +227,18 @@ const SET_INACTIVITY_TIMEOUT_MS = 90_000;
 const SET_INACTIVITY_POLL_MS = 10_000;
 
 /**
+ * Capacity of the per-slot WorkoutSample ring buffer used by the VMCP-02.29
+ * Phase 1 parity scaffold. At ~40 Hz this covers ~15 s of active-set
+ * telemetry — long enough that Phase 2 can slice the buffer between two
+ * firmware boundaries to synthesize per-phase velocity/ROM metrics for the
+ * just-completed rep. The buffer is per-slot (so bilateral lifts don't
+ * contaminate each other) and bounded; oldest samples are dropped as new
+ * ones arrive. Process-local — cleared when the slot's listeners are
+ * unwired.
+ */
+const FIRMWARE_SAMPLE_BUFFER_CAP = 600;
+
+/**
  * Cadence for the batched `idle_rep_summary` channel event (VMCP-02.11).
  * The bridge accumulates idle-rep boundaries detected while no MCP set is
  * armed and emits a single summary per window so the channel doesn't drown
@@ -321,6 +334,28 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // are lazy and unsuitable for this purpose).
   let lastChainSettingLbs: number | undefined = undefined;
   let lastBaseWeight: number | undefined = undefined;
+  // VMCP-02.29 Phase 1 parity scaffold. The ring holds the most recent
+  // `FIRMWARE_SAMPLE_BUFFER_CAP` samples processed while a set is active so
+  // a future phase can slice the buffer between two firmware-anchored rep
+  // boundaries to synthesize per-phase velocity/ROM metrics. Phase 1 only
+  // populates the buffer + counts firmware boundaries; the slicing logic
+  // lands in Phase 2. Reset on every `set.start` (mid-set buffer is the
+  // only useful window — across-set samples don't compose).
+  const sampleRing: WorkoutSample[] = [];
+  const pushSample = (sample: WorkoutSample): void => {
+    sampleRing.push(sample);
+    if (sampleRing.length > FIRMWARE_SAMPLE_BUFFER_CAP) {
+      sampleRing.shift();
+    }
+  };
+  // Firmware-rep dedupe keys. The SDK fires `onPerRep` twice per real rep
+  // (pull start + return start, same `repCount`). We append exactly one
+  // FirmwareRep per `(setCounter, repCount)` pair on the 'return' event —
+  // the canonical "end of concentric = rep complete" moment from the
+  // firmware's perspective. `lastFirmwareKey` is the `${setCounter}:${repCount}`
+  // we last appended; the comparison short-circuits the dedupe lookup so
+  // the hot path stays a single string compare.
+  let lastFirmwareKey: string | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -413,6 +448,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         return;
       }
 
+      // VMCP-02.29 Phase 1: buffer the sample for the firmware-rep parity
+      // scaffold. Bounded ring — oldest sample drops on overflow. Phase 2
+      // will slice this between two `onPerRep` 'return' boundaries to
+      // reconstruct per-phase metrics for firmware-anchored reps.
+      pushSample(sample);
+
       const previousRepCount = live.snapshotSet()?.reps.length ?? 0;
       live.processSample(sample);
       const nextRepCount = live.snapshotSet()?.reps.length ?? 0;
@@ -476,9 +517,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   pushUnsub(
     unsubs,
     client.onPerRep((payload: PerRepEvent) => {
-      // Diagnostic capture: full device payload to debug ring so Phase 0
-      // validation can verify setCounter/repCount/targetWeightTenths
-      // ground truth. Bridge does not act on these fields yet.
+      // Diagnostic capture: full device payload to debug ring for byte-level
+      // analysis. The PerRepEvent fires twice per real rep (pull start +
+      // return start, same repCount); both phases land in the debug buffer.
       debug.events.push({
         capturedAt: Date.now(),
         type: 'rep_boundary',
@@ -491,6 +532,40 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           bridgeRepsSoFar: live.snapshotSet()?.reps.length ?? 0,
         },
       });
+
+      // VMCP-02.29 Phase 1 parity scaffold. Run the firmware-anchored
+      // finalize side-by-side with the analytics-derived path so
+      // `debug.compare_rep_streams` can surface a count diff. Only act on
+      // 'return' events (eccentric start = canonical end-of-concentric)
+      // and only when a set is armed — orphan firmware boundaries with no
+      // active set fall through silently. De-dupe by
+      // `(setCounter, repCount)`: the device fires 'return' once per real
+      // rep but a duplicate or replay shouldn't inflate the parity count.
+      if (payload.phase !== 'return') return;
+      const activeSet = live.snapshotSet();
+      if (activeSet === undefined) return;
+      const key = `${payload.setCounter}:${payload.repCount}`;
+      if (key === lastFirmwareKey) return;
+      lastFirmwareKey = key;
+
+      const now = Date.now();
+      const firmwareRep = {
+        ts: now,
+        repNumber: payload.repCount,
+        setCounter: payload.setCounter,
+        frameCounter: payload.frameCounter,
+        targetWeightTenths: payload.targetWeightTenths,
+      };
+      live.appendFirmwareRep(firmwareRep);
+      const device = live.snapshotDevice();
+      const firmwareRepsSoFar = live.snapshotSet()?.firmwareReps?.length ?? 0;
+      const payloadOut = buildFirmwareRepFinalizedPayload(
+        firmwareRep,
+        activeSet,
+        device,
+        firmwareRepsSoFar,
+      );
+      slotChannels.publish(payloadOut);
     }),
   );
 

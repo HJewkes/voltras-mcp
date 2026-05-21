@@ -249,6 +249,41 @@ export interface ActiveSet {
    * `startSet` runs.
    */
   lastActivityAt?: number;
+  /**
+   * Firmware-anchored rep boundaries captured from the SDK's `onPerRep`
+   * event. Parity-gathering scaffold for VMCP-02.29 Phase 1 — runs side-by-
+   * side with the analytics-derived `reps[]` so `debug.compare_rep_streams`
+   * can surface a count diff between the two pipelines. Each entry records
+   * the firmware's view of one completed rep (one per 'return' phase event,
+   * de-duped by `(setCounter, repNumber)`). No consumer-facing surface
+   * change yet — Phase 2+ will use this plus the bridge's sample buffer to
+   * synthesize velocity/ROM metrics from firmware-anchored windows.
+   */
+  firmwareReps?: FirmwareRep[];
+}
+
+/**
+ * Firmware-anchored rep boundary record. Captured from `client.onPerRep`
+ * 'return' phase events (eccentric start = canonical end-of-concentric).
+ * Field names match the SDK's `PerRepEvent` for traceability; values are
+ * stored as-received (no unit conversion). Phase 1 carries no derived
+ * metrics — Phase 2 will populate per-phase velocities by slicing the
+ * bridge's per-slot sample buffer at this rep's frame window.
+ */
+export interface FirmwareRep {
+  /** Wall-clock ms when the bridge captured the firmware boundary. */
+  ts: number;
+  /** Cumulative rep counter within the set (PerRepEvent.repCount). */
+  repNumber: number;
+  /** Set counter from the firmware frame (PerRepEvent.setCounter). */
+  setCounter: number;
+  /** Cumulative frame counter within the set (PerRepEvent.frameCounter). */
+  frameCounter: number;
+  /**
+   * Target weight in tenths of pounds (PerRepEvent.targetWeightTenths).
+   * baseWeight × 10 in weight mode; 0 in band/damper/isokinetic.
+   */
+  targetWeightTenths: number;
 }
 
 /**
@@ -500,6 +535,23 @@ export class LiveState {
   }
 
   /**
+   * Append a firmware-anchored rep boundary to the active set's parallel
+   * `firmwareReps[]` array. VMCP-02.29 Phase 1 parity scaffold — runs
+   * alongside `appendRep` / `processSample` so the analytics + firmware
+   * pipelines can be count-compared. Silently dropped when no set is active
+   * (mirrors `appendRep`'s stale-event policy). Caller is responsible for
+   * de-duping by `(setCounter, repNumber)` so the device's
+   * pull-then-return double-fire doesn't inflate the count.
+   */
+  appendFirmwareRep(rep: FirmwareRep): void {
+    if (this.set === undefined) {
+      return;
+    }
+    const existing = this.set.firmwareReps ?? [];
+    this.set = { ...this.set, firmwareReps: [...existing, rep] };
+  }
+
+  /**
    * Process a single telemetry sample through the analytics-set pipeline.
    * Workout-analytics's `addSampleToSet` owns the rep-boundary state machine
    * (eccentric→concentric starts a new rep; IDLE folds into the current
@@ -712,8 +764,13 @@ export class LiveState {
     // (resource handlers, tools) don't read it; the snapshot still includes
     // the reference for type completeness, but mutating the returned set
     // doesn't churn the ledger because the bridge's mutator goes through the
-    // helper.
-    return { ...this.set, reps: [...this.set.reps] };
+    // helper. `firmwareReps` IS copied so the snapshot survives a subsequent
+    // `appendFirmwareRep` mutation without aliasing.
+    return {
+      ...this.set,
+      reps: [...this.set.reps],
+      ...(this.set.firmwareReps !== undefined ? { firmwareReps: [...this.set.firmwareReps] } : {}),
+    };
   }
 
   /**
