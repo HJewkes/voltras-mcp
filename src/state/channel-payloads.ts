@@ -946,8 +946,14 @@ export type SettingsUpdateField =
   | 'damperLevel'
   | 'assistMode'
   | 'trainingModeRaw'
-  | 'chainTargetForceTenths'
-  | 'weightLbsTenths'
+  // VMCP-02.40: chain + weight transitions now publish from the cmd=0x10
+  // cascade path under the user-facing field names. The state-dump-derived
+  // `chainTargetForceTenths` / `weightLbsTenths` no longer emit per-field
+  // settings_update channel events (they remain in the `__all` payload for
+  // diagnostic context) — they're the firmware's lazily-computed
+  // effective-force values and false-positive on mode-bounce transients.
+  | 'chainSettingLbs'
+  | 'weightLbs'
   | 'eccentricPercentTenths';
 
 export function buildSettingsUpdatePayload(
@@ -1265,6 +1271,53 @@ export function buildIdleRepSummaryPayload(args: {
       slot,
     },
     idle_rep_count: idleRepCount,
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a passive `rest_status` channel event
+ * (VMCP-02.08). Emitted on a 15s cadence after `set_ended` (capped at
+ * 5 minutes) so the PT skill can observe elapsed rest time without
+ * blocking on `timer.wait` or polling.
+ *
+ * `elapsedSeconds` is the seconds since the originating `set_ended`
+ * (0 on the initial emit, then 15, 30, ... up to `capSeconds`).
+ * `setId` is the id of the set that just ended; the model uses it to
+ * attribute the rest period to a specific set. `final` is `true` only
+ * on the terminal emit at the cap — the skill can use it to surface
+ * "long rest" coaching or simply stop expecting more rest_status events.
+ */
+export function buildRestStatusPayload(args: {
+  slotId: string;
+  setId: string;
+  elapsedSeconds: number;
+  capSeconds: number;
+  final: boolean;
+}): { meta: Record<string, string>; content: string } {
+  const { slotId, setId, elapsedSeconds, capSeconds, final } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'rest_status',
+    slot: slotId,
+    set_id: setId,
+    elapsed_seconds: String(elapsedSeconds),
+  };
+  if (final) {
+    meta.final = 'true';
+  }
+  const summary = final
+    ? `Rest reached cap (${capSeconds}s elapsed since set ${setId.slice(0, 8)}). No further rest_status events for this set.`
+    : `Resting: ${elapsedSeconds}s elapsed since set ${setId.slice(0, 8)}.`;
+  const content = JSON.stringify({
+    summary,
+    rest_status: {
+      slot: slotId,
+      set_id: setId,
+      elapsed_seconds: elapsedSeconds,
+      cap_seconds: capSeconds,
+      final,
+    },
   });
   return { meta, content };
 }

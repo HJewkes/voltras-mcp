@@ -542,8 +542,11 @@ export function registerDeviceTools(
   // device.set_weight — direct passthrough to the SDK; the schema clamps
   // input to the device-allowed range so the SDK never sees out-of-band lbs.
   // Wrapped in `trackedSetterCall` so the bridge can correlate a subsequent
-  // state-dump value at `weightLbsTenths !== input.lbs × 10` into a
-  // `setting_coerced` channel event (F2/F3).
+  // cmd=0x10 cascade echo at `baseWeight !== input.lbs` into a
+  // `setting_coerced` channel event (F2/F3). VMCP-02.40: source from cmd=0x10
+  // (`baseWeight`, whole lbs) rather than state-dump (`weightLbsTenths`, ×10,
+  // lazily-refreshed firmware-internal effective-weight) — the cmd=0x10 echo
+  // is the only frame that reliably reflects user-set weight per-write.
   install(
     placeholders,
     'device.set_weight',
@@ -553,7 +556,7 @@ export function registerDeviceTools(
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_weight',
-        [{ field: 'weightLbsTenths', requested: input.lbs * 10 }],
+        [{ field: 'baseWeight', requested: input.lbs }],
         () => slot.client.setWeight(input.lbs),
       );
       return { ok: true };
@@ -619,8 +622,11 @@ export function registerDeviceTools(
 
   // device.set_chains — passthrough; schema enforces 0–100 lbs. Wrapped in
   // `trackedSetterCall`: the firmware silently caps chains at weight, so a
-  // request of 60 lbs against a 50-lb weight surfaces as `chainTargetForceTenths
-  // = 500` not 600 — that mismatch is exactly the F3 coercion signal.
+  // request of 60 lbs against a 50-lb weight surfaces as `chains = 50` in the
+  // cmd=0x10 cascade echo (not 60) — that mismatch is exactly the F3 coercion
+  // signal. VMCP-02.40: source from cmd=0x10 (`chains`, whole lbs) rather than
+  // state-dump (`chainTargetForceTenths`, ×10, lazily-refreshed
+  // firmware-internal effective chain force).
   install(
     placeholders,
     'device.set_chains',
@@ -630,7 +636,7 @@ export function registerDeviceTools(
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_chains',
-        [{ field: 'chainTargetForceTenths', requested: input.lbs * 10 }],
+        [{ field: 'chains', requested: input.lbs }],
         () => slot.client.setChains(input.lbs),
       );
       return { ok: true };
@@ -861,25 +867,33 @@ export function registerDeviceTools(
       // value are skipped (the bridge has no requested-baseline to
       // compare against).
       const preDevice = slot.live.snapshotDevice();
-      // weightLbsTenths uses 'exact' mode: the user's explicit target is
-      // the new value the firmware should converge on. chains + ecc use
-      // 'guard' mode: the user's PRIOR setting is the baseline they
-      // expect to persist across the guided-load entry, and the firmware
-      // ramping them to safe minimums (chains 100→20, ecc 500→80 at low
-      // targets — hardware capture 2026-05-11) is the coercion we want
-      // to surface. The longer GUIDED_LOAD window accommodates the
-      // firmware's ~10s internal safety-ramp settle.
+      // baseWeight uses 'exact' mode: the user's explicit target is the new
+      // value the firmware should converge on. chains uses 'guard' mode: the
+      // user's PRIOR setting is the baseline they expect to persist across
+      // the guided-load entry, and the firmware ramping it to a safe minimum
+      // (chains 100→20 at low targets — hardware capture 2026-05-11) is the
+      // coercion we want to surface. The longer GUIDED_LOAD window
+      // accommodates the firmware's ~10s internal safety-ramp settle.
+      //
+      // VMCP-02.40: baseWeight + chains source from cmd=0x10 cascade echo
+      // (whole lbs, refreshed per-write). The earlier state-dump-sourced
+      // `weightLbsTenths` / `chainTargetForceTenths` are lazily-updated
+      // firmware-internal effective-force values and false-positive on the
+      // Damper→WeightTraining mode-bounce transient. Eccentric remains on
+      // the state-dump path with its existing 2-of-2 stability defense
+      // (handles the documented 80→320→0 transient burst) until a separate
+      // pass routes it through cmd=0x10 too.
       const fields: TrackedFieldSpec[] = [
         {
-          field: 'weightLbsTenths',
-          requested: input.targetWeightLbs * 10,
+          field: 'baseWeight',
+          requested: input.targetWeightLbs,
           mode: 'exact',
         },
       ];
-      if (typeof preDevice.chainTargetForceTenths === 'number') {
+      if (typeof preDevice.chainSettingLbs === 'number') {
         fields.push({
-          field: 'chainTargetForceTenths',
-          requested: preDevice.chainTargetForceTenths,
+          field: 'chains',
+          requested: preDevice.chainSettingLbs,
           mode: 'guard',
         });
       }

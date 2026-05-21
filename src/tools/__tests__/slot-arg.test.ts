@@ -68,6 +68,7 @@ const { registerDeviceTools } = await import('../device-tools.js');
 const { registerMockTools } = await import('../mock-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -272,6 +273,7 @@ function setup(): Harness {
     channels,
     setStartDeviceSnapshots: new Map(),
     setWatchdog: new SetWatchdog(),
+    restTimers: new RestTimerRegistry(),
   } as unknown as ServerState;
 
   const { placeholders, invoke } = makeFakePlaceholders(ALL_TOOL_NAMES);

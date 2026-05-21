@@ -67,6 +67,8 @@ const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
 const { CoercionWatch } = await import('../coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
+const { RestTimerRegistry } = await import('../rest-timer.js');
+type RestTimerRegistryT = InstanceType<typeof RestTimerRegistry>;
 
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
@@ -366,7 +368,12 @@ function makeBareState(opts: {
   live: LiveStateT;
   server: FakeServer;
   channels: FakeChannels;
-}): { slots: Map<string, unknown>; channels: FakeChannels; server: FakeServer } {
+}): {
+  slots: Map<string, unknown>;
+  channels: FakeChannels;
+  server: FakeServer;
+  restTimers: RestTimerRegistryT;
+} {
   const slots = new Map<string, unknown>();
   slots.set('primary', {
     slotId: 'primary',
@@ -375,7 +382,12 @@ function makeBareState(opts: {
     modeRevertGuard: new ModeRevertGuard(),
     coercionWatch: new CoercionWatch(),
   });
-  return { slots, channels: opts.channels, server: opts.server };
+  return {
+    slots,
+    channels: opts.channels,
+    server: opts.server,
+    restTimers: new RestTimerRegistry(),
+  };
 }
 
 describe('wireEventBridge', () => {
@@ -383,6 +395,7 @@ describe('wireEventBridge', () => {
   let client: FakeClient;
   let server: FakeServer;
   let channels: FakeChannels;
+  let bareState: ReturnType<typeof makeBareState>;
 
   beforeEach(() => {
     live = new LiveState();
@@ -391,10 +404,10 @@ describe('wireEventBridge', () => {
     channels = makeFakeChannels();
     // Cast through unknown to keep test-only types decoupled from the SDK
     // module — the bridge accepts the structural surface we provide.
-    const state = makeBareState({ client, live, server, channels });
+    bareState = makeBareState({ client, live, server, channels });
     wireBridgeForSlot(
-      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
-      state.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      bareState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      bareState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
     );
   });
 
@@ -688,6 +701,7 @@ describe('wireEventBridge', () => {
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
       setWatchdog: SetWatchdogT;
+      restTimers: RestTimerRegistryT;
     }
     let fakeState: FakeState;
 
@@ -726,6 +740,7 @@ describe('wireEventBridge', () => {
         server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
+        restTimers: new RestTimerRegistry(),
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(
@@ -797,14 +812,16 @@ describe('wireEventBridge', () => {
       // LiveState's set is cleared.
       expect(live.snapshotSet()).toBeUndefined();
 
-      // Two channel events on a single onSetSummary fire: first the
+      // Three channel events on a single onSetSummary fire: first the
       // `set_pre_summary` rest-coaching prompt (kept for backwards-compat
       // with PT-skill consumers), then the unified `set_ended` event
-      // with `closed_by='device'`.
-      expect(channels.publish).toHaveBeenCalledTimes(2);
+      // with `closed_by='device'`, then the initial passive `rest_status`
+      // (VMCP-02.08) at t=0 of the rest period.
+      expect(channels.publish).toHaveBeenCalledTimes(3);
       expect(channels.publish.mock.calls[0][0].meta.event_type).toBe('set_pre_summary');
       const event = channels.publish.mock.calls[1][0];
       expect(event.meta.event_type).toBe('set_ended');
+      expect(channels.publish.mock.calls[2][0].meta.event_type).toBe('rest_status');
       expect(event.meta.closed_by).toBe('device');
       expect(event.meta.set_id).toBe('set-dev');
       expect(event.meta.session_id).toBe('sess-dev');
@@ -867,8 +884,9 @@ describe('wireEventBridge', () => {
       await flushMicrotasks();
 
       // First publish is `set_pre_summary`, second is unified `set_ended`
-      // with `closed_by='device'`.
-      expect(channels.publish).toHaveBeenCalledTimes(2);
+      // with `closed_by='device'`, third is the initial `rest_status`
+      // (VMCP-02.08) at t=0 of the rest period.
+      expect(channels.publish).toHaveBeenCalledTimes(3);
       const setEnded = channels.publish.mock.calls[1][0];
       expect(setEnded.meta.event_type).toBe('set_ended');
       expect(setEnded.meta.closed_by).toBe('device');
@@ -912,7 +930,13 @@ describe('wireEventBridge', () => {
       });
       await flushMicrotasks();
 
-      const setEnded = channels.publish.mock.calls[channels.publish.mock.calls.length - 1][0];
+      // Filter for the unified `set_ended` payload — call order is now
+      // [set_pre_summary, set_ended, rest_status] (VMCP-02.08).
+      const setEndedCall = channels.publish.mock.calls.find(
+        (c) => c[0].meta.event_type === 'set_ended',
+      );
+      expect(setEndedCall).toBeDefined();
+      const setEnded = setEndedCall![0];
       const parsed = JSON.parse(setEnded.content) as {
         device_summary?: { rep_count: number };
         device_set_summary?: { rep_count: number };
@@ -944,6 +968,7 @@ describe('wireEventBridge', () => {
         { connected: boolean; weightLbs?: number; trainingMode?: string }
       >;
       setWatchdog: SetWatchdogT;
+      restTimers: RestTimerRegistryT;
     }
     let fakeState: FakeStateForTrigger;
 
@@ -971,6 +996,7 @@ describe('wireEventBridge', () => {
         server,
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
+        restTimers: new RestTimerRegistry(),
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(
@@ -1762,6 +1788,19 @@ describe('wireEventBridge', () => {
       expect(live.snapshotDevice().connected).toBe(false);
     });
 
+    it("VMCP-02.08: on 'disconnected' cancels any in-flight rest_status timer for the slot", () => {
+      // Arm a rest timer directly on the registry — production flow does
+      // this via `finalizeSet`, but the bridge's disconnect cancel must
+      // work regardless of how the timer got armed.
+      const noop = { publish: () => undefined, forSlot: () => noop };
+      bareState.restTimers.start('primary', 'set-x', noop);
+      expect(bareState.restTimers.has('primary')).toBe(true);
+
+      client.fire.connectionStateChange('disconnected');
+
+      expect(bareState.restTimers.has('primary')).toBe(false);
+    });
+
     describe('connection_changed channel event', () => {
       it("publishes connection_changed with state=connected and device snapshot on 'connected'", () => {
         live.applySettings({
@@ -2140,9 +2179,13 @@ describe('wireEventBridge', () => {
       expect(parsed.__all.battery_percent).toBeNull();
     });
 
-    it('settings_update without damperLevel does NOT emit a synthetic event', () => {
+    it('settings_update without any tracked field (damper/chain/weight) does NOT emit a synthetic event', () => {
+      // VMCP-02.40: chain + base-weight transitions now also publish
+      // settings_update events from this handler, so weight/chains must
+      // also be absent from the fired update for "no event" to hold. Mode +
+      // battery alone are not published (no consumer-facing transitions yet).
       channels.publish.mockClear();
-      client.fire.settingsUpdate({ weight: 75, mode: 1, battery: 80 });
+      client.fire.settingsUpdate({ mode: 1, battery: 80 });
 
       const settingsEvents = channels.publish.mock.calls
         .map((c) => c[0])
@@ -2222,6 +2265,7 @@ describe('wireEventBridge — guided-load auto-create', () => {
     server: FakeServer;
     setStartDeviceSnapshots: Map<string, unknown>;
     setWatchdog: SetWatchdogT;
+    restTimers: RestTimerRegistryT;
   }
 
   let live: LiveStateT;
@@ -2243,6 +2287,7 @@ describe('wireEventBridge — guided-load auto-create', () => {
       server: makeFakeServer(),
       setStartDeviceSnapshots: new Map(),
       setWatchdog: new SetWatchdog(),
+      restTimers: new RestTimerRegistry(),
     };
     wireBridgeForSlot(
       state as unknown as Parameters<typeof wireBridgeForSlot>[0],
@@ -2413,7 +2458,7 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     expect(content.changed.value).toBe(2);
   });
 
-  it('synthesizes channel events for every transitioned field on the first stable dump', () => {
+  it('synthesizes channel events for every transitioned state-dump field on the first stable dump', () => {
     client.fire.stateDump(
       makeStateDumpEvent({
         trainingMode: 1,
@@ -2423,17 +2468,21 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
         eccentricPercentTenths: 50,
       }),
     );
-    // All five tracked fields transition from undefined → value on the first
-    // stable dump and each emits one channel event.
+    // VMCP-02.40: chainTargetForceTenths + weightLbsTenths no longer emit
+    // per-field settings_update events (they're firmware-internal lazy
+    // values; user-facing chain + weight transitions now come from the
+    // cmd=0x10 cascade as `chainSettingLbs` / `weightLbs`). Only
+    // assistMode + trainingModeRaw + eccentricPercentTenths remain emitted
+    // from the state-dump path.
     const fields = channels.publish.mock.calls.map((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
       return content.changed.field;
     });
     expect(fields).toContain('assistMode');
     expect(fields).toContain('trainingModeRaw');
-    expect(fields).toContain('chainTargetForceTenths');
-    expect(fields).toContain('weightLbsTenths');
     expect(fields).toContain('eccentricPercentTenths');
+    expect(fields).not.toContain('chainTargetForceTenths');
+    expect(fields).not.toContain('weightLbsTenths');
   });
 
   it('de-duplicates: same payload on second dump does not re-emit a channel event', () => {
@@ -2529,8 +2578,14 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
     expect(live.snapshotDevice().chainSettingLbs).toBe(50);
   });
 
-  it('includes chain_setting_lbs in the __all block of state-dump settings_update payloads', () => {
+  it('includes chain_setting_lbs + chain_target_force_tenths in the __all block of state-dump settings_update payloads', () => {
+    // VMCP-02.40: state-dump no longer emits a per-field settings_update
+    // for `chainTargetForceTenths`. The lazy field stays in the `__all`
+    // payload (diagnostic context) of any state-dump-triggered event —
+    // here we use the `assistMode` transition to capture the __all
+    // snapshot.
     client.fire.settingsUpdate({ chains: 50 });
+    channels.publish.mockClear();
     client.fire.stateDump(
       makeStateDumpEvent({
         trainingMode: 1,
@@ -2539,12 +2594,12 @@ describe('onStateDump (cmd=0x07 — Bug 26)', () => {
         weightLbsTenths: 500,
       }),
     );
-    const dumpCall = channels.publish.mock.calls.find((c) => {
+    const assistCall = channels.publish.mock.calls.find((c) => {
       const content = JSON.parse(c[0].content) as { changed: { field: string } };
-      return content.changed.field === 'chainTargetForceTenths';
+      return content.changed.field === 'assistMode';
     });
-    expect(dumpCall).toBeDefined();
-    const content = JSON.parse(dumpCall![0].content) as {
+    expect(assistCall).toBeDefined();
+    const content = JSON.parse(assistCall![0].content) as {
       __all: { chain_setting_lbs: number | null; chain_target_force_tenths: number | null };
     };
     expect(content.__all.chain_setting_lbs).toBe(50);
@@ -2674,21 +2729,25 @@ describe('setting_coerced channel event (F2+F3)', () => {
   });
 
   it('F3 repro: guided-load coerces chains + ecc, weight unchanged → exactly 2 events (guard mode + stability)', () => {
+    // VMCP-02.40: chain + base-weight are now sourced from cmd=0x10 cascade
+    // echoes (`settings_update` path, threshold=1) so a single coerced echo
+    // fires immediately. Eccentric remains state-dump-sourced with the
+    // 2-of-2 stability defense against the documented 80→320→0 transient.
     const stamp = Date.now();
     // Pretend `device.start_guided_load { targetWeightLbs: 5 }` registered
-    // three checks: weight=50 (target, exact mode), chains=100 (carry-over
+    // three checks: baseWeight=5 (target, exact mode), chains=10 (carry-over
     // baseline, guard mode), ecc=500 (carry-over baseline, guard mode).
     watch.register({
       setterName: 'device.start_guided_load',
-      field: 'weightLbsTenths',
-      requested: 50,
+      field: 'baseWeight',
+      requested: 5,
       setterReturnedAt: stamp,
       mode: 'exact',
     });
     watch.register({
       setterName: 'device.start_guided_load',
-      field: 'chainTargetForceTenths',
-      requested: 100,
+      field: 'chains',
+      requested: 10,
       setterReturnedAt: stamp,
       mode: 'guard',
     });
@@ -2699,22 +2758,27 @@ describe('setting_coerced channel event (F2+F3)', () => {
       setterReturnedAt: stamp,
       mode: 'guard',
     });
-    // Two consecutive state-dumps with weight matched (no event for it —
-    // exact mode echo clears) and chains+ecc coerced. Stability fires on
-    // the second matching observation.
-    const coerced = makeStateDumpEvent({
+    // cmd=0x10 echo: baseWeight=5 matches requested → exact-mode clear, no
+    // event. chains=2 ≠ requested 10 → guard-mode coercion, threshold=1
+    // fires on this single observation.
+    client.fire.settingsUpdate({ baseWeight: 5, chains: 2 });
+    expect(pickAllCoercionPublishes()).toHaveLength(1);
+    // Two consecutive state-dumps with ecc coerced to 80 — stability fires
+    // on the second matching observation. (The chain/weight values in the
+    // state-dump are now diagnostic-only and no longer observed for
+    // coercion.)
+    const dump = makeStateDumpEvent({
       trainingMode: 1,
       weightLbsTenths: 50,
       chainTargetForceTenths: 20,
       eccentricPercentTenths: 80,
     });
-    client.fire.stateDump(coerced);
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
-    client.fire.stateDump(coerced);
+    client.fire.stateDump(dump);
+    client.fire.stateDump(dump);
     const events = pickAllCoercionPublishes();
     expect(events).toHaveLength(2);
     const fields = events.map((e) => e.meta.field).sort();
-    expect(fields).toEqual(['chainTargetForceTenths', 'eccentricPercentTenths']);
+    expect(fields).toEqual(['chains', 'eccentricPercentTenths']);
     for (const e of events) {
       expect(e.meta.source_setter).toBe('device.start_guided_load');
     }
@@ -2770,25 +2834,24 @@ describe('setting_coerced channel event (F2+F3)', () => {
   });
 
   it('edge — distinct setters touching the same field both fire (VMCP-01.38)', () => {
-    // Bilateral-style scenario: `device.set_chains` and `bilateral.cascade`
-    // both register a `chainTargetForceTenths` check within the window.
-    // Each must surface its own setting_coerced event when the device
-    // settles at a coerced value.
+    // VMCP-02.40: chains now sourced from cmd=0x10 cascade echoes
+    // (threshold=1). Bilateral-style scenario: `device.set_chains` and
+    // `bilateral.cascade` both register a `chains` check within the window.
+    // Each must surface its own setting_coerced event on a single coerced
+    // echo (the cmd=0x10 cascade arrives exactly once per setter write).
     watch.register({
       setterName: 'device.set_chains',
-      field: 'chainTargetForceTenths',
-      requested: 500,
+      field: 'chains',
+      requested: 50,
       setterReturnedAt: Date.now(),
     });
     watch.register({
       setterName: 'bilateral.cascade',
-      field: 'chainTargetForceTenths',
-      requested: 800,
+      field: 'chains',
+      requested: 80,
       setterReturnedAt: Date.now(),
     });
-    const coerced = makeStateDumpEvent({ chainTargetForceTenths: 300 });
-    client.fire.stateDump(coerced);
-    client.fire.stateDump(coerced);
+    client.fire.settingsUpdate({ chains: 30 });
     const events = pickAllCoercionPublishes();
     expect(events).toHaveLength(2);
     const sourceSetters = events.map((e) => e.meta.source_setter).sort();
@@ -2848,17 +2911,20 @@ describe('setting_coerced channel event (F2+F3)', () => {
   });
 
   it('guided-load: baseline echoes do not clear guard-mode check; coercion stabilizes after settle', () => {
-    // Hardware repro 2026-05-11: start_guided_load{target=5} against
-    // chains=10/ecc=50 produces state-dump bursts that echo the prior
-    // chains=100 + ecc=500 values BEFORE the firmware's safety ramp
-    // pushes them to 20 + 80. Guard mode keeps the checks alive across
-    // the echoes; stability fires only after two consecutive observations
-    // of the same coerced value.
+    // VMCP-02.40: chains observed on cmd=0x10 cascade (threshold=1, fires
+    // on first coerced echo). Ecc remains state-dump (threshold=2). Both
+    // guard-mode checks survive baseline-echo arrivals and only fire when
+    // their respective observation stream carries a coerced value.
+    //
+    // Original hardware repro 2026-05-11: start_guided_load{target=5}
+    // against chains=10/ecc=50 produced bursts that echoed prior
+    // chains=10 + ecc=500 values BEFORE the firmware's safety ramp pushed
+    // them to 2 + 80.
     const stamp = Date.now();
     watch.register({
       setterName: 'device.start_guided_load',
-      field: 'chainTargetForceTenths',
-      requested: 100,
+      field: 'chains',
+      requested: 10,
       setterReturnedAt: stamp,
       mode: 'guard',
       windowMs: 15_000,
@@ -2871,37 +2937,32 @@ describe('setting_coerced channel event (F2+F3)', () => {
       mode: 'guard',
       windowMs: 15_000,
     });
-    // Burst 1: pre-settle echo (no coercion observed yet).
+    // cmd=0x10 baseline echo for chains — guard mode keeps the check alive
+    // since deviceValue === requested means "no change yet."
+    client.fire.settingsUpdate({ chains: 10 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // State-dump baseline echo for ecc — guard mode keeps it alive too.
     client.fire.stateDump(
       makeStateDumpEvent({
-        chainTargetForceTenths: 100,
         eccentricPercentTenths: 500,
       }),
     );
     expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Burst 2: chains coerced, ecc still echoing. Stability primed.
+    // cmd=0x10 coerced chains echo — fires immediately (threshold=1).
+    client.fire.settingsUpdate({ chains: 2 });
+    let events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.meta.field).toBe('chains');
+    // First coerced ecc state-dump — primes streak (threshold=2).
     client.fire.stateDump(
       makeStateDumpEvent({
-        chainTargetForceTenths: 20,
-        eccentricPercentTenths: 500,
-      }),
-    );
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Burst 3: both fields at their settled coerced values. Chains streak
-    // confirms (fires); ecc streak primes at 80.
-    client.fire.stateDump(
-      makeStateDumpEvent({
-        chainTargetForceTenths: 20,
         eccentricPercentTenths: 80,
       }),
     );
-    let events = pickAllCoercionPublishes();
-    expect(events).toHaveLength(1);
-    expect(events[0]!.meta.field).toBe('chainTargetForceTenths');
-    // Burst 4: ecc streak confirms (cumulative event count = 2).
+    expect(pickAllCoercionPublishes()).toHaveLength(1); // no new event yet
+    // Second coerced ecc state-dump — stability confirms, ecc fires.
     client.fire.stateDump(
       makeStateDumpEvent({
-        chainTargetForceTenths: 20,
         eccentricPercentTenths: 80,
       }),
     );
@@ -2942,27 +3003,26 @@ describe('setting_coerced channel event (F2+F3)', () => {
       rightSlot as unknown as Parameters<typeof wireBridgeForSlot>[1],
     );
 
+    // VMCP-02.40: chains observed on cmd=0x10 cascade echoes (threshold=1).
+    // Each slot's coerced echo fires its own setting_coerced immediately;
+    // no priming round needed because cmd=0x10 echoes are single-shot per
+    // setter write.
     const stamp = Date.now();
     watch.register({
       setterName: 'device.set_chains',
-      field: 'chainTargetForceTenths',
-      requested: 500,
+      field: 'chains',
+      requested: 50,
       setterReturnedAt: stamp,
     });
     rightWatch.register({
       setterName: 'device.set_chains',
-      field: 'chainTargetForceTenths',
-      requested: 500,
+      field: 'chains',
+      requested: 50,
       setterReturnedAt: stamp,
     });
-    const coerced = makeStateDumpEvent({ chainTargetForceTenths: 300 });
-    // First state-dump on each primes its slot's stability counter.
-    client.fire.stateDump(coerced);
-    rightClient.fire.stateDump(coerced);
-    expect(pickAllCoercionPublishes()).toHaveLength(0);
-    // Second state-dump on each fires its slot's event.
-    client.fire.stateDump(coerced);
-    rightClient.fire.stateDump(coerced);
+    // Each slot's cmd=0x10 echo fires its own event.
+    client.fire.settingsUpdate({ chains: 30 });
+    rightClient.fire.settingsUpdate({ chains: 30 });
     const events = pickAllCoercionPublishes();
     expect(events).toHaveLength(2);
     const slotIds = events.map((e) => e.meta.slot_id).sort();
@@ -2970,5 +3030,82 @@ describe('setting_coerced channel event (F2+F3)', () => {
     // Slot-scoped publisher also injects `slot` meta (forSlot wrapper).
     const slotMeta = events.map((e) => e.meta.slot).sort();
     expect(slotMeta).toEqual(['primary', 'right']);
+  });
+
+  // ── VMCP-02.40 wrong-field-source regression guards ─────────────────────
+  // The diagnostic at coordination/HANDOFF-2026-05-21-coercion-watch-field-source.md
+  // captured the byte-level evidence: state-dump's `chainTargetForceTenths`
+  // and `weightLbsTenths` are firmware-internal lazy values, not real-time
+  // reflections of the user's setting. The cmd=0x10 cascade echo is the
+  // only frame that reliably reflects per-write user state. These guards
+  // pin that architectural choice.
+
+  it('VMCP-02.40: a stale state-dump with frozen chainTargetForceTenths does NOT fire chain coercion', () => {
+    // The morning bench session captured left's state-dump payload
+    // byte-identical across multiple chain setter writes — the firmware's
+    // lazy effective-force field hadn't refreshed yet. Under VMCP-02.40
+    // that frozen frame must not be observed for chain coercion at all.
+    watch.register({
+      setterName: 'device.set_chains',
+      field: 'chains',
+      requested: 25,
+      setterReturnedAt: Date.now(),
+    });
+    // State-dump arrives carrying the stale lazy value (500 = 50 lb, way
+    // off from requested 25). Pre-VMCP-02.40 this would have fired a
+    // false `setting_coerced` event. Post-fix: no observation on this
+    // field via state-dump → no event.
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        trainingMode: 1,
+        chainTargetForceTenths: 500,
+        weightLbsTenths: 500,
+      }),
+    );
+    client.fire.stateDump(
+      makeStateDumpEvent({
+        trainingMode: 1,
+        chainTargetForceTenths: 500,
+        weightLbsTenths: 500,
+      }),
+    );
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // The pending chains check is still alive — waiting for a real cmd=0x10
+    // echo to either confirm-clear or fire-coercion.
+    expect(watch.size()).toBe(1);
+  });
+
+  it('VMCP-02.40: cmd=0x10 echo at requested chain value clears the check (exact-mode)', () => {
+    // The firmware accepted the chain write without coercion (e.g. user
+    // wrote chains=25 while weight=50 — no cap needed). The cmd=0x10 echo
+    // carries chains=25 matching the pending check's requested value,
+    // exact-mode clears the check, no event fires.
+    watch.register({
+      setterName: 'device.set_chains',
+      field: 'chains',
+      requested: 25,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.settingsUpdate({ chains: 25 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    expect(watch.size()).toBe(0);
+  });
+
+  it('VMCP-02.40: cmd=0x10 echo with coerced weight fires baseWeight setting_coerced', () => {
+    // Direct device.set_weight pendant: pending check requested=200 (lbs),
+    // firmware caps to 175 (lbs). cmd=0x10 echo carries baseWeight=175,
+    // threshold=1 → fires immediately.
+    watch.register({
+      setterName: 'device.set_weight',
+      field: 'baseWeight',
+      requested: 200,
+      setterReturnedAt: Date.now(),
+    });
+    client.fire.settingsUpdate({ baseWeight: 175 });
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.meta.field).toBe('baseWeight');
+    expect(events[0]!.meta.requested_value).toBe('200');
+    expect(events[0]!.meta.device_value).toBe('175');
   });
 });
