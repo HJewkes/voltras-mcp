@@ -304,11 +304,23 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // Latest known state-dump values; transitions synthesize `settings_update`
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
+  //
+  // VMCP-02.40: `chainTargetForceTenths` and `weightLbsTenths` are no longer
+  // tracked here — they were the firmware's lazily-computed effective-force
+  // values, false-positive on the Damper→WeightTraining mode-bounce and stale
+  // across cmd=0x10 cascade writes. User-facing chain/weight transitions are
+  // now sourced from the cmd=0x10 cascade (see `lastChainSettingLbs` /
+  // `lastBaseWeight` below).
   let lastAssistMode: number | undefined = undefined;
   let lastTrainingModeRaw: number | undefined = undefined;
-  let lastChainTargetForceTenths: number | undefined = undefined;
-  let lastWeightLbsTenths: number | undefined = undefined;
   let lastEccentricPercentTenths: number | undefined = undefined;
+  // VMCP-02.40: cmd=0x10 cascade-sourced user-set values. Transition publish
+  // for `settings_update` channel events lives in the `onSettingsUpdate`
+  // handler below — fires when the cmd=0x10 echo carries a new value, which
+  // is the reliable per-write signal (state-dump's offset 5-6 / offset 3-4
+  // are lazy and unsuitable for this purpose).
+  let lastChainSettingLbs: number | undefined = undefined;
+  let lastBaseWeight: number | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -745,30 +757,38 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // Synthesize a `settings_update` channel event when damperLevel
-      // transitions. The cmd=0x10 cascade carrying paramID 0x0351 routes
-      // through this same callback; we observe the field on
-      // `settings.damperLevel` and only publish when the value actually
-      // changes. The `__all` block in the payload snapshots every monitored
-      // field at emission time so consumers don't have to merge against a
-      // prior settings_update.
+      // Synthesize `settings_update` channel events when the cmd=0x10
+      // cascade carries a new value for any of the user-set fields the
+      // bridge surfaces. The `__all` block in the payload snapshots every
+      // monitored field at emission time so consumers don't have to merge
+      // against a prior settings_update.
+      //
+      // VMCP-02.40: chain + base-weight transitions publish from this
+      // handler (not from `synthStateDumpTransitions`), so the channel
+      // event reflects the user-set value as soon as the cmd=0x10 echo
+      // lands. The state-dump's `chainTargetForceTenths` /
+      // `weightLbsTenths` were the prior source but are firmware-internal
+      // lazy values; sourcing here removes the false-positive class.
+      const incomingWeight = settings.weight ?? settings.baseWeight;
       if (settings.damperLevel !== undefined && settings.damperLevel !== lastDamperLevel) {
         lastDamperLevel = settings.damperLevel;
-        const device = live.snapshotDevice();
-        const all: SettingsUpdateAll = { damperLevel: settings.damperLevel };
-        if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
-        if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
-        if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
-        const payload = buildSettingsUpdatePayload('damperLevel', settings.damperLevel, all);
-        slotChannels.publish(payload);
+        publishCmd10SettingsUpdate('damperLevel', settings.damperLevel, live, slotChannels);
+      }
+      if (typeof settings.chains === 'number' && settings.chains !== lastChainSettingLbs) {
+        lastChainSettingLbs = settings.chains;
+        publishCmd10SettingsUpdate('chainSettingLbs', settings.chains, live, slotChannels);
+      }
+      if (typeof incomingWeight === 'number' && incomingWeight !== lastBaseWeight) {
+        lastBaseWeight = incomingWeight;
+        publishCmd10SettingsUpdate('weightLbs', incomingWeight, live, slotChannels);
       }
 
       // F2/F3 coercion correlation: walk every field the SDK surfaced and
       // ask the slot's CoercionWatch whether it matches a recently-fired
-      // setter at a coerced value. The fields exposed via onSettingsUpdate
-      // are the cmd=0x10 cascade subset (damperLevel + the user-set chain
-      // pounds); state-dump-only fields are observed in `onStateDump`
-      // below to avoid double-firing on the same event burst.
+      // setter at a coerced value. VMCP-02.40 routes chain + weight
+      // coercion-watch through this cmd=0x10 cascade path (the only frame
+      // that reliably reflects the post-write user-set value); only ecc
+      // and assistMode remain observed in `onStateDump` below.
       observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels, slotId);
     }),
   );
@@ -824,8 +844,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           {
             lastAssistMode,
             lastTrainingModeRaw,
-            lastChainTargetForceTenths,
-            lastWeightLbsTenths,
             lastEccentricPercentTenths,
           },
           lastDamperLevel,
@@ -834,8 +852,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         );
         lastAssistMode = dump.assistMode;
         lastTrainingModeRaw = dump.trainingMode;
-        lastChainTargetForceTenths = dump.chainTargetForceTenths;
-        lastWeightLbsTenths = dump.weightLbsTenths;
         lastEccentricPercentTenths = dump.eccentricPercentTenths;
 
         // F2/F3 coercion correlation for state-dump fields. Run after
@@ -1180,8 +1196,6 @@ function synthStateDumpTransitions(
   prev: {
     lastAssistMode: number | undefined;
     lastTrainingModeRaw: number | undefined;
-    lastChainTargetForceTenths: number | undefined;
-    lastWeightLbsTenths: number | undefined;
     lastEccentricPercentTenths: number | undefined;
   },
   knownDamperLevel: number | undefined,
@@ -1189,6 +1203,13 @@ function synthStateDumpTransitions(
   channels: ChannelPublisher,
 ): void {
   const device = live.snapshotDevice();
+  // VMCP-02.40: state-dump-derived `chainTargetForceTenths` and
+  // `weightLbsTenths` are kept in the `__all` block for diagnostic context
+  // but no longer drive per-field `settings_update` channel events — those
+  // transitions now publish from `onSettingsUpdate` (cmd=0x10 cascade)
+  // under `chainSettingLbs` / `weightLbs`, where the values reflect the
+  // user-set state per-write instead of the firmware's lazy effective
+  // force.
   const all: SettingsUpdateAll = {
     assistMode: dump.assistMode,
     trainingModeRaw: dump.trainingMode,
@@ -1207,20 +1228,6 @@ function synthStateDumpTransitions(
     'trainingModeRaw',
     dump.trainingMode,
     prev.lastTrainingModeRaw,
-    all,
-    channels,
-  );
-  publishIfTransition(
-    'chainTargetForceTenths',
-    dump.chainTargetForceTenths,
-    prev.lastChainTargetForceTenths,
-    all,
-    channels,
-  );
-  publishIfTransition(
-    'weightLbsTenths',
-    dump.weightLbsTenths,
-    prev.lastWeightLbsTenths,
     all,
     channels,
   );
@@ -1245,17 +1252,50 @@ function publishIfTransition(
 }
 
 /**
+ * VMCP-02.40: publish a `settings_update` channel event for a cmd=0x10
+ * cascade-sourced field transition (damperLevel, chainSettingLbs, weightLbs).
+ * Composes the `__all` block from the just-updated LiveState snapshot so
+ * consumers see the post-write value for the changed field alongside the
+ * latest known values for the other tracked fields.
+ */
+function publishCmd10SettingsUpdate(
+  field: SettingsUpdateField,
+  current: number,
+  live: LiveState,
+  channels: ChannelPublisher,
+): void {
+  const device = live.snapshotDevice();
+  const all: SettingsUpdateAll = {};
+  if (device.damperLevel !== undefined) all.damperLevel = device.damperLevel;
+  if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
+  if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
+  if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
+  if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
+  channels.publish(buildSettingsUpdatePayload(field, current, all));
+}
+
+/**
  * Walk an `onSettingsUpdate` payload's coercion-eligible fields and ask the
  * slot's CoercionWatch whether any of them matches a recently-fired setter
  * at a coerced value. Publishes one `setting_coerced` channel event per hit.
  *
- * Only the fields exposed through the cmd=0x10 cascade are inspected here:
- *   * `damperLevel` — direct passthrough (no unit conversion).
+ * VMCP-02.40: chain + base-weight coercion observation lives here (cmd=0x10
+ * cascade is the only frame that reliably reflects the user-set chain /
+ * weight per-write). The state-dump-derived `chainTargetForceTenths` and
+ * `weightLbsTenths` are the firmware's lazily-computed effective force at
+ * the cable — observed against requested user values they false-positive on
+ * mode-bounce transients and stale across writes. The diagnostic at
+ * `coordination/HANDOFF-2026-05-21-coercion-watch-field-source.md` carries
+ * the byte-level evidence.
  *
- * State-dump-only fields (`assistMode`, `weightLbsTenths`,
- * `chainTargetForceTenths`, `eccentricPercentTenths`) are observed in the
- * `onStateDump` handler instead — observing them on both paths would double-
- * fire when a setter write triggers both cascades in the same window.
+ * Fields observed here (all cmd=0x10-sourced, whole-pound units):
+ *   * `damperLevel` — direct passthrough (no unit conversion).
+ *   * `chains` — user-set chain force in lbs.
+ *   * `baseWeight` — user-set base weight in lbs.
+ *
+ * State-dump-only fields (`assistMode`, `eccentricPercentTenths`) are still
+ * observed in the `onStateDump` handler — they have no cmd=0x10 echo today
+ * (eccentric may move here in a follow-up once a cmd=0x10 source is wired).
  */
 function observeSettingsUpdateCoercions(
   settings: SdkSettingsUpdate,
@@ -1267,13 +1307,25 @@ function observeSettingsUpdateCoercions(
   if (typeof settings.damperLevel === 'number') {
     observeCoercion('damperLevel', settings.damperLevel, watch, live, channels, slotId);
   }
+  if (typeof settings.chains === 'number') {
+    observeCoercion('chains', settings.chains, watch, live, channels, slotId);
+  }
+  const weight = settings.weight ?? settings.baseWeight;
+  if (typeof weight === 'number') {
+    observeCoercion('baseWeight', weight, watch, live, channels, slotId);
+  }
 }
 
 /**
  * Walk an `onStateDump` payload's coercion-eligible fields. Publishes one
- * `setting_coerced` event per hit. The fields here correspond to the F2/F3
- * setters whose user intent flows through state-dump frames (ecc, chains,
- * weight, assist).
+ * `setting_coerced` event per hit.
+ *
+ * VMCP-02.40: chain + weight observations moved to
+ * `observeSettingsUpdateCoercions` (cmd=0x10 path). Only `assistMode` and
+ * `eccentricPercentTenths` remain here — they have no cmd=0x10 echo today.
+ * Eccentric's `eccentricPercentTenths` has the documented 80→320→0
+ * transient burst defused by the 2-of-2 stability counter; a follow-up may
+ * route eccentric through cmd=0x10 too.
  */
 function observeStateDumpCoercions(
   dump: SdkStateDump,
@@ -1290,15 +1342,6 @@ function observeStateDumpCoercions(
     channels,
     slotId,
   );
-  observeCoercion(
-    'chainTargetForceTenths',
-    dump.chainTargetForceTenths,
-    watch,
-    live,
-    channels,
-    slotId,
-  );
-  observeCoercion('weightLbsTenths', dump.weightLbsTenths, watch, live, channels, slotId);
   observeCoercion('assistMode', dump.assistMode, watch, live, channels, slotId);
 }
 
