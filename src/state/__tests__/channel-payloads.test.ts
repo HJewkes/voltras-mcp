@@ -48,6 +48,10 @@ function makePhase(
     holdMs: number;
     startPos: number;
     endPos: number;
+    totalForce: number;
+    peakVelocityTime: number;
+    lastMovementVelocity: number;
+    peakForce: number;
   }>,
 ): Rep['concentric'] {
   const samples = overrides.samples ?? 0;
@@ -69,12 +73,14 @@ function makePhase(
     startPosition: overrides.startPos ?? 0,
     endPosition: overrides.endPos ?? 0,
     _totalVelocity: overrides.totalVelocity ?? 0,
-    _totalForce: 0,
+    _totalForce: overrides.totalForce ?? 0,
     _totalLoad: 0,
     _movementSampleCount: overrides.movementSampleCount ?? 0,
     _totalHoldDuration: overrides.holdMs ?? 0,
+    _peakVelocityTime: overrides.peakVelocityTime ?? 0,
+    _lastMovementVelocity: overrides.lastMovementVelocity ?? 0,
     peakVelocity: overrides.peakVelocity ?? 0,
-    peakForce: 0,
+    peakForce: overrides.peakForce ?? 0,
     peakLoad: 0,
   };
 }
@@ -175,12 +181,12 @@ describe('buildRepFinalizedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.summary).toBe('Rep 2: 0.71 m/s peak conc, 135 lbs');
     expect(parsed.rep.rep_number).toBe(2);
-    expect(parsed.rep.concentric).toEqual({
+    expect(parsed.rep.concentric).toMatchObject({
       peak_velocity: 0.71,
       mean_velocity: 0.71,
       duration_ms: 400,
     });
-    expect(parsed.rep.eccentric).toEqual({
+    expect(parsed.rep.eccentric).toMatchObject({
       peak_velocity: 0.55,
       mean_velocity: 0.55,
       duration_ms: 500,
@@ -192,6 +198,61 @@ describe('buildRepFinalizedPayload', () => {
       training_mode: 'WeightTraining',
       rep_count_so_far: 2,
     });
+  });
+
+  it('surfaces telemetry enrichment fields on each phase + rep level', () => {
+    // Hand-built rep with known internals so the boundary conversions are
+    // checkable. Concentric phase: 4 movement samples, peakVelocity 800 mm/s
+    // captured 200ms into the phase, _totalPower = 800 * 100 * 4 = 320_000
+    // (peakForce 100, uniform), trailing movement velocity 600 mm/s.
+    const rep: Rep = {
+      repNumber: 3,
+      concentric: makePhase({
+        samples: 4,
+        peakVelocity: 800,
+        totalVelocity: 2800,
+        totalForce: 400,
+        movementSampleCount: 4,
+        peakVelocityTime: 1200,
+        lastMovementVelocity: 600,
+        peakForce: 100,
+        startTime: 1000,
+        endTime: 1400,
+        startPos: 0,
+        endPos: 600,
+      }),
+      eccentric: makePhase({
+        samples: 4,
+        peakVelocity: 500,
+        totalVelocity: 1600,
+        totalForce: 320,
+        movementSampleCount: 4,
+        peakVelocityTime: 1600,
+        lastMovementVelocity: 200,
+        peakForce: 80,
+        startTime: 1500,
+        endTime: 1900,
+        startPos: 600,
+        endPos: 0,
+      }),
+    };
+    const { content } = buildRepFinalizedPayload(rep, 2, set, device, 3);
+    const parsed = JSON.parse(content);
+    const conc = parsed.rep.concentric;
+    expect(conc.time_to_peak_velocity_ms).toBe(200); // 1200 - 1000
+    // velocity_drop: (peak 800 - last 600) / peak × 100 = 25%
+    expect(conc.velocity_drop_pct).toBeCloseTo(25.0, 1);
+    // velocity_envelope is 4-pt array; values land in m/s (synthetic phase
+    // has zero-velocity samples, so envelope is [0, 0, 0, 0]).
+    expect(conc.velocity_envelope_mps).toEqual([0, 0, 0, 0]);
+    // Eccentric mirrors the same shape.
+    expect(parsed.rep.eccentric.velocity_drop_pct).toBeCloseTo(60.0, 1);
+    expect(parsed.rep.eccentric.time_to_peak_velocity_ms).toBe(100);
+    // Rep-level: tempo_ratio = ecc.movementDuration / conc.movementDuration
+    // = 0.4 / 0.4 = 1.0 (no hold in either phase).
+    expect(parsed.rep.tempo_ratio).toBeCloseTo(1.0, 2);
+    // hold_top_ms = eccentric.startTime - concentric.endTime = 1500 - 1400 = 100
+    expect(parsed.rep.hold_top_ms).toBe(100);
   });
 
   it('uses a weight-less summary when device weight is unknown', () => {

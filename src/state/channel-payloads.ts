@@ -23,7 +23,12 @@ import type { Rep } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
   getPhaseRangeOfMotion,
+  getPhaseTimeToPeakVelocityMs,
+  getPhaseVelocityDropPct,
+  getPhaseVelocityEnvelope,
+  getRepHoldTopMs,
   getRepPeakForce,
+  getRepTempoRatio,
 } from '@voltras/workout-analytics';
 
 import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
@@ -86,6 +91,56 @@ function repRangeOfMotion(rep: Rep): number | null {
 }
 
 /**
+ * Round a fractional percentage to one decimal place. Used for
+ * velocity-drop, which workout-analytics returns as 0-100 already.
+ */
+function pctOneDecimal(pct: number): number {
+  return Number(pct.toFixed(1));
+}
+
+/**
+ * Convert the 4-point mm/s envelope from workout-analytics into the same
+ * m/s scale as `peak_velocity` / `mean_velocity`. Preserves length and
+ * order so consumers can read the entries positionally (25/50/75/100% of
+ * the phase movement span).
+ */
+function envelopeMps(env: readonly number[]): [number, number, number, number] {
+  return [
+    mmsToMps(env[0] ?? 0),
+    mmsToMps(env[1] ?? 0),
+    mmsToMps(env[2] ?? 0),
+    mmsToMps(env[3] ?? 0),
+  ];
+}
+
+/**
+ * Telemetry-derived per-phase enrichment fields (VMCP-02.29 follow-up).
+ * Slotted into `rep.concentric` / `rep.eccentric` alongside the existing
+ * peak / mean / duration block.
+ *
+ * Scope note: impulse + meanPower are intentionally NOT included in this
+ * first wave. Workout-analytics already exposes them via
+ * `getRepConcentricImpulse` / `getRepMeanConcentricPower`, but voltras-mcp's
+ * bridge currently passes raw frame values into `WorkoutSample.force`
+ * (tenths-of-lbs, not lbs per the contract) which would scale impulse +
+ * power outputs by 10x. Adding them cleanly requires fixing the unit
+ * passthrough in the bridge first — deferred to a follow-up.
+ */
+interface PhaseEnrichment {
+  time_to_peak_velocity_ms: number;
+  velocity_drop_pct: number;
+  velocity_envelope_mps: [number, number, number, number];
+}
+
+function phaseEnrichment(phase: Rep['concentric']): PhaseEnrichment {
+  return {
+    time_to_peak_velocity_ms: getPhaseTimeToPeakVelocityMs(phase),
+    velocity_drop_pct: pctOneDecimal(getPhaseVelocityDropPct(phase)),
+    velocity_envelope_mps: envelopeMps(getPhaseVelocityEnvelope(phase)),
+  };
+}
+
+/**
  * Build the meta + content for a `rep_finalized` channel event. Caller
  * supplies the finalized rep, the still-active set, the device snapshot,
  * and the count of reps already in `set.reps` (which includes the new
@@ -138,14 +193,18 @@ export function buildRepFinalizedPayload(
         peak_velocity: concPeak,
         mean_velocity: concMean,
         duration_ms: phaseMovementDurationMs(finalizedRep.concentric),
+        ...phaseEnrichment(finalizedRep.concentric),
       },
       eccentric: {
         peak_velocity: eccPeak,
         mean_velocity: eccMean,
         duration_ms: phaseMovementDurationMs(finalizedRep.eccentric),
+        ...phaseEnrichment(finalizedRep.eccentric),
       },
       peak_force: getRepPeakForce(finalizedRep),
       rom_m: repRangeOfMotion(finalizedRep),
+      tempo_ratio: Number(getRepTempoRatio(finalizedRep).toFixed(2)),
+      hold_top_ms: getRepHoldTopMs(finalizedRep),
     },
     set_context: {
       weight_lbs: device.weightLbs ?? null,
@@ -465,21 +524,27 @@ function closedByFor(cause: SetEndedCause, partialReason: string | undefined): S
  */
 function serializeRepForPayload(rep: Rep): {
   rep_number: number;
-  concentric: { peak_velocity: number; mean_velocity: number };
-  eccentric: { peak_velocity: number; mean_velocity: number };
+  concentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
+  eccentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
   rom_m: number | null;
+  tempo_ratio: number;
+  hold_top_ms: number;
 } {
   return {
     rep_number: rep.repNumber,
     concentric: {
       peak_velocity: mmsToMps(rep.concentric.peakVelocity),
       mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.concentric)),
+      ...phaseEnrichment(rep.concentric),
     },
     eccentric: {
       peak_velocity: mmsToMps(rep.eccentric.peakVelocity),
       mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.eccentric)),
+      ...phaseEnrichment(rep.eccentric),
     },
     rom_m: repRangeOfMotion(rep),
+    tempo_ratio: Number(getRepTempoRatio(rep).toFixed(2)),
+    hold_top_ms: getRepHoldTopMs(rep),
   };
 }
 
