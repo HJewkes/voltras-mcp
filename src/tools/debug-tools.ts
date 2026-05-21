@@ -24,7 +24,6 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 
 import {
-  DebugCompareRepStreamsInput,
   DebugPushTestChannelInput,
   DebugRecentEventsInput,
   DebugRecentFramesInput,
@@ -133,46 +132,4 @@ export function registerDebugTools(
       return Promise.resolve({ ok: true });
     }),
   );
-  install(
-    placeholders,
-    'debug.compare_rep_streams',
-    DebugCompareRepStreamsInput,
-    wrapHandler(DebugCompareRepStreamsInput, (input) => {
-      const slot = state.slots.get(input.slot);
-      if (slot === undefined) {
-        return Promise.resolve({
-          slot: input.slot,
-          active: false,
-          reason: 'unknown_slot',
-        });
-      }
-      const set = slot.live.snapshotSet();
-      if (set === undefined) {
-        return Promise.resolve({
-          slot: input.slot,
-          active: false,
-          reason: 'no_active_set',
-        });
-      }
-      const analyticsCount = set.reps.length;
-      const firmwareCount = set.firmwareReps?.length ?? 0;
-      return Promise.resolve({
-        slot: input.slot,
-        active: true,
-        set_id: set.setId,
-        analytics_count: analyticsCount,
-        firmware_count: firmwareCount,
-        divergence: analyticsCount - firmwareCount,
-      });
-    }),
-    COMPARE_REP_STREAMS_DESCRIPTION,
-  );
 }
-
-const COMPARE_REP_STREAMS_DESCRIPTION =
-  "VMCP-02.29 Phase 1 parity tool. Returns side-by-side rep counts on the slot's currently-active set: " +
-  '`analytics_count` (eccentric→concentric boundaries from the workout-analytics frame pipeline) vs ' +
-  "`firmware_count` (firmware-anchored `onPerRep` 'return' boundaries). " +
-  '`divergence = analytics_count - firmware_count` — positive means analytics is counting more reps than the firmware. ' +
-  'Returns `{ active: false, reason: "no_active_set" | "unknown_slot" }` when there is no set to compare. ' +
-  'Phase 1 is measurement-gathering only; no behavioral change to set/rep handling.';
