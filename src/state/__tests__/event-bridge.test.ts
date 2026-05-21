@@ -430,21 +430,116 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onPerRep (debug-only post-fix)', () => {
-    // The device fires onPerRep at every phase transition (concentric
-    // → eccentric → idle), so it cannot be the "rep complete" signal — that
-    // would double-count every rep. The bridge logs onPerRep to the
-    // debug buffer but does NOT mutate live state or notify resources.
-    it('does not mutate live state on bare per-rep event (no frames buffered)', () => {
+  describe('onPerRep (VMCP-02.29 Phase 1 firmware parity)', () => {
+    // The device fires onPerRep at every phase transition (pull start +
+    // return start) — same `repCount` for both. The bridge appends a
+    // FirmwareRep on 'return' only (one per real rep) and publishes a
+    // parallel `rep_finalized` channel event with `rep_source: 'firmware'`.
+    // Analytics-derived `rep_finalized` (rep_source: 'analytics') still
+    // fires from onFrame — the two streams run side-by-side so
+    // `debug.compare_rep_streams` can surface the count diff.
+    it('ignores the pull-phase event (only return counts as end-of-rep)', () => {
       startSet(live);
-      const before = live.snapshotSet();
-      client.fire.perRep();
-      expect(live.snapshotSet()).toEqual(before);
-      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+      client.fire.perRep({
+        phase: 'pull',
+        frameCounter: 5,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 600,
+      });
+      expect(live.snapshotSet()?.firmwareReps ?? []).toHaveLength(0);
+      expect(channels.publish).not.toHaveBeenCalled();
     });
 
-    it('drops the signal silently when no set is active', () => {
-      client.fire.perRep();
+    it('appends a FirmwareRep + publishes rep_source:firmware on return phase', () => {
+      startSet(live);
+      live.applySettings({ connected: true, weightLbs: 60, trainingMode: 'WeightTraining' });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 600,
+      });
+      const set = live.snapshotSet();
+      expect(set?.firmwareReps).toHaveLength(1);
+      expect(set?.firmwareReps?.[0]).toMatchObject({
+        repNumber: 1,
+        setCounter: 1,
+        frameCounter: 12,
+        targetWeightTenths: 600,
+      });
+      expect(channels.publish).toHaveBeenCalledTimes(1);
+      const event = channels.publish.mock.calls[0][0];
+      expect(event.meta.event_type).toBe('rep_finalized');
+      expect(event.meta.rep_source).toBe('firmware');
+      expect(event.meta.set_id).toBe('set-1');
+      expect(event.meta.rep_count).toBe('1');
+      expect(event.meta.weight_lbs).toBe('60');
+      const parsed = JSON.parse(event.content);
+      expect(parsed.rep.rep_number).toBe(1);
+      expect(parsed.rep.target_weight_tenths).toBe(600);
+      expect(parsed.set_context.firmware_rep_count_so_far).toBe(1);
+    });
+
+    it('de-dupes consecutive return events with the same (setCounter, repCount)', () => {
+      startSet(live);
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      // Replay the same boundary (e.g., a redundant decode) — should be ignored.
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      expect(live.snapshotSet()?.firmwareReps).toHaveLength(1);
+      expect(channels.publish).toHaveBeenCalledTimes(1);
+    });
+
+    it('appends each unique repCount in sequence', () => {
+      startSet(live);
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 24,
+        setCounter: 1,
+        repCount: 2,
+        targetWeightTenths: 0,
+      });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 36,
+        setCounter: 1,
+        repCount: 3,
+        targetWeightTenths: 0,
+      });
+      const reps = live.snapshotSet()?.firmwareReps ?? [];
+      expect(reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+      expect(channels.publish).toHaveBeenCalledTimes(3);
+    });
+
+    it('drops the firmware boundary silently when no set is active', () => {
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 1,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
   });
@@ -559,6 +654,7 @@ describe('wireEventBridge', () => {
       const event = channels.publish.mock.calls[0][0];
       expect(event.meta.source).toBe('voltras');
       expect(event.meta.event_type).toBe('rep_finalized');
+      expect(event.meta.rep_source).toBe('analytics');
       expect(event.meta.set_id).toBe('set-1');
       expect(event.meta.rep_count).toBe('1');
       // Velocity in the test frames is 0.5 (positive); meta should expose

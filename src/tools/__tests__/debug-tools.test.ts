@@ -7,6 +7,7 @@
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { ServerState } from '../../state/server-state.js';
+import type { LiveState as LiveStateType } from '../../state/live-state.js';
 
 vi.mock('@voltras/node-sdk', () => ({}));
 
@@ -48,7 +49,12 @@ function fakeState(channels: { publish: ReturnType<typeof vi.fn> }): ServerState
   return { channels } as unknown as ServerState;
 }
 
-const ALL_DEBUG_TOOLS = ['debug.recent_frames', 'debug.recent_events', 'debug.push_test_channel'];
+const ALL_DEBUG_TOOLS = [
+  'debug.recent_frames',
+  'debug.recent_events',
+  'debug.push_test_channel',
+  'debug.compare_rep_streams',
+];
 
 describe('debug.recent_frames', () => {
   beforeEach(() => {
@@ -370,5 +376,120 @@ describe('debug.push_test_channel', () => {
     expect(r.isError).toBe(true);
     expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('debug.compare_rep_streams', () => {
+  // The tool reads `state.slots.get(slot).live.snapshotSet()` so the test
+  // wires a state with a real `LiveState` instance, populates it with a
+  // mixed set of analytics reps + firmware-anchored reps, then asserts the
+  // tool surfaces the count diff. The shape mirrors VMCP-02.29 Phase 1:
+  // measurement parity gathering, no consumer surface change.
+  beforeEach(() => {
+    _resetDebugBuffersForTest();
+  });
+
+  async function buildState(): Promise<{
+    live: LiveStateType;
+    invoke: ReturnType<typeof makePlaceholders>['invoke'];
+  }> {
+    const { LiveState } = await import('../../state/live-state.js');
+    const live = new LiveState();
+    const slots = new Map([['primary', { live }]]);
+    const state = { channels: { publish: vi.fn() }, slots } as unknown as ServerState;
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, state, placeholders as never);
+    return { live, invoke };
+  }
+
+  async function readBody(invoke: ReturnType<typeof makePlaceholders>['invoke']): Promise<{
+    slot: string;
+    active: boolean;
+    set_id?: string;
+    analytics_count?: number;
+    firmware_count?: number;
+    divergence?: number;
+    reason?: string;
+  }> {
+    const r = await invoke('debug.compare_rep_streams', {});
+    return JSON.parse(r.content[0].text);
+  }
+
+  it('returns active:false / no_active_set when the slot has no armed set', async () => {
+    const { invoke } = await buildState();
+    const body = await readBody(invoke);
+    expect(body).toEqual({ slot: 'primary', active: false, reason: 'no_active_set' });
+  });
+
+  it('returns active:false / unknown_slot for an unrecognised slot id', async () => {
+    const { invoke } = await buildState();
+    const r = await invoke('debug.compare_rep_streams', { slot: 'left' });
+    const body = JSON.parse(r.content[0].text);
+    expect(body).toEqual({ slot: 'left', active: false, reason: 'unknown_slot' });
+  });
+
+  it('surfaces the analytics vs firmware count diff on the active set', async () => {
+    const { live, invoke } = await buildState();
+    live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+    });
+    live.startSet({
+      setId: 'set-99',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    });
+    // 3 analytics reps (the canonical pipeline), 2 firmware reps.
+    for (let i = 0; i < 3; i += 1) {
+      // Minimal Rep shape suitable for length comparison only.
+      live.appendRep({ concentric: {}, eccentric: {}, repNumber: i + 1 } as never);
+    }
+    for (let i = 0; i < 2; i += 1) {
+      live.appendFirmwareRep({
+        ts: 1000 + i,
+        repNumber: i + 1,
+        setCounter: 1,
+        frameCounter: 10 * (i + 1),
+        targetWeightTenths: 600,
+      });
+    }
+
+    const body = await readBody(invoke);
+    expect(body).toEqual({
+      slot: 'primary',
+      active: true,
+      set_id: 'set-99',
+      analytics_count: 3,
+      firmware_count: 2,
+      divergence: 1,
+    });
+  });
+
+  it('reports firmware_count:0 when only the analytics stream has fired', async () => {
+    const { live, invoke } = await buildState();
+    live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+    });
+    live.startSet({
+      setId: 'set-1',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    });
+    live.appendRep({ concentric: {}, eccentric: {}, repNumber: 1 } as never);
+
+    const body = await readBody(invoke);
+    expect(body.active).toBe(true);
+    expect(body.analytics_count).toBe(1);
+    expect(body.firmware_count).toBe(0);
+    expect(body.divergence).toBe(1);
   });
 });
