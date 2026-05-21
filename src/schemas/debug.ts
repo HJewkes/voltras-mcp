@@ -46,17 +46,3 @@ export const DebugPushTestChannelInput = z.object({
   content: z.string().min(1),
   meta: z.record(z.string(), z.string()).default({}),
 });
-
-/**
- * Input for `debug.compare_rep_streams` — VMCP-02.29 Phase 1 parity tool.
- * Returns the analytics-derived vs firmware-anchored rep counts on a
- * slot's currently-active set so the divergence between the two pipelines
- * is observable without waiting for a `set.end` + persisted-row diff.
- *
- * `slot` defaults to 'primary' so single-slot callers don't need to think
- * about bilateral wiring. Returns a structured `{ active: false }` shape
- * when the slot has no armed set, so the tool is safe to call at any time.
- */
-export const DebugCompareRepStreamsInput = z.object({
-  slot: z.string().min(1).optional().default('primary'),
-});
