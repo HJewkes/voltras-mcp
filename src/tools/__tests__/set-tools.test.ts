@@ -706,8 +706,10 @@ describe('set.end', () => {
       reps: Array<{ rep_number: number }>;
       vbt_summary: {
         first_rep_v: number | null;
+        peak_rep_v: number | null;
+        peak_rep_number: number | null;
         last_rep_v: number | null;
-        velocity_delta_pct: number | null;
+        velocity_loss_pct: number | null;
         mean_velocity: number | null;
       };
     };
@@ -720,12 +722,12 @@ describe('set.end', () => {
     expect(parsed.reps).toHaveLength(2);
     expect(parsed.reps[0].rep_number).toBe(1);
     expect(parsed.reps[1].rep_number).toBe(2);
-    // makeRep produces zero-velocity phases — vbt.velocity_delta_pct is null
-    // (first rep peak <= 0 disables the delta calc), but the rest of the
+    // makeRep produces zero-velocity phases — vbt.velocity_loss_pct is null
+    // (peak baseline <= 0 disables the loss calc), but the rest of the
     // vbt_summary fields are present and numeric.
     expect(parsed.vbt_summary.first_rep_v).toBe(0);
     expect(parsed.vbt_summary.last_rep_v).toBe(0);
-    expect(parsed.vbt_summary.velocity_delta_pct).toBeNull();
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
   });
 
   it('explicit set.end produces unified set_ended with closed_by=tool', async () => {
@@ -808,7 +810,7 @@ describe('set.end', () => {
     expect(parsed.device_summary).toBeUndefined();
   });
 
-  it('set_ended vbt_summary.velocity_delta_pct is null when fewer than 2 reps', async () => {
+  it('set_ended vbt_summary.velocity_loss_pct is null when fewer than 2 reps', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {});
@@ -819,10 +821,10 @@ describe('set.end', () => {
     const event = h.channels.publish.mock.calls[0][0] as { content: string };
     const parsed = JSON.parse(event.content) as {
       reps: unknown[];
-      vbt_summary: { velocity_delta_pct: number | null };
+      vbt_summary: { velocity_loss_pct: number | null };
     };
     expect(parsed.reps).toHaveLength(1);
-    expect(parsed.vbt_summary.velocity_delta_pct).toBeNull();
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
   });
 
   it('maps reps to StoredRep with sequential index and parent setId', async () => {

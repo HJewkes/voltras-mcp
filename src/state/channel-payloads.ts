@@ -448,7 +448,7 @@ export function buildSetEndedPayload(
   const summary = buildSetEndedSummary(
     stored.reps.length,
     safeDurationMs,
-    vbt.velocity_delta_pct,
+    vbt.velocity_loss_pct,
     cause,
   );
 
@@ -548,37 +548,88 @@ function serializeRepForPayload(rep: Rep): {
   };
 }
 
+/**
+ * Highest peak concentric velocity across a rep array. Returns 0 when the
+ * array is empty or no rep has a positive concentric peak. This is the
+ * canonical VBT fatigue baseline — measuring loss from the athlete's best
+ * rep, not the first rep (rep 1 is routinely a cable-engagement artifact
+ * with a tiny ROM and a meaninglessly low velocity; VMCP-02.24).
+ */
+export function peakConcentricBaseline(reps: readonly Rep[]): number {
+  let max = 0;
+  for (const rep of reps) {
+    if (rep.concentric.peakVelocity > max) {
+      max = rep.concentric.peakVelocity;
+    }
+  }
+  return max;
+}
+
+/**
+ * Rep number (1-indexed) at which the velocity baseline was set — the rep
+ * with the highest peak concentric velocity. Ties prefer the earlier rep so
+ * the model can reason "baseline came from rep 1, current from rep 8"
+ * without ambiguity.
+ */
+export function baselineRepNumberFor(reps: readonly Rep[]): number {
+  let best = 0;
+  let idx = 0;
+  for (let i = 0; i < reps.length; i++) {
+    if (reps[i].concentric.peakVelocity > best) {
+      best = reps[i].concentric.peakVelocity;
+      idx = i;
+    }
+  }
+  // repNumber is canonical when present; fall back to 1-indexed array
+  // position for analytics' immutable rep shape.
+  return reps[idx]?.repNumber ?? idx + 1;
+}
+
 interface VbtSummary {
   first_rep_v: number | null;
+  /** Baseline velocity: the highest peak concentric velocity across the set. */
+  peak_rep_v: number | null;
+  /** 1-indexed rep number where the peak baseline was set. */
+  peak_rep_number: number | null;
   last_rep_v: number | null;
   /**
-   * `(first - last) / first × 100`. Positive when the set decelerated
-   * (typical "velocity loss"); negative when reps got faster across the set
-   * (e.g. potentiation, warm-up sets, technical improvement). Renamed from
-   * the prior `velocity_loss_pct` so the sign is interpretable without an
-   * implicit "loss" framing.
+   * `(peak - last) / peak × 100`. Canonical VBT velocity loss: how far the
+   * final rep slowed from the set's fastest rep. Always ≥ 0 (the last rep
+   * can be at most the peak). Matches the `velocity_loss_exceeded` trigger
+   * event's convention — both measure loss from the peak baseline, not from
+   * a contaminated rep-1 baseline (VMCP-02.12, .24).
    */
-  velocity_delta_pct: number | null;
+  velocity_loss_pct: number | null;
   mean_velocity: number | null;
 }
 
 function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   if (reps.length === 0) {
-    return { first_rep_v: null, last_rep_v: null, velocity_delta_pct: null, mean_velocity: null };
+    return {
+      first_rep_v: null,
+      peak_rep_v: null,
+      peak_rep_number: null,
+      last_rep_v: null,
+      velocity_loss_pct: null,
+      mean_velocity: null,
+    };
   }
-  // Delta% is computed on the native scale (ratio is unit-invariant); first
-  // and last velocity values get converted to m/s for the payload so the
-  // field labels match. `meanConcentricPeakVelocity` already converts.
+  // Loss% is computed on the native scale (ratio is unit-invariant); the
+  // velocity values get converted to m/s for the payload so the field labels
+  // match. `meanConcentricPeakVelocity` already converts.
   const firstRaw = reps[0].concentric.peakVelocity;
   const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
-  const deltaPct =
-    reps.length < 2 || firstRaw <= 0
+  const peakRaw = peakConcentricBaseline(reps);
+  const lossPct =
+    reps.length < 2 || peakRaw <= 0
       ? null
-      : Number((100 * ((firstRaw - lastRaw) / firstRaw)).toFixed(1));
+      : Number((100 * ((peakRaw - lastRaw) / peakRaw)).toFixed(1));
   return {
     first_rep_v: mmsToMps(firstRaw),
+    peak_rep_v: mmsToMps(peakRaw),
+    peak_rep_number: baselineRepNumberFor(reps),
     last_rep_v: mmsToMps(lastRaw),
-    velocity_delta_pct: deltaPct,
+    velocity_loss_pct: lossPct,
     mean_velocity: meanConcentricPeakVelocity(reps),
   };
 }
@@ -586,25 +637,21 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
 function buildSetEndedSummary(
   repCount: number,
   durationMs: number,
-  deltaPct: number | null,
+  lossPct: number | null,
   cause: SetEndedCause,
 ): string {
   const seconds = Math.round(durationMs / 1000);
   const headline = cause === 'device_signal' ? 'Set ended by device' : 'Set ended';
   const base = `${headline}: ${repCount} reps in ${seconds}s`;
-  // Phrase the delta in the direction the user actually moved: positive →
-  // "slower" (typical fatigue), negative → "faster" (potentiation / warm-up),
-  // zero → no qualifier. Avoids the prior "-36.1% velocity loss" wording
-  // that confused readers when reps got faster across the set (F9).
-  const withDelta =
-    deltaPct === null
+  // `lossPct` is peak-to-last velocity loss and is always ≥ 0 — the last rep
+  // can be at most the set's fastest rep. Phrase any positive loss as the
+  // fatigue signal it is; omit the qualifier when the last rep WAS the peak
+  // (zero loss) so we don't tack on a noisy "0.0% velocity loss".
+  const withLoss =
+    lossPct === null || lossPct === 0
       ? base
-      : deltaPct > 0
-        ? `${base}, ${deltaPct.toFixed(1)}% slower last-vs-first`
-        : deltaPct < 0
-          ? `${base}, ${Math.abs(deltaPct).toFixed(1)}% faster last-vs-first`
-          : base;
-  return cause === 'device_signal' ? `${withDelta} (set ended automatically)` : withDelta;
+      : `${base}, ${lossPct.toFixed(1)}% velocity loss (peak-to-last)`;
+  return cause === 'device_signal' ? `${withLoss} (set ended automatically)` : withLoss;
 }
 
 /**

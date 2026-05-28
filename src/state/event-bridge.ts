@@ -126,6 +126,8 @@ import {
   buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
+  baselineRepNumberFor,
+  peakConcentricBaseline,
   triggerDedupeKey,
   type ActiveSetAtDisconnect,
   type CoercionSetContext,
@@ -1048,40 +1050,6 @@ function evaluateRepTriggers(
       continue;
     }
   }
-}
-
-/**
- * Highest peak concentric velocity across a rep array. Returns 0 when the
- * array is empty or no rep has a positive concentric peak.
- */
-function peakConcentricBaseline(reps: readonly Rep[]): number {
-  let max = 0;
-  for (const rep of reps) {
-    if (rep.concentric.peakVelocity > max) {
-      max = rep.concentric.peakVelocity;
-    }
-  }
-  return max;
-}
-
-/**
- * Rep number (1-indexed) at which the velocity-loss baseline was set —
- * the rep with the highest peak concentric velocity. Ties prefer the
- * earlier rep so the model can reason "baseline came from rep 1, current
- * from rep 8" without ambiguity.
- */
-function baselineRepNumberFor(reps: readonly Rep[]): number {
-  let best = 0;
-  let idx = 0;
-  for (let i = 0; i < reps.length; i++) {
-    if (reps[i].concentric.peakVelocity > best) {
-      best = reps[i].concentric.peakVelocity;
-      idx = i;
-    }
-  }
-  // repNumber is canonical when present; fall back to 1-indexed array
-  // position for analytics' immutable rep shape.
-  return reps[idx]?.repNumber ?? idx + 1;
 }
 
 /**
