@@ -404,7 +404,7 @@ describe('buildSetEndedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.summary).toContain('2 reps');
     expect(parsed.summary).toContain('90s');
-    expect(parsed.summary).toContain('slower last-vs-first');
+    expect(parsed.summary).toContain('velocity loss (peak-to-last)');
     expect(parsed.set).toMatchObject({
       set_id: 'set-end',
       session_id: 'sess-1',
@@ -421,19 +421,24 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.reps[0].rom_m).toBeCloseTo(0.6, 3);
     expect(parsed.vbt_summary).toEqual({
       first_rep_v: 0.85,
+      // rep 1 (850) is the set's fastest, so it's the peak baseline
+      peak_rep_v: 0.85,
+      peak_rep_number: 1,
       last_rep_v: 0.5,
-      // (850 - 500) / 850 * 100 = 41.176... => 41.2 (unit-invariant)
-      velocity_delta_pct: 41.2,
+      // (peak 850 - last 500) / 850 * 100 = 41.176... => 41.2 (unit-invariant)
+      velocity_loss_pct: 41.2,
       mean_velocity: 0.675,
     });
   });
 
-  it('vbt_summary.velocity_delta_pct is null when fewer than 2 reps', () => {
+  it('vbt_summary.velocity_loss_pct is null when fewer than 2 reps', () => {
     const reps = [makeRep(1, 600, 400)];
     const { content } = buildSetEndedPayload(buildStored(reps));
     const parsed = JSON.parse(content);
-    expect(parsed.vbt_summary.velocity_delta_pct).toBeNull();
+    expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
     expect(parsed.vbt_summary.first_rep_v).toBe(0.6);
+    expect(parsed.vbt_summary.peak_rep_v).toBe(0.6);
+    expect(parsed.vbt_summary.peak_rep_number).toBe(1);
     expect(parsed.vbt_summary.last_rep_v).toBe(0.6);
   });
 
@@ -444,8 +449,10 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.reps).toEqual([]);
     expect(parsed.vbt_summary).toEqual({
       first_rep_v: null,
+      peak_rep_v: null,
+      peak_rep_number: null,
       last_rep_v: null,
-      velocity_delta_pct: null,
+      velocity_loss_pct: null,
       mean_velocity: null,
     });
   });
@@ -454,12 +461,11 @@ describe('buildSetEndedPayload', () => {
     // Hardware capture 2026-05-11: 5 complete reps then the inactivity
     // watchdog (or a disconnect) force-closed mid-rep-6. Pre-fix, a
     // single-sample concentric-only rep 6 was persisted (peakVelocity=982
-    // mm/s) and last_rep_v reflected that bogus value, flipping
-    // velocity_delta_pct positive when the real rep1→rep5 trend was
-    // negative. Post-fix, the inactivity-timeout finalize path drops the
-    // trailing in-progress rep before persistence, so the StoredSet that
-    // reaches `buildSetEndedPayload` contains only 5 reps and
-    // last_rep_v correctly reflects rep 5's concentric peak.
+    // mm/s) and last_rep_v reflected that bogus value, polluting the
+    // peak baseline and velocity loss. Post-fix, the inactivity-timeout
+    // finalize path drops the trailing in-progress rep before persistence,
+    // so the StoredSet that reaches `buildSetEndedPayload` contains only 5
+    // reps and last_rep_v correctly reflects rep 5's concentric peak.
     const reps = [
       makeRep(1, 700, 500), // first
       makeRep(2, 720, 520),
@@ -475,10 +481,13 @@ describe('buildSetEndedPayload', () => {
     // last_rep_v — NOT some bogus value from a never-completed rep 6.
     expect(parsed.vbt_summary.last_rep_v).toBe(0.85);
     expect(parsed.vbt_summary.first_rep_v).toBe(0.7);
-    // velocity_delta_pct on (700→850) is negative — set was accelerating,
-    // exactly the inversion the bogus rep-6 value masked in the field
-    // capture.
-    expect(parsed.vbt_summary.velocity_delta_pct).toBeLessThan(0);
+    // The set was accelerating monotonically — rep 5 (850) is both the last
+    // rep AND the peak baseline, so peak-to-last velocity loss is exactly 0.
+    // The bogus rep-6 value would have raised the peak and pushed last_rep_v
+    // below it, fabricating a loss that never happened.
+    expect(parsed.vbt_summary.peak_rep_number).toBe(5);
+    expect(parsed.vbt_summary.peak_rep_v).toBe(0.85);
+    expect(parsed.vbt_summary.velocity_loss_pct).toBe(0);
   });
 
   describe('cause = "device_signal" → unified set_ended with closed_by="device"', () => {
@@ -527,14 +536,14 @@ describe('buildSetEndedPayload', () => {
       expect(toolPayload.set.closed_by).toBe('tool');
     });
 
-    it('summary still surfaces the velocity delta when the set has at least 2 reps', () => {
+    it('summary still surfaces the velocity loss when the set has at least 2 reps', () => {
       const reps = [makeRep(1, 850, 500), makeRep(2, 500, 400)];
       const stored = buildStored(reps);
       const { content } = buildSetEndedPayload(stored, 'device_signal');
       const parsed = JSON.parse(content);
-      // velocity_delta_pct is computed identically to the tool path.
-      expect(parsed.vbt_summary.velocity_delta_pct).toBeCloseTo(41.2, 1);
-      expect(parsed.summary).toContain('41.2% slower last-vs-first');
+      // velocity_loss_pct is computed identically to the tool path.
+      expect(parsed.vbt_summary.velocity_loss_pct).toBeCloseTo(41.2, 1);
+      expect(parsed.summary).toContain('41.2% velocity loss (peak-to-last)');
     });
   });
 });
