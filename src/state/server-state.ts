@@ -114,6 +114,17 @@ export interface SlotState {
    * config and the bridge has no auto-create path outside guided-load.
    */
   pendingGuidedLoadInactivityMs?: number;
+  /**
+   * Exercise identity for the next bridge-minted guided-load auto-session
+   * (VMCP-02.13). Set by `device.start_guided_load` from its optional
+   * `exerciseName` / `exerciseId` params; read once and cleared by
+   * `ensureGuidedLoadSessionAndSet` when it mints the session. When absent,
+   * the auto-session falls back to the generic `'Guided Load (auto)'` name.
+   * Only consumed if the bridge actually creates a new session — a reused
+   * explicit session keeps its own identity.
+   */
+  pendingGuidedLoadExerciseName?: string;
+  pendingGuidedLoadExerciseId?: string;
 }
 
 export const PRIMARY_SLOT = 'primary' as const;

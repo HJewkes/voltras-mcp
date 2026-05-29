@@ -198,6 +198,17 @@ export const DeviceStartGuidedLoadInput = z.object({
    * for diagnostic flows that need to reproduce the no-unload short-circuit.
    */
   skipUnload: z.boolean().optional(),
+  /**
+   * Exercise identity for the session the bridge auto-creates on `armed`
+   * (VMCP-02.13). When supplied — and no session is already active on the
+   * slot — the auto-session inherits this name/id instead of the generic
+   * `'Guided Load (auto)'`, so the set is filterable by exercise post-hoc.
+   * Ignored when an explicit `session.start` is already active (that session
+   * is reused as-is). `exerciseId` without `exerciseName` is allowed but the
+   * name is what analytics surfaces.
+   */
+  exerciseName: z.string().min(1).max(120).optional(),
+  exerciseId: z.string().min(1).max(120).optional(),
   slot: SlotIdSchema,
 });
 

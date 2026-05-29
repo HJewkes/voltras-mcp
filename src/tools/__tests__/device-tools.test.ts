@@ -1833,6 +1833,30 @@ describe('registerDeviceTools', () => {
       expect(payload.code).toBe('INVALID_INPUT');
       expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
     });
+
+    it('VMCP-02.13: stashes exerciseName / exerciseId on the slot for the bridge', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, {
+        targetWeightLbs: 50,
+        exerciseName: 'Barbell Squat',
+        exerciseId: 'ex-squat-001',
+      });
+      expect(isError).toBeUndefined();
+      const slot = state.slots.get('primary')!;
+      expect(slot.pendingGuidedLoadExerciseName).toBe('Barbell Squat');
+      expect(slot.pendingGuidedLoadExerciseId).toBe('ex-squat-001');
+    });
+
+    it('VMCP-02.13: clears any stale exercise stash when called without the params', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.pendingGuidedLoadExerciseName = 'Stale Exercise';
+      slot.pendingGuidedLoadExerciseId = 'stale-id';
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(slot.pendingGuidedLoadExerciseName).toBeUndefined();
+      expect(slot.pendingGuidedLoadExerciseId).toBeUndefined();
+    });
   });
 
   describe('AC-14: BLE access only via @voltras/node-sdk', () => {

@@ -284,7 +284,7 @@ const CONFIGURE_ISOKINETIC_DESCRIPTION =
   'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
 
 const START_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.';
+  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
@@ -1011,6 +1011,23 @@ export function registerDeviceTools(
         typeof input.inactivityTimeoutSeconds === 'number'
           ? input.inactivityTimeoutSeconds * 1000
           : GUIDED_LOAD_DEFAULT_INACTIVITY_MS;
+      // VMCP-02.13: stash the exercise identity so the bridge's auto-create
+      // path names the session something filterable instead of the generic
+      // "Guided Load (auto)". Single-shot — the bridge clears these once
+      // consumed. Only takes effect when the bridge mints a NEW session; a
+      // reused explicit session keeps its own name. Reset on every call
+      // (deleting when absent) so a stale stash from a prior trigger that
+      // never armed doesn't leak into this one.
+      if (input.exerciseName !== undefined) {
+        slot.pendingGuidedLoadExerciseName = input.exerciseName;
+      } else {
+        delete slot.pendingGuidedLoadExerciseName;
+      }
+      if (input.exerciseId !== undefined) {
+        slot.pendingGuidedLoadExerciseId = input.exerciseId;
+      } else {
+        delete slot.pendingGuidedLoadExerciseId;
+      }
       // VMCP-02.06: drive the cable to a mechanically-unloaded state before
       // the trigger so the firmware emits the countdown ceremony. Caller
       // can opt out via `skipUnload` for diagnostic flows.

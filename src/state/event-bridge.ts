@@ -1084,12 +1084,20 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
   if (slot.live.session === undefined) {
     const sessionId = randomUUID();
     const startedAt = new Date().toISOString();
+    // VMCP-02.13: inherit the exercise identity the `start_guided_load` tool
+    // stashed (single-shot), so the auto-session is filterable by exercise.
+    // Fall back to the generic label when the caller supplied no name.
+    const exerciseName = slot.pendingGuidedLoadExerciseName ?? 'Guided Load (auto)';
+    const exerciseId = slot.pendingGuidedLoadExerciseId;
+    delete slot.pendingGuidedLoadExerciseName;
+    delete slot.pendingGuidedLoadExerciseId;
     slot.live.startSession({
       sessionId,
       startedAt,
       setIds: [],
       status: 'active',
-      exerciseName: 'Guided Load (auto)',
+      exerciseName,
+      ...(exerciseId !== undefined ? { exerciseId } : {}),
       autoCreatedBy: 'guided_load',
     });
     // Persist the row so a downstream `metrics.compute` / `session.list`
@@ -1099,7 +1107,8 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       .putSession({
         id: sessionId,
         startedAt,
-        exerciseName: 'Guided Load (auto)',
+        exerciseName,
+        ...(exerciseId !== undefined ? { exerciseId } : {}),
       })
       .catch((err) => {
         log.warn('event-bridge: guided-load auto session persist failed', err);
