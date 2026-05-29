@@ -282,6 +282,7 @@ const DEVICE_TOOL_NAMES = [
   'device.set_isokinetic_ecc_speed_limit',
   'device.set_isokinetic_ecc_const_weight',
   'device.set_isokinetic_ecc_overload_weight',
+  'device.configure_isokinetic',
   'device.unload',
   'device.start_guided_load',
   'device.exit_guided_load',
@@ -1659,6 +1660,68 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { lbs: 50 });
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_SETTING');
+    });
+  });
+
+  describe('device.configure_isokinetic (VMCP-02.16)', () => {
+    it('writes only the required fields when optionals are omitted', async () => {
+      const reg = placeholders.get('device.configure_isokinetic')!;
+      const { isError, payload } = await invoke(reg, {
+        targetSpeedMmPerSec: 800,
+        eccMode: 'isokinetic',
+      });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      const client = primaryClient(state);
+      expect(client.setIsokineticTargetSpeed).toHaveBeenCalledWith(800);
+      expect(client.setIsokineticEccMode).toHaveBeenCalledWith('isokinetic');
+      expect(client.setIsokineticEccSpeedLimit).not.toHaveBeenCalled();
+      expect(client.setIsokineticEccConstWeight).not.toHaveBeenCalled();
+      expect(client.setIsokineticEccOverloadWeight).not.toHaveBeenCalled();
+    });
+
+    it('forwards every supplied field to the matching SDK setter', async () => {
+      const reg = placeholders.get('device.configure_isokinetic')!;
+      const { isError, payload } = await invoke(reg, {
+        targetSpeedMmPerSec: 1200,
+        eccMode: 'constant',
+        eccSpeedLimitMmPerSec: 600,
+        eccConstWeightLbs: 40,
+        eccOverloadWeightLbs: 25,
+      });
+      expect(isError).toBeUndefined();
+      expect(payload).toEqual({ ok: true });
+      const client = primaryClient(state);
+      expect(client.setIsokineticTargetSpeed).toHaveBeenCalledWith(1200);
+      expect(client.setIsokineticEccMode).toHaveBeenCalledWith('constant');
+      expect(client.setIsokineticEccSpeedLimit).toHaveBeenCalledWith(600);
+      expect(client.setIsokineticEccConstWeight).toHaveBeenCalledWith(40);
+      expect(client.setIsokineticEccOverloadWeight).toHaveBeenCalledWith(25);
+    });
+
+    it('rejects out-of-range targetSpeedMmPerSec (3000) before any SDK write', async () => {
+      const reg = placeholders.get('device.configure_isokinetic')!;
+      const { isError, payload } = await invoke(reg, {
+        targetSpeedMmPerSec: 3000,
+        eccMode: 'isokinetic',
+      });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(primaryClient(state).setIsokineticTargetSpeed).not.toHaveBeenCalled();
+    });
+
+    it('maps an SDK error thrown mid-sequence to its code', async () => {
+      const client = primaryClient(state);
+      client.setIsokineticEccMode.mockRejectedValueOnce(
+        new FakeVoltraSDKError('not connected', 'NOT_CONNECTED'),
+      );
+      const reg = placeholders.get('device.configure_isokinetic')!;
+      const { isError, payload } = await invoke(reg, {
+        targetSpeedMmPerSec: 800,
+        eccMode: 'constant',
+      });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('NOT_CONNECTED');
     });
   });
 
