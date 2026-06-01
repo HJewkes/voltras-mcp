@@ -51,6 +51,7 @@ import {
   DeviceSetIsokineticEccSpeedLimitInput,
   DeviceSetIsokineticEccConstWeightInput,
   DeviceSetIsokineticEccOverloadWeightInput,
+  DeviceConfigureIsokineticInput,
   DeviceStartGuidedLoadInput,
   // <Bug-22>
   DeviceEnterRowModeInput,
@@ -248,23 +249,42 @@ const ASSIST_MODE_DESCRIPTION =
 const BAND_MAX_FORCE_DESCRIPTION =
   'Set the band-mode maximum-force ceiling (15-70 lbs). Pounds. Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
 
+// VMCP-02.16: the five per-field isokinetic setters are @deprecated in favor
+// of the single `device.configure_isokinetic` tool. They stay registered for
+// one release so existing callers keep working; the deprecation prefix steers
+// the model toward the combined tool (one description, one call per slot).
+const ISOKINETIC_DEPRECATION = '@deprecated — prefer device.configure_isokinetic. ';
+
 const ISOKINETIC_TARGET_SPEED_DESCRIPTION =
+  ISOKINETIC_DEPRECATION +
   'Set the isokinetic target speed (0-2000 mm/s, step 10). Input is millimeters/second; the device UI displays the value in meters/second (input ÷ 1000). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
 
 const ISOKINETIC_ECC_MODE_DESCRIPTION =
+  ISOKINETIC_DEPRECATION +
   'Set the isokinetic eccentric mode ("isokinetic" or "constant"). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
 
 const ISOKINETIC_ECC_SPEED_LIMIT_DESCRIPTION =
+  ISOKINETIC_DEPRECATION +
   'Set the isokinetic eccentric speed limit (0-2000 mm/s, step 10). 0 = auto. Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
 
 const ISOKINETIC_ECC_CONST_WEIGHT_DESCRIPTION =
+  ISOKINETIC_DEPRECATION +
   'Set the isokinetic eccentric constant weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
 
 const ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION =
+  ISOKINETIC_DEPRECATION +
   'Set the isokinetic eccentric overload weight (0-200 lbs). Pounds. Note: the device emits an audible beep when this is set on a connected device — possibly a safety/range cue from the firmware; the command itself succeeds. Settings persist globally across mode switches. Validated on-device 2026-05-06.';
 
+const CONFIGURE_ISOKINETIC_DESCRIPTION =
+  'Configure isokinetic mode in one call (VMCP-02.16) — replaces the five per-field device.set_isokinetic_* setters. ' +
+  '`targetSpeedMmPerSec` (0-2000, step 10) and `eccMode` ("isokinetic" | "constant") are required; ' +
+  '`eccSpeedLimitMmPerSec` (0-2000, 0 = auto), `eccConstWeightLbs` (0-200), and `eccOverloadWeightLbs` (0-200) are optional and only written when supplied. ' +
+  'Use `eccConstWeightLbs` with `eccMode: "constant"` and `eccOverloadWeightLbs` with the overload variant. Speeds are mm/s (UI shows m/s = input ÷ 1000); weights are pounds. ' +
+  'Caveats (apply to every field): settings persist globally across mode switches and the firmware emits no modeConfirmation echo, so coercion checks expire silently. ' +
+  'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
+
 const START_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.';
+  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
@@ -873,6 +893,66 @@ export function registerDeviceTools(
     ISOKINETIC_ECC_OVERLOAD_WEIGHT_DESCRIPTION,
   );
 
+  // device.configure_isokinetic (VMCP-02.16) — one tool for the whole
+  // isokinetic config. Registers every supplied field as a coercion check
+  // under one setter name, then writes them in sequence inside a single
+  // tracked call (mirrors start_guided_load's multi-field pattern). Required
+  // fields first (target speed, ecc mode); optional ecc tuning fields only
+  // when present.
+  install(
+    placeholders,
+    'device.configure_isokinetic',
+    DeviceConfigureIsokineticInput,
+    wrapHandler(DeviceConfigureIsokineticInput, async (input) => {
+      const slot = getSlot(state, input.slot);
+      // Ecc mode is an enum string; the CoercionWatch compares numeric device
+      // values, so fingerprint it (0 = 'isokinetic', 1 = 'constant') exactly
+      // as device.set_isokinetic_ecc_mode does.
+      const fields: TrackedFieldSpec[] = [
+        { field: 'isokineticTargetSpeedMmPerSec', requested: input.targetSpeedMmPerSec },
+        { field: 'isokineticEccMode', requested: input.eccMode === 'constant' ? 1 : 0 },
+      ];
+      if (typeof input.eccSpeedLimitMmPerSec === 'number') {
+        fields.push({
+          field: 'isokineticEccSpeedLimitMmPerSec',
+          requested: input.eccSpeedLimitMmPerSec,
+        });
+      }
+      if (typeof input.eccConstWeightLbs === 'number') {
+        fields.push({
+          field: 'isokineticEccConstWeightLbsTenths',
+          requested: input.eccConstWeightLbs * 10,
+        });
+      }
+      if (typeof input.eccOverloadWeightLbs === 'number') {
+        fields.push({
+          field: 'isokineticEccOverloadWeightLbsTenths',
+          requested: input.eccOverloadWeightLbs * 10,
+        });
+      }
+      await trackedSetterCall(
+        slot.coercionWatch,
+        'device.configure_isokinetic',
+        fields,
+        async () => {
+          await slot.client.setIsokineticTargetSpeed(input.targetSpeedMmPerSec);
+          await slot.client.setIsokineticEccMode(input.eccMode);
+          if (typeof input.eccSpeedLimitMmPerSec === 'number') {
+            await slot.client.setIsokineticEccSpeedLimit(input.eccSpeedLimitMmPerSec);
+          }
+          if (typeof input.eccConstWeightLbs === 'number') {
+            await slot.client.setIsokineticEccConstWeight(input.eccConstWeightLbs);
+          }
+          if (typeof input.eccOverloadWeightLbs === 'number') {
+            await slot.client.setIsokineticEccOverloadWeight(input.eccOverloadWeightLbs);
+          }
+        },
+      );
+      return { ok: true };
+    }),
+    CONFIGURE_ISOKINETIC_DESCRIPTION,
+  );
+
   // device.unload (VMCP-02.06) — drives the device into a fully-unloaded
   // mechanical state via mode-bounce (Damper → WeightTraining). Required
   // before `device.start_guided_load` for the visible countdown ceremony to
@@ -931,6 +1011,23 @@ export function registerDeviceTools(
         typeof input.inactivityTimeoutSeconds === 'number'
           ? input.inactivityTimeoutSeconds * 1000
           : GUIDED_LOAD_DEFAULT_INACTIVITY_MS;
+      // VMCP-02.13: stash the exercise identity so the bridge's auto-create
+      // path names the session something filterable instead of the generic
+      // "Guided Load (auto)". Single-shot — the bridge clears these once
+      // consumed. Only takes effect when the bridge mints a NEW session; a
+      // reused explicit session keeps its own name. Reset on every call
+      // (deleting when absent) so a stale stash from a prior trigger that
+      // never armed doesn't leak into this one.
+      if (input.exerciseName !== undefined) {
+        slot.pendingGuidedLoadExerciseName = input.exerciseName;
+      } else {
+        delete slot.pendingGuidedLoadExerciseName;
+      }
+      if (input.exerciseId !== undefined) {
+        slot.pendingGuidedLoadExerciseId = input.exerciseId;
+      } else {
+        delete slot.pendingGuidedLoadExerciseId;
+      }
       // VMCP-02.06: drive the cable to a mechanically-unloaded state before
       // the trigger so the firmware emits the countdown ceremony. Caller
       // can opt out via `skipUnload` for diagnostic flows.

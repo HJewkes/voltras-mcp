@@ -113,6 +113,27 @@ export const DeviceSetIsokineticEccOverloadWeightInput = z.object({
   slot: SlotIdSchema,
 });
 
+/**
+ * Input for `device.configure_isokinetic` (VMCP-02.16) — sets the whole
+ * isokinetic mode in one call, replacing the four individual setters.
+ *
+ * `targetSpeedMmPerSec` and `eccMode` are required; the three eccentric
+ * tuning fields are optional and only written when supplied. `eccConstWeightLbs`
+ * pairs with `eccMode: 'constant'`, `eccOverloadWeightLbs` with the overload
+ * variant — both are accepted so a caller can stage either configuration, but
+ * only the field the firmware reads for the selected mode takes effect.
+ * Ranges and units match the per-field setters exactly (mm/s for speeds,
+ * step-of-10; pounds for weights).
+ */
+export const DeviceConfigureIsokineticInput = z.object({
+  targetSpeedMmPerSec: z.number().int().min(0).max(2000),
+  eccMode: z.enum(['isokinetic', 'constant']),
+  eccConstWeightLbs: z.number().int().min(0).max(200).optional(),
+  eccOverloadWeightLbs: z.number().int().min(0).max(200).optional(),
+  eccSpeedLimitMmPerSec: z.number().int().min(0).max(2000).optional(),
+  slot: SlotIdSchema,
+});
+
 // <Bug-22> Rowing two-stage entry — replaces set_mode(Rowing).
 /** Input for `device.enter_row_mode` — opens the rowing sub-menu. */
 export const DeviceEnterRowModeInput = z.object({
@@ -177,6 +198,17 @@ export const DeviceStartGuidedLoadInput = z.object({
    * for diagnostic flows that need to reproduce the no-unload short-circuit.
    */
   skipUnload: z.boolean().optional(),
+  /**
+   * Exercise identity for the session the bridge auto-creates on `armed`
+   * (VMCP-02.13). When supplied — and no session is already active on the
+   * slot — the auto-session inherits this name/id instead of the generic
+   * `'Guided Load (auto)'`, so the set is filterable by exercise post-hoc.
+   * Ignored when an explicit `session.start` is already active (that session
+   * is reused as-is). `exerciseId` without `exerciseName` is allowed but the
+   * name is what analytics surfaces.
+   */
+  exerciseName: z.string().min(1).max(120).optional(),
+  exerciseId: z.string().min(1).max(120).optional(),
   slot: SlotIdSchema,
 });
 

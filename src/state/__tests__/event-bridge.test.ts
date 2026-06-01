@@ -2388,6 +2388,57 @@ describe('wireEventBridge — guided-load auto-create', () => {
     // default SET_INACTIVITY_TIMEOUT_MS still provides the safety net).
     expect(state.setWatchdog.has(set!.setId)).toBe(false);
   });
+
+  // ── VMCP-02.13: auto-session inherits the stashed exercise identity ──
+  it('VMCP-02.13: auto-session inherits stashed exerciseName / exerciseId', () => {
+    const slot = state.slots.get('primary') as unknown as {
+      pendingGuidedLoadExerciseName?: string;
+      pendingGuidedLoadExerciseId?: string;
+    };
+    slot.pendingGuidedLoadExerciseName = 'Barbell Squat';
+    slot.pendingGuidedLoadExerciseId = 'ex-squat-001';
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const sess = live.snapshotSession();
+    expect(sess?.exerciseName).toBe('Barbell Squat');
+    expect(sess?.exerciseId).toBe('ex-squat-001');
+    expect(state.store.putSession).toHaveBeenCalledWith(
+      expect.objectContaining({ exerciseName: 'Barbell Squat', exerciseId: 'ex-squat-001' }),
+    );
+    // Single-shot — both stash fields cleared after consumption.
+    expect(slot.pendingGuidedLoadExerciseName).toBeUndefined();
+    expect(slot.pendingGuidedLoadExerciseId).toBeUndefined();
+  });
+
+  it("VMCP-02.13: falls back to 'Guided Load (auto)' when no exercise stashed", () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+    const sess = live.snapshotSession();
+    expect(sess?.exerciseName).toBe('Guided Load (auto)');
+    expect(sess?.exerciseId).toBeUndefined();
+  });
+
+  it('VMCP-02.13: a reused explicit session keeps its own name (stash ignored)', () => {
+    live.startSession({
+      sessionId: 'explicit-sess',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseName: 'Bench Press',
+    });
+    const slot = state.slots.get('primary') as unknown as {
+      pendingGuidedLoadExerciseName?: string;
+    };
+    slot.pendingGuidedLoadExerciseName = 'Barbell Squat';
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    // Existing session is reused untouched; the stash is not consumed.
+    expect(live.snapshotSession()?.sessionId).toBe('explicit-sess');
+    expect(live.snapshotSession()?.exerciseName).toBe('Bench Press');
+    expect(state.store.putSession).not.toHaveBeenCalled();
+    expect(slot.pendingGuidedLoadExerciseName).toBe('Barbell Squat');
+  });
 });
 
 // ── onStateDump (cmd=0x07 — Bug 26 / Gap C1) ───────────────────────────────
