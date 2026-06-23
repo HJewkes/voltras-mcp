@@ -87,6 +87,21 @@ describe('SEED_CABLE_EXERCISES', () => {
       expect(hits.some((ex) => ex.id === 'cable-lat-pulldown')).toBe(true);
     });
 
+    // VMCP-02.37: the 2026-05-18 bench session searched for "VTS bench", "VTS
+    // squat", and "bayesian curl" and got zero hits, forcing a free-text
+    // fallback that loses catalog metadata. VTS is the user's Smith-style rig,
+    // so VTS lifts resolve to the existing compounds via aliases; bayesian curl
+    // is a distinct positional entry.
+    it('VMCP-02.37: resolves VTS rig aliases to the base compounds', () => {
+      expect(searchExercises('VTS bench').some((ex) => ex.id === 'cable-chest-press')).toBe(true);
+      expect(searchExercises('VTS squat').some((ex) => ex.id === 'cable-squat')).toBe(true);
+    });
+
+    it('VMCP-02.37: resolves "bayesian curl" to its own positional entry', () => {
+      const hits = searchExercises('bayesian curl');
+      expect(hits.some((ex) => ex.id === 'cable-bayesian-curl')).toBe(true);
+    });
+
     it('getExerciseById returns the seed entry for a known id', () => {
       const ex = getExerciseById('cable-romanian-deadlift');
       expect(ex).toBeDefined();
