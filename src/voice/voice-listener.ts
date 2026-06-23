@@ -34,10 +34,20 @@
 // voice-models/ and pass `wakeWordModelPath` to listen_start.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createRequire } from 'node:module';
 import type { Readable } from 'node:stream';
 
 import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
+
+// VMCP-02.38: the package is `"type": "module"`, so the bare CommonJS
+// `require` global is undefined at runtime — calling it threw
+// `LISTENER_START_FAILED: require is not defined` on the first
+// `system.listen_start`. Reconstruct a CJS-style `require` from the module
+// URL (the same pattern used in `tools/server-tools.ts`) so the lazy native
+// loads below resolve. These stay lazy `require` (not top-level `import`) so a
+// missing sox / whisper install only surfaces at start() time, not on import.
+const require = createRequire(import.meta.url);
 
 /** Default whisper.cpp model. ~150 MB; sub-second p50 on M-series. */
 export const DEFAULT_STT_MODEL: SttModelName = 'base.en';
@@ -166,7 +176,6 @@ export function resolveStartArgs(input: SystemListenStartInputType): StartArgs {
  * (the Linux CI smoke test imports voltras-mcp without sox installed).
  */
 export function defaultAudioFactory(): AudioSource {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const record = require('node-record-lpcm16') as {
     record: (opts: Record<string, unknown>) => { stream: () => Readable; stop: () => void };
   };
@@ -221,7 +230,6 @@ export function defaultWhisper(): WhisperFn {
     const fs = await import('node:fs/promises');
     const os = await import('node:os');
     const path = await import('node:path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const whisper = require('nodejs-whisper') as {
       nodewhisper: (path: string, opts: Record<string, unknown>) => Promise<string>;
     };
