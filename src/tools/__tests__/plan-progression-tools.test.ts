@@ -588,8 +588,13 @@ describe('plan.attach_to_session', () => {
 
 // ─── plan.suggest_progression ──────────────────────────────────────────────
 describe('plan.suggest_progression', () => {
-  /** Build a StoredSet whose only relevant attribute is the rep count. */
-  function setWithReps(setId: string, repCount: number): StoredSet {
+  /**
+   * Build a StoredSet with `repCount` reps. By default every rep carries the
+   * same peak concentric velocity (flat profile → 0% velocity loss → no VMCP-
+   * 02.25 VBT override), so rep-band tests are unaffected. Pass `peakVelocities`
+   * (one per rep) to model an intra-set velocity decline for the fatigue guard.
+   */
+  function setWithReps(setId: string, repCount: number, peakVelocities?: number[]): StoredSet {
     return {
       id: setId,
       sessionId: 'sess-prior',
@@ -598,10 +603,15 @@ describe('plan.suggest_progression', () => {
       partial: false,
       trainingMode: 'WeightTraining',
       weightLbs: 135,
-      // Each rep is opaque to the suggestion math — only the array length matters.
       reps: Array.from(
         { length: repCount },
-        (_, i) => ({ id: `r${i}`, setId, index: i }) as StoredSet['reps'][number],
+        (_, i) =>
+          ({
+            id: `r${i}`,
+            setId,
+            index: i,
+            concentric: { peakVelocity: peakVelocities?.[i] ?? 800 },
+          }) as StoredSet['reps'][number],
       ),
     };
   }
@@ -656,6 +666,51 @@ describe('plan.suggest_progression', () => {
     expect(body.suggestion.delta).toBe(5);
     expect(body.suggestion.basedOnSessionId).toBe('sess-prior');
     expect(body.suggestion.reasoning.length).toBeGreaterThan(0);
+  });
+
+  it('VMCP-02.25: holds (not +5) when a set hit its reps but at high velocity loss', async () => {
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.listSessions.mockResolvedValueOnce([
+      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    ]);
+    // 1 set, 12 reps (== targetRepsHigh, so rep-count alone says +5), but peak
+    // concentric velocity decays 1000 -> 500 mm/s = 50% loss (functional
+    // failure). The VBT layer must override the increment to a hold.
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('s1', 12, [1000, 960, 920, 880, 840, 800, 760, 710, 660, 600, 550, 500]),
+    ]);
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { suggestion: { delta: number; reasoning: string } };
+    expect(body.suggestion.delta).toBe(0);
+    expect(body.suggestion.reasoning.toLowerCase()).toContain('velocity');
+  });
+
+  it('VMCP-02.25: still suggests +5 when reps are hit with only mild velocity loss', async () => {
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.listSessions.mockResolvedValueOnce([
+      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    ]);
+    // 3 sets of 12, peak velocity decays only 1000 -> 920 (~8% loss, under the
+    // 25% ceiling) — the rep-band increment stands.
+    const mild = [1000, 985, 970, 955, 940, 932, 928, 924, 922, 921, 920, 920];
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('s1', 12, mild),
+      setWithReps('s2', 12, mild),
+      setWithReps('s3', 12, mild),
+    ]);
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { suggestion: { delta: number } };
+    expect(body.suggestion.delta).toBe(5);
   });
 
   it('suggests 0 lb (hold) when sets land in the rep band', async () => {
