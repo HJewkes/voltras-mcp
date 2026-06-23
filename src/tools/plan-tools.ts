@@ -35,7 +35,7 @@ import {
   PlanWeekCreateInput,
   PlanWeekListForBlockInput,
 } from '../schemas/plan.js';
-import { type ServerState, getSlot } from '../state/server-state.js';
+import { type ServerState } from '../state/server-state.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -439,7 +439,7 @@ async function completeWorkout(
   state: ServerState,
   input: z.infer<typeof PlanCompleteWorkoutInput>,
 ): Promise<{ assignment: StoredProgramAssignment }> {
-  const sessionId = input.sessionId ?? activeSessionIdOrNull(state);
+  const sessionId = input.sessionId ?? resolveActiveSessionId(state);
   if (sessionId === null) {
     throw new ToolError(
       'NO_ACTIVE_SESSION',
@@ -660,18 +660,35 @@ function computeProgressionDelta(
 }
 
 /**
- * Best-effort lookup of the active session id from the primary slot. Returns
- * null when no slot is configured or no session is active so that callers
- * (only `complete_workout` today) can surface a clean `NO_ACTIVE_SESSION`
- * error rather than crashing on a missing slot.
+ * Resolve the active session id by scanning ALL bound slots — not just
+ * `primary`. A single-device setup has one slot (`primary`); a bilateral setup
+ * binds `left` + `right` with no `primary`, so the old primary-only lookup
+ * (VMCP-02.36, Bug #14) threw on the missing `primary` slot and surfaced a
+ * false `NO_ACTIVE_SESSION`.
+ *
+ * Returns null when no slot has an active session (callers surface a clean
+ * `NO_ACTIVE_SESSION`). A bilateral pair sharing one session id collapses to a
+ * single value and resolves cleanly. When slots carry DISTINCT active sessions
+ * (independent bilateral sessions) the choice is genuinely ambiguous, so we
+ * throw `AMBIGUOUS_SESSION` directing the caller to pass an explicit
+ * `sessionId` — the existing disambiguator on `plan.complete_workout`.
  */
-function activeSessionIdOrNull(state: ServerState): string | null {
-  try {
-    const slot = getSlot(state);
-    return slot.live.session?.sessionId ?? null;
-  } catch {
-    return null;
+function resolveActiveSessionId(state: ServerState): string | null {
+  const sessionIds = new Set<string>();
+  for (const slot of state.slots.values()) {
+    const id = slot.live.session?.sessionId;
+    if (id !== undefined) sessionIds.add(id);
   }
+  if (sessionIds.size === 0) return null;
+  if (sessionIds.size === 1) {
+    const [only] = sessionIds;
+    return only;
+  }
+  throw new ToolError(
+    'AMBIGUOUS_SESSION',
+    `Multiple active sessions across slots (${sessionIds.size}). ` +
+      'Pass an explicit sessionId to plan.complete_workout to disambiguate.',
+  );
 }
 
 /**
