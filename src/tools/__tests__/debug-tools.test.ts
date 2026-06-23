@@ -11,7 +11,7 @@ import type { ServerState } from '../../state/server-state.js';
 vi.mock('@voltras/node-sdk', () => ({}));
 
 const { _resetDebugBuffersForTest, getDebugBuffers } = await import('../../state/debug-buffer.js');
-const { registerDebugTools } = await import('../debug-tools.js');
+const { registerDebugTools, RECENT_EVENTS_DESCRIPTION } = await import('../debug-tools.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -370,5 +370,52 @@ describe('debug.push_test_channel', () => {
     expect(r.isError).toBe(true);
     expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+// VMCP-02.33: the `debug.recent_events` `types` filter matches diagnostic
+// ring-buffer `type` names, which are a distinct namespace from the
+// claude/channel `event_type` names. The description's filter EXAMPLES had
+// drifted to channel-only names (`rep_finalized`, `setting_coerced`,
+// `mode_diverged`) that match nothing in the buffer. Guard that every name in
+// a `types: [...]` example is a real DebugEvent.type.
+describe('RECENT_EVENTS_DESCRIPTION filter examples (VMCP-02.33)', () => {
+  // The authoritative DebugEvent.type union (debug-buffer.ts) — mirrored here
+  // because TS types aren't available at runtime.
+  const VALID_DEBUG_TYPES = new Set([
+    'rep_boundary',
+    'set_boundary',
+    'summary',
+    'pre_summary',
+    'settings_update',
+    'connection_state_change',
+    'guided_load_state',
+    'state_dump',
+    'send_raw',
+    'raw_frame',
+  ]);
+
+  it('only references real DebugEvent.type names inside `types: [...]` examples', () => {
+    const exampleArrays = [...RECENT_EVENTS_DESCRIPTION.matchAll(/types:\s*\[([^\]]*)\]/g)];
+    expect(exampleArrays.length).toBeGreaterThan(0);
+    const namesInExamples = exampleArrays.flatMap((m) =>
+      [...m[1].matchAll(/"([^"]+)"/g)].map((q) => q[1]),
+    );
+    expect(namesInExamples.length).toBeGreaterThan(0);
+    for (const name of namesInExamples) {
+      expect(VALID_DEBUG_TYPES.has(name), `"${name}" is not a DebugEvent.type`).toBe(true);
+    }
+  });
+
+  it('does not advertise filtering by channel-only event_type names', () => {
+    // These are claude/channel event_type names, never debug ring-buffer types.
+    // They may appear in the clarifying prose, but not as a `types: [...]` filter.
+    const exampleArrays = [...RECENT_EVENTS_DESCRIPTION.matchAll(/types:\s*\[([^\]]*)\]/g)];
+    const filterNames = exampleArrays.flatMap((m) =>
+      [...m[1].matchAll(/"([^"]+)"/g)].map((q) => q[1]),
+    );
+    for (const channelOnly of ['rep_finalized', 'setting_coerced', 'mode_diverged']) {
+      expect(filterNames).not.toContain(channelOnly);
+    }
   });
 });

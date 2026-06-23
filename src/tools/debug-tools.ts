@@ -57,14 +57,21 @@ function install<S extends z.ZodObject>(
   tool.update(updates as never);
 }
 
-const RECENT_EVENTS_DESCRIPTION =
-  'Returns the most recent bridge-level events from the diagnostic ring buffer (rep_boundary, set_boundary, summary, settings_update, connection_state_change, guided_load_state, raw_frame, etc.). ' +
+// VMCP-02.33: the `types` filter matches the diagnostic ring-buffer `type`
+// names — which are a DISTINCT namespace from the `claude/channel`
+// `event_type` names. e.g. the ring-buffer `rep_boundary` is what underlies
+// the channel's `rep_finalized`; filtering this tool by a channel name like
+// `rep_finalized` / `setting_coerced` matches nothing. The example types
+// below are all real DebugEvent.type values.
+export const RECENT_EVENTS_DESCRIPTION =
+  'Returns the most recent bridge-level events from the diagnostic ring buffer (rep_boundary, set_boundary, summary, pre_summary, settings_update, connection_state_change, guided_load_state, state_dump, send_raw, raw_frame). ' +
   'Optional `types` filters to only events whose `type` field matches one of the supplied strings. ' +
+  'These are ring-buffer diagnostic names, NOT the `claude/channel` event_type names (e.g. ring-buffer `rep_boundary` underlies the channel `rep_finalized`; `connection_state_change` underlies the channel `connection_changed`). ' +
   'Optional `includeRawFrames` (default `false`) controls whether raw BLE `raw_frame` entries are included — they are excluded by default because at 40 Hz they dominate the buffer. ' +
   'Examples: ' +
   '`{}` returns parsed events only; ' +
-  '`{ types: ["rep_finalized"] }` returns only rep-finalized events; ' +
-  '`{ types: ["setting_coerced", "mode_diverged"] }` returns only those two parser-emitted divergence events; ' +
+  '`{ types: ["rep_boundary"] }` returns only rep-boundary events; ' +
+  '`{ types: ["set_boundary", "guided_load_state"] }` returns only set-boundary and guided-load phase events; ' +
   '`{ includeRawFrames: true }` restores the legacy firehose (parsed events + raw frames).';
 
 /**
