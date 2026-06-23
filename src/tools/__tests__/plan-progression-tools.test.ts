@@ -356,6 +356,60 @@ describe('plan.complete_workout', () => {
     expect(h.store.putProgramAssignment).not.toHaveBeenCalled();
   });
 
+  // VMCP-02.36: bilateral setups bind `left` + `right` with no `primary`. The
+  // old primary-only lookup threw on the missing slot and returned a false
+  // NO_ACTIVE_SESSION. The slot scan now resolves a shared session and flags a
+  // genuinely ambiguous one.
+  const mkBareSlot = (slotId: string, sessionId: string): SlotState =>
+    ({ slotId, live: { session: { sessionId } } }) as unknown as SlotState;
+
+  it('VMCP-02.36: resolves the active session on a bilateral setup (left+right, no primary)', async () => {
+    const slots = h.state.slots;
+    slots.clear();
+    slots.set('left', mkBareSlot('left', 'sess-bi'));
+    slots.set('right', mkBareSlot('right', 'sess-bi'));
+    const session: StoredSession = { id: 'sess-bi', startedAt: '2025-02-10T00:00:00.000Z' };
+    h.store.getSession.mockResolvedValueOnce(session);
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_1);
+
+    const r = await h.invoke('plan.complete_workout', { workoutTemplateId: 'tmpl-1' });
+    expect(r.isError).toBeUndefined();
+    expect((parseResult(r) as { assignment: StoredProgramAssignment }).assignment.sessionId).toBe(
+      'sess-bi',
+    );
+  });
+
+  it('VMCP-02.36: returns AMBIGUOUS_SESSION when slots carry distinct active sessions', async () => {
+    const slots = h.state.slots;
+    slots.clear();
+    slots.set('left', mkBareSlot('left', 'sess-left'));
+    slots.set('right', mkBareSlot('right', 'sess-right'));
+
+    const r = await h.invoke('plan.complete_workout', { workoutTemplateId: 'tmpl-1' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('AMBIGUOUS_SESSION');
+    expect(h.store.putProgramAssignment).not.toHaveBeenCalled();
+  });
+
+  it('VMCP-02.36: an explicit sessionId still wins over the slot scan', async () => {
+    const slots = h.state.slots;
+    slots.clear();
+    slots.set('left', mkBareSlot('left', 'sess-left'));
+    slots.set('right', mkBareSlot('right', 'sess-right'));
+    const session: StoredSession = { id: 'sess-explicit', startedAt: '2025-02-10T00:00:00.000Z' };
+    h.store.getSession.mockResolvedValueOnce(session);
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_1);
+
+    const r = await h.invoke('plan.complete_workout', {
+      workoutTemplateId: 'tmpl-1',
+      sessionId: 'sess-explicit',
+    });
+    expect(r.isError).toBeUndefined();
+    expect((parseResult(r) as { assignment: StoredProgramAssignment }).assignment.sessionId).toBe(
+      'sess-explicit',
+    );
+  });
+
   it('returns NOT_FOUND when the workout template does not exist', async () => {
     h.store.getWorkoutTemplate.mockResolvedValueOnce(undefined);
     const r = await h.invoke('plan.complete_workout', {
