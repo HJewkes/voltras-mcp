@@ -40,7 +40,13 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
   {
     id: 'cable-chest-press',
     name: 'Cable Chest Press',
-    aliases: ['cable bench press', 'standing cable press'],
+    aliases: [
+      'cable bench press',
+      'standing cable press',
+      'VTS bench',
+      'VTS Smith bench',
+      'Smith bench press',
+    ],
     muscleGroups: ['chest'],
     secondaryMuscleGroups: ['shoulders', 'triceps'],
     movementPattern: 'push',
@@ -147,7 +153,7 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
   {
     id: 'cable-shoulder-press',
     name: 'Cable Shoulder Press',
-    aliases: ['cable overhead press'],
+    aliases: ['cable overhead press', 'VTS overhead press', 'Smith shoulder press'],
     muscleGroups: ['shoulders'],
     secondaryMuscleGroups: ['triceps', 'traps'],
     movementPattern: 'push',
@@ -278,7 +284,7 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
   {
     id: 'cable-row',
     name: 'Cable Row',
-    aliases: ['seated cable row'],
+    aliases: ['seated cable row', 'VTS row', 'Smith row'],
     muscleGroups: ['back'],
     secondaryMuscleGroups: ['biceps', 'shoulders'],
     movementPattern: 'pull',
@@ -446,6 +452,34 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
     ],
     qualityScore: 6,
   },
+  {
+    // VMCP-02.37: positional bicep variant. The working arm stays behind the
+    // torso, loading the long head from a deep stretch — biomechanically
+    // distinct from a standard curl, so it earns its own entry rather than an
+    // alias on `cable-bicep-curl`.
+    id: 'cable-bayesian-curl',
+    name: 'Cable Bayesian Curl',
+    aliases: ['bayesian curl', 'behind-the-body cable curl'],
+    muscleGroups: ['biceps'],
+    secondaryMuscleGroups: ['forearms'],
+    movementPattern: 'isolation',
+    exerciseType: 'isolation',
+    equipment: VOLTRA_EQUIPMENT,
+    cableEquivalent: true,
+    cableSetup: {
+      cablePath: 'low',
+      attachments: ['d_handle'],
+      notes:
+        'Face away from the cable origin so the working arm stays behind the torso; ' +
+        'the upper arm angles back to load the biceps long head in a deep stretch.',
+    },
+    formCues: [
+      'Keep the elbow drawn behind your torso for the whole set',
+      'Let the cable pull you into a full stretch at the bottom',
+      'Curl without letting the upper arm drift forward',
+    ],
+    qualityScore: 7,
+  },
 
   // ──────────────────────────────────────────────────────────────────────
   // Legs — quads, hamstrings, glutes, hips
@@ -453,7 +487,7 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
   {
     id: 'cable-squat',
     name: 'Cable Squat',
-    aliases: ['cable goblet squat'],
+    aliases: ['cable goblet squat', 'VTS squat', 'VTS Smith squat', 'Smith squat'],
     muscleGroups: ['quads'],
     secondaryMuscleGroups: ['glutes', 'hamstrings', 'core'],
     movementPattern: 'squat',
@@ -475,7 +509,7 @@ export const SEED_CABLE_EXERCISES: Exercise[] = [
   {
     id: 'cable-romanian-deadlift',
     name: 'Cable Romanian Deadlift',
-    aliases: ['cable RDL'],
+    aliases: ['cable RDL', 'VTS RDL', 'VTS Romanian deadlift', 'Smith RDL'],
     muscleGroups: ['hamstrings'],
     secondaryMuscleGroups: ['glutes', 'back'],
     movementPattern: 'hinge',
