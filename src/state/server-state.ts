@@ -125,6 +125,17 @@ export interface SlotState {
    */
   pendingGuidedLoadExerciseName?: string;
   pendingGuidedLoadExerciseId?: string;
+  /**
+   * Requested guided-load target weight (lbs) for the in-flight direct-load
+   * flow (VMCP-02.03). Set by `device.start_guided_load` so the bridge can
+   * surface `requested_target_lbs` on the first-class `guided_load_state`
+   * channel event. Unlike the single-shot exercise/inactivity stashes, this
+   * is read on EVERY phase transition through the flow, so the bridge clears
+   * it on the terminal phases (`exited` / `timeout`) rather than on first
+   * consume. Absent for unit-direct guided loads with no tool stash, in
+   * which case the event omits the target.
+   */
+  pendingGuidedLoadTargetLbs?: number;
 }
 
 export const PRIMARY_SLOT = 'primary' as const;

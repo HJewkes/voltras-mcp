@@ -118,6 +118,7 @@ import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
+  buildGuidedLoadStatePayload,
   buildIdleRepPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
@@ -323,6 +324,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // are lazy and unsuitable for this purpose).
   let lastChainSettingLbs: number | undefined = undefined;
   let lastBaseWeight: number | undefined = undefined;
+  // VMCP-02.03: last guided-load phase published to the channel. The SDK
+  // re-fires `onGuidedLoadState` on every countdown tick; gating the channel
+  // publish on a phase change collapses intra-countdown spam to one event per
+  // transition (the debug event still records every tick).
+  let lastGuidedLoadPhase: string | undefined = undefined;
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -699,22 +705,50 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             fitnessModeRaw: gls.fitnessModeRaw,
           },
         });
-        // Only auto-create on the "device is in the direct-load state
-        // machine" phases — `idle`/`exited`/`timeout` carry no
+        // Auto-create a session+set on the "device is in the direct-load
+        // state machine" phases — `idle`/`exited`/`timeout` carry no
         // attribution requirement. We do not auto-tear-down on
         // `exited`/`timeout`: the explicit `session.end`/`set.end` tools
         // remain authoritative for ending the auto-created bookkeeping,
         // which keeps the bridge's tear-down policy uniform across
-        // explicit and auto-created sessions.
+        // explicit and auto-created sessions. Runs before the channel
+        // publish so the `armed` event already carries the new set_id.
         if (
-          gls.phase !== 'armed' &&
-          gls.phase !== 'countdown' &&
-          gls.phase !== 'engaging' &&
-          gls.phase !== 'active'
+          gls.phase === 'armed' ||
+          gls.phase === 'countdown' ||
+          gls.phase === 'engaging' ||
+          gls.phase === 'active'
         ) {
-          return;
+          ensureGuidedLoadSessionAndSet(state, slot, slotId);
         }
-        ensureGuidedLoadSessionAndSet(state, slot, slotId);
+
+        // VMCP-02.03: promote the phase machine to a first-class channel
+        // event, published once per phase transition. `idle` is the baseline
+        // resting state and carries no coaching signal, so it is not
+        // published; every other phase (including the terminal `exited` /
+        // `timeout`) emits so agents can branch on `outcome` in real time.
+        if (gls.phase !== 'idle' && gls.phase !== lastGuidedLoadPhase) {
+          const guidedSession = slot.live.snapshotSession();
+          const guidedSet = slot.live.snapshotSet();
+          slotChannels.publish(
+            buildGuidedLoadStatePayload({
+              phase: gls.phase,
+              countdownRemainingMs: gls.countdownRemainingMs,
+              requestedTargetLbs: slot.pendingGuidedLoadTargetLbs,
+              setId: guidedSet?.setId,
+              sessionId: guidedSession?.sessionId ?? guidedSet?.sessionId,
+            }),
+          );
+        }
+        lastGuidedLoadPhase = gls.phase;
+
+        // VMCP-02.03: clear the requested-target stash on the terminal phases
+        // so a stale target can't leak into a later guided-load flow on this
+        // slot. (The exercise/inactivity stashes are single-shot-cleared on
+        // consume; this one is read on every transition, so it clears here.)
+        if (gls.phase === 'exited' || gls.phase === 'timeout') {
+          delete slot.pendingGuidedLoadTargetLbs;
+        }
       }),
     );
   }

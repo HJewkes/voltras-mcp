@@ -14,6 +14,7 @@ import type { Rep } from '@voltras/workout-analytics';
 
 import {
   buildConnectionChangedPayload,
+  buildGuidedLoadStatePayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
   buildRestStatusPayload,
@@ -23,6 +24,7 @@ import {
   buildSettingCoercedPayload,
   buildSetTargetReachedPayload,
   buildVelocityLossExceededPayload,
+  guidedLoadPhaseToOutcome,
   meanConcentricPeakVelocity,
   summarizePreviousSet,
   summarizeSetForTrigger,
@@ -1374,5 +1376,102 @@ describe('buildRestStatusPayload (VMCP-02.08)', () => {
     });
     const parsed = JSON.parse(content) as { summary: string };
     expect(parsed.summary.toLowerCase()).toContain('cap');
+  });
+});
+
+describe('guidedLoadPhaseToOutcome (VMCP-02.03)', () => {
+  it('maps each phase to its branchable outcome', () => {
+    expect(guidedLoadPhaseToOutcome('idle')).toBe('pending');
+    expect(guidedLoadPhaseToOutcome('armed')).toBe('pending');
+    expect(guidedLoadPhaseToOutcome('countdown')).toBe('pending');
+    expect(guidedLoadPhaseToOutcome('engaging')).toBe('pending');
+    expect(guidedLoadPhaseToOutcome('active')).toBe('engaged');
+    expect(guidedLoadPhaseToOutcome('exited')).toBe('ended');
+    expect(guidedLoadPhaseToOutcome('timeout')).toBe('failed');
+  });
+});
+
+describe('buildGuidedLoadStatePayload (VMCP-02.03)', () => {
+  it('armed: meta carries phase/outcome/requested_target_lbs; content summary mentions the target', () => {
+    const { meta, content } = buildGuidedLoadStatePayload({
+      phase: 'armed',
+      countdownRemainingMs: null,
+      requestedTargetLbs: 95,
+    });
+    expect(meta.source).toBe('voltras');
+    expect(meta.event_type).toBe('guided_load_state');
+    expect(meta.phase).toBe('armed');
+    expect(meta.outcome).toBe('pending');
+    expect(meta.requested_target_lbs).toBe('95');
+    expect(meta.countdown_remaining_ms).toBeUndefined();
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      guided_load: { phase: string; outcome: string; requested_target_lbs: number | null };
+      set_context: unknown;
+    };
+    expect(parsed.summary).toContain('95 lbs');
+    expect(parsed.guided_load.outcome).toBe('pending');
+    expect(parsed.guided_load.requested_target_lbs).toBe(95);
+    expect(parsed.set_context).toBeNull();
+  });
+
+  it('countdown: surfaces countdown_remaining_ms in meta only on the countdown phase', () => {
+    const { meta, content } = buildGuidedLoadStatePayload({
+      phase: 'countdown',
+      countdownRemainingMs: 2500,
+      requestedTargetLbs: 95,
+    });
+    expect(meta.countdown_remaining_ms).toBe('2500');
+    const parsed = JSON.parse(content) as {
+      guided_load: { countdown_remaining_ms: number | null };
+    };
+    expect(parsed.guided_load.countdown_remaining_ms).toBe(2500);
+  });
+
+  it('active: outcome=engaged with set_context when a set is present', () => {
+    const { meta, content } = buildGuidedLoadStatePayload({
+      phase: 'active',
+      countdownRemainingMs: null,
+      requestedTargetLbs: 110,
+      setId: 'set-9',
+      sessionId: 'sess-9',
+    });
+    expect(meta.outcome).toBe('engaged');
+    expect(meta.set_id).toBe('set-9');
+    expect(meta.session_id).toBe('sess-9');
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      set_context: { set_id: string; session_id: string };
+    };
+    expect(parsed.summary).toContain('engaged');
+    expect(parsed.set_context).toEqual({ set_id: 'set-9', session_id: 'sess-9' });
+  });
+
+  it('timeout: outcome=failed and the summary tells the agent to unload + retrigger', () => {
+    const { meta, content } = buildGuidedLoadStatePayload({
+      phase: 'timeout',
+      countdownRemainingMs: null,
+      requestedTargetLbs: 95,
+    });
+    expect(meta.outcome).toBe('failed');
+    const parsed = JSON.parse(content) as { summary: string };
+    expect(parsed.summary).toContain('FAILED');
+    expect(parsed.summary.toLowerCase()).toContain('device.unload');
+  });
+
+  it('omits requested_target_lbs + set context when unavailable (unit-direct guided load)', () => {
+    const { meta, content } = buildGuidedLoadStatePayload({
+      phase: 'exited',
+      countdownRemainingMs: null,
+    });
+    expect(meta.outcome).toBe('ended');
+    expect(meta.requested_target_lbs).toBeUndefined();
+    expect(meta.set_id).toBeUndefined();
+    const parsed = JSON.parse(content) as {
+      guided_load: { requested_target_lbs: number | null };
+      set_context: unknown;
+    };
+    expect(parsed.guided_load.requested_target_lbs).toBeNull();
+    expect(parsed.set_context).toBeNull();
   });
 });
