@@ -40,6 +40,7 @@ import {
   computeReadiness,
   computeSessionFatigue,
   computeStrengthEstimate,
+  computeVBTSetFatigueIndex,
   computeVolume,
   createTechniqueBaseline,
   getPhaseDuration,
@@ -125,7 +126,23 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     case 'session.fatigue': {
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
-      return computeSessionFatigue(sets.map(toAnalyticsSet), weightsOf(sets));
+      const analyticsSets = sets.map(toAnalyticsSet);
+      const crossSet = computeSessionFatigue(analyticsSets, weightsOf(sets));
+      // VMCP-02.26: computeSessionFatigue measures CROSS-set decay only
+      // (velocity recovery + rep drop between sets), so a single working set —
+      // even one taken to functional failure — reports level 0. Fold in the
+      // per-set WITHIN-set fatigue index (VBT spec §6.2: velocity loss + tempo
+      // creep + ROM shrink) so a hard single set surfaces real fatigue. Report
+      // `level` as the max of the two views: cross-set decay dominates
+      // multi-set sessions; within-set fatigue rescues the low-set-count case.
+      // `withinSetFatigue` is surfaced alongside for transparency.
+      const withinSetPerSet = analyticsSets.map((s) => computeVBTSetFatigueIndex(s).fatigueIndex);
+      const withinSetMax = withinSetPerSet.length === 0 ? 0 : Math.max(...withinSetPerSet);
+      return {
+        ...crossSet,
+        level: Math.max(crossSet.level, withinSetMax),
+        withinSetFatigue: { max: withinSetMax, perSet: withinSetPerSet },
+      };
     }
 
     case 'session.strength': {

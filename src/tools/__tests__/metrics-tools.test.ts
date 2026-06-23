@@ -413,6 +413,52 @@ describe('metrics.compute — session.fatigue', () => {
     expect(result.isError).toBeUndefined();
     expect((parsePayload(result) as { level: number }).level).toBe(0.4);
   });
+
+  it('VMCP-02.26: surfaces within-set fatigue for a single near-failure set (level not 0)', async () => {
+    // Single set, concentric velocity decays 1.0 -> 0.5 (50% loss). The
+    // cross-set estimate has nothing to compare against, so it returns level 0
+    // (the bug). The handler must fold in the within-set fatigue index.
+    spy.mockReturnValue({ level: 0, velocityRecoveryPct: 0, repDropPct: 0, isJunkVolume: false });
+    // Mean concentric velocity is read from _totalVelocity / _movementSampleCount
+    // (getRepMeanVelocity), so set those to make the per-rep mean equal `vel`.
+    const decliningRep = (i: number, vel: number): StoredRep => ({
+      id: `d-rep-${i}`,
+      setId: 'd1',
+      index: i,
+      repNumber: i + 1,
+      concentric: {
+        ...EMPTY_PHASE,
+        peakVelocity: vel,
+        _totalVelocity: vel * 4,
+        _movementSampleCount: 4,
+      },
+      eccentric: { ...EMPTY_PHASE, peakVelocity: vel * 0.6 },
+    });
+    const set: StoredSet = {
+      id: 'd1',
+      sessionId: 'sess-nf',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:00:30.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 60,
+      reps: [decliningRep(0, 1.0), decliningRep(1, 0.75), decliningRep(2, 0.5)],
+    };
+    const state = makeStateWithStore({ getSetsForSession: vi.fn(async () => [set]) });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'session.fatigue', sessionId: 'sess-nf' });
+    expect(result.isError).toBeUndefined();
+    const payload = parsePayload(result) as {
+      level: number;
+      withinSetFatigue: { max: number; perSet: number[] };
+    };
+    expect(payload.level).toBeGreaterThan(0);
+    expect(payload.withinSetFatigue.max).toBeGreaterThan(0);
+    expect(payload.withinSetFatigue.perSet).toHaveLength(1);
+  });
 });
 
 describe('metrics.compute — session.strength', () => {
