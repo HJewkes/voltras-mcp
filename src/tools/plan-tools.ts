@@ -35,6 +35,7 @@ import {
   PlanWeekCreateInput,
   PlanWeekListForBlockInput,
 } from '../schemas/plan.js';
+import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import type {
   StoredPlannedExercise,
@@ -378,6 +379,32 @@ const PROGRESSION_DECREMENT_LBS = -5;
 const PROGRESSION_HOLD_LBS = 0;
 
 /**
+ * VMCP-02.25: velocity-loss ceiling above which a set that *hit its rep target*
+ * is treated as taken to/near functional failure — so the heuristic holds the
+ * load instead of adding weight. VBT autoregulation commonly reads ~20% loss as
+ * moderate fatigue and ~30%+ as high/near-failure; 25% is the conservative
+ * "this set was already hard — don't add load" line. (The 2026-05-18 bench set
+ * hit its reps at ~49% loss yet the rep-band-only heuristic recommended +5 lb.)
+ */
+const PROGRESSION_VELOCITY_LOSS_HOLD_PCT = 25;
+
+/**
+ * Peak-to-last concentric velocity loss (%) for one set, using the same
+ * peak-baseline definition as the `velocity_loss_exceeded` channel event
+ * (baseline = highest peak concentric velocity in the set, which sidesteps the
+ * rep-1 setup-pause artifact). Returns 0 when the set is too short or carries no
+ * velocity telemetry to judge — i.e. "no fatigue signal", never a false override.
+ */
+function setVelocityLossPct(set: StoredSet): number {
+  if (set.reps.length < 2) return 0;
+  const baseline = peakConcentricBaseline(set.reps);
+  if (baseline <= 0) return 0;
+  const last = set.reps[set.reps.length - 1].concentric.peakVelocity;
+  if (last >= baseline) return 0;
+  return (100 * (baseline - last)) / baseline;
+}
+
+/**
  * Resolve the program a progression-tool call refers to. If `programId` is
  * supplied, fetch + verify it exists. Otherwise, pick the most-recent
  * non-archived program (the store returns rows ordered by `created_at DESC`).
@@ -639,6 +666,21 @@ function computeProgressionDelta(
   const majority = Math.floor(setsCompleted / 2) + 1;
   const bandLabel = repsLow === repsHigh ? `${repsLow} reps` : `${repsLow}-${repsHigh} reps`;
   if (hitHigh >= majority) {
+    // VMCP-02.25: layer VBT on top of the rep-band check. Hitting the rep
+    // target at high intra-set velocity loss means the load was already at/near
+    // functional failure — adding weight would accumulate misload week over
+    // week. Hold instead of incrementing when any set crossed the ceiling.
+    const maxLossPct = Math.max(0, ...sets.map(setVelocityLossPct));
+    if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
+      return {
+        delta: PROGRESSION_HOLD_LBS,
+        reasoning:
+          `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel}), ` +
+          `but velocity dropped ${Math.round(maxLossPct)}% within a set ` +
+          `(>= ${PROGRESSION_VELOCITY_LOSS_HOLD_PCT}% near-failure) — hold the load, don't add.`,
+        basedOnSessionId: basisSessionId,
+      };
+    }
     return {
       delta: PROGRESSION_INCREMENT_LBS,
       reasoning: `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel}); add ${PROGRESSION_INCREMENT_LBS} lb.`,
