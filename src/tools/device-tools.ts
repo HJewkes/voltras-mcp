@@ -1028,6 +1028,11 @@ export function registerDeviceTools(
       } else {
         delete slot.pendingGuidedLoadExerciseId;
       }
+      // VMCP-02.03: stash the requested target so the bridge can surface
+      // `requested_target_lbs` on the first-class guided_load_state channel
+      // event. NOT single-shot — the bridge reads it on every phase
+      // transition and clears it on the terminal phase (exited/timeout).
+      slot.pendingGuidedLoadTargetLbs = input.targetWeightLbs;
       // VMCP-02.06: drive the cable to a mechanically-unloaded state before
       // the trigger so the firmware emits the countdown ceremony. Caller
       // can opt out via `skipUnload` for diagnostic flows.

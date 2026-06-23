@@ -332,6 +332,9 @@ interface FakeSlot {
   coercionWatch: CoercionWatchT;
   modeRevertGuard: ModeRevertGuardT;
   pendingGuidedLoadInactivityMs?: number;
+  pendingGuidedLoadExerciseName?: string;
+  pendingGuidedLoadExerciseId?: string;
+  pendingGuidedLoadTargetLbs?: number;
 }
 
 interface FakeSlotBindings {
@@ -1832,6 +1835,14 @@ describe('registerDeviceTools', () => {
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
       expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
+    });
+
+    it('VMCP-02.03: stashes pendingGuidedLoadTargetLbs on the slot for the bridge', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 95 });
+      expect(isError).toBeUndefined();
+      const slot = state.slots.get('primary')!;
+      expect(slot.pendingGuidedLoadTargetLbs).toBe(95);
     });
 
     it('VMCP-02.13: stashes exerciseName / exerciseId on the slot for the bridge', async () => {

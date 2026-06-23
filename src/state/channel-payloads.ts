@@ -878,6 +878,138 @@ export function buildIdleTimeoutPayload(
 }
 
 /**
+ * Guided-load phase machine, mirrored locally so this module doesn't pull in
+ * the SDK type (matches the `ConnectionState` mirroring below). The SDK's
+ * `GuidedLoadPhase` union is `idle | armed | countdown | engaging | active |
+ * exited | timeout`.
+ */
+export type GuidedLoadPhase =
+  | 'idle'
+  | 'armed'
+  | 'countdown'
+  | 'engaging'
+  | 'active'
+  | 'exited'
+  | 'timeout';
+
+/**
+ * Branchable summary of where the guided-load flow stands. The key ergonomic
+ * add of VMCP-02.03: agents branch on `outcome` (`failed` / `engaged`) instead
+ * of memorizing the phase enum. `pending` covers the in-progress phases
+ * (armed/countdown/engaging); `engaged` = active; `ended` = exited (clean
+ * teardown); `failed` = timeout (the silent ceremony-skip / poll-window expiry).
+ */
+export type GuidedLoadOutcome = 'pending' | 'engaged' | 'ended' | 'failed';
+
+/** Pure phase → outcome map. `idle` collapses to `pending` (not yet engaged). */
+export function guidedLoadPhaseToOutcome(phase: GuidedLoadPhase): GuidedLoadOutcome {
+  switch (phase) {
+    case 'active':
+      return 'engaged';
+    case 'exited':
+      return 'ended';
+    case 'timeout':
+      return 'failed';
+    default:
+      return 'pending';
+  }
+}
+
+function guidedLoadSummary(
+  phase: GuidedLoadPhase,
+  countdownRemainingMs: number | null,
+  requestedTargetLbs: number | undefined,
+): string {
+  const at = requestedTargetLbs !== undefined ? ` at ${requestedTargetLbs} lbs` : '';
+  switch (phase) {
+    case 'armed':
+      return `Guided load armed${at} — waiting for the unload ceremony.`;
+    case 'countdown':
+      return countdownRemainingMs !== null
+        ? `Guided load countdown: ${countdownRemainingMs} ms remaining.`
+        : 'Guided load countdown in progress.';
+    case 'engaging':
+      return `Guided load engaging${at}.`;
+    case 'active':
+      return `Guided load engaged${at}.`;
+    case 'exited':
+      return 'Guided load exited.';
+    case 'timeout':
+      return (
+        `Guided load FAILED to engage${at} (ceremony skipped or timed out). ` +
+        `Call device.unload and re-trigger.`
+      );
+    case 'idle':
+      return 'Guided load idle.';
+  }
+}
+
+export interface GuidedLoadStatePayloadInput {
+  phase: GuidedLoadPhase;
+  countdownRemainingMs: number | null;
+  /** Requested target weight (lbs) stashed by `device.start_guided_load`. */
+  requestedTargetLbs?: number | undefined;
+  /** Auto-created (or reused) guided-load set/session, when present. */
+  setId?: string | undefined;
+  sessionId?: string | undefined;
+}
+
+/**
+ * Build the meta + content for a first-class `guided_load_state` channel
+ * event (VMCP-02.03). Promotes the previously debug-only phase machine to the
+ * regular channel stream so PT Claude can react to engagement/failure without
+ * polling `debug.recent_events`.
+ *
+ * NDA: deliberately omits `fitnessModeRaw` (the decoded firmware mode byte) —
+ * the phase/outcome pair expresses the state semantically. The debug event
+ * retains `fitnessModeRaw` for diagnostics; the customer-facing channel must
+ * not surface firmware mode bytes.
+ *
+ * `countdown_remaining_ms` is present only on the `countdown` phase (per the
+ * ticket); `requested_target_lbs` and the set-context keys are omitted when
+ * unavailable (e.g. a unit-direct guided load with no tool stash).
+ */
+export function buildGuidedLoadStatePayload(input: GuidedLoadStatePayloadInput): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const outcome = guidedLoadPhaseToOutcome(input.phase);
+  const showCountdown = input.phase === 'countdown' && input.countdownRemainingMs !== null;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'guided_load_state',
+    phase: input.phase,
+    outcome,
+  };
+  if (showCountdown) {
+    meta.countdown_remaining_ms = String(input.countdownRemainingMs);
+  }
+  if (input.requestedTargetLbs !== undefined) {
+    meta.requested_target_lbs = String(input.requestedTargetLbs);
+  }
+  if (input.setId !== undefined) {
+    meta.set_id = input.setId;
+  }
+  if (input.sessionId !== undefined) {
+    meta.session_id = input.sessionId;
+  }
+  const content = JSON.stringify({
+    summary: guidedLoadSummary(input.phase, input.countdownRemainingMs, input.requestedTargetLbs),
+    guided_load: {
+      phase: input.phase,
+      outcome,
+      countdown_remaining_ms: showCountdown ? input.countdownRemainingMs : null,
+      requested_target_lbs: input.requestedTargetLbs ?? null,
+    },
+    set_context:
+      input.setId !== undefined
+        ? { set_id: input.setId, session_id: input.sessionId ?? null }
+        : null,
+  });
+  return { meta, content };
+}
+
+/**
  * Compute the dedupe key for a trigger spec. Used by the bridge's
  * `tryFireTrigger` ledger so identical specs in `notifyOn` collapse to
  * one event while distinct thresholds fire independently.

@@ -2389,6 +2389,60 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(state.setWatchdog.has(set!.setId)).toBe(false);
   });
 
+  // ── VMCP-02.03: first-class guided_load_state channel event ──
+  function guidedPublishes(): { content: string; meta: Record<string, string> }[] {
+    return state.channels.publish.mock.calls
+      .map((c) => c[0])
+      .filter((e) => e.meta.event_type === 'guided_load_state');
+  }
+
+  it('VMCP-02.03: publishes a guided_load_state channel event on the armed transition', () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const events = guidedPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0].meta.phase).toBe('armed');
+    expect(events[0].meta.outcome).toBe('pending');
+    expect(events[0].meta.slot).toBe('primary');
+    // set_context carries the auto-created set.
+    expect(events[0].meta.set_id).toBe(live.snapshotSet()!.setId);
+  });
+
+  it('VMCP-02.03: timeout transition publishes outcome=failed (the silent-skip signal)', () => {
+    client.fireGuided({ phase: 'timeout', countdownRemainingMs: null, fitnessModeRaw: null });
+    const events = guidedPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0].meta.outcome).toBe('failed');
+  });
+
+  it('VMCP-02.03: suppresses intra-countdown spam — one publish per phase transition', () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'countdown', countdownRemainingMs: 3000, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'countdown', countdownRemainingMs: 2000, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'countdown', countdownRemainingMs: 1000, fitnessModeRaw: 0x0026 });
+    client.fireGuided({ phase: 'active', countdownRemainingMs: null, fitnessModeRaw: 0x0027 });
+
+    expect(guidedPublishes().map((e) => e.meta.phase)).toEqual(['armed', 'countdown', 'active']);
+  });
+
+  it('VMCP-02.03: does not publish for the idle baseline phase', () => {
+    client.fireGuided({ phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null });
+    expect(guidedPublishes()).toHaveLength(0);
+  });
+
+  it('VMCP-02.03: surfaces requested_target_lbs from the slot stash and clears it on a terminal phase', () => {
+    const slot = state.slots.get('primary') as unknown as { pendingGuidedLoadTargetLbs?: number };
+    slot.pendingGuidedLoadTargetLbs = 120;
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+    expect(guidedPublishes()[0].meta.requested_target_lbs).toBe('120');
+    // Read on every transition, so it survives mid-flow.
+    expect(slot.pendingGuidedLoadTargetLbs).toBe(120);
+
+    client.fireGuided({ phase: 'exited', countdownRemainingMs: null, fitnessModeRaw: 0x0004 });
+    expect(slot.pendingGuidedLoadTargetLbs).toBeUndefined();
+  });
+
   // ── VMCP-02.13: auto-session inherits the stashed exercise identity ──
   it('VMCP-02.13: auto-session inherits stashed exerciseName / exerciseId', () => {
     const slot = state.slots.get('primary') as unknown as {
