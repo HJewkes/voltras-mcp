@@ -32,6 +32,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
+import { activeModeName } from './active-mode.js';
 import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
@@ -208,6 +209,11 @@ export function buildRepFinalizedPayload(
     },
     set_context: {
       weight_lbs: device.weightLbs ?? null,
+      // VMCP-02.09: `requested_mode` (cmd=0x10 intent) vs `active_mode` (cmd=0x07
+      // applied) make "asked for X, running Y" self-evident. `training_mode` is
+      // kept as a deprecated alias (= requested) for one release.
+      requested_mode: device.trainingMode ?? null,
+      active_mode: activeModeName(device.trainingModeRaw),
       training_mode: device.trainingMode ?? null,
       // The caller passes the current `set.reps.length`; the in-progress
       // new rep sits at the end of that array, so subtract one.
@@ -294,8 +300,15 @@ export function buildSetStartedPayload(
   if (device.weightLbs !== undefined && device.weightLbs > 0) {
     meta.weight_lbs = String(device.weightLbs);
   }
+  // VMCP-02.09: surface requested (cmd=0x10) and applied (cmd=0x07) modes
+  // distinctly; `training_mode` stays as a deprecated alias (= requested).
   if (device.trainingMode !== undefined) {
+    meta.requested_mode = device.trainingMode;
     meta.training_mode = device.trainingMode;
+  }
+  const activeMode = activeModeName(device.trainingModeRaw);
+  if (activeMode !== null) {
+    meta.active_mode = activeMode;
   }
 
   const summary = buildSetStartedSummary(device, ordinal);
@@ -305,6 +318,8 @@ export function buildSetStartedPayload(
       set_id: set.setId,
       session_id: set.sessionId,
       weight_lbs: device.weightLbs ?? null,
+      requested_mode: device.trainingMode ?? null,
+      active_mode: activeMode,
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
     },

@@ -197,9 +197,30 @@ describe('buildRepFinalizedPayload', () => {
     expect(parsed.rep.rom_m).toBeCloseTo(0.6, 3);
     expect(parsed.set_context).toEqual({
       weight_lbs: 135,
+      // VMCP-02.09: requested (cmd=0x10) surfaced explicitly; active_mode is
+      // null here because the fixture carries no cmd=0x07 trainingModeRaw.
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
       rep_count_so_far: 2,
     });
+  });
+
+  // VMCP-02.09 — when the applied (cmd=0x07) byte is present and diverges from
+  // the requested mode, set_context surfaces both distinctly.
+  it('surfaces active_mode from trainingModeRaw, distinct from requested_mode', () => {
+    const diverged: DeviceSnapshot = {
+      connected: true,
+      weightLbs: 135,
+      trainingMode: 'Isokinetic', // requested (cmd=0x10)
+      trainingModeRaw: 1, // applied (cmd=0x07) — device actually running WeightTraining
+    };
+    const rep = makeRep(1, 500, 400);
+    const { content } = buildRepFinalizedPayload(rep, 0, set, diverged, 2);
+    const parsed = JSON.parse(content);
+    expect(parsed.set_context.requested_mode).toBe('Isokinetic');
+    expect(parsed.set_context.active_mode).toBe('Weight Training');
+    expect(parsed.set_context.training_mode).toBe('Isokinetic'); // deprecated alias = requested
   });
 
   it('surfaces telemetry enrichment fields on each phase + rep level', () => {
@@ -327,7 +348,7 @@ describe('buildSetStartedPayload', () => {
     trainingMode: 'WeightTraining',
   };
 
-  it('emits meta with weight_lbs and training_mode when set on the device', () => {
+  it('emits meta with weight_lbs and requested/training_mode when set on the device', () => {
     const { meta } = buildSetStartedPayload(set, device, 2, null);
     expect(meta).toEqual({
       source: 'voltras',
@@ -335,6 +356,9 @@ describe('buildSetStartedPayload', () => {
       set_id: 'set-2',
       session_id: 'sess-1',
       weight_lbs: '135',
+      // VMCP-02.09: requested surfaced explicitly; training_mode kept as alias.
+      // active_mode is omitted from meta when no cmd=0x07 byte is known.
+      requested_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
     });
   });
@@ -349,10 +373,29 @@ describe('buildSetStartedPayload', () => {
       set_id: 'set-2',
       session_id: 'sess-1',
       weight_lbs: 135,
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:05:00.000Z',
     });
     expect(parsed.previous_set_summary).toBeNull();
+  });
+
+  // VMCP-02.09 — applied (cmd=0x07) mode surfaced on both meta and content.
+  it('surfaces active_mode from trainingModeRaw on meta and content', () => {
+    const diverged: DeviceSnapshot = {
+      connected: true,
+      weightLbs: 135,
+      trainingMode: 'Isokinetic',
+      trainingModeRaw: 1,
+    };
+    const { meta, content } = buildSetStartedPayload(set, diverged, 1, null);
+    expect(meta.requested_mode).toBe('Isokinetic');
+    expect(meta.active_mode).toBe('Weight Training');
+    const parsed = JSON.parse(content);
+    expect(parsed.set.requested_mode).toBe('Isokinetic');
+    expect(parsed.set.active_mode).toBe('Weight Training');
+    expect(parsed.set.training_mode).toBe('Isokinetic');
   });
 
   it('content surfaces previous_set_summary when one is provided', () => {

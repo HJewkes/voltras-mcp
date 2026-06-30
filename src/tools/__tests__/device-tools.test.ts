@@ -1121,6 +1121,30 @@ describe('registerDeviceTools', () => {
       expect(payload.eccentricPercentTenths).toBe(50);
     });
 
+    // VMCP-02.09 — requested (cmd=0x10) vs applied (cmd=0x07) modes surfaced
+    // distinctly so callers stop reading `trainingMode` as the active mode.
+    it('surfaces requested_mode and active_mode (mapped from trainingModeRaw)', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Isokinetic', trainingModeRaw: 1 });
+      const reg = placeholders.get('device.get_state')!;
+      const { isError, payload } = await invoke(reg, {});
+      expect(isError).toBeUndefined();
+      expect(payload.requested_mode).toBe('Isokinetic');
+      // activeModeName maps the cmd=0x07 byte 1 → 'Weight Training' from its
+      // own verified-name table (not the SDK mock), so this is the space form.
+      expect(payload.active_mode).toBe('Weight Training');
+      // Deprecated aliases retained for one release.
+      expect(payload.trainingMode).toBe('Isokinetic');
+      expect(payload.trainingModeRaw).toBe(1);
+    });
+
+    it('active_mode is null and requested_mode null when modes are unknown', async () => {
+      const reg = placeholders.get('device.get_state')!;
+      const { payload } = await invoke(reg, {});
+      expect(payload.requested_mode).toBeNull();
+      expect(payload.active_mode).toBeNull();
+    });
+
     it('omits state-dump fields when live.snapshotDevice returns them as undefined', async () => {
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
