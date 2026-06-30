@@ -284,7 +284,7 @@ const CONFIGURE_ISOKINETIC_DESCRIPTION =
   'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
 
 const START_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.';
+  '@experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
@@ -1051,10 +1051,25 @@ export function registerDeviceTools(
       // event. NOT single-shot — the bridge reads it on every phase
       // transition and clears it on the terminal phase (exited/timeout).
       slot.pendingGuidedLoadTargetLbs = input.targetWeightLbs;
-      // VMCP-02.06: drive the cable to a mechanically-unloaded state before
-      // the trigger so the firmware emits the countdown ceremony. Caller
-      // can opt out via `skipUnload` for diagnostic flows.
-      if (input.skipUnload !== true) {
+      // VMCP-02.45: from a cold Idle/no-mode start the firmware suppresses
+      // state-dump telemetry AND the auto-unload (Workout.STOP) does not
+      // establish a training mode — so BP_BASE_WEIGHT + the AA12 trigger land
+      // on a device that falls straight back to Idle and never engages (the
+      // user sees inactivity_timeout, 0 reps, and a silent channel). When the
+      // device is in Idle, drive it into WeightTraining first so telemetry
+      // resumes and the trigger sticks, and skip the Workout.STOP unload (the
+      // cable is already slack in Idle, and STOP can knock the freshly-set
+      // mode back to Idle). Mirrors the hardware-validated
+      // set_mode(WeightTraining) → start_guided_load(skipUnload) recovery
+      // (HANDOFF-2026-05-21-vmcp-02.29-phase-1-parity-data §'Engagement
+      // journey'). A failed setMode propagates as a structured error rather
+      // than the silent inactivity_timeout the bug produced.
+      if (slot.live.snapshotDevice().trainingMode === 'Idle') {
+        await slot.client.setMode(TrainingMode.WeightTraining);
+      } else if (input.skipUnload !== true) {
+        // VMCP-02.06: drive the cable to a mechanically-unloaded state before
+        // the trigger so the firmware emits the countdown ceremony. Caller
+        // can opt out via `skipUnload` for diagnostic flows.
         await slot.client.unloadDevice();
       }
       // F3 coercion correlation: guided-load runs a firmware safety
