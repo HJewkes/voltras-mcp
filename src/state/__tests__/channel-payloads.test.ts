@@ -455,6 +455,10 @@ describe('buildSetEndedPayload', () => {
       set_id: 'set-end',
       session_id: 'sess-1',
       weight_lbs: 100,
+      // VMCP-02.09: requested mode from the StoredSet; active_mode is always
+      // null on set_ended (StoredSet does not persist the cmd=0x07 byte).
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
       partial_reason: null,
     });
@@ -619,6 +623,10 @@ describe('buildConnectionChangedPayload', () => {
       connected: true,
       battery_percent: 85,
       weight_lbs: 100,
+      // VMCP-02.09: requested surfaced explicitly; active_mode null (fixture has
+      // no cmd=0x07 trainingModeRaw); training_mode retained as alias.
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
       damper_level: 3,
       stale_since_disconnect: null,
@@ -772,6 +780,10 @@ describe('summarizeSetForTrigger', () => {
       set_id: 'set-1',
       session_id: 'sess-1',
       weight_lbs: 135,
+      // VMCP-02.09: requested explicit; active_mode null (no cmd=0x07 byte in
+      // the fixture); training_mode retained as alias.
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:00:00.000Z',
     });
@@ -782,6 +794,28 @@ describe('summarizeSetForTrigger', () => {
     });
     expect(summary.vbt_summary.first_rep_v).toBe(0.85);
     expect(summary.vbt_summary.last_rep_v).toBe(0.7);
+  });
+
+  // VMCP-02.09 — applied (cmd=0x07) mode surfaced from trainingModeRaw,
+  // distinct from the requested mode, on the trigger set_so_far block.
+  it('surfaces active_mode from trainingModeRaw, distinct from requested_mode', () => {
+    const set: ActiveSet = {
+      setId: 'set-1',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    };
+    const diverged: DeviceSnapshot = {
+      connected: true,
+      weightLbs: 135,
+      trainingMode: 'Isokinetic',
+      trainingModeRaw: 1,
+    };
+    const summary = summarizeSetForTrigger(set, diverged);
+    expect(summary.set.requested_mode).toBe('Isokinetic');
+    expect(summary.set.active_mode).toBe('Weight Training');
+    expect(summary.set.training_mode).toBe('Isokinetic');
   });
 
   it('reports null weight/mode when device has none', () => {
@@ -1281,6 +1315,10 @@ describe('buildSettingCoercedPayload', () => {
       set_id: null,
       session_id: null,
       weight_lbs: 30,
+      // VMCP-02.09: requested explicit; active_mode null (no cmd=0x07 byte in
+      // the fixture); training_mode retained as alias.
+      requested_mode: 'WeightTraining',
+      active_mode: null,
       training_mode: 'WeightTraining',
     });
   });

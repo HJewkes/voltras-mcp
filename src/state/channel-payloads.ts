@@ -473,6 +473,12 @@ export function buildSetEndedPayload(
       set_id: stored.id,
       session_id: stored.sessionId,
       weight_lbs: stored.weightLbs,
+      // VMCP-02.09: requested mode captured at set start. StoredSet does not
+      // persist the cmd=0x07 applied byte, so active_mode is null on the
+      // historical set_ended event (it is live on set_started / rep_finalized /
+      // get_state). training_mode retained as a deprecated alias (= requested).
+      requested_mode: stored.trainingMode,
+      active_mode: null,
       training_mode: stored.trainingMode,
       started_at: stored.startedAt,
       ended_at: stored.endedAt,
@@ -728,6 +734,10 @@ export interface SetSoFar {
     set_id: string;
     session_id: string;
     weight_lbs: number | null;
+    // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
+    // retained as a deprecated alias (= requested).
+    requested_mode: string | null;
+    active_mode: string | null;
     training_mode: string | null;
     started_at: string;
   };
@@ -751,6 +761,8 @@ export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): 
       set_id: set.setId,
       session_id: set.sessionId,
       weight_lbs: device.weightLbs ?? null,
+      requested_mode: device.trainingMode ?? null,
+      active_mode: activeModeName(device.trainingModeRaw),
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
     },
@@ -1162,6 +1174,10 @@ export function buildConnectionChangedPayload(
       connected: device.connected,
       battery_percent: device.batteryPercent ?? null,
       weight_lbs: device.weightLbs ?? null,
+      // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
+      // retained as a deprecated alias (= requested).
+      requested_mode: device.trainingMode ?? null,
+      active_mode: activeModeName(device.trainingModeRaw),
       training_mode: device.trainingMode ?? null,
       damper_level: device.damperLevel ?? null,
       stale_since_disconnect: device.staleSinceDisconnect ?? null,
@@ -1402,6 +1418,10 @@ export function buildSettingCoercedPayload(
       set_id: context.setId,
       session_id: context.sessionId,
       weight_lbs: device.weightLbs ?? null,
+      // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
+      // retained as a deprecated alias (= requested).
+      requested_mode: device.trainingMode ?? null,
+      active_mode: activeModeName(device.trainingModeRaw),
       training_mode: device.trainingMode ?? null,
     },
   });
