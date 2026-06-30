@@ -299,7 +299,8 @@ const UNLOAD_DESCRIPTION =
   "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. " +
   'Mechanism: writes two `BP_SET_FITNESS_MODE` frames back-to-back (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
   "A single `FITNESS_WORKOUT_STATE=0` write (used by rowing's `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. " +
-  'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`.';
+  'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. ' +
+  'When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41).';
 
 const DeviceExitGuidedLoadInput = z
   .object({
@@ -963,8 +964,25 @@ export function registerDeviceTools(
     'device.unload',
     DeviceUnloadInput,
     wrapHandler(DeviceUnloadInput, async (input) => {
-      const slot = getSlot(state, input.slot);
+      const slotId = input.slot ?? PRIMARY_SLOT;
+      const slot = getSlot(state, slotId);
+      // VMCP-02.41: capture whether we are tearing down an active guided-load
+      // flow BEFORE the mode-bounce. `unloadDevice()` physically drops the
+      // cable but never touches the SDK's guided-load state machine, so
+      // `guidedLoadState.phase` — and the `load_state` / `guided_load.phase`
+      // that get_state derives from it — would stay stale at `active` /
+      // `loaded` after the unload. When unload is the teardown for an active
+      // flow, drive the SDK through `exitGuidedLoad()` too: that transitions
+      // the phase to `exited` (refreshing get_state), fires onGuidedLoadState
+      // so the bridge publishes the terminal `guided_load_state` channel event
+      // (outcome: 'ended'), and lets us reap the auto-created scaffold —
+      // automating the validated unload-then-exit_guided_load recovery.
+      const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
       await slot.client.unloadDevice();
+      if (wasGuidedLoadActive) {
+        await slot.client.exitGuidedLoad();
+        await reapGuidedLoadScaffold(state, slotId);
+      }
       return { ok: true };
     }),
     UNLOAD_DESCRIPTION,
