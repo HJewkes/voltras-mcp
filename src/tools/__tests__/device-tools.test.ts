@@ -1764,6 +1764,64 @@ describe('registerDeviceTools', () => {
       expect(client.startGuidedLoad).toHaveBeenCalled();
     });
 
+    // VMCP-02.45 — from Idle the auto-unload (Workout.STOP) does not establish
+    // a mode, so the trigger never engages. Drive WeightTraining first instead.
+    it('from Idle: sets WeightTraining before startGuidedLoad and skips the unload', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Idle' });
+      const client = primaryClient(state);
+      const callOrder: string[] = [];
+      client.setMode.mockImplementationOnce(async () => {
+        callOrder.push('setMode');
+      });
+      client.startGuidedLoad.mockImplementationOnce(async () => {
+        callOrder.push('startGuidedLoad');
+      });
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 20 });
+      expect(isError).toBeUndefined();
+      // WeightTraining = 0x0001 in the SDK enum.
+      expect(client.setMode).toHaveBeenCalledWith(0x0001);
+      expect(client.unloadDevice).not.toHaveBeenCalled();
+      expect(callOrder).toEqual(['setMode', 'startGuidedLoad']);
+    });
+
+    it('from Idle with skipUnload:true: still sets WeightTraining, no unload', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Idle' });
+      const client = primaryClient(state);
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 20, skipUnload: true });
+      expect(isError).toBeUndefined();
+      expect(client.setMode).toHaveBeenCalledWith(0x0001);
+      expect(client.unloadDevice).not.toHaveBeenCalled();
+    });
+
+    it('when NOT in Idle: does not set mode, keeps the auto-unload', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Weight Training' });
+      const client = primaryClient(state);
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(client.setMode).not.toHaveBeenCalled();
+      expect(client.unloadDevice).toHaveBeenCalledTimes(1);
+    });
+
+    it('from Idle: a failed setMode surfaces as a structured error, no trigger', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Idle' });
+      const client = primaryClient(state);
+      client.setMode.mockRejectedValueOnce(
+        new FakeVoltraSDKError('mode write failed', 'COMMAND_FAILED'),
+      );
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 20 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('COMMAND_FAILED');
+      expect(client.startGuidedLoad).not.toHaveBeenCalled();
+    });
+
     it('forwards optional pollIntervalMs and pollDurationMs when supplied', async () => {
       const reg = placeholders.get('device.start_guided_load')!;
       const { isError } = await invoke(reg, {
