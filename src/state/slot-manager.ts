@@ -25,6 +25,7 @@ import { VoltraClient } from '@voltras/node-sdk';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
 import { wireBridgeForSlot } from './event-bridge.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
+import { ModeDivergenceWatch } from './mode-divergence-watch.js';
 import { CoercionWatch } from './coercion-watch.js';
 import { PRIMARY_SLOT, MAX_SLOTS, type ServerState, type SlotState } from './server-state.js';
 
@@ -60,6 +61,7 @@ export function createSlot(state: ServerState, slotId: string, client: VoltraCli
     client,
     live: new LiveState(),
     modeRevertGuard: new ModeRevertGuard(),
+    modeDivergenceWatch: new ModeDivergenceWatch(),
     coercionWatch: new CoercionWatch(),
   };
   state.slots.set(slotId, slot);
@@ -136,6 +138,7 @@ export function resetPrimarySlot(state: ServerState): void {
   slot.client = new VoltraClient();
   slot.live.markDisconnected(new Date().toISOString());
   slot.modeRevertGuard = new ModeRevertGuard();
+  slot.modeDivergenceWatch = new ModeDivergenceWatch();
   // Drop any pending coercion checks from the outgoing client so they can't
   // fire against a state-dump on the fresh one. The new connection's first
   // setter call will re-register from scratch.

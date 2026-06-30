@@ -1024,6 +1024,65 @@ export function buildGuidedLoadStatePayload(input: GuidedLoadStatePayloadInput):
   return { meta, content };
 }
 
+export interface ModeDivergedPayloadInput {
+  /** Requested-mode name (cmd=0x10), e.g. `"Isokinetic"`. */
+  requestedMode: string | null;
+  /** Applied-mode name (cmd=0x07), e.g. `"Weight Training"` / `"unverified(7)"`. */
+  activeMode: string | null;
+  /** How long the modes had disagreed at emit time, in ms. */
+  divergedForMs: number;
+  /** Active set/session, when one is open. */
+  setId?: string | undefined;
+  sessionId?: string | undefined;
+}
+
+/**
+ * Build the meta + content for a `mode_diverged` channel event (VMCP-02.09c).
+ * Synthesized by the bridge when the requested (cmd=0x10) and applied (cmd=0x07)
+ * training modes disagree past the debounce window — the "asked for X, running
+ * Y" condition VMCP-02.09a made visible. Mirrors `set_aborted_by_mode_revert`:
+ * a requested≠applied signal lifted to a first-class event so PT Claude can
+ * tell the user the mode change may not have taken.
+ *
+ * The `slot` meta key is injected by the per-slot channel publisher.
+ */
+export function buildModeDivergedPayload(input: ModeDivergedPayloadInput): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const requested = input.requestedMode ?? 'unknown';
+  const active = input.activeMode ?? 'unknown';
+  const seconds = (input.divergedForMs / 1000).toFixed(1);
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'mode_diverged',
+    requested_mode: requested,
+    active_mode: active,
+    diverged_for_ms: String(input.divergedForMs),
+  };
+  if (input.setId !== undefined) {
+    meta.set_id = input.setId;
+  }
+  if (input.sessionId !== undefined) {
+    meta.session_id = input.sessionId;
+  }
+  const content = JSON.stringify({
+    summary:
+      `Mode mismatch: requested ${requested} but the device is running ${active} ` +
+      `(${seconds}s). The mode change may not have taken — re-select on the unit.`,
+    divergence: {
+      requested_mode: input.requestedMode,
+      active_mode: input.activeMode,
+      diverged_for_ms: input.divergedForMs,
+    },
+    set_context:
+      input.setId !== undefined
+        ? { set_id: input.setId, session_id: input.sessionId ?? null }
+        : null,
+  });
+  return { meta, content };
+}
+
 /**
  * Compute the dedupe key for a trigger spec. Used by the bridge's
  * `tryFireTrigger` ledger so identical specs in `notifyOn` collapse to

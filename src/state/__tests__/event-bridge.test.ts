@@ -65,6 +65,8 @@ const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
+const { ModeDivergenceWatch } = await import('../mode-divergence-watch.js');
+type ModeDivergenceWatchT = InstanceType<typeof ModeDivergenceWatch>;
 const { CoercionWatch } = await import('../coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 const { RestTimerRegistry } = await import('../rest-timer.js');
@@ -380,6 +382,7 @@ function makeBareState(opts: {
     client: opts.client,
     live: opts.live,
     modeRevertGuard: new ModeRevertGuard(),
+    modeDivergenceWatch: new ModeDivergenceWatch(),
     coercionWatch: new CoercionWatch(),
   });
   return {
@@ -689,6 +692,7 @@ describe('wireEventBridge', () => {
       live: LiveStateT;
       client: FakeClient;
       modeRevertGuard: ModeRevertGuardT;
+      modeDivergenceWatch: ModeDivergenceWatchT;
       coercionWatch: CoercionWatchT;
     }
     interface FakeState {
@@ -731,6 +735,7 @@ describe('wireEventBridge', () => {
         live,
         client: client as unknown as FakeSlot['client'],
         modeRevertGuard: new ModeRevertGuard(),
+        modeDivergenceWatch: new ModeDivergenceWatch(),
         coercionWatch: new CoercionWatch(),
       });
       fakeState = {
@@ -956,6 +961,7 @@ describe('wireEventBridge', () => {
       live: LiveStateT;
       client: FakeClient;
       modeRevertGuard: ModeRevertGuardT;
+      modeDivergenceWatch: ModeDivergenceWatchT;
       coercionWatch: CoercionWatchT;
     }
     interface FakeStateForTrigger {
@@ -987,6 +993,7 @@ describe('wireEventBridge', () => {
         live,
         client,
         modeRevertGuard: new ModeRevertGuard(),
+        modeDivergenceWatch: new ModeDivergenceWatch(),
         coercionWatch: new CoercionWatch(),
       });
       fakeState = {
@@ -1989,6 +1996,7 @@ describe('wireEventBridge', () => {
         client: freshClient,
         live: freshLive,
         modeRevertGuard: new ModeRevertGuard(),
+        modeDivergenceWatch: new ModeDivergenceWatch(),
         coercionWatch: new CoercionWatch(),
       };
       const slots = new Map([['primary', slot]]);
@@ -2022,6 +2030,7 @@ describe('wireEventBridge', () => {
         client: freshClient,
         live: freshLive,
         modeRevertGuard: new ModeRevertGuard(),
+        modeDivergenceWatch: new ModeDivergenceWatch(),
         coercionWatch: new CoercionWatch(),
       };
       const slots = new Map([['primary', slot]]);
@@ -2034,6 +2043,65 @@ describe('wireEventBridge', () => {
       slot.modeRevertGuard.arm(3 as never);
       freshClient.fire.settingsUpdate({ mode: 3 });
       expect(slot.modeRevertGuard.isAborted()).toBe(false);
+    });
+  });
+
+  // ── VMCP-02.09c — mode-divergence watch → mode_diverged channel event ──
+  describe('mode-divergence watch (VMCP-02.09c)', () => {
+    // The watch's state machine has dedicated unit tests; here we verify the
+    // bridge feeds requested (onSettingsUpdate) + applied (onStateDump) into
+    // the slot watch and publishes a `mode_diverged` event on divergence. The
+    // slot watch uses window=0 so a single settled disagreement emits at once.
+    function wireFreshSlot(): {
+      client: ReturnType<typeof makeFakeClient>;
+      channels: ReturnType<typeof makeFakeChannels>;
+    } {
+      const freshClient = makeFakeClient();
+      const freshChannels = makeFakeChannels();
+      const slot = {
+        slotId: 'primary',
+        client: freshClient,
+        live: new LiveState(),
+        modeRevertGuard: new ModeRevertGuard(),
+        modeDivergenceWatch: new ModeDivergenceWatch(Date.now, 0),
+        coercionWatch: new CoercionWatch(),
+      };
+      const slots = new Map([['primary', slot]]);
+      const fresh = { slots, channels: freshChannels, server: undefined };
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        slot as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+      return { client: freshClient, channels: freshChannels };
+    }
+
+    it('publishes mode_diverged when requested (Isokinetic) and applied (WeightTraining) disagree', () => {
+      const { client, channels } = wireFreshSlot();
+      // User requests Isokinetic (cmd=0x10).
+      client.fire.settingsUpdate({ mode: 7 });
+      // Device reports it is actually running WeightTraining (cmd=0x07 byte 1).
+      client.fire.stateDump(makeStateDumpEvent({ trainingMode: 1 }));
+
+      const diverged = channels.publish.mock.calls
+        .map((c) => c[0])
+        .find((e) => e.meta.event_type === 'mode_diverged');
+      expect(diverged).toBeDefined();
+      expect(diverged!.meta.requested_mode).toBe('Isokinetic');
+      expect(diverged!.meta.active_mode).toBe('Weight Training');
+      expect(diverged!.meta.diverged_for_ms).toBe('0');
+      const parsed = JSON.parse(diverged!.content);
+      expect(parsed.divergence.requested_mode).toBe('Isokinetic');
+      expect(parsed.divergence.active_mode).toBe('Weight Training');
+    });
+
+    it('does NOT publish mode_diverged when requested and applied agree', () => {
+      const { client, channels } = wireFreshSlot();
+      client.fire.settingsUpdate({ mode: 1 }); // requested WeightTraining
+      client.fire.stateDump(makeStateDumpEvent({ trainingMode: 1 })); // applied WeightTraining
+      const diverged = channels.publish.mock.calls
+        .map((c) => c[0])
+        .find((e) => e.meta.event_type === 'mode_diverged');
+      expect(diverged).toBeUndefined();
     });
   });
 
@@ -2788,6 +2856,7 @@ describe('setting_coerced channel event (F2+F3)', () => {
       client,
       live,
       modeRevertGuard: new ModeRevertGuard(),
+      modeDivergenceWatch: new ModeDivergenceWatch(),
       coercionWatch: watch,
     });
     const state = { slots, channels, server };
@@ -3090,6 +3159,7 @@ describe('setting_coerced channel event (F2+F3)', () => {
       client: rightClient,
       live: rightLive,
       modeRevertGuard: new ModeRevertGuard(),
+      modeDivergenceWatch: new ModeDivergenceWatch(),
       coercionWatch: rightWatch,
     };
     // Reach into the same state the beforeEach already constructed — both

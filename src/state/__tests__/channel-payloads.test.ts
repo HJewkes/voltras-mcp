@@ -15,6 +15,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionChangedPayload,
   buildGuidedLoadStatePayload,
+  buildModeDivergedPayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
   buildRestStatusPayload,
@@ -689,6 +690,49 @@ describe('buildConnectionChangedPayload', () => {
     const device: DeviceSnapshot = { connected: false };
     const { content } = buildConnectionChangedPayload('authenticating', device, null);
     expect(JSON.parse(content).summary).toBe('Voltra authenticating.');
+  });
+});
+
+describe('buildModeDivergedPayload (VMCP-02.09c)', () => {
+  it('emits meta + content naming requested vs active and the divergence age', () => {
+    const { meta, content } = buildModeDivergedPayload({
+      requestedMode: 'Isokinetic',
+      activeMode: 'Weight Training',
+      divergedForMs: 4200,
+      setId: 'set-9',
+      sessionId: 'sess-3',
+    });
+    expect(meta).toEqual({
+      source: 'voltras',
+      event_type: 'mode_diverged',
+      requested_mode: 'Isokinetic',
+      active_mode: 'Weight Training',
+      diverged_for_ms: '4200',
+      set_id: 'set-9',
+      session_id: 'sess-3',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.summary).toBe(
+      'Mode mismatch: requested Isokinetic but the device is running Weight Training (4.2s). ' +
+        'The mode change may not have taken — re-select on the unit.',
+    );
+    expect(parsed.divergence).toEqual({
+      requested_mode: 'Isokinetic',
+      active_mode: 'Weight Training',
+      diverged_for_ms: 4200,
+    });
+    expect(parsed.set_context).toEqual({ set_id: 'set-9', session_id: 'sess-3' });
+  });
+
+  it('omits set/session meta and nulls set_context when no set is active', () => {
+    const { meta, content } = buildModeDivergedPayload({
+      requestedMode: 'Rowing',
+      activeMode: 'unverified(5)',
+      divergedForMs: 2000,
+    });
+    expect(meta.set_id).toBeUndefined();
+    expect(meta.session_id).toBeUndefined();
+    expect(JSON.parse(content).set_context).toBeNull();
   });
 });
 
