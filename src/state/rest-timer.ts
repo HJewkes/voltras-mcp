@@ -33,6 +33,7 @@
 
 import type { ChannelPublisher } from './channel-publisher.js';
 import { buildRestStatusPayload } from './channel-payloads.js';
+import { log } from '../logger.js';
 
 /**
  * Interval between successive `rest_status` emits. 15s is short enough that
@@ -217,7 +218,15 @@ export class RestTimerRegistry {
     if (this.entries.get(entry.slotId) !== entry) {
       return;
     }
-    this.publish(entry, /*final*/ false);
+    // A throwing publisher must NOT break the rest cadence: swallow and
+    // log the publish error, then still schedule the next tick so the
+    // elapsed counter keeps advancing to the terminal cap emit. Mirrors
+    // the tick-loop resilience in passive-scanner.ts / set-watchdog.ts.
+    try {
+      this.publish(entry, /*final*/ false);
+    } catch (err) {
+      log.error('rest-timer tick publish failed', err);
+    }
     this.scheduleNext(entry);
   }
 
@@ -225,8 +234,16 @@ export class RestTimerRegistry {
     if (this.entries.get(entry.slotId) !== entry) {
       return;
     }
-    this.publish(entry, /*final*/ true);
-    this.entries.delete(entry.slotId);
+    // Terminal emit: even if the final publish throws, the map entry MUST
+    // be removed so a failed publisher never leaks a live rest into the
+    // registry (`has()` would otherwise stay true forever).
+    try {
+      this.publish(entry, /*final*/ true);
+    } catch (err) {
+      log.error('rest-timer final publish failed', err);
+    } finally {
+      this.entries.delete(entry.slotId);
+    }
   }
 
   private publish(entry: RestTimerEntry, final: boolean): void {

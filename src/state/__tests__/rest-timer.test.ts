@@ -376,7 +376,12 @@ describe('RestTimerRegistry', () => {
       expect(second.events.map((e) => e.meta.set_id)).toEqual(['set-2', 'set-2']);
     });
 
-    it('publish failures do not break subsequent ticks', () => {
+    it('a throwing publish on one tick does not break the cadence', () => {
+      // Arrange: a publisher that throws on its 2nd emit — i.e. the first
+      // interval tick at t=15 fails while the t=0 initial + later ticks
+      // succeed. The production publisher (`state.channels.forSlot(...)`)
+      // is fire-and-forget, so a throw is a bug the timer must survive:
+      // it may not kill the rest cadence or leak the slot entry.
       const events: ChannelEvent[] = [];
       const throwingPublisher: ChannelPublisher = {
         publish: vi.fn((e) => {
@@ -387,16 +392,28 @@ describe('RestTimerRegistry', () => {
         }),
         forSlot: () => throwingPublisher,
       };
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Act: drive two intervals. The t=15 tick throws inside the timer
+      // callback; a resilient registry swallows it and still schedules
+      // the t=30 tick.
       registry.start('primary', 'set-1', throwingPublisher);
-      // The publish at t=15 throws. The registry's contract isn't
-      // explicit about swallowing publisher errors — but in production
-      // the publisher is `state.channels.forSlot(...)` which is
-      // fire-and-forget, so a throw would be a programmer error. We
-      // assert the behavior is "next tick still scheduled" by checking
-      // the t=0 publish landed before the throw.
-      expect(() => scheduler.tick(REST_STATUS_INTERVAL_MS)).toThrow('publish failed');
-      // Event at t=0 succeeded; the throw happened on the t=15 tick.
-      expect(events.length).toBeGreaterThanOrEqual(1);
+      scheduler.tick(REST_STATUS_INTERVAL_MS * 2);
+
+      // Assert: the throw was caught (logged, not propagated), the t=30
+      // tick still fired (3rd event landed), and the rest is still live.
+      expect(errorSpy).toHaveBeenCalled();
+      expect(events.length).toBeGreaterThanOrEqual(3);
+      expect(registry.has('primary')).toBe(true);
+
+      // Act 2: run out the clock past the cap.
+      scheduler.tick(REST_STATUS_CAP_MS);
+
+      // Assert: terminal emit fired and the entry was cleaned up — a
+      // failed tick never leaks a stuck rest into the registry.
+      expect(registry.has('primary')).toBe(false);
+
+      errorSpy.mockRestore();
     });
   });
 });
