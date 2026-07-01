@@ -289,6 +289,65 @@ describe('runTick — disable race', () => {
   });
 });
 
+describe('runTick — stop→start race', () => {
+  it('does not spawn a second scan chain when a stop→start straddles an in-flight scan', async () => {
+    // Arrange: a running scanner (generation 1) with one tick's scan
+    // in-flight and awaiting a resolution we control.
+    let resolveInflight!: (devs: PassiveScanDevice[]) => void;
+    const h = makeHarness({
+      scanResult: () =>
+        new Promise<PassiveScanDevice[]>((r) => {
+          resolveInflight = r;
+        }),
+    });
+    startPassiveScan(h.state, h.ctx, 10_000);
+    h.scheduler.pending.shift(); // discard the auto-scheduled wrapper…
+    const inflight = runTick(h.state, h.ctx); // …drive the same tick so we hold its promise.
+    expect(h.scan).toHaveBeenCalledTimes(1);
+
+    // Act: stop then start again (generation 2) while the first scan is
+    // still awaiting, then let the now-stale scan resolve.
+    stopPassiveScan(h.state, h.ctx);
+    startPassiveScan(h.state, h.ctx, 10_000);
+    resolveInflight([{ id: 'a' }]);
+    await inflight;
+
+    // Assert: the stale tick dropped its result and did NOT reschedule —
+    // exactly the new chain's single immediate first tick remains.
+    expect(h.onNewlySeen).not.toHaveBeenCalled();
+    expect(h.scheduler.pending).toHaveLength(1);
+    expect(h.scheduler.pending[0]!.ms).toBe(0);
+  });
+
+  it('the restarted chain continues normally as the sole live chain', async () => {
+    // First scan is deferred (the straddled one); later scans resolve
+    // immediately so the new chain can walk forward.
+    let resolveInflight!: (devs: PassiveScanDevice[]) => void;
+    let call = 0;
+    const h = makeHarness({
+      scanResult: () => {
+        call += 1;
+        if (call === 1) return new Promise<PassiveScanDevice[]>((r) => (resolveInflight = r));
+        return Promise.resolve([{ id: 'a' }]);
+      },
+    });
+    startPassiveScan(h.state, h.ctx, 10_000);
+    h.scheduler.pending.shift();
+    const inflight = runTick(h.state, h.ctx);
+    stopPassiveScan(h.state, h.ctx);
+    startPassiveScan(h.state, h.ctx, 10_000);
+    resolveInflight([{ id: 'a' }]);
+    await inflight; // stale tick returns without rescheduling
+
+    // The new chain's immediate first tick fires, resolves fresh, and
+    // schedules exactly one interval-delayed successor — one live handle.
+    await h.fireSole();
+    expect(h.onNewlySeen).toHaveBeenCalledTimes(1);
+    expect(h.scheduler.pending).toHaveLength(1);
+    expect(h.scheduler.pending[0]!.ms).toBe(10_000);
+  });
+});
+
 describe('runTick — disabled before entry', () => {
   it('is a silent no-op if enabled is false at tick start', async () => {
     const h = makeHarness();
