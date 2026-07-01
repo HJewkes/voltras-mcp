@@ -29,21 +29,22 @@ import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 
-import { type ServerState, getSlot } from '../state/server-state.js';
+import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
   SessionEndInput,
   SessionGetInput,
   SessionListInput,
   SessionStartInput,
 } from '../schemas/session.js';
-import type { StoredRep, StoredSession, StoredSet } from '../store/types.js';
-import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../state/live-state.js';
+import type { StoredSession, StoredSet } from '../store/types.js';
+import type { ActiveSession } from '../state/live-state.js';
 import {
   aggregateSession,
   aggregateSessionFull,
   type SessionListEntrySummary,
   type SessionListEntryFull,
 } from '../state/session-list-aggregator.js';
+import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
 
 /**
@@ -207,19 +208,28 @@ function trainingModeFromSnapshot(name: string | undefined): TrainingMode | unde
 }
 
 async function endSession(state: ServerState, slotId: string | undefined): Promise<{ ok: true }> {
-  const slot = getSlot(state, slotId);
+  const resolvedSlotId = slotId ?? PRIMARY_SLOT;
+  const slot = getSlot(state, resolvedSlotId);
   const active = slot.live.session;
   if (active === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
   }
 
-  // EC-06: if a set is open, force-end it as partial first.
+  // EC-06: if a set is open, force-close it through the shared finalize path
+  // (VMCP-02.50) so a session-triggered close does everything an explicit
+  // set.end does — disengage the motor (safety: never leave the cable loaded),
+  // cancel the idle watchdog, clear the set-start device snapshot, use that
+  // start snapshot for the persisted row, and emit the `set_ended` event.
+  // The prior hand-rolled `endSet` + `putSet` skipped all of those and
+  // persisted the CURRENT (possibly mid-set-changed) device snapshot.
+  // `partialReason: 'session_end'` keeps the row flagged partial with the
+  // session-end cause.
   if (slot.live.set !== undefined) {
-    const device = slot.live.snapshotDevice();
-    const finalized = slot.live.endSet('session_end');
-    if (finalized !== undefined) {
-      await state.store.putSet(toStoredSet(finalized, device));
-    }
+    await finalizeSet(state, resolvedSlotId, {
+      cause: 'tool',
+      disengageMotor: true,
+      partialReason: 'session_end',
+    });
   }
 
   const finalizedSession = slot.live.endSession();
@@ -281,28 +291,4 @@ async function getSession(
   }
   const sets = await state.store.getSetsForSession(input.id);
   return { session, sets };
-}
-
-/**
- * Build a `StoredSet` from a finalized `ActiveSet` and the device snapshot
- * captured at set start (or at session-end-cascade time).
- */
-function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
-  const reps: StoredRep[] = active.reps.map((rep, index) => ({
-    ...rep,
-    id: randomUUID(),
-    setId: active.setId,
-    index,
-  }));
-  return {
-    id: active.setId,
-    sessionId: active.sessionId,
-    startedAt: active.startedAt,
-    endedAt: active.endedAt ?? new Date().toISOString(),
-    partial: active.status === 'partial',
-    ...(active.partialReason !== undefined ? { partialReason: active.partialReason } : {}),
-    trainingMode: device.trainingMode ?? 'Unknown',
-    weightLbs: device.weightLbs ?? 0,
-    reps,
-  };
 }

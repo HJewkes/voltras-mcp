@@ -481,7 +481,7 @@ export async function finalizeSet(
   opts: {
     cause: SetEndedCause;
     disengageMotor: boolean;
-    partialReason?: 'inactivity_timeout' | 'guided_load_exited';
+    partialReason?: 'inactivity_timeout' | 'guided_load_exited' | 'session_end';
   },
 ): Promise<StoredSet | undefined> {
   const slot = getSlot(state, slotId);

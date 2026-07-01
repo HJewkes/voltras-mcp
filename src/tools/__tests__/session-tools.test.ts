@@ -177,6 +177,11 @@ function makeRep(n: number): Rep {
 
 const TOOL_NAMES = ['session.start', 'session.end', 'session.list', 'session.get'];
 
+interface PublishedEvent {
+  content: string;
+  meta: Record<string, string>;
+}
+
 interface Harness {
   state: ServerState;
   invoke: (
@@ -186,25 +191,59 @@ interface Harness {
   store: ReturnType<typeof makeStore>;
   exercises: ExerciseService;
   live: LiveStateType;
+  /** Mock for the slot client's motor-disengage call (`slot.client.endSet`). */
+  clientEndSet: ReturnType<typeof vi.fn>;
+  /** Spy on the idle watchdog's per-set cancel. */
+  setWatchdogCancel: ReturnType<typeof vi.fn>;
+  /** The `state.setStartDeviceSnapshots` map, seedable per test. */
+  setStartDeviceSnapshots: Map<string, unknown>;
+  /** Every channel event published during the invocation, in order. */
+  published: PublishedEvent[];
 }
 
 function setup(): Harness {
   const live = new LiveState();
   const store = makeStore();
   const exercises = makeExercises({ 'bench-press': BENCH });
+  // VMCP-02.50: session.end now routes an open set through the shared
+  // `finalizeSet`, which touches the slot client, the idle watchdog, the
+  // start-snapshot map, the channel publisher, and the rest-timer registry.
+  // The harness supplies just enough of each for the delegation to run.
+  const clientEndSet = vi.fn(async () => {});
   const slots = new Map();
   slots.set('primary', {
     slotId: 'primary',
-    client: {} as never,
+    client: { endSet: clientEndSet } as never,
     live,
     modeRevertGuard: new ModeRevertGuard(),
   });
+  const published: PublishedEvent[] = [];
+  const slotPublisher: {
+    publish: (e: PublishedEvent) => void;
+    forSlot: () => typeof slotPublisher;
+  } = {
+    publish: (e: PublishedEvent) => {
+      published.push(e);
+    },
+    forSlot: () => slotPublisher,
+  };
+  const setWatchdogCancel = vi.fn();
+  const setStartDeviceSnapshots = new Map<string, unknown>();
   const state = {
     config: {} as never,
     manager: {} as never,
     slots,
     store,
     exercises,
+    setWatchdog: {
+      register: vi.fn(),
+      reset: vi.fn(),
+      cancel: setWatchdogCancel,
+      has: vi.fn(() => false),
+    },
+    restTimers: { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn(), has: vi.fn(() => false) },
+    setStartDeviceSnapshots,
+    channels: { forSlot: () => slotPublisher },
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -219,6 +258,10 @@ function setup(): Harness {
     store,
     exercises,
     live,
+    clientEndSet,
+    setWatchdogCancel,
+    setStartDeviceSnapshots,
+    published,
   };
 }
 
@@ -428,6 +471,90 @@ describe('session.end', () => {
     const finalRow = h.store.putSession.mock.calls[0][0] as StoredSession;
     expect(finalRow.id).toBe(sessionId);
     expect(typeof finalRow.endedAt).toBe('string');
+  });
+
+  // ── VMCP-02.50 — session.end's open-set cascade delegates to finalizeSet ──
+  //
+  // Opens a session + active set (2 reps) so `session.end` must force-close
+  // the set. Each test asserts one of the behaviours the hand-rolled close
+  // used to skip.
+  async function openSessionWithActiveSet(): Promise<string> {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const sessionId = h.live.session!.sessionId;
+    h.live.applySettings({ connected: true, weightLbs: 95, trainingMode: 'WeightTraining' });
+    h.live.startSet({
+      setId: 'set-X',
+      sessionId,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    });
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    return sessionId;
+  }
+
+  it('disengages the motor when force-closing an open set (safety)', async () => {
+    await openSessionWithActiveSet();
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    // The hand-rolled close never issued a motor stop — the cable stayed
+    // loaded through session end. Delegating to finalizeSet fixes that.
+    expect(h.clientEndSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the set-start device snapshot for the closed set', async () => {
+    await openSessionWithActiveSet();
+    h.setStartDeviceSnapshots.set('set-X', { weightLbs: 95, trainingMode: 'WeightTraining' });
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    expect(h.setStartDeviceSnapshots.has('set-X')).toBe(false);
+  });
+
+  it('cancels the idle watchdog for the closed set', async () => {
+    await openSessionWithActiveSet();
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    expect(h.setWatchdogCancel).toHaveBeenCalledWith('set-X');
+  });
+
+  it('emits a set_ended channel event tagged session_end', async () => {
+    await openSessionWithActiveSet();
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    const setEnded = h.published.find((e) => e.meta.event_type === 'set_ended');
+    expect(setEnded).toBeDefined();
+    expect(setEnded!.meta.closed_by).toBe('session_end');
+    expect(setEnded!.meta.partial_reason).toBe('session_end');
+  });
+
+  it('persists the START-of-set weight, not a mid-set change', async () => {
+    const sessionId = await openSessionWithActiveSet();
+    // Snapshot captured at set.start time = 95 lb.
+    h.setStartDeviceSnapshots.set('set-X', { weightLbs: 95, trainingMode: 'WeightTraining' });
+    // User bumps the device to 135 lb mid-set; the persisted row must still
+    // reflect the load actually lifted (the start snapshot), not the drift.
+    h.live.applySettings({ connected: true, weightLbs: 135, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    expect(h.store.putSet).toHaveBeenCalledTimes(1);
+    const persistedSet = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(persistedSet.sessionId).toBe(sessionId);
+    expect(persistedSet.weightLbs).toBe(95);
+  });
+
+  it('guard: session.end with NO open set runs no set cascade', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    // No set was open, so none of the finalize side effects should fire.
+    expect(h.store.putSet).not.toHaveBeenCalled();
+    expect(h.clientEndSet).not.toHaveBeenCalled();
+    expect(h.published.find((e) => e.meta.event_type === 'set_ended')).toBeUndefined();
+    // The session itself still closes normally.
+    expect(h.live.session).toBeUndefined();
+    expect(h.store.putSession).toHaveBeenCalled();
   });
 });
 
