@@ -26,7 +26,7 @@ const FakeTrainingMode = {
   CustomCurves: 6,
   Isokinetic: 7,
   Isometric: 8,
-  // Reverse mapping (TS enum behaviour).
+  // Reverse mapping (TS enum behaviour): number -> no-space member name.
   0: 'Idle',
   1: 'WeightTraining',
   2: 'ResistanceBand',
@@ -37,8 +37,24 @@ const FakeTrainingMode = {
   8: 'Isometric',
 } as const;
 
+// Mirrors the REAL SDK: the human-readable names, which are SPACED for the
+// multi-word modes. `settingsToSnapshot` stores these on the device snapshot,
+// so this is the form `slot.identify` reads back — distinct from the enum's
+// no-space member keys above. VMCP-02.53 was the mismatch between the two.
+const FakeTrainingModeNames: Record<number, string> = {
+  0: 'Idle',
+  1: 'Weight Training',
+  2: 'Resistance Band',
+  3: 'Rowing',
+  4: 'Damper',
+  6: 'Custom Curves',
+  7: 'Isokinetic',
+  8: 'Isometric',
+};
+
 vi.mock('@voltras/node-sdk', () => ({
   TrainingMode: FakeTrainingMode,
+  TrainingModeNames: FakeTrainingModeNames,
   VoltraSDKError: FakeVoltraSDKError,
   VoltraClient: class {},
   VoltraManager: class {},
@@ -101,7 +117,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
 function makeFakeLive(trainingMode?: string): FakeLive {
   return {
     snapshotDevice: vi.fn(() => ({
-      trainingMode: trainingMode ?? 'WeightTraining',
+      // Default to the SPACED human form the real snapshot carries.
+      trainingMode: trainingMode ?? 'Weight Training',
     })),
   };
 }
@@ -137,8 +154,8 @@ describe('slot.identify', () => {
   });
 
   describe('happy path', () => {
-    it('switches to Damper then back to WeightTraining after the specified duration', async () => {
-      setup('WeightTraining');
+    it('switches to Damper then back to Weight Training after the specified duration', async () => {
+      setup('Weight Training');
       const promise = identifyCb({ durationMs: 2000 });
 
       // After setMode(Damper) resolves, the timer starts. Advance past it.
@@ -149,18 +166,18 @@ describe('slot.identify', () => {
       const body = payload(result) as Record<string, unknown>;
       expect(body.ok).toBe(true);
       expect(body.slot).toBe('primary');
-      expect(body.previousMode).toBe('WeightTraining');
+      expect(body.previousMode).toBe('Weight Training');
       expect(body.identifiedFor).toBe(2000);
       expect(body.revertWarning).toBeUndefined();
 
-      // Assert call order: Damper first, then WeightTraining.
+      // Assert call order: Damper first, then Weight Training.
       expect(client.setMode).toHaveBeenCalledTimes(2);
       expect(client.setMode).toHaveBeenNthCalledWith(1, FakeTrainingMode.Damper);
       expect(client.setMode).toHaveBeenNthCalledWith(2, FakeTrainingMode.WeightTraining);
     });
 
     it('uses default 3000 ms when durationMs is omitted', async () => {
-      setup('WeightTraining');
+      setup('Weight Training');
       const promise = identifyCb({});
 
       await vi.advanceTimersByTimeAsync(3000);
@@ -173,12 +190,12 @@ describe('slot.identify', () => {
 
     it('uses an explicit slot id when provided', async () => {
       client = makeFakeClient();
-      live = makeFakeLive('ResistanceBand');
+      live = makeFakeLive('Resistance Band');
       const state = makeState(client, live, 'left');
       // Add 'primary' slot to satisfy getSlot default behaviour — our call
       // will pass slot:'left' explicitly.
       const primaryClient = makeFakeClient();
-      const primaryLive = makeFakeLive('WeightTraining');
+      const primaryLive = makeFakeLive('Weight Training');
       (state.slots as Map<string, unknown>).set('primary', {
         slotId: 'primary',
         client: primaryClient,
@@ -195,7 +212,7 @@ describe('slot.identify', () => {
       expect(result.isError).toBeUndefined();
       const body = payload(result) as Record<string, unknown>;
       expect(body.slot).toBe('left');
-      expect(body.previousMode).toBe('ResistanceBand');
+      expect(body.previousMode).toBe('Resistance Band');
       expect(client.setMode).toHaveBeenNthCalledWith(1, FakeTrainingMode.Damper);
       expect(client.setMode).toHaveBeenNthCalledWith(2, FakeTrainingMode.ResistanceBand);
       // Primary slot's client must NOT have been touched.
@@ -245,7 +262,7 @@ describe('slot.identify', () => {
 
   describe('revert failure', () => {
     it('returns ok-shape with revertWarning when the revert setMode call rejects', async () => {
-      setup('WeightTraining');
+      setup('Weight Training');
       let callCount = 0;
       client.setMode = vi.fn(async () => {
         callCount += 1;
@@ -263,10 +280,75 @@ describe('slot.identify', () => {
       expect(result.isError).toBeUndefined();
       const body = payload(result) as Record<string, unknown>;
       expect(body.ok).toBe(true);
-      expect(body.previousMode).toBe('WeightTraining');
+      expect(body.previousMode).toBe('Weight Training');
       expect(body.identifiedFor).toBe(1000);
       expect(typeof body.revertWarning).toBe('string');
       expect(String(body.revertWarning)).toMatch(/Damper/i);
+    });
+  });
+
+  // ── VMCP-02.53 — multi-word modes must reverse-map, not strand in Damper ──
+  //
+  // The device snapshot stores the SPACED human name ('Weight Training'); the
+  // revert must reverse-map that name back to its numeric mode. The old code
+  // indexed the enum object by the spaced name (no-space keys) → undefined →
+  // the device was left in Damper. These fail on pre-fix main and pass after.
+  describe('VMCP-02.53 multi-word mode revert', () => {
+    it.each([
+      ['Weight Training', FakeTrainingMode.WeightTraining],
+      ['Resistance Band', FakeTrainingMode.ResistanceBand],
+      ['Custom Curves', FakeTrainingMode.CustomCurves],
+    ] as const)(
+      'reverts %s to its mode after identify (no strand)',
+      async (modeName, modeValue) => {
+        setup(modeName);
+        const promise = identifyCb({ durationMs: 1000 });
+        await vi.advanceTimersByTimeAsync(1000);
+        const result = await promise;
+
+        expect(result.isError).toBeUndefined();
+        const body = payload(result) as Record<string, unknown>;
+        expect(body.ok).toBe(true);
+        expect(body.previousMode).toBe(modeName);
+        // The revert happened, so there is NO "still in Damper" warning.
+        expect(body.revertWarning).toBeUndefined();
+        // Second setMode restores the ORIGINAL numeric mode — not left in Damper.
+        expect(client.setMode).toHaveBeenCalledTimes(2);
+        expect(client.setMode).toHaveBeenNthCalledWith(1, FakeTrainingMode.Damper);
+        expect(client.setMode).toHaveBeenNthCalledWith(2, modeValue);
+      },
+    );
+
+    it('guard: a single-word mode (Rowing) still reverts correctly', async () => {
+      setup('Rowing');
+      const promise = identifyCb({ durationMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+
+      expect(result.isError).toBeUndefined();
+      const body = payload(result) as Record<string, unknown>;
+      expect(body.previousMode).toBe('Rowing');
+      expect(body.revertWarning).toBeUndefined();
+      expect(client.setMode).toHaveBeenNthCalledWith(2, FakeTrainingMode.Rowing);
+    });
+
+    it('undefined prior mode defaults to Idle and reverts safely (not Damper)', async () => {
+      const c = makeFakeClient();
+      const l: FakeLive = { snapshotDevice: vi.fn(() => ({ trainingMode: undefined })) };
+      const state = makeState(c, l);
+      const { placeholders, callbacks } = buildPlaceholders(['slot.identify']);
+      registerSlotTools({} as McpServer, state, placeholders);
+      const cb = callbacks.get('slot.identify')!.cb;
+
+      const promise = cb({ durationMs: 500 });
+      await vi.advanceTimersByTimeAsync(500);
+      const result = await promise;
+
+      expect(result.isError).toBeUndefined();
+      const body = payload(result) as Record<string, unknown>;
+      expect(body.previousMode).toBe('Idle');
+      expect(body.revertWarning).toBeUndefined();
+      expect(c.setMode).toHaveBeenNthCalledWith(2, FakeTrainingMode.Idle);
     });
   });
 

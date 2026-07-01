@@ -16,7 +16,7 @@
 // direct BLE-adapter library references in this file.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { TrainingMode } from '@voltras/node-sdk';
+import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import { SlotIdSchema } from '../schemas/common.js';
@@ -124,13 +124,26 @@ function throwSdkLike(code: string, message: string): never {
 }
 
 /**
- * Resolve the training mode name from the SDK TrainingMode enum given a
- * numeric value. Falls back to the raw number's string form when the enum
- * has no reverse-mapping entry (e.g. for numeric-only values).
+ * Reverse-map a training-mode NAME back to its numeric `TrainingMode` value.
+ *
+ * The device snapshot stores the mode as the human-readable name via
+ * `TrainingModeNames` (e.g. 'Weight Training' — see `settingsToSnapshot` in
+ * event-bridge), so the reverse lookup MUST walk that same table. Indexing the
+ * `TrainingMode` enum object directly only matches the no-space member keys
+ * ('WeightTraining'), which strands the device in Damper for every multi-word
+ * mode (VMCP-02.53).
+ *
+ * Returns `undefined` for an unrecognised name; the caller then warns and
+ * leaves the device in Damper for the user to restore manually.
  */
-function modeNameFromValue(value: number): string {
-  const name = (TrainingMode as unknown as Record<number, string | undefined>)[value];
-  return name ?? String(value);
+function modeValueFromName(name: string): TrainingMode | undefined {
+  for (const key of Object.keys(TrainingModeNames)) {
+    const value = Number(key) as TrainingMode;
+    if (TrainingModeNames[value] === name) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 // ── Registration ──────────────────────────────────────────────────────────
@@ -166,7 +179,7 @@ export function registerSlotTools(
       const snapshot = slot.live.snapshotDevice();
       const previousModeName = snapshot.trainingMode ?? 'Idle';
 
-      const damperName = modeNameFromValue(TrainingMode.Damper);
+      const damperName = TrainingModeNames[TrainingMode.Damper];
       if (previousModeName === damperName) {
         throwSdkLike(
           'ALREADY_IN_DAMPER',
@@ -181,9 +194,9 @@ export function registerSlotTools(
       await new Promise<void>((resolve) => setTimeout(resolve, durationMs));
 
       // Resolve the numeric value of the previous mode for revert call.
-      const prevModeValue = (TrainingMode as unknown as Record<string, number | undefined>)[
-        previousModeName
-      ];
+      // Walk `TrainingModeNames` (the same table the snapshot name came from)
+      // so multi-word modes ('Weight Training' etc.) reverse-map correctly.
+      const prevModeValue = modeValueFromName(previousModeName);
       if (prevModeValue === undefined) {
         // Unexpected — the mode name we got from the snapshot doesn't map
         // back to a numeric enum value. Return partial success with a warning.
