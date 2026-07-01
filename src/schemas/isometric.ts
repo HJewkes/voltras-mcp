@@ -70,5 +70,16 @@ export const IsometricMeasureImbalanceInput = z.object({
   dominantSide: z.enum(['left', 'right', 'unknown']).optional().default('unknown'),
 });
 
+/**
+ * A bilateral imbalance test needs two distinct devices — one per limb. When
+ * `primarySlot === secondarySlot` the protocol would run twice on the same
+ * device and report a bogus ~0% asymmetry (`strongerSide: 'tie'`) as if two
+ * limbs were compared. Reject same-slot input as INVALID_INPUT.
+ */
+export const IsometricMeasureImbalanceInputRefined = IsometricMeasureImbalanceInput.refine(
+  (v) => v.primarySlot !== v.secondarySlot,
+  { message: 'primarySlot and secondarySlot must be different devices', path: ['secondarySlot'] },
+);
+
 export type IsometricMeasureMaxInputType = z.infer<typeof IsometricMeasureMaxInput>;
 export type IsometricMeasureImbalanceInputType = z.infer<typeof IsometricMeasureImbalanceInput>;

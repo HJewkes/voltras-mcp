@@ -36,7 +36,11 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { TelemetryFrame } from '@voltras/node-sdk';
 import type { z } from 'zod';
 
-import { IsometricMeasureMaxInput, IsometricMeasureImbalanceInput } from '../schemas/isometric.js';
+import {
+  IsometricMeasureMaxInput,
+  IsometricMeasureImbalanceInput,
+  IsometricMeasureImbalanceInputRefined,
+} from '../schemas/isometric.js';
 import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
   aggregateSide,
@@ -115,7 +119,7 @@ export function registerIsometricTools(
     placeholders,
     'isometric.measure_imbalance',
     IsometricMeasureImbalanceInput,
-    wrapHandler(IsometricMeasureImbalanceInput, (input) => measureImbalance(state, input)),
+    wrapHandler(IsometricMeasureImbalanceInputRefined, (input) => measureImbalance(state, input)),
     MEASURE_IMBALANCE_DESCRIPTION,
   );
 }

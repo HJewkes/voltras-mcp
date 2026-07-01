@@ -381,4 +381,21 @@ describe('isometric.measure_imbalance', () => {
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'SLOT_NOT_BOUND' });
   });
+
+  it('rejects primarySlot === secondarySlot with INVALID_INPUT', async () => {
+    // Arrange: same device for both limbs — a bilateral test needs two.
+    // Act
+    const result = await measureImbalanceCb({
+      primarySlot: 'left',
+      secondarySlot: 'left',
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      betweenSidesRestMs: 60_000,
+    });
+    // Assert: rejected at validation before any trial runs.
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(leftClient.subscribeCount).toBe(0);
+  });
 });
