@@ -293,6 +293,16 @@ export interface ActiveSet {
    * window; still measurement-only (no consumer reads `firmwareReps`).
    */
   firmwareReps?: FirmwareRep[];
+  /**
+   * Firmware's authoritative total rep count for the set, captured from the
+   * `onSetSummary` (`aa 85 5f`) payload's `repCount` at close (VMCP-02.29
+   * PR4). Recorded alongside the terminal firmware rep the close path appends
+   * so `debug.compare_rep_streams` can check the firmware pipeline's accrued
+   * `firmwareReps.length` against the device's own count. Absent for sets
+   * force-closed without an `onSetSummary` (inactivity_timeout / disconnect).
+   * Measurement-only — no consumer-facing surface reads it.
+   */
+  firmwareTotalRepCount?: number;
 }
 
 /**
@@ -559,10 +569,24 @@ export class LiveState {
       opts.dropTrailingInProgress === true && isTrailingRepIncomplete(rawReps)
         ? rawReps.slice(0, -1)
         : rawReps;
+    // PR4: mirror the analytics-side trailing-partial drop on the parallel
+    // firmware-rep pipeline. A force-close without an `onSetSummary`
+    // (inactivity_timeout / disconnect) sets `dropTrailingInProgress`; when
+    // the trailing firmware rep's enriched VBT is provably in-progress
+    // (eccentric never started) it's dropped too, so both pipelines discard
+    // the same partial. Graceful/device-signal closes keep every firmware rep.
+    const finalFirmwareReps =
+      current.firmwareReps === undefined
+        ? undefined
+        : dropTrailingFirmwareRepIfIncomplete(
+            current.firmwareReps,
+            opts.dropTrailingInProgress === true,
+          );
     const endedAt = new Date().toISOString();
     const finalized: ActiveSet = {
       ...current,
       reps: [...finalReps],
+      ...(finalFirmwareReps !== undefined ? { firmwareReps: finalFirmwareReps } : {}),
       endedAt,
       status: reason === undefined ? 'ended' : 'partial',
       ...(reason === undefined ? {} : { partialReason: reason }),
@@ -605,6 +629,27 @@ export class LiveState {
     }
     const existing = this.set.firmwareReps ?? [];
     this.set = { ...this.set, firmwareReps: [...existing, rep] };
+  }
+
+  /**
+   * Finalize the firmware-rep pipeline on the device's `aa 85 5f` close
+   * (VMCP-02.29 PR4). Appends the terminal firmware rep — whose enriched slice
+   * the bridge cuts from the last `onPerRep` 'return' boundary to the buffer
+   * tip, because the final rep never emits its own 'return' — and records the
+   * device's authoritative `repCount` as {@link ActiveSet.firmwareTotalRepCount}
+   * in one mutation. Silently dropped when no set is active (mirrors
+   * `appendFirmwareRep`'s stale-event policy). Measurement-only.
+   */
+  finalizeFirmwareReps(finalRep: FirmwareRep, totalRepCount: number): void {
+    if (this.set === undefined) {
+      return;
+    }
+    const existing = this.set.firmwareReps ?? [];
+    this.set = {
+      ...this.set,
+      firmwareReps: [...existing, finalRep],
+      firmwareTotalRepCount: totalRepCount,
+    };
   }
 
   /**
@@ -953,4 +998,39 @@ function isTrailingRepIncomplete(reps: readonly Rep[]): boolean {
   }
   const last = reps[reps.length - 1];
   return last.eccentric.samples.length === 0;
+}
+
+/**
+ * PR4 helper: drop the trailing firmware rep on a force-close without an
+ * `onSetSummary` (inactivity_timeout / disconnect) when its enriched VBT rep
+ * is provably in-progress. Mirrors the analytics-side `isTrailingRepIncomplete`
+ * policy so both pipelines discard the same trailing partial. Returns a copy of
+ * the input untouched when no drop was requested, the trailing rep is complete,
+ * or the array is absent/empty.
+ */
+function dropTrailingFirmwareRepIfIncomplete(
+  reps: readonly FirmwareRep[],
+  drop: boolean,
+): FirmwareRep[] {
+  if (drop && isTrailingFirmwareRepIncomplete(reps)) {
+    return reps.slice(0, -1);
+  }
+  return [...reps];
+}
+
+/**
+ * The trailing firmware rep is "incomplete" when its enriched VBT rep exists
+ * and carries no eccentric samples — the same signal `isTrailingRepIncomplete`
+ * applies to the analytics `reps[]`. A firmware rep with no `enriched` is
+ * treated as complete (no VBT evidence it was mid-cycle, so keep it).
+ */
+function isTrailingFirmwareRepIncomplete(reps: readonly FirmwareRep[]): boolean {
+  if (reps.length === 0) {
+    return false;
+  }
+  const enriched = reps[reps.length - 1].enriched;
+  if (enriched === undefined) {
+    return false;
+  }
+  return isTrailingRepIncomplete([enriched]);
 }

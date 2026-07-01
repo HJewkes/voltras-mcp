@@ -114,7 +114,7 @@ import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { addSampleToSet, completeSet, createRep, createSet } from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
-import type { LiveState, DeviceSnapshot } from './live-state.js';
+import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
@@ -707,6 +707,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // fall through to the inactivity watchdog defined below
       // (`SET_INACTIVITY_TIMEOUT_MS`).
       live.applySetSummary(payload);
+      // VMCP-02.29 PR4: finalize the parallel firmware-rep pipeline BEFORE
+      // `finalizeSet` discards the set. The last rep never fires its own
+      // `onPerRep` 'return' boundary (the device disengages after the final
+      // concentric), so slice the trailing sample window and append it as the
+      // terminal FirmwareRep plus record the device's authoritative repCount.
+      // Still measurement-only — no channel event, no consumer reads it.
+      finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
       notifySlot(server, slotId, SET_URI, setUriForSlot);
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
@@ -1273,6 +1280,40 @@ function sliceFrameBufferAndEnrich(
     }
   }
   return completeSet(waSet).reps[0] ?? createRep(0);
+}
+
+/**
+ * VMCP-02.29 PR4: build + append the terminal firmware rep on the device's
+ * `aa 85 5f` close. The last rep has no `onPerRep` 'return' of its own, so its
+ * enriched slice runs from the last boundary (`priorBoundaryTs`, floored at set
+ * start) to the buffer tip. The `SetSummaryEvent` carries no set/frame counter,
+ * so both are recorded as 0 (traceability-only fields). Records the device's
+ * `repCount` as the firmware's authoritative total. Measurement-only.
+ */
+function finalizeFirmwareRepsOnClose(
+  live: LiveState,
+  activeSet: ActiveSet,
+  sampleRing: readonly BufferedSample[],
+  priorBoundaryTs: number,
+  payload: SetSummaryEvent,
+): void {
+  const boundaryTs = Date.now();
+  const parsedStart = Date.parse(activeSet.startedAt);
+  const setStartMs = Number.isFinite(parsedStart) ? parsedStart : 0;
+  const enriched = sliceFrameBufferAndEnrich(
+    sampleRing,
+    Math.max(priorBoundaryTs, setStartMs),
+    boundaryTs,
+  );
+  const finalRep: FirmwareRep = {
+    ts: boundaryTs,
+    repNumber: payload.repCount,
+    setCounter: 0,
+    frameCounter: 0,
+    targetWeightTenths: payload.targetWeightTenths,
+    enriched,
+  };
+  live.finalizeFirmwareReps(finalRep, payload.repCount);
 }
 
 /**
