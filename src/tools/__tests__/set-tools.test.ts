@@ -270,6 +270,84 @@ describe('set.start', () => {
     expect(h.store.putSet).not.toHaveBeenCalled();
   });
 
+  // ── VMCP-02.52 — set.start re-entrancy latch ────────────────────────────
+  it('rejects a concurrent set.start that interleaves across startRecording', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    // Gate the FIRST startRecording so a second call can interleave while the
+    // first is suspended mid-engage — before the set is installed in LiveState
+    // (which is what the SET_ALREADY_ACTIVE guard reads). This is the exact
+    // window VMCP-02.52 describes.
+    const slot = (
+      h.state.slots as unknown as Map<
+        string,
+        { client: { startRecording: ReturnType<typeof vi.fn> } }
+      >
+    ).get('primary')!;
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markEntered!: () => void;
+    const enteredFirst = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let first = true;
+    slot.client.startRecording = vi.fn(async () => {
+      if (first) {
+        first = false;
+        markEntered();
+        await gate;
+      }
+    });
+
+    const p1 = h.invoke('set.start', {});
+    await enteredFirst; // p1 has set the latch and is suspended in startRecording
+
+    const r2 = await h.invoke('set.start', {});
+    releaseFirst(); // release p1 before asserting so nothing dangles
+    const r1 = await p1;
+
+    // Second call is rejected by the latch — no phantom setId minted.
+    expect(r2.isError).toBe(true);
+    expect((parseResult(r2) as { code: string }).code).toBe('SET_ALREADY_ACTIVE');
+
+    expect(r1.isError).toBeUndefined();
+    const setId1 = (parseResult(r1) as { setId: string }).setId;
+
+    // Exactly one set installed, one (real) snapshot entry, one set_started,
+    // and only one motor engage — the second call never touched the device.
+    expect(h.live.set?.setId).toBe(setId1);
+    const snaps = h.state.setStartDeviceSnapshots as unknown as Map<string, unknown>;
+    expect(snaps.size).toBe(1);
+    expect(snaps.has(setId1)).toBe(true);
+    const startedEvents = h.channels.publish.mock.calls.filter(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'set_started',
+    );
+    expect(startedEvents).toHaveLength(1);
+    expect(slot.client.startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it('guard: a sequential set.start after set.end starts a fresh set (latch cleared)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    const r1 = await h.invoke('set.start', {});
+    expect(r1.isError).toBeUndefined();
+    const setId1 = (parseResult(r1) as { setId: string }).setId;
+
+    const rEnd = await h.invoke('set.end', {});
+    expect(rEnd.isError).toBeUndefined();
+    expect(h.live.set).toBeUndefined();
+
+    const r2 = await h.invoke('set.start', {});
+    expect(r2.isError).toBeUndefined();
+    const setId2 = (parseResult(r2) as { setId: string }).setId;
+    expect(setId2).not.toBe(setId1);
+    expect(h.live.set?.setId).toBe(setId2);
+  });
+
   it('starts a set and stamps live state with a generated setId', async () => {
     const sessionId = startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
