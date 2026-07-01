@@ -6,8 +6,9 @@
 // handler against the placeholder map.
 //
 // Each test exercises a distinct slice of the contract:
-//   * fan-out call counting (happy path)
-//   * subset-of-fields → only requested setters fire
+//   * fan-out call counting (happy path — all four setters supplied)
+//   * full-settings contract: omitting a setter is rejected, no setters fire
+//     (VMCP-02.27 regression for stale-carryover bug #10)
 //   * partial-failure isolation under `abortOnFirstFailure: false`
 //   * sequential abort under `abortOnFirstFailure: true`
 //   * empty-input rejection
@@ -257,6 +258,16 @@ interface SlotResult {
   };
 }
 
+// A complete setter payload satisfying the full-settings contract
+// (VMCP-02.27). Tests that only care about slot resolution / ordering spread
+// this so they clear the contract gate without re-stating every field.
+const FULL_SETTINGS = {
+  mode: 'WeightTraining',
+  weightLbs: 75,
+  eccentricOverloadLbs: 30,
+  chainsLbs: 20,
+} as const;
+
 function setupHandler(slots: Array<[string, FakeSlot]>): {
   state: State;
   reg: RecordedTool;
@@ -318,29 +329,43 @@ describe('bilateral.cascade', () => {
     }
   });
 
-  it('only requested setters fire — `applied` map keys reflect the request', async () => {
-    const { isError, payload } = await invoke(reg, {
-      mode: 'ResistanceBand',
-      weightLbs: 50,
-    });
-    expect(isError).toBeUndefined();
-    expect(payload.ok).toBe(true);
-    // Mode + weight on each slot ⇒ 4 calls.
-    expect(primary.client.setMode).toHaveBeenCalledTimes(1);
-    expect(primary.client.setWeight).toHaveBeenCalledTimes(1);
-    expect(secondary.client.setMode).toHaveBeenCalledTimes(1);
-    expect(secondary.client.setWeight).toHaveBeenCalledTimes(1);
-    // Untouched setters never fire.
-    expect(primary.client.setEccentric).not.toHaveBeenCalled();
-    expect(primary.client.setChains).not.toHaveBeenCalled();
-    expect(secondary.client.setEccentric).not.toHaveBeenCalled();
-    expect(secondary.client.setChains).not.toHaveBeenCalled();
-    const results = payload.results as SlotResult[];
-    for (const r of results) {
-      expect(Object.keys(r.applied).sort()).toEqual(['mode', 'weightLbs']);
-      expect(r.applied.mode?.ok).toBe(true);
-      expect(r.applied.weightLbs?.ok).toBe(true);
+  // VMCP-02.27 regression: bench bug #10 was a weight-only cascade that let
+  // chains (and every other omitted setter) linger at its prior firmware
+  // value. Under the full-settings contract a partial request is rejected
+  // outright — no setter may fire, so nothing can silently carry over.
+  it('full-settings contract: a weight-only request is rejected — no setters fire', async () => {
+    const { isError, payload } = await invoke(reg, { weightLbs: 50 });
+    expect(isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    // The message names every omitted setter so the caller can fix the call.
+    const message = String(payload.message);
+    expect(message).toMatch(/full-settings/i);
+    expect(message).toMatch(/mode/);
+    expect(message).toMatch(/eccentricOverloadLbs/);
+    expect(message).toMatch(/chainsLbs/);
+    // Not one setter fired on either slot — the stale-carryover path is dead.
+    for (const slot of [primary, secondary]) {
+      expect(slot.client.setMode).not.toHaveBeenCalled();
+      expect(slot.client.setWeight).not.toHaveBeenCalled();
+      expect(slot.client.setEccentric).not.toHaveBeenCalled();
+      expect(slot.client.setChains).not.toHaveBeenCalled();
     }
+  });
+
+  it('full-settings contract: omitting only `chainsLbs` is rejected naming chains', async () => {
+    const { isError, payload } = await invoke(reg, {
+      mode: 'WeightTraining',
+      weightLbs: 75,
+      eccentricOverloadLbs: 30,
+    });
+    expect(isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    const message = String(payload.message);
+    expect(message).toMatch(/Missing:.*chainsLbs/);
+    // Present setters must NOT fire — the whole cascade is rejected atomically.
+    expect(primary.client.setMode).not.toHaveBeenCalled();
+    expect(primary.client.setWeight).not.toHaveBeenCalled();
+    expect(primary.client.setEccentric).not.toHaveBeenCalled();
   });
 
   it('partial-failure: one setter on secondary rejects, other setters still attempted on both slots', async () => {
@@ -424,7 +449,7 @@ describe('bilateral.cascade', () => {
     const { isError, payload } = await invoke(reg, {});
     expect(isError).toBe(true);
     expect(payload.code).toBe('INVALID_INPUT');
-    expect(String(payload.message)).toMatch(/at least one of/i);
+    expect(String(payload.message)).toMatch(/full-settings/i);
     // Sanity: no SDK calls landed.
     for (const slot of [primary, secondary]) {
       expect(slot.client.setMode).not.toHaveBeenCalled();
@@ -471,7 +496,7 @@ describe('bilateral.cascade', () => {
   });
 
   it('omitted `slots` defaults to every connected slot in natural order', async () => {
-    const { isError, payload } = await invoke(reg, { weightLbs: 60 });
+    const { isError, payload } = await invoke(reg, { ...FULL_SETTINGS, weightLbs: 60 });
     expect(isError).toBeUndefined();
     expect(payload.ok).toBe(true);
     const results = payload.results as SlotResult[];
@@ -482,7 +507,7 @@ describe('bilateral.cascade', () => {
 
   it('omitted `slots` skips disconnected slots', async () => {
     secondary.client.isConnected = false;
-    const { isError, payload } = await invoke(reg, { weightLbs: 60 });
+    const { isError, payload } = await invoke(reg, { ...FULL_SETTINGS, weightLbs: 60 });
     expect(isError).toBeUndefined();
     const results = payload.results as SlotResult[];
     expect(results.map((r) => r.slot)).toEqual(['primary']);
@@ -500,8 +525,8 @@ describe('bilateral.cascade', () => {
 
   it('preserves explicit `slots` order in `results` (slots: [secondary, primary] → that order)', async () => {
     const { isError, payload } = await invoke(reg, {
+      ...FULL_SETTINGS,
       slots: ['secondary', 'primary'],
-      weightLbs: 50,
     });
     expect(isError).toBeUndefined();
     const results = payload.results as SlotResult[];

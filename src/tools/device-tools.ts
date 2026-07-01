@@ -168,12 +168,16 @@ const DeviceUnloadInput = z
 
 // ── bilateral.cascade input ───────────────────────────────────────────────
 //
-// Bundles up to four device setters across one-or-more slots. Each setter
-// field is optional and only fires when explicitly provided. At least one
-// of `mode`/`weightLbs`/`eccentricPercent`/`chainsLbs` MUST be present —
-// the handler enforces this at runtime (zod's `.refine()` would still
-// match the empty `{}` and fan out zero setters, which is just confusing;
-// runtime check produces a tighter INVALID_INPUT message).
+// Bundles all four device setters across one-or-more slots. VMCP-02.27:
+// the cascade enforces a FULL-SETTINGS contract — every call MUST supply
+// `mode`, `weightLbs`, `eccentricOverloadLbs` (or the deprecated
+// `eccentricPercent` alias), AND `chainsLbs`. Omitting a setter used to
+// leave that setting at its prior firmware value, which silently carried
+// stale state across cascades (e.g. chains lingering after a weight-only
+// call). Requiring the complete set makes the cascade idempotent and its
+// applied state fully specified. The handler enforces this at runtime
+// (see `buildCascadePlan`) so the INVALID_INPUT message can name exactly
+// which setters are missing rather than emitting a generic zod error.
 //
 // Field unit notes:
 //   * `eccentricPercent` mirrors the underlying `client.setEccentric(percent)`
@@ -208,10 +212,11 @@ const BilateralCascadeInput = z
   });
 
 const BILATERAL_CASCADE_DESCRIPTION =
-  'Apply up to four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
-  'Within each slot the requested setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'Apply all four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
+  'Full-settings contract: every call MUST supply `mode`, `weightLbs`, `eccentricOverloadLbs`, and `chainsLbs` — omitting any is rejected with INVALID_INPUT naming the missing setters. This is deliberate: a partial cascade would leave the unset settings at their prior firmware value, silently carrying stale state (e.g. chains lingering after a weight-only call). Requiring the complete set makes each cascade idempotent and its applied state fully specified. ' +
+  'Within each slot the setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
   'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
-  'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with `applied.<setter>` keys present iff that setter was requested. ' +
+  'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with an `applied.<setter>` outcome for each of the four setters. ' +
   'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release.';
 
 // `slot.swap` accepts no arguments — there are exactly two slot positions
@@ -1414,9 +1419,10 @@ function resolveCascadeSlotIds(state: ServerState, inputSlots: string[] | undefi
 }
 
 /**
- * Translate the validated tool input into a `CascadePlan` and verify at
- * least one setter was requested. The mode-name → numeric-enum map mirrors
- * `device.set_mode`'s handler so both tools agree on the SDK-call shape.
+ * Translate the validated tool input into a `CascadePlan` and enforce the
+ * full-settings contract — every setter must be supplied (VMCP-02.27). The
+ * mode-name → numeric-enum map mirrors `device.set_mode`'s handler so both
+ * tools agree on the SDK-call shape.
  */
 function buildCascadePlan(input: {
   mode?: string | undefined;
@@ -1443,18 +1449,31 @@ function buildCascadePlan(input: {
     );
   }
   if (input.chainsLbs !== undefined) plan.chainsLbs = input.chainsLbs;
-  if (
-    plan.mode === undefined &&
-    plan.weightLbs === undefined &&
-    plan.eccentricPercent === undefined &&
-    plan.chainsLbs === undefined
-  ) {
+  const missing = missingCascadeSetters(plan);
+  if (missing.length > 0) {
     throwSdkLike(
       'INVALID_INPUT',
-      'bilateral.cascade requires at least one of `mode`, `weightLbs`, `eccentricOverloadLbs`, or `chainsLbs`.',
+      `bilateral.cascade enforces a full-settings contract: every call must set all of \`mode\`, \`weightLbs\`, \`eccentricOverloadLbs\`, and \`chainsLbs\` so the applied device state is fully specified and no omitted setter carries a stale value from a prior cascade. Missing: ${missing.join(', ')}.`,
     );
   }
   return plan;
+}
+
+/**
+ * List the cascade setters absent from a built plan, reported by their
+ * PUBLIC param names (the internal `eccentricPercent` field surfaces as the
+ * preferred `eccentricOverloadLbs`). Drives the full-settings contract: a
+ * cascade must specify every setter so it fully overwrites device state
+ * rather than leaving an omitted setter at its prior firmware value —
+ * the stale-carryover bug from VMCP-02.27.
+ */
+function missingCascadeSetters(plan: CascadePlan): string[] {
+  const missing: string[] = [];
+  if (plan.mode === undefined) missing.push('mode');
+  if (plan.weightLbs === undefined) missing.push('weightLbs');
+  if (plan.eccentricPercent === undefined) missing.push('eccentricOverloadLbs');
+  if (plan.chainsLbs === undefined) missing.push('chainsLbs');
+  return missing;
 }
 
 /**
