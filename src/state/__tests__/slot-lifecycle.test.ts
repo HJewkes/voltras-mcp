@@ -45,6 +45,7 @@ const { LiveState } = await import('../live-state.js');
 const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
 const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import('../slot-manager.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
+const { ModeDivergenceWatch } = await import('../mode-divergence-watch.js');
 const { CoercionWatch } = await import('../coercion-watch.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's
@@ -66,6 +67,7 @@ function makeStateWithPrimary(opts: { primaryConnected?: boolean } = {}): Server
     client,
     live: new LiveState(),
     modeRevertGuard: new ModeRevertGuard(),
+    modeDivergenceWatch: new ModeDivergenceWatch(),
     coercionWatch: new CoercionWatch(),
   });
   return { slots } as unknown as ServerState;
@@ -271,8 +273,13 @@ describe('swapSlots', () => {
     const primaryClientBefore = primaryBefore.client;
     const primaryLiveBefore = primaryBefore.live;
     const primaryGuardBefore = primaryBefore.modeRevertGuard;
+    const primaryDivergenceBefore = primaryBefore.modeDivergenceWatch;
     const leftLiveBefore = leftBefore.live;
     const leftGuardBefore = leftBefore.modeRevertGuard;
+    const leftDivergenceBefore = leftBefore.modeDivergenceWatch;
+    // Distinct per-slot divergence detectors so a missed swap would leave
+    // device B's frames comparing against device A's stale mode state.
+    expect(primaryDivergenceBefore).not.toBe(leftDivergenceBefore);
 
     swapSlots(state);
 
@@ -291,6 +298,8 @@ describe('swapSlots', () => {
     expect(leftAfter.live).toBe(primaryLiveBefore);
     expect(primaryAfter.modeRevertGuard).toBe(leftGuardBefore);
     expect(leftAfter.modeRevertGuard).toBe(primaryGuardBefore);
+    expect(primaryAfter.modeDivergenceWatch).toBe(leftDivergenceBefore);
+    expect(leftAfter.modeDivergenceWatch).toBe(primaryDivergenceBefore);
   });
 
   it('rejects when only one slot is connected (primary connected, no second slot)', () => {
