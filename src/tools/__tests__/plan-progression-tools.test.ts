@@ -594,7 +594,12 @@ describe('plan.suggest_progression', () => {
    * 02.25 VBT override), so rep-band tests are unaffected. Pass `peakVelocities`
    * (one per rep) to model an intra-set velocity decline for the fatigue guard.
    */
-  function setWithReps(setId: string, repCount: number, peakVelocities?: number[]): StoredSet {
+  function setWithReps(
+    setId: string,
+    repCount: number,
+    peakVelocities?: number[],
+    weightLbs = 135,
+  ): StoredSet {
     return {
       id: setId,
       sessionId: 'sess-prior',
@@ -602,7 +607,7 @@ describe('plan.suggest_progression', () => {
       endedAt: '2025-02-09T00:01:00.000Z',
       partial: false,
       trainingMode: 'WeightTraining',
-      weightLbs: 135,
+      weightLbs,
       reps: Array.from(
         { length: repCount },
         (_, i) =>
@@ -759,6 +764,68 @@ describe('plan.suggest_progression', () => {
     };
     expect(body.suggestion.delta).toBe(-5);
     expect(body.suggestion.reasoning.length).toBeGreaterThan(0);
+  });
+
+  // VMCP-progression-warmups: warmups log through the same set path as working
+  // sets and carry no warmup flag, so the heuristic must exclude them by load
+  // (session top load) — otherwise light, low-rep warmups poison the rep tally.
+  it('VMCP-progression-warmups: does NOT deload when warmups sit below two top-rep working sets', async () => {
+    // Arrange: 3 ramp-up warmups (3/3/5 reps at 45/95/115 lb) + 2 working sets
+    // (12/12 reps at 135 lb) against the 3×8-12 bench plan. Counting all five
+    // sets yields missed=3 >= majority=3 → a bogus -5 deload despite both
+    // working sets topping the band.
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.listSessions.mockResolvedValueOnce([
+      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    ]);
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('w1', 3, undefined, 45),
+      setWithReps('w2', 3, undefined, 95),
+      setWithReps('w3', 5, undefined, 115),
+      setWithReps('s1', 12, undefined, 135),
+      setWithReps('s2', 12, undefined, 135),
+    ]);
+
+    // Act
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+
+    // Assert: both working sets topped the band → increment, never a deload.
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { suggestion: { delta: number } };
+    expect(body.suggestion.delta).not.toBe(-5);
+    expect(body.suggestion.delta).toBe(5);
+  });
+
+  it('VMCP-progression-warmups: still deloads when the top-load working sets genuinely miss', async () => {
+    // Arrange: same warmup ramp, but the 3 working sets at 135 lb only hit 5
+    // reps (below the low band of 8). A real deload must survive the filter.
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.listSessions.mockResolvedValueOnce([
+      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    ]);
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('w1', 3, undefined, 45),
+      setWithReps('w2', 5, undefined, 95),
+      setWithReps('s1', 5, undefined, 135),
+      setWithReps('s2', 5, undefined, 135),
+      setWithReps('s3', 5, undefined, 135),
+    ]);
+
+    // Act
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+
+    // Assert
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { suggestion: { delta: number } };
+    expect(body.suggestion.delta).toBe(-5);
   });
 
   it('returns NOT_FOUND when no planned exercise matches the exerciseId', async () => {

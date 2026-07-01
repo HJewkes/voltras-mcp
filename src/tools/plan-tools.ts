@@ -624,9 +624,28 @@ async function resolveBasisSession(
 }
 
 /**
+ * Warmups and working sets flow through the same `set.start`/`set.end` path and
+ * carry no explicit warmup flag (see `StoredSet`), so the only signal that
+ * separates them is load: a warmup is a sub-working-weight ramp-up. Treat the
+ * sets at the session's heaviest load as the working sets — the ones the rep
+ * band is actually prescribed against. Judging progression on the full set list
+ * lets light, low-rep warmups inflate the "missed" tally into a bogus deload
+ * (VMCP-progression-warmups), and a single high-velocity-loss warmup can
+ * suppress a legit +5. Session-relative top load (not `targetWeightLbs`) is used
+ * so the filter tracks the load actually lifted, even after the plan's original
+ * target has been outgrown.
+ */
+function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
+  if (sets.length === 0) return sets;
+  const topLoad = Math.max(...sets.map((set) => set.weightLbs));
+  return sets.filter((set) => set.weightLbs >= topLoad);
+}
+
+/**
  * Aggregate per-set rep counts against the planned rep band, then map to a
  * single-step delta. Bands without `targetRepsLow` (i.e. plain "do X sets"
  * prescriptions) collapse to a hold — there's no objective basis to bump.
+ * Only working sets (session top load) are scored; warmups are excluded.
  */
 function computeProgressionDelta(
   planned: StoredPlannedExercise,
@@ -640,8 +659,7 @@ function computeProgressionDelta(
       basedOnSessionId: basisSessionId,
     };
   }
-  const setsCompleted = sets.length;
-  if (setsCompleted === 0) {
+  if (sets.length === 0) {
     return {
       delta: PROGRESSION_DECREMENT_LBS,
       reasoning: `Prior session has 0 completed sets (target ${planned.targetSets}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
@@ -649,12 +667,14 @@ function computeProgressionDelta(
     };
   }
 
+  const workingSets = selectWorkingSets(sets);
+  const setsCompleted = workingSets.length;
   const repsLow = planned.targetRepsLow;
   const repsHigh = planned.targetRepsHigh ?? repsLow;
   let hitHigh = 0;
   let inBand = 0;
   let missed = 0;
-  for (const set of sets) {
+  for (const set of workingSets) {
     const count = set.reps.length;
     if (count >= repsHigh) hitHigh += 1;
     else if (count >= repsLow) inBand += 1;
@@ -670,7 +690,7 @@ function computeProgressionDelta(
     // target at high intra-set velocity loss means the load was already at/near
     // functional failure — adding weight would accumulate misload week over
     // week. Hold instead of incrementing when any set crossed the ceiling.
-    const maxLossPct = Math.max(0, ...sets.map(setVelocityLossPct));
+    const maxLossPct = Math.max(0, ...workingSets.map(setVelocityLossPct));
     if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
       return {
         delta: PROGRESSION_HOLD_LBS,
