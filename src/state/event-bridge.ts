@@ -114,6 +114,7 @@ import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { addSampleToSet, completeSet, createRep, createSet } from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
+import { selectSetReps } from './live-state.js';
 import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
@@ -533,7 +534,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         // Net coverage: reps 1..N-1 emit `rep_finalized` (each fires
         // when the *next* rep begins — small lag the coaching surface
         // should expect), and rep N is delivered inside `set_ended`.
-        const set = live.snapshotSet();
+        // VMCP-02.29 PR5: project onto the configured rep source before
+        // reading the finalized rep. Default `'analytics'` returns the
+        // snapshot unchanged, so the payload is byte-identical to pre-PR5;
+        // `'firmware'` indexes the firmware-anchored enriched reps instead.
+        const rawSet = live.snapshotSet();
+        // `state.config?.repSource` tolerates the bridge's partial test
+        // harnesses (which omit `config`); production state always carries it.
+        // selectSetReps treats any non-`'firmware'` value — including this
+        // undefined fallback — as the analytics default.
+        const set =
+          rawSet === undefined ? undefined : selectSetReps(rawSet, state.config?.repSource);
         if (set !== undefined && set.reps.length >= 2) {
           const finalizedIndex = set.reps.length - 2;
           const finalizedRep = set.reps[finalizedIndex];

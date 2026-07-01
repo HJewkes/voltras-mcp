@@ -3703,3 +3703,112 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(events[0]!.meta.device_value).toBe('175');
   });
 });
+
+// VMCP-02.29 PR5 — rep_finalized routes through REP_SOURCE at the read
+// boundary. The publish is still triggered by the analytics rep-boundary
+// detection (processSample); only the CONTENT read is switched. Default
+// analytics is byte-identical; firmware indexes the firmware enriched reps.
+describe('rep_finalized — REP_SOURCE switch (VMCP-02.29 PR5)', () => {
+  function closedRep(): unknown {
+    let s = createSet();
+    s = addSampleToSet(s, {
+      sequence: 1,
+      timestamp: 1,
+      phase: 1,
+      position: 0,
+      velocity: 500,
+      force: 50,
+    });
+    s = addSampleToSet(s, {
+      sequence: 2,
+      timestamp: 2,
+      phase: 3,
+      position: 0.1,
+      velocity: 500,
+      force: 50,
+    });
+    s = addSampleToSet(s, {
+      sequence: 3,
+      timestamp: 3,
+      phase: 1,
+      position: 0.2,
+      velocity: 500,
+      force: 50,
+    });
+    return completeSet(s).reps[0];
+  }
+
+  function firmwareRep(repNumber: number): unknown {
+    return {
+      ts: repNumber,
+      repNumber,
+      setCounter: 1,
+      frameCounter: repNumber,
+      targetWeightTenths: 0,
+      enriched: closedRep(),
+    };
+  }
+
+  // Drive exactly one analytics rep boundary (rep 1 finalizes when rep 2
+  // begins) after seeding THREE firmware reps, then return the single
+  // rep_finalized payload published for the chosen source.
+  function runBoundary(repSource: 'analytics' | 'firmware'): {
+    meta: Record<string, string>;
+    content: Record<string, unknown>;
+  } {
+    const live = new LiveState();
+    const client = makeFakeClient();
+    const server = makeFakeServer();
+    const channels = makeFakeChannels();
+    const state = {
+      ...makeBareState({ client, live, server, channels }),
+      config: { repSource },
+    };
+    wireBridgeForSlot(
+      state as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      state.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+    startSet(live);
+    live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    // Seed 3 firmware reps so the firmware pipeline has a DIFFERENT length than
+    // the analytics pipeline (which reaches length 2 at this boundary).
+    live.appendFirmwareRep(firmwareRep(900) as Parameters<typeof live.appendFirmwareRep>[0]);
+    live.appendFirmwareRep(firmwareRep(901) as Parameters<typeof live.appendFirmwareRep>[0]);
+    live.appendFirmwareRep(firmwareRep(902) as Parameters<typeof live.appendFirmwareRep>[0]);
+    const frame = (seq: number, phase: number): void =>
+      client.fire.frame({
+        sequence: seq,
+        timestamp: 1000 + seq,
+        phase,
+        position: 0.1 * seq,
+        velocity: 500,
+        force: 50,
+      });
+    frame(1, 1); // CONCENTRIC — rep 1 starts
+    frame(2, 3); // ECCENTRIC
+    frame(3, 1); // CONCENTRIC — rep 1 finalized, rep 2 begins -> publish
+    const call = channels.publish.mock.calls.find(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'rep_finalized',
+    );
+    const event = call![0] as { meta: Record<string, string>; content: string };
+    return { meta: event.meta, content: JSON.parse(event.content) as Record<string, unknown> };
+  }
+
+  it("default 'analytics' reads the analytics rep count (rep 1 of 2)", () => {
+    const { meta, content } = runBoundary('analytics');
+    expect(meta.rep_count).toBe('1');
+    expect((content.rep as { rep_number: number }).rep_number).toBe(1);
+    expect((content.set_context as { rep_count_so_far: number }).rep_count_so_far).toBe(1);
+  });
+
+  it("'firmware' reads the firmware enriched reps (3 seeded -> rep 2 finalized)", () => {
+    const { meta, content } = runBoundary('firmware');
+    // With 3 firmware reps, the finalized index is length-2 = 1 -> rep 2, and
+    // rep_count_so_far is length-1 = 2. This is unambiguously the firmware
+    // pipeline, not the length-2 analytics pipeline the same frames produced.
+    expect(meta.rep_count).toBe('2');
+    expect((content.rep as { rep_number: number }).rep_number).toBe(2);
+    expect((content.set_context as { rep_count_so_far: number }).rep_count_so_far).toBe(2);
+  });
+});

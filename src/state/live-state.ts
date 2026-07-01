@@ -27,12 +27,14 @@ import type { InProgressEvent, SetSummaryEvent, SummaryEvent } from '@voltras/no
 import type { Rep, Set as AnalyticsSet, WorkoutSample } from '@voltras/workout-analytics';
 import {
   createSet,
+  createRep,
   addSampleToSet,
   completeSet,
   getPhaseMeanVelocity,
   getPhaseRangeOfMotion,
 } from '@voltras/workout-analytics';
 
+import type { RepSource } from '../config.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { WatchConfig } from '../schemas/set.js';
 
@@ -342,6 +344,38 @@ export interface FirmwareRep {
    * `getPhaseRangeOfMotion(concentric)` etc. for firmware-window VBT.
    */
   enriched?: Rep;
+}
+
+/**
+ * Enriched VBT reps from the firmware-anchored pipeline (VMCP-02.29 PR5).
+ * Each firmware boundary carries an `enriched` Rep (PR2 / PR4); the rare
+ * empty-slice boundary that never got enriched falls back to an empty rep so
+ * the returned array stays dense and index-addressable.
+ */
+export function firmwareEnrichedReps(set: ActiveSet): Rep[] {
+  return (set.firmwareReps ?? []).map((fr) => fr.enriched ?? createRep(0));
+}
+
+/**
+ * Project an active set's rep array onto the configured rep source
+ * (VMCP-02.29 PR5, the dark-flag read boundary). Returns the set UNCHANGED
+ * under the default `'analytics'` source — the same object reference, so every
+ * consumer stays byte-for-byte identical to pre-PR5 behavior. Only the
+ * explicit `'firmware'` source swaps `reps` for the firmware-anchored enriched
+ * reps; all other fields (including `firmwareTotalRepCount`) are preserved.
+ *
+ * `source` accepts `undefined` so partial test harnesses that omit `config`
+ * resolve to the analytics default rather than forcing a cast at each call.
+ */
+export function selectSetReps(set: ActiveSet, source: RepSource | undefined): ActiveSet {
+  // Guard on the explicit `'firmware'` value (never on `!== 'analytics'`) so
+  // the firmware path is reachable ONLY when the flag is deliberately set —
+  // any other value, including an unset/undefined config, stays analytics and
+  // returns the set unchanged.
+  if (source !== 'firmware') {
+    return set;
+  }
+  return { ...set, reps: firmwareEnrichedReps(set) };
 }
 
 /**
