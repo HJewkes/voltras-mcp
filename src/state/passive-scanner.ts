@@ -19,6 +19,11 @@
 //     cancels the pending handle and reschedules; `stop` clears the
 //     pending handle (any scan already in-flight runs to completion but
 //     its result is dropped).
+//   * Each `start` opens a new scan-chain epoch (`state.generation`). A
+//     tick whose scan was in-flight across a stop→start (or reconfigure)
+//     sees a stale generation on resolve and bows out without
+//     rescheduling — otherwise it would orphan the new chain's timer and
+//     run two concurrent tick loops (double scan rate).
 //
 // State ownership:
 //   * `PassiveScanState` lives on `ServerState` (one instance per server,
@@ -68,6 +73,12 @@ export interface PassiveScanState {
    * Cleared on `stop` so a fresh `start` doesn't suppress devices that
    * were seen during a previous session. */
   seenDeviceIds: Set<string>;
+  /** Monotonic scan-chain epoch. Bumped on every `start` so an in-flight
+   * tick from a superseded chain (e.g. a stop→start or reconfigure while
+   * a scan was awaiting) can detect it's stale and no-op instead of
+   * rescheduling — which would orphan the new chain's timer and run two
+   * concurrent tick chains. */
+  generation: number;
 }
 
 /** Discovered-device shape returned by `manager.scan` (subset). The
@@ -127,6 +138,7 @@ export function createPassiveScanState(): PassiveScanState {
     intervalMs: PASSIVE_SCAN_DEFAULT_INTERVAL_MS,
     handle: null,
     seenDeviceIds: new Set(),
+    generation: 0,
   };
 }
 
@@ -165,6 +177,10 @@ export function startPassiveScan(
     state.intervalMs = clampInterval(intervalMs);
   }
   state.enabled = true;
+  // Open a new scan-chain epoch. Any tick still awaiting a scan from the
+  // prior chain will see a mismatched generation once it resolves and
+  // bow out instead of rescheduling over this chain's timer.
+  state.generation += 1;
   // First tick fires immediately so an explicit enable doesn't have to
   // wait a full interval for its first event.
   state.handle = sched.setTimeout(() => {
@@ -198,6 +214,9 @@ export function stopPassiveScan(
  */
 export async function runTick(state: PassiveScanState, ctx: PassiveScanContext): Promise<void> {
   if (!state.enabled) return;
+  // Epoch this tick belongs to. If `start` bumps the generation while our
+  // scan is in-flight, this tick is stale and must not reschedule.
+  const generation = state.generation;
 
   // BLE conflict avoidance: skip the scan if anything is currently
   // connected. Don't clear `seenDeviceIds` here — the device set as we
@@ -211,14 +230,17 @@ export async function runTick(state: PassiveScanState, ctx: PassiveScanContext):
     ctx.onError?.(err);
     return null;
   });
+
+  // Bow out if this chain was superseded while the scan was in-flight:
+  // a `stop` (enabled=false) or a stop→start / reconfigure (generation
+  // bumped). Either way, rescheduling here would fire stale events and/or
+  // orphan the new chain's timer, spawning a second concurrent tick loop.
+  if (!state.enabled || generation !== state.generation) return;
+
   if (devices === null) {
     scheduleNext(state, ctx);
     return;
   }
-
-  // If the scanner was stopped while the scan was in-flight, drop the
-  // result — don't fire stale events or reschedule.
-  if (!state.enabled) return;
 
   const newlySeen = devices.filter((d) => !state.seenDeviceIds.has(d.id));
   if (newlySeen.length > 0) {
