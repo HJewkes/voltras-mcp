@@ -117,6 +117,38 @@ export interface DeviceSnapshot {
   isStale?: boolean;
 }
 
+/**
+ * Compact mid-set context carried on a {@link PendingDisconnectNotice}.
+ * Structurally identical to `channel-payloads`' `ActiveSetAtDisconnect` so
+ * the notice reads with the same shape as the `connection_changed` channel
+ * event's `active_set_at_disconnect` block.
+ */
+export interface DisconnectNoticeActiveSet {
+  set_id: string;
+  rep_count_so_far: number;
+  weight_lbs: number | null;
+  training_mode: string | null;
+}
+
+/**
+ * One-shot advisory recorded when the bridge marks a slot disconnected while
+ * channels are off (VMCP-02.32). Drained onto the next relevant tool return
+ * (`device.get_state`, `bilateral.cascade`) so the agent learns of a drop it
+ * would otherwise have received as a `connection_changed` channel event —
+ * before it drives the cable. Modelled on `buildConnectionChangedPayload`
+ * semantics (state, disconnected_at, mid-set context) so the agent parses a
+ * familiar shape. Purely advisory: the bridge never force-stops sets or
+ * auto-recovers.
+ */
+export interface PendingDisconnectNotice {
+  event_type: 'connection_changed';
+  state: 'disconnected';
+  disconnected_at: string | null;
+  mid_set: boolean;
+  active_set_at_disconnect: DisconnectNoticeActiveSet | null;
+  note: string;
+}
+
 /** Active session metadata. `setIds` accumulates as sets close. */
 export interface ActiveSession {
   sessionId: string;
@@ -312,6 +344,14 @@ export class LiveState {
    * distinguish cached pre-disconnect state from freshly-confirmed data.
    */
   private _staleSinceDisconnect: string | undefined = undefined;
+  /**
+   * One-shot disconnect advisory awaiting delivery on the next relevant tool
+   * return (VMCP-02.32). Recorded by the bridge on an unexpected drop while
+   * channels are off; `takePendingDisconnectNotice` drains it exactly once so
+   * it isn't re-delivered. Independent of `_staleSinceDisconnect`, which is a
+   * persistent snapshot flag rather than a deliver-once notice.
+   */
+  private _pendingDisconnectNotice: PendingDisconnectNotice | undefined = undefined;
   /**
    * Internal analytics-set used to detect rep boundaries from the frame
    * stream. Mirrors the canonical mobile-app pipeline: `addSampleToSet`
@@ -676,6 +716,26 @@ export class LiveState {
   /** True when the snapshot is the last-known pre-disconnect state. */
   isStale(): boolean {
     return this._staleSinceDisconnect !== undefined;
+  }
+
+  /**
+   * Stash a one-shot disconnect advisory (VMCP-02.32). Overwrites any
+   * un-drained prior notice so the most recent drop is the one surfaced —
+   * a still-pending older notice about the same slot carries no extra signal.
+   */
+  recordPendingDisconnectNotice(notice: PendingDisconnectNotice): void {
+    this._pendingDisconnectNotice = notice;
+  }
+
+  /**
+   * Drain the pending disconnect advisory, returning it once and clearing it
+   * so a subsequent tool return doesn't re-deliver it. Returns `undefined`
+   * when no notice is pending.
+   */
+  takePendingDisconnectNotice(): PendingDisconnectNotice | undefined {
+    const notice = this._pendingDisconnectNotice;
+    this._pendingDisconnectNotice = undefined;
+    return notice;
   }
 
   /**

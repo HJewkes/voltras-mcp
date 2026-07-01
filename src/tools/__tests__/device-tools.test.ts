@@ -323,6 +323,10 @@ interface FakeLive {
         status: 'active' | 'ended' | 'partial';
       };
   markDisconnected: (at: string) => void;
+  // VMCP-02.32: get_state / bilateral.cascade drain a one-shot disconnect
+  // advisory off the slot's live state. The fake returns `undefined` (no
+  // pending notice) by default; dedicated tests override it.
+  takePendingDisconnectNotice: () => unknown;
 }
 
 interface FakeSlot {
@@ -373,6 +377,7 @@ function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>>
     snapshotDevice: () => ({ connected: false, ...overrides }),
     snapshotSet: () => undefined,
     markDisconnected: vi.fn(),
+    takePendingDisconnectNotice: vi.fn(() => undefined),
   };
 }
 

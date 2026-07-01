@@ -1974,6 +1974,56 @@ describe('wireEventBridge', () => {
         expect(JSON.parse(second.content).summary).toBe('Voltra authenticating.');
       });
     });
+
+    // ── VMCP-02.32 — delayed disconnect notice for the tool-return path ────
+    // The bridge records a one-shot advisory on every disconnect so the
+    // agent still learns of an idle-lull drop even when push channels are
+    // off (the channel publish is fire-and-forget and dropped when the host
+    // wasn't launched with --channels). The advisory is drained by the tool
+    // layer; here we assert the bridge records it and it drains exactly once.
+    describe('pending disconnect notice (VMCP-02.32)', () => {
+      it("records a mid-set advisory on 'disconnected' that drains exactly once", () => {
+        live.applySettings({ weightLbs: 135, trainingMode: 'WeightTraining' });
+        startSet(live);
+        client.fire.connectionStateChange('disconnected');
+
+        const notice = live.takePendingDisconnectNotice();
+        expect(notice).toMatchObject({
+          event_type: 'connection_changed',
+          state: 'disconnected',
+          mid_set: true,
+          active_set_at_disconnect: {
+            set_id: 'set-1',
+            rep_count_so_far: 0,
+            weight_lbs: 135,
+            training_mode: 'WeightTraining',
+          },
+        });
+        expect(notice?.disconnected_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(typeof notice?.note).toBe('string');
+        // Drain-once: a second take returns nothing so the notice is not
+        // re-delivered on a subsequent tool return.
+        expect(live.takePendingDisconnectNotice()).toBeUndefined();
+      });
+
+      it("records a no-set advisory (mid_set=false, null active set) on 'disconnected'", () => {
+        client.fire.connectionStateChange('disconnected');
+        const notice = live.takePendingDisconnectNotice();
+        expect(notice).toMatchObject({
+          event_type: 'connection_changed',
+          state: 'disconnected',
+          mid_set: false,
+          active_set_at_disconnect: null,
+        });
+      });
+
+      it('does not record an advisory on non-disconnect transitions', () => {
+        client.fire.connectionStateChange('connecting');
+        client.fire.connectionStateChange('authenticating');
+        client.fire.connectionStateChange('connected');
+        expect(live.takePendingDisconnectNotice()).toBeUndefined();
+      });
+    });
   });
 
   // ── Bug 22 — mode-revert guard wiring ──────────────────────────────────

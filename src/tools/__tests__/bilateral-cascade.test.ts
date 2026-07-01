@@ -183,7 +183,13 @@ const DEVICE_TOOL_NAMES = [
 interface FakeSlot {
   slotId: string;
   client: FakeClient;
-  live: { snapshotDevice: () => Record<string, unknown>; markDisconnected: Mock };
+  live: {
+    snapshotDevice: () => Record<string, unknown>;
+    markDisconnected: Mock;
+    // VMCP-02.32: the cascade return drains each target slot's one-shot
+    // disconnect advisory. Default fake returns none.
+    takePendingDisconnectNotice: Mock;
+  };
 }
 
 function makeSlot(slotId: string, connected = true): FakeSlot {
@@ -193,6 +199,7 @@ function makeSlot(slotId: string, connected = true): FakeSlot {
     live: {
       snapshotDevice: () => ({}),
       markDisconnected: vi.fn(),
+      takePendingDisconnectNotice: vi.fn(() => undefined),
     },
   };
 }

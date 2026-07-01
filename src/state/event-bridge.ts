@@ -118,6 +118,7 @@ import { getDebugBuffers } from './debug-buffer.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
+  buildPendingDisconnectNotice,
   buildGuidedLoadStatePayload,
   buildModeDivergedPayload,
   buildIdleRepPayload,
@@ -992,6 +993,15 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         live.snapshotDevice(),
         activeSetForPayload,
       );
+      // VMCP-02.32: stash a one-shot advisory for the tool-return path so the
+      // agent still learns of a drop that lands while push channels are off —
+      // drained onto the next device.get_state / bilateral.cascade. Advisory
+      // only; the bridge never force-stops the set here.
+      if (connState === 'disconnected') {
+        live.recordPendingDisconnectNotice(
+          buildPendingDisconnectNotice(live.snapshotDevice(), activeSetForPayload),
+        );
+      }
       slotChannels.publish(payload);
     }),
   );

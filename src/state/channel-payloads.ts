@@ -33,7 +33,7 @@ import {
   getRepTempoRatio,
 } from '@voltras/workout-analytics';
 
-import type { ActiveSet, DeviceSnapshot, IdleRep } from './live-state.js';
+import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
 import { activeModeName } from './active-mode.js';
 import type { StoredSet } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
@@ -1226,6 +1226,37 @@ export function buildConnectionChangedPayload(
     active_set_at_disconnect: state === 'disconnected' ? activeSet : null,
   });
   return { meta, content };
+}
+
+/**
+ * Advisory attached to `device.get_state` / `bilateral.cascade` returns to
+ * explain the delayed disconnect notice the agent is about to read.
+ */
+const DISCONNECT_NOTICE_TEXT =
+  'Slot disconnected while idle since your last tool call. Surfacing the drop ' +
+  'here because push channels were off. Verify the connection before loading ' +
+  'the cable; this notice is delivered once.';
+
+/**
+ * Build the one-shot {@link PendingDisconnectNotice} the bridge stashes on a
+ * disconnect while channels are off (VMCP-02.32). Reuses the same `device`
+ * snapshot and pre-cascade `activeSet` inputs as
+ * {@link buildConnectionChangedPayload} so the drained advisory mirrors the
+ * `connection_changed` channel event's disconnect shape (state,
+ * disconnected_at, mid-set context). Advisory only — no motor action.
+ */
+export function buildPendingDisconnectNotice(
+  device: DeviceSnapshot,
+  activeSet: ActiveSetAtDisconnect | null,
+): PendingDisconnectNotice {
+  return {
+    event_type: 'connection_changed',
+    state: 'disconnected',
+    disconnected_at: device.disconnectedAt ?? null,
+    mid_set: activeSet !== null,
+    active_set_at_disconnect: activeSet,
+    note: DISCONNECT_NOTICE_TEXT,
+  };
 }
 
 /**
