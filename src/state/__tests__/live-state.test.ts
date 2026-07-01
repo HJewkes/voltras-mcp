@@ -6,7 +6,7 @@
 // snapshots, stale-rep drop, null battery coercion).
 import { describe, expect, it } from 'vitest';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
-import { LiveState, type ActiveSession, type ActiveSet } from '../live-state.js';
+import { LiveState, type ActiveSession, type ActiveSet, type FirmwareRep } from '../live-state.js';
 
 const TS_A = '2025-01-01T00:00:00.000Z';
 const TS_B = '2025-01-01T00:01:00.000Z';
@@ -269,6 +269,78 @@ describe('LiveState', () => {
       live.startSet(makeSet());
       const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
       expect(finalized?.reps.length).toBe(0);
+    });
+  });
+
+  describe('firmware-rep finalize + trailing drop (VMCP-02.29 PR4)', () => {
+    // An enriched VBT rep whose eccentric phase is complete (has samples) vs
+    // in-progress (empty). `isTrailingFirmwareRepIncomplete` mirrors the
+    // analytics rule: eccentric.samples.length === 0 ⇒ in-progress.
+    function enrichedRep(repNumber: number, eccentricComplete: boolean): Rep {
+      const base = makeRep(repNumber);
+      if (!eccentricComplete) {
+        return base; // makeRep's eccentric.samples is already []
+      }
+      const eccSample: WorkoutSample = {
+        sequence: 0,
+        timestamp: 0,
+        phase: 3 as WorkoutSample['phase'],
+        position: 0,
+        velocity: 0,
+        force: 0,
+      };
+      return { ...base, eccentric: { ...base.eccentric, samples: [eccSample] } };
+    }
+
+    function firmwareRep(repNumber: number, eccentricComplete: boolean): FirmwareRep {
+      return {
+        ts: repNumber,
+        repNumber,
+        setCounter: 1,
+        frameCounter: repNumber,
+        targetWeightTenths: 0,
+        enriched: enrichedRep(repNumber, eccentricComplete),
+      };
+    }
+
+    it('finalizeFirmwareReps appends the terminal rep and records the total count', () => {
+      const live = new LiveState();
+      live.startSet(makeSet({ firmwareReps: [firmwareRep(1, true)] }));
+      live.finalizeFirmwareReps(firmwareRep(2, true), 2);
+      const set = live.snapshotSet();
+      expect(set?.firmwareReps).toHaveLength(2);
+      expect(set?.firmwareReps?.[1].repNumber).toBe(2);
+      expect(set?.firmwareTotalRepCount).toBe(2);
+    });
+
+    it('finalizeFirmwareReps is a silent no-op when no set is active', () => {
+      const live = new LiveState();
+      live.finalizeFirmwareReps(firmwareRep(1, true), 1);
+      expect(live.snapshotSet()).toBeUndefined();
+    });
+
+    it('drops the trailing in-progress firmware rep on inactivity force-close', () => {
+      const live = new LiveState();
+      live.startSet(makeSet({ firmwareReps: [firmwareRep(1, true), firmwareRep(2, false)] }));
+      const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
+      expect(finalized?.firmwareReps).toHaveLength(1);
+      expect(finalized?.firmwareReps?.[0].repNumber).toBe(1);
+      expect(finalized?.partialReason).toBe('inactivity_timeout');
+    });
+
+    it('keeps a complete trailing firmware rep even when dropTrailingInProgress is set', () => {
+      const live = new LiveState();
+      live.startSet(makeSet({ firmwareReps: [firmwareRep(1, true), firmwareRep(2, true)] }));
+      const finalized = live.endSet('inactivity_timeout', { dropTrailingInProgress: true });
+      expect(finalized?.firmwareReps).toHaveLength(2);
+    });
+
+    it('preserves the trailing firmware rep on a graceful close (no drop flag)', () => {
+      const live = new LiveState();
+      live.startSet(makeSet({ firmwareReps: [firmwareRep(1, true), firmwareRep(2, false)] }));
+      const finalized = live.endSet();
+      expect(finalized?.firmwareReps).toHaveLength(2);
+      expect(finalized?.status).toBe('ended');
     });
   });
 

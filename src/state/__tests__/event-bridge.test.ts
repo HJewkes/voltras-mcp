@@ -1239,6 +1239,85 @@ describe('wireEventBridge', () => {
       expect(parsed.device_summary).toEqual({ rep_count: 7, schema_version: 4 });
       expect(parsed.device_set_summary?.rep_count).toBe(7);
     });
+
+    it('finalizes the last firmware rep + records firmwareTotalRepCount on close (VMCP-02.29 PR4)', async () => {
+      // Fire frames + two `return` boundaries (firmware reps 1-2), then a
+      // setSummary carrying repCount=3. The final rep never emits its own
+      // 'return' (the device disengages after the last concentric), so the
+      // close path slices the trailing sample window, appends it as firmware
+      // rep 3, and records the device's authoritative repCount. Deterministic
+      // clock so the boundary slice windows are exact.
+      let clock = 1_700_000_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+      // Snapshot the active set at the instant finalizeSet reaches endSet —
+      // AFTER the firmware finalize appends, BEFORE endSet discards it.
+      let firmwareRepsAtClose = 0;
+      let finalRepNumber: number | undefined;
+      let totalAtClose: number | undefined;
+      const realEndSet = live.endSet.bind(live);
+      vi.spyOn(live, 'endSet').mockImplementation((reason, opts) => {
+        const snap = live.snapshotSet();
+        const fw = snap?.firmwareReps ?? [];
+        firmwareRepsAtClose = fw.length;
+        finalRepNumber = fw[fw.length - 1]?.repNumber;
+        totalAtClose = snap?.firmwareTotalRepCount;
+        return realEndSet(reason, opts);
+      });
+
+      startActiveSet({ startedAt: new Date(clock).toISOString() });
+      const frame = (seq: number, phase: number, velocity: number): void =>
+        client.fire.frame({
+          sequence: seq,
+          timestamp: seq,
+          phase,
+          position: 0.1 * seq,
+          velocity,
+          force: 50,
+        });
+
+      clock += 10;
+      frame(1, 1, 400);
+      frame(2, 3, 200);
+      clock += 10;
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 2,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      clock += 10;
+      frame(3, 1, 500);
+      frame(4, 3, 250);
+      clock += 10;
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 4,
+        setCounter: 1,
+        repCount: 2,
+        targetWeightTenths: 0,
+      });
+      clock += 10;
+      frame(5, 1, 600);
+      frame(6, 3, 300);
+      clock += 10;
+      client.fire.setSummary({
+        schemaVersion: 1,
+        targetWeightTenths: 1000,
+        repCount: 3,
+        repDurationMs: 1800,
+        raw: new Uint8Array(110),
+      });
+      await flushMicrotasks();
+
+      // Two `return`-driven firmware reps + one appended on close = 3; the
+      // final rep carries the device's rep number and firmwareTotalRepCount
+      // equals the setSummary payload's repCount.
+      expect(firmwareRepsAtClose).toBe(3);
+      expect(finalRepNumber).toBe(3);
+      expect(totalAtClose).toBe(3);
+      nowSpy.mockRestore();
+    });
   });
 
   describe('trigger DSL — synchronous evaluation on rep_finalized', () => {
