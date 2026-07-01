@@ -179,7 +179,8 @@ function seedConnectedState(slot: SlotState): void {
  *
  * The slot keys in `state.slots` (and each entry's `slotId` field) are
  * preserved; only the slot-scoped bindings — `client`, `live`,
- * `modeRevertGuard` — are exchanged. The event bridge is unwired from each
+ * `modeRevertGuard`, `modeDivergenceWatch`, and `coercionWatch` — are
+ * exchanged. The event bridge is unwired from each
  * slot before the swap and re-wired against the post-swap clients so the
  * `slot.slotId` captured in the bridge's closures continues to label
  * outbound channel events with the slot key the consumer expects (the slot
@@ -217,14 +218,17 @@ export function swapSlots(state: ServerState): void {
   const tmpClient = a.client;
   const tmpLive = a.live;
   const tmpGuard = a.modeRevertGuard;
+  const tmpDivergenceWatch = a.modeDivergenceWatch;
   const tmpWatch = a.coercionWatch;
   a.client = b.client;
   a.live = b.live;
   a.modeRevertGuard = b.modeRevertGuard;
+  a.modeDivergenceWatch = b.modeDivergenceWatch;
   a.coercionWatch = b.coercionWatch;
   b.client = tmpClient;
   b.live = tmpLive;
   b.modeRevertGuard = tmpGuard;
+  b.modeDivergenceWatch = tmpDivergenceWatch;
   b.coercionWatch = tmpWatch;
   a.unwireBridge = wireBridgeForSlot(state, a);
   b.unwireBridge = wireBridgeForSlot(state, b);
