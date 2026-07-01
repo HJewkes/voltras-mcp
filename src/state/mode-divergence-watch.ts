@@ -56,12 +56,20 @@ export interface ModeDivergence {
  * (non-Idle), and they disagree past the window, returns a `ModeDivergence`
  * exactly once. Reconvergence (or either side going Idle) clears the episode
  * so the next persistent divergence re-arms.
+ *
+ * A divergence that *shifts* to a different-but-still-divergent pair (e.g. the
+ * requested mode changes 7→2 while the applied mode stays 1) is treated as a
+ * new episode: the debounce window re-arms for the new pair so a fresh
+ * `mode_diverged` can emit, rather than the new mismatch being swallowed by
+ * the already-emitted prior episode. An *unchanged* persistent divergence
+ * still emits only once.
  */
 export class ModeDivergenceWatch {
   private requested: number | undefined = undefined;
   private active: number | undefined = undefined;
   private divergedSince: number | null = null;
   private emitted = false;
+  private divergedPair: { requested: number; active: number } | null = null;
 
   /**
    * @param now Wall-clock provider — defaulted to `Date.now`, parameterised so
@@ -107,6 +115,7 @@ export class ModeDivergenceWatch {
   private clearEpisode(): void {
     this.divergedSince = null;
     this.emitted = false;
+    this.divergedPair = null;
   }
 
   private evaluate(): ModeDivergence | null {
@@ -122,15 +131,32 @@ export class ModeDivergenceWatch {
       this.clearEpisode();
       return null;
     }
-    // Settled disagreement.
-    if (this.divergedSince === null) {
+    return this.evaluateDivergence(this.requested, this.active);
+  }
+
+  private evaluateDivergence(requested: number, active: number): ModeDivergence | null {
+    // Arm a fresh debounce window when this is a brand-new episode OR the
+    // divergent pair shifted to a different still-divergent pair. Re-arming on
+    // a shift lets the new mismatch earn its own emit instead of being
+    // swallowed by the prior (already-emitted) episode; an unchanged pair
+    // keeps its window so a persistent divergence still emits only once.
+    if (this.divergedSince === null || this.pairShifted(requested, active)) {
       this.divergedSince = this.now();
+      this.emitted = false;
+      this.divergedPair = { requested, active };
     }
     const divergedForMs = this.now() - this.divergedSince;
     if (!this.emitted && divergedForMs >= this.windowMs) {
       this.emitted = true;
-      return { requested: this.requested, active: this.active, divergedForMs };
+      return { requested, active, divergedForMs };
     }
     return null;
+  }
+
+  private pairShifted(requested: number, active: number): boolean {
+    return (
+      this.divergedPair !== null &&
+      (this.divergedPair.requested !== requested || this.divergedPair.active !== active)
+    );
   }
 }
