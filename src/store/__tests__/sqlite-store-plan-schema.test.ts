@@ -329,6 +329,97 @@ describe('SqliteSessionStore — v3 plan schema', () => {
       expect(await store.getAssignmentsForSession('sess-1')).toEqual([]);
     });
   });
+
+  // Regression: parent upserts must NOT delete-then-insert. INSERT OR REPLACE
+  // on a PK conflict does DELETE + INSERT, and with foreign_keys=ON that
+  // cascade-deletes every child row. Re-putting a parent (to stamp endedAt /
+  // archivedAt / reorder) is a routine operation, so the child subtree must
+  // survive. Each test re-puts one parent and asserts its children remain.
+  describe('re-put parent preserves child subtree (ON CONFLICT upsert)', () => {
+    beforeEach(async () => {
+      await store.putTrainingProgram(makeProgram());
+      await store.putTrainingBlock(makeBlock());
+      await store.putTrainingWeek(makeWeek());
+      await store.putWorkoutTemplate(makeTemplate());
+      await store.putPlannedExercise(makePlanned());
+
+      const session: StoredSession = {
+        id: 'sess-1',
+        startedAt: '2025-02-01T00:00:00.000Z',
+        exerciseId: 'bench-press',
+      };
+      await store.putSession(session);
+
+      const assignment: StoredProgramAssignment = {
+        id: 'assign-1',
+        sessionId: 'sess-1',
+        plannedExerciseId: 'pe-1',
+        workoutTemplateId: 'tmpl-1',
+        assignedAt: '2025-02-01T00:00:00.000Z',
+      };
+      await store.putProgramAssignment(assignment);
+    });
+
+    it('re-putting a session to stamp endedAt keeps its program_assignments', async () => {
+      await store.putSession({
+        id: 'sess-1',
+        startedAt: '2025-02-01T00:00:00.000Z',
+        endedAt: '2025-02-01T01:00:00.000Z',
+        exerciseId: 'bench-press',
+      });
+
+      expect((await store.getSession('sess-1'))?.endedAt).toBe('2025-02-01T01:00:00.000Z');
+      const rows = await store.getAssignmentsForSession('sess-1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe('assign-1');
+    });
+
+    it('archiving a program (re-put with archivedAt) keeps the whole planning tree', async () => {
+      await store.putTrainingProgram(makeProgram({ archivedAt: '2025-03-01T00:00:00.000Z' }));
+
+      expect((await store.getTrainingProgram('prog-1'))?.archivedAt).toBe(
+        '2025-03-01T00:00:00.000Z',
+      );
+      expect(await store.getTrainingBlocksForProgram('prog-1')).toHaveLength(1);
+      expect(await store.getTrainingWeeksForBlock('block-1')).toHaveLength(1);
+      expect(await store.getWorkoutTemplatesForWeek('week-1')).toHaveLength(1);
+      expect(await store.getPlannedExercisesForTemplate('tmpl-1')).toHaveLength(1);
+    });
+
+    it('re-putting a training block keeps its weeks, templates, and exercises', async () => {
+      await store.putTrainingBlock(makeBlock({ name: 'renamed block' }));
+
+      expect((await store.getTrainingBlocksForProgram('prog-1'))[0]?.name).toBe('renamed block');
+      expect(await store.getTrainingWeeksForBlock('block-1')).toHaveLength(1);
+      expect(await store.getWorkoutTemplatesForWeek('week-1')).toHaveLength(1);
+      expect(await store.getPlannedExercisesForTemplate('tmpl-1')).toHaveLength(1);
+    });
+
+    it('re-putting a training week keeps its templates and exercises', async () => {
+      await store.putTrainingWeek(makeWeek({ name: 'renamed week' }));
+
+      expect((await store.getTrainingWeeksForBlock('block-1'))[0]?.name).toBe('renamed week');
+      expect(await store.getWorkoutTemplatesForWeek('week-1')).toHaveLength(1);
+      expect(await store.getPlannedExercisesForTemplate('tmpl-1')).toHaveLength(1);
+    });
+
+    it('re-putting a workout template keeps its planned exercises and assignments', async () => {
+      await store.putWorkoutTemplate(makeTemplate({ name: 'renamed template' }));
+
+      expect((await store.getWorkoutTemplate('tmpl-1'))?.name).toBe('renamed template');
+      expect(await store.getPlannedExercisesForTemplate('tmpl-1')).toHaveLength(1);
+      expect(await store.getAssignmentsForTemplate('tmpl-1')).toHaveLength(1);
+    });
+
+    it('re-putting a planned exercise keeps assignments referencing it', async () => {
+      await store.putPlannedExercise(makePlanned({ targetSets: 5 }));
+
+      expect((await store.getPlannedExercisesForTemplate('tmpl-1'))[0]?.targetSets).toBe(5);
+      const rows = await store.getAssignmentsForSession('sess-1');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.plannedExerciseId).toBe('pe-1');
+    });
+  });
 });
 
 describe('SqliteSessionStore — v3 migration idempotency', () => {
