@@ -28,8 +28,17 @@
 // resource-updated hint when one is. EC-11 (stale rep drop) is enforced at
 // the bridge layer by the active-set check before the hint is sent.
 
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
+// `@voltras/workout-analytics` is NOT mocked — the golden VBT compare in the
+// PR2 firmware-enrichment test replays the same sample slice through the real
+// analytics pipeline the bridge uses.
+import {
+  createSet,
+  addSampleToSet,
+  completeSet,
+  getPhaseRangeOfMotion,
+} from '@voltras/workout-analytics';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -554,6 +563,182 @@ describe('wireEventBridge', () => {
       });
       expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('firmware-rep enrichment (VMCP-02.29 PR2)', () => {
+    // PR2 attaches a real VBT Rep to each FirmwareRep by slicing the per-slot
+    // sample buffer between the prior firmware boundary and this one (D3
+    // correlation: buffered samples are stamped with a wall-clock `capturedAt`
+    // and sliced by a `(floor, boundaryTs]` window — never by frameCounter).
+    // We drive a deterministic clock so the slice windows are exact, feed a
+    // synthetic ECC+CONC WorkoutSample stream, fire `return` boundaries at
+    // chosen points, then assert the enriched rep EQUALS a direct
+    // workout-analytics computation over the same slice (golden compare).
+    interface FrameInput {
+      sequence: number;
+      timestamp: number;
+      phase: number;
+      position: number;
+      velocity: number;
+      force: number;
+    }
+    const toSample = (f: FrameInput): Parameters<typeof addSampleToSet>[1] => ({
+      sequence: f.sequence,
+      timestamp: f.timestamp,
+      phase: f.phase as Parameters<typeof addSampleToSet>[1]['phase'],
+      position: f.position,
+      velocity: f.velocity,
+      force: f.force,
+    });
+    // Golden: replay a slice through a fresh analytics set exactly as the
+    // bridge does, then return the first completed rep.
+    const goldenRep = (frames: FrameInput[]): ReturnType<typeof completeSet>['reps'][number] => {
+      const set = frames.reduce((s, f) => addSampleToSet(s, toSample(f)), createSet());
+      return completeSet(set).reps[0];
+    };
+    // One concentric-then-eccentric rep. Concentric peak velocity is the max
+    // of the concentric samples; ROM derives from the position sweep.
+    const repFrames = (base: number, peak: number): FrameInput[] => [
+      { sequence: base, timestamp: base, phase: 1, position: 0.1, velocity: peak / 2, force: 50 },
+      {
+        sequence: base + 1,
+        timestamp: base + 1,
+        phase: 1,
+        position: 0.4,
+        velocity: peak,
+        force: 55,
+      },
+      {
+        sequence: base + 2,
+        timestamp: base + 2,
+        phase: 1,
+        position: 0.7,
+        velocity: peak / 3,
+        force: 52,
+      },
+      {
+        sequence: base + 3,
+        timestamp: base + 3,
+        phase: 3,
+        position: 0.4,
+        velocity: peak / 4,
+        force: 40,
+      },
+      {
+        sequence: base + 4,
+        timestamp: base + 4,
+        phase: 3,
+        position: 0.1,
+        velocity: peak / 8,
+        force: 38,
+      },
+    ];
+
+    let now = 0;
+    let nowSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      now = 1_700_000_000_000;
+      nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    });
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    function armSet(): void {
+      live.startSession({
+        sessionId: 'sess-fw',
+        startedAt: new Date(now).toISOString(),
+        setIds: [],
+        status: 'active',
+      });
+      live.startSet({
+        setId: 'set-fw',
+        sessionId: 'sess-fw',
+        startedAt: new Date(now).toISOString(),
+        reps: [],
+        status: 'active',
+      });
+    }
+
+    it('attaches an enriched VBT rep matching a golden WA compute over the same slice', () => {
+      armSet();
+      const rep1 = repFrames(10, 800);
+      const rep2 = repFrames(20, 500);
+
+      now += 10; // first sample capturedAt strictly past the set-start floor
+      for (const f of rep1) client.fire.frame(f);
+      now += 10; // return boundary 1 — capturedAt <= boundaryTs
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 5,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+
+      now += 10; // rep-2 samples land strictly past boundary 1
+      for (const f of rep2) client.fire.frame(f);
+      now += 10; // return boundary 2
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 11,
+        setCounter: 1,
+        repCount: 2,
+        targetWeightTenths: 0,
+      });
+
+      const firmwareReps = live.snapshotSet()?.firmwareReps ?? [];
+      expect(firmwareReps).toHaveLength(2);
+
+      const gold1 = goldenRep(rep1);
+      const gold2 = goldenRep(rep2);
+      // Sanity: the golden reps carry real movement so an empty-vs-empty
+      // equality can't pass silently.
+      expect(gold1.concentric.peakVelocity).toBeGreaterThan(0);
+      expect(getPhaseRangeOfMotion(gold1.concentric)).toBeGreaterThan(0);
+
+      const enriched1 = firmwareReps[0].enriched;
+      const enriched2 = firmwareReps[1].enriched;
+      expect(enriched1).toBeDefined();
+      expect(enriched2).toBeDefined();
+
+      expect(enriched1?.concentric.peakVelocity).toBe(gold1.concentric.peakVelocity);
+      expect(getPhaseRangeOfMotion(enriched1!.concentric)).toBe(
+        getPhaseRangeOfMotion(gold1.concentric),
+      );
+      expect(enriched2?.concentric.peakVelocity).toBe(gold2.concentric.peakVelocity);
+      expect(getPhaseRangeOfMotion(enriched2!.concentric)).toBe(
+        getPhaseRangeOfMotion(gold2.concentric),
+      );
+      // Distinct windows: rep 2's slice must not fold in rep 1's stronger pull.
+      expect(enriched2?.concentric.peakVelocity).toBe(500);
+      // Measurement-only: the analytics pipeline publishes its usual
+      // `rep_finalized` events (driven by the same frames), but the firmware
+      // enrichment path adds NO event of its own — no publish carries a
+      // firmware/enriched marker. The empty-slice test below proves the
+      // enrichment path is silent in isolation (perRep only, no frames).
+      for (const call of channels.publish.mock.calls) {
+        expect(call[0].meta.event_type).toBe('rep_finalized');
+      }
+    });
+
+    it('falls back to an empty rep when the boundary slice held no samples', () => {
+      armSet();
+      // Fire a return boundary with no buffered frames in the window.
+      now += 10;
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 3,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      const firmwareReps = live.snapshotSet()?.firmwareReps ?? [];
+      expect(firmwareReps).toHaveLength(1);
+      expect(firmwareReps[0].enriched).toBeDefined();
+      expect(firmwareReps[0].enriched?.concentric.samples).toHaveLength(0);
+      expect(channels.publish).not.toHaveBeenCalled();
     });
   });
 
