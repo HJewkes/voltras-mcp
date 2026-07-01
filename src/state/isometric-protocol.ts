@@ -53,7 +53,10 @@ export interface SideAnalysis {
   meanPlateauForceLbs: number | null;
   /** Coefficient of variation across the 2 best trials' plateau forces. */
   cvPct: number | null;
-  /** 0.70 × meanPlateauForceLbs, rounded to nearest 5 lb; null when no mean. */
+  /**
+   * 0.70 × meanPlateauForceLbs, rounded to nearest 5 lb and clamped up to the
+   * device minimum (5 lb) so it is always a settable target; null when no mean.
+   */
   inferredWorkingWeightLbs: number | null;
 }
 
@@ -95,6 +98,14 @@ const WORKING_WEIGHT_RATIO = 0.7;
 
 /** Rounding step for inferred working weight (lbs). */
 const WORKING_WEIGHT_ROUND_STEP = 5;
+
+/**
+ * Device firmware floor for a settable weight (lbs). `device.set_weight`
+ * rejects anything below this (see DeviceSetWeightInput / SDK clamp), so a
+ * low plateau that rounds to 0 must be clamped up — otherwise the
+ * isometric→programming handoff emits a target the device cannot accept.
+ */
+const DEVICE_MIN_WORKING_WEIGHT_LBS = 5;
 
 /**
  * Analyze a single trial's force samples against the per-trial validity
@@ -250,9 +261,9 @@ export function aggregateSide(trials: TrialAnalysis[]): SideAnalysis {
   const best2 = [sorted[0].plateauForceLbs, sorted[1].plateauForceLbs];
   const meanPlateau = mean(best2);
   const cvPct = coefficientOfVariation(best2);
-  const inferredWorkingWeightLbs = roundToStep(
-    meanPlateau * WORKING_WEIGHT_RATIO,
-    WORKING_WEIGHT_ROUND_STEP,
+  const inferredWorkingWeightLbs = Math.max(
+    DEVICE_MIN_WORKING_WEIGHT_LBS,
+    roundToStep(meanPlateau * WORKING_WEIGHT_RATIO, WORKING_WEIGHT_ROUND_STEP),
   );
 
   return {

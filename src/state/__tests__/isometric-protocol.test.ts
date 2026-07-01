@@ -154,6 +154,17 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
     expect(result.inferredWorkingWeightLbs).toBe(140);
   });
 
+  it('clamps inferred working weight up to the 5 lb device minimum', () => {
+    // Arrange: two very low plateaus (~3 lb). 70% = 2.1, which rounds to 0 —
+    // below the device set_weight floor of 5 lb.
+    const trials = [validTrial(1, 3), validTrial(2, 3)];
+    // Act
+    const result = aggregateSide(trials);
+    // Assert: never emit an unsettable (< 5 lb) target.
+    expect(result.inferredWorkingWeightLbs).toBe(5);
+    expect(result.inferredWorkingWeightLbs).toBeGreaterThanOrEqual(5);
+  });
+
   it('discards a session-level outlier (peak > 15% from session mean)', () => {
     // Two strong trials at 200 and one outlier at 50 — session mean ≈ 150,
     // outlier diverges ~66.7% so it gets re-marked invalid. Two strong
