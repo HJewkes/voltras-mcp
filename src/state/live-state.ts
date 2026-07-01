@@ -674,15 +674,24 @@ export class LiveState {
    * in one mutation. Silently dropped when no set is active (mirrors
    * `appendFirmwareRep`'s stale-event policy). Measurement-only.
    */
-  finalizeFirmwareReps(finalRep: FirmwareRep, totalRepCount: number): void {
+  finalizeFirmwareReps(finalRep: FirmwareRep, deviceReportedTotal: number): void {
     if (this.set === undefined) {
       return;
     }
     const existing = this.set.firmwareReps ?? [];
+    // The auto-ended terminal rep has no `onPerRep` 'return' of its own, so the
+    // device's `onSetSummary` count omits it (bench 2026-07-01: device reported
+    // 4 for a 5-rep set that auto-ended on the final rep). Derive the terminal
+    // rep number positionally from what we actually reconstructed rather than
+    // trusting the device's pre-terminal counter, and reconcile the total as
+    // `max(positional, deviceReported)` so neither a missing terminal 'return'
+    // (device under-counts) nor a dropped mid-set boundary (positional
+    // under-counts) can silently drop a rep.
+    const positionalRepNumber = existing.length + 1;
     this.set = {
       ...this.set,
-      firmwareReps: [...existing, finalRep],
-      firmwareTotalRepCount: totalRepCount,
+      firmwareReps: [...existing, { ...finalRep, repNumber: positionalRepNumber }],
+      firmwareTotalRepCount: Math.max(positionalRepNumber, deviceReportedTotal),
     };
   }
 

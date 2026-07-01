@@ -590,7 +590,13 @@ export async function finalizeSet(
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
-  const payload = buildSetEndedPayload(stored, opts.cause, deviceSummary, deviceSetSummary);
+  const payload = buildSetEndedPayload(
+    stored,
+    opts.cause,
+    deviceSummary,
+    deviceSetSummary,
+    finalized.firmwareTotalRepCount,
+  );
   const slotChannels = state.channels.forSlot(slotId);
   slotChannels.publish(payload);
   // VMCP-02.08: kick off the passive rest_status emission cycle. Starts

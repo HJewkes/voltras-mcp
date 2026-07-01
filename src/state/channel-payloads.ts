@@ -453,6 +453,7 @@ export function buildSetEndedPayload(
   cause: SetEndedCause = 'tool',
   deviceSummary?: DeviceSummaryBlock,
   deviceSetSummary?: DeviceSetSummaryBlock,
+  firmwareReconciledTotal?: number,
 ): {
   meta: Record<string, string>;
   content: string;
@@ -480,17 +481,25 @@ export function buildSetEndedPayload(
     // Device-asserted canonical counts harvested from the SDK's `onSummary`
     // vendor frame. Carried alongside the analytics-derived `rep_count` so
     // the model can spot a mismatch (e.g., device-side counter desync) at
-    // a glance without parsing content.
-    meta.device_rep_count = String(deviceSummary.repCount);
+    // a glance without parsing content. Prefer the firmware-parity
+    // reconstructed total when available (see `firmwareReconciledTotal`).
+    meta.device_rep_count = String(firmwareReconciledTotal ?? deviceSummary.repCount);
     meta.device_schema_version = String(deviceSummary.schemaVersion);
   }
   if (deviceSetSummary !== undefined) {
-    // Per-set device summary from `onSetSummary` (`aa 85 5f`). Distinct
+    // Per-set device summary from the device's set-close frame. Distinct
     // from `onSummary` above which is workout-end-only. Surfaced in meta
     // for fast scanning + mismatch detection. Wins over `device_summary`
     // when both happen to be present (rare; would require both frames in
     // the same set's lifetime).
-    meta.device_rep_count = String(deviceSetSummary.repCount);
+    //
+    // Prefer `firmwareReconciledTotal` — the firmware-parity pipeline's
+    // reconstructed total — over the raw frame count: when a set auto-ends
+    // on its final rep, that rep never fires its own `onPerRep` 'return', so
+    // the set-close frame's `repCount` omits it (bench 2026-07-01: frame said
+    // 4 for a 5-rep set). The reconstructed total restores it. The raw frame
+    // count is still echoed verbatim in `content.device_set_summary.rep_count`.
+    meta.device_rep_count = String(firmwareReconciledTotal ?? deviceSetSummary.repCount);
     meta.device_set_rep_duration_ms = String(deviceSetSummary.repDurationMs);
     meta.device_schema_version = String(deviceSetSummary.schemaVersion);
   }
