@@ -1295,11 +1295,13 @@ function sliceFrameBufferAndEnrich(
 
 /**
  * VMCP-02.29 PR4: build + append the terminal firmware rep on the device's
- * `aa 85 5f` close. The last rep has no `onPerRep` 'return' of its own, so its
+ * set-close frame. The last rep has no `onPerRep` 'return' of its own, so its
  * enriched slice runs from the last boundary (`priorBoundaryTs`, floored at set
  * start) to the buffer tip. The `SetSummaryEvent` carries no set/frame counter,
- * so both are recorded as 0 (traceability-only fields). Records the device's
- * `repCount` as the firmware's authoritative total. Measurement-only.
+ * so both are recorded as 0 (traceability-only fields). The terminal rep's
+ * number is derived positionally inside `finalizeFirmwareReps`; the device's
+ * `repCount` is passed only as a reconciliation floor (it omits this very rep
+ * when the set auto-ends on it). Measurement-only.
  */
 function finalizeFirmwareRepsOnClose(
   live: LiveState,

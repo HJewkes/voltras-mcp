@@ -1174,6 +1174,42 @@ describe('buildSetEndedPayload — device_summary', () => {
     expect(withSummary.reps).toEqual(withoutSummary.reps);
     expect(withSummary.vbt_summary).toEqual(withoutSummary.vbt_summary);
   });
+
+  it('prefers firmwareReconciledTotal over the raw set-close count for device_rep_count (bench 2026-07-01)', () => {
+    const stored = buildStored([
+      makeRep(1, 800, 500),
+      makeRep(2, 600, 400),
+      makeRep(3, 700, 450),
+      makeRep(4, 650, 420),
+      makeRep(5, 640, 410),
+    ]);
+    // Set auto-ended on rep 5: the device set-close frame reports 4 (the
+    // terminal rep never fired its own 'return'); the firmware-parity pipeline
+    // reconstructed the true total of 5.
+    const { meta, content } = buildSetEndedPayload(
+      stored,
+      'device_signal',
+      undefined,
+      { repCount: 4, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      5,
+    );
+    // meta carries the reconciled total, not the stale frame value.
+    expect(meta.device_rep_count).toBe('5');
+    // The raw frame count is still echoed verbatim in content for diagnostics.
+    const parsed = JSON.parse(content) as { device_set_summary: { rep_count: number } };
+    expect(parsed.device_set_summary.rep_count).toBe(4);
+  });
+
+  it('falls back to the raw set-close count when no firmware total is reconstructed', () => {
+    const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
+    const { meta } = buildSetEndedPayload(stored, 'device_signal', undefined, {
+      repCount: 2,
+      repDurationMs: 1000,
+      targetWeightTenths: 200,
+      schemaVersion: 1,
+    });
+    expect(meta.device_rep_count).toBe('2');
+  });
 });
 
 describe('buildSetPreSummaryPayload', () => {

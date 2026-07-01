@@ -320,6 +320,31 @@ describe('LiveState', () => {
       expect(set?.firmwareTotalRepCount).toBe(2);
     });
 
+    it('reconstructs the auto-ended terminal rep positionally when the device under-reports (bench 2026-07-01)', () => {
+      // A 5-rep set that auto-ends on the final rep: the device fired an
+      // `onPerRep` 'return' for reps 1-4 only (the terminal rep never gets its
+      // own), and the set-close frame's repCount omits it — reporting 4, not 5.
+      const live = new LiveState();
+      live.startSet(
+        makeSet({
+          firmwareReps: [
+            firmwareRep(1, true),
+            firmwareRep(2, true),
+            firmwareRep(3, true),
+            firmwareRep(4, true),
+          ],
+        }),
+      );
+      // Device-reported total = 4 (omits the auto-ended terminal rep); the
+      // caller-supplied finalRep carries a deliberately-wrong repNumber (99) to
+      // prove the number is derived positionally, not trusted from the input.
+      live.finalizeFirmwareReps(firmwareRep(99, true), 4);
+      const set = live.snapshotSet();
+      expect(set?.firmwareReps).toHaveLength(5);
+      expect(set?.firmwareReps?.[4].repNumber).toBe(5);
+      expect(set?.firmwareTotalRepCount).toBe(5);
+    });
+
     it('finalizeFirmwareReps is a silent no-op when no set is active', () => {
       const live = new LiveState();
       live.finalizeFirmwareReps(firmwareRep(1, true), 1);
