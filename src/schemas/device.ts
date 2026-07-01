@@ -58,10 +58,17 @@ export const DeviceSetModeInput = z.object({
 
 // ── SDK 0.6.0 mode-config setters (validated on-device 2026-05-06) ────────
 //
-// MCP-side schemas keep numeric ranges intentionally permissive — the SDK's
-// command-builder rejects out-of-band values with `InvalidSettingError`,
-// and that rejection is the authoritative range gate. MCP just sanity-bounds
-// the input so an obviously bogus value doesn't reach the BLE write path.
+// The SDK's command-builder is the authoritative gate: it maps each numeric
+// setting through a discrete lookup table and throws `InvalidSettingError`
+// for any value it can't resolve. Where the SDK's valid set is a simple
+// contiguous range (e.g. weights, damper) the MCP schema stays lightly
+// permissive and lets the SDK reject the edges. Where the SDK's valid set is
+// narrower or stepped than a naive integer range — band max force (15..70),
+// isokinetic speeds (0..2000 step 10) — the schema mirrors that exact
+// contract so an off-range or off-step value fails fast at the tool boundary
+// with a clear INVALID_INPUT instead of a late BLE-path SDK error. These
+// bounds are derived from the SDK's own `getAvailable*` tables (verified
+// on-device 2026-05-06); tighten only where the device genuinely rejects.
 // String-union setters are exhaustive at the schema layer (no SDK round-trip
 // needed to enumerate valid values).
 
@@ -77,15 +84,23 @@ export const DeviceSetAssistModeInput = z.object({
   slot: SlotIdSchema,
 });
 
-/** Input for `device.set_band_max_force` — pounds; SDK valid range 15..70. */
+/**
+ * Input for `device.set_band_max_force` — pounds. The SDK's valid set is every
+ * integer 15..70 (`getAvailableBandMaxForce()`); the schema enforces that exact
+ * range so sub-15 / above-70 values fail fast here rather than in the BLE path.
+ */
 export const DeviceSetBandMaxForceInput = z.object({
-  lbs: z.number().int().min(0).max(100),
+  lbs: z.number().int().min(15).max(70),
   slot: SlotIdSchema,
 });
 
-/** Input for `device.set_isokinetic_target_speed` — mm/s; SDK requires step-of-10. */
+/**
+ * Input for `device.set_isokinetic_target_speed` — mm/s. The SDK's valid set is
+ * 0..2000 in steps of 10 (`getAvailableIsokineticTargetSpeeds()`); `.multipleOf(10)`
+ * rejects off-step values (e.g. 1505) at the tool boundary. 0 is a valid multiple.
+ */
 export const DeviceSetIsokineticTargetSpeedInput = z.object({
-  mmPerSec: z.number().int().min(0).max(2000),
+  mmPerSec: z.number().int().min(0).max(2000).multipleOf(10),
   slot: SlotIdSchema,
 });
 
@@ -95,9 +110,14 @@ export const DeviceSetIsokineticEccModeInput = z.object({
   slot: SlotIdSchema,
 });
 
-/** Input for `device.set_isokinetic_ecc_speed_limit` — mm/s; 0 = auto. */
+/**
+ * Input for `device.set_isokinetic_ecc_speed_limit` — mm/s; 0 = auto. Same
+ * discrete set as target speed: 0..2000 step 10
+ * (`getAvailableIsokineticEccSpeedLimits()`). `.multipleOf(10)` rejects off-step
+ * values at the tool boundary; 0 (auto) is a valid multiple.
+ */
 export const DeviceSetIsokineticEccSpeedLimitInput = z.object({
-  mmPerSec: z.number().int().min(0).max(2000),
+  mmPerSec: z.number().int().min(0).max(2000).multipleOf(10),
   slot: SlotIdSchema,
 });
 
@@ -126,11 +146,11 @@ export const DeviceSetIsokineticEccOverloadWeightInput = z.object({
  * step-of-10; pounds for weights).
  */
 export const DeviceConfigureIsokineticInput = z.object({
-  targetSpeedMmPerSec: z.number().int().min(0).max(2000),
+  targetSpeedMmPerSec: z.number().int().min(0).max(2000).multipleOf(10),
   eccMode: z.enum(['isokinetic', 'constant']),
   eccConstWeightLbs: z.number().int().min(0).max(200).optional(),
   eccOverloadWeightLbs: z.number().int().min(0).max(200).optional(),
-  eccSpeedLimitMmPerSec: z.number().int().min(0).max(2000).optional(),
+  eccSpeedLimitMmPerSec: z.number().int().min(0).max(2000).multipleOf(10).optional(),
   slot: SlotIdSchema,
 });
 
