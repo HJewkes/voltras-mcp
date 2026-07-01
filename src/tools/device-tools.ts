@@ -1070,7 +1070,15 @@ export function registerDeviceTools(
       // (HANDOFF-2026-05-21-vmcp-02.29-phase-1-parity-data §'Engagement
       // journey'). A failed setMode propagates as a structured error rather
       // than the silent inactivity_timeout the bug produced.
-      if (slot.live.snapshotDevice().trainingMode === 'Idle') {
+      //
+      // `trainingMode` is the REQUESTED mode echoed from the cmd=0x10 cascade
+      // and is `undefined` until the first cascade fires. On a fresh boot/wake
+      // — the exact cold-start this preflight targets — no requested mode has
+      // been observed yet, so treat that unknown/absent requested mode the same
+      // as explicit Idle: drive WeightTraining and skip the unload. (Requested
+      // intent only; do NOT consult the applied-mode `trainingModeRaw` here.)
+      const requestedMode = slot.live.snapshotDevice().trainingMode;
+      if (requestedMode === 'Idle' || requestedMode === undefined) {
         await slot.client.setMode(TrainingMode.WeightTraining);
       } else if (input.skipUnload !== true) {
         // VMCP-02.06: drive the cable to a mechanically-unloaded state before

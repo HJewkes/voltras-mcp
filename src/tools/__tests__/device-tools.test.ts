@@ -1769,7 +1769,11 @@ describe('registerDeviceTools', () => {
     });
 
     // VMCP-02.06 — auto-unload precedes the direct-load trigger by default.
+    // An established (non-Idle) requested mode takes the unload branch, unlike
+    // the Idle/undefined cold-boot path which drives WeightTraining instead.
     it('auto-invokes client.unloadDevice before startGuidedLoad', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Weight Training' });
       const reg = placeholders.get('device.start_guided_load')!;
       const client = primaryClient(state);
       const callOrder: string[] = [];
@@ -1835,6 +1839,30 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       expect(client.setMode).not.toHaveBeenCalled();
       expect(client.unloadDevice).toHaveBeenCalledTimes(1);
+    });
+
+    // VMCP-02.45 cold-boot gap: on a fresh boot/wake the requested-mode echo
+    // (cmd=0x10 cascade) has not fired yet, so `trainingMode` is undefined —
+    // the exact scenario this preflight targets. An undefined requested mode
+    // must be treated like Idle (drive WeightTraining, skip the unload), not
+    // fall through to the unload branch and silently inactivity_timeout.
+    it('when trainingMode is undefined (cold boot): sets WeightTraining, skips unload', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive(); // no trainingMode → undefined
+      const client = primaryClient(state);
+      const callOrder: string[] = [];
+      client.setMode.mockImplementationOnce(async () => {
+        callOrder.push('setMode');
+      });
+      client.startGuidedLoad.mockImplementationOnce(async () => {
+        callOrder.push('startGuidedLoad');
+      });
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 20 });
+      expect(isError).toBeUndefined();
+      expect(client.setMode).toHaveBeenCalledWith(0x0001);
+      expect(client.unloadDevice).not.toHaveBeenCalled();
+      expect(callOrder).toEqual(['setMode', 'startGuidedLoad']);
     });
 
     it('from Idle: a failed setMode surfaces as a structured error, no trigger', async () => {
