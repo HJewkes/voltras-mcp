@@ -177,10 +177,17 @@ export interface StoredProgramAssignment {
  */
 export interface SessionStore {
   /**
-   * Upsert: INSERT OR REPLACE semantics. Called twice per session — once at
-   * `session.start` (no `endedAt`), once at `session.end` (with `endedAt`).
-   * Implementations MUST overwrite the existing row when the ids match;
-   * a naive `INSERT` will fail on the second call.
+   * Upsert via `ON CONFLICT(id) DO UPDATE` (see the SqliteSessionStore
+   * implementation). Called twice per session — once at `session.start`
+   * (no `endedAt`), once at `session.end` (with `endedAt`) — so the second
+   * call MUST update the existing row in place; a naive `INSERT` fails on it.
+   *
+   * DO NOT implement this as `INSERT OR REPLACE`. `sessions` is a foreign-key
+   * cascade parent: `program_assignments.session_id REFERENCES sessions(id)
+   * ON DELETE CASCADE`. `INSERT OR REPLACE` deletes the conflicting row before
+   * re-inserting, and that delete cascades — every `session.end` re-put would
+   * wipe the session's `program_assignment` links (the data-loss regression
+   * fixed in #79). Update the row in place instead.
    */
   putSession(s: StoredSession): Promise<void>;
 

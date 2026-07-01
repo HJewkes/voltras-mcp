@@ -21,15 +21,15 @@ Adapter is read once at startup; runtime switching is out of scope for v1.
 
 ## Environment Variables
 
-| Var              | Default                  | Notes                                                                                             |
-| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER` | `node`                   | `node` or `mock`                                                                                  |
-| `VMCP_DB_PATH`   | `~/.voltras/vmcp.sqlite` | SQLite store path; second process on same path exits with `SQLITE_BUSY`-style error               |
-| `VMCP_LOG_LEVEL` | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport) |
+| Var              | Default                  | Notes                                                                                                                                     |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOLTRA_ADAPTER` | `node`                   | `node` or `mock`                                                                                                                          |
+| `VMCP_DB_PATH`   | `~/.voltras/vmcp.sqlite` | SQLite store path; don't share one path across processes — startup runs a best-effort lock probe (see Concurrency), not a persistent lock |
+| `VMCP_LOG_LEVEL` | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport)                                         |
 
 ## Concurrency
 
-Stdio is single-client by transport design — each Claude Code session spawns its own `voltras-mcp` process. Two processes pointed at the same `VMCP_DB_PATH` will see the second exit cleanly at startup with a SQLite-lock error identifying the conflicting path.
+Stdio is single-client by transport design — each Claude Code session spawns its own `voltras-mcp` process. Keep one process per `VMCP_DB_PATH`: that is a caller responsibility, not something the store enforces. On open the store runs a single `BEGIN IMMEDIATE` write-lock probe, so a newcomer is rejected with a clear lock error **only if the incumbent happens to hold a write lock at that instant**. It is not a persistent lock (the DB is not in WAL mode), so two processes that both open while neither is mid-write will both succeed — their later concurrent writes then fail with a `SQLITE_BUSY`-style error. The probe catches the common case; it is not a guarantee.
 
 ## Source-Layout Conventions
 

@@ -356,7 +356,7 @@ export class SqliteSessionStore implements SessionStore {
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
-        insertRep.run(rep.id, rep.setId, rep.index, JSON.stringify(rep));
+        insertRep.run(rep.id, rep.setId, rep.index, serializeRepPayload(rep));
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -626,6 +626,32 @@ export class SqliteSessionStore implements SessionStore {
   }
 }
 
+/**
+ * Serialize a rep to its stored JSON payload, coercing any non-finite number
+ * (NaN / ±Infinity) to 0 first.
+ *
+ * `JSON.stringify` renders non-finite numbers as `null`, which would read back
+ * as `null` in a numeric field and surface as NaN in downstream analytics — a
+ * silent corruption. Coercing to 0 keeps the value finite and round-trippable;
+ * a coercion is logged so bad upstream data is observable rather than silent.
+ * (Rejecting the write instead would drop the whole set, which is worse for a
+ * store whose primary job is not losing recorded work.)
+ */
+function serializeRepPayload(rep: StoredRep): string {
+  let coerced = false;
+  const json = JSON.stringify(rep, (_key, value: unknown) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      coerced = true;
+      return 0;
+    }
+    return value;
+  });
+  if (coerced) {
+    log.warn(`SqliteSessionStore.putSet: coerced non-finite number(s) to 0 in rep ${rep.id}`);
+  }
+  return json;
+}
+
 function checkSchemaVersion(db: DatabaseSync, path: string): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const found = row?.user_version ?? 0;
@@ -662,6 +688,14 @@ function probeWriteLock(db: DatabaseSync, path: string): void {
   // or pending write lock on the same database file. This converts the
   // lock contention into a clear startup error before any user data is
   // written.
+  //
+  // This is a best-effort STARTUP-INSTANT probe, not a persistent lock: it
+  // only trips if the incumbent process is holding a write lock at this exact
+  // moment. Two processes that both open while neither is mid-write will both
+  // pass this probe (the DB is not in WAL mode, and we don't retain the lock),
+  // and their later concurrent writes will then throw SQLITE_BUSY. The
+  // single-writer contract (one process per VMCP_DB_PATH) is a caller
+  // responsibility; this probe catches the common case, it does not enforce it.
   try {
     db.exec('BEGIN IMMEDIATE');
     db.exec('COMMIT');

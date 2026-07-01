@@ -129,6 +129,26 @@ describe('SqliteSessionStore', () => {
       expect(await store.getSet('missing-set')).toBeUndefined();
     });
 
+    it('coerces non-finite rep numbers to 0 rather than storing null (VMCP-01.41)', async () => {
+      // Simulate bad upstream data: non-finite numeric fields on a rep. Plain
+      // JSON.stringify renders NaN/Infinity as `null`, which reads back as
+      // `null` in a numeric field (→ NaN downstream). The store's serializer
+      // must coerce them to a finite, round-trippable value instead.
+      const rep = makeRep('set-nf', 0);
+      rep.concentric = { ...rep.concentric, peakForce: NaN };
+      rep.eccentric = { ...rep.eccentric, peakVelocity: Infinity };
+      await store.putSet(makeSet({ id: 'set-nf', reps: [rep] }));
+
+      const fetched = await store.getSet('set-nf');
+      expect(fetched).toBeDefined();
+      const got = fetched!.reps[0];
+      // Would be `null` on the pre-fix code path; the guard keeps it finite.
+      expect(got.concentric.peakForce).toBe(0);
+      expect(got.eccentric.peakVelocity).toBe(0);
+      expect(Number.isFinite(got.concentric.peakForce)).toBe(true);
+      expect(Number.isFinite(got.eccentric.peakVelocity)).toBe(true);
+    });
+
     it('getSetsForSession returns all sets oldest-first', async () => {
       await store.putSet(
         makeSet({
