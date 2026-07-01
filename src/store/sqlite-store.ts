@@ -356,7 +356,7 @@ export class SqliteSessionStore implements SessionStore {
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
-        insertRep.run(rep.id, rep.setId, rep.index, JSON.stringify(rep));
+        insertRep.run(rep.id, rep.setId, rep.index, serializeRepPayload(rep));
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -624,6 +624,32 @@ export class SqliteSessionStore implements SessionStore {
       .all(setId) as unknown as RepRow[];
     return rows.map((row) => JSON.parse(row.payload) as StoredRep);
   }
+}
+
+/**
+ * Serialize a rep to its stored JSON payload, coercing any non-finite number
+ * (NaN / ±Infinity) to 0 first.
+ *
+ * `JSON.stringify` renders non-finite numbers as `null`, which would read back
+ * as `null` in a numeric field and surface as NaN in downstream analytics — a
+ * silent corruption. Coercing to 0 keeps the value finite and round-trippable;
+ * a coercion is logged so bad upstream data is observable rather than silent.
+ * (Rejecting the write instead would drop the whole set, which is worse for a
+ * store whose primary job is not losing recorded work.)
+ */
+function serializeRepPayload(rep: StoredRep): string {
+  let coerced = false;
+  const json = JSON.stringify(rep, (_key, value: unknown) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      coerced = true;
+      return 0;
+    }
+    return value;
+  });
+  if (coerced) {
+    log.warn(`SqliteSessionStore.putSet: coerced non-finite number(s) to 0 in rep ${rep.id}`);
+  }
+  return json;
 }
 
 function checkSchemaVersion(db: DatabaseSync, path: string): void {
