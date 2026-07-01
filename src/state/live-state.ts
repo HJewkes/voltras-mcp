@@ -288,8 +288,9 @@ export interface ActiveSet {
    * can surface a count diff between the two pipelines. Each entry records
    * the firmware's view of one completed rep (one per 'return' phase event,
    * de-duped by `(setCounter, repNumber)`). No consumer-facing surface
-   * change — Phase 2+ will use this plus the bridge's sample buffer to
-   * synthesize velocity/ROM metrics from firmware-anchored windows.
+   * change — PR2 now enriches each entry with a real VBT `Rep` (`enriched`)
+   * synthesized by slicing the bridge's sample buffer at the firmware-anchored
+   * window; still measurement-only (no consumer reads `firmwareReps`).
    */
   firmwareReps?: FirmwareRep[];
 }
@@ -297,10 +298,16 @@ export interface ActiveSet {
 /**
  * Firmware-anchored rep boundary record. Captured from `client.onPerRep`
  * 'return' phase events (eccentric start = canonical end-of-concentric).
- * Field names match the SDK's `PerRepEvent` for traceability; values are
- * stored as-received (no unit conversion). Phase 1 carries no derived
- * metrics — Phase 2 will populate per-phase velocities by slicing the
- * bridge's per-slot sample buffer at this rep's frame window.
+ * Field names match the SDK's `PerRepEvent` for traceability; the boundary
+ * fields are stored as-received (no unit conversion).
+ *
+ * Phase 2 (VMCP-02.29 PR2) attaches a real VBT {@link Rep} in `enriched`,
+ * built by slicing the bridge's per-slot sample buffer between the prior
+ * firmware boundary and this one and replaying the slice through
+ * workout-analytics (`createSet` → `addSampleToSet` → `completeSet`). Still
+ * measurement-only — no consumer reads `enriched`; it exists so
+ * `debug.compare_rep_streams` and later phases can compare firmware-anchored
+ * VBT against the analytics-derived `reps[]`.
  */
 export interface FirmwareRep {
   /** Wall-clock ms when the bridge captured the firmware boundary. */
@@ -316,6 +323,15 @@ export interface FirmwareRep {
    * baseWeight × 10 in weight mode; 0 in band/damper/isokinetic.
    */
   targetWeightTenths: number;
+  /**
+   * VBT metrics for the firmware-anchored rep, produced by replaying the
+   * buffered `WorkoutSample` slice between the prior and this boundary
+   * through workout-analytics. Absent until PR2's enrichment path populates
+   * it (and on the rare boundary whose slice held no samples, where it falls
+   * back to an empty rep). Read `concentric.peakVelocity` /
+   * `getPhaseRangeOfMotion(concentric)` etc. for firmware-window VBT.
+   */
+  enriched?: Rep;
 }
 
 /**
@@ -824,8 +840,11 @@ export class LiveState {
     // (resource handlers, tools) don't read it; the snapshot still includes
     // the reference for type completeness, but mutating the returned set
     // doesn't churn the ledger because the bridge's mutator goes through the
-    // helper. `firmwareReps` IS copied so the snapshot survives a subsequent
-    // `appendFirmwareRep` mutation without aliasing.
+    // helper. `firmwareReps` IS copied (shallow) so the snapshot survives a
+    // subsequent `appendFirmwareRep` mutation without aliasing; each
+    // `FirmwareRep` — including its immutable `enriched` Rep — is replaced
+    // wholesale by the bridge and never mutated in place, so a shallow array
+    // copy is a fully independent view.
     return {
       ...this.set,
       reps: [...this.set.reps],

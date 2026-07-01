@@ -111,6 +111,7 @@ import type {
 } from '@voltras/node-sdk';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
+import { addSampleToSet, completeSet, createRep, createSet } from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
 import type { LiveState, DeviceSnapshot } from './live-state.js';
@@ -245,6 +246,17 @@ const SET_INACTIVITY_POLL_MS = 10_000;
 const FIRMWARE_SAMPLE_BUFFER_CAP = 600;
 
 /**
+ * One entry in the per-slot firmware sample ring. Pairs the raw
+ * `WorkoutSample` with the wall-clock `capturedAt` (`Date.now()` at
+ * `onFrame`) so PR2 can correlate buffered samples to a firmware rep boundary
+ * by time window rather than by the un-alignable `frameCounter` (D3).
+ */
+interface BufferedSample {
+  sample: WorkoutSample;
+  capturedAt: number;
+}
+
+/**
  * Cadence for the batched `idle_rep_summary` channel event (VMCP-02.11).
  * The bridge accumulates idle-rep boundaries detected while no MCP set is
  * armed and emits a single summary per window so the channel doesn't drown
@@ -340,15 +352,26 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // are lazy and unsuitable for this purpose).
   let lastChainSettingLbs: number | undefined = undefined;
   let lastBaseWeight: number | undefined = undefined;
-  // VMCP-02.29 Phase 1 parity scaffold. The ring holds the most recent
+  // VMCP-02.29 parity scaffold. The ring holds the most recent
   // `FIRMWARE_SAMPLE_BUFFER_CAP` samples processed while a set is active so
-  // a future phase can slice the buffer between two firmware-anchored rep
-  // boundaries to synthesize per-phase velocity/ROM metrics. Phase 1 only
-  // populates the buffer + records firmware boundaries; the slicing logic
-  // lands in Phase 2.
-  const sampleRing: WorkoutSample[] = [];
+  // PR2 can slice the buffer between two firmware-anchored rep boundaries and
+  // replay the slice through workout-analytics to synthesize a per-rep VBT
+  // `Rep`.
+  //
+  // Boundary→buffer correlation (D3). `PerRepEvent` carries no timestamp and
+  // only a uint8 `frameCounter` that wraps at 256 — it does NOT share an
+  // origin with `WorkoutSample.sequence`, so aligning them would be unsafe.
+  // Instead each buffered sample is stamped with a wall-clock `capturedAt`
+  // (`Date.now()` at `onFrame`) and each 'return' boundary is stamped with a
+  // wall-clock `boundaryTs` (`Date.now()` in the `onPerRep` handler). A rep's
+  // slice is the half-open window `(floor, boundaryTs]`, where
+  // `floor = max(priorBoundaryTs, setStartMs)`: `priorBoundaryTs` excludes the
+  // previous rep's samples, and the set-start floor excludes any trailing
+  // samples the bounded ring still holds from a prior set. Tolerates ~50ms of
+  // clock slop between the frame stream and the boundary event.
+  const sampleRing: BufferedSample[] = [];
   const pushSample = (sample: WorkoutSample): void => {
-    sampleRing.push(sample);
+    sampleRing.push({ sample, capturedAt: Date.now() });
     if (sampleRing.length > FIRMWARE_SAMPLE_BUFFER_CAP) {
       sampleRing.shift();
     }
@@ -361,6 +384,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // we last appended; the comparison short-circuits the dedupe lookup so
   // the hot path stays a single string compare.
   let lastFirmwareKey: string | undefined = undefined;
+  // Wall-clock ms of the last firmware boundary appended on this slot; the
+  // lower bound of the next rep's buffer slice (see D3 note above). Reset
+  // implicitly per set via the `setStartMs` floor in the slice window.
+  let priorBoundaryTs = 0;
   // VMCP-02.03: last guided-load phase published to the channel. The SDK
   // re-fires `onGuidedLoadState` on every countdown tick; gating the channel
   // publish on a phase change collapses intra-countdown spam to one event per
@@ -563,30 +590,46 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         },
       });
 
-      // VMCP-02.29 Phase 1 parity scaffold. Record a firmware-anchored rep
-      // boundary alongside the analytics-derived pipeline so
-      // `debug.compare_rep_streams` can surface a count diff. Only act on
-      // 'return' events (eccentric start = canonical end-of-concentric) and
-      // only when a set is armed — orphan firmware boundaries with no active
-      // set fall through silently. De-dupe by `(setCounter, repCount)`: the
-      // device fires 'return' once per real rep but a duplicate or replay
-      // shouldn't inflate the parity count. Measurement-only: the firmware
-      // rep accrues in state + the debug ring; NO channel event is published
-      // (that parallel live `rep_finalized` publish is why #57 was reverted).
+      // VMCP-02.29 parity scaffold. Record a firmware-anchored rep boundary
+      // alongside the analytics-derived pipeline so `debug.compare_rep_streams`
+      // can surface a count diff. Only act on 'return' events (eccentric start
+      // = canonical end-of-concentric) and only when a set is armed — orphan
+      // firmware boundaries with no active set fall through silently. De-dupe
+      // by `(setCounter, repCount)`: the device fires 'return' once per real
+      // rep but a duplicate or replay shouldn't inflate the parity count.
+      //
+      // PR2: enrich the rep with real VBT by slicing the per-slot sample
+      // buffer between the prior boundary and this one (see the D3 correlation
+      // note where `sampleRing` is declared) and replaying the slice through
+      // workout-analytics. Still measurement-only: the firmware rep (now
+      // carrying `enriched`) accrues in state + the debug ring; NO channel
+      // event is published (that parallel live `rep_finalized` publish is why
+      // #57 was reverted), and no consumer reads `enriched`.
       if (payload.phase !== 'return') return;
-      if (live.snapshotSet() === undefined) return;
+      const activeSet = live.snapshotSet();
+      if (activeSet === undefined) return;
       const key = `${payload.setCounter}:${payload.repCount}`;
       if (key === lastFirmwareKey) return;
       lastFirmwareKey = key;
 
+      const boundaryTs = Date.now();
+      const parsedStart = Date.parse(activeSet.startedAt);
+      const setStartMs = Number.isFinite(parsedStart) ? parsedStart : 0;
+      const enriched = sliceFrameBufferAndEnrich(
+        sampleRing,
+        Math.max(priorBoundaryTs, setStartMs),
+        boundaryTs,
+      );
+      priorBoundaryTs = boundaryTs;
+
       const firmwareRep = {
-        ts: Date.now(),
+        ts: boundaryTs,
         repNumber: payload.repCount,
         setCounter: payload.setCounter,
         frameCounter: payload.frameCounter,
         targetWeightTenths: payload.targetWeightTenths,
       };
-      live.appendFirmwareRep(firmwareRep);
+      live.appendFirmwareRep({ ...firmwareRep, enriched });
       debug.events.push({
         capturedAt: firmwareRep.ts,
         type: 'firmware_rep',
@@ -1206,6 +1249,30 @@ function evaluateRepTriggers(
       continue;
     }
   }
+}
+
+/**
+ * VMCP-02.29 PR2: build a real VBT {@link Rep} for a firmware-anchored rep by
+ * replaying the buffered sample slice through a fresh workout-analytics set.
+ * Samples whose `capturedAt` falls in the half-open window
+ * `(startBoundary, endBoundary]` are fed to `addSampleToSet`; `completeSet`
+ * then trims the trailing IDLE exactly as the live pipeline does. Returns the
+ * first (and, for a single-rep slice, only) completed rep, or an empty rep
+ * when the slice held no samples (boundary fired before any frame buffered).
+ * Pure + measurement-only — reads the ring, mutates nothing.
+ */
+function sliceFrameBufferAndEnrich(
+  buffer: readonly BufferedSample[],
+  startBoundary: number,
+  endBoundary: number,
+): Rep {
+  let waSet = createSet();
+  for (const { sample, capturedAt } of buffer) {
+    if (capturedAt > startBoundary && capturedAt <= endBoundary) {
+      waSet = addSampleToSet(waSet, sample);
+    }
+  }
+  return completeSet(waSet).reps[0] ?? createRep(0);
 }
 
 /**
