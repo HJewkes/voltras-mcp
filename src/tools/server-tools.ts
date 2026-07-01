@@ -13,10 +13,15 @@
 //   - analyticsVersion — same trick for @voltras/workout-analytics.
 //   - dbPath        — `state.config.dbPath`.
 //   - logLevel      — `state.config.logLevel`.
+//   - channelsEnabled  — the `claude/channel` push surface is live (see below).
+//   - channelsDegraded — pushes are expected but silently falling back to
+//                       polling because the host didn't opt in (see below).
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
-// removes any disk I/O from the request path.
+// removes any disk I/O from the request path. The channel flags are the one
+// per-call computation — they read the live client capabilities, which only
+// exist after `initialize` completes.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { execSync } from 'node:child_process';
@@ -26,6 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ServerHealthInput } from '../schemas/server.js';
+import { noopChannelPublisher } from '../state/channel-publisher.js';
 import type { ServerState } from '../state/server-state.js';
 import { wrapHandler } from './helpers.js';
 
@@ -113,6 +119,55 @@ const ANALYTICS_VERSION = readResolvedDependencyVersion('@voltras/workout-analyt
 const BUILD_SHA = readGitShortSha();
 
 /**
+ * Reported state of the `claude/channel` push surface.
+ *
+ * `runServer` always declares the server-side `claude/channel` capability and
+ * installs a real publisher, so the server always *intends* to push. Whether
+ * those pushes actually reach the model depends on the host opting in at launch
+ * (the dev-channels flag), which the host signals back as a client capability.
+ * The two flags below let an agent tell — deterministically, in-band — whether
+ * to expect pushes or must fall back to polling. Without this, a host launched
+ * without the flag degrades to polling with no other signal (VMCP-02.30 / Bug
+ * #4): tools that publish channel events silently never wake the model.
+ */
+interface ChannelStatus {
+  /**
+   * The push surface is live: a real publisher is wired AND the connected host
+   * declared the `claude/channel` client capability. Channel events reach the
+   * model inline; no polling needed.
+   */
+  channelsEnabled: boolean;
+  /**
+   * The server intends to push (a real publisher is wired) but the host did
+   * NOT opt in, so every published event is silently dropped and the agent
+   * must poll to observe state changes. This is the silent-degradation case.
+   * Mutually exclusive with `channelsEnabled`; both are false when no real
+   * publisher is wired (e.g. tests), since nothing was expected to push.
+   */
+  channelsDegraded: boolean;
+}
+
+/** True when the connected host opted into `claude/channel` push delivery. */
+function hostAcceptsChannels(state: ServerState): boolean {
+  const capabilities = state.server?.server.getClientCapabilities();
+  return capabilities?.experimental?.['claude/channel'] !== undefined;
+}
+
+/**
+ * Derive the channel push-surface status from the wired publisher and the
+ * host's declared capabilities. A real (non-noop) publisher means the server
+ * intends to push; the host capability decides whether that push is delivered.
+ */
+function resolveChannelStatus(state: ServerState): ChannelStatus {
+  const publisherWired = state.channels !== undefined && state.channels !== noopChannelPublisher;
+  const hostOptedIn = hostAcceptsChannels(state);
+  return {
+    channelsEnabled: publisherWired && hostOptedIn,
+    channelsDegraded: publisherWired && !hostOptedIn,
+  };
+}
+
+/**
  * Hot-swap the `server.health` placeholder with the real handler. Mirrors
  * the install pattern used by the device/session/set tool registries.
  */
@@ -136,6 +191,7 @@ export function registerServerTools(
         analyticsVersion: ANALYTICS_VERSION,
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
+        ...resolveChannelStatus(state),
       }),
     ) as never,
   });

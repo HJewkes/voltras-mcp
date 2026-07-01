@@ -9,6 +9,23 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@voltras/node-sdk', () => ({}));
 
 const { registerServerTools } = await import('../server-tools.js');
+const { noopChannelPublisher, McpChannelPublisher } =
+  await import('../../state/channel-publisher.js');
+
+/** Minimal real (non-noop) publisher: any object other than the noop sentinel. */
+const realPublisher = new McpChannelPublisher({
+  server: { notification: () => Promise.resolve() },
+} as never);
+
+/** Fake state.server whose client capabilities declare (or not) channels. */
+function serverWithChannelCapability(declared: boolean): unknown {
+  return {
+    server: {
+      getClientCapabilities: () =>
+        declared ? { experimental: { 'claude/channel': {} } } : { experimental: {} },
+    },
+  };
+}
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -69,6 +86,48 @@ describe('server.health', () => {
     // We don't assert the exact value here — just that it's a non-empty string
     // and is NOT the literal placeholder.
     expect((body.version as string).length).toBeGreaterThan(0);
+  });
+
+  it('reports channelsEnabled when a real publisher is wired and the host opted in', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      channels: realPublisher,
+      server: serverWithChannelCapability(true),
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+    expect(body.channelsEnabled).toBe(true);
+    expect(body.channelsDegraded).toBe(false);
+  });
+
+  it('reports channelsDegraded when a publisher is wired but the host did not opt in', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      channels: realPublisher,
+      server: serverWithChannelCapability(false),
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+    expect(body.channelsEnabled).toBe(false);
+    expect(body.channelsDegraded).toBe(true);
+  });
+
+  it('reports neither flag when no real publisher is wired (nothing expected to push)', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      channels: noopChannelPublisher,
+      server: serverWithChannelCapability(true),
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+    expect(body.channelsEnabled).toBe(false);
+    expect(body.channelsDegraded).toBe(false);
   });
 
   it('throws if the placeholder is missing', () => {
