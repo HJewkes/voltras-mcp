@@ -436,6 +436,33 @@ describe('voltras-mcp resources', () => {
       expect(a.sessionId).toBe('P-1');
       expect(b.sessionId).toBe('S-1');
     });
+
+    it('list callback enumerates one entry per active slot', async () => {
+      const secondary = new LiveState();
+      const multiServer = new McpServer(
+        { name: 'voltras-mcp-test', version: '0.0.0' },
+        { capabilities: { resources: { subscribe: true } } },
+      );
+      registerSessionResource(multiServer, makeState({ primary, secondary }));
+
+      const list = await listResources(multiServer, 'session-active');
+      const uris = list.resources.map((r) => r.uri);
+      expect(uris).toContain('voltra://session/primary/active');
+      expect(uris).toContain('voltra://session/secondary/active');
+    });
+
+    it('returns { active: false } when the slot has no LiveState', async () => {
+      const stateNoSlots: ResourceState = makeState({});
+      const freshServer = new McpServer(
+        { name: 'voltras-mcp-test', version: '0.0.0' },
+        { capabilities: { resources: { subscribe: true } } },
+      );
+      registerSessionResource(freshServer, stateNoSlots);
+
+      const result = await readResource(freshServer, 'voltra://session/phantom/active');
+      const body = jsonText(result);
+      expect(body).toEqual({ active: false });
+    });
   });
 
   describe('voltra://set/active (legacy alias)', () => {
@@ -500,6 +527,20 @@ describe('voltras-mcp resources', () => {
       expect(primaryRead.reps.length).toBe(1);
       expect(secondaryRead.setId).toBe('S-set');
       expect(secondaryRead.reps.length).toBe(0);
+    });
+
+    it('list callback enumerates one entry per active slot', async () => {
+      const secondary = new LiveState();
+      const multiServer = new McpServer(
+        { name: 'voltras-mcp-test', version: '0.0.0' },
+        { capabilities: { resources: { subscribe: true } } },
+      );
+      registerSetResource(multiServer, makeState({ primary, secondary }));
+
+      const list = await listResources(multiServer, 'set-active');
+      const uris = list.resources.map((r) => r.uri);
+      expect(uris).toContain('voltra://set/primary/active');
+      expect(uris).toContain('voltra://set/secondary/active');
     });
   });
 
