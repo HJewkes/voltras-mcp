@@ -62,7 +62,7 @@ import {
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
 import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
-import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
+import type { ActiveSet, DeviceSnapshot, PendingDisconnectNotice } from '../state/live-state.js';
 import type { ModeRevertAbort } from '../state/mode-revert-guard.js';
 import type { SlotBinding } from '../state/slot-bindings.js';
 import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
@@ -1317,7 +1317,7 @@ export function registerDeviceTools(
       // the response, which prefers preserved values for routability).
       const slotBinding =
         typeof device.deviceId === 'string' ? state.slotBindings.get(device.deviceId) : null;
-      return buildDeviceGetStateResponse(
+      const response = buildDeviceGetStateResponse(
         slot.client.isConnected,
         slot.client.connectionState,
         slot.client.isRowingActive,
@@ -1328,6 +1328,14 @@ export function registerDeviceTools(
         slot.live.snapshotSet(),
         slotBinding,
       );
+      // VMCP-02.32: drain any delayed disconnect advisory so the agent learns
+      // of a drop that landed while push channels were off — before it acts on
+      // the state. Drain-once: not re-delivered on the next get_state.
+      const disconnectNotice = slot.live.takePendingDisconnectNotice();
+      if (disconnectNotice !== undefined) {
+        response.disconnect_notice = disconnectNotice;
+      }
+      return response;
     }),
   );
 
@@ -1350,7 +1358,18 @@ export function registerDeviceTools(
         };
       });
       const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
-      return { ok: cascadeAllOk(results), results };
+      const out: Record<string, unknown> = { ok: cascadeAllOk(results), results };
+      // VMCP-02.32: drain any delayed disconnect advisory for each target slot
+      // (a slot that dropped mid-lull and reconnected still carries an
+      // un-delivered notice while channels are off). Keyed by slot id, present
+      // only when at least one target has a pending notice. A currently-
+      // disconnected slot never reaches here — resolveCascadeSlotIds rejects it
+      // up front, surfacing the drop through that INVALID_INPUT path instead.
+      const disconnectNotices = drainCascadeDisconnectNotices(state, targetSlotIds);
+      if (disconnectNotices !== undefined) {
+        out.disconnect_notices = disconnectNotices;
+      }
+      return out;
     }),
     BILATERAL_CASCADE_DESCRIPTION,
   );
@@ -1382,6 +1401,25 @@ export function registerDeviceTools(
  * natural map-iteration order (insertion order — primary first when bound,
  * then any explicit slots in the order they were allocated).
  */
+/**
+ * Drain the delayed disconnect advisory (VMCP-02.32) for each cascade target
+ * slot, keyed by slot id. Returns `undefined` when no target had a pending
+ * notice so the caller can omit the field entirely. Drain-once per slot.
+ */
+function drainCascadeDisconnectNotices(
+  state: ServerState,
+  slotIds: string[],
+): Record<string, PendingDisconnectNotice> | undefined {
+  const notices: Record<string, PendingDisconnectNotice> = {};
+  for (const slotId of slotIds) {
+    const notice = getSlot(state, slotId).live.takePendingDisconnectNotice();
+    if (notice !== undefined) {
+      notices[slotId] = notice;
+    }
+  }
+  return Object.keys(notices).length > 0 ? notices : undefined;
+}
+
 function resolveCascadeSlotIds(state: ServerState, inputSlots: string[] | undefined): string[] {
   if (inputSlots === undefined) {
     const connected: string[] = [];

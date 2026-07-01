@@ -48,6 +48,17 @@ class FakeVoltraClient {
   connectionState: 'disconnected' | 'connecting' | 'authenticating' | 'connected' = 'disconnected';
   connectedDeviceId: string | null = null;
   settings: Record<string, unknown> | undefined = undefined;
+  // Transient fields `device.get_state` reads off the live client. The
+  // real SDK client always exposes these; the fake needs them so the
+  // get_state handler (added for VMCP-02.32's drain assertions) doesn't
+  // dereference `undefined.phase`.
+  isRowingActive = false;
+  isRecording = false;
+  guidedLoadState = {
+    phase: 'idle' as const,
+    countdownRemainingMs: null as number | null,
+    fitnessModeRaw: null as number | null,
+  };
   onPerRep(): () => void {
     return () => undefined;
   }
@@ -160,7 +171,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { Rep } from '@voltras/workout-analytics';
 import { z } from 'zod';
 
-const { bootstrapState, getSlot } = await import('../../state/server-state.js');
+const { bootstrapState, getSlot, PRIMARY_SLOT } = await import('../../state/server-state.js');
 const { wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
@@ -186,6 +197,7 @@ const CORE_TOOL_NAMES = [
   'device.set_chains',
   'device.set_eccentric',
   'device.get_state',
+  'bilateral.cascade',
   'session.start',
   'session.end',
   'session.list',
@@ -438,5 +450,90 @@ describe('VMCP disconnect recovery (integration, AC-18)', () => {
     expect(sessionEnd.isError).toBeUndefined();
     const persistedSession = await h.state.store.getSession(sessionId);
     expect(persistedSession?.endedAt).toBeDefined();
+  });
+});
+
+// VMCP-02.32: a slot that drops during an idle lull would have emitted a
+// `connection_changed` channel event, but channels can be off — so the bridge
+// stashes a one-shot advisory (`recordPendingDisconnectNotice`) that the tool
+// layer drains onto the next relevant return. Here we drive that LiveState
+// mutation directly (the fake SDK client can't fire onConnectionStateChange,
+// per this file's header note 2) and assert `device.get_state` and
+// `bilateral.cascade` carry the notice, drained exactly once.
+describe('VMCP-02.32 delayed disconnect notice on tool return', () => {
+  let h: Harness;
+
+  beforeAll(async () => {
+    h = await buildHarness();
+  });
+
+  afterAll(async () => {
+    await h.cleanup();
+  });
+
+  async function connectPrimary(): Promise<void> {
+    const scan = await call(h.client, 'device.scan', { timeoutMs: 1000 });
+    const deviceId = (scan.payload.devices as Array<{ id: string }>)[0].id;
+    await call(h.client, 'device.connect', { deviceId });
+    getSlot(h.state).live.applySettings({
+      connected: true,
+      weightLbs: 100,
+      trainingMode: 'WeightTraining',
+    });
+  }
+
+  function stashPendingNotice(): void {
+    getSlot(h.state).live.recordPendingDisconnectNotice({
+      event_type: 'connection_changed',
+      state: 'disconnected',
+      disconnected_at: '2026-05-18T18:40:00.000Z',
+      mid_set: false,
+      active_set_at_disconnect: null,
+      note: 'Slot disconnected while idle since your last tool call.',
+    });
+  }
+
+  it('device.get_state carries the notice, then does not re-deliver it', async () => {
+    await connectPrimary();
+    stashPendingNotice();
+
+    const first = await call(h.client, 'device.get_state');
+    expect(first.payload.disconnect_notice).toMatchObject({
+      event_type: 'connection_changed',
+      state: 'disconnected',
+      disconnected_at: '2026-05-18T18:40:00.000Z',
+    });
+
+    // Drain-once: the second read no longer carries the advisory.
+    const second = await call(h.client, 'device.get_state');
+    expect(second.payload.disconnect_notice).toBeUndefined();
+  });
+
+  it('bilateral.cascade carries the notice keyed by slot, drained once', async () => {
+    stashPendingNotice();
+
+    const cascade = await call(h.client, 'bilateral.cascade', {
+      mode: 'WeightTraining',
+      weightLbs: 120,
+      eccentricOverloadLbs: 0,
+      chainsLbs: 0,
+    });
+    expect(cascade.isError).toBeUndefined();
+    const notices = cascade.payload.disconnect_notices as
+      | Record<string, { state: string; disconnected_at: string }>
+      | undefined;
+    expect(notices?.[PRIMARY_SLOT]).toMatchObject({
+      state: 'disconnected',
+      disconnected_at: '2026-05-18T18:40:00.000Z',
+    });
+
+    // Drain-once: a follow-up cascade omits the field entirely.
+    const again = await call(h.client, 'bilateral.cascade', {
+      mode: 'WeightTraining',
+      weightLbs: 120,
+      eccentricOverloadLbs: 0,
+      chainsLbs: 0,
+    });
+    expect(again.payload.disconnect_notices).toBeUndefined();
   });
 });
