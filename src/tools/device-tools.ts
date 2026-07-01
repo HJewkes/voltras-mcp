@@ -86,6 +86,11 @@ import {
 } from '../state/passive-scanner.js';
 import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
+import {
+  shouldPreflightWeightTraining,
+  buildGuidedLoadTrackedFields,
+  teardownBleResources,
+} from './device-handler-helpers.js';
 import { finalizeSet } from './set-tools.js';
 import type { StoredSession } from '../store/types.js';
 import { log } from '../logger.js';
@@ -559,29 +564,14 @@ export function registerDeviceTools(
           managerDisconnectError = e;
         }
       }
-      // Belt-and-suspenders: force-close the adapter even if `manager.disconnect`
-      // succeeded silently against a partial-disconnect path (W3C
-      // `device.gatt.disconnect()` is fire-and-forget; SimpleBLE handle map
-      // can leak). If the adapter is already torn down this is a no-op.
-      if (adapterRef !== null) {
-        try {
-          await adapterRef.disconnect();
-        } catch {
-          // Adapter teardown failures are non-fatal — the JS handles are
-          // already nulled by `cleanup()` paths and the writeChar is gone.
-        }
-      }
-      // Idempotent: dispose returns early if already disposed (e.g., by
-      // `manager.disconnect`'s internal call). This catches the case where
-      // the slot's client is held outside the manager.clients map (e.g.,
-      // primary's bootstrap stub), or where `manager.disconnect` short-
-      // circuited because the deviceId wasn't registered.
-      try {
-        slot.client.dispose();
-      } catch {
-        // Defensive — dispose is documented as idempotent and shouldn't
-        // throw, but we don't want a slot teardown to fail the tool.
-      }
+      // Belt-and-suspenders BLE teardown: force-close a captured adapter even
+      // if `manager.disconnect` succeeded silently against a partial-disconnect
+      // path (W3C `device.gatt.disconnect()` is fire-and-forget; the SimpleBLE
+      // handle map can leak), then dispose the slot client (idempotent —
+      // returns early if `manager.disconnect` already disposed it). Both steps
+      // are best-effort and log-at-info on failure so slot bookkeeping below
+      // still reaches a clean terminal state.
+      await teardownBleResources(adapterRef, slot.client);
       // Slot teardown only runs when the slot was actually connected. A
       // disconnect against an idle primary slot stays a true no-op (the
       // existing test asserts manager.disconnect wasn't called); rebuilding
@@ -1078,7 +1068,7 @@ export function registerDeviceTools(
       // as explicit Idle: drive WeightTraining and skip the unload. (Requested
       // intent only; do NOT consult the applied-mode `trainingModeRaw` here.)
       const requestedMode = slot.live.snapshotDevice().trainingMode;
-      if (requestedMode === 'Idle' || requestedMode === undefined) {
+      if (shouldPreflightWeightTraining(requestedMode)) {
         await slot.client.setMode(TrainingMode.WeightTraining);
       } else if (input.skipUnload !== true) {
         // VMCP-02.06: drive the cable to a mechanically-unloaded state before
@@ -1112,27 +1102,7 @@ export function registerDeviceTools(
       // the state-dump path with its existing 2-of-2 stability defense
       // (handles the documented 80→320→0 transient burst) until a separate
       // pass routes it through cmd=0x10 too.
-      const fields: TrackedFieldSpec[] = [
-        {
-          field: 'baseWeight',
-          requested: input.targetWeightLbs,
-          mode: 'exact',
-        },
-      ];
-      if (typeof preDevice.chainSettingLbs === 'number') {
-        fields.push({
-          field: 'chains',
-          requested: preDevice.chainSettingLbs,
-          mode: 'guard',
-        });
-      }
-      if (typeof preDevice.eccentricPercentTenths === 'number') {
-        fields.push({
-          field: 'eccentricPercentTenths',
-          requested: preDevice.eccentricPercentTenths,
-          mode: 'guard',
-        });
-      }
+      const fields = buildGuidedLoadTrackedFields(input.targetWeightLbs, preDevice);
       await trackedSetterCall(
         slot.coercionWatch,
         'device.start_guided_load',
