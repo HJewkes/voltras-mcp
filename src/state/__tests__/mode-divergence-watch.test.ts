@@ -122,4 +122,88 @@ describe('ModeDivergenceWatch', () => {
     w.onRequested(7);
     expect(w.onApplied(1)).toEqual({ requested: 7, active: 1, divergedForMs: 0 });
   });
+
+  it('re-arms and emits again when the divergent pair shifts to a new pair', () => {
+    // Arrange: an episode has emitted for requested=7 vs active=1.
+    const clock = makeClock();
+    const w = new ModeDivergenceWatch(clock.now);
+    w.onRequested(7);
+    w.onApplied(1);
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(1)).toEqual({
+      requested: 7,
+      active: 1,
+      divergedForMs: MODE_DIVERGENCE_WINDOW_MS,
+    });
+
+    // Act: requested shifts 7→2 while active stays 1 — a NEW still-divergent
+    // pair. The new mismatch must arm its own window (not be swallowed).
+    expect(w.onRequested(2)).toBeNull(); // shifted pair at this t → re-armed
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS - 1);
+    expect(w.onApplied(1)).toBeNull(); // still inside the new window
+
+    // Assert: once the new pair persists past the window, a fresh event emits.
+    clock.advance(1);
+    expect(w.onApplied(1)).toEqual({
+      requested: 2,
+      active: 1,
+      divergedForMs: MODE_DIVERGENCE_WINDOW_MS,
+    });
+  });
+
+  it('re-arms when the active side shifts to a new still-divergent value', () => {
+    // Arrange: emitted episode for requested=7 vs active=1.
+    const clock = makeClock();
+    const w = new ModeDivergenceWatch(clock.now);
+    w.onRequested(7);
+    w.onApplied(1);
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(1)).not.toBeNull();
+
+    // Act + Assert: active shifts 1→2 (still ≠ requested 7) → new episode.
+    expect(w.onApplied(2)).toBeNull(); // shifted pair re-armed
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(2)).toEqual({
+      requested: 7,
+      active: 2,
+      divergedForMs: MODE_DIVERGENCE_WINDOW_MS,
+    });
+  });
+
+  it('does not re-spam while the divergent pair is unchanged', () => {
+    // Arrange: emitted episode for requested=7 vs active=1.
+    const clock = makeClock();
+    const w = new ModeDivergenceWatch(clock.now);
+    w.onRequested(7);
+    w.onApplied(1);
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(1)).not.toBeNull();
+
+    // Act + Assert: repeated feeds of the SAME pair long past the window stay
+    // silent — one emit per persistent episode.
+    clock.advance(10_000);
+    expect(w.onApplied(1)).toBeNull();
+    expect(w.onRequested(7)).toBeNull();
+    clock.advance(10_000);
+    expect(w.onApplied(1)).toBeNull();
+  });
+
+  it('a shifted pair that reconverges before its window emits nothing', () => {
+    // Arrange: emitted episode for 7 vs 1, then shift to 2 vs 1.
+    const clock = makeClock();
+    const w = new ModeDivergenceWatch(clock.now);
+    w.onRequested(7);
+    w.onApplied(1);
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(1)).not.toBeNull();
+    expect(w.onRequested(2)).toBeNull(); // re-armed for 2 vs 1
+
+    // Act: the shifted pair reconverges (active follows to 2) inside the window.
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS - 1);
+    expect(w.onApplied(2)).toBeNull(); // converged → episode cleared
+
+    // Assert: nothing lingers to emit for the abandoned shifted pair.
+    clock.advance(MODE_DIVERGENCE_WINDOW_MS);
+    expect(w.onApplied(2)).toBeNull();
+  });
 });
