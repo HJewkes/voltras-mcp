@@ -145,6 +145,17 @@ export interface SlotState {
    * which case the event omits the target.
    */
   pendingGuidedLoadTargetLbs?: number;
+  /**
+   * Re-entrancy latch for `set.start` (VMCP-02.52). The `SET_ALREADY_ACTIVE`
+   * guard reads `live.set`, but the set isn't installed until AFTER the
+   * `await client.startRecording()` round-trip. Two `set.start` calls that
+   * interleave across that await would both pass the guard and the second
+   * would mint a phantom setId + leak a `setStartDeviceSnapshots` entry.
+   * `startSet` sets this synchronously before the await and clears it in a
+   * `finally`, so a concurrent second call is rejected cleanly. Absent
+   * except during the brief window a `set.start` is engaging the motor.
+   */
+  setStartInFlight?: boolean;
 }
 
 export const PRIMARY_SLOT = 'primary' as const;

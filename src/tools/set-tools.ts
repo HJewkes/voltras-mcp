@@ -157,6 +157,14 @@ async function startSet(
   if (slot.live.set !== undefined) {
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
+  // VMCP-02.52: reject a second set.start that raced past the guard above
+  // while a prior start is still mid-flight. The set isn't installed in
+  // LiveState until after `await client.startRecording()` below, so without
+  // this latch an interleaved call would mint a phantom setId and leak a
+  // `setStartDeviceSnapshots` entry that no finalize path ever cleans up.
+  if (slot.setStartInFlight === true) {
+    throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already being started on this slot.');
+  }
 
   // <Bug-22> Refuse to engage strength-mode GO when the device is in Rowing.
   // `client.startRecording()` writes `BP_SET_FITNESS_MODE = 5` (the strength
@@ -216,21 +224,33 @@ async function startSet(
   // committed past the abort check).
   armModeRevertGuardForSet(slot);
 
-  // Engage the device motor — firmware-side equivalent of the "tap to load"
-  // prompt on the unit. Without this the cable is free-running and no force
-  // is applied. SDK: VoltraClient.startRecording → Workout.GO.
-  await slot.client.startRecording();
-
+  // Mint the set identity up front so the re-entrancy latch can wrap the
+  // engage-and-install window without threading a possibly-unassigned setId.
   const setId = randomUUID();
   const startedAt = new Date().toISOString();
-  slot.live.startSet({
-    setId,
-    sessionId: session.sessionId,
-    startedAt,
-    reps: [],
-    status: 'active',
-    ...(watch !== undefined ? { watch } : {}),
-  });
+
+  // VMCP-02.52: hold the per-slot latch across the engage round-trip. Cleared
+  // in `finally` once the set is installed — after which `live.set` (the
+  // SET_ALREADY_ACTIVE guard) takes over blocking concurrent starts. A throw
+  // from `startRecording` clears the latch too, so a retry can proceed.
+  slot.setStartInFlight = true;
+  try {
+    // Engage the device motor — firmware-side equivalent of the "tap to load"
+    // prompt on the unit. Without this the cable is free-running and no force
+    // is applied. SDK: VoltraClient.startRecording → Workout.GO.
+    await slot.client.startRecording();
+
+    slot.live.startSet({
+      setId,
+      sessionId: session.sessionId,
+      startedAt,
+      reps: [],
+      status: 'active',
+      ...(watch !== undefined ? { watch } : {}),
+    });
+  } finally {
+    slot.setStartInFlight = false;
+  }
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
   // Push a lifecycle event so a channel-enabled host wakes the model on the
