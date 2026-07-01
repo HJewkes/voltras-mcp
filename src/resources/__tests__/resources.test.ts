@@ -32,7 +32,13 @@ import type { Mock } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ReadResourceResult, ListResourcesResult } from '@modelcontextprotocol/sdk/types.js';
 
-import { LiveState, type ActiveSession, type ActiveSet } from '../../state/live-state.js';
+import {
+  LiveState,
+  type ActiveSession,
+  type ActiveSet,
+  type FirmwareRep,
+} from '../../state/live-state.js';
+import type { RepSource } from '../../config.js';
 import { registerDeviceResource } from '../device-resource.js';
 import { registerSessionResource } from '../session-resource.js';
 import { registerSetResource } from '../set-resource.js';
@@ -156,12 +162,17 @@ function jsonText(result: ReadResourceResult): unknown {
 interface ResourceState {
   liveForSlot: (slotId: string) => LiveState | undefined;
   slotIds: () => string[];
+  repSource: () => RepSource;
 }
 
-function makeState(slots: Record<string, LiveState>): ResourceState {
+function makeState(
+  slots: Record<string, LiveState>,
+  repSource: RepSource = 'analytics',
+): ResourceState {
   return {
     liveForSlot: (slotId) => slots[slotId],
     slotIds: () => Object.keys(slots),
+    repSource: () => repSource,
   };
 }
 
@@ -497,6 +508,62 @@ describe('voltras-mcp resources', () => {
       const a = await readResource(server, 'voltra://set/active');
       const b = await readResource(server, 'voltra://set/active');
       expect(a.contents?.[0]?.text).toBe(b.contents?.[0]?.text);
+    });
+  });
+
+  describe('voltra://set/active — REP_SOURCE switch (VMCP-02.29 PR5)', () => {
+    function firmwareRepFor(repNumber: number): FirmwareRep {
+      return {
+        ts: repNumber,
+        repNumber,
+        setCounter: 1,
+        frameCounter: repNumber,
+        targetWeightTenths: 0,
+        enriched: { ...(makeRep() as { repNumber: number }), repNumber } as never,
+      };
+    }
+
+    function seededSet(): ActiveSet {
+      return makeSet({
+        reps: [makeRep() as ActiveSet['reps'][number], makeRep() as ActiveSet['reps'][number]],
+        firmwareReps: [firmwareRepFor(900), firmwareRepFor(901)],
+        firmwareTotalRepCount: 2,
+      });
+    }
+
+    function readSet(repSource: RepSource): { reps: Array<{ repNumber: number }> } {
+      const live = new LiveState();
+      const srv = new McpServer(
+        { name: 'voltras-mcp-test', version: '0.0.0' },
+        { capabilities: { resources: { subscribe: true } } },
+      );
+      registerSetResource(srv, makeState({ primary: live }, repSource));
+      live.startSession(makeSession());
+      live.startSet(seededSet());
+      // readResource uses the closure `server`; register on a fresh server and
+      // read via the same helper by temporarily swapping — simplest is to read
+      // through the freshly-registered server.
+      return jsonTextFrom(srv);
+    }
+
+    function jsonTextFrom(srv: McpServer): { reps: Array<{ repNumber: number }> } {
+      const map = srv as unknown as {
+        _registeredResources: Record<
+          string,
+          { readCallback: (uri: URL) => { contents: Array<{ text: string }> } }
+        >;
+      };
+      const entry = map._registeredResources['voltra://set/active'];
+      const text = entry.readCallback(new URL('voltra://set/active')).contents[0].text;
+      return JSON.parse(text) as { reps: Array<{ repNumber: number }> };
+    }
+
+    it("default 'analytics' serves the analytics reps", () => {
+      expect(readSet('analytics').reps.map((r) => r.repNumber)).toEqual([1, 1]);
+    });
+
+    it("'firmware' serves the firmware enriched reps", () => {
+      expect(readSet('firmware').reps.map((r) => r.repNumber)).toEqual([900, 901]);
     });
   });
 

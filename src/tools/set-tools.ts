@@ -37,7 +37,7 @@ import {
   type WatchConfig,
 } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
-import type { ActiveSet, DeviceSnapshot } from '../state/live-state.js';
+import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
 import {
   buildIdleTimeoutPayload,
   buildSetAbortedByModeRevertPayload,
@@ -557,7 +557,12 @@ export async function finalizeSet(
     opts.partialReason !== undefined
       ? { ...finalized, status: 'partial', partialReason: opts.partialReason }
       : finalized;
-  const stored = toStoredSet(finalizedWithCause, device);
+  // VMCP-02.29 PR5: route the persisted rep array through the configured rep
+  // source. Default `'analytics'` returns the set unchanged (byte-identical
+  // stored set + vbt_summary); `'firmware'` swaps in the firmware-anchored
+  // enriched reps, which feeds toStoredSet -> stored.reps -> computeVbtSummary.
+  const finalizedForStore = selectSetReps(finalizedWithCause, state.config?.repSource);
+  const stored = toStoredSet(finalizedForStore, device);
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
   // close. The payload carries the full rep array plus a pre-computed VBT
@@ -587,7 +592,12 @@ async function liveMetrics(
 ): Promise<{ active: false } | ActiveSet> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   const snapshot = getSlot(state, slotId).live.snapshotSet();
-  return Promise.resolve(snapshot ?? { active: false });
+  if (snapshot === undefined) {
+    return Promise.resolve({ active: false });
+  }
+  // VMCP-02.29 PR5: project the live rep buffer onto the configured rep
+  // source. Default `'analytics'` returns the snapshot unchanged.
+  return Promise.resolve(selectSetReps(snapshot, state.config?.repSource));
 }
 
 /**

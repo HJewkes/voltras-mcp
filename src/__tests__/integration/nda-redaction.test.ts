@@ -220,6 +220,7 @@ async function buildHarness(): Promise<Harness> {
   const lazyState = {
     liveForSlot: (slotId: string) => stateBox.value?.slots.get(slotId)?.live,
     slotIds: () => (stateBox.value ? [...stateBox.value.slots.keys()] : []),
+    repSource: () => stateBox.value?.config.repSource ?? 'analytics',
   };
   registerDeviceResource(server, lazyState);
   registerSessionResource(server, lazyState);

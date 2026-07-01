@@ -15,6 +15,7 @@ describe('loadConfig', () => {
       dbPath: '/tmp/vmcp-test.sqlite',
       slotBindingsPath: '/tmp/vmcp-test-bindings.json',
       logLevel: 'debug',
+      repSource: 'analytics',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -71,5 +72,27 @@ describe('loadConfig', () => {
   it('produces a value assignable to the Config type', () => {
     const cfg: Config = loadConfig({ VOLTRA_ADAPTER: 'mock', HOME: '/h' });
     expect(cfg.adapter).toBe('mock');
+  });
+
+  // VMCP-02.29 PR5 — REP_SOURCE dark switch defaults to analytics.
+  it('defaults VMCP_REP_SOURCE to "analytics"', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.repSource).toBe('analytics');
+  });
+
+  it('honors VMCP_REP_SOURCE="firmware" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_REP_SOURCE: 'firmware', HOME: '/home/test' });
+    expect(cfg.repSource).toBe('firmware');
+  });
+
+  it('honors VMCP_REP_SOURCE="analytics" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_REP_SOURCE: 'analytics', HOME: '/home/test' });
+    expect(cfg.repSource).toBe('analytics');
+  });
+
+  it('throws on invalid VMCP_REP_SOURCE, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/fake/);
+    expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/analytics/);
+    expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/firmware/);
   });
 });

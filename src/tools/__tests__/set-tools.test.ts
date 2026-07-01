@@ -8,8 +8,9 @@
 //   * set.live_metrics returns the live snapshot or `{ active: false }`
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
-import type { LiveState as LiveStateType } from '../../state/live-state.js';
+import type { LiveState as LiveStateType, FirmwareRep } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
+import type { RepSource } from '../../config.js';
 import type { SessionStore, StoredSet } from '../../store/types.js';
 
 vi.mock('@voltras/node-sdk', () => {
@@ -162,7 +163,7 @@ interface Harness {
   channels: { publish: ReturnType<typeof vi.fn> };
 }
 
-function setup(): Harness {
+function setup(opts: { repSource?: RepSource } = {}): Harness {
   const live = new LiveState();
   const store = makeStore();
   const client = {
@@ -198,7 +199,7 @@ function setup(): Harness {
   const slots = new Map();
   slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard: new ModeRevertGuard() });
   const state = {
-    config: {} as never,
+    config: { repSource: opts.repSource } as never,
     manager: {} as never,
     slots,
     store,
@@ -1174,5 +1175,119 @@ describe('rest_status wiring (VMCP-02.08)', () => {
       (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
     );
     expect(eventTypes).toEqual(['set_started']);
+  });
+});
+
+// VMCP-02.29 PR5 — REP_SOURCE dark switch.
+//
+// The consumer read boundary routes through `config.repSource`. Default
+// `'analytics'` must be byte-for-byte identical to pre-PR5; the firmware path
+// is reachable ONLY when the flag is explicitly `'firmware'`. These tests are
+// parametrized over BOTH states plus an explicit default (flag unset) assertion.
+describe('set consumers — REP_SOURCE switch (VMCP-02.29 PR5)', () => {
+  // A firmware rep whose enriched VBT rep carries a recognizable repNumber in
+  // the 900-range so it is trivially distinguishable from the analytics reps
+  // (1,2,3) seeded via appendRep.
+  function firmwareRepFor(repNumber: number): FirmwareRep {
+    return {
+      ts: repNumber,
+      repNumber,
+      setCounter: 1,
+      frameCounter: repNumber,
+      targetWeightTenths: 0,
+      enriched: makeRep(repNumber),
+    };
+  }
+
+  async function seedSet(h: Harness): Promise<string> {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    const startResult = await h.invoke('set.start', {});
+    const setId = (parseResult(startResult) as { setId: string }).setId;
+    // Analytics pipeline: reps 1..3. Firmware pipeline: 2 reps (900, 901) with
+    // an authoritative total of 2 — deliberately a DIFFERENT count so the two
+    // pipelines are unambiguous in every assertion.
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.appendRep(makeRep(3));
+    h.live.appendFirmwareRep(firmwareRepFor(900));
+    h.live.finalizeFirmwareReps(firmwareRepFor(901), 2);
+    return setId;
+  }
+
+  function setEndedPayload(h: Harness): {
+    meta: Record<string, string>;
+    reps: Array<{ rep_number: number }>;
+  } {
+    const call = h.channels.publish.mock.calls.find(
+      (c: unknown[]) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'set_ended',
+    );
+    const event = call![0] as { content: string; meta: Record<string, string> };
+    const parsed = JSON.parse(event.content) as { reps: Array<{ rep_number: number }> };
+    return { meta: event.meta, reps: parsed.reps };
+  }
+
+  describe('default (flag unset) selects analytics', () => {
+    it('set.live_metrics reads the analytics reps', async () => {
+      const h = setup(); // no repSource -> unset/undefined -> analytics default
+      await seedSet(h);
+      const body = parseResult(await h.invoke('set.live_metrics', {})) as {
+        reps: Array<{ repNumber: number }>;
+        firmwareTotalRepCount?: number;
+      };
+      expect(body.reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+      // Firmware fields are still carried on the snapshot but are NOT the read
+      // source — the reps array is the analytics pipeline's.
+      expect(body.firmwareTotalRepCount).toBe(2);
+    });
+
+    it('stored set + set_ended read the analytics reps', async () => {
+      const h = setup();
+      await seedSet(h);
+      h.channels.publish.mockClear();
+      await h.invoke('set.end', {});
+      const stored = h.store.putSet.mock.calls[0][0] as { reps: Array<{ repNumber: number }> };
+      expect(stored.reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+      const { meta, reps } = setEndedPayload(h);
+      expect(meta.rep_count).toBe('3');
+      expect(reps.map((r) => r.rep_number)).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("'analytics' explicit selects analytics", () => {
+    it('stored set reads the analytics reps', async () => {
+      const h = setup({ repSource: 'analytics' });
+      await seedSet(h);
+      await h.invoke('set.end', {});
+      const stored = h.store.putSet.mock.calls[0][0] as { reps: Array<{ repNumber: number }> };
+      expect(stored.reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("'firmware' selects the firmware pipeline", () => {
+    it('set.live_metrics reads the firmware enriched reps', async () => {
+      const h = setup({ repSource: 'firmware' });
+      await seedSet(h);
+      const body = parseResult(await h.invoke('set.live_metrics', {})) as {
+        reps: Array<{ repNumber: number }>;
+        firmwareTotalRepCount?: number;
+      };
+      expect(body.reps.map((r) => r.repNumber)).toEqual([900, 901]);
+      expect(body.firmwareTotalRepCount).toBe(2);
+    });
+
+    it('stored set + set_ended + vbt read the firmware reps and firmwareTotalRepCount', async () => {
+      const h = setup({ repSource: 'firmware' });
+      await seedSet(h);
+      h.channels.publish.mockClear();
+      await h.invoke('set.end', {});
+      const stored = h.store.putSet.mock.calls[0][0] as { reps: Array<{ repNumber: number }> };
+      // Stored rep count matches the firmware pipeline (== firmwareTotalRepCount),
+      // not the 3 analytics reps.
+      expect(stored.reps.map((r) => r.repNumber)).toEqual([900, 901]);
+      const { meta, reps } = setEndedPayload(h);
+      expect(meta.rep_count).toBe('2');
+      expect(reps.map((r) => r.rep_number)).toEqual([900, 901]);
+    });
   });
 });

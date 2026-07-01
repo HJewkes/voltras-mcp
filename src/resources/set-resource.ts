@@ -13,7 +13,8 @@ import {
 } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ListResourcesResult } from '@modelcontextprotocol/sdk/types.js';
 
-import type { LiveState } from '../state/live-state.js';
+import type { RepSource } from '../config.js';
+import { selectSetReps, type LiveState } from '../state/live-state.js';
 
 const LEGACY_URI = 'voltra://set/active';
 const TEMPLATE_URI = 'voltra://set/{slot}/active';
@@ -22,6 +23,12 @@ const TEMPLATE_URI = 'voltra://set/{slot}/active';
 export interface SetResourceState {
   liveForSlot: (slotId: string) => LiveState | undefined;
   slotIds: () => string[];
+  /**
+   * The configured rep source (VMCP-02.29 PR5). Resolved lazily so the
+   * resource reflects `config.repSource` even though wiring runs before
+   * bootstrap; defaults to `'analytics'` until state is available.
+   */
+  repSource: () => RepSource;
 }
 
 function setUriForSlot(slotId: string): string {
@@ -34,7 +41,12 @@ function setUriForSlot(slotId: string): string {
 export function registerSetResource(server: McpServer, state: SetResourceState): void {
   const readBody = (slotId: string): string => {
     const live = state.liveForSlot(slotId);
-    return JSON.stringify(live?.snapshotSet() ?? { active: false });
+    const snapshot = live?.snapshotSet();
+    // VMCP-02.29 PR5: project onto the configured rep source. Default
+    // `'analytics'` returns the snapshot unchanged (byte-identical resource).
+    const body =
+      snapshot === undefined ? { active: false } : selectSetReps(snapshot, state.repSource());
+    return JSON.stringify(body);
   };
 
   const templateRead: ReadResourceTemplateCallback = (uri, variables) => ({

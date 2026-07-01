@@ -6,7 +6,14 @@
 // snapshots, stale-rep drop, null battery coercion).
 import { describe, expect, it } from 'vitest';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
-import { LiveState, type ActiveSession, type ActiveSet, type FirmwareRep } from '../live-state.js';
+import {
+  LiveState,
+  selectSetReps,
+  firmwareEnrichedReps,
+  type ActiveSession,
+  type ActiveSet,
+  type FirmwareRep,
+} from '../live-state.js';
 
 const TS_A = '2025-01-01T00:00:00.000Z';
 const TS_B = '2025-01-01T00:01:00.000Z';
@@ -341,6 +348,63 @@ describe('LiveState', () => {
       const finalized = live.endSet();
       expect(finalized?.firmwareReps).toHaveLength(2);
       expect(finalized?.status).toBe('ended');
+    });
+  });
+
+  describe('selectSetReps — REP_SOURCE read boundary (VMCP-02.29 PR5)', () => {
+    function fw(repNumber: number): FirmwareRep {
+      return {
+        ts: repNumber,
+        repNumber,
+        setCounter: 1,
+        frameCounter: repNumber,
+        targetWeightTenths: 0,
+        enriched: makeRep(repNumber),
+      };
+    }
+
+    const seeded = makeSet({
+      reps: [makeRep(1), makeRep(2), makeRep(3)],
+      firmwareReps: [fw(900), fw(901)],
+      firmwareTotalRepCount: 2,
+    });
+
+    it("'analytics' returns the SAME set reference unchanged (byte-identical)", () => {
+      const out = selectSetReps(seeded, 'analytics');
+      expect(out).toBe(seeded);
+      expect(out.reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+    });
+
+    it('an unset/undefined source defaults to analytics (dark-flag safety)', () => {
+      const out = selectSetReps(seeded, undefined);
+      expect(out).toBe(seeded);
+      expect(out.reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+    });
+
+    it("'firmware' swaps reps for the enriched firmware reps, preserving other fields", () => {
+      const out = selectSetReps(seeded, 'firmware');
+      expect(out).not.toBe(seeded);
+      expect(out.reps.map((r) => r.repNumber)).toEqual([900, 901]);
+      // firmwareTotalRepCount (and every non-reps field) is carried through.
+      expect(out.firmwareTotalRepCount).toBe(2);
+      expect(out.setId).toBe(seeded.setId);
+    });
+
+    it('firmwareEnrichedReps falls back to an empty rep for an un-enriched boundary', () => {
+      const bare: FirmwareRep = {
+        ts: 1,
+        repNumber: 5,
+        setCounter: 1,
+        frameCounter: 5,
+        targetWeightTenths: 0,
+      };
+      const reps = firmwareEnrichedReps(makeSet({ firmwareReps: [bare] }));
+      expect(reps).toHaveLength(1);
+      expect(reps[0]).toBeDefined();
+    });
+
+    it('firmwareEnrichedReps returns [] when the set has no firmware reps', () => {
+      expect(firmwareEnrichedReps(makeSet())).toEqual([]);
     });
   });
 
