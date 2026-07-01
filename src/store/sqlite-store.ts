@@ -662,6 +662,14 @@ function probeWriteLock(db: DatabaseSync, path: string): void {
   // or pending write lock on the same database file. This converts the
   // lock contention into a clear startup error before any user data is
   // written.
+  //
+  // This is a best-effort STARTUP-INSTANT probe, not a persistent lock: it
+  // only trips if the incumbent process is holding a write lock at this exact
+  // moment. Two processes that both open while neither is mid-write will both
+  // pass this probe (the DB is not in WAL mode, and we don't retain the lock),
+  // and their later concurrent writes will then throw SQLITE_BUSY. The
+  // single-writer contract (one process per VMCP_DB_PATH) is a caller
+  // responsibility; this probe catches the common case, it does not enforce it.
   try {
     db.exec('BEGIN IMMEDIATE');
     db.exec('COMMIT');
