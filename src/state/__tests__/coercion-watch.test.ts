@@ -208,6 +208,89 @@ describe('CoercionWatch.observe — guard mode', () => {
   });
 });
 
+describe('CoercionWatch.observe — threshold-1 fields (chains/baseWeight guided-load registration)', () => {
+  // start_guided_load (device-tools.ts) registers `chains` in 'guard' mode
+  // and `baseWeight` in 'exact' mode, both routed through STABILITY_BY_FIELD
+  // at threshold 1 (cmd=0x10 cascade echo — single-shot, never a 2-of-2
+  // burst). The guard-mode tests above only exercise the default threshold-2
+  // field (`chainTargetForceTenths`), so the single-observation guard-fire
+  // path (baseline echo → ONE coerced value fires immediately) was never
+  // pinned. These mirror the real production registration shape.
+
+  it('guard + threshold 1 (chains): baseline echo does NOT fire and stays pending', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        field: 'chains',
+        requested: 100,
+        mode: 'guard',
+        setterName: 'device.start_guided_load',
+      }),
+    );
+    const hits = watch.observe('chains', 100, 1_000_100);
+    expect(hits).toEqual([]);
+    expect(watch.size()).toBe(1);
+  });
+
+  it('guard + threshold 1 (chains): a single coerced observation fires immediately after the baseline echo', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        field: 'chains',
+        requested: 100,
+        mode: 'guard',
+        setterName: 'device.start_guided_load',
+      }),
+    );
+    // Baseline echo — no fire, primes the check as pending.
+    expect(watch.observe('chains', 100, 1_000_100)).toEqual([]);
+    // ONE coerced value — threshold 1 means this fires immediately, unlike
+    // the threshold-2 default which would need a second confirming pass.
+    const hits = watch.observe('chains', 20, 1_000_200);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(100);
+    expect(hits[0].setterName).toBe('device.start_guided_load');
+    expect(watch.size()).toBe(0);
+  });
+
+  it('exact + threshold 1 (baseWeight): a single coerced observation fires immediately (no stability wait)', () => {
+    // baseWeight differs from chains: start_guided_load registers it in
+    // 'exact' mode (the target weight IS the new value the firmware should
+    // converge on), not 'guard'. Threshold 1 still applies, so unlike the
+    // default threshold-2 exact-mode fields, a single non-matching
+    // observation is sufficient to fire — no second confirming pass needed.
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        field: 'baseWeight',
+        requested: 100,
+        mode: 'exact',
+        setterName: 'device.start_guided_load',
+      }),
+    );
+    const hits = watch.observe('baseWeight', 20, 1_000_100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].requested).toBe(100);
+    expect(hits[0].setterName).toBe('device.start_guided_load');
+    expect(watch.size()).toBe(0);
+  });
+
+  it('exact + threshold 1 (baseWeight): an echo at the requested value clears the check (legitimate success)', () => {
+    const watch = new CoercionWatch();
+    watch.register(
+      makeRegister({
+        field: 'baseWeight',
+        requested: 100,
+        mode: 'exact',
+        setterName: 'device.start_guided_load',
+      }),
+    );
+    const hits = watch.observe('baseWeight', 100, 1_000_100);
+    expect(hits).toEqual([]);
+    expect(watch.size()).toBe(0);
+  });
+});
+
 describe('CoercionWatch.observe — per-check windowMs', () => {
   it('honors a longer windowMs override (guided-load shape)', () => {
     const watch = new CoercionWatch();
