@@ -309,9 +309,15 @@ export class SqliteSessionStore implements SessionStore {
   async putSession(s: StoredSession): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO sessions
+        `INSERT INTO sessions
            (id, started_at, ended_at, exercise_id, exercise_name, notes)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at,
+           exercise_id = excluded.exercise_id,
+           exercise_name = excluded.exercise_name,
+           notes = excluded.notes`,
       )
       .run(
         s.id,
@@ -413,9 +419,14 @@ export class SqliteSessionStore implements SessionStore {
   async putTrainingProgram(p: StoredTrainingProgram): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO training_programs
+        `INSERT INTO training_programs
            (id, name, description, created_at, archived_at)
-         VALUES (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           description = excluded.description,
+           created_at = excluded.created_at,
+           archived_at = excluded.archived_at`,
       )
       .run(p.id, p.name, p.description ?? null, p.createdAt, p.archivedAt ?? null);
     return Promise.resolve();
@@ -443,9 +454,16 @@ export class SqliteSessionStore implements SessionStore {
   async putTrainingBlock(b: StoredTrainingBlock): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO training_blocks
+        `INSERT INTO training_blocks
            (id, program_id, order_index, name, focus, weeks_count, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           program_id = excluded.program_id,
+           order_index = excluded.order_index,
+           name = excluded.name,
+           focus = excluded.focus,
+           weeks_count = excluded.weeks_count,
+           notes = excluded.notes`,
       )
       .run(b.id, b.programId, b.orderIndex, b.name, b.focus ?? null, b.weeksCount, b.notes ?? null);
     return Promise.resolve();
@@ -461,9 +479,13 @@ export class SqliteSessionStore implements SessionStore {
   async putTrainingWeek(w: StoredTrainingWeek): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO training_weeks
+        `INSERT INTO training_weeks
            (id, block_id, order_index, name)
-         VALUES (?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           block_id = excluded.block_id,
+           order_index = excluded.order_index,
+           name = excluded.name`,
       )
       .run(w.id, w.blockId, w.orderIndex, w.name ?? null);
     return Promise.resolve();
@@ -479,9 +501,15 @@ export class SqliteSessionStore implements SessionStore {
   async putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO workout_templates
+        `INSERT INTO workout_templates
            (id, week_id, day_label, name, notes, order_index)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           week_id = excluded.week_id,
+           day_label = excluded.day_label,
+           name = excluded.name,
+           notes = excluded.notes,
+           order_index = excluded.order_index`,
       )
       .run(t.id, t.weekId, t.dayLabel ?? null, t.name, t.notes ?? null, t.orderIndex);
     return Promise.resolve();
@@ -504,11 +532,22 @@ export class SqliteSessionStore implements SessionStore {
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO planned_exercises
+        `INSERT INTO planned_exercises
            (id, workout_template_id, exercise_id, order_index, target_sets,
             target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
             rest_sec, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           workout_template_id = excluded.workout_template_id,
+           exercise_id = excluded.exercise_id,
+           order_index = excluded.order_index,
+           target_sets = excluded.target_sets,
+           target_reps_low = excluded.target_reps_low,
+           target_reps_high = excluded.target_reps_high,
+           target_weight_lbs = excluded.target_weight_lbs,
+           target_rpe = excluded.target_rpe,
+           rest_sec = excluded.rest_sec,
+           notes = excluded.notes`,
       )
       .run(
         e.id,
