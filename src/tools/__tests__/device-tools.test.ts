@@ -1538,18 +1538,16 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).setBandMaxForce).not.toHaveBeenCalled();
     });
 
-    it('surfaces SDK InvalidSettingError when value is in MCP range but rejected by SDK', async () => {
-      // MCP schema accepts 0..100, but the SDK valid set is 15..70. A
-      // value of 5 passes the schema and hits the SDK, which rejects it.
+    it('rejects a sub-15 value at the schema layer without calling the SDK', async () => {
+      // The schema bounds now mirror the SDK's valid set (15..70), so a value
+      // of 5 that formerly slipped through the loose 0..100 bound to the BLE
+      // path is rejected up front with INVALID_INPUT and never reaches the SDK.
       const client = primaryClient(state);
-      client.setBandMaxForce.mockRejectedValueOnce(
-        new FakeVoltraSDKError('bandMaxForce out of range', 'INVALID_SETTING'),
-      );
       const reg = placeholders.get('device.set_band_max_force')!;
       const { isError, payload } = await invoke(reg, { lbs: 5 });
       expect(isError).toBe(true);
-      expect(payload.code).toBe('INVALID_SETTING');
-      expect(client.setBandMaxForce).toHaveBeenCalledWith(5);
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(client.setBandMaxForce).not.toHaveBeenCalled();
     });
   });
 
@@ -1570,15 +1568,16 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).setIsokineticTargetSpeed).not.toHaveBeenCalled();
     });
 
-    it('surfaces SDK InvalidSettingError for invalid step (e.g. 1505 — not multiple of 10)', async () => {
+    it('rejects an off-step value (1505) at the schema layer without calling the SDK', async () => {
+      // `.multipleOf(10)` now enforces the SDK's step-of-10 contract at the
+      // tool boundary, so an off-step value fails fast with INVALID_INPUT
+      // instead of reaching the SDK's InvalidSettingError on the BLE path.
       const client = primaryClient(state);
-      client.setIsokineticTargetSpeed.mockRejectedValueOnce(
-        new FakeVoltraSDKError('must be multiple of 10', 'INVALID_SETTING'),
-      );
       const reg = placeholders.get('device.set_isokinetic_target_speed')!;
       const { isError, payload } = await invoke(reg, { mmPerSec: 1505 });
       expect(isError).toBe(true);
-      expect(payload.code).toBe('INVALID_SETTING');
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(client.setIsokineticTargetSpeed).not.toHaveBeenCalled();
     });
   });
 
@@ -1625,15 +1624,15 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).setIsokineticEccSpeedLimit).not.toHaveBeenCalled();
     });
 
-    it('surfaces SDK InvalidSettingError on rejection', async () => {
+    it('rejects an off-step value (1505) at the schema layer without calling the SDK', async () => {
+      // `.multipleOf(10)` enforces the SDK's step-of-10 contract up front, so
+      // an off-step limit fails with INVALID_INPUT before any SDK round-trip.
       const client = primaryClient(state);
-      client.setIsokineticEccSpeedLimit.mockRejectedValueOnce(
-        new FakeVoltraSDKError('invalid step', 'INVALID_SETTING'),
-      );
       const reg = placeholders.get('device.set_isokinetic_ecc_speed_limit')!;
       const { isError, payload } = await invoke(reg, { mmPerSec: 1505 });
       expect(isError).toBe(true);
-      expect(payload.code).toBe('INVALID_SETTING');
+      expect(payload.code).toBe('INVALID_INPUT');
+      expect(client.setIsokineticEccSpeedLimit).not.toHaveBeenCalled();
     });
   });
 
