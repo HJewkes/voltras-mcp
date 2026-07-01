@@ -26,7 +26,9 @@ import {
   getPhaseTimeToPeakVelocityMs,
   getPhaseVelocityDropPct,
   getPhaseVelocityEnvelope,
+  getRepConcentricImpulse,
   getRepHoldTopMs,
+  getRepMeanConcentricPower,
   getRepPeakForce,
   getRepTempoRatio,
 } from '@voltras/workout-analytics';
@@ -92,6 +94,41 @@ function repRangeOfMotion(rep: Rep): number | null {
 }
 
 /**
+ * Concentric impulse for a rep in pound-seconds (lb·s).
+ *
+ * `getRepConcentricImpulse` integrates `WorkoutSample.force` over time. The
+ * bridge passes raw frame force through in tenths-of-lbs (the WorkoutSample
+ * contract wants lbs — VMCP-02.46), so the helper's output is inflated 10x;
+ * we correct with `/ 10` here at the serialization boundary, mirroring the
+ * `mmsToMps` / `mmToM` pattern of fixing units at emit rather than mutating
+ * WA's inputs. Null when the concentric phase has no samples (matches
+ * `repRangeOfMotion`), so the model distinguishes "no data" from a true 0.
+ */
+function repConcentricImpulseLbS(rep: Rep): number | null {
+  if (rep.concentric.samples.length === 0) {
+    return null;
+  }
+  return Number((getRepConcentricImpulse(rep) / 10).toFixed(3));
+}
+
+/**
+ * Mean concentric power for a rep in pound-metres per second (lb·m/s).
+ *
+ * `getRepMeanConcentricPower` is work / concentric-time, where work is
+ * `Σ force × |Δposition|`. Force arrives in tenths-of-lbs (÷10) and position
+ * in millimetres (÷1000), so the helper output is inflated 10 000x relative
+ * to lb·m/s; we correct with `/ 10000`. Same boundary-conversion rationale
+ * as `repConcentricImpulseLbS`. Null when the concentric phase has no
+ * samples.
+ */
+function repMeanConcentricPowerLbMps(rep: Rep): number | null {
+  if (rep.concentric.samples.length === 0) {
+    return null;
+  }
+  return Number((getRepMeanConcentricPower(rep) / 10000).toFixed(3));
+}
+
+/**
  * Round a fractional percentage to one decimal place. Used for
  * velocity-drop, which workout-analytics returns as 0-100 already.
  */
@@ -119,13 +156,11 @@ function envelopeMps(env: readonly number[]): [number, number, number, number] {
  * Slotted into `rep.concentric` / `rep.eccentric` alongside the existing
  * peak / mean / duration block.
  *
- * Scope note: impulse + meanPower are intentionally NOT included in this
- * first wave. Workout-analytics already exposes them via
- * `getRepConcentricImpulse` / `getRepMeanConcentricPower`, but voltras-mcp's
- * bridge currently passes raw frame values into `WorkoutSample.force`
- * (tenths-of-lbs, not lbs per the contract) which would scale impulse +
- * power outputs by 10x. Adding them cleanly requires fixing the unit
- * passthrough in the bridge first — deferred to a follow-up.
+ * Impulse + mean-power are rep-level (concentric) rather than per-phase, so
+ * they live on the rep block (see `repConcentricImpulseLbS` /
+ * `repMeanConcentricPowerLbMps`) not here. VMCP-02.46 added them by
+ * correcting WA's tenths-of-lbs / mm inflation at the emit boundary instead
+ * of rewriting the bridge's `WorkoutSample` passthrough.
  */
 interface PhaseEnrichment {
   time_to_peak_velocity_ms: number;
@@ -204,6 +239,8 @@ export function buildRepFinalizedPayload(
       },
       peak_force: getRepPeakForce(finalizedRep),
       rom_m: repRangeOfMotion(finalizedRep),
+      impulse_lb_s: repConcentricImpulseLbS(finalizedRep),
+      mean_power_lb_mps: repMeanConcentricPowerLbMps(finalizedRep),
       tempo_ratio: Number(getRepTempoRatio(finalizedRep).toFixed(2)),
       hold_top_ms: getRepHoldTopMs(finalizedRep),
     },
@@ -548,6 +585,8 @@ function serializeRepForPayload(rep: Rep): {
   concentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
   eccentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
   rom_m: number | null;
+  impulse_lb_s: number | null;
+  mean_power_lb_mps: number | null;
   tempo_ratio: number;
   hold_top_ms: number;
 } {
@@ -564,6 +603,8 @@ function serializeRepForPayload(rep: Rep): {
       ...phaseEnrichment(rep.eccentric),
     },
     rom_m: repRangeOfMotion(rep),
+    impulse_lb_s: repConcentricImpulseLbS(rep),
+    mean_power_lb_mps: repMeanConcentricPowerLbMps(rep),
     tempo_ratio: Number(getRepTempoRatio(rep).toFixed(2)),
     hold_top_ms: getRepHoldTopMs(rep),
   };

@@ -279,6 +279,46 @@ describe('buildRepFinalizedPayload', () => {
     expect(parsed.rep.hold_top_ms).toBe(100);
   });
 
+  // VMCP-02.46: impulse + mean-power are added at the rep level by correcting
+  // WA's tenths-of-lbs (force ÷10) and mm (position ÷1000) inflation at the
+  // emit boundary — the bridge's WorkoutSample passthrough is left untouched.
+  it('emits impulse_lb_s + mean_power_lb_mps with the tenths/mm inflation corrected', () => {
+    // Concentric: 3 samples, force held at 500 tenths (= 50 lb), position
+    // 0 → 100 → 200 mm across 1000 → 1200 ms (0.2 s of movement, no hold).
+    //   impulse = ∫F dt = 50 lb × 0.2 s = 10.0 lb·s
+    //   work    = ∫F dx = 50 lb × 0.2 m = 10.0 lb·m
+    //   power   = work / 0.2 s          = 50.0 lb·m/s
+    const concentric = {
+      ...makePhase({ samples: 0, startTime: 1000, endTime: 1200, movementSampleCount: 3 }),
+      samples: [
+        { sequence: 0, timestamp: 1000, phase: 1, position: 0, velocity: 0, force: 500 },
+        { sequence: 1, timestamp: 1100, phase: 1, position: 100, velocity: 0, force: 500 },
+        { sequence: 2, timestamp: 1200, phase: 1, position: 200, velocity: 0, force: 500 },
+      ] as Rep['concentric']['samples'],
+    };
+    const rep: Rep = {
+      repNumber: 1,
+      concentric,
+      eccentric: makePhase({ samples: 2, startTime: 1200, endTime: 1600 }),
+    };
+    const { content } = buildRepFinalizedPayload(rep, 0, set, device, 1);
+    const parsed = JSON.parse(content);
+    expect(parsed.rep.impulse_lb_s).toBeCloseTo(10.0, 3);
+    expect(parsed.rep.mean_power_lb_mps).toBeCloseTo(50.0, 3);
+  });
+
+  it('emits null impulse_lb_s + mean_power_lb_mps when the concentric phase has no samples', () => {
+    const rep: Rep = {
+      repNumber: 1,
+      concentric: makePhase({ samples: 0, startTime: 1000, endTime: 1000 }),
+      eccentric: makePhase({ samples: 0 }),
+    };
+    const { content } = buildRepFinalizedPayload(rep, 0, set, device, 1);
+    const parsed = JSON.parse(content);
+    expect(parsed.rep.impulse_lb_s).toBeNull();
+    expect(parsed.rep.mean_power_lb_mps).toBeNull();
+  });
+
   it('uses a weight-less summary when device weight is unknown', () => {
     const rep = makeRep(1, 500, 400);
     const noWeight: DeviceSnapshot = { connected: true };
@@ -469,6 +509,11 @@ describe('buildSetEndedPayload', () => {
       eccentric: { peak_velocity: 0.5, mean_velocity: 0.5 },
     });
     expect(parsed.reps[0].rom_m).toBeCloseTo(0.6, 3);
+    // VMCP-02.46: serialized reps carry impulse + mean-power too. makeRep's
+    // samples have zero force/position, so both compute to 0 (present, not
+    // null — the concentric phase does have samples).
+    expect(parsed.reps[0].impulse_lb_s).toBe(0);
+    expect(parsed.reps[0].mean_power_lb_mps).toBe(0);
     expect(parsed.vbt_summary).toEqual({
       first_rep_v: 0.85,
       // rep 1 (850) is the set's fastest, so it's the peak baseline
