@@ -433,21 +433,126 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onPerRep (debug-only post-fix)', () => {
-    // The device fires onPerRep at every phase transition (concentric
-    // → eccentric → idle), so it cannot be the "rep complete" signal — that
-    // would double-count every rep. The bridge logs onPerRep to the
-    // debug buffer but does NOT mutate live state or notify resources.
-    it('does not mutate live state on bare per-rep event (no frames buffered)', () => {
+  describe('onPerRep (VMCP-02.29 Phase 1 firmware parity)', () => {
+    // The device fires onPerRep at every phase transition (pull start +
+    // return start) — same `repCount` for both. The bridge appends a
+    // FirmwareRep on 'return' only (one per real rep) and records it to the
+    // debug ring. This is a measurement-only scaffold: firmwareReps accrue
+    // in parallel with the analytics-derived `reps[]` so
+    // `debug.compare_rep_streams` can surface the count diff. Crucially, NO
+    // channel event is published for firmware reps (the parallel live
+    // `rep_finalized` publish is exactly why the first attempt was reverted).
+    it('ignores the pull-phase event (only return counts as end-of-rep)', () => {
       startSet(live);
-      const before = live.snapshotSet();
-      client.fire.perRep();
-      expect(live.snapshotSet()).toEqual(before);
-      expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
+      client.fire.perRep({
+        phase: 'pull',
+        frameCounter: 5,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 600,
+      });
+      expect(live.snapshotSet()?.firmwareReps ?? []).toHaveLength(0);
+      expect(channels.publish).not.toHaveBeenCalled();
     });
 
-    it('drops the signal silently when no set is active', () => {
-      client.fire.perRep();
+    it('appends a FirmwareRep on return phase without publishing a channel event', async () => {
+      const { _resetDebugBuffersForTest, getDebugBuffers } = await import('../debug-buffer.js');
+      _resetDebugBuffersForTest();
+      const debug = getDebugBuffers();
+      const fresh = makeBareState({ client, live, server, channels });
+      wireBridgeForSlot(
+        fresh as unknown as Parameters<typeof wireBridgeForSlot>[0],
+        fresh.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+      );
+      startSet(live);
+      live.applySettings({ connected: true, weightLbs: 60, trainingMode: 'WeightTraining' });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 600,
+      });
+      const set = live.snapshotSet();
+      expect(set?.firmwareReps).toHaveLength(1);
+      expect(set?.firmwareReps?.[0]).toMatchObject({
+        repNumber: 1,
+        setCounter: 1,
+        frameCounter: 12,
+        targetWeightTenths: 600,
+      });
+      // Measurement-only: the firmware rep lands in the debug ring...
+      const firmwareEvents = debug.events.recent(20).filter((e) => e.type === 'firmware_rep');
+      expect(firmwareEvents).toHaveLength(1);
+      expect(firmwareEvents[0].payload).toMatchObject({
+        repNumber: 1,
+        setCounter: 1,
+        frameCounter: 12,
+        targetWeightTenths: 600,
+        firmwareRepsSoFar: 1,
+      });
+      // ...and NOT on any channel.
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
+
+    it('de-dupes consecutive return events with the same (setCounter, repCount)', () => {
+      startSet(live);
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      // Replay the same boundary (e.g., a redundant decode) — should be ignored.
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      expect(live.snapshotSet()?.firmwareReps).toHaveLength(1);
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
+
+    it('appends each unique repCount in sequence', () => {
+      startSet(live);
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 12,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 24,
+        setCounter: 1,
+        repCount: 2,
+        targetWeightTenths: 0,
+      });
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 36,
+        setCounter: 1,
+        repCount: 3,
+        targetWeightTenths: 0,
+      });
+      const reps = live.snapshotSet()?.firmwareReps ?? [];
+      expect(reps.map((r) => r.repNumber)).toEqual([1, 2, 3]);
+      expect(channels.publish).not.toHaveBeenCalled();
+    });
+
+    it('drops the firmware boundary silently when no set is active', () => {
+      client.fire.perRep({
+        phase: 'return',
+        frameCounter: 1,
+        setCounter: 1,
+        repCount: 1,
+        targetWeightTenths: 0,
+      });
+      expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
   });

@@ -60,7 +60,17 @@ export interface DebugEvent {
      * capture). At 40 Hz telemetry rate this can fill a 256-capacity ring in
      * ~6 seconds — bump `VMCP_DEBUG_BUFFER_SIZE` for longer captures.
      */
-    | 'raw_frame';
+    | 'raw_frame'
+    /**
+     * Firmware-anchored rep boundary recorded by the VMCP-02.29 Phase 1
+     * parity scaffold. Emitted once per real rep (the `onPerRep` 'return'
+     * phase, de-duped by `(setCounter, repCount)`). Payload carries the
+     * `FirmwareRep` fields (`repNumber`, `setCounter`, `frameCounter`,
+     * `targetWeightTenths`, `ts`) plus `firmwareRepsSoFar`. Measurement-only:
+     * the firmware stream accrues here + in `ActiveSet.firmwareReps` and is
+     * surfaced by `debug.compare_rep_streams`; no channel event is published.
+     */
+    | 'firmware_rep';
   payload: Record<string, unknown>;
 }
 
