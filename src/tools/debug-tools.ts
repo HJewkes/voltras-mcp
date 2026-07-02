@@ -11,20 +11,29 @@
 //     `types` allowlist and an `includeRawFrames` opt-in for the pre-decode
 //     raw BLE frame channel (excluded by default — at 40 Hz it dominates the
 //     buffer and was the firehose problem VMCP-02.10 fixed).
-//   * `debug.push_test_channel({ content, meta })` — fires a single
+//   * `debug.push_test_channel({ content, meta, nonce? })` — fires a single
 //     `claude/channel` notification through the publisher so a developer
 //     can verify channel delivery (host launched with `--channels`) without
-//     attaching real hardware.
+//     attaching real hardware. Injects a `nonce` into the delivered meta and
+//     records it as the outstanding delivery probe.
+//   * `debug.confirm_channel({ nonce })` — the reply half of the delivery
+//     round-trip: the model echoes the nonce it read off the delivered
+//     `<channel>` tag, which the server records as a confirmed delivery and
+//     `server.health` surfaces as `channelsLastConfirmedAt` (VMCP-01.42
+//     follow-up).
 //
 // `recent_*` default to the schema's default `n` (50), capped at the buffer's
 // configured capacity (default 256, override via `VMCP_DEBUG_BUFFER_SIZE`).
 // The buffers are process-local — a server restart drops them.
+
+import { randomUUID } from 'node:crypto';
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
 import {
   DebugCompareRepStreamsInput,
+  DebugConfirmChannelInput,
   DebugPushTestChannelInput,
   DebugRecentEventsInput,
   DebugRecentFramesInput,
@@ -136,9 +145,29 @@ export function registerDebugTools(
     'debug.push_test_channel',
     DebugPushTestChannelInput,
     wrapHandler(DebugPushTestChannelInput, (input) => {
-      state.channels.publish({ content: input.content, meta: input.meta });
-      return Promise.resolve({ ok: true });
+      // Mint a nonce (or honour a caller-supplied one), record it as the
+      // outstanding probe, and inject it into the delivered meta so the model
+      // can echo it back via debug.confirm_channel to prove delivery.
+      const nonce = input.nonce ?? randomUUID();
+      state.channelDelivery.recordProbe(nonce);
+      state.channels.publish({ content: input.content, meta: { ...input.meta, nonce } });
+      return Promise.resolve({ ok: true, nonce });
     }),
+  );
+  install(
+    placeholders,
+    'debug.confirm_channel',
+    DebugConfirmChannelInput,
+    wrapHandler(DebugConfirmChannelInput, (input) => {
+      const snapshot = state.channelDelivery.recordConfirmation(input.nonce);
+      return Promise.resolve({
+        ok: true,
+        matchedProbe: snapshot.lastConfirmationMatchedProbe,
+        confirmations: snapshot.confirmations,
+        lastConfirmedAt: snapshot.lastConfirmedAt,
+      });
+    }),
+    CONFIRM_CHANNEL_DESCRIPTION,
   );
   install(
     placeholders,
@@ -175,6 +204,13 @@ export function registerDebugTools(
     COMPARE_REP_STREAMS_DESCRIPTION,
   );
 }
+
+const CONFIRM_CHANNEL_DESCRIPTION =
+  'Confirms a `claude/channel` push was actually delivered — the reply half of the delivery round-trip. ' +
+  'Call this with the `nonce` you read off a delivered `<channel>` tag (e.g. the nonce returned by / injected into a `debug.push_test_channel` probe). ' +
+  'The server records the confirmation timestamp, which `server.health` then reports as `channelsLastConfirmedAt`. ' +
+  '`matchedProbe: true` means the nonce matched the outstanding probe — positive proof channels are live, since you could only know the nonce by receiving the push inline. ' +
+  'Typical flow: call `debug.push_test_channel` → read the `nonce` from the `<channel>` tag it delivers → call `debug.confirm_channel({ nonce })`.';
 
 const COMPARE_REP_STREAMS_DESCRIPTION =
   "VMCP-02.29 Phase 1 parity tool. Returns side-by-side rep counts on the slot's currently-active set: " +

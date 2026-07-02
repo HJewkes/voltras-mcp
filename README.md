@@ -123,11 +123,12 @@ Server is connect-first: `server.connect(transport)` returns immediately, after 
 
 ### Debug (`debug.*`)
 
-| Tool                      | Purpose                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `debug.recent_frames`     | Return the last N telemetry frames from an in-memory ring buffer (capacity 256, override via `VMCP_DEBUG_BUFFER_SIZE`).                                 |
-| `debug.recent_events`     | Return the last N SDK events (rep_boundary, set_boundary, settings_update, connection_state_change).                                                    |
-| `debug.push_test_channel` | Emit a synthetic `claude/channel` notification with caller-supplied `content` + `meta`. Used to smoke-test channel delivery without driving the device. |
+| Tool                      | Purpose                                                                                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `debug.recent_frames`     | Return the last N telemetry frames from an in-memory ring buffer (capacity 256, override via `VMCP_DEBUG_BUFFER_SIZE`).                                                                                                                |
+| `debug.recent_events`     | Return the last N SDK events (rep_boundary, set_boundary, settings_update, connection_state_change).                                                                                                                                   |
+| `debug.push_test_channel` | Emit a synthetic `claude/channel` notification with caller-supplied `content` + `meta`. Injects (and returns) a `nonce` so delivery can be confirmed. Smoke-tests channel delivery without driving the device.                         |
+| `debug.confirm_channel`   | Reply half of the delivery round-trip: echo the `nonce` read off a delivered `<channel>` tag. Records a confirmed delivery that `server.health` surfaces as `channelsLastConfirmedAt` (`matchedProbe: true` proves channels are live). |
 
 ### Mock (`mock.*`, registered iff `VOLTRA_ADAPTER=mock`)
 

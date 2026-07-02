@@ -11,6 +11,7 @@ vi.mock('@voltras/node-sdk', () => ({}));
 const { registerServerTools } = await import('../server-tools.js');
 const { noopChannelPublisher, McpChannelPublisher } =
   await import('../../state/channel-publisher.js');
+const { ChannelDeliveryTracker } = await import('../../state/channel-delivery.js');
 
 /** Minimal real (non-noop) publisher: any object other than the noop sentinel. */
 const realPublisher = new McpChannelPublisher({
@@ -93,6 +94,26 @@ describe('server.health', () => {
     // Claude Code host never sends (VMCP-01.42).
     expect(body.channelsEnabled).toBeUndefined();
     expect(body.channelsDegraded).toBeUndefined();
+    // No delivery confirmed yet → null.
+    expect(body.channelsLastConfirmedAt).toBeNull();
+  });
+
+  it('surfaces channelsLastConfirmedAt from the delivery tracker once a push is confirmed', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const confirmedAt = '2026-07-02T12:00:00.000Z';
+    const channelDelivery = new ChannelDeliveryTracker(() => confirmedAt);
+    channelDelivery.recordProbe('n1');
+    channelDelivery.recordConfirmation('n1');
+    const state = {
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      channels: realPublisher,
+      channelDelivery,
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+    expect(body.channelsWired).toBe(true);
+    expect(body.channelsLastConfirmedAt).toBe(confirmedAt);
   });
 
   it('does not depend on client capabilities (host channel opt-in is server-invisible)', async () => {

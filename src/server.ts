@@ -106,6 +106,7 @@ const CORE_TOOL_NAMES = [
   'debug.recent_frames',
   'debug.recent_events',
   'debug.push_test_channel',
+  'debug.confirm_channel',
   'debug.compare_rep_streams',
   'system.speak',
   'system.listen_start',

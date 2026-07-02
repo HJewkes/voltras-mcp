@@ -41,10 +41,30 @@ export const DebugRecentEventsInput = z.object({
  * string→string `meta` map that becomes XML attributes on the delivered
  * `<channel>` tag. The host silently drops the notification when channels
  * weren't enabled at session launch (`--channels`).
+ *
+ * `nonce` (optional): a round-trip token. When omitted the handler mints one
+ * (randomUUID). Either way it is injected into the delivered `meta` as `nonce`
+ * and recorded as the outstanding probe, so the model can echo it back through
+ * `debug.confirm_channel` to prove end-to-end delivery (VMCP-01.42 follow-up).
  */
 export const DebugPushTestChannelInput = z.object({
   content: z.string().min(1),
   meta: z.record(z.string(), z.string()).default({}),
+  nonce: z.string().min(1).optional(),
+});
+
+/**
+ * Input for `debug.confirm_channel` — the reply half of the channel
+ * delivery round-trip. The model calls this with the `nonce` it read off a
+ * delivered `<channel>` tag (typically the one minted by
+ * `debug.push_test_channel`). The server records the confirmation timestamp
+ * and whether the nonce matched the outstanding probe, and `server.health`
+ * then surfaces the last confirmed-delivery time. Because the model can only
+ * know the nonce if the push was actually delivered inline, a matching
+ * confirmation is positive proof that channels are live.
+ */
+export const DebugConfirmChannelInput = z.object({
+  nonce: z.string().min(1),
 });
 
 /**
