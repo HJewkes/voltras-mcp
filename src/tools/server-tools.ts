@@ -13,15 +13,14 @@
 //   - analyticsVersion — same trick for @voltras/workout-analytics.
 //   - dbPath        — `state.config.dbPath`.
 //   - logLevel      — `state.config.logLevel`.
-//   - channelsEnabled  — the `claude/channel` push surface is live (see below).
-//   - channelsDegraded — pushes are expected but silently falling back to
-//                       polling because the host didn't opt in (see below).
+//   - channelsWired — a real (non-noop) `claude/channel` publisher is
+//                     installed, so the server IS emitting channel
+//                     notifications (see below).
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
-// removes any disk I/O from the request path. The channel flags are the one
-// per-call computation — they read the live client capabilities, which only
-// exist after `initialize` completes.
+// removes any disk I/O from the request path. `channelsWired` is the one
+// per-call computation — it reads the currently-wired publisher off state.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { execSync } from 'node:child_process';
@@ -123,48 +122,39 @@ const BUILD_SHA = readGitShortSha();
  *
  * `runServer` always declares the server-side `claude/channel` capability and
  * installs a real publisher, so the server always *intends* to push. Whether
- * those pushes actually reach the model depends on the host opting in at launch
- * (the dev-channels flag), which the host signals back as a client capability.
- * The two flags below let an agent tell — deterministically, in-band — whether
- * to expect pushes or must fall back to polling. Without this, a host launched
- * without the flag degrades to polling with no other signal (VMCP-02.30 / Bug
- * #4): tools that publish channel events silently never wake the model.
+ * those pushes actually reach the model depends on the host being launched with
+ * `--dangerously-load-development-channels`, but — critically — that opt-in is
+ * a host-internal routing decision that is INVISIBLE to the server: Claude Code
+ * declares no matching client capability, and `notifications/claude/channel` is
+ * fire-and-forget with no ack (events drop silently when channels aren't loaded).
+ * See https://code.claude.com/docs/en/channels-reference.
+ *
+ * So the server can only truthfully report whether it is *emitting* events, not
+ * whether they are *delivered*. `channelsWired` reports exactly that. To confirm
+ * actual end-to-end delivery, push a probe with `debug.push_test_channel` and
+ * observe whether the model receives it inline — the reply-tool pattern is the
+ * only reliable confirmation (VMCP-01.42 corrects the earlier VMCP-02.30 flags,
+ * which read a client capability the host never sends and so always reported
+ * `channelsDegraded` even while pushes were live).
  */
 interface ChannelStatus {
   /**
-   * The push surface is live: a real publisher is wired AND the connected host
-   * declared the `claude/channel` client capability. Channel events reach the
-   * model inline; no polling needed.
+   * A real (non-noop) publisher is installed, so the server IS emitting
+   * `claude/channel` notifications. This is server-knowable and honest; it is
+   * NOT a delivery guarantee (see above). False when no real publisher is
+   * wired (e.g. tests), since nothing is being pushed.
    */
-  channelsEnabled: boolean;
-  /**
-   * The server intends to push (a real publisher is wired) but the host did
-   * NOT opt in, so every published event is silently dropped and the agent
-   * must poll to observe state changes. This is the silent-degradation case.
-   * Mutually exclusive with `channelsEnabled`; both are false when no real
-   * publisher is wired (e.g. tests), since nothing was expected to push.
-   */
-  channelsDegraded: boolean;
-}
-
-/** True when the connected host opted into `claude/channel` push delivery. */
-function hostAcceptsChannels(state: ServerState): boolean {
-  const capabilities = state.server?.server.getClientCapabilities();
-  return capabilities?.experimental?.['claude/channel'] !== undefined;
+  channelsWired: boolean;
 }
 
 /**
- * Derive the channel push-surface status from the wired publisher and the
- * host's declared capabilities. A real (non-noop) publisher means the server
- * intends to push; the host capability decides whether that push is delivered.
+ * Report whether the server is emitting channel events. A real (non-noop)
+ * publisher means the server is actively pushing; delivery to the model is not
+ * server-observable, so this is deliberately the only channel field reported.
  */
 function resolveChannelStatus(state: ServerState): ChannelStatus {
   const publisherWired = state.channels !== undefined && state.channels !== noopChannelPublisher;
-  const hostOptedIn = hostAcceptsChannels(state);
-  return {
-    channelsEnabled: publisherWired && hostOptedIn,
-    channelsDegraded: publisherWired && !hostOptedIn,
-  };
+  return { channelsWired: publisherWired };
 }
 
 /**
