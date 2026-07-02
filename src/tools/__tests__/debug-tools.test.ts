@@ -13,6 +13,7 @@ vi.mock('@voltras/node-sdk', () => ({}));
 
 const { _resetDebugBuffersForTest, getDebugBuffers } = await import('../../state/debug-buffer.js');
 const { registerDebugTools, RECENT_EVENTS_DESCRIPTION } = await import('../debug-tools.js');
+const { ChannelDeliveryTracker } = await import('../../state/channel-delivery.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -45,14 +46,22 @@ function makePlaceholders(names: string[]): {
   };
 }
 
-function fakeState(channels: { publish: ReturnType<typeof vi.fn> }): ServerState {
-  return { channels } as unknown as ServerState;
+const FIXED_ISO = '2026-07-02T12:00:00.000Z';
+
+function fakeState(
+  channels: { publish: ReturnType<typeof vi.fn> },
+  channelDelivery: InstanceType<typeof ChannelDeliveryTracker> = new ChannelDeliveryTracker(
+    () => FIXED_ISO,
+  ),
+): ServerState {
+  return { channels, channelDelivery } as unknown as ServerState;
 }
 
 const ALL_DEBUG_TOOLS = [
   'debug.recent_frames',
   'debug.recent_events',
   'debug.push_test_channel',
+  'debug.confirm_channel',
   'debug.compare_rep_streams',
 ];
 
@@ -339,7 +348,7 @@ describe('debug.push_test_channel', () => {
     _resetDebugBuffersForTest();
   });
 
-  it('forwards content + meta to the channel publisher and returns ok', async () => {
+  it('forwards content, injects the caller-supplied nonce into meta, and echoes it back', async () => {
     const publish = vi.fn();
     const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
     registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
@@ -347,24 +356,30 @@ describe('debug.push_test_channel', () => {
     const r = await invoke('debug.push_test_channel', {
       content: 'hello channels',
       meta: { source: 'voltras', event_type: 'manual_test' },
+      nonce: 'probe-123',
     });
     expect(r.isError).toBeUndefined();
-    expect(JSON.parse(r.content[0].text)).toEqual({ ok: true });
+    expect(JSON.parse(r.content[0].text)).toEqual({ ok: true, nonce: 'probe-123' });
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith({
       content: 'hello channels',
-      meta: { source: 'voltras', event_type: 'manual_test' },
+      meta: { source: 'voltras', event_type: 'manual_test', nonce: 'probe-123' },
     });
   });
 
-  it('defaults meta to an empty object when caller omits it', async () => {
+  it('mints a nonce when the caller omits one and injects it into meta', async () => {
     const publish = vi.fn();
     const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
     registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
 
     const r = await invoke('debug.push_test_channel', { content: 'plain' });
     expect(r.isError).toBeUndefined();
-    expect(publish).toHaveBeenCalledWith({ content: 'plain', meta: {} });
+    const body = JSON.parse(r.content[0].text) as { ok: boolean; nonce: string };
+    expect(body.ok).toBe(true);
+    expect(typeof body.nonce).toBe('string');
+    expect(body.nonce.length).toBeGreaterThan(0);
+    // The same minted nonce is injected into the delivered meta.
+    expect(publish).toHaveBeenCalledWith({ content: 'plain', meta: { nonce: body.nonce } });
   });
 
   it('returns INVALID_INPUT when content is missing', async () => {
@@ -376,6 +391,66 @@ describe('debug.push_test_channel', () => {
     expect(r.isError).toBe(true);
     expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('debug.confirm_channel', () => {
+  beforeEach(() => {
+    _resetDebugBuffersForTest();
+  });
+
+  it('records a matching probe round-trip and reports matchedProbe:true', async () => {
+    const publish = vi.fn();
+    const tracker = new ChannelDeliveryTracker(() => FIXED_ISO);
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }, tracker), placeholders as never);
+
+    await invoke('debug.push_test_channel', { content: 'probe', nonce: 'abc' });
+    const r = await invoke('debug.confirm_channel', { nonce: 'abc' });
+    expect(r.isError).toBeUndefined();
+    expect(JSON.parse(r.content[0].text)).toEqual({
+      ok: true,
+      matchedProbe: true,
+      confirmations: 1,
+      lastConfirmedAt: FIXED_ISO,
+    });
+    expect(tracker.snapshot().lastConfirmedAt).toBe(FIXED_ISO);
+  });
+
+  it('reports matchedProbe:false when the nonce does not match the outstanding probe', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    await invoke('debug.push_test_channel', { content: 'probe', nonce: 'expected' });
+    const r = await invoke('debug.confirm_channel', { nonce: 'stale' });
+    const body = JSON.parse(r.content[0].text) as { matchedProbe: boolean; confirmations: number };
+    expect(body.matchedProbe).toBe(false);
+    expect(body.confirmations).toBe(1);
+  });
+
+  it('reports matchedProbe:false when confirming before any probe fired', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    const r = await invoke('debug.confirm_channel', { nonce: 'orphan' });
+    const body = JSON.parse(r.content[0].text) as {
+      matchedProbe: boolean;
+      lastConfirmedAt: string;
+    };
+    expect(body.matchedProbe).toBe(false);
+    expect(body.lastConfirmedAt).toBe(FIXED_ISO);
+  });
+
+  it('returns INVALID_INPUT when nonce is missing', async () => {
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    const r = await invoke('debug.confirm_channel', {});
+    expect(r.isError).toBe(true);
+    expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });
 

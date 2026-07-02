@@ -48,6 +48,7 @@ import { ExerciseService } from '../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
+import { ChannelDeliveryTracker } from './channel-delivery.js';
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { ModeDivergenceWatch } from './mode-divergence-watch.js';
@@ -204,6 +205,15 @@ export interface ServerState {
    */
   channels: ChannelPublisher;
   /**
+   * Round-trip ledger for `claude/channel` delivery confirmation (VMCP-01.42
+   * follow-up). Channel pushes are fire-and-forget, so the server can't observe
+   * delivery directly; `debug.push_test_channel` records a probe nonce here and
+   * `debug.confirm_channel` records the model's echo. `server.health` reads
+   * `lastConfirmedAt` off this tracker to give operators a persistent, in-band
+   * "channels are actually delivering" signal. Process-local — reset on restart.
+   */
+  channelDelivery: ChannelDeliveryTracker;
+  /**
    * In-flight non-blocking timers started via `timer.start`. Keyed by
    * `timer_id`. Each entry tracks the underlying `setTimeout` handle plus
    * the metadata needed to publish the `timer_complete` channel event when
@@ -317,6 +327,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // `McpChannelPublisher` once the McpServer instance is available. Tests
     // that don't care about channel pushes can leave the no-op in place.
     const channels: ChannelPublisher = noopChannelPublisher;
+    const channelDelivery = new ChannelDeliveryTracker();
     const timers = new Map<string, PushTimer>();
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
     const setWatchdog = new SetWatchdog();
@@ -338,6 +349,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       store,
       exercises,
       channels,
+      channelDelivery,
       timers,
       setStartDeviceSnapshots,
       setWatchdog,

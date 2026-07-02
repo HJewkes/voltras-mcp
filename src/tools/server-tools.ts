@@ -16,6 +16,8 @@
 //   - channelsWired — a real (non-noop) `claude/channel` publisher is
 //                     installed, so the server IS emitting channel
 //                     notifications (see below).
+//   - channelsLastConfirmedAt — ISO timestamp of the last model-confirmed
+//                     channel delivery (reply-tool round-trip), or null.
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
@@ -130,11 +132,13 @@ const BUILD_SHA = readGitShortSha();
  * See https://code.claude.com/docs/en/channels-reference.
  *
  * So the server can only truthfully report whether it is *emitting* events, not
- * whether they are *delivered*. `channelsWired` reports exactly that. To confirm
- * actual end-to-end delivery, push a probe with `debug.push_test_channel` and
- * observe whether the model receives it inline — the reply-tool pattern is the
- * only reliable confirmation (VMCP-01.42 corrects the earlier VMCP-02.30 flags,
- * which read a client capability the host never sends and so always reported
+ * whether they are *delivered*. `channelsWired` reports exactly that. Actual
+ * end-to-end delivery is confirmed via the reply-tool round-trip: push a probe
+ * with `debug.push_test_channel` and echo its nonce back with
+ * `debug.confirm_channel`. `channelsLastConfirmedAt` surfaces the timestamp of
+ * the most recent such confirmation, giving a persistent in-band signal that
+ * channels are live (VMCP-01.42 corrects the earlier VMCP-02.30 flags, which
+ * read a client capability the host never sends and so always reported
  * `channelsDegraded` even while pushes were live).
  */
 interface ChannelStatus {
@@ -145,16 +149,27 @@ interface ChannelStatus {
    * wired (e.g. tests), since nothing is being pushed.
    */
   channelsWired: boolean;
+  /**
+   * ISO timestamp of the most recent model-confirmed channel delivery (via the
+   * `debug.push_test_channel` → `debug.confirm_channel` round-trip), or null
+   * when no delivery has been confirmed this process. Unlike `channelsWired`,
+   * a non-null value here is positive proof the host is routing pushes to the
+   * model — the only reliable delivery signal available server-side.
+   */
+  channelsLastConfirmedAt: string | null;
 }
 
 /**
- * Report whether the server is emitting channel events. A real (non-noop)
- * publisher means the server is actively pushing; delivery to the model is not
- * server-observable, so this is deliberately the only channel field reported.
+ * Report the channel push surface. A real (non-noop) publisher means the server
+ * is actively emitting events; delivery to the model is not directly observable,
+ * so `channelsLastConfirmedAt` reflects the last reply-tool confirmation instead.
  */
 function resolveChannelStatus(state: ServerState): ChannelStatus {
   const publisherWired = state.channels !== undefined && state.channels !== noopChannelPublisher;
-  return { channelsWired: publisherWired };
+  return {
+    channelsWired: publisherWired,
+    channelsLastConfirmedAt: state.channelDelivery?.snapshot().lastConfirmedAt ?? null,
+  };
 }
 
 /**
