@@ -6,10 +6,12 @@
 //   - VMCP_SLOT_BINDINGS_PATH         — slot-bindings JSON, default ~/.voltras/slot-bindings.json.
 //   - VMCP_LOG_LEVEL                  — 'debug' | 'info' | 'warn' | 'error', default 'info'.
 //   - VMCP_REP_SOURCE                  — 'analytics' | 'firmware', default 'analytics'.
+//   - VMCP_REST_TIMER                  — 'on' | 'off', default 'off'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
-// throws synchronously when VOLTRA_ADAPTER or VMCP_REP_SOURCE is set to an
-// unrecognized value so the failure surfaces before bootstrapState begins.
+// throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, or VMCP_REST_TIMER
+// is set to an unrecognized value so the failure surfaces before
+// bootstrapState begins.
 
 import { homedir } from 'node:os';
 
@@ -27,12 +29,27 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
  */
 export type RepSource = 'analytics' | 'firmware';
 
+/**
+ * Whether `finalizeSet` auto-arms the passive `rest_status` emission cycle
+ * (VMCP-02.08) when a set closes (VMCP-02.54).
+ *   - `'off'` (DEFAULT) — no auto rest timer. The set closes with its
+ *     `set_ended` push and nothing further; a consumer that wants rest
+ *     coaching drives it explicitly via the `timer.*` tools. Opt-in by
+ *     design: the automatic 5-minute `rest_status` stream was channel noise
+ *     for callers that don't consume it, and semantically wrong on paths
+ *     like `session.end` where the owning session is already torn down.
+ *   - `'on'` — auto-arm on every natural set close. Still skipped when the
+ *     close is a `session_end` cascade (the session no longer exists).
+ */
+export type RestTimerMode = 'off' | 'on';
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
   readonly slotBindingsPath: string;
   readonly logLevel: LogLevel;
   readonly repSource: RepSource;
+  readonly restTimer: RestTimerMode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -44,6 +61,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (repSource !== 'analytics' && repSource !== 'firmware') {
     throw new Error(`Invalid VMCP_REP_SOURCE="${repSource}". Must be "analytics" or "firmware".`);
   }
+  const restTimer = env.VMCP_REST_TIMER ?? 'off';
+  if (restTimer !== 'off' && restTimer !== 'on') {
+    throw new Error(`Invalid VMCP_REST_TIMER="${restTimer}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -53,5 +74,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     slotBindingsPath: env.VMCP_SLOT_BINDINGS_PATH ?? `${home}/.voltras/slot-bindings.json`,
     logLevel: (env.VMCP_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     repSource,
+    restTimer,
   }) satisfies Config;
 }

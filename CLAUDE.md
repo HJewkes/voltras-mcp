@@ -21,11 +21,12 @@ Adapter is read once at startup; runtime switching is out of scope for v1.
 
 ## Environment Variables
 
-| Var              | Default                  | Notes                                                                                                                                     |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER` | `node`                   | `node` or `mock`                                                                                                                          |
-| `VMCP_DB_PATH`   | `~/.voltras/vmcp.sqlite` | SQLite store path; don't share one path across processes — startup runs a best-effort lock probe (see Concurrency), not a persistent lock |
-| `VMCP_LOG_LEVEL` | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport)                                         |
+| Var               | Default                  | Notes                                                                                                                                     |
+| ----------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOLTRA_ADAPTER`  | `node`                   | `node` or `mock`                                                                                                                          |
+| `VMCP_DB_PATH`    | `~/.voltras/vmcp.sqlite` | SQLite store path; don't share one path across processes — startup runs a best-effort lock probe (see Concurrency), not a persistent lock |
+| `VMCP_LOG_LEVEL`  | `info`                   | `debug` / `info` / `warn` / `error`; logs go to stderr only (stdio is reserved for MCP transport)                                         |
+| `VMCP_REST_TIMER` | `off`                    | `off` / `on`; opt-in auto `rest_status` cycle on natural set close (VMCP-02.54). Never armed on a `session.end` cascade                   |
 
 ## Concurrency
 

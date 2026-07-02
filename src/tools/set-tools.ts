@@ -599,16 +599,21 @@ export async function finalizeSet(
   );
   const slotChannels = state.channels.forSlot(slotId);
   slotChannels.publish(payload);
-  // VMCP-02.08: kick off the passive rest_status emission cycle. Starts
-  // AFTER the set_ended publish so a channel-consumer receives both the
-  // set_ended and the initial (t=0) rest_status in deterministic order.
-  // Skipped only when the set was force-closed by disconnect — the
-  // event-bridge disconnect handler cancels its slot's rest timer
-  // explicitly, but a finalize-during-disconnect would re-arm it; gating
-  // by `partialReason !== 'inactivity_timeout'` would still allow that
-  // re-arm. Cheaper to always start here and let the disconnect handler's
-  // explicit cancel win on the lifecycle.
-  state.restTimers.start(slotId, stored.id, slotChannels);
+  // VMCP-02.08 / VMCP-02.54: optionally kick off the passive rest_status
+  // emission cycle. Starts AFTER the set_ended publish so a channel-consumer
+  // receives both the set_ended and the initial (t=0) rest_status in
+  // deterministic order. Gated on two conditions:
+  //   - `config.restTimer === 'on'` — opt-in (default off). The automatic
+  //     rest stream is noise for callers that don't consume it.
+  //   - `partialReason !== 'session_end'` — a session.end cascade tears down
+  //     the owning session (VMCP-02.50/#95 routes its open-set close through
+  //     finalizeSet), so arming a rest timer here would emit rest_status
+  //     pushes for a session that no longer exists (VMCP-02.54).
+  // The disconnect handler still cancels its slot's rest timer explicitly, so
+  // a force-close-during-disconnect never leaves a live timer.
+  if (state.config?.restTimer === 'on' && opts.partialReason !== 'session_end') {
+    state.restTimers.start(slotId, stored.id, slotChannels);
+  }
   return stored;
 }
 

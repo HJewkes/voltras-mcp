@@ -16,6 +16,7 @@ describe('loadConfig', () => {
       slotBindingsPath: '/tmp/vmcp-test-bindings.json',
       logLevel: 'debug',
       repSource: 'analytics',
+      restTimer: 'off',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -94,5 +95,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/fake/);
     expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/analytics/);
     expect(() => loadConfig({ VMCP_REP_SOURCE: 'fake' })).toThrow(/firmware/);
+  });
+
+  // VMCP-02.54 — the passive rest timer is opt-in, default off.
+  it('defaults VMCP_REST_TIMER to "off"', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.restTimer).toBe('off');
+  });
+
+  it('honors VMCP_REST_TIMER="on" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_REST_TIMER: 'on', HOME: '/home/test' });
+    expect(cfg.restTimer).toBe('on');
+  });
+
+  it('throws on invalid VMCP_REST_TIMER, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/on/);
   });
 });

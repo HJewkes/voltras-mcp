@@ -48,7 +48,7 @@ vi.mock('@voltras/node-sdk', () => {
 });
 
 const { LiveState } = await import('../../state/live-state.js');
-const { registerSetTools } = await import('../set-tools.js');
+const { registerSetTools, finalizeSet } = await import('../set-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
@@ -163,7 +163,7 @@ interface Harness {
   channels: { publish: ReturnType<typeof vi.fn> };
 }
 
-function setup(opts: { repSource?: RepSource } = {}): Harness {
+function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): Harness {
   const live = new LiveState();
   const store = makeStore();
   const client = {
@@ -199,7 +199,10 @@ function setup(opts: { repSource?: RepSource } = {}): Harness {
   const slots = new Map();
   slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard: new ModeRevertGuard() });
   const state = {
-    config: { repSource: opts.repSource } as never,
+    // Default the harness to restTimer:'on' so the existing rest_status
+    // coverage exercises the timer mechanics; production defaults to 'off'
+    // (opt-in, VMCP-02.54). Tests override to 'off' to assert suppression.
+    config: { repSource: opts.repSource, restTimer: opts.restTimer ?? 'on' } as never,
     manager: {} as never,
     slots,
     store,
@@ -1253,6 +1256,46 @@ describe('rest_status wiring (VMCP-02.08)', () => {
       (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
     );
     expect(eventTypes).toEqual(['set_started']);
+  });
+
+  // VMCP-02.54 — the passive rest timer is opt-in. With the default 'off'
+  // config a natural set close arms nothing: no timer, no rest_status stream.
+  it('does NOT arm the rest timer on set close when restTimer is off (VMCP-02.54)', async () => {
+    const off = setup({ restTimer: 'off' });
+    startSession(off.live);
+    off.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await off.invoke('set.start', {});
+    off.channels.publish.mockClear();
+    await off.invoke('set.end', {});
+
+    expect(off.state.restTimers.has('primary')).toBe(false);
+    const eventTypes = off.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    expect(eventTypes).toEqual(['set_ended']);
+  });
+
+  // VMCP-02.54 — even with restTimer:'on', a session_end cascade (the #95
+  // open-set force-close routed through finalizeSet) must NOT arm a rest
+  // timer: the owning session is already torn down, so any rest_status push
+  // would reference a session that no longer exists.
+  it('does NOT arm the rest timer when the close is a session_end cascade (VMCP-02.54)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.channels.publish.mockClear();
+
+    await finalizeSet(h.state, 'primary', {
+      cause: 'tool',
+      disengageMotor: true,
+      partialReason: 'session_end',
+    });
+
+    expect(h.state.restTimers.has('primary')).toBe(false);
+    const eventTypes = h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+    expect(eventTypes).toEqual(['set_ended']);
   });
 });
 
