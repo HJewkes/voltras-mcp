@@ -384,6 +384,7 @@ function makeBareState(opts: {
   channels: FakeChannels;
   server: FakeServer;
   restTimers: RestTimerRegistryT;
+  config: { restTimer: 'on' };
 } {
   const slots = new Map<string, unknown>();
   slots.set('primary', {
@@ -399,6 +400,9 @@ function makeBareState(opts: {
     channels: opts.channels,
     server: opts.server,
     restTimers: new RestTimerRegistry(),
+    // Default to restTimer:'on' so the bridge-level rest_status coverage
+    // exercises the timer; production defaults to 'off' (opt-in, VMCP-02.54).
+    config: { restTimer: 'on' },
   };
 }
 
@@ -996,6 +1000,7 @@ describe('wireEventBridge', () => {
       >;
       setWatchdog: SetWatchdogT;
       restTimers: RestTimerRegistryT;
+      config: { restTimer: 'on' };
     }
     let fakeState: FakeState;
 
@@ -1036,6 +1041,9 @@ describe('wireEventBridge', () => {
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
+        // restTimer:'on' so the device-close path arms the passive rest_status
+        // cycle these tests assert; production defaults 'off' (VMCP-02.54).
+        config: { restTimer: 'on' },
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(
@@ -1373,6 +1381,9 @@ describe('wireEventBridge', () => {
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
+        // restTimer:'on' so the device-close path arms the passive rest_status
+        // cycle these tests assert; production defaults 'off' (VMCP-02.54).
+        config: { restTimer: 'on' },
       };
       const slot = slots.get('primary')!;
       wireBridgeForSlot(

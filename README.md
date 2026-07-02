@@ -44,11 +44,12 @@ Restart Claude Code after registration; resources and tools appear under the `vo
 
 ## Environment Variables
 
-| Var              | Default                  | Allowed                                | Purpose                                                                             |
-| ---------------- | ------------------------ | -------------------------------------- | ----------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER` | `node`                   | `node` \| `mock`                       | BLE adapter selection. `mock` adds the `mock.*` tools and uses an in-memory device. |
-| `VMCP_DB_PATH`   | `~/.voltras/vmcp.sqlite` | absolute path                          | SQLite store location. The directory is created if missing.                         |
-| `VMCP_LOG_LEVEL` | `info`                   | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr; stdio is reserved for the MCP transport.      |
+| Var               | Default                  | Allowed                                | Purpose                                                                                                                               |
+| ----------------- | ------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOLTRA_ADAPTER`  | `node`                   | `node` \| `mock`                       | BLE adapter selection. `mock` adds the `mock.*` tools and uses an in-memory device.                                                   |
+| `VMCP_DB_PATH`    | `~/.voltras/vmcp.sqlite` | absolute path                          | SQLite store location. The directory is created if missing.                                                                           |
+| `VMCP_LOG_LEVEL`  | `info`                   | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr; stdio is reserved for the MCP transport.                                                        |
+| `VMCP_REST_TIMER` | `off`                    | `off` \| `on`                          | When `on`, a natural set close auto-arms the passive `rest_status` push cycle. Off by default; a `session.end` cascade never arms it. |
 
 ## Concurrency
 
