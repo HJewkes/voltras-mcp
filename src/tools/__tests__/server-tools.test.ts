@@ -17,16 +17,6 @@ const realPublisher = new McpChannelPublisher({
   server: { notification: () => Promise.resolve() },
 } as never);
 
-/** Fake state.server whose client capabilities declare (or not) channels. */
-function serverWithChannelCapability(declared: boolean): unknown {
-  return {
-    server: {
-      getClientCapabilities: () =>
-        declared ? { experimental: { 'claude/channel': {} } } : { experimental: {} },
-    },
-  };
-}
-
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
   update(updates: { callback: (args: unknown, extra?: unknown) => Promise<unknown> }): void;
@@ -88,46 +78,49 @@ describe('server.health', () => {
     expect((body.version as string).length).toBeGreaterThan(0);
   });
 
-  it('reports channelsEnabled when a real publisher is wired and the host opted in', async () => {
+  it('reports channelsWired when a real publisher is installed', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
-      server: serverWithChannelCapability(true),
     } as never;
     registerServerTools({} as never, state, placeholders as never);
 
     const body = JSON.parse((await invoke('server.health', {})).content[0].text);
-    expect(body.channelsEnabled).toBe(true);
-    expect(body.channelsDegraded).toBe(false);
+    expect(body.channelsWired).toBe(true);
+    // Delivery is not server-observable; the removed enabled/degraded flags
+    // (VMCP-02.30) must not reappear — they read a client capability the real
+    // Claude Code host never sends (VMCP-01.42).
+    expect(body.channelsEnabled).toBeUndefined();
+    expect(body.channelsDegraded).toBeUndefined();
   });
 
-  it('reports channelsDegraded when a publisher is wired but the host did not opt in', async () => {
+  it('does not depend on client capabilities (host channel opt-in is server-invisible)', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
+    // Even a state whose server would report NO client channel capability
+    // still reports channelsWired: the flag reflects the publisher, not any
+    // (nonexistent) client-side capability signal.
     const state = {
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
-      server: serverWithChannelCapability(false),
+      server: { server: { getClientCapabilities: () => ({ experimental: {} }) } },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
 
     const body = JSON.parse((await invoke('server.health', {})).content[0].text);
-    expect(body.channelsEnabled).toBe(false);
-    expect(body.channelsDegraded).toBe(true);
+    expect(body.channelsWired).toBe(true);
   });
 
-  it('reports neither flag when no real publisher is wired (nothing expected to push)', async () => {
+  it('reports channelsWired false when no real publisher is wired (nothing pushed)', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: noopChannelPublisher,
-      server: serverWithChannelCapability(true),
     } as never;
     registerServerTools({} as never, state, placeholders as never);
 
     const body = JSON.parse((await invoke('server.health', {})).content[0].text);
-    expect(body.channelsEnabled).toBe(false);
-    expect(body.channelsDegraded).toBe(false);
+    expect(body.channelsWired).toBe(false);
   });
 
   it('throws if the placeholder is missing', () => {
