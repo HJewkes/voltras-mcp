@@ -126,27 +126,64 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 2×2 panel grid → single column under 700px (legacy parity). */
-.app-grid {
+/* Layout cohesion (Phase 6, VMCP-01.50): hero exercise card (main) + a supporting
+   rail (Session / Rest / BodyMap) as a sidebar, not a flat grid. Stacks to a
+   single column on narrow viewports. */
+.app-layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
   gap: 16px;
   padding: 16px;
   align-items: start;
 }
 
-@media (max-width: 700px) {
-  .app-grid {
+.support-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .app-layout {
     grid-template-columns: 1fr;
   }
 }
 
-/* Metric tile grid inside the current-set panel. */
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 16px;
+/* ── Exercise hero ─────────────────────────────────────────────────────────── */
+
+.hero-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* "Live set" tag next to the exercise name — uses the success status token so it
+   reads as active without a second color language. */
+.hero-live-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-status-success);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Glanceable live readouts — a horizontal band of titan Metric tiles, sized to
+   be read from across the room (weight/reps/loss are the primary signals). */
+.hero-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 28px 40px;
+}
+
+/* Nested set table sits below the live band inside the same hero card. */
+.hero-sets-spaced {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border-default);
 }
 
 .panel-empty {

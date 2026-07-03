@@ -44,9 +44,8 @@ import {
 } from './adapter';
 import { CONNECTION_TONE_TOKEN } from './colors';
 import { buildBodyMapData } from './bodymap';
-import { CurrentSetPanel } from './panels/CurrentSetPanel';
+import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
-import { SetLogPanel } from './panels/SetLogPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
 import { BodyMapPanel } from './panels/BodyMapPanel';
 
@@ -182,12 +181,22 @@ function App(): React.JSX.Element {
         </div>
       )}
 
-      <main className="app-grid">
-        <CurrentSetPanel view={currentSet} />
-        <RestTimerPanel elapsedMs={restElapsedMs} />
-        <SetLogPanel rows={setLogRows} />
-        <SessionProgressPanel view={progress} />
-        <BodyMapPanel data={bodyMapData} />
+      {/* Layout cohesion (Phase 6, VMCP-01.50): the current exercise is the HERO —
+          its live metrics, velocity strip, and sets nested in one card — with the
+          BodyMap / Session / Rest panels as a supporting rail, rather than five
+          co-equal grid tiles. Mirrors the mobile app's exercise-centric flow. */}
+      <main className="app-layout">
+        <ExerciseHeroPanel
+          exercise={progress.exercise}
+          hasSession={progress.active}
+          currentSet={currentSet}
+          setLog={setLogRows}
+        />
+        <aside className="support-rail" aria-label="Session overview">
+          <SessionProgressPanel view={progress} />
+          <RestTimerPanel elapsedMs={restElapsedMs} />
+          <BodyMapPanel data={bodyMapData} />
+        </aside>
       </main>
     </div>
   );
