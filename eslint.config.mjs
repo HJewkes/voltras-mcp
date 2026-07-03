@@ -55,6 +55,20 @@ export default tseslint.config(
     },
   },
   {
+    // CommonJS build-config files (dashboard SPA Tailwind/PostCSS). These run in
+    // a Node CJS context (require/module/__dirname) and are not part of any
+    // tsconfig — allow the CJS idioms the flat/TS recommended configs forbid.
+    files: ['src/**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { require: 'readonly', module: 'writable', __dirname: 'readonly' },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'no-undef': 'off',
+    },
+  },
+  {
     // Phase 0 dashboard SPA (VMCP-01.44): browser-targeted React (.tsx) plus its
     // Vite/node build config. These files are excluded from the main tsconfig
     // (they use jsx + DOM libs) and typechecked separately via
