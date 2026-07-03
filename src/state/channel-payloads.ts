@@ -748,20 +748,31 @@ export function buildSetPreSummaryPayload(
   device: DeviceSnapshot,
   payload: SetSummaryEvent,
 ): { meta: Record<string, string>; content: string } {
+  // Prefer the firmware-parity reconstructed total over the raw frame count,
+  // matching `buildSetEndedPayload`. `set_pre_summary` is the LIVE coaching
+  // prompt the model reads the instant a set closes, so a raw frame count here
+  // is what the model latches onto first — before the corrected `set_ended`
+  // arrives moments later. When a set auto-ends on its final rep that rep never
+  // fires its own `onPerRep` 'return', so the raw frame `repCount` omits it
+  // (bench 2026-07-01: frame said 4 for a 5-rep set). The bridge runs
+  // `finalizeFirmwareRepsOnClose` before this payload is built, so
+  // `firmwareTotalRepCount` is the reconciled truth by now; `?? payload.repCount`
+  // guards the case where no firmware reps were captured.
+  const reconciledRepCount = set.firmwareTotalRepCount ?? payload.repCount;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'set_pre_summary',
     set_id: set.setId,
     session_id: set.sessionId,
-    device_rep_count: String(payload.repCount),
+    device_rep_count: String(reconciledRepCount),
     final_rep_duration_ms: String(payload.repDurationMs),
     schema_version: String(payload.schemaVersion),
   };
-  const summary = `Final rep complete: ${payload.repCount} reps, last rep ${payload.repDurationMs}ms`;
+  const summary = `Final rep complete: ${reconciledRepCount} reps, last rep ${payload.repDurationMs}ms`;
   const content = JSON.stringify({
     summary,
     pre_summary: {
-      rep_count: payload.repCount,
+      rep_count: reconciledRepCount,
       final_rep_duration_ms: payload.repDurationMs,
       schema_version: payload.schemaVersion,
       target_weight_tenths: payload.targetWeightTenths,

@@ -706,7 +706,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         return;
       }
       const device = live.snapshotDevice();
-      slotChannels.publish(buildSetPreSummaryPayload(set, device, payload));
       // Capture the typed payload onto the active set + close immediately.
       // `aa 85 5f` is the canonical per-set close marker in WT/RB/Damper —
       // it fires after all reps complete with the final rep count, not
@@ -723,8 +722,15 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // `onPerRep` 'return' boundary (the device disengages after the final
       // concentric), so slice the trailing sample window and append it as the
       // terminal FirmwareRep plus record the device's authoritative repCount.
-      // Still measurement-only — no channel event, no consumer reads it.
+      // This also records the reconciled `firmwareTotalRepCount` on the set.
       finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
+      // VMCP-02.55 (Phase 2): publish `set_pre_summary` AFTER reconciliation so
+      // the live coaching prompt reports the reconciled rep count, not the raw
+      // frame count that omits an auto-ended terminal rep (bench 2026-07-01
+      // 4-vs-5 latch). Re-snapshot to pick up the `firmwareTotalRepCount` that
+      // `finalizeFirmwareRepsOnClose` just recorded.
+      const reconciledSet = live.snapshotSet() ?? set;
+      slotChannels.publish(buildSetPreSummaryPayload(reconciledSet, device, payload));
       notifySlot(server, slotId, SET_URI, setUriForSlot);
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
@@ -1284,10 +1290,19 @@ function sliceFrameBufferAndEnrich(
   startBoundary: number,
   endBoundary: number,
 ): Rep {
+  // VMCP-02.55 (Phase 2): the slice IS one firmware-asserted rep, so assert the
+  // boundary structurally via workout-analytics 1.4.0's `repBoundary` option
+  // (PR #15) instead of re-deriving it from the phase stream. The first in-window
+  // sample opens the rep (`repBoundary: true`); every later sample is pinned into
+  // it (`repBoundary: false`), suppressing the internal eccentric→concentric
+  // detector. Without this, a spurious phase flicker inside the window produces a
+  // second rep that `completeSet(...).reps[0]` silently discards.
   let waSet = createSet();
+  let isFirstInWindow = true;
   for (const { sample, capturedAt } of buffer) {
     if (capturedAt > startBoundary && capturedAt <= endBoundary) {
-      waSet = addSampleToSet(waSet, sample);
+      waSet = addSampleToSet(waSet, sample, { repBoundary: isFirstInWindow });
+      isFirstInWindow = false;
     }
   }
   return completeSet(waSet).reps[0] ?? createRep(0);
