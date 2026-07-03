@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Voltras Dashboard (SPA)</title>
+    <!--
+      Bootstrap paint only. These two literals mirror titan's
+      `--color-background-base` (#101010) and `--color-text-primary` (#f3f4f6)
+      so the first frame matches the theme before the bundle loads
+      `theme/global.css` (which then owns every colour via `var(--color-*)` —
+      see spa/colors.ts). They are the ONLY hard-coded colours in the SPA, kept
+      here because the CSS variables do not exist until the bundle mounts.
+    -->
     <style>
       * {
         margin: 0;

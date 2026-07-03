@@ -20,6 +20,10 @@
  * dist, and resolve to the CSS variables in `theme/global.css` — whose `:root`
  * is dark by default (no theme-mode class/provider needed). Without this
  * pipeline the class strings have no backing CSS and text renders colorless.
+ *
+ * Color source of truth: titan's semantic `--color-*` tokens are the ONLY color
+ * source in this dashboard — see `colors.ts` for the policy and the one place
+ * that maps a semantic state (connection tone) onto a titan status token.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -36,9 +40,9 @@ import {
   initialAccumulatorState,
   reduceSnapshot,
   type AccumulatorState,
-  type ConnectionTone,
   type Snapshot,
 } from './adapter';
+import { CONNECTION_TONE_TOKEN } from './colors';
 import { buildBodyMapData } from './bodymap';
 import { CurrentSetPanel } from './panels/CurrentSetPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
@@ -119,12 +123,6 @@ function formatClock(d: Date): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-const TONE_COLOR: Record<ConnectionTone, string> = {
-  success: 'var(--color-status-success)',
-  warning: 'var(--color-status-warning)',
-  error: 'var(--color-status-error)',
-};
-
 function App(): React.JSX.Element {
   const { snapshot, accumulator, status, lastUpdate, nowMs } = useDashboardModel();
 
@@ -142,7 +140,7 @@ function App(): React.JSX.Element {
   const restElapsedMs =
     accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
 
-  const toneColor = TONE_COLOR[connection.tone];
+  const toneColor = CONNECTION_TONE_TOKEN[connection.tone];
 
   return (
     <div className="dashboard">

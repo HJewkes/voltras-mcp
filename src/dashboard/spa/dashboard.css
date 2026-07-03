@@ -7,6 +7,10 @@
  * (single column under 700px, matching the legacy dashboard), the header, and
  * the small layout wrappers used inside panels. All colours reference the titan
  * theme variables from `global.css`.
+ *
+ * Colour source of truth: every colour below is a titan `--color-*` token via
+ * `var()` — no ad-hoc hex. See `colors.ts` for the single-source-of-truth policy
+ * (the sole exception is the WCAG-AA `--color-text-tertiary` re-value below).
  */
 
 .dashboard {
