@@ -20,7 +20,8 @@ export function CurrentSetPanel({ view }: { view: CurrentSetView }): React.JSX.E
           <div className="metric-grid">
             <Metric value={view.weight} label="Weight" size="md" />
             <Metric value={view.mode} label="Mode" size="md" />
-            <Metric value={String(view.reps)} label="Reps" size="md" />
+            <Metric value={view.repsLabel} label="Reps" size="md" />
+            <Metric value={view.velocityLoss} label="Velocity loss" size="md" />
             <Metric value={view.latestPeakVelocity} label="Latest peak vel" size="md" />
             <Metric value={view.targetWeight} label="Target weight" size="md" />
           </div>

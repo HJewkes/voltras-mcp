@@ -13,6 +13,13 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* WCAG AA fix (VMCP-01.46 audit): titan's `--color-text-tertiary` (#6B7280)
+     only reaches ~3.5:1 on the dark surfaces — below the 4.5:1 AA threshold for
+     the small muted text it drives here (captions, timestamps, empty states).
+     Bump it locally to #8D95A3 (~5.7:1) so every muted string clears AA while
+     staying visibly "tertiary". Scoped to `.dashboard` so it cascades into the
+     titan components' muted labels too without touching the shared design token. */
+  --color-text-tertiary: #8d95a3;
 }
 
 .app-header {
@@ -33,10 +40,78 @@
   color: var(--color-brand-primary);
 }
 
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .status-dot {
   font-size: 16px;
   line-height: 1;
   transition: color 0.3s;
+}
+
+.status-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 0.3s;
+  font-variant-numeric: tabular-nums;
+}
+
+.battery-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-default);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.battery-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.battery-chip.battery-low {
+  color: var(--color-status-error);
+  border-color: var(--color-status-error);
+  background: var(--color-status-error-subtle);
+}
+
+/* Safety banner: shown when the device is disconnected (or the sidecar is
+   unreachable). Must be impossible to miss from across the room. */
+.disconnect-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 12px 16px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--color-status-error-subtle);
+  border: 1px solid var(--color-status-error);
+  border-left-width: 4px;
+}
+
+.disconnect-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-status-error);
+}
+
+.disconnect-banner-detail {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .last-update {

@@ -27,12 +27,16 @@ import '@titan-design/react-ui/theme/global.css';
 import './dashboard.css';
 
 import {
+  buildBattery,
+  buildConnectionStatus,
   buildCurrentSet,
   buildSessionProgress,
   buildSetLogRows,
+  fmtDisconnectClock,
   initialAccumulatorState,
   reduceSnapshot,
   type AccumulatorState,
+  type ConnectionTone,
   type Snapshot,
 } from './adapter';
 import { CurrentSetPanel } from './panels/CurrentSetPanel';
@@ -113,9 +117,9 @@ function formatClock(d: Date): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-const STATUS_DOT: Record<Status, string> = {
-  ok: 'var(--color-status-success)',
-  stale: 'var(--color-status-warning)',
+const TONE_COLOR: Record<ConnectionTone, string> = {
+  success: 'var(--color-status-success)',
+  warning: 'var(--color-status-warning)',
   error: 'var(--color-status-error)',
 };
 
@@ -128,24 +132,54 @@ function App(): React.JSX.Element {
   const currentSet = buildCurrentSet(snap);
   const setLogRows = buildSetLogRows(accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
+  const connection = buildConnectionStatus(snap, status);
+  const battery = buildBattery(snap);
   // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
   // clamped so a clock skew never renders a negative M:SS.
   const restElapsedMs =
     accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
 
+  const toneColor = TONE_COLOR[connection.tone];
+
   return (
     <div className="dashboard">
       <header className="app-header">
         <h1 className="app-title">Voltras MCP</h1>
-        <span
-          className="status-dot"
-          style={{ color: STATUS_DOT[status] }}
-          aria-label={`status: ${status}`}
-        >
-          ●
+        {/* Connection is derived from the device snapshot, not just the poll.
+            aria-live announces state changes; the text label makes the state
+            legible without relying on color alone. */}
+        <span className="status-chip" role="status" aria-live="polite">
+          <span className="status-dot" style={{ color: toneColor }} aria-hidden="true">
+            ●
+          </span>
+          <span className="status-label" style={{ color: toneColor }}>
+            {connection.label}
+          </span>
         </span>
+        {battery.present && (
+          <span
+            className={`battery-chip${battery.low ? ' battery-low' : ''}`}
+            aria-label={`battery ${battery.label}${battery.low ? ', low' : ''}`}
+          >
+            <span className="battery-icon" aria-hidden="true">
+              {battery.low ? '🪫' : '🔋'}
+            </span>
+            <span className="battery-value">{battery.label}</span>
+          </span>
+        )}
         <span className="last-update">{lastUpdate}</span>
       </header>
+
+      {connection.showBanner && (
+        <div className="disconnect-banner" role="alert">
+          <span className="disconnect-banner-title">Device disconnected</span>
+          <span className="disconnect-banner-detail">
+            {connection.disconnectedAt
+              ? `Lost connection at ${fmtDisconnectClock(connection.disconnectedAt)} — readings below are the last known values.`
+              : 'No live connection to the device — readings below may be stale.'}
+          </span>
+        </div>
+      )}
 
       <main className="app-grid">
         <CurrentSetPanel view={currentSet} />
