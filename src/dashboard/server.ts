@@ -29,6 +29,9 @@
 //
 //   GET /                — placeholder HTML (panels are added in follow-up
 //                          loop tasks).
+//   GET /app             — Phase 0 React SPA (VMCP-01.44). Serves the
+//                          vite-built bundle from `dist/spa` (js/css under
+//                          `/app/assets/*`). Additive; does not touch `/`.
 //   GET /api/snapshot    — { session, devices, sets } JSON. Live view of
 //                          the active session, every slot's device snapshot,
 //                          and the active set if any.
@@ -39,7 +42,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
@@ -189,6 +192,17 @@ async function handleRequest(
     sendHtml(res, 200, DASHBOARD_HTML);
     return;
   }
+  // Phase 0 React SPA (VMCP-01.44), served read-only under `/app` from the
+  // vite-built bundle in `dist/spa`. Additive and parallel to the vanilla
+  // `/` dashboard above — neither route touches the other.
+  if (pathname === '/app' || pathname === '/app/') {
+    serveSpaIndex(res);
+    return;
+  }
+  if (pathname.startsWith('/app/')) {
+    serveSpaAsset(res, pathname);
+    return;
+  }
   if (pathname === '/api/health') {
     sendJson(res, 200, {
       ok: true,
@@ -269,6 +283,72 @@ function sendHtml(res: ServerResponse, status: number, body: string): void {
     'cache-control': 'no-store',
   });
   res.end(body);
+}
+
+/**
+ * Directory holding the vite-built Phase 0 SPA bundle (VMCP-01.44). Populated by
+ * `npm run build:dashboard`. Resolved relative to this compiled module
+ * (`dist/dashboard/server.js` → `dist/spa`) so it works from the published dist.
+ */
+const SPA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'spa');
+
+/** Shown at `/app` when the SPA hasn't been built yet (no `dist/spa`). */
+const SPA_NOT_BUILT_HTML =
+  '<!doctype html><meta charset="utf-8"><title>SPA not built</title>' +
+  '<body style="font-family:system-ui;background:#101010;color:#f3f4f6;padding:32px">' +
+  '<h1>Dashboard SPA not built</h1>' +
+  '<p>Run <code>npm run build:dashboard</code> to generate <code>dist/spa</code>, then reload.</p>';
+
+function serveSpaIndex(res: ServerResponse): void {
+  try {
+    sendHtml(res, 200, readFileSync(join(SPA_DIR, 'index.html'), 'utf8'));
+  } catch {
+    sendHtml(res, 503, SPA_NOT_BUILT_HTML);
+  }
+}
+
+function serveSpaAsset(res: ServerResponse, pathname: string): void {
+  const relative = pathname.slice('/app/'.length);
+  const target = normalize(join(SPA_DIR, relative));
+  // Path-traversal guard: the resolved file must stay inside SPA_DIR.
+  if (target !== SPA_DIR && !target.startsWith(SPA_DIR + sep)) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  try {
+    sendAsset(res, readFileSync(target), contentTypeFor(target));
+  } catch {
+    sendJson(res, 404, { error: 'not_found' });
+  }
+}
+
+function sendAsset(res: ServerResponse, body: Buffer, contentType: string): void {
+  res.writeHead(200, {
+    'content-type': contentType,
+    'content-length': body.length,
+    'cache-control': 'no-store',
+  });
+  res.end(body);
+}
+
+function contentTypeFor(filePath: string): string {
+  switch (extname(filePath)) {
+    case '.js':
+      return 'text/javascript; charset=utf-8';
+    case '.css':
+      return 'text/css; charset=utf-8';
+    case '.html':
+      return 'text/html; charset=utf-8';
+    case '.json':
+    case '.map':
+      return 'application/json; charset=utf-8';
+    case '.svg':
+      return 'image/svg+xml';
+    case '.woff2':
+      return 'font/woff2';
+    default:
+      return 'application/octet-stream';
+  }
 }
 
 interface PackageJsonShape {
