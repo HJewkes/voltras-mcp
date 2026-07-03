@@ -54,4 +54,30 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // Phase 0 dashboard SPA (VMCP-01.44): browser-targeted React (.tsx) plus its
+    // Vite/node build config. These files are excluded from the main tsconfig
+    // (they use jsx + DOM libs) and typechecked separately via
+    // `npm run typecheck:spa`. `no-undef` is off here — the correct setting for
+    // TypeScript sources, where the compiler (not ESLint) resolves symbols; the
+    // SPA's own tsconfig provides the DOM/browser lib so undefined-symbol errors
+    // still surface at typecheck.
+    files: ['src/dashboard/spa/**/*.{ts,tsx}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+    },
+    rules: {
+      'no-undef': 'off',
+      'no-console': ['error', { allow: ['warn', 'error'] }],
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
+      ],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
 );
