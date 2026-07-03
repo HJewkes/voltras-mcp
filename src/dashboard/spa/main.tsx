@@ -77,6 +77,10 @@ function useDashboardModel(): Model {
         setAccumulator((prev) => reduceSnapshot(prev, data, now));
         setStatus('ok');
         setLastUpdate(formatClock(new Date(now)));
+        // Advance the clock in the same tick that may set restStartMs, so the
+        // rest count-up reads `now - restStartMs === 0` at the transition rather
+        // than a stale (pre-transition) `nowMs` that would go briefly negative.
+        setNowMs(now);
       } catch {
         if (!cancelled) setStatus('error');
       }
@@ -124,7 +128,10 @@ function App(): React.JSX.Element {
   const currentSet = buildCurrentSet(snap);
   const setLogRows = buildSetLogRows(accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
-  const restElapsedMs = accumulator.restStartMs == null ? null : nowMs - accumulator.restStartMs;
+  // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
+  // clamped so a clock skew never renders a negative M:SS.
+  const restElapsedMs =
+    accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
 
   return (
     <div className="dashboard">
