@@ -1,21 +1,34 @@
 import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import {
+  reactNativeSvgWebResolver,
+  reactNativeBodyHighlighterEsm,
+  svgWebAliases,
+  webResolveExtensions,
+} from './vite-rn-svg-plugins';
 
 /**
- * Vite config for the Phase 0 dashboard SPA (VMCP-01.44).
+ * Vite config for the dashboard SPA (VMCP-01.44 / Phase 3 VMCP-01.47).
  *
  * `@titan-design/react-ui` is a React Native component library that runs on web
  * via react-native-web. Consuming its PUBLISHED `dist` (not its source) keeps the
- * resolution surface small — the compiled barrel only reaches two bare specifiers
- * that a browser bundler can't resolve as-is:
+ * resolution surface small, but its barrel reaches bare specifiers a browser
+ * bundler can't resolve as-is:
  *
  *   1. `react-native`                  -> aliased to `react-native-web`
- *   2. `react-native-body-highlighter` -> aliased to a no-op stub (Phase 3 concern;
- *      the package has no web build and does a dynamic `require('react')` that
- *      throws in browser ESM). Stubbing it also means the barrel never reaches
- *      `react-native-svg`, so — unlike titan-design's own specimen config — no svg
- *      web-resolver plugin is needed here.
+ *   2. `react-native-svg`              -> aliased to its ESM ("module") build,
+ *      with its `.web.js` platform siblings selected by
+ *      `reactNativeSvgWebResolver()` (Node resolvers ignore `.web.js` and would
+ *      load the native Flow sources).
+ *   3. `react-native-body-highlighter` -> esbuild-bundled to self-contained ESM
+ *      by `reactNativeBodyHighlighterEsm()` (untranspiled-JSX CJS dist with no
+ *      static ESM default; rn-svg web build inlined, react/react-native external).
+ *
+ * Phase 3 un-stubs BodyMap: (2) + (3) replace the former no-op body-highlighter
+ * stub so the real muscle SVG renders. See `vite-rn-svg-plugins.ts` (an npm port
+ * of titan-design's proven build-storybook resolution). The SPA is only produced
+ * via `vite build`, so the production (Rollup) plugins suffice.
  *
  * The published `dist` bakes its own `$$css` JSX runtime, so plain
  * `@vitejs/plugin-react` is sufficient (no nativewind jsxImportSource).
@@ -33,31 +46,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   root: __dirname,
   base: '/app/',
-  plugins: [react()],
+  plugins: [reactNativeSvgWebResolver(), reactNativeBodyHighlighterEsm(), react()],
   css: {
     postcss: __dirname,
   },
   resolve: {
-    alias: [
-      { find: /^react-native$/, replacement: 'react-native-web' },
-      {
-        find: /^react-native-body-highlighter$/,
-        replacement: path.resolve(__dirname, 'stubs/react-native-body-highlighter.tsx'),
-      },
-    ],
-    extensions: [
-      '.web.tsx',
-      '.web.ts',
-      '.web.jsx',
-      '.web.js',
-      '.mjs',
-      '.js',
-      '.mts',
-      '.ts',
-      '.jsx',
-      '.tsx',
-      '.json',
-    ],
+    alias: [...svgWebAliases, { find: /^react-native$/, replacement: 'react-native-web' }],
+    extensions: webResolveExtensions,
   },
   build: {
     outDir: path.resolve(__dirname, '../../../dist/spa'),

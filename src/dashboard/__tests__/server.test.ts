@@ -203,6 +203,42 @@ describe('GET /api/snapshot', () => {
     expect(body.devices).toHaveLength(1);
   });
 
+  it('joins the active exercise to its catalog muscle groups (activeExercise)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-M',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable-chest-press',
+      exerciseName: 'Cable Chest Press',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const handle = await startWithFake({
+      ...base,
+      exercises: {
+        getById: (id: string) =>
+          id === 'cable-chest-press'
+            ? { muscleGroups: ['chest'], secondaryMuscleGroups: ['shoulders', 'triceps'] }
+            : undefined,
+      },
+    });
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as {
+      activeExercise: { primaryMuscles: string[]; secondaryMuscles: string[] } | null;
+    };
+    expect(body.activeExercise).toEqual({
+      primaryMuscles: ['chest'],
+      secondaryMuscles: ['shoulders', 'triceps'],
+    });
+  });
+
+  it('reports activeExercise=null when no session / no catalog is wired', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { activeExercise: unknown };
+    expect(body.activeExercise).toBeNull();
+  });
+
   it('lists every slot in devices[]', async () => {
     const handle = await startWithFake(
       makeFakeState({

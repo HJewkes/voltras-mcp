@@ -53,11 +53,23 @@ export interface SnapshotActiveSet {
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
 }
 
+/**
+ * The active session's target muscle groups (raw voltras catalog strings, e.g.
+ * `'chest'`, `'shoulders'`), joined server-side from the exercise catalog. Drives
+ * the BodyMap heatmap (VMCP-01.47). Plain fitness metadata — no protocol data.
+ */
+export interface SnapshotActiveExercise {
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+}
+
 /** Client-side view of the `/api/snapshot` JSON shape (server: buildSnapshot). */
 export interface Snapshot {
   session: { sessionId: string; exerciseName?: string } | null;
   devices: Array<{ slotId: string; device: SnapshotDevice }>;
   sets: { active: SnapshotActiveSet | null };
+  /** Target muscles for the active exercise; null when idle / unknown. */
+  activeExercise?: SnapshotActiveExercise | null;
 }
 
 // ── Formatters (mirror legacy dashboard-html.ts) ─────────────────────────────
