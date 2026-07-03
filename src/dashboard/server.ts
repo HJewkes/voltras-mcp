@@ -27,10 +27,12 @@
 //
 // ── Endpoints ─────────────────────────────────────────────────────────────
 //
-//   GET /                — placeholder HTML (panels are added in follow-up
-//                          loop tasks).
-//   GET /app             — Phase 0 React SPA (VMCP-01.44). Serves the
-//                          vite-built bundle from `dist/spa` (js/css under
+//   GET /                — legacy vanilla-HTML dashboard (`dashboard-html.ts`).
+//                          Zero-build, inline `<script>` polling `/api/snapshot`.
+//                          Still the default route; see `src/dashboard/README.md`.
+//   GET /app             — titan-design React SPA (Vite + react-native-web;
+//                          Phases 0-5, VMCP-01.44 through VMCP-01.49). Serves
+//                          the vite-built bundle from `dist/spa` (js/css under
 //                          `/app/assets/*`). Additive; does not touch `/`.
 //   GET /api/snapshot    — { session, devices, sets } JSON. Live view of
 //                          the active session, every slot's device snapshot,
