@@ -1,152 +1,115 @@
 /**
  * Exercise hero panel (VMCP-01.50, Phase 6 — layout cohesion).
  *
- * Recomposes the former co-equal "Current set" + "Sets this session" grid tiles
- * into a single exercise-centric HERO, mirroring titan's ActiveWorkoutPage
- * composition — an exercise as the hero with its sets nested inside it — rather
- * than scattered equal-weight panels. The BodyMap / Session / Rest panels move to
- * a supporting rail (see main.tsx), giving the dashboard the hierarchy + flow of
- * the mobile app's designed workout UX instead of a flat card grid.
+ * The current exercise is the HERO, composed from titan-design's REAL Workout
+ * organisms — `ExerciseCard` (expanded) with nested `SetRow`s — mirroring the
+ * mobile app's ascending set-timeline (completed → active) instead of co-equal
+ * Metric/Table tiles. This is the same design-system generation the mobile app
+ * will consume once it bumps off @titan-design/react-ui@0.1.1 (VLT-09.33), so the
+ * two surfaces converge on one component set.
  *
- * Component choice: this adopts the ActiveWorkoutPage *pattern* (hero + nested
- * sets) using titan Card/Metric/VelocityStrip/Table, NOT titan's literal
- * ExerciseCard/SetRow. Those organisms have fixed SET/PREV/REPS/WEIGHT/RPE
- * columns; the dashboard carries Mode + Peak-velocity and never captures RPE, so
- * SetRow would render empty PREV/RPE columns and drop the Peak column (see the
- * original note in the retired SetLogPanel). The Table primitives give true
- * column parity while staying titan components.
+ * Data-shape gaps closed (rather than avoided): peak velocity rides SetRow's
+ * built-in per-row VelocityStrip (`velocities`) instead of a bespoke column; the
+ * prior set fills the PREV column; Mode is a per-exercise constant surfaced in
+ * the live-status line, not per row; RPE is absent (never captured) and SetRow
+ * renders it as an em-dash. A slim live-status strip carries the dashboard's
+ * across-the-room glanceable signals (velocity-loss %, latest peak).
  *
- * a11y (preserves Phase 5): exposed as an ARIA region named for the exercise; the
- * nested set table is aria-live="polite" so a completed set announces once (the
- * row count changes only on set close, never mid-set — see reduceSnapshot).
- *
- * NDA: renders adapter view-models only — no protocol data crosses this boundary.
+ * a11y (preserves Phase 5): ARIA region named for the exercise; the set list is
+ * aria-live="polite" so a completed set announces once (row count changes only on
+ * set close — see reduceSnapshot). NDA: renders adapter view-models only.
  */
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Metric,
-  Table,
-  TableBody,
-  TableCell,
-  TableHeader,
-  TableHeaderCell,
-  TableRow,
-  VelocityStrip,
-} from '@titan-design/react-ui';
-import type { CurrentSetView, SetLogRow } from '../adapter';
+import { Card, CardContent, ExerciseCard, type ExerciseCardProps } from '@titan-design/react-ui';
+import type { CurrentSetView, HeroSetRow } from '../adapter';
+
+type SetRowProps = NonNullable<ExerciseCardProps['sets']>[number];
 
 export interface ExerciseHeroProps {
   /** Active-session exercise name; `'—'` when idle. */
   exercise: string;
-  /** Whether a session is active (drives title + empty state). */
   hasSession: boolean;
+  /** Per-exercise training mode (e.g. "weight Training"), for the status line. */
+  mode: string;
+  /** Live callout signals (velocity-loss %, latest peak) for the active set. */
   currentSet: CurrentSetView;
-  setLog: SetLogRow[];
+  /** Completed sets + the active set, ascending, in titan-SetRow shape. */
+  heroSets: HeroSetRow[];
+}
+
+const rnd = (n: number | null): number | null => (n != null ? Math.round(n) : null);
+
+function toSetRowProps(r: HeroSetRow): SetRowProps {
+  return {
+    mode: r.mode,
+    setNumber: r.setNumber,
+    reps: r.reps,
+    weight: rnd(r.weightLbs),
+    rpe: null,
+    unit: 'lbs',
+    velocities: r.velocitiesMps.length > 0 ? r.velocitiesMps : undefined,
+    previous: r.previous
+      ? { reps: r.previous.reps, weight: Math.round(r.previous.weightLbs) }
+      : null,
+    isNextSet: r.mode === 'active',
+    targets:
+      r.mode === 'active' && r.targetReps != null && r.targetWeightLbs != null
+        ? { reps: r.targetReps, weight: Math.round(r.targetWeightLbs) }
+        : undefined,
+  };
 }
 
 export function ExerciseHeroPanel({
   exercise,
   hasSession,
+  mode,
   currentSet,
-  setLog,
+  heroSets,
 }: ExerciseHeroProps): React.JSX.Element {
-  const named = hasSession && exercise !== '—';
-  const title = named ? exercise : 'No active session';
-  const activeRowIndex = setLog.length + 1;
-  const showSetTable = setLog.length > 0 || currentSet.active;
+  if (!hasSession) {
+    return (
+      <section className="hero" role="region" aria-label="Current exercise">
+        <Card variant="elevated" elevation={2}>
+          <CardContent className="px-6 py-8">
+            <div className="panel-empty">No active session — start a set to begin.</div>
+          </CardContent>
+        </Card>
+      </section>
+    );
+  }
+
+  const named = exercise !== '—';
+  const title = named ? exercise : 'Current exercise';
+  const completed = heroSets.filter((r) => r.mode === 'completed').length;
+  const lastRow = heroSets[heroSets.length - 1];
+  const summaryReps = currentSet.repTarget ?? lastRow?.reps ?? 0;
+  const summaryWeight = rnd(lastRow?.weightLbs ?? null) ?? 0;
 
   return (
-    <section className="hero" role="region" aria-label={named ? exercise : 'Current exercise'}>
-      <Card variant="elevated" elevation={2}>
-        <CardHeader className="px-6 py-5">
-          <div className="hero-title-row">
-            <CardTitle className="text-2xl font-bold text-text-primary">{title}</CardTitle>
-            {currentSet.active && <span className="hero-live-tag">● Live set</span>}
-          </div>
-        </CardHeader>
-        <CardContent className="px-6 pt-0 pb-6">
-          {!hasSession ? (
-            <div className="panel-empty">No active session — start a set to begin.</div>
-          ) : (
-            <>
-              {currentSet.active && (
-                <>
-                  <div className="hero-metrics">
-                    <Metric value={currentSet.weight} label="Weight" size="lg" />
-                    <Metric value={currentSet.repsLabel} label="Reps" size="lg" />
-                    <Metric value={currentSet.velocityLoss} label="Velocity loss" size="lg" />
-                    <Metric value={currentSet.latestPeakVelocity} label="Latest peak" size="md" />
-                    <Metric value={currentSet.mode} label="Mode" size="md" />
-                  </div>
-                  {currentSet.velocitiesMps.length > 0 && (
-                    <div className="velocity-wrap">
-                      <div className="velocity-caption">Peak velocity per rep (m/s)</div>
-                      <VelocityStrip
-                        velocities={currentSet.velocitiesMps}
-                        variant="full"
-                        expanded
-                        showInfo={false}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div
-                className={`hero-sets${currentSet.active ? ' hero-sets-spaced' : ''}`}
-                aria-live="polite"
-                aria-atomic="false"
-              >
-                <div className="velocity-caption">Sets this session</div>
-                {!showSetTable ? (
-                  <div className="panel-empty">No sets yet</div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow isHoverable={false}>
-                        <TableHeaderCell align="left" width={40}>
-                          #
-                        </TableHeaderCell>
-                        <TableHeaderCell align="right">Weight</TableHeaderCell>
-                        <TableHeaderCell align="right">Mode</TableHeaderCell>
-                        <TableHeaderCell align="right">Reps</TableHeaderCell>
-                        <TableHeaderCell align="right">Peak vel</TableHeaderCell>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {setLog.map((row) => (
-                        <TableRow key={row.index} isHoverable={false}>
-                          <TableCell align="left" width={40}>
-                            {String(row.index)}
-                          </TableCell>
-                          <TableCell align="right">{row.weight}</TableCell>
-                          <TableCell align="right">{row.mode}</TableCell>
-                          <TableCell align="right">{String(row.reps)}</TableCell>
-                          <TableCell align="right">{row.peakVelocity}</TableCell>
-                        </TableRow>
-                      ))}
-                      {currentSet.active && (
-                        <TableRow isHoverable={false}>
-                          <TableCell align="left" width={40}>
-                            {String(activeRowIndex)}
-                          </TableCell>
-                          <TableCell align="right">{currentSet.weight}</TableCell>
-                          <TableCell align="right">{currentSet.mode}</TableCell>
-                          <TableCell align="right">{currentSet.repsLabel}</TableCell>
-                          <TableCell align="right">{currentSet.latestPeakVelocity}</TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+    <section className="hero" role="region" aria-label={title}>
+      {currentSet.active && (
+        <div className="hero-live-strip" role="status" aria-live="polite">
+          <span className="hero-live-dot" aria-hidden="true">
+            ●
+          </span>
+          <span className="hero-live-label">Live</span>
+          <span className="hero-live-item">{mode}</span>
+          <span className="hero-live-item">
+            <b>{currentSet.velocityLoss}</b> loss
+          </span>
+          <span className="hero-live-item">
+            <b>{currentSet.latestPeakVelocity}</b> peak
+          </span>
+        </div>
+      )}
+      <div className="hero-card" aria-live="polite" aria-atomic="false">
+        <ExerciseCard
+          name={title}
+          state="expanded"
+          onToggle={() => undefined}
+          summary={{ sets: completed, reps: summaryReps, weight: summaryWeight, unit: 'lbs' }}
+          sets={heroSets.map(toSetRowProps)}
+        />
+      </div>
     </section>
   );
 }

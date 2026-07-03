@@ -253,6 +253,9 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       mode: 'weight',
       repCount: 2,
       bestPeakVelocityMms: 900,
+      // Per-rep peaks retained (m/s) so titan SetRow can render its per-row
+      // VelocityStrip for completed sets, not just the active one.
+      velocitiesMps: [0.9, 0.8],
     });
     expect(state.restStartMs).toBe(2_000);
   });

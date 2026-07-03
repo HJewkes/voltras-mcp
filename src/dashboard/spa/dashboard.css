@@ -152,38 +152,50 @@
 
 /* ── Exercise hero ─────────────────────────────────────────────────────────── */
 
-.hero-title-row {
+/* The exercise hero is titan's ExerciseCard (expanded, with nested SetRows). The
+   only dashboard chrome is a slim live-status strip above it carrying the
+   across-the-room glanceable signals ExerciseCard doesn't surface. */
+.hero-live-strip {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* "Live set" tag next to the exercise name — uses the success status token so it
-   reads as active without a second color language. */
-.hero-live-tag {
+.hero-live-dot {
   font-size: 11px;
+  line-height: 1;
+  color: var(--color-status-success);
+}
+
+.hero-live-label {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-status-success);
-  font-variant-numeric: tabular-nums;
 }
 
-/* Glanceable live readouts — a horizontal band of titan Metric tiles, sized to
-   be read from across the room (weight/reps/loss are the primary signals). */
-.hero-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 28px 40px;
+.hero-live-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
 }
 
-/* Nested set table sits below the live band inside the same hero card. */
-.hero-sets-spaced {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--color-border-default);
+.hero-live-item + .hero-live-item::before,
+.hero-live-label + .hero-live-item::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--color-text-tertiary);
+}
+
+.hero-live-item b {
+  color: var(--color-text-primary);
+  font-weight: 700;
 }
 
 .panel-empty {

@@ -34,8 +34,8 @@ import {
   buildBattery,
   buildConnectionStatus,
   buildCurrentSet,
+  buildHeroSets,
   buildSessionProgress,
-  buildSetLogRows,
   fmtDisconnectClock,
   initialAccumulatorState,
   reduceSnapshot,
@@ -129,7 +129,7 @@ function App(): React.JSX.Element {
   const snap = snapshot ?? empty;
 
   const currentSet = buildCurrentSet(snap);
-  const setLogRows = buildSetLogRows(accumulator.setLog);
+  const heroSets = buildHeroSets(snap, accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
   const bodyMapData = buildBodyMapData(snap.activeExercise, accumulator.setLog.length);
   const connection = buildConnectionStatus(snap, status);
@@ -189,8 +189,9 @@ function App(): React.JSX.Element {
         <ExerciseHeroPanel
           exercise={progress.exercise}
           hasSession={progress.active}
+          mode={currentSet.mode}
           currentSet={currentSet}
-          setLog={setLogRows}
+          heroSets={heroSets}
         />
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
