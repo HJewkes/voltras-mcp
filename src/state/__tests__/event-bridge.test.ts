@@ -1928,6 +1928,43 @@ describe('wireEventBridge', () => {
       expect(parsed.set_so_far).not.toBeNull();
     });
 
+    it('reports the reconciled count when the set auto-ended on its terminal rep (VMCP-02.55, bench 2026-07-01 4-vs-5)', () => {
+      startSetNow();
+      live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
+      // Reps 1-4 each fire their onPerRep 'return' boundary; the 5th rep
+      // auto-ended and the device disengaged before firing its own 'return',
+      // so only 4 firmware boundaries were captured.
+      for (let rep = 1; rep <= 4; rep++) {
+        client.fire.perRep({
+          phase: 'return',
+          frameCounter: rep,
+          setCounter: 1,
+          repCount: rep,
+          targetWeightTenths: 1000,
+        });
+      }
+      channels.publish.mockClear();
+      // The device's set-close frame reports 4 — it omits the auto-ended
+      // terminal rep. finalizeFirmwareRepsOnClose reconstructs the total to 5
+      // (positional 4+1) BEFORE set_pre_summary publishes, so the live coaching
+      // prompt must report 5, not the raw 4 that previously latched.
+      client.fire.setSummary({
+        schemaVersion: 1,
+        targetWeightTenths: 1000,
+        repCount: 4,
+        repDurationMs: 1800,
+        raw: new Uint8Array(110),
+      });
+      const preSummary = channels.publish.mock.calls.find(
+        (c) => (c[0] as { meta: { event_type: string } }).meta.event_type === 'set_pre_summary',
+      );
+      expect(preSummary).toBeDefined();
+      const event = preSummary![0] as { meta: Record<string, string>; content: string };
+      expect(event.meta.device_rep_count).toBe('5');
+      const parsed = JSON.parse(event.content) as { summary: string };
+      expect(parsed.summary).toBe('Final rep complete: 5 reps, last rep 1800ms');
+    });
+
     it('is a silent drop when no set is active (ghost preSummary after set.end)', () => {
       // No startSet — simulates set.end already running before the device's
       // preSummary echo arrived.

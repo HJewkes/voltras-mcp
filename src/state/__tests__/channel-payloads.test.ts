@@ -1269,6 +1269,43 @@ describe('buildSetPreSummaryPayload', () => {
     expect(parsed.set_so_far.reps).toHaveLength(2);
   });
 
+  it('prefers the reconciled firmwareTotalRepCount over the raw frame count (VMCP-02.55)', () => {
+    // Bench 2026-07-01 4-vs-5 latch: a set auto-ended on its 5th rep, but that
+    // terminal rep never fired its own `onPerRep` 'return', so the device's
+    // set-close frame reported repCount=4. finalizeFirmwareRepsOnClose has
+    // reconstructed the total to 5 (firmwareTotalRepCount) before this payload
+    // is built. The live coaching prompt must report 5, not the raw 4.
+    const set: ActiveSet = { ...activeSet([makeRep(1, 800, 500)]), firmwareTotalRepCount: 5 };
+    const { meta, content } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 1000,
+      repCount: 4,
+      repDurationMs: 1800,
+      raw: new Uint8Array(110),
+    });
+    expect(meta.device_rep_count).toBe('5');
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      pre_summary: { rep_count: number };
+    };
+    expect(parsed.summary).toBe('Final rep complete: 5 reps, last rep 1800ms');
+    expect(parsed.pre_summary.rep_count).toBe(5);
+  });
+
+  it('falls back to the raw frame count when no firmware reps were captured', () => {
+    // No firmwareTotalRepCount (e.g. a mode that never populated the firmware
+    // pipeline) — `?? payload.repCount` keeps the raw device count.
+    const set = activeSet([makeRep(1, 800, 500), makeRep(2, 700, 500)]);
+    const { meta } = buildSetPreSummaryPayload(set, device, {
+      schemaVersion: 1,
+      targetWeightTenths: 1000,
+      repCount: 2,
+      repDurationMs: 1800,
+      raw: new Uint8Array(110),
+    });
+    expect(meta.device_rep_count).toBe('2');
+  });
+
   it('handles a zero-rep set (preSummary fired before any rep finalized — defensive)', () => {
     const set = activeSet([]);
     const { meta, content } = buildSetPreSummaryPayload(set, device, {
