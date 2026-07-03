@@ -1,0 +1,95 @@
+/*
+ * Layout-only styles for the Phase 1 dashboard SPA (VMCP-01.45).
+ *
+ * Panel surfaces, text colours, and typography come from titan-design
+ * components (Tailwind classes → theme CSS variables). This file only owns the
+ * app chrome and grid the titan components sit inside: the 2×2 panel grid
+ * (single column under 700px, matching the legacy dashboard), the header, and
+ * the small layout wrappers used inside panels. All colours reference the titan
+ * theme variables from `global.css`.
+ */
+
+.dashboard {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: var(--color-surface-elevated);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.app-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-brand-primary);
+}
+
+.status-dot {
+  font-size: 16px;
+  line-height: 1;
+  transition: color 0.3s;
+}
+
+.last-update {
+  min-width: 72px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 2×2 panel grid → single column under 700px (legacy parity). */
+.app-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 16px;
+  align-items: start;
+}
+
+@media (max-width: 700px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Metric tile grid inside the current-set panel. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 16px;
+}
+
+.panel-empty {
+  padding: 20px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.velocity-wrap {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.velocity-caption {
+  margin-bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.rest-timer-body {
+  padding: 12px 0 6px;
+}

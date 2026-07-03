@@ -20,6 +20,13 @@ import react from '@vitejs/plugin-react';
  * The published `dist` bakes its own `$$css` JSX runtime, so plain
  * `@vitejs/plugin-react` is sufficient (no nativewind jsxImportSource).
  *
+ * Theming (VMCP-01.45): those compiled components emit Tailwind class strings
+ * (e.g. `text-text-primary`) with no inline colours, so the Tailwind CSS must be
+ * generated for them to render legibly. `css.postcss` points at this directory,
+ * whose `postcss.config.cjs` runs Tailwind (titan's theme) + autoprefixer — the
+ * config path is a plain string so this typechecked file needs no `tailwindcss`
+ * / `autoprefixer` type deps.
+ *
  * Served by the sidecar under `/app/` (see src/dashboard/server.ts), hence
  * `base: '/app/'` so emitted asset URLs are `/app/assets/...`.
  */
@@ -27,6 +34,9 @@ export default defineConfig({
   root: __dirname,
   base: '/app/',
   plugins: [react()],
+  css: {
+    postcss: __dirname,
+  },
   resolve: {
     alias: [
       { find: /^react-native$/, replacement: 'react-native-web' },
