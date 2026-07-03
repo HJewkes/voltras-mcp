@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 
 import {
+  buildBattery,
+  buildConnectionStatus,
   buildCurrentSet,
   buildSessionProgress,
   buildSetLogRows,
@@ -28,6 +30,19 @@ function rep(repNumber: number, peakMms: number): Rep {
   return {
     repNumber,
     concentric: { peakVelocity: peakMms },
+    eccentric: {},
+  } as unknown as Rep;
+}
+
+/**
+ * Build a Rep carrying the concentric movement-sample aggregates WA needs for
+ * mean-velocity (`_totalVelocity / _movementSampleCount`). One sample so mean
+ * equals `meanMms`, letting velocity-loss come out deterministically.
+ */
+function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
+  return {
+    repNumber,
+    concentric: { peakVelocity: peakMms, _totalVelocity: meanMms, _movementSampleCount: 1 },
     eccentric: {},
   } as unknown as Rep;
 }
@@ -112,6 +127,106 @@ describe('buildCurrentSet', () => {
       }),
     );
     expect(view.weight).toBe('100.0 lbs');
+  });
+
+  it('renders "N of M reps" from the watch rep_count_reached target', () => {
+    const view = buildCurrentSet(
+      snapshot({
+        sessionId: 's1',
+        activeSet: {
+          reps: [rep(1, 800), rep(2, 700), rep(3, 650)],
+          watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] },
+        },
+      }),
+    );
+    expect(view.repTarget).toBe(8);
+    expect(view.repsLabel).toBe('3 of 8 reps');
+  });
+
+  it('renders a bare rep count with no configured target', () => {
+    const view = buildCurrentSet(snapshot({ sessionId: 's1', activeSet: { reps: [rep(1, 800)] } }));
+    expect(view.repTarget).toBeNull();
+    expect(view.repsLabel).toBe('1 rep');
+  });
+
+  it('computes velocity-loss % via WA across the set', () => {
+    const view = buildCurrentSet(
+      snapshot({
+        sessionId: 's1',
+        activeSet: { reps: [repWithMean(1, 800, 800), repWithMean(2, 600, 600)] },
+      }),
+    );
+    // (800 - 600) / 800 × 100 = 25%.
+    expect(view.velocityLoss).toBe('25%');
+  });
+
+  it('shows the em-dash for velocity-loss under two reps', () => {
+    const view = buildCurrentSet(
+      snapshot({ sessionId: 's1', activeSet: { reps: [repWithMean(1, 800, 800)] } }),
+    );
+    expect(view.velocityLoss).toBe('—');
+  });
+});
+
+describe('buildConnectionStatus — device-derived header state', () => {
+  it('reports LIVE (success) when the device is connected and fresh', () => {
+    const s = buildConnectionStatus(
+      snapshot({ sessionId: 's1', device: { connected: true } }),
+      'ok',
+    );
+    expect(s).toMatchObject({ tone: 'success', label: 'LIVE', showBanner: false });
+  });
+
+  it('reports OFFLINE (error) + banner when the device is disconnected', () => {
+    const s = buildConnectionStatus(
+      snapshot({
+        sessionId: 's1',
+        device: { connected: false, disconnectedAt: '2026-07-03T10:00:00.000Z' },
+      }),
+      'ok',
+    );
+    expect(s).toMatchObject({
+      tone: 'error',
+      label: 'OFFLINE',
+      showBanner: true,
+      disconnectedAt: '2026-07-03T10:00:00.000Z',
+    });
+  });
+
+  it('reports STALE (warning) when the snapshot is cached pre-disconnect data', () => {
+    const s = buildConnectionStatus(
+      snapshot({
+        sessionId: 's1',
+        device: { connected: true, staleSinceDisconnect: '2026-07-03T10:00:00.000Z' },
+      }),
+      'ok',
+    );
+    expect(s).toMatchObject({ tone: 'warning', label: 'STALE', showBanner: false });
+  });
+
+  it('reports NO SIGNAL (error) + banner when the sidecar poll fails', () => {
+    const s = buildConnectionStatus(
+      snapshot({ sessionId: 's1', device: { connected: true } }),
+      'error',
+    );
+    expect(s).toMatchObject({ tone: 'error', label: 'NO SIGNAL', showBanner: true });
+  });
+});
+
+describe('buildBattery', () => {
+  it('formats a present battery percent', () => {
+    const b = buildBattery(snapshot({ sessionId: 's1', device: { batteryPercent: 82 } }));
+    expect(b).toEqual({ present: true, pct: 82, label: '82%', low: false });
+  });
+
+  it('flips to low state below the threshold', () => {
+    const b = buildBattery(snapshot({ sessionId: 's1', device: { batteryPercent: 15 } }));
+    expect(b).toMatchObject({ present: true, label: '15%', low: true });
+  });
+
+  it('is absent when no battery reading is present', () => {
+    const b = buildBattery(snapshot({ sessionId: 's1', device: { connected: true } }));
+    expect(b).toEqual({ present: false, pct: null, label: '—', low: false });
   });
 });
 
