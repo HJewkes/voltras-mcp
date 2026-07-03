@@ -91,6 +91,16 @@ export interface DashboardServerState {
       offset: number;
     }): Promise<StoredSession[]>;
   };
+  /**
+   * Exercise catalog lookup, used to join the active session's `exerciseId` to
+   * its target muscle groups for the dashboard BodyMap (VMCP-01.47). Optional so
+   * the server test fakes need not fabricate a catalog; the real `ServerState`
+   * always supplies it. Muscle groups are plain fitness metadata (not protocol
+   * data), so surfacing them in the loopback snapshot JSON respects NDA NF-07.
+   */
+  exercises?: {
+    getById(id: string): { muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined;
+  };
 }
 
 export interface DashboardServerHandle {
@@ -105,10 +115,22 @@ interface DeviceEntry {
   device: DeviceSnapshot;
 }
 
+/**
+ * The active session's target muscle groups (primary + secondary), joined from
+ * the exercise catalog for the dashboard BodyMap. Plain fitness metadata —
+ * never protocol data. Null when there is no active session or the exercise is
+ * unknown / carries no muscle metadata.
+ */
+interface ActiveExerciseMuscles {
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+}
+
 interface SnapshotResponse {
   session: ActiveSession | null;
   devices: DeviceEntry[];
   sets: { active: ActiveSet | null };
+  activeExercise: ActiveExerciseMuscles | null;
 }
 
 /**
@@ -243,6 +265,26 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
     session: session ?? null,
     devices,
     sets: { active: activeSet ?? null },
+    activeExercise: resolveActiveExerciseMuscles(state, session),
+  };
+}
+
+/**
+ * Join the active session's `exerciseId` to its catalog muscle groups. Returns
+ * null when there is no session, no `exerciseId`, no catalog wired, or the
+ * exercise is unknown — the client renders an empty BodyMap in every such case.
+ */
+function resolveActiveExerciseMuscles(
+  state: DashboardServerState,
+  session: ActiveSession | undefined,
+): ActiveExerciseMuscles | null {
+  const exerciseId = session?.exerciseId;
+  if (!exerciseId || !state.exercises) return null;
+  const exercise = state.exercises.getById(exerciseId);
+  if (!exercise) return null;
+  return {
+    primaryMuscles: exercise.muscleGroups ?? [],
+    secondaryMuscles: exercise.secondaryMuscleGroups ?? [],
   };
 }
 

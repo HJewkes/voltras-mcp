@@ -39,10 +39,12 @@ import {
   type ConnectionTone,
   type Snapshot,
 } from './adapter';
+import { buildBodyMapData } from './bodymap';
 import { CurrentSetPanel } from './panels/CurrentSetPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SetLogPanel } from './panels/SetLogPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
+import { BodyMapPanel } from './panels/BodyMapPanel';
 
 const POLL_INTERVAL_MS = 500;
 const TICK_INTERVAL_MS = 1000;
@@ -132,6 +134,7 @@ function App(): React.JSX.Element {
   const currentSet = buildCurrentSet(snap);
   const setLogRows = buildSetLogRows(accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
+  const bodyMapData = buildBodyMapData(snap.activeExercise, accumulator.setLog.length);
   const connection = buildConnectionStatus(snap, status);
   const battery = buildBattery(snap);
   // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
@@ -186,6 +189,7 @@ function App(): React.JSX.Element {
         <RestTimerPanel elapsedMs={restElapsedMs} />
         <SetLogPanel rows={setLogRows} />
         <SessionProgressPanel view={progress} />
+        <BodyMapPanel data={bodyMapData} />
       </main>
     </div>
   );
