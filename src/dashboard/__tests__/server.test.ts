@@ -539,6 +539,43 @@ describe('GET /api/history', () => {
     expect(body.muscles).toBeNull();
   });
 
+  it('extracts all-time PR records (e1rm/weight/reps/velocity) from history', async () => {
+    const base = makeFakeState(
+      { primary: {} },
+      () =>
+        Promise.resolve([{ id: 's1', startedAt: '2026-05-14T00:00:00.000Z', exerciseId: 'bench' }]),
+      () =>
+        Promise.resolve([
+          {
+            id: 'set1',
+            sessionId: 's1',
+            startedAt: '',
+            endedAt: '',
+            partial: false,
+            trainingMode: 'weight',
+            weightLbs: 100,
+            reps: [{ concentric: { peakVelocity: 800 } }, { concentric: { peakVelocity: 750 } }],
+          },
+        ] as unknown as StoredSet[]),
+    );
+    const handle = await startWithFake(base);
+    const res = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/pr-history?exerciseId=bench',
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as {
+      records: Array<{ type: string; value: number; date: string; unit?: string }>;
+    };
+    const byType = Object.fromEntries(body.records.map((r) => [r.type, r]));
+    expect(byType.weight?.value).toBe(100);
+    expect(byType.reps?.value).toBe(2);
+    expect(byType.velocity?.value).toBe(0.8); // 800 mm/s → 0.8 m/s
+    expect(byType.e1rm?.value).toBeGreaterThan(100);
+    expect(byType.e1rm?.date).toBe('May 14');
+  });
+
   it('uses the default limit when ?limit is absent', async () => {
     const state = makeFakeState({ primary: {} });
     const handle = await startWithFake(state);

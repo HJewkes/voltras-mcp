@@ -48,7 +48,11 @@ import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
 import { BodyMapPanel } from './panels/BodyMapPanel';
-import { StrengthTrendPanel, type ExerciseTrendPoint } from './panels/StrengthTrendPanel';
+import {
+  StrengthTrendPanel,
+  type ExerciseTrendPoint,
+  type PrRecordView,
+} from './panels/StrengthTrendPanel';
 import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
 import type { PrescriptionView } from './view-model/mappers';
@@ -72,6 +76,7 @@ interface Model {
   prescription: PrescriptionView | null;
   program: ProgramStatusView | null;
   muscleVolume: Record<string, number>;
+  prRecords: PrRecordView[];
 }
 
 function useDashboardModel(): Model {
@@ -85,6 +90,7 @@ function useDashboardModel(): Model {
   const [prescription, setPrescription] = useState<PrescriptionView | null>(null);
   const [program, setProgram] = useState<ProgramStatusView | null>(null);
   const [muscleVolume, setMuscleVolume] = useState<Record<string, number>>({});
+  const [prRecords, setPrRecords] = useState<PrRecordView[]>([]);
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -137,12 +143,13 @@ function useDashboardModel(): Model {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes, planRes, programRes, volumeRes] = await Promise.all([
+        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes] = await Promise.all([
           fetch('/api/exercise-trend', { cache: 'no-store' }),
           fetch('/api/next-workout', { cache: 'no-store' }),
           fetch('/api/session-plan', { cache: 'no-store' }),
           fetch('/api/program-status', { cache: 'no-store' }),
           fetch('/api/muscle-volume', { cache: 'no-store' }),
+          fetch('/api/pr-history', { cache: 'no-store' }),
         ]);
         if (trendRes.ok) {
           const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
@@ -163,6 +170,10 @@ function useDashboardModel(): Model {
         if (volumeRes.ok) {
           const data = (await volumeRes.json()) as { muscles?: Record<string, number> | null };
           if (!cancelled) setMuscleVolume(data.muscles ?? {});
+        }
+        if (prRes.ok) {
+          const data = (await prRes.json()) as { records?: PrRecordView[] };
+          if (!cancelled) setPrRecords(data.records ?? []);
         }
       } catch {
         // best-effort; keep the last-known values on a transient failure
@@ -187,6 +198,7 @@ function useDashboardModel(): Model {
     prescription,
     program,
     muscleVolume,
+    prRecords,
   };
 }
 
@@ -207,6 +219,7 @@ function App(): React.JSX.Element {
     prescription,
     program,
     muscleVolume,
+    prRecords,
   } = useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
@@ -284,7 +297,11 @@ function App(): React.JSX.Element {
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
           <MesoStatusPanel program={program} />
-          <StrengthTrendPanel points={trend} />
+          <StrengthTrendPanel
+            points={trend}
+            prRecords={prRecords}
+            exerciseName={progress.exercise}
+          />
           <RestTimerPanel elapsedMs={restElapsedMs} />
           <BodyMapPanel data={bodyMapData} weeklyData={weeklyBodyMapData} />
         </aside>

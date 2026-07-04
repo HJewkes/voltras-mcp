@@ -47,7 +47,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { estimateE1RMFromReps } from '@voltras/workout-analytics';
+import { estimateE1RMFromReps, getRepPeakVelocity } from '@voltras/workout-analytics';
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
@@ -292,6 +292,11 @@ async function handleRequest(
   if (pathname === '/api/muscle-volume') {
     const muscles = await fetchMuscleVolume(state);
     sendJson(res, 200, { muscles });
+    return;
+  }
+  if (pathname === '/api/pr-history') {
+    const records = await fetchPrHistory(state, url);
+    sendJson(res, 200, { records });
     return;
   }
   sendJson(res, 404, { error: 'not_found' });
@@ -625,6 +630,105 @@ async function fetchMuscleVolume(
     }
   }
   return volume;
+}
+
+const PR_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** ISO timestamp → "MMM D" display date (UTC, deterministic). Falls back to raw. */
+function fmtPrDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${PR_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** One PR record for titan PrHistoryModal. */
+interface PrRecordView {
+  type: 'e1rm' | 'weight' | 'reps' | 'velocity';
+  value: number;
+  unit?: 'lbs';
+  date: string;
+}
+
+/**
+ * All-time PR records for an exercise (defaults to the active one) from stored
+ * history: best estimated 1RM, top set weight, most reps in a set, and fastest
+ * rep — each with the date it was set. Derived fitness metadata only (NF-07).
+ */
+async function fetchPrHistory(state: DashboardServerState, url: URL): Promise<PrRecordView[]> {
+  const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
+  if (exerciseId === undefined || exerciseId === '') return [];
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:asc',
+    limit: parseLimit(url.searchParams.get('limit')),
+    offset: 0,
+    exerciseId,
+  });
+
+  const best = { e1rm: 0, weight: 0, reps: 0, velMms: 0 };
+  const dates = { e1rm: '', weight: '', reps: '', velMms: '' };
+  for (const session of sessions) {
+    for (const set of await state.store.getSetsForSession(session.id)) {
+      const reps = set.reps.length;
+      if (reps < 1) continue;
+      const e1 = estimateE1RMFromReps(set.weightLbs, reps).e1RM;
+      if (Number.isFinite(e1) && e1 > best.e1rm) {
+        best.e1rm = e1;
+        dates.e1rm = session.startedAt;
+      }
+      if (set.weightLbs > best.weight) {
+        best.weight = set.weightLbs;
+        dates.weight = session.startedAt;
+      }
+      if (reps > best.reps) {
+        best.reps = reps;
+        dates.reps = session.startedAt;
+      }
+      for (const rep of set.reps) {
+        const pv = getRepPeakVelocity(rep);
+        if (typeof pv === 'number' && Number.isFinite(pv) && pv > best.velMms) {
+          best.velMms = pv;
+          dates.velMms = session.startedAt;
+        }
+      }
+    }
+  }
+
+  const records: PrRecordView[] = [];
+  if (best.e1rm > 0)
+    records.push({
+      type: 'e1rm',
+      value: Math.round(best.e1rm),
+      unit: 'lbs',
+      date: fmtPrDate(dates.e1rm),
+    });
+  if (best.weight > 0)
+    records.push({
+      type: 'weight',
+      value: Math.round(best.weight),
+      unit: 'lbs',
+      date: fmtPrDate(dates.weight),
+    });
+  if (best.reps > 0) records.push({ type: 'reps', value: best.reps, date: fmtPrDate(dates.reps) });
+  if (best.velMms > 0)
+    records.push({
+      type: 'velocity',
+      value: Number((best.velMms / 1000).toFixed(2)),
+      date: fmtPrDate(dates.velMms),
+    });
+  return records;
 }
 
 function parseLimit(raw: string | null): number {
