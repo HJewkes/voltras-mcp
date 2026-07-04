@@ -381,6 +381,77 @@ describe('GET /api/history', () => {
     expect(body.workout).toBeNull();
   });
 
+  it('serves the active exercise prescription from an attached template', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-P',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-P', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'squat',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+            {
+              id: 'pe2',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 1,
+              targetSets: 3,
+              targetRepsLow: 8,
+              targetRepsHigh: 10,
+              targetWeightLbs: 62,
+              targetRpe: 8,
+            },
+          ]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { plan: Record<string, number> | null };
+    expect(body.plan).toEqual({ repsLow: 8, repsHigh: 10, weightLbs: 62, rpe: 8 });
+  });
+
+  it('returns plan=null when no template is attached to the active session', async () => {
+    const session: ActiveSession = {
+      sessionId: 's',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () => Promise.resolve([]),
+        getPlannedExercisesForTemplate: () => Promise.resolve([]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: unknown };
+    expect(body.plan).toBeNull();
+  });
+
   it('uses the default limit when ?limit is absent', async () => {
     const state = makeFakeState({ primary: {} });
     const handle = await startWithFake(state);

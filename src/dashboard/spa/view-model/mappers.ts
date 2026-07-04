@@ -171,6 +171,45 @@ export function isNewE1RM(current: number | null | undefined, historyBest: numbe
   return current != null && historyBest != null && current > historyBest;
 }
 
+/** Prescribed targets for the active exercise, matching `/api/session-plan`. */
+export interface PrescriptionView {
+  repsLow?: number;
+  repsHigh?: number;
+  weightLbs?: number;
+  rpe?: number;
+}
+
+/** Human prescription string, e.g. "8–10 @ 62 lb · RPE 8". Null if nothing to show. */
+export function formatPrescription(p: PrescriptionView | null): string | null {
+  if (p == null) return null;
+  let reps: string | null = null;
+  if (p.repsLow != null && p.repsHigh != null) {
+    reps = p.repsLow === p.repsHigh ? `${p.repsLow}` : `${p.repsLow}–${p.repsHigh}`;
+  } else if (p.repsLow != null) {
+    reps = `${p.repsLow}`;
+  }
+  const weight = p.weightLbs != null ? `${p.weightLbs} lb` : null;
+  const head = [reps, weight].filter((s): s is string => s != null).join(' @ ');
+  const rpe = p.rpe != null ? `RPE ${p.rpe}` : null;
+  const full = [head.length > 0 ? head : null, rpe]
+    .filter((s): s is string => s != null)
+    .join(' · ');
+  return full.length > 0 ? full : null;
+}
+
+/**
+ * Signed % the actual working weight deviates from the prescribed weight — feeds
+ * titan DeviationBar (positive = heavier than planned). Null when either weight
+ * is missing, so "no prescription" renders nothing rather than a 0% "on plan".
+ */
+export function weightDeviationPct(
+  actualLbs: number | null,
+  prescribedLbs: number | null | undefined,
+): number | null {
+  if (actualLbs == null || prescribedLbs == null || prescribedLbs <= 0) return null;
+  return Math.round(((actualLbs - prescribedLbs) / prescribedLbs) * 100);
+}
+
 const round1 = (x: number): number => (Number.isFinite(x) ? Math.round(x * 10) / 10 : 0);
 
 /**

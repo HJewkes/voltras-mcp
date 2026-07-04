@@ -50,6 +50,7 @@ import { SessionProgressPanel } from './panels/SessionProgressPanel';
 import { BodyMapPanel } from './panels/BodyMapPanel';
 import { StrengthTrendPanel, type ExerciseTrendPoint } from './panels/StrengthTrendPanel';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
+import type { PrescriptionView } from './view-model/mappers';
 
 const POLL_INTERVAL_MS = 500;
 const TICK_INTERVAL_MS = 1000;
@@ -67,6 +68,7 @@ interface Model {
   nowMs: number;
   trend: ExerciseTrendPoint[];
   nextWorkout: NextWorkoutView | null;
+  prescription: PrescriptionView | null;
 }
 
 function useDashboardModel(): Model {
@@ -77,6 +79,7 @@ function useDashboardModel(): Model {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [trend, setTrend] = useState<ExerciseTrendPoint[]>([]);
   const [nextWorkout, setNextWorkout] = useState<NextWorkoutView | null>(null);
+  const [prescription, setPrescription] = useState<PrescriptionView | null>(null);
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -129,9 +132,10 @@ function useDashboardModel(): Model {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes] = await Promise.all([
+        const [trendRes, nextRes, planRes] = await Promise.all([
           fetch('/api/exercise-trend', { cache: 'no-store' }),
           fetch('/api/next-workout', { cache: 'no-store' }),
+          fetch('/api/session-plan', { cache: 'no-store' }),
         ]);
         if (trendRes.ok) {
           const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
@@ -140,6 +144,10 @@ function useDashboardModel(): Model {
         if (nextRes.ok) {
           const data = (await nextRes.json()) as { workout?: NextWorkoutView | null };
           if (!cancelled) setNextWorkout(data.workout ?? null);
+        }
+        if (planRes.ok) {
+          const data = (await planRes.json()) as { plan?: PrescriptionView | null };
+          if (!cancelled) setPrescription(data.plan ?? null);
         }
       } catch {
         // best-effort; keep the last-known values on a transient failure
@@ -153,7 +161,7 @@ function useDashboardModel(): Model {
     };
   }, [exerciseName]);
 
-  return { snapshot, accumulator, status, lastUpdate, nowMs, trend, nextWorkout };
+  return { snapshot, accumulator, status, lastUpdate, nowMs, trend, nextWorkout, prescription };
 }
 
 function formatClock(d: Date): string {
@@ -162,7 +170,7 @@ function formatClock(d: Date): string {
 }
 
 function App(): React.JSX.Element {
-  const { snapshot, accumulator, status, lastUpdate, nowMs, trend, nextWorkout } =
+  const { snapshot, accumulator, status, lastUpdate, nowMs, trend, nextWorkout, prescription } =
     useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
@@ -234,6 +242,7 @@ function App(): React.JSX.Element {
           heroSets={heroSets}
           historyBestE1rm={trend.length > 0 ? Math.max(...trend.map((p) => p.e1rm)) : null}
           nextWorkout={nextWorkout}
+          prescription={prescription}
         />
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />

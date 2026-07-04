@@ -207,6 +207,28 @@
   min-height: 60px;
 }
 
+/* "vs plan" deviation row (titan DeviationBar) — actual working weight against
+   the attached plan's prescribed weight. */
+.hero-deviation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.hero-deviation-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.hero-deviation-value {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
 /* Strength-trend chart (titan StrengthTrendChart) — center the fixed-size SVG
    plot within the panel body. */
 .strength-trend-body {

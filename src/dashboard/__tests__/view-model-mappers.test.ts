@@ -11,9 +11,11 @@ import {
   deriveExerciseE1RM,
   deriveRpe,
   deriveTempo,
+  formatPrescription,
   isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
+  weightDeviationPct,
   type WorkoutSetView,
 } from '../spa/view-model/mappers.js';
 
@@ -87,6 +89,35 @@ describe('isNewE1RM', () => {
     expect(isNewE1RM(200, null)).toBe(false); // first-ever session: nothing to beat
     expect(isNewE1RM(null, 170)).toBe(false);
     expect(isNewE1RM(undefined, 170)).toBe(false);
+  });
+});
+
+describe('formatPrescription', () => {
+  it('renders a rep-range · weight · RPE string', () => {
+    expect(formatPrescription({ repsLow: 8, repsHigh: 10, weightLbs: 62, rpe: 8 })).toBe(
+      '8–10 @ 62 lb · RPE 8',
+    );
+  });
+  it('collapses an equal rep range and omits missing parts', () => {
+    expect(formatPrescription({ repsLow: 5, repsHigh: 5, weightLbs: 100 })).toBe('5 @ 100 lb');
+    expect(formatPrescription({ weightLbs: 45 })).toBe('45 lb');
+  });
+  it('is null for no prescription or an empty one', () => {
+    expect(formatPrescription(null)).toBeNull();
+    expect(formatPrescription({})).toBeNull();
+  });
+});
+
+describe('weightDeviationPct', () => {
+  it('signs the deviation from prescribed weight (heavier = positive)', () => {
+    expect(weightDeviationPct(66, 60)).toBe(10);
+    expect(weightDeviationPct(54, 60)).toBe(-10);
+    expect(weightDeviationPct(60, 60)).toBe(0);
+  });
+  it('is null when either weight is missing', () => {
+    expect(weightDeviationPct(null, 60)).toBeNull();
+    expect(weightDeviationPct(60, undefined)).toBeNull();
+    expect(weightDeviationPct(60, 0)).toBeNull();
   });
 });
 
