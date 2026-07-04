@@ -510,6 +510,35 @@ describe('GET /api/history', () => {
     expect(body.program).toBeNull();
   });
 
+  it('rolls up weekly effective sets per muscle (primary full, secondary half)', async () => {
+    const now = new Date().toISOString();
+    const base = makeFakeState(
+      { primary: {} },
+      () => Promise.resolve([{ id: 's1', startedAt: now, exerciseId: 'bench' }]),
+      () => Promise.resolve([{}, {}, {}] as unknown as StoredSet[]), // 3 sets
+    );
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: base.store,
+      exercises: {
+        getById: () => ({ muscleGroups: ['chest'], secondaryMuscleGroups: ['triceps'] }),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/muscle-volume');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { muscles: Record<string, number> };
+    expect(body.muscles.chest).toBe(3); // primary: 3 sets
+    expect(body.muscles.triceps).toBe(1.5); // secondary: 3 × 0.5
+  });
+
+  it('returns muscles=null when no exercise catalog is available', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/muscle-volume');
+    const body = JSON.parse(res.body) as { muscles: unknown };
+    expect(body.muscles).toBeNull();
+  });
+
   it('uses the default limit when ?limit is absent', async () => {
     const state = makeFakeState({ primary: {} });
     const handle = await startWithFake(state);

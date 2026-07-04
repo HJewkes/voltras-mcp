@@ -14,8 +14,9 @@
  * NDA: derived purely from `/api/snapshot` JSON muscle metadata — no protocol
  * data crosses this boundary.
  */
-import { MuscleGroup, type BodyMapData } from '@titan-design/react-ui';
+import { DEFAULT_VOLUME_LANDMARKS, MuscleGroup, type BodyMapData } from '@titan-design/react-ui';
 import type { SnapshotActiveExercise } from './adapter';
+import { volumeStatusForSets } from './view-model/mappers';
 
 /**
  * The volume-status enum BodyMap's data actually expects. Derived from
@@ -103,4 +104,30 @@ export function buildBodyMapData(
   for (const raw of activeExercise.secondaryMuscles) add(raw, SECONDARY_INTENSITY);
 
   return Array.from(byGroup.values());
+}
+
+/**
+ * Build the WEEKLY-volume heatmap from `/api/muscle-volume` (effective sets per
+ * voltras muscle string over the trailing week). Each muscle's `volumeStatus`
+ * comes from titan's MEV/MAV/MRV landmarks (getHeatmapColor paints under=cool →
+ * over=hot); `intensity` scales the fill toward MRV. Multiple voltras strings
+ * that fold onto one titan group have their sets summed. Empty input (no recent
+ * training) yields a plain body outline.
+ */
+export function buildWeeklyVolumeData(weeklySetsByMuscle: Record<string, number>): BodyMapData[] {
+  const byGroup = new Map<MuscleGroup, number>();
+  for (const [raw, sets] of Object.entries(weeklySetsByMuscle)) {
+    const group = toMuscleGroup(raw);
+    if (group === null || !(sets > 0)) continue;
+    byGroup.set(group, (byGroup.get(group) ?? 0) + sets);
+  }
+  return Array.from(byGroup.entries()).map(([group, sets]) => {
+    const landmarks = DEFAULT_VOLUME_LANDMARKS[group];
+    return {
+      muscleGroup: group,
+      intensity: Math.min(1, sets / landmarks.mrv),
+      volumeStatus: volumeStatusForSets(sets, landmarks),
+      weeklySets: Math.round(sets),
+    };
+  });
 }
