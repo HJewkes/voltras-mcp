@@ -25,6 +25,7 @@
 import {
   Card,
   CardContent,
+  DeviationBar,
   ExerciseCard,
   VelocityStrip,
   WorkoutCard,
@@ -42,9 +43,12 @@ export interface NextWorkoutView {
 import {
   deriveExerciseE1RM,
   deriveTempo,
+  formatPrescription,
   isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
+  weightDeviationPct,
+  type PrescriptionView,
   type WorkoutSetView,
 } from '../view-model/mappers';
 
@@ -62,6 +66,8 @@ export interface ExerciseHeroProps {
   historyBestE1rm: number | null;
   /** Next planned workout for the idle preview; null when no plan / none pending. */
   nextWorkout: NextWorkoutView | null;
+  /** Prescribed targets for the active exercise; null when no plan is attached. */
+  prescription: PrescriptionView | null;
 }
 
 export function ExerciseHeroPanel({
@@ -72,6 +78,7 @@ export function ExerciseHeroPanel({
   heroSets,
   historyBestE1rm,
   nextWorkout,
+  prescription,
 }: ExerciseHeroProps): React.JSX.Element {
   if (!hasSession) {
     return (
@@ -107,6 +114,9 @@ export function ExerciseHeroPanel({
   const e1rm = deriveExerciseE1RM(heroSets);
   const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
   const tempo = deriveTempo(heroSets);
+  const prescriptionText = formatPrescription(prescription);
+  const activeWeightLbs = heroSets[heroSets.length - 1]?.weightLbs ?? null;
+  const weightDeviation = weightDeviationPct(activeWeightLbs, prescription?.weightLbs);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -134,6 +144,22 @@ export function ExerciseHeroPanel({
           <VelocityStrip velocities={currentSet.velocitiesMps} variant="full" expanded showInfo />
         </div>
       )}
+      {currentSet.active && weightDeviation !== null && (
+        // Working weight vs the attached plan's prescribed weight — "on plan" at
+        // a glance via titan DeviationBar (positive = heavier than planned).
+        <div
+          className="hero-deviation"
+          aria-label={`Working weight vs plan: ${weightDeviation > 0 ? '+' : ''}${weightDeviation}%`}
+        >
+          <span className="hero-deviation-label">vs plan</span>
+          <DeviationBar deviation={weightDeviation} width={160} />
+          <span className="hero-deviation-value">
+            {weightDeviation === 0
+              ? 'on plan'
+              : `${weightDeviation > 0 ? '+' : ''}${weightDeviation}%`}
+          </span>
+        </div>
+      )}
       <div className="hero-card" aria-live="polite" aria-atomic="false">
         <ExerciseCard
           name={title}
@@ -143,6 +169,7 @@ export function ExerciseHeroPanel({
           e1rm={e1rm ?? undefined}
           isPR={isPR}
           tempo={tempo ?? undefined}
+          prescription={prescriptionText ?? undefined}
           sets={heroSets.map(toSetRowProps)}
         />
       </div>

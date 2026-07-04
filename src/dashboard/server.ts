@@ -115,6 +115,8 @@ export interface DashboardServerState {
     getWorkoutTemplatesForWeek?(weekId: string): Promise<StoredWorkoutTemplate[]>;
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     getAssignmentsForTemplate?(templateId: string): Promise<StoredProgramAssignment[]>;
+    /** Plan assignments attached to a session — feeds the active-exercise prescription. */
+    getAssignmentsForSession?(sessionId: string): Promise<StoredProgramAssignment[]>;
   };
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
@@ -275,6 +277,11 @@ async function handleRequest(
   if (pathname === '/api/next-workout') {
     const workout = await fetchNextWorkout(state);
     sendJson(res, 200, { workout });
+    return;
+  }
+  if (pathname === '/api/session-plan') {
+    const plan = await fetchSessionPlan(state);
+    sendJson(res, 200, { plan });
     return;
   }
   sendJson(res, 404, { error: 'not_found' });
@@ -452,6 +459,57 @@ async function fetchNextWorkout(state: DashboardServerState): Promise<NextWorkou
         };
       }
     }
+  }
+  return null;
+}
+
+/** Prescribed targets for the active exercise, from its attached plan template. */
+interface PrescriptionView {
+  repsLow?: number;
+  repsHigh?: number;
+  weightLbs?: number;
+  rpe?: number;
+}
+
+/**
+ * The active exercise's prescription, when the live session is attached to a
+ * workout template (plan.attach_to_session): find the planned exercise matching
+ * the active exercise id and surface its target rep range / weight / RPE. Returns
+ * null when the plan store isn't available, no session/exercise is active, or no
+ * template-level attachment covers the active exercise. Single-exercise
+ * (plannedExerciseId) attachments aren't resolved here — the store has no direct
+ * getPlannedExercise(id); tracked as a follow-up. Plan metadata only (NF-07).
+ */
+async function fetchSessionPlan(state: DashboardServerState): Promise<PrescriptionView | null> {
+  const { store } = state;
+  if (
+    store.getAssignmentsForSession === undefined ||
+    store.getPlannedExercisesForTemplate === undefined
+  ) {
+    return null;
+  }
+  let session: ActiveSession | undefined;
+  for (const [, slot] of state.slots) {
+    const candidate = slot.live.snapshotSession();
+    if (candidate !== undefined) {
+      session = candidate;
+      break;
+    }
+  }
+  if (session === undefined || session.exerciseId === undefined) return null;
+  const { sessionId, exerciseId } = session;
+
+  for (const assignment of await store.getAssignmentsForSession(sessionId)) {
+    if (assignment.workoutTemplateId === undefined) continue;
+    const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
+    const match = planned.find((p) => p.exerciseId === exerciseId);
+    if (match === undefined) continue;
+    const prescription: PrescriptionView = {};
+    if (match.targetRepsLow !== undefined) prescription.repsLow = match.targetRepsLow;
+    if (match.targetRepsHigh !== undefined) prescription.repsHigh = match.targetRepsHigh;
+    if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
+    if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
+    return prescription;
   }
   return null;
 }
