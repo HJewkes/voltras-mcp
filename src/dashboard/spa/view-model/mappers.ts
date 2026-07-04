@@ -19,6 +19,8 @@
 import {
   estimateE1RMFromReps,
   estimateSetRIR,
+  getPhaseHoldDuration,
+  getPhaseMovementDuration,
   getRepPeakVelocity,
   getSetVelocityLossPct,
   type Rep,
@@ -167,4 +169,29 @@ export function deriveExerciseE1RM(
  */
 export function isNewE1RM(current: number | null | undefined, historyBest: number | null): boolean {
   return current != null && historyBest != null && current > historyBest;
+}
+
+const round1 = (x: number): number => (Number.isFinite(x) ? Math.round(x * 10) / 10 : 0);
+
+/**
+ * Rep cadence as titan `TempoDisplay`'s `[eccentric, pauseBottom, concentric,
+ * pauseTop]` seconds, from the most recent rep carrying real phase timing. Read
+ * straight off WA's phase durations (not the getRepTempo string, which rounds to
+ * whole seconds and loses sub-second pauses). Returns null when no rep has timing
+ * yet — a 0-0-0-0 cadence means "not captured", not "instant", so we hide it.
+ */
+export function deriveTempo(views: WorkoutSetView[]): [number, number, number, number] | null {
+  const last = views[views.length - 1];
+  if (last === undefined) return null;
+  for (let i = last.reps.length - 1; i >= 0; i--) {
+    const rep = last.reps[i];
+    const tempo: [number, number, number, number] = [
+      round1(getPhaseMovementDuration(rep.eccentric)),
+      round1(getPhaseHoldDuration(rep.eccentric)),
+      round1(getPhaseMovementDuration(rep.concentric)),
+      round1(getPhaseHoldDuration(rep.concentric)),
+    ];
+    if (tempo.some((v) => v > 0)) return tempo;
+  }
+  return null;
 }

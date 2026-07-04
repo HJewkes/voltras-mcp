@@ -26,6 +26,7 @@ import { Card, CardContent, ExerciseCard, VelocityStrip } from '@titan-design/re
 import type { CurrentSetView } from '../adapter';
 import {
   deriveExerciseE1RM,
+  deriveTempo,
   isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
@@ -71,6 +72,7 @@ export function ExerciseHeroPanel({
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
   const e1rm = deriveExerciseE1RM(heroSets);
   const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
+  const tempo = deriveTempo(heroSets);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -106,6 +108,7 @@ export function ExerciseHeroPanel({
           summary={summary}
           e1rm={e1rm ?? undefined}
           isPR={isPR}
+          tempo={tempo ?? undefined}
           sets={heroSets.map(toSetRowProps)}
         />
       </div>
