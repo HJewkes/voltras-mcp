@@ -238,6 +238,20 @@
   overflow-x: auto;
 }
 
+/* "PR history" affordance below the trend chart — opens the PrHistoryModal. */
+.pr-history-link {
+  display: block;
+  margin: 10px auto 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-brand-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
 /* BodyMap Live / Weekly-volume mode toggle. */
 .bodymap-mode {
   display: flex;
