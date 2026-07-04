@@ -207,6 +207,15 @@
   min-height: 60px;
 }
 
+/* Strength-trend chart (titan StrengthTrendChart) — center the fixed-size SVG
+   plot within the panel body. */
+.strength-trend-body {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 2px;
+  overflow-x: auto;
+}
+
 .panel-empty {
   padding: 20px 0;
   text-align: center;

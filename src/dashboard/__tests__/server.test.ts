@@ -18,7 +18,7 @@ import {
   type DashboardServerState,
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
-import type { StoredSession } from '../../store/types.js';
+import type { StoredSession, StoredSet } from '../../store/types.js';
 
 // Track every handle a test acquires so `afterEach` can close stragglers.
 const liveHandles: DashboardServerHandle[] = [];
@@ -55,9 +55,11 @@ function makeFakeState(
     sort: 'startedAt:desc' | 'startedAt:asc';
     limit: number;
     offset: number;
+    exerciseId?: string;
   }) => Promise<StoredSession[]> = () => Promise.resolve([]),
+  getSetsForSession: (sessionId: string) => Promise<StoredSet[]> = () => Promise.resolve([]),
 ): DashboardServerState & {
-  store: { listSessions: ReturnType<typeof vi.fn> };
+  store: { listSessions: ReturnType<typeof vi.fn>; getSetsForSession: ReturnType<typeof vi.fn> };
 } {
   const slotMap = new Map<
     string,
@@ -73,9 +75,10 @@ function makeFakeState(
     });
   }
   const listMock = vi.fn(listSessions);
+  const setsMock = vi.fn(getSetsForSession);
   return {
     slots: slotMap,
-    store: { listSessions: listMock },
+    store: { listSessions: listMock, getSetsForSession: setsMock },
   };
 }
 
@@ -283,6 +286,52 @@ describe('GET /api/history', () => {
     await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/history?limit=200');
     const callArgs = state.store.listSessions.mock.calls[0]?.[0] as { limit: number };
     expect(callArgs.limit).toBe(HISTORY_MAX_LIMIT);
+  });
+
+  it('computes a per-exercise e1RM trend with PR flags from history', async () => {
+    const makeSet = (sessionId: string, weightLbs: number, reps: number): StoredSet => ({
+      id: `${sessionId}-set`,
+      sessionId,
+      startedAt: '',
+      endedAt: '',
+      partial: false,
+      trainingMode: 'weight',
+      weightLbs,
+      reps: Array.from({ length: reps }, () => ({}) as StoredSet['reps'][number]),
+    });
+    const sessions: StoredSession[] = [
+      { id: 's1', startedAt: '2026-05-01T00:00:00.000Z', exerciseId: 'bench' },
+      { id: 's2', startedAt: '2026-05-08T00:00:00.000Z', exerciseId: 'bench' },
+    ];
+    const setsById: Record<string, StoredSet[]> = {
+      s1: [makeSet('s1', 100, 5)],
+      s2: [makeSet('s2', 110, 5)], // heavier → higher e1RM → PR
+    };
+    const state = makeFakeState(
+      { primary: {} },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+    const handle = await startWithFake(state);
+    const res = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/exercise-trend?exerciseId=bench',
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as {
+      points: { date: string; e1rm: number; isPR: boolean }[];
+    };
+    expect(body.points).toHaveLength(2);
+    expect(body.points[0]?.isPR).toBe(true); // first session establishes the baseline PR
+    expect(body.points[1]?.e1rm).toBeGreaterThan(body.points[0]?.e1rm ?? 0);
+    expect(body.points[1]?.isPR).toBe(true); // improved on the baseline
+    expect(state.store.listSessions).toHaveBeenCalledWith({
+      sort: 'startedAt:asc',
+      limit: HISTORY_DEFAULT_LIMIT,
+      offset: 0,
+      exerciseId: 'bench',
+    });
   });
 
   it('uses the default limit when ?limit is absent', async () => {

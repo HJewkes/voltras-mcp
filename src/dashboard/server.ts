@@ -47,10 +47,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { estimateE1RMFromReps } from '@voltras/workout-analytics';
+
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
-import type { StoredSession } from '../store/types.js';
+import type { StoredSession, StoredSet } from '../store/types.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -91,7 +93,10 @@ export interface DashboardServerState {
       sort: 'startedAt:desc' | 'startedAt:asc';
       limit: number;
       offset: number;
+      exerciseId?: string;
     }): Promise<StoredSession[]>;
+    /** Persisted sets (with full WA reps) for a session — feeds the e1RM trend. */
+    getSetsForSession(sessionId: string): Promise<StoredSet[]>;
   };
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
@@ -244,6 +249,11 @@ async function handleRequest(
     sendJson(res, 200, { sessions });
     return;
   }
+  if (pathname === '/api/exercise-trend') {
+    const points = await fetchExerciseTrend(state, url);
+    sendJson(res, 200, { points });
+    return;
+  }
   sendJson(res, 404, { error: 'not_found' });
 }
 
@@ -300,6 +310,64 @@ async function fetchHistory(
     limit,
     offset: 0,
   });
+}
+
+/** One point on the per-exercise estimated-1RM trend (titan StrengthTrendChart shape). */
+interface ExerciseTrendPoint {
+  /** ISO timestamp of the session. */
+  date: string;
+  /** Best estimated 1RM (lbs) across that session's sets of this exercise. */
+  e1rm: number;
+  /** True when this session set a new all-time e1RM in the returned window. */
+  isPR: boolean;
+}
+
+/** The active session's exercise id (first slot with a session), for the default trend. */
+function activeExerciseId(state: DashboardServerState): string | undefined {
+  for (const [, slot] of state.slots) {
+    const session = slot.live.snapshotSession();
+    if (session?.exerciseId !== undefined) return session.exerciseId;
+  }
+  return undefined;
+}
+
+/**
+ * Per-exercise estimated-1RM trend from persisted history. For each past session
+ * of the exercise, the best `estimateE1RMFromReps(weight, repCount)` across its
+ * sets becomes one chronological point; a running max flags PR sessions. Pure
+ * fitness metadata over stored WA reps — no protocol data crosses the boundary.
+ */
+async function fetchExerciseTrend(
+  state: DashboardServerState,
+  url: URL,
+): Promise<ExerciseTrendPoint[]> {
+  const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
+  if (exerciseId === undefined || exerciseId === '') return [];
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:asc',
+    limit,
+    offset: 0,
+    exerciseId,
+  });
+
+  const points: ExerciseTrendPoint[] = [];
+  let runningMax = Number.NEGATIVE_INFINITY;
+  for (const session of sessions) {
+    const sets = await state.store.getSetsForSession(session.id);
+    let best = 0;
+    for (const set of sets) {
+      if (set.reps.length < 1) continue;
+      const est = estimateE1RMFromReps(set.weightLbs, set.reps.length).e1RM;
+      if (Number.isFinite(est) && est > best) best = est;
+    }
+    if (best <= 0) continue;
+    const e1rm = Math.round(best);
+    const isPR = e1rm > runningMax;
+    if (isPR) runningMax = e1rm;
+    points.push({ date: session.startedAt, e1rm, isPR });
+  }
+  return points;
 }
 
 function parseLimit(raw: string | null): number {
