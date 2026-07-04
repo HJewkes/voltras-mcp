@@ -5,9 +5,10 @@
 // mobile app will share. Pure logic, node environment.
 
 import { describe, expect, it } from 'vitest';
-import type { Rep } from '@voltras/workout-analytics';
+import { estimateE1RMFromReps, type Rep } from '@voltras/workout-analytics';
 
 import {
+  deriveExerciseE1RM,
   deriveRpe,
   toExerciseSummary,
   toSetRowProps,
@@ -45,6 +46,24 @@ function completedView(reps: Rep[], over: Partial<WorkoutSetView> = {}): Workout
     ...over,
   };
 }
+
+describe('deriveExerciseE1RM', () => {
+  it('returns the best (max) e1RM across the exercise sets, rounded', () => {
+    const light = completedView([rep(1, 800), rep(2, 700), rep(3, 650)], { weightLbs: 100 });
+    const heavy = completedView([rep(1, 800), rep(2, 700), rep(3, 650), rep(4, 600), rep(5, 550)], {
+      weightLbs: 100,
+    });
+    // 5 reps yields a higher rep-based e1RM than 3 at the same load.
+    const expected = Math.round(estimateE1RMFromReps(100, 5).e1RM);
+    expect(deriveExerciseE1RM([light, heavy])).toEqual({ value: expected, unit: 'lbs' });
+  });
+
+  it('is null when no set has both a weight and at least one rep', () => {
+    expect(deriveExerciseE1RM([])).toBeNull();
+    expect(deriveExerciseE1RM([completedView([], { weightLbs: 100 })])).toBeNull();
+    expect(deriveExerciseE1RM([completedView([rep(1, 800)], { weightLbs: null })])).toBeNull();
+  });
+});
 
 describe('deriveRpe', () => {
   it('derives a nearest-0.5 RPE (0–10) from real velocity loss', () => {
