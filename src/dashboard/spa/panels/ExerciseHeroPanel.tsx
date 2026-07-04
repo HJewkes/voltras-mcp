@@ -26,6 +26,7 @@ import { Card, CardContent, ExerciseCard, VelocityStrip } from '@titan-design/re
 import type { CurrentSetView } from '../adapter';
 import {
   deriveExerciseE1RM,
+  isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
   type WorkoutSetView,
@@ -41,6 +42,8 @@ export interface ExerciseHeroProps {
   currentSet: CurrentSetView;
   /** Completed sets + the active set, ascending, as canonical set views. */
   heroSets: WorkoutSetView[];
+  /** Best estimated 1RM in this exercise's prior history, for PR detection. Null when none. */
+  historyBestE1rm: number | null;
 }
 
 export function ExerciseHeroPanel({
@@ -49,6 +52,7 @@ export function ExerciseHeroPanel({
   mode,
   currentSet,
   heroSets,
+  historyBestE1rm,
 }: ExerciseHeroProps): React.JSX.Element {
   if (!hasSession) {
     return (
@@ -66,6 +70,7 @@ export function ExerciseHeroPanel({
   const title = named ? exercise : 'Current exercise';
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
   const e1rm = deriveExerciseE1RM(heroSets);
+  const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -100,6 +105,7 @@ export function ExerciseHeroPanel({
           onToggle={() => undefined}
           summary={summary}
           e1rm={e1rm ?? undefined}
+          isPR={isPR}
           sets={heroSets.map(toSetRowProps)}
         />
       </div>

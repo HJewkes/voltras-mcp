@@ -220,6 +220,7 @@ function App(): React.JSX.Element {
           mode={currentSet.mode}
           currentSet={currentSet}
           heroSets={heroSets}
+          historyBestE1rm={trend.length > 0 ? Math.max(...trend.map((p) => p.e1rm)) : null}
         />
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
