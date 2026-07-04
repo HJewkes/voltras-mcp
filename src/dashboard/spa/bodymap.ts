@@ -14,9 +14,13 @@
  * NDA: derived purely from `/api/snapshot` JSON muscle metadata — no protocol
  * data crosses this boundary.
  */
-import { DEFAULT_VOLUME_LANDMARKS, MuscleGroup, type BodyMapData } from '@titan-design/react-ui';
+import {
+  DEFAULT_VOLUME_LANDMARKS,
+  MuscleGroup,
+  type BodyMapData,
+} from '@titan-design/react-ui/bodymap';
+import { classifyWeeklyVolume } from '@voltras/workout-analytics';
 import type { SnapshotActiveExercise } from './adapter';
-import { volumeStatusForSets } from './view-model/mappers';
 
 /**
  * The volume-status enum BodyMap's data actually expects. Derived from
@@ -126,7 +130,7 @@ export function buildWeeklyVolumeData(weeklySetsByMuscle: Record<string, number>
     return {
       muscleGroup: group,
       intensity: Math.min(1, sets / landmarks.mrv),
-      volumeStatus: volumeStatusForSets(sets, landmarks),
+      volumeStatus: classifyWeeklyVolume(sets, landmarks),
       weeklySets: Math.round(sets),
     };
   });

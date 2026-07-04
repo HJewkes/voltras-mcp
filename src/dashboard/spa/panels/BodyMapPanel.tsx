@@ -11,7 +11,7 @@
  * this component is reached solely through the vite bundle (never node vitest).
  */
 import { useState } from 'react';
-import { BodyMap, type BodyMapData, type MuscleGroup } from '@titan-design/react-ui';
+import { BodyMap, type BodyMapData, type MuscleGroup } from '@titan-design/react-ui/bodymap';
 import { PanelCard } from './PanelCard';
 
 export function BodyMapPanel({

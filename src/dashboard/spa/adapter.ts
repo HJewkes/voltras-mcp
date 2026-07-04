@@ -13,13 +13,56 @@
  * WA peak velocities are millimetres/second; divide by 1000 for m/s (matches the
  * legacy dashboard's `fmtVelocity`).
  */
-import { getSetVelocityLossPct, type Rep } from '@voltras/workout-analytics';
+import { getRepPeakVelocity, getSetVelocityLossPct, type Rep } from '@voltras/workout-analytics';
 
-import { MMS_PER_MPS, repPeakMms, toMps, type WorkoutSetView } from './view-model/mappers';
+/**
+ * mm/s → m/s divisor. The device pipeline records velocities in mm/s; converting
+ * to the m/s the UI reasons in is a data-source concern the app owns (WA stays
+ * unit-agnostic; the design system rounds for display).
+ */
+export const MMS_PER_MPS = 1000;
 
-// `toMps` is re-exported for consumers/tests that read the dashboard's public
-// adapter surface; its single home is the shared view-model mapper layer.
-export { toMps } from './view-model/mappers';
+/** Peak concentric velocity (mm/s) for a rep, via WA. Null when unavailable. */
+export function repPeakMms(rep: Rep): number | null {
+  const v = getRepPeakVelocity(rep);
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Convert a mm/s velocity to m/s (2-dp) as a number for chart props. */
+export function toMps(mmPerSec: number | null | undefined): number | null {
+  if (mmPerSec == null || !Number.isFinite(mmPerSec)) return null;
+  return Number((mmPerSec / MMS_PER_MPS).toFixed(2));
+}
+
+/**
+ * Canonical, surface-agnostic view of one set in the hero timeline. Carries the
+ * raw WA `Rep[]` as the source of truth; the panel derives RPE / per-rep velocity
+ * from it via WA so every consumer gets identical numbers. Plan context
+ * (`targetReps` / `targetWeightLbs` / `previous`) is composed app-side — it comes
+ * from the session/plan layer, not from WA analytics.
+ */
+export interface WorkoutSetView {
+  setNumber: number;
+  /** `'completed'` = a closed set; `'active'` = the in-progress set. */
+  kind: 'completed' | 'active';
+  /** Full WA reps (source of truth) — RPE / velocity derive from these. */
+  reps: readonly Rep[];
+  weightLbs: number | null;
+  /** Active-set targets (rep-count trigger + working weight); null for completed. */
+  targetReps: number | null;
+  targetWeightLbs: number | null;
+  /** Prior set's performance, for titan SetRow's PREV column. */
+  previous: { reps: number; weightLbs: number } | null;
+}
+
+/** Prescribed targets for the active exercise, matching `/api/session-plan`. */
+export interface PrescriptionView {
+  repsLow?: number;
+  repsHigh?: number;
+  weightLbs?: number;
+  rpe?: number;
+}
+
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
 const TENTHS_PER_LB = 10;
 /** Battery percent below which the indicator flips to its warning state. */
