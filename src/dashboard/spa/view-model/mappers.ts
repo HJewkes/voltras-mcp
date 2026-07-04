@@ -1,0 +1,140 @@
+/**
+ * Shared workout view-model → titan-prop mappers (VMCP-01.52, convergence Track 2).
+ *
+ * This is the convergence backbone: a canonical, surface-agnostic per-set shape
+ * ({@link WorkoutSetView}) plus pure mappers from it onto titan-design component
+ * props. The dashboard SPA consumes it today; the mobile app will map its own WA
+ * `Set` data into the SAME `WorkoutSetView` and reuse these mappers, so both
+ * surfaces derive RPE / velocity identically and render one component set.
+ *
+ * Deliberately self-contained — it imports only `@voltras/workout-analytics`
+ * (runtime math) and titan-design *types* (`import type`, erased at build). No
+ * dashboard-specific or React-runtime imports — so it lifts cleanly into a shared
+ * `@voltras/workout-view-model` package when a second consumer (mobile) is ready.
+ *
+ * All VBT math is routed through WA (`getRepPeakVelocity`, `getSetVelocityLossPct`,
+ * `estimateSetRIR`) — never hand-rolled. NDA: reads WA view-models only; no
+ * protocol bytes / frames / command codes cross this boundary.
+ */
+import {
+  estimateSetRIR,
+  getRepPeakVelocity,
+  getSetVelocityLossPct,
+  type Rep,
+} from '@voltras/workout-analytics';
+import type { ExerciseCardProps, SetRowProps } from '@titan-design/react-ui';
+
+/** mm/s → m/s divisor (WA velocities arrive in mm/s). */
+export const MMS_PER_MPS = 1000;
+
+/**
+ * Canonical, surface-agnostic view of one set in a workout timeline. Carries the
+ * raw WA `Rep[]` as the source of truth; the mappers derive RPE / per-rep
+ * velocity from it via WA so every consumer gets identical numbers. Both the
+ * dashboard (from its snapshot accumulator) and mobile (from its `CompletedSet`)
+ * can populate this shape.
+ */
+export interface WorkoutSetView {
+  setNumber: number;
+  /** `'completed'` = a closed set; `'active'` = the in-progress set. */
+  kind: 'completed' | 'active';
+  /** Full WA reps (source of truth) — RPE / velocity derive from these. */
+  reps: readonly Rep[];
+  weightLbs: number | null;
+  /** Active-set targets (rep-count trigger + working weight); null for completed. */
+  targetReps: number | null;
+  targetWeightLbs: number | null;
+  /** Prior set's performance, for titan SetRow's PREV column. */
+  previous: { reps: number; weightLbs: number } | null;
+}
+
+/** Peak concentric velocity (mm/s) for a rep, via WA. Null if unavailable. */
+export function repPeakMms(rep: Rep): number | null {
+  const v = getRepPeakVelocity(rep);
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Convert a mm/s velocity to m/s (2-dp) as a number for chart props. */
+export function toMps(mmPerSec: number | null | undefined): number | null {
+  if (mmPerSec == null || !Number.isFinite(mmPerSec)) return null;
+  return Number((mmPerSec / MMS_PER_MPS).toFixed(2));
+}
+
+/**
+ * Estimated RPE (10 − RIR) for a set, via WA `estimateSetRIR` (velocity-loss
+ * based, never hand-rolled). Needs at least two reps carrying real concentric
+ * movement samples; under two reps, or when WA can't derive a finite RIR (e.g.
+ * reps with no samples), we return null so titan SetRow renders its em-dash.
+ *
+ * RPE is a velocity-loss estimate, so it is gated on velocity loss being itself
+ * derivable — without real concentric samples `estimateSetRIR` returns a
+ * misleading floor (RPE 10) rather than signalling "unknown". Rounded to the
+ * nearest 0.5 — RPE's conventional granularity, which also aligns with titan's
+ * RPE color bands.
+ */
+export function deriveRpe(reps: readonly Rep[]): number | null {
+  if (reps.length < 2) return null;
+  const set = { reps: [...reps] };
+  if (!Number.isFinite(getSetVelocityLossPct(set))) return null;
+  const { rpe } = estimateSetRIR(set);
+  if (!Number.isFinite(rpe)) return null;
+  return Math.round(rpe * 2) / 2;
+}
+
+/** Per-rep peak velocities (m/s), ordered — for titan's per-row VelocityStrip. */
+export function repVelocitiesMps(reps: readonly Rep[]): number[] {
+  return reps.map((r) => toMps(repPeakMms(r)) ?? 0);
+}
+
+const rnd = (n: number | null): number | null => (n != null ? Math.round(n) : null);
+
+/** Rep count shown on a row: null for an active set with no reps yet, else count. */
+function displayRepCount(view: WorkoutSetView): number | null {
+  if (view.kind === 'active' && view.reps.length === 0) return null;
+  return view.reps.length;
+}
+
+/** Map a canonical set view onto titan `SetRow` props. */
+export function toSetRowProps(view: WorkoutSetView): SetRowProps {
+  const velocities = repVelocitiesMps(view.reps);
+  return {
+    mode: view.kind,
+    setNumber: view.setNumber,
+    reps: displayRepCount(view),
+    weight: rnd(view.weightLbs),
+    rpe: deriveRpe(view.reps),
+    unit: 'lbs',
+    velocities: velocities.length > 0 ? velocities : undefined,
+    previous: view.previous
+      ? { reps: view.previous.reps, weight: Math.round(view.previous.weightLbs) }
+      : null,
+    isNextSet: view.kind === 'active',
+    targets:
+      view.kind === 'active' && view.targetReps != null && view.targetWeightLbs != null
+        ? { reps: view.targetReps, weight: Math.round(view.targetWeightLbs) }
+        : undefined,
+  };
+}
+
+type ExerciseSummary = NonNullable<ExerciseCardProps['summary']>;
+
+/**
+ * Map the set-timeline onto titan `ExerciseCard`'s header summary. `sets` counts
+ * completed sets; `reps`/`weight` reflect the current target — the active set's
+ * rep target when configured, else the last set's actuals (mirrors the mobile
+ * app's exercise header).
+ */
+export function toExerciseSummary(
+  views: WorkoutSetView[],
+  repTarget: number | null,
+): ExerciseSummary {
+  const completed = views.filter((v) => v.kind === 'completed').length;
+  const last = views[views.length - 1];
+  const lastReps = last ? last.reps.length : 0;
+  return {
+    sets: completed,
+    reps: repTarget ?? lastReps,
+    weight: rnd(last?.weightLbs ?? null) ?? 0,
+    unit: 'lbs',
+  };
+}

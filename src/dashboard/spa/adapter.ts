@@ -13,15 +13,13 @@
  * WA peak velocities are millimetres/second; divide by 1000 for m/s (matches the
  * legacy dashboard's `fmtVelocity`).
  */
-import {
-  estimateSetRIR,
-  getRepPeakVelocity,
-  getSetVelocityLossPct,
-  type Rep,
-} from '@voltras/workout-analytics';
+import { getSetVelocityLossPct, type Rep } from '@voltras/workout-analytics';
 
-/** mm/s → m/s divisor (WA velocities arrive in mm/s; see legacy fmtVelocity). */
-const MMS_PER_MPS = 1000;
+import { MMS_PER_MPS, repPeakMms, toMps, type WorkoutSetView } from './view-model/mappers';
+
+// `toMps` is re-exported for consumers/tests that read the dashboard's public
+// adapter surface; its single home is the shared view-model mapper layer.
+export { toMps } from './view-model/mappers';
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
 const TENTHS_PER_LB = 10;
 /** Battery percent below which the indicator flips to its warning state. */
@@ -85,12 +83,6 @@ export function fmtVelocity(mmPerSec: number | null | undefined): string {
   return `${(mmPerSec / MMS_PER_MPS).toFixed(2)} m/s`;
 }
 
-/** Convert a mm/s velocity to m/s (2-dp) as a number for chart props. */
-export function toMps(mmPerSec: number | null | undefined): number | null {
-  if (mmPerSec == null || !Number.isFinite(mmPerSec)) return null;
-  return Number((mmPerSec / MMS_PER_MPS).toFixed(2));
-}
-
 /** Format a pounds value as `"135.0 lbs"`, or the em-dash placeholder. */
 export function fmtWeight(lbs: number | null | undefined): string {
   if (lbs == null || !Number.isFinite(lbs)) return '—';
@@ -109,32 +101,6 @@ export function fmtElapsed(ms: number): string {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min}:${String(sec).padStart(2, '0')}`;
-}
-
-/** Peak concentric velocity (mm/s) for a rep, via WA. Null if unavailable. */
-function repPeakMms(rep: Rep): number | null {
-  const v = getRepPeakVelocity(rep);
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
-/**
- * Estimated RPE (10 − RIR) for a set, via WA `estimateSetRIR` (velocity-loss
- * based, never hand-rolled). Needs at least two reps carrying real concentric
- * movement samples; under two reps, or when WA can't derive a finite RIR (e.g.
- * reps with no samples), we return null so titan SetRow renders its em-dash
- * rather than a misleading value. Rounded to the nearest 0.5 — RPE's
- * conventional granularity, which also aligns with titan's RPE color bands.
- */
-function deriveRpe(reps: Rep[]): number | null {
-  if (reps.length < 2) return null;
-  // RPE is a velocity-loss estimate, so only surface it when velocity loss is
-  // itself derivable — the same gate the live-status strip uses. Without real
-  // concentric samples `estimateSetRIR` returns a misleading floor (RPE 10)
-  // rather than signalling "unknown"; treat that as inestimable.
-  if (!Number.isFinite(getSetVelocityLossPct({ reps }))) return null;
-  const { rpe } = estimateSetRIR({ reps });
-  if (!Number.isFinite(rpe)) return null;
-  return Math.round(rpe * 2) / 2;
 }
 
 // ── Current-set view model ───────────────────────────────────────────────────
@@ -358,15 +324,12 @@ export interface CompletedSet {
   repCount: number;
   /** Best (max) per-rep peak concentric velocity for the set, in mm/s. */
   bestPeakVelocityMms: number | null;
-  /** Per-rep peak concentric velocities in m/s (ordered), for titan SetRow's
-      per-row VelocityStrip. Empty when reps carry no movement samples. */
-  velocitiesMps: number[];
   /**
    * Full WA `Rep[]` retained at set-close (source of truth). The reps are
    * already in `SnapshotActiveSet.reps` before the set closes, so retaining
-   * them costs no backend/wire change and lets the hero derive RPE (and, later,
-   * velocity-history / tempo) that the scalar summary fields structurally
-   * cannot. The convenience fields above are precomputed from this array.
+   * them costs no backend/wire change and lets the hero derive RPE, per-rep
+   * velocity (and, later, tempo) via the shared view-model mappers — which the
+   * scalar summary fields structurally cannot.
    */
   reps: Rep[];
 }
@@ -400,12 +363,9 @@ export function initialAccumulatorState(): AccumulatorState {
 function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | null): CompletedSet {
   const reps = Array.isArray(set.reps) ? set.reps : [];
   let bestPeak: number | null = null;
-  const velocitiesMps: number[] = [];
   for (const rep of reps) {
     const v = repPeakMms(rep);
     if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
-    const mps = toMps(v);
-    if (mps != null) velocitiesMps.push(mps);
   }
   const weightLbs = resolveWeightLbs(device, set);
   return {
@@ -413,7 +373,6 @@ function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | nul
     mode: device?.trainingMode ?? null,
     repCount: reps.length,
     bestPeakVelocityMms: bestPeak,
-    velocitiesMps,
     reps: [...reps],
   };
 }
@@ -526,51 +485,28 @@ export function buildSetLogRows(setLog: CompletedSet[]): SetLogRow[] {
   }));
 }
 
-// ── Hero set rows (titan SetRow shape) ───────────────────────────────────────
+// ── Hero set timeline (canonical WorkoutSetView) ─────────────────────────────
 
-/**
- * Numeric, framework-free row model for the exercise hero's nested set list —
- * one entry per completed set plus the active set, in ascending timeline order
- * (mirrors the mobile app's SetLog). The panel maps this onto titan `SetRow`
- * props. Peak velocity is carried as the per-rep m/s array so titan renders its
- * built-in per-row VelocityStrip (rather than a bespoke Peak column); Mode is a
- * per-set constant surfaced at the hero header, not per row; RPE is derived from
- * the retained WA `Rep[]` via velocity-loss (`deriveRpe`), or null (em-dash)
- * when the set has too few reps / no movement samples to estimate it.
- */
-export interface HeroSetRow {
-  setNumber: number;
-  mode: 'completed' | 'active';
-  /** Completed rep count; active in-progress count (null until the first rep). */
-  reps: number | null;
-  weightLbs: number | null;
-  /** Active-set targets (from the rep-count trigger + working weight). */
-  targetReps: number | null;
-  targetWeightLbs: number | null;
-  /** Per-rep peak velocities (m/s) for the row's VelocityStrip. */
-  velocitiesMps: number[];
-  /** Estimated RPE (10 − RIR, nearest 0.5), or null when inestimable. */
-  rpe: number | null;
-  /** Prior set's performance, for titan SetRow's PREV column. */
-  previous: { reps: number; weightLbs: number } | null;
-}
-
-function priorPerformance(setLog: CompletedSet[], i: number): HeroSetRow['previous'] {
+function priorPerformance(setLog: CompletedSet[], i: number): WorkoutSetView['previous'] {
   const prev = i > 0 ? setLog[i - 1] : null;
   return prev && prev.weightLbs != null ? { reps: prev.repCount, weightLbs: prev.weightLbs } : null;
 }
 
-/** Completed sets + the active set as titan-SetRow-ready numeric rows. */
-export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): HeroSetRow[] {
-  const rows: HeroSetRow[] = setLog.map((s, i) => ({
+/**
+ * Completed sets + the active set as canonical {@link WorkoutSetView}s, ascending
+ * (mirrors the mobile app's SetLog). Each carries the raw WA `Rep[]`; the shared
+ * view-model mappers derive titan `SetRow` props (RPE, per-rep velocity, PREV)
+ * from it — the same code path the mobile app will reuse once it consumes the
+ * shared layer, so the two surfaces converge on one component set.
+ */
+export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): WorkoutSetView[] {
+  const rows: WorkoutSetView[] = setLog.map((s, i) => ({
     setNumber: i + 1,
-    mode: 'completed' as const,
-    reps: s.repCount,
+    kind: 'completed' as const,
+    reps: s.reps,
     weightLbs: s.weightLbs,
     targetReps: null,
     targetWeightLbs: null,
-    velocitiesMps: s.velocitiesMps,
-    rpe: deriveRpe(s.reps),
     previous: priorPerformance(setLog, i),
   }));
 
@@ -581,13 +517,11 @@ export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): HeroS
     const weightLbs = resolveWeightLbs(device, active);
     rows.push({
       setNumber: setLog.length + 1,
-      mode: 'active',
-      reps: reps.length > 0 ? reps.length : null,
+      kind: 'active',
+      reps,
       weightLbs,
       targetReps: resolveRepTarget(active),
       targetWeightLbs: weightLbs,
-      velocitiesMps: reps.map((r) => toMps(repPeakMms(r)) ?? 0),
-      rpe: deriveRpe(reps),
       previous: priorPerformance(setLog, setLog.length),
     });
   }
