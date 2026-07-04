@@ -126,27 +126,76 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 2×2 panel grid → single column under 700px (legacy parity). */
-.app-grid {
+/* Layout cohesion (Phase 6, VMCP-01.50): hero exercise card (main) + a supporting
+   rail (Session / Rest / BodyMap) as a sidebar, not a flat grid. Stacks to a
+   single column on narrow viewports. */
+.app-layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
   gap: 16px;
   padding: 16px;
   align-items: start;
 }
 
-@media (max-width: 700px) {
-  .app-grid {
+.support-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .app-layout {
     grid-template-columns: 1fr;
   }
 }
 
-/* Metric tile grid inside the current-set panel. */
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 16px;
+/* ── Exercise hero ─────────────────────────────────────────────────────────── */
+
+/* The exercise hero is titan's ExerciseCard (expanded, with nested SetRows). The
+   only dashboard chrome is a slim live-status strip above it carrying the
+   across-the-room glanceable signals ExerciseCard doesn't surface. */
+.hero-live-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-live-dot {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-status-success);
+}
+
+.hero-live-label {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-status-success);
+}
+
+.hero-live-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.hero-live-item + .hero-live-item::before,
+.hero-live-label + .hero-live-item::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--color-text-tertiary);
+}
+
+.hero-live-item b {
+  color: var(--color-text-primary);
+  font-weight: 700;
 }
 
 .panel-empty {

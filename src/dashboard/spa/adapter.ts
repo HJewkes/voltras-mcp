@@ -333,6 +333,9 @@ export interface CompletedSet {
   repCount: number;
   /** Best (max) per-rep peak concentric velocity for the set, in mm/s. */
   bestPeakVelocityMms: number | null;
+  /** Per-rep peak concentric velocities in m/s (ordered), for titan SetRow's
+      per-row VelocityStrip. Empty when reps carry no movement samples. */
+  velocitiesMps: number[];
 }
 
 export interface AccumulatorState {
@@ -364,9 +367,12 @@ export function initialAccumulatorState(): AccumulatorState {
 function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | null): CompletedSet {
   const reps = Array.isArray(set.reps) ? set.reps : [];
   let bestPeak: number | null = null;
+  const velocitiesMps: number[] = [];
   for (const rep of reps) {
     const v = repPeakMms(rep);
     if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
+    const mps = toMps(v);
+    if (mps != null) velocitiesMps.push(mps);
   }
   const weightLbs = resolveWeightLbs(device, set);
   return {
@@ -374,6 +380,7 @@ function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | nul
     mode: device?.trainingMode ?? null,
     repCount: reps.length,
     bestPeakVelocityMms: bestPeak,
+    velocitiesMps,
   };
 }
 
@@ -483,4 +490,67 @@ export function buildSetLogRows(setLog: CompletedSet[]): SetLogRow[] {
     reps: entry.repCount,
     peakVelocity: fmtVelocity(entry.bestPeakVelocityMms),
   }));
+}
+
+// ── Hero set rows (titan SetRow shape) ───────────────────────────────────────
+
+/**
+ * Numeric, framework-free row model for the exercise hero's nested set list —
+ * one entry per completed set plus the active set, in ascending timeline order
+ * (mirrors the mobile app's SetLog). The panel maps this onto titan `SetRow`
+ * props. Peak velocity is carried as the per-rep m/s array so titan renders its
+ * built-in per-row VelocityStrip (rather than a bespoke Peak column); Mode is a
+ * per-set constant surfaced at the hero header, not per row; RPE is absent (the
+ * dashboard never captures it) and titan renders it as an em-dash.
+ */
+export interface HeroSetRow {
+  setNumber: number;
+  mode: 'completed' | 'active';
+  /** Completed rep count; active in-progress count (null until the first rep). */
+  reps: number | null;
+  weightLbs: number | null;
+  /** Active-set targets (from the rep-count trigger + working weight). */
+  targetReps: number | null;
+  targetWeightLbs: number | null;
+  /** Per-rep peak velocities (m/s) for the row's VelocityStrip. */
+  velocitiesMps: number[];
+  /** Prior set's performance, for titan SetRow's PREV column. */
+  previous: { reps: number; weightLbs: number } | null;
+}
+
+function priorPerformance(setLog: CompletedSet[], i: number): HeroSetRow['previous'] {
+  const prev = i > 0 ? setLog[i - 1] : null;
+  return prev && prev.weightLbs != null ? { reps: prev.repCount, weightLbs: prev.weightLbs } : null;
+}
+
+/** Completed sets + the active set as titan-SetRow-ready numeric rows. */
+export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): HeroSetRow[] {
+  const rows: HeroSetRow[] = setLog.map((s, i) => ({
+    setNumber: i + 1,
+    mode: 'completed' as const,
+    reps: s.repCount,
+    weightLbs: s.weightLbs,
+    targetReps: null,
+    targetWeightLbs: null,
+    velocitiesMps: s.velocitiesMps,
+    previous: priorPerformance(setLog, i),
+  }));
+
+  const active = snapshot.sets.active;
+  if (active) {
+    const device = firstDevice(snapshot);
+    const reps = Array.isArray(active.reps) ? active.reps : [];
+    const weightLbs = resolveWeightLbs(device, active);
+    rows.push({
+      setNumber: setLog.length + 1,
+      mode: 'active',
+      reps: reps.length > 0 ? reps.length : null,
+      weightLbs,
+      targetReps: resolveRepTarget(active),
+      targetWeightLbs: weightLbs,
+      velocitiesMps: reps.map((r) => toMps(repPeakMms(r)) ?? 0),
+      previous: priorPerformance(setLog, setLog.length),
+    });
+  }
+  return rows;
 }
