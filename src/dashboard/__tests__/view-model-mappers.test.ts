@@ -10,11 +10,21 @@ import { estimateE1RMFromReps, type Rep } from '@voltras/workout-analytics';
 import {
   deriveExerciseE1RM,
   deriveRpe,
+  deriveTempo,
   isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
   type WorkoutSetView,
 } from '../spa/view-model/mappers.js';
+
+/** A rep with real phase timing: 1s concentric, 2s eccentric + 0.5s bottom pause. */
+function repWithPhases(): Rep {
+  return {
+    repNumber: 1,
+    concentric: { peakVelocity: 800, startTime: 0, endTime: 1000, _totalHoldDuration: 0 },
+    eccentric: { startTime: 0, endTime: 2500, _totalHoldDuration: 500 },
+  } as unknown as Rep;
+}
 
 /** Build a Rep whose concentric peak velocity (mm/s) is `peakMms`. */
 function rep(repNumber: number, peakMms: number): Rep {
@@ -77,6 +87,26 @@ describe('isNewE1RM', () => {
     expect(isNewE1RM(200, null)).toBe(false); // first-ever session: nothing to beat
     expect(isNewE1RM(null, 170)).toBe(false);
     expect(isNewE1RM(undefined, 170)).toBe(false);
+  });
+});
+
+describe('deriveTempo', () => {
+  it('reads [ecc, pauseBottom, conc, pauseTop] seconds from the latest timed rep', () => {
+    const view: WorkoutSetView = {
+      setNumber: 1,
+      kind: 'active',
+      reps: [repWithPhases()],
+      weightLbs: 100,
+      targetReps: null,
+      targetWeightLbs: null,
+      previous: null,
+    };
+    expect(deriveTempo([view])).toEqual([2, 0.5, 1, 0]);
+  });
+
+  it('is null when reps carry no phase timing', () => {
+    expect(deriveTempo([completedView([rep(1, 800)])])).toBeNull();
+    expect(deriveTempo([])).toBeNull();
   });
 });
 
