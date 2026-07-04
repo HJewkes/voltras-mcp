@@ -158,3 +158,13 @@ export function deriveExerciseE1RM(
   }
   return best === null ? null : { value: Math.round(best), unit: 'lbs' };
 }
+
+/**
+ * True when the live e1RM beats the best in prior history — a new PR worth a
+ * badge on the hero card. Requires a historical baseline: the first-ever session
+ * of an exercise is NOT flagged (nothing to beat yet), so the badge means
+ * "you just went past your record", not "no record exists".
+ */
+export function isNewE1RM(current: number | null | undefined, historyBest: number | null): boolean {
+  return current != null && historyBest != null && current > historyBest;
+}

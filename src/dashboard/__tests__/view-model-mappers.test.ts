@@ -10,6 +10,7 @@ import { estimateE1RMFromReps, type Rep } from '@voltras/workout-analytics';
 import {
   deriveExerciseE1RM,
   deriveRpe,
+  isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
   type WorkoutSetView,
@@ -62,6 +63,20 @@ describe('deriveExerciseE1RM', () => {
     expect(deriveExerciseE1RM([])).toBeNull();
     expect(deriveExerciseE1RM([completedView([], { weightLbs: 100 })])).toBeNull();
     expect(deriveExerciseE1RM([completedView([rep(1, 800)], { weightLbs: null })])).toBeNull();
+  });
+});
+
+describe('isNewE1RM', () => {
+  it('flags a PR only when the live e1RM strictly beats prior history', () => {
+    expect(isNewE1RM(175, 170)).toBe(true);
+    expect(isNewE1RM(170, 170)).toBe(false); // ties are not PRs
+    expect(isNewE1RM(160, 170)).toBe(false);
+  });
+
+  it('is false without both a live value and a historical baseline', () => {
+    expect(isNewE1RM(200, null)).toBe(false); // first-ever session: nothing to beat
+    expect(isNewE1RM(null, 170)).toBe(false);
+    expect(isNewE1RM(undefined, 170)).toBe(false);
   });
 });
 
