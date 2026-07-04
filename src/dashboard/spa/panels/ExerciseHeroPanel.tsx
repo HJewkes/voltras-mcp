@@ -22,7 +22,7 @@
  * aria-live="polite" so a completed set announces once (row count changes only on
  * set close — see reduceSnapshot). NDA: renders adapter view-models only.
  */
-import { Card, CardContent, ExerciseCard } from '@titan-design/react-ui';
+import { Card, CardContent, ExerciseCard, VelocityStrip } from '@titan-design/react-ui';
 import type { CurrentSetView } from '../adapter';
 import { toExerciseSummary, toSetRowProps, type WorkoutSetView } from '../view-model/mappers';
 
@@ -76,6 +76,15 @@ export function ExerciseHeroPanel({
           <span className="hero-live-item">
             <b>{currentSet.latestPeakVelocity}</b> peak
           </span>
+        </div>
+      )}
+      {currentSet.active && currentSet.velocitiesMps.length > 0 && (
+        // Expanded per-rep velocity chart for the LIVE set — the same titan
+        // VelocityStrip organism the mobile app uses, at full/expanded variant so
+        // the zone-colored bars + velocity-loss read across the room. The nested
+        // SetRow strips stay mini; this is the active-set close-up.
+        <div className="hero-velocity" aria-label="Live set velocity by rep">
+          <VelocityStrip velocities={currentSet.velocitiesMps} variant="full" expanded showInfo />
         </div>
       )}
       <div className="hero-card" aria-live="polite" aria-atomic="false">
