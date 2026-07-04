@@ -210,6 +210,25 @@ export function weightDeviationPct(
   return Math.round(((actualLbs - prescribedLbs) / prescribedLbs) * 100);
 }
 
+/** Weekly-volume status names (mirror titan's muscle-taxonomy VolumeStatus). */
+export type VolumeStatusName = 'under' | 'maintenance' | 'productive' | 'over';
+
+/**
+ * Classify weekly effective sets against MEV/MAV/MRV landmarks: below MEV is
+ * `under` (not enough to grow), MEV–MAV `maintenance`, MAV–MRV `productive` (the
+ * sweet spot), at/above MRV `over` (beyond recoverable volume). Pure — the
+ * landmark table lives in titan; this only compares.
+ */
+export function volumeStatusForSets(
+  sets: number,
+  landmarks: { mev: number; mav: number; mrv: number },
+): VolumeStatusName {
+  if (sets < landmarks.mev) return 'under';
+  if (sets < landmarks.mav) return 'maintenance';
+  if (sets < landmarks.mrv) return 'productive';
+  return 'over';
+}
+
 const round1 = (x: number): number => (Number.isFinite(x) ? Math.round(x * 10) / 10 : 0);
 
 /**

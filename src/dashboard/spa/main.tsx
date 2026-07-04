@@ -43,7 +43,7 @@ import {
   type Snapshot,
 } from './adapter';
 import { CONNECTION_TONE_TOKEN } from './colors';
-import { buildBodyMapData } from './bodymap';
+import { buildBodyMapData, buildWeeklyVolumeData } from './bodymap';
 import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
@@ -71,6 +71,7 @@ interface Model {
   nextWorkout: NextWorkoutView | null;
   prescription: PrescriptionView | null;
   program: ProgramStatusView | null;
+  muscleVolume: Record<string, number>;
 }
 
 function useDashboardModel(): Model {
@@ -83,6 +84,7 @@ function useDashboardModel(): Model {
   const [nextWorkout, setNextWorkout] = useState<NextWorkoutView | null>(null);
   const [prescription, setPrescription] = useState<PrescriptionView | null>(null);
   const [program, setProgram] = useState<ProgramStatusView | null>(null);
+  const [muscleVolume, setMuscleVolume] = useState<Record<string, number>>({});
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -135,11 +137,12 @@ function useDashboardModel(): Model {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes, planRes, programRes] = await Promise.all([
+        const [trendRes, nextRes, planRes, programRes, volumeRes] = await Promise.all([
           fetch('/api/exercise-trend', { cache: 'no-store' }),
           fetch('/api/next-workout', { cache: 'no-store' }),
           fetch('/api/session-plan', { cache: 'no-store' }),
           fetch('/api/program-status', { cache: 'no-store' }),
+          fetch('/api/muscle-volume', { cache: 'no-store' }),
         ]);
         if (trendRes.ok) {
           const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
@@ -156,6 +159,10 @@ function useDashboardModel(): Model {
         if (programRes.ok) {
           const data = (await programRes.json()) as { program?: ProgramStatusView | null };
           if (!cancelled) setProgram(data.program ?? null);
+        }
+        if (volumeRes.ok) {
+          const data = (await volumeRes.json()) as { muscles?: Record<string, number> | null };
+          if (!cancelled) setMuscleVolume(data.muscles ?? {});
         }
       } catch {
         // best-effort; keep the last-known values on a transient failure
@@ -179,6 +186,7 @@ function useDashboardModel(): Model {
     nextWorkout,
     prescription,
     program,
+    muscleVolume,
   };
 }
 
@@ -198,6 +206,7 @@ function App(): React.JSX.Element {
     nextWorkout,
     prescription,
     program,
+    muscleVolume,
   } = useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
@@ -207,6 +216,7 @@ function App(): React.JSX.Element {
   const heroSets = buildHeroSets(snap, accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
   const bodyMapData = buildBodyMapData(snap.activeExercise, accumulator.setLog.length);
+  const weeklyBodyMapData = buildWeeklyVolumeData(muscleVolume);
   const connection = buildConnectionStatus(snap, status);
   const battery = buildBattery(snap);
   // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
@@ -276,7 +286,7 @@ function App(): React.JSX.Element {
           <MesoStatusPanel program={program} />
           <StrengthTrendPanel points={trend} />
           <RestTimerPanel elapsedMs={restElapsedMs} />
-          <BodyMapPanel data={bodyMapData} />
+          <BodyMapPanel data={bodyMapData} weeklyData={weeklyBodyMapData} />
         </aside>
       </main>
     </div>

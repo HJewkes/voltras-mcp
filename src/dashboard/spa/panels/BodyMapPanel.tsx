@@ -14,18 +14,50 @@ import { useState } from 'react';
 import { BodyMap, type BodyMapData, type MuscleGroup } from '@titan-design/react-ui';
 import { PanelCard } from './PanelCard';
 
-export function BodyMapPanel({ data }: { data: BodyMapData[] }): React.JSX.Element {
+export function BodyMapPanel({
+  data,
+  weeklyData,
+}: {
+  /** Live heatmap: muscles worked by the current exercise. */
+  data: BodyMapData[];
+  /** Weekly-volume heatmap: MEV/MAV/MRV status over the trailing week. */
+  weeklyData: BodyMapData[];
+}): React.JSX.Element {
   const [view, setView] = useState<'front' | 'back'>('front');
+  const [mode, setMode] = useState<'live' | 'weekly'>('live');
   const [highlighted, setHighlighted] = useState<MuscleGroup | null>(null);
 
   const onMusclePress = (muscle: MuscleGroup): void => {
     setHighlighted((prev) => (prev === muscle ? null : muscle));
   };
 
+  const hasWeekly = weeklyData.length > 0;
+  const shown = mode === 'weekly' && hasWeekly ? weeklyData : data;
+
   return (
     <PanelCard title="Muscle heatmap">
+      {hasWeekly && (
+        <div className="bodymap-mode" role="group" aria-label="Heatmap mode">
+          <button
+            type="button"
+            className={mode === 'live' ? 'is-active' : ''}
+            aria-pressed={mode === 'live'}
+            onClick={() => setMode('live')}
+          >
+            Live
+          </button>
+          <button
+            type="button"
+            className={mode === 'weekly' ? 'is-active' : ''}
+            aria-pressed={mode === 'weekly'}
+            onClick={() => setMode('weekly')}
+          >
+            Weekly volume
+          </button>
+        </div>
+      )}
       <BodyMap
-        data={data}
+        data={shown}
         view={view}
         onViewChange={setView}
         onMusclePress={onMusclePress}

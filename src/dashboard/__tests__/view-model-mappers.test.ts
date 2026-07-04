@@ -15,6 +15,7 @@ import {
   isNewE1RM,
   toExerciseSummary,
   toSetRowProps,
+  volumeStatusForSets,
   weightDeviationPct,
   type WorkoutSetView,
 } from '../spa/view-model/mappers.js';
@@ -118,6 +119,17 @@ describe('weightDeviationPct', () => {
     expect(weightDeviationPct(null, 60)).toBeNull();
     expect(weightDeviationPct(60, undefined)).toBeNull();
     expect(weightDeviationPct(60, 0)).toBeNull();
+  });
+});
+
+describe('volumeStatusForSets', () => {
+  const lm = { mev: 8, mav: 16, mrv: 22 };
+  it('classifies weekly sets against MEV/MAV/MRV landmarks', () => {
+    expect(volumeStatusForSets(5, lm)).toBe('under'); // < MEV
+    expect(volumeStatusForSets(8, lm)).toBe('maintenance'); // MEV..MAV
+    expect(volumeStatusForSets(16, lm)).toBe('productive'); // MAV..MRV
+    expect(volumeStatusForSets(22, lm)).toBe('over'); // >= MRV
+    expect(volumeStatusForSets(40, lm)).toBe('over');
   });
 });
 

@@ -289,6 +289,11 @@ async function handleRequest(
     sendJson(res, 200, { program });
     return;
   }
+  if (pathname === '/api/muscle-volume') {
+    const muscles = await fetchMuscleVolume(state);
+    sendJson(res, 200, { muscles });
+    return;
+  }
   sendJson(res, 404, { error: 'not_found' });
 }
 
@@ -574,6 +579,52 @@ async function fetchProgramStatus(state: DashboardServerState): Promise<ProgramS
     return status;
   }
   return null;
+}
+
+/** Days of history the weekly-volume rollup covers. */
+const VOLUME_WINDOW_DAYS = 7;
+/** Recent sessions scanned for the rollup (cap; a week rarely exceeds this). */
+const VOLUME_SESSION_SCAN = 60;
+/** Secondary muscles count as a fraction of a working set (standard heuristic). */
+const SECONDARY_SET_WEIGHT = 0.5;
+
+/**
+ * Weekly effective sets per catalog muscle over the trailing {@link
+ * VOLUME_WINDOW_DAYS} days: each session's set count is attributed to its
+ * exercise's primary muscles (full) and secondary muscles (half), joined via the
+ * exercise catalog. The client maps these onto titan's volume landmarks. Derived
+ * fitness metadata only — no protocol data (NF-07).
+ */
+async function fetchMuscleVolume(
+  state: DashboardServerState,
+): Promise<Record<string, number> | null> {
+  const catalog = state.exercises;
+  if (catalog === undefined) return null;
+  const cutoff = Date.now() - VOLUME_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:desc',
+    limit: VOLUME_SESSION_SCAN,
+    offset: 0,
+  });
+
+  const volume: Record<string, number> = {};
+  for (const session of sessions) {
+    if (Number.isFinite(Date.parse(session.startedAt)) && Date.parse(session.startedAt) < cutoff) {
+      continue;
+    }
+    if (session.exerciseId === undefined) continue;
+    const meta = catalog.getById(session.exerciseId);
+    if (meta === undefined) continue;
+    const setCount = (await state.store.getSetsForSession(session.id)).length;
+    if (setCount === 0) continue;
+    for (const muscle of meta.muscleGroups) {
+      volume[muscle] = (volume[muscle] ?? 0) + setCount;
+    }
+    for (const muscle of meta.secondaryMuscleGroups ?? []) {
+      volume[muscle] = (volume[muscle] ?? 0) + setCount * SECONDARY_SET_WEIGHT;
+    }
+  }
+  return volume;
 }
 
 function parseLimit(raw: string | null): number {
