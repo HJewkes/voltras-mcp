@@ -334,6 +334,53 @@ describe('GET /api/history', () => {
     });
   });
 
+  it('serves the first unassigned workout with catalog muscle groups', async () => {
+    const base = makeFakeState({ primary: {} });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        listTrainingPrograms: () => Promise.resolve([{ id: 'p1', name: 'Prog', createdAt: '' }]),
+        getTrainingBlocksForProgram: () =>
+          Promise.resolve([
+            { id: 'b1', programId: 'p1', orderIndex: 0, name: 'Block A', weeksCount: 4 },
+          ]),
+        getTrainingWeeksForBlock: () =>
+          Promise.resolve([{ id: 'w1', blockId: 'b1', orderIndex: 0, name: 'Week 1' }]),
+        getWorkoutTemplatesForWeek: () =>
+          Promise.resolve([{ id: 't1', weekId: 'w1', name: 'Day A', orderIndex: 0 }]),
+        getAssignmentsForTemplate: () => Promise.resolve([]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+      },
+      exercises: { getById: () => ({ muscleGroups: ['chest', 'triceps'] }) },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/next-workout');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as {
+      workout: { name: string; totalSets: number; muscleGroups: Array<{ group: string }> } | null;
+    };
+    expect(body.workout?.name).toBe('Day A');
+    expect(body.workout?.totalSets).toBe(3);
+    expect(body.workout?.muscleGroups.map((m) => m.group)).toEqual(['chest', 'triceps']);
+  });
+
+  it('returns workout=null when the store exposes no plan methods', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/next-workout');
+    const body = JSON.parse(res.body) as { workout: unknown };
+    expect(body.workout).toBeNull();
+  });
+
   it('uses the default limit when ?limit is absent', async () => {
     const state = makeFakeState({ primary: {} });
     const handle = await startWithFake(state);

@@ -52,7 +52,16 @@ import { estimateE1RMFromReps } from '@voltras/workout-analytics';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
-import type { StoredSession, StoredSet } from '../store/types.js';
+import type {
+  StoredSession,
+  StoredSet,
+  StoredTrainingProgram,
+  StoredTrainingBlock,
+  StoredTrainingWeek,
+  StoredWorkoutTemplate,
+  StoredPlannedExercise,
+  StoredProgramAssignment,
+} from '../store/types.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -97,6 +106,15 @@ export interface DashboardServerState {
     }): Promise<StoredSession[]>;
     /** Persisted sets (with full WA reps) for a session — feeds the e1RM trend. */
     getSetsForSession(sessionId: string): Promise<StoredSet[]>;
+    // Plan-store reads for the idle "next workout" preview. Optional so the
+    // server test fakes (and any store build without planning) degrade to no
+    // preview rather than failing; the real sqlite store supplies them all.
+    listTrainingPrograms?(opts?: { includeArchived?: boolean }): Promise<StoredTrainingProgram[]>;
+    getTrainingBlocksForProgram?(programId: string): Promise<StoredTrainingBlock[]>;
+    getTrainingWeeksForBlock?(blockId: string): Promise<StoredTrainingWeek[]>;
+    getWorkoutTemplatesForWeek?(weekId: string): Promise<StoredWorkoutTemplate[]>;
+    getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
+    getAssignmentsForTemplate?(templateId: string): Promise<StoredProgramAssignment[]>;
   };
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
@@ -254,6 +272,11 @@ async function handleRequest(
     sendJson(res, 200, { points });
     return;
   }
+  if (pathname === '/api/next-workout') {
+    const workout = await fetchNextWorkout(state);
+    sendJson(res, 200, { workout });
+    return;
+  }
   sendJson(res, 404, { error: 'not_found' });
 }
 
@@ -368,6 +391,69 @@ async function fetchExerciseTrend(
     points.push({ date: session.startedAt, e1rm, isPR });
   }
   return points;
+}
+
+/** Next planned workout for the idle dashboard, shaped for titan `WorkoutCard`. */
+interface NextWorkoutView {
+  name: string;
+  /** Free-form context line (block · week), shown where WorkoutCard renders "date". */
+  date: string;
+  totalSets: number;
+  muscleGroups: Array<{ group: string; label: string }>;
+  unit: 'lbs';
+}
+
+/**
+ * The first not-yet-assigned template in the latest program — the same "what's
+ * next" traversal the plan.next_workout tool performs, resolved here from the
+ * store for the idle preview. Returns null when the plan store isn't available,
+ * no program exists, or every template is done. Plan metadata only (names,
+ * planned sets, catalog muscle groups) — no protocol data (NF-07).
+ */
+async function fetchNextWorkout(state: DashboardServerState): Promise<NextWorkoutView | null> {
+  const { store } = state;
+  if (
+    store.listTrainingPrograms === undefined ||
+    store.getTrainingBlocksForProgram === undefined ||
+    store.getTrainingWeeksForBlock === undefined ||
+    store.getWorkoutTemplatesForWeek === undefined ||
+    store.getPlannedExercisesForTemplate === undefined ||
+    store.getAssignmentsForTemplate === undefined
+  ) {
+    return null;
+  }
+  const programs = await store.listTrainingPrograms({ includeArchived: false });
+  const program = programs[0];
+  if (program === undefined) return null;
+
+  for (const block of await store.getTrainingBlocksForProgram(program.id)) {
+    for (const week of await store.getTrainingWeeksForBlock(block.id)) {
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        const assignments = await store.getAssignmentsForTemplate(template.id);
+        if (assignments.length > 0) continue; // already done
+        const planned = await store.getPlannedExercisesForTemplate(template.id);
+        const totalSets = planned.reduce((sum, ex) => sum + ex.targetSets, 0);
+        const seen = new Set<string>();
+        const muscleGroups: Array<{ group: string; label: string }> = [];
+        for (const ex of planned) {
+          for (const m of state.exercises?.getById(ex.exerciseId)?.muscleGroups ?? []) {
+            if (seen.has(m)) continue;
+            seen.add(m);
+            muscleGroups.push({ group: m, label: m });
+          }
+        }
+        const weekLabel = week.name ?? `Week ${week.orderIndex + 1}`;
+        return {
+          name: template.name,
+          date: `${block.name} · ${weekLabel}`,
+          totalSets,
+          muscleGroups,
+          unit: 'lbs',
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function parseLimit(raw: string | null): number {

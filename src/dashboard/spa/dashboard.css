@@ -216,6 +216,16 @@
   overflow-x: auto;
 }
 
+/* Idle-state "up next" preview (titan WorkoutCard). */
+.hero-next-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
 .panel-empty {
   padding: 20px 0;
   text-align: center;
