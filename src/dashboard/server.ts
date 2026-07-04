@@ -284,6 +284,11 @@ async function handleRequest(
     sendJson(res, 200, { plan });
     return;
   }
+  if (pathname === '/api/program-status') {
+    const program = await fetchProgramStatus(state);
+    sendJson(res, 200, { program });
+    return;
+  }
   sendJson(res, 404, { error: 'not_found' });
 }
 
@@ -510,6 +515,63 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
     if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
     return prescription;
+  }
+  return null;
+}
+
+/** Current-block program status for the meso overview (titan MesoStatusCard). */
+interface ProgramStatusView {
+  mesoName: string;
+  focus?: string;
+  weekNumber: number;
+  totalWeeks: number;
+  workoutsDone: number;
+  workoutsPlanned: number;
+}
+
+/**
+ * Where the latest program stands: the first block that isn't fully assigned is
+ * the "current" mesocycle — its name/focus, the current week (first week with an
+ * unassigned template), and workouts done vs planned across the block. Returns
+ * null when the plan store isn't available, no program exists, or every block is
+ * complete. Plan metadata only (NF-07).
+ */
+async function fetchProgramStatus(state: DashboardServerState): Promise<ProgramStatusView | null> {
+  const { store } = state;
+  if (
+    store.listTrainingPrograms === undefined ||
+    store.getTrainingBlocksForProgram === undefined ||
+    store.getTrainingWeeksForBlock === undefined ||
+    store.getWorkoutTemplatesForWeek === undefined ||
+    store.getAssignmentsForTemplate === undefined
+  ) {
+    return null;
+  }
+  const [program] = await store.listTrainingPrograms({ includeArchived: false });
+  if (program === undefined) return null;
+
+  for (const block of await store.getTrainingBlocksForProgram(program.id)) {
+    let planned = 0;
+    let done = 0;
+    let currentWeekOrder = -1;
+    for (const week of await store.getTrainingWeeksForBlock(block.id)) {
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        planned += 1;
+        const assignments = await store.getAssignmentsForTemplate(template.id);
+        if (assignments.length > 0) done += 1;
+        else if (currentWeekOrder === -1) currentWeekOrder = week.orderIndex;
+      }
+    }
+    if (planned === 0 || done >= planned) continue; // empty or finished block
+    const status: ProgramStatusView = {
+      mesoName: block.name,
+      weekNumber: (currentWeekOrder >= 0 ? currentWeekOrder : 0) + 1,
+      totalWeeks: block.weeksCount,
+      workoutsDone: done,
+      workoutsPlanned: planned,
+    };
+    if (block.focus !== undefined) status.focus = block.focus;
+    return status;
   }
   return null;
 }
