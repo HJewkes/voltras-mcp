@@ -198,6 +198,15 @@
   font-weight: 700;
 }
 
+/* Live per-rep velocity chart (titan VelocityStrip, expanded) sits between the
+   glanceable status strip and the set card. Reserve the strip's expanded height
+   (bars + label/info rows) so the surrounding layout doesn't reflow as reps land. */
+.hero-velocity {
+  margin-bottom: 14px;
+  padding: 0 2px;
+  min-height: 60px;
+}
+
 .panel-empty {
   padding: 20px 0;
   text-align: center;
