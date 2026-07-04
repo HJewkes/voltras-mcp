@@ -55,7 +55,7 @@ import {
 } from './panels/StrengthTrendPanel';
 import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
-import type { PrescriptionView } from './view-model/mappers';
+import type { PrescriptionView } from './adapter';
 
 const POLL_INTERVAL_MS = 500;
 const TICK_INTERVAL_MS = 1000;

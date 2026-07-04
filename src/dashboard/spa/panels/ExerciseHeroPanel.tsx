@@ -8,10 +8,11 @@
  * will consume once it bumps off @titan-design/react-ui@0.1.1 (VLT-09.33), so the
  * two surfaces converge on one component set.
  *
- * Set rows + the header summary are produced by the shared view-model mappers
- * (`toSetRowProps`, `toExerciseSummary`) from canonical `WorkoutSetView`s — the
- * same mappers the mobile app will reuse, so both surfaces derive RPE / velocity
- * identically. Data-shape gaps closed there (rather than avoided): peak velocity
+ * Set rows + the header summary are wired here (`toSetRowProps`,
+ * `toExerciseSummary`) from canonical `WorkoutSetView`s: exact derivations come
+ * from `@voltras/workout-analytics` and the titan components round/band/format
+ * for display (the model↔render split). Mobile wires its own WA data into the
+ * same titan components identically. Data-shape gaps closed here: peak velocity
  * rides SetRow's built-in per-row VelocityStrip (`velocities`); the prior set
  * fills PREV; RPE is a WA velocity-loss estimate (em-dash when inestimable). Mode
  * is a per-exercise constant surfaced in the live-status line, not per row — a
@@ -29,8 +30,17 @@ import {
   ExerciseCard,
   VelocityStrip,
   WorkoutCard,
+  formatPrescription,
+  formatSignedPct,
 } from '@titan-design/react-ui';
-import type { CurrentSetView } from '../adapter';
+import {
+  bestE1RMAcrossSets,
+  getSetTempoSeconds,
+  isNewE1RM,
+  weightDeviationRatio,
+} from '@voltras/workout-analytics';
+import { type CurrentSetView, type PrescriptionView, type WorkoutSetView } from '../adapter';
+import { toExerciseSummary, toSetRowProps } from './exercise-hero-view';
 
 /** Next planned workout for the idle preview, matching `/api/next-workout`. */
 export interface NextWorkoutView {
@@ -40,18 +50,6 @@ export interface NextWorkoutView {
   muscleGroups: Array<{ group: string; label: string }>;
   unit: 'lbs';
 }
-import {
-  deriveExerciseE1RM,
-  deriveTempo,
-  formatPrescription,
-  isNewE1RM,
-  toExerciseSummary,
-  toSetRowProps,
-  weightDeviationPct,
-  type PrescriptionView,
-  type WorkoutSetView,
-} from '../view-model/mappers';
-
 export interface ExerciseHeroProps {
   /** Active-session exercise name; `'—'` when idle. */
   exercise: string;
@@ -111,12 +109,20 @@ export function ExerciseHeroPanel({
   const named = exercise !== '—';
   const title = named ? exercise : 'Current exercise';
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
-  const e1rm = deriveExerciseE1RM(heroSets);
+  const e1rmValue = bestE1RMAcrossSets(
+    heroSets.map((v) => ({ load: v.weightLbs, reps: v.reps.length })),
+  );
+  const e1rm = e1rmValue != null ? { value: e1rmValue, unit: 'lbs' as const } : null;
   const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
-  const tempo = deriveTempo(heroSets);
+  const lastSet = heroSets[heroSets.length - 1];
+  const tempo = getSetTempoSeconds({ reps: lastSet?.reps ?? [] });
   const prescriptionText = formatPrescription(prescription);
-  const activeWeightLbs = heroSets[heroSets.length - 1]?.weightLbs ?? null;
-  const weightDeviation = weightDeviationPct(activeWeightLbs, prescription?.weightLbs);
+  const activeWeightLbs = lastSet?.weightLbs ?? null;
+  // Exact signed ratio (e.g. 0.09). DeviationBar takes the ratio directly; the
+  // label formats it as a percent via titan. (The former mapper handed a
+  // pre-scaled percentage to DeviationBar, which expects a ratio — this also
+  // corrects the dot position.)
+  const weightDeviation = weightDeviationRatio(activeWeightLbs, prescription?.weightLbs);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -149,14 +155,12 @@ export function ExerciseHeroPanel({
         // a glance via titan DeviationBar (positive = heavier than planned).
         <div
           className="hero-deviation"
-          aria-label={`Working weight vs plan: ${weightDeviation > 0 ? '+' : ''}${weightDeviation}%`}
+          aria-label={`Working weight vs plan: ${formatSignedPct(weightDeviation)}`}
         >
           <span className="hero-deviation-label">vs plan</span>
           <DeviationBar deviation={weightDeviation} width={160} />
           <span className="hero-deviation-value">
-            {weightDeviation === 0
-              ? 'on plan'
-              : `${weightDeviation > 0 ? '+' : ''}${weightDeviation}%`}
+            {weightDeviation === 0 ? 'on plan' : formatSignedPct(weightDeviation)}
           </span>
         </div>
       )}
