@@ -22,8 +22,23 @@
  * aria-live="polite" so a completed set announces once (row count changes only on
  * set close — see reduceSnapshot). NDA: renders adapter view-models only.
  */
-import { Card, CardContent, ExerciseCard, VelocityStrip } from '@titan-design/react-ui';
+import {
+  Card,
+  CardContent,
+  ExerciseCard,
+  VelocityStrip,
+  WorkoutCard,
+} from '@titan-design/react-ui';
 import type { CurrentSetView } from '../adapter';
+
+/** Next planned workout for the idle preview, matching `/api/next-workout`. */
+export interface NextWorkoutView {
+  name: string;
+  date: string;
+  totalSets: number;
+  muscleGroups: Array<{ group: string; label: string }>;
+  unit: 'lbs';
+}
 import {
   deriveExerciseE1RM,
   deriveTempo,
@@ -45,6 +60,8 @@ export interface ExerciseHeroProps {
   heroSets: WorkoutSetView[];
   /** Best estimated 1RM in this exercise's prior history, for PR detection. Null when none. */
   historyBestE1rm: number | null;
+  /** Next planned workout for the idle preview; null when no plan / none pending. */
+  nextWorkout: NextWorkoutView | null;
 }
 
 export function ExerciseHeroPanel({
@@ -54,15 +71,32 @@ export function ExerciseHeroPanel({
   currentSet,
   heroSets,
   historyBestE1rm,
+  nextWorkout,
 }: ExerciseHeroProps): React.JSX.Element {
   if (!hasSession) {
     return (
       <section className="hero" role="region" aria-label="Current exercise">
-        <Card variant="elevated" elevation={2}>
-          <CardContent className="px-6 py-8">
-            <div className="panel-empty">No active session — start a set to begin.</div>
-          </CardContent>
-        </Card>
+        {nextWorkout ? (
+          // Idle time becomes program context: the next unassigned workout from
+          // the active program, as a titan WorkoutCard.
+          <div className="hero-next-workout">
+            <div className="hero-next-label">Up next</div>
+            <WorkoutCard
+              name={nextWorkout.name}
+              date={nextWorkout.date}
+              status="upcoming"
+              muscleGroups={nextWorkout.muscleGroups}
+              totalSets={nextWorkout.totalSets}
+              unit={nextWorkout.unit}
+            />
+          </div>
+        ) : (
+          <Card variant="elevated" elevation={2}>
+            <CardContent className="px-6 py-8">
+              <div className="panel-empty">No active session — start a set to begin.</div>
+            </CardContent>
+          </Card>
+        )}
       </section>
     );
   }
