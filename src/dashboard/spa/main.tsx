@@ -48,9 +48,12 @@ import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
 import { BodyMapPanel } from './panels/BodyMapPanel';
+import { StrengthTrendPanel, type ExerciseTrendPoint } from './panels/StrengthTrendPanel';
 
 const POLL_INTERVAL_MS = 500;
 const TICK_INTERVAL_MS = 1000;
+/** Strength trend is historical, not live — poll it slowly, and on exercise change. */
+const TREND_INTERVAL_MS = 15_000;
 const STALE_THRESHOLD_MS = POLL_INTERVAL_MS * 2;
 
 type Status = 'ok' | 'stale' | 'error';
@@ -61,6 +64,7 @@ interface Model {
   status: Status;
   lastUpdate: string;
   nowMs: number;
+  trend: ExerciseTrendPoint[];
 }
 
 function useDashboardModel(): Model {
@@ -69,6 +73,7 @@ function useDashboardModel(): Model {
   const [status, setStatus] = useState<Status>('ok');
   const [lastUpdate, setLastUpdate] = useState<string>('—');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [trend, setTrend] = useState<ExerciseTrendPoint[]>([]);
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -114,7 +119,30 @@ function useDashboardModel(): Model {
     };
   }, []);
 
-  return { snapshot, accumulator, status, lastUpdate, nowMs };
+  // Strength trend: historical, so on its own slow cadence and refetched when the
+  // active exercise changes (server resolves the active exercise when no id given).
+  const exerciseName = snapshot?.session?.exerciseName ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTrend = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/exercise-trend', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { points?: ExerciseTrendPoint[] };
+        if (!cancelled) setTrend(data.points ?? []);
+      } catch {
+        // best-effort; keep the last-known points on a transient failure
+      }
+    };
+    void fetchTrend();
+    const id = setInterval(() => void fetchTrend(), TREND_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [exerciseName]);
+
+  return { snapshot, accumulator, status, lastUpdate, nowMs, trend };
 }
 
 function formatClock(d: Date): string {
@@ -123,7 +151,7 @@ function formatClock(d: Date): string {
 }
 
 function App(): React.JSX.Element {
-  const { snapshot, accumulator, status, lastUpdate, nowMs } = useDashboardModel();
+  const { snapshot, accumulator, status, lastUpdate, nowMs, trend } = useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
   const snap = snapshot ?? empty;
@@ -195,6 +223,7 @@ function App(): React.JSX.Element {
         />
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
+          <StrengthTrendPanel points={trend} />
           <RestTimerPanel elapsedMs={restElapsedMs} />
           <BodyMapPanel data={bodyMapData} />
         </aside>

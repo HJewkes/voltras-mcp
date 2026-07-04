@@ -59,6 +59,7 @@ function makeFakeState(
     slots: slotMap,
     store: {
       listSessions: () => Promise.resolve([] as StoredSession[]),
+      getSetsForSession: () => Promise.resolve([]),
     },
   };
 }
