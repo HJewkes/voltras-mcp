@@ -21,7 +21,6 @@ import {
   initialAccumulatorState,
   reduceSnapshot,
   toMps,
-  type CompletedSet,
   type Snapshot,
   type SnapshotActiveSet,
   type SnapshotDevice,
@@ -255,10 +254,8 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       mode: 'weight',
       repCount: 2,
       bestPeakVelocityMms: 900,
-      // Per-rep peaks retained (m/s) so titan SetRow can render its per-row
-      // VelocityStrip for completed sets, not just the active one.
-      velocitiesMps: [0.9, 0.8],
-      // Full WA reps retained (source of truth) so the hero can derive RPE.
+      // Full WA reps retained (source of truth) so the shared mappers can derive
+      // RPE / per-rep velocity for the hero.
       reps: [rep(1, 900), rep(2, 800)],
     });
     expect(state.restStartMs).toBe(2_000);
@@ -339,50 +336,36 @@ describe('buildSessionProgress + buildSetLogRows', () => {
   });
 });
 
-describe('buildHeroSets — RPE derivation from retained reps', () => {
-  /** Accumulate one closed set (device weight 100) from the given active reps. */
-  function loggedSet(reps: Rep[]): CompletedSet[] {
+describe('buildHeroSets — canonical WorkoutSetView timeline', () => {
+  it('emits completed sets carrying their retained reps, then the active set', () => {
     const device: SnapshotDevice = { weightLbs: 100, trainingMode: 'weight' };
     let state = initialAccumulatorState();
-    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device, activeSet: { reps } }), 0);
+    // One set opens then closes → logged.
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', device, activeSet: { reps: [rep(1, 900), rep(2, 800)] } }),
+      0,
+    );
     state = reduceSnapshot(state, snapshot({ sessionId: 's1', device }), 500);
-    return state.setLog;
-  }
 
-  it('derives an RPE (nearest 0.5, 0–10) for a set with real velocity loss', () => {
-    // (800 → 600) mean velocity across two reps = 25% loss → an estimable RPE.
-    const setLog = loggedSet([repWithMean(1, 800, 800), repWithMean(2, 600, 600)]);
-    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
-    expect(rows).toHaveLength(1);
-    const { rpe } = rows[0];
-    expect(rpe).not.toBeNull();
-    expect((rpe as number) % 0.5).toBe(0);
-    expect(rpe as number).toBeGreaterThanOrEqual(0);
-    expect(rpe as number).toBeLessThanOrEqual(10);
-  });
-
-  it('leaves RPE null when reps carry no movement samples', () => {
-    const setLog = loggedSet([rep(1, 900), rep(2, 800)]);
-    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
-    expect(rows[0].rpe).toBeNull();
-  });
-
-  it('leaves RPE null for a single-rep set (loss needs ≥2 reps)', () => {
-    const setLog = loggedSet([repWithMean(1, 800, 800)]);
-    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
-    expect(rows[0].rpe).toBeNull();
-  });
-
-  it('surfaces a live RPE on the in-progress active row too', () => {
+    // A new active set is now open with a rep target.
     const rows = buildHeroSets(
       snapshot({
         sessionId: 's1',
-        activeSet: { reps: [repWithMean(1, 800, 800), repWithMean(2, 600, 600)] },
+        device,
+        activeSet: {
+          reps: [rep(1, 850)],
+          watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] },
+        },
       }),
-      [],
+      state.setLog,
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].mode).toBe('active');
-    expect(rows[0].rpe).not.toBeNull();
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ setNumber: 1, kind: 'completed', weightLbs: 100 });
+    expect(rows[0].reps).toEqual([rep(1, 900), rep(2, 800)]); // full reps carried
+    expect(rows[1]).toMatchObject({ setNumber: 2, kind: 'active', targetReps: 8 });
+    // PREV column source: the active row points back at the completed set.
+    expect(rows[1].previous).toEqual({ reps: 2, weightLbs: 100 });
   });
 });
