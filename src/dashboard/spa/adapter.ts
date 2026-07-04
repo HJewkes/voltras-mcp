@@ -13,7 +13,12 @@
  * WA peak velocities are millimetres/second; divide by 1000 for m/s (matches the
  * legacy dashboard's `fmtVelocity`).
  */
-import { getRepPeakVelocity, getSetVelocityLossPct, type Rep } from '@voltras/workout-analytics';
+import {
+  estimateSetRIR,
+  getRepPeakVelocity,
+  getSetVelocityLossPct,
+  type Rep,
+} from '@voltras/workout-analytics';
 
 /** mm/s → m/s divisor (WA velocities arrive in mm/s; see legacy fmtVelocity). */
 const MMS_PER_MPS = 1000;
@@ -110,6 +115,26 @@ export function fmtElapsed(ms: number): string {
 function repPeakMms(rep: Rep): number | null {
   const v = getRepPeakVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Estimated RPE (10 − RIR) for a set, via WA `estimateSetRIR` (velocity-loss
+ * based, never hand-rolled). Needs at least two reps carrying real concentric
+ * movement samples; under two reps, or when WA can't derive a finite RIR (e.g.
+ * reps with no samples), we return null so titan SetRow renders its em-dash
+ * rather than a misleading value. Rounded to the nearest 0.5 — RPE's
+ * conventional granularity, which also aligns with titan's RPE color bands.
+ */
+function deriveRpe(reps: Rep[]): number | null {
+  if (reps.length < 2) return null;
+  // RPE is a velocity-loss estimate, so only surface it when velocity loss is
+  // itself derivable — the same gate the live-status strip uses. Without real
+  // concentric samples `estimateSetRIR` returns a misleading floor (RPE 10)
+  // rather than signalling "unknown"; treat that as inestimable.
+  if (!Number.isFinite(getSetVelocityLossPct({ reps }))) return null;
+  const { rpe } = estimateSetRIR({ reps });
+  if (!Number.isFinite(rpe)) return null;
+  return Math.round(rpe * 2) / 2;
 }
 
 // ── Current-set view model ───────────────────────────────────────────────────
@@ -336,6 +361,14 @@ export interface CompletedSet {
   /** Per-rep peak concentric velocities in m/s (ordered), for titan SetRow's
       per-row VelocityStrip. Empty when reps carry no movement samples. */
   velocitiesMps: number[];
+  /**
+   * Full WA `Rep[]` retained at set-close (source of truth). The reps are
+   * already in `SnapshotActiveSet.reps` before the set closes, so retaining
+   * them costs no backend/wire change and lets the hero derive RPE (and, later,
+   * velocity-history / tempo) that the scalar summary fields structurally
+   * cannot. The convenience fields above are precomputed from this array.
+   */
+  reps: Rep[];
 }
 
 export interface AccumulatorState {
@@ -381,6 +414,7 @@ function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | nul
     repCount: reps.length,
     bestPeakVelocityMms: bestPeak,
     velocitiesMps,
+    reps: [...reps],
   };
 }
 
@@ -500,8 +534,9 @@ export function buildSetLogRows(setLog: CompletedSet[]): SetLogRow[] {
  * (mirrors the mobile app's SetLog). The panel maps this onto titan `SetRow`
  * props. Peak velocity is carried as the per-rep m/s array so titan renders its
  * built-in per-row VelocityStrip (rather than a bespoke Peak column); Mode is a
- * per-set constant surfaced at the hero header, not per row; RPE is absent (the
- * dashboard never captures it) and titan renders it as an em-dash.
+ * per-set constant surfaced at the hero header, not per row; RPE is derived from
+ * the retained WA `Rep[]` via velocity-loss (`deriveRpe`), or null (em-dash)
+ * when the set has too few reps / no movement samples to estimate it.
  */
 export interface HeroSetRow {
   setNumber: number;
@@ -514,6 +549,8 @@ export interface HeroSetRow {
   targetWeightLbs: number | null;
   /** Per-rep peak velocities (m/s) for the row's VelocityStrip. */
   velocitiesMps: number[];
+  /** Estimated RPE (10 − RIR, nearest 0.5), or null when inestimable. */
+  rpe: number | null;
   /** Prior set's performance, for titan SetRow's PREV column. */
   previous: { reps: number; weightLbs: number } | null;
 }
@@ -533,6 +570,7 @@ export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): HeroS
     targetReps: null,
     targetWeightLbs: null,
     velocitiesMps: s.velocitiesMps,
+    rpe: deriveRpe(s.reps),
     previous: priorPerformance(setLog, i),
   }));
 
@@ -549,6 +587,7 @@ export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): HeroS
       targetReps: resolveRepTarget(active),
       targetWeightLbs: weightLbs,
       velocitiesMps: reps.map((r) => toMps(repPeakMms(r)) ?? 0),
+      rpe: deriveRpe(reps),
       previous: priorPerformance(setLog, setLog.length),
     });
   }

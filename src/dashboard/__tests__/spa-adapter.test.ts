@@ -11,6 +11,7 @@ import {
   buildBattery,
   buildConnectionStatus,
   buildCurrentSet,
+  buildHeroSets,
   buildSessionProgress,
   buildSetLogRows,
   fmtElapsed,
@@ -20,6 +21,7 @@ import {
   initialAccumulatorState,
   reduceSnapshot,
   toMps,
+  type CompletedSet,
   type Snapshot,
   type SnapshotActiveSet,
   type SnapshotDevice,
@@ -256,6 +258,8 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       // Per-rep peaks retained (m/s) so titan SetRow can render its per-row
       // VelocityStrip for completed sets, not just the active one.
       velocitiesMps: [0.9, 0.8],
+      // Full WA reps retained (source of truth) so the hero can derive RPE.
+      reps: [rep(1, 900), rep(2, 800)],
     });
     expect(state.restStartMs).toBe(2_000);
   });
@@ -332,5 +336,53 @@ describe('buildSessionProgress + buildSetLogRows', () => {
       reps: 3,
       peakVelocity: '0.74 m/s',
     });
+  });
+});
+
+describe('buildHeroSets — RPE derivation from retained reps', () => {
+  /** Accumulate one closed set (device weight 100) from the given active reps. */
+  function loggedSet(reps: Rep[]): CompletedSet[] {
+    const device: SnapshotDevice = { weightLbs: 100, trainingMode: 'weight' };
+    let state = initialAccumulatorState();
+    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device, activeSet: { reps } }), 0);
+    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device }), 500);
+    return state.setLog;
+  }
+
+  it('derives an RPE (nearest 0.5, 0–10) for a set with real velocity loss', () => {
+    // (800 → 600) mean velocity across two reps = 25% loss → an estimable RPE.
+    const setLog = loggedSet([repWithMean(1, 800, 800), repWithMean(2, 600, 600)]);
+    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
+    expect(rows).toHaveLength(1);
+    const { rpe } = rows[0];
+    expect(rpe).not.toBeNull();
+    expect((rpe as number) % 0.5).toBe(0);
+    expect(rpe as number).toBeGreaterThanOrEqual(0);
+    expect(rpe as number).toBeLessThanOrEqual(10);
+  });
+
+  it('leaves RPE null when reps carry no movement samples', () => {
+    const setLog = loggedSet([rep(1, 900), rep(2, 800)]);
+    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
+    expect(rows[0].rpe).toBeNull();
+  });
+
+  it('leaves RPE null for a single-rep set (loss needs ≥2 reps)', () => {
+    const setLog = loggedSet([repWithMean(1, 800, 800)]);
+    const rows = buildHeroSets(snapshot({ sessionId: 's1' }), setLog);
+    expect(rows[0].rpe).toBeNull();
+  });
+
+  it('surfaces a live RPE on the in-progress active row too', () => {
+    const rows = buildHeroSets(
+      snapshot({
+        sessionId: 's1',
+        activeSet: { reps: [repWithMean(1, 800, 800), repWithMean(2, 600, 600)] },
+      }),
+      [],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].mode).toBe('active');
+    expect(rows[0].rpe).not.toBeNull();
   });
 });

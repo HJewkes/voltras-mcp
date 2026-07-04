@@ -11,8 +11,9 @@
  * Data-shape gaps closed (rather than avoided): peak velocity rides SetRow's
  * built-in per-row VelocityStrip (`velocities`) instead of a bespoke column; the
  * prior set fills the PREV column; Mode is a per-exercise constant surfaced in
- * the live-status line, not per row; RPE is absent (never captured) and SetRow
- * renders it as an em-dash. A slim live-status strip carries the dashboard's
+ * the live-status line, not per row; RPE is derived from the set's retained WA
+ * reps (velocity-loss estimate), or an em-dash when inestimable. A slim
+ * live-status strip carries the dashboard's
  * across-the-room glanceable signals (velocity-loss %, latest peak).
  *
  * a11y (preserves Phase 5): ARIA region named for the exercise; the set list is
@@ -44,7 +45,7 @@ function toSetRowProps(r: HeroSetRow): SetRowProps {
     setNumber: r.setNumber,
     reps: r.reps,
     weight: rnd(r.weightLbs),
-    rpe: null,
+    rpe: r.rpe,
     unit: 'lbs',
     velocities: r.velocitiesMps.length > 0 ? r.velocitiesMps : undefined,
     previous: r.previous
