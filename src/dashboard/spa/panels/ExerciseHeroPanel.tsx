@@ -24,7 +24,12 @@
  */
 import { Card, CardContent, ExerciseCard, VelocityStrip } from '@titan-design/react-ui';
 import type { CurrentSetView } from '../adapter';
-import { toExerciseSummary, toSetRowProps, type WorkoutSetView } from '../view-model/mappers';
+import {
+  deriveExerciseE1RM,
+  toExerciseSummary,
+  toSetRowProps,
+  type WorkoutSetView,
+} from '../view-model/mappers';
 
 export interface ExerciseHeroProps {
   /** Active-session exercise name; `'—'` when idle. */
@@ -60,6 +65,7 @@ export function ExerciseHeroPanel({
   const named = exercise !== '—';
   const title = named ? exercise : 'Current exercise';
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
+  const e1rm = deriveExerciseE1RM(heroSets);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -93,6 +99,7 @@ export function ExerciseHeroPanel({
           state="expanded"
           onToggle={() => undefined}
           summary={summary}
+          e1rm={e1rm ?? undefined}
           sets={heroSets.map(toSetRowProps)}
         />
       </div>

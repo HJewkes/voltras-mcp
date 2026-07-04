@@ -17,6 +17,7 @@
  * protocol bytes / frames / command codes cross this boundary.
  */
 import {
+  estimateE1RMFromReps,
   estimateSetRIR,
   getRepPeakVelocity,
   getSetVelocityLossPct,
@@ -137,4 +138,23 @@ export function toExerciseSummary(
     weight: rnd(last?.weightLbs ?? null) ?? 0,
     unit: 'lbs',
   };
+}
+
+/**
+ * Best estimated 1RM across the exercise's sets so far, for the hero card's
+ * e1RM badge. Uses WA's rep-based estimate (load × rep-count) per set and takes
+ * the max — a live "projected 1RM" that firms up as reps accumulate. Null until
+ * a set has both a weight and at least one rep. Rep-based (not profile-based):
+ * a single working weight has no load-velocity spread to fit a profile from.
+ */
+export function deriveExerciseE1RM(
+  views: WorkoutSetView[],
+): NonNullable<ExerciseCardProps['e1rm']> | null {
+  let best: number | null = null;
+  for (const v of views) {
+    if (v.weightLbs == null || v.reps.length < 1) continue;
+    const est = estimateE1RMFromReps(v.weightLbs, v.reps.length).e1RM;
+    if (Number.isFinite(est) && (best === null || est > best)) best = est;
+  }
+  return best === null ? null : { value: Math.round(best), unit: 'lbs' };
 }
