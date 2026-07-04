@@ -452,6 +452,64 @@ describe('GET /api/history', () => {
     expect(body.plan).toBeNull();
   });
 
+  it('reports the current-block program status (week + workouts done/planned)', async () => {
+    const base = makeFakeState({ primary: {} });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        listTrainingPrograms: () => Promise.resolve([{ id: 'p1', name: 'Prog', createdAt: '' }]),
+        getTrainingBlocksForProgram: () =>
+          Promise.resolve([
+            {
+              id: 'b1',
+              programId: 'p1',
+              orderIndex: 0,
+              name: 'Hypertrophy',
+              focus: 'hypertrophy',
+              weeksCount: 4,
+            },
+          ]),
+        getTrainingWeeksForBlock: () =>
+          Promise.resolve([
+            { id: 'w1', blockId: 'b1', orderIndex: 0, name: 'Week 1' },
+            { id: 'w2', blockId: 'b1', orderIndex: 1, name: 'Week 2' },
+          ]),
+        getWorkoutTemplatesForWeek: (weekId: string) =>
+          Promise.resolve(
+            weekId === 'w1'
+              ? [{ id: 't1', weekId: 'w1', name: 'A', orderIndex: 0 }]
+              : [{ id: 't2', weekId: 'w2', name: 'B', orderIndex: 0 }],
+          ),
+        getAssignmentsForTemplate: (templateId: string) =>
+          Promise.resolve(
+            templateId === 't1'
+              ? [{ id: 'a', sessionId: 's', workoutTemplateId: 't1', assignedAt: '' }]
+              : [],
+          ),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/program-status');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { program: Record<string, unknown> | null };
+    expect(body.program).toEqual({
+      mesoName: 'Hypertrophy',
+      focus: 'hypertrophy',
+      weekNumber: 2,
+      totalWeeks: 4,
+      workoutsDone: 1,
+      workoutsPlanned: 2,
+    });
+  });
+
+  it('returns program=null when the store exposes no plan methods', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/program-status');
+    const body = JSON.parse(res.body) as { program: unknown };
+    expect(body.program).toBeNull();
+  });
+
   it('uses the default limit when ?limit is absent', async () => {
     const state = makeFakeState({ primary: {} });
     const handle = await startWithFake(state);
