@@ -216,6 +216,18 @@ export interface ActiveSet {
     | 'inactivity_timeout'
     | 'guided_load_exited';
   /**
+   * Marks a set the guided-load bootstrap minted on the user's behalf (the
+   * set-level twin of {@link ActiveSession.autoCreatedBy}). Such a set is
+   * created at `armed` time, before the guided-load target weight has
+   * propagated via `settings_update`, so its `set.start` device snapshot
+   * holds a stale (pre-target) `weightLbs`. `finalizeSet` reads this tag to
+   * re-snapshot the device live at close — for the natural device-signal
+   * close, not just the `guided_load_exited` reap — so the persisted set
+   * header reflects the weight the reps were actually performed at rather
+   * than the pre-armed value. VMCP-02.57.
+   */
+  autoCreatedBy?: 'guided_load';
+  /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
    * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.

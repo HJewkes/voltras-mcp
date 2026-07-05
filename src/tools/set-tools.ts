@@ -555,17 +555,21 @@ export async function finalizeSet(
   // Use the snapshot captured at `set.start`; fall back to the current
   // snapshot if it was somehow missing (defensive — should not happen).
   //
-  // F4 (VMCP-01.19): the guided-load auto-create path snapshots at
-  // `armed` time, before the device's settings_update has propagated
-  // the target weight. Re-snapshot live for that finalize path so the
-  // persisted row reflects the guided-load target rather than the
-  // pre-armed value. Symmetric with how trigger DSL / device-signal
-  // paths fall back when no start-snapshot exists.
+  // F4 (VMCP-01.19) + VMCP-02.57: the guided-load auto-create path
+  // snapshots at `armed` time, before the device's settings_update has
+  // propagated the target weight, so the start snapshot holds a stale
+  // pre-target `weightLbs`. Re-snapshot live for EVERY guided-load-
+  // originated set — the natural device-signal close, not just the
+  // `guided_load_exited` reap — so the persisted header reflects the
+  // weight the reps were actually performed at (bench 2026-07-05: header
+  // read 30 for a set done entirely at 50). Symmetric with how trigger
+  // DSL / device-signal paths fall back when no start-snapshot exists.
   const startSnapshot = state.setStartDeviceSnapshots.get(setId);
-  const device =
-    opts.partialReason === 'guided_load_exited'
-      ? slot.live.snapshotDevice()
-      : (startSnapshot ?? slot.live.snapshotDevice());
+  const isGuidedLoadSet =
+    finalized.autoCreatedBy === 'guided_load' || opts.partialReason === 'guided_load_exited';
+  const device = isGuidedLoadSet
+    ? slot.live.snapshotDevice()
+    : (startSnapshot ?? slot.live.snapshotDevice());
   state.setStartDeviceSnapshots.delete(setId);
 
   // Stamp partial only when an explicit reason was supplied. F14/F15
