@@ -273,6 +273,46 @@ function App(): React.JSX.Element {
 
   const toneColor = CONNECTION_TONE_TOKEN[connection.tone];
 
+  // Live-mode rail ordering (VMCP-01.60): during an active session the
+  // glanceable live panels (rest timer + muscle heatmap) float directly under
+  // the session summary so they're readable mid-set; the planning/history
+  // panels demote below. Idle/review keeps the planning-forward order.
+  const liveCluster = (
+    <>
+      <RestTimerPanel elapsedMs={restElapsedMs} />
+      <React.Suspense
+        fallback={
+          <PanelCard title="Muscle heatmap">
+            <p className="panel-empty">Loading muscle map…</p>
+          </PanelCard>
+        }
+      >
+        <BodyMapPanel
+          activeExercise={snap.activeExercise}
+          sessionSetCount={accumulator.setLog.length}
+          weeklySetsByMuscle={muscleVolume}
+        />
+      </React.Suspense>
+    </>
+  );
+  const planningCluster = (
+    <>
+      <MesoStatusPanel program={program} />
+      <MesoOverviewPanel meso={meso} />
+      <StrengthTrendPanel points={trend} prRecords={prRecords} exerciseName={progress.exercise} />
+      <CapacityBandPanel points={capacityBand} />
+      <React.Suspense
+        fallback={
+          <PanelCard title="Weekly volume status">
+            <p className="panel-empty">Loading volume status…</p>
+          </PanelCard>
+        }
+      >
+        <VolumeStatusPanel weeklySetsByMuscle={muscleVolume} />
+      </React.Suspense>
+    </>
+  );
+
   return (
     <div className="dashboard">
       <header className="app-header">
@@ -330,37 +370,17 @@ function App(): React.JSX.Element {
         />
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
-          <MesoStatusPanel program={program} />
-          <MesoOverviewPanel meso={meso} />
-          <StrengthTrendPanel
-            points={trend}
-            prRecords={prRecords}
-            exerciseName={progress.exercise}
-          />
-          <CapacityBandPanel points={capacityBand} />
-          <RestTimerPanel elapsedMs={restElapsedMs} />
-          <React.Suspense
-            fallback={
-              <PanelCard title="Weekly volume status">
-                <p className="panel-empty">Loading volume status…</p>
-              </PanelCard>
-            }
-          >
-            <VolumeStatusPanel weeklySetsByMuscle={muscleVolume} />
-          </React.Suspense>
-          <React.Suspense
-            fallback={
-              <PanelCard title="Muscle heatmap">
-                <p className="panel-empty">Loading muscle map…</p>
-              </PanelCard>
-            }
-          >
-            <BodyMapPanel
-              activeExercise={snap.activeExercise}
-              sessionSetCount={accumulator.setLog.length}
-              weeklySetsByMuscle={muscleVolume}
-            />
-          </React.Suspense>
+          {progress.active ? (
+            <>
+              {liveCluster}
+              {planningCluster}
+            </>
+          ) : (
+            <>
+              {planningCluster}
+              {liveCluster}
+            </>
+          )}
         </aside>
       </main>
     </div>
