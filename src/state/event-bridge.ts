@@ -1001,7 +1001,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // coercion-watch through this cmd=0x10 cascade path (the only frame
       // that reliably reflects the post-write user-set value); only ecc
       // and assistMode remain observed in `onStateDump` below.
-      observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels, slotId);
+      observeSettingsUpdateCoercions(
+        settings,
+        slot.coercionWatch,
+        live,
+        slotChannels,
+        slotId,
+        slot.client.guidedLoadState?.phase,
+      );
     }),
   );
 
@@ -1571,21 +1578,44 @@ function publishCmd10SettingsUpdate(
  * observed in the `onStateDump` handler — they have no cmd=0x10 echo today
  * (eccentric may move here in a follow-up once a cmd=0x10 source is wired).
  */
+/**
+ * Guided-load phases that precede the settled `active` (engaged) state. Base
+ * weight and chains are still ramping through the firmware safety sequence
+ * during these phases, so a settings-update cascade can transiently echo the PRIOR
+ * value before the target lands. `active` is excluded — by then the setting
+ * has settled and a coerced echo is genuine. See `observeSettingsUpdateCoercions`.
+ */
+const GUIDED_LOAD_PRE_ENGAGED_PHASES: ReadonlySet<string> = new Set([
+  'armed',
+  'countdown',
+  'engaging',
+]);
+
 function observeSettingsUpdateCoercions(
   settings: SdkSettingsUpdate,
   watch: CoercionWatch,
   live: LiveState,
   channels: ChannelPublisher,
   slotId: string,
+  guidedLoadPhase: string | undefined,
 ): void {
   if (typeof settings.damperLevel === 'number') {
     observeCoercion('damperLevel', settings.damperLevel, watch, live, channels, slotId);
   }
-  if (typeof settings.chains === 'number') {
+  // VMCP-02.60: while a guided-load flow is pre-engaged, suppress the
+  // guided-load-tracked fields (baseWeight, chains). Both fire coercion on
+  // the FIRST non-matching settings-update echo (threshold=1), so a transient
+  // prior-value read during the ramp false-positives a `setting_coerced`
+  // (observed 150→115 on a 150 lb guided-load). At `active` the settled
+  // echo either clears the check (echo === target) or surfaces a genuine
+  // coercion. Damper is never touched by guided-load, so it stays observed.
+  const rampingGuidedLoad =
+    guidedLoadPhase !== undefined && GUIDED_LOAD_PRE_ENGAGED_PHASES.has(guidedLoadPhase);
+  if (typeof settings.chains === 'number' && !rampingGuidedLoad) {
     observeCoercion('chains', settings.chains, watch, live, channels, slotId);
   }
   const weight = settings.weight ?? settings.baseWeight;
-  if (typeof weight === 'number') {
+  if (typeof weight === 'number' && !rampingGuidedLoad) {
     observeCoercion('baseWeight', weight, watch, live, channels, slotId);
   }
 }

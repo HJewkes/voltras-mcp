@@ -3750,6 +3750,62 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(events[0]!.meta.requested_value).toBe('200');
     expect(events[0]!.meta.device_value).toBe('175');
   });
+
+  // ── VMCP-02.60: guided-load ramp must not surface a transient coercion ──
+  function setGuidedPhase(c: FakeClient, phase: string): void {
+    (c as unknown as { guidedLoadState: { phase: string } }).guidedLoadState = { phase };
+  }
+
+  it('VMCP-02.60: a transient prior-weight echo during the guided-load ramp fires no false coercion', () => {
+    // Repro of the 2026-07-05 false positive: start_guided_load{target=150}
+    // registers baseWeight=150 (exact). During the firmware safety ramp a
+    // settings-update cascade transiently echoes the PRIOR weight (115) before the
+    // target settles. Pre-fix, baseWeight's threshold=1 fired
+    // `setting_coerced 150→115` immediately. The gate suppresses baseWeight
+    // observation while the flow is pre-engaged (armed/countdown/engaging).
+    setGuidedPhase(client, 'engaging');
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'baseWeight',
+      requested: 150,
+      setterReturnedAt: Date.now(),
+      mode: 'exact',
+    });
+    client.fire.settingsUpdate({ baseWeight: 115 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // The ramp read was skipped, not consumed — the check is still pending.
+    expect(watch.size()).toBe(1);
+    // Weight settles to the target as the flow engages; the settled echo at
+    // `active` clears the check (exact-mode) with no spurious event.
+    setGuidedPhase(client, 'active');
+    client.fire.settingsUpdate({ baseWeight: 150 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    expect(watch.size()).toBe(0);
+  });
+
+  it('VMCP-02.60: a genuine weight coercion still fires once the flow is engaged', () => {
+    // The gate defers, it does not disable: a target the firmware actually
+    // caps (200→150) must still surface once the flow reaches `active`.
+    setGuidedPhase(client, 'engaging');
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'baseWeight',
+      requested: 200,
+      setterReturnedAt: Date.now(),
+      mode: 'exact',
+    });
+    // Transient prior-value read during the ramp — suppressed.
+    client.fire.settingsUpdate({ baseWeight: 115 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // Firmware-capped weight echoes at `active` — genuine coercion fires.
+    setGuidedPhase(client, 'active');
+    client.fire.settingsUpdate({ baseWeight: 150 });
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.meta.field).toBe('baseWeight');
+    expect(events[0]!.meta.requested_value).toBe('200');
+    expect(events[0]!.meta.device_value).toBe('150');
+  });
 });
 
 // VMCP-02.29 PR5 — rep_finalized routes through REP_SOURCE at the read
