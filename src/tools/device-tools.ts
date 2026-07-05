@@ -91,8 +91,7 @@ import {
   buildGuidedLoadTrackedFields,
   teardownBleResources,
 } from './device-handler-helpers.js';
-import { finalizeSet } from './set-tools.js';
-import type { StoredSession } from '../store/types.js';
+import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -1724,74 +1723,6 @@ function resolveConnectSlotId(
     );
   }
   return binding.physicalSide;
-}
-
-/**
- * F4+F8 (VMCP-01.19 / VMCP-01.24) — reap the bridge-minted guided-load
- * scaffold after `device.exit_guided_load`.
- *
- * Order: set first, then session. Channels see `set_ended` and the
- * (eventual) session-ended event as separate signals — the brief
- * forbids bundling them.
- *
- * Set reap: `finalizeSet` with `partialReason: 'guided_load_exited'`
- * and `disengageMotor: false`. The SDK already wrote the exit frame;
- * a redundant `Workout.STOP` would just churn state. We pass `cause:
- * 'tool'` because the call originated in a tool handler — channel
- * subscribers reading the cause field see this as a tool-driven close,
- * consistent with the explicit `set.end` shape.
- *
- * Session reap: only fires when the active session is tagged
- * `autoCreatedBy: 'guided_load'` AND no other set is in flight. The
- * F14 `dropTrailingInProgress` predicate is intentionally NOT extended
- * to `'guided_load_exited'` — guided load has no in-flight rep at exit
- * time, and any reps that landed during the demo should persist.
- *
- * Errors in the persist path are caught + logged; the BLE write has
- * already succeeded by the time we run, so a SQLite failure shouldn't
- * fail the tool call.
- */
-async function reapGuidedLoadScaffold(state: ServerState, slotId: string): Promise<void> {
-  const slot = getSlot(state, slotId);
-
-  if (slot.live.set !== undefined) {
-    try {
-      await finalizeSet(state, slotId, {
-        cause: 'tool',
-        disengageMotor: false,
-        partialReason: 'guided_load_exited',
-      });
-    } catch (err) {
-      log.warn('device.exit_guided_load: set reap failed', err);
-    }
-  }
-
-  const session = slot.live.session;
-  if (
-    session !== undefined &&
-    session.autoCreatedBy === 'guided_load' &&
-    slot.live.set === undefined
-  ) {
-    const finalizedSession = slot.live.endSession();
-    if (finalizedSession !== undefined) {
-      const stored: StoredSession = {
-        id: finalizedSession.sessionId,
-        startedAt: finalizedSession.startedAt,
-        endedAt: new Date().toISOString(),
-        ...(finalizedSession.exerciseId !== undefined
-          ? { exerciseId: finalizedSession.exerciseId }
-          : {}),
-        ...(finalizedSession.exerciseName !== undefined
-          ? { exerciseName: finalizedSession.exerciseName }
-          : {}),
-      };
-      try {
-        await state.store.putSession(stored);
-      } catch (err) {
-        log.warn('device.exit_guided_load: session reap persist failed', err);
-      }
-    }
-  }
 }
 
 /**

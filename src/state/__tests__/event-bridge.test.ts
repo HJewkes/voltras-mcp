@@ -3028,6 +3028,59 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(state.store.putSession).not.toHaveBeenCalled();
     expect(slot.pendingGuidedLoadExerciseName).toBe('Barbell Squat');
   });
+
+  // ── VMCP-02.62: a failed engagement (timeout) reaps the auto-created scaffold ──
+  it('VMCP-02.62: a timeout after arming reaps the auto-created session + set', async () => {
+    // Repro of the 2026-07-05 orphan: a guided-load that fails to engage
+    // transitions armed → timeout. Pre-fix the bridge left the auto-created
+    // session+set ACTIVE (closed ~92s later by the inactivity watchdog at 0
+    // reps). Post-fix the failure transition reaps them immediately.
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: null });
+    expect(live.snapshotSet()).toBeDefined();
+    expect(live.snapshotSession()).toBeDefined();
+
+    client.fireGuided({ phase: 'timeout', countdownRemainingMs: null, fitnessModeRaw: null });
+    // The reap is fire-and-forget (`void ...catch(...)`); wait for it to land.
+    await vi.waitFor(() => expect(live.snapshotSession()).toBeUndefined());
+
+    expect(live.snapshotSet()).toBeUndefined();
+    // Set persisted as a guided-load partial; session persisted with endedAt.
+    expect(state.store.putSet).toHaveBeenCalledTimes(1);
+    const storedSet = state.store.putSet.mock.calls[0]![0] as { partialReason?: string };
+    expect(storedSet.partialReason).toBe('guided_load_exited');
+    expect(state.store.putSession).toHaveBeenCalledTimes(2);
+    const endPersist = state.store.putSession.mock.calls[1]![0] as { endedAt?: string };
+    expect(endPersist.endedAt).toBeDefined();
+  });
+
+  it('VMCP-02.62: a timeout does NOT reap a legitimately-active explicit set', async () => {
+    // An explicit (user-started) session + set is active when a guided load
+    // fires against it and times out. The reap is gated on
+    // `autoCreatedBy: 'guided_load'`, so the user's set is left untouched.
+    live.startSession({
+      sessionId: 'explicit-sess',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseName: 'Bench Press',
+    });
+    live.startSet({
+      setId: 'explicit-set',
+      sessionId: 'explicit-sess',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    });
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: null });
+    client.fireGuided({ phase: 'timeout', countdownRemainingMs: null, fitnessModeRaw: null });
+    // Give any (erroneous) async reap a chance to run before asserting absence.
+    await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+
+    expect(live.snapshotSet()?.setId).toBe('explicit-set');
+    expect(live.snapshotSession()?.sessionId).toBe('explicit-sess');
+    expect(state.store.putSet).not.toHaveBeenCalled();
+  });
 });
 
 // ── onStateDump (cmd=0x07 — Bug 26 / Gap C1) ───────────────────────────────
@@ -3749,6 +3802,62 @@ describe('setting_coerced channel event (F2+F3)', () => {
     expect(events[0]!.meta.field).toBe('baseWeight');
     expect(events[0]!.meta.requested_value).toBe('200');
     expect(events[0]!.meta.device_value).toBe('175');
+  });
+
+  // ── VMCP-02.60: guided-load ramp must not surface a transient coercion ──
+  function setGuidedPhase(c: FakeClient, phase: string): void {
+    (c as unknown as { guidedLoadState: { phase: string } }).guidedLoadState = { phase };
+  }
+
+  it('VMCP-02.60: a transient prior-weight echo during the guided-load ramp fires no false coercion', () => {
+    // Repro of the 2026-07-05 false positive: start_guided_load{target=150}
+    // registers baseWeight=150 (exact). During the firmware safety ramp a
+    // settings-update cascade transiently echoes the PRIOR weight (115) before the
+    // target settles. Pre-fix, baseWeight's threshold=1 fired
+    // `setting_coerced 150→115` immediately. The gate suppresses baseWeight
+    // observation while the flow is pre-engaged (armed/countdown/engaging).
+    setGuidedPhase(client, 'engaging');
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'baseWeight',
+      requested: 150,
+      setterReturnedAt: Date.now(),
+      mode: 'exact',
+    });
+    client.fire.settingsUpdate({ baseWeight: 115 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // The ramp read was skipped, not consumed — the check is still pending.
+    expect(watch.size()).toBe(1);
+    // Weight settles to the target as the flow engages; the settled echo at
+    // `active` clears the check (exact-mode) with no spurious event.
+    setGuidedPhase(client, 'active');
+    client.fire.settingsUpdate({ baseWeight: 150 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    expect(watch.size()).toBe(0);
+  });
+
+  it('VMCP-02.60: a genuine weight coercion still fires once the flow is engaged', () => {
+    // The gate defers, it does not disable: a target the firmware actually
+    // caps (200→150) must still surface once the flow reaches `active`.
+    setGuidedPhase(client, 'engaging');
+    watch.register({
+      setterName: 'device.start_guided_load',
+      field: 'baseWeight',
+      requested: 200,
+      setterReturnedAt: Date.now(),
+      mode: 'exact',
+    });
+    // Transient prior-value read during the ramp — suppressed.
+    client.fire.settingsUpdate({ baseWeight: 115 });
+    expect(pickAllCoercionPublishes()).toHaveLength(0);
+    // Firmware-capped weight echoes at `active` — genuine coercion fires.
+    setGuidedPhase(client, 'active');
+    client.fire.settingsUpdate({ baseWeight: 150 });
+    const events = pickAllCoercionPublishes();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.meta.field).toBe('baseWeight');
+    expect(events[0]!.meta.requested_value).toBe('200');
+    expect(events[0]!.meta.device_value).toBe('150');
   });
 });
 

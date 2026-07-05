@@ -145,6 +145,7 @@ import type { ModeDivergence } from './mode-divergence-watch.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
+import { reapGuidedLoadScaffold } from './guided-load-reap.js';
 import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -908,6 +909,22 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             }),
           );
         }
+        // VMCP-02.62: a guided-load that fails to engage transitions to
+        // `timeout` (the silent ceremony-skip / poll-window expiry). Without
+        // this, the session+set auto-created on `armed` sit ACTIVE until the
+        // inactivity watchdog reaps them ~30-90s later, surfacing a phantom
+        // 0-rep set. Reap the auto-created scaffold immediately on the failure
+        // transition. `requireAutoCreated` guards against tearing down a
+        // legitimately-active explicit set that was open when the flow timed
+        // out. Gated on the phase CHANGE so the SDK's repeated terminal
+        // emissions don't re-fire the reap. Fire-and-forget: the callback is
+        // sync, and the `timeout` channel event above already carries the
+        // failed set's id before the async close lands.
+        if (gls.phase === 'timeout' && lastGuidedLoadPhase !== 'timeout') {
+          void reapGuidedLoadScaffold(state, slotId, { requireAutoCreated: true }).catch((err) => {
+            log.warn('event-bridge: guided-load timeout reap failed', err);
+          });
+        }
         lastGuidedLoadPhase = gls.phase;
 
         // VMCP-02.03: clear the requested-target stash on the terminal phases
@@ -1001,7 +1018,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // coercion-watch through this cmd=0x10 cascade path (the only frame
       // that reliably reflects the post-write user-set value); only ecc
       // and assistMode remain observed in `onStateDump` below.
-      observeSettingsUpdateCoercions(settings, slot.coercionWatch, live, slotChannels, slotId);
+      observeSettingsUpdateCoercions(
+        settings,
+        slot.coercionWatch,
+        live,
+        slotChannels,
+        slotId,
+        slot.client.guidedLoadState?.phase,
+      );
     }),
   );
 
@@ -1577,21 +1601,44 @@ function publishCmd10SettingsUpdate(
  * observed in the `onStateDump` handler — they have no cmd=0x10 echo today
  * (eccentric may move here in a follow-up once a cmd=0x10 source is wired).
  */
+/**
+ * Guided-load phases that precede the settled `active` (engaged) state. Base
+ * weight and chains are still ramping through the firmware safety sequence
+ * during these phases, so a settings-update cascade can transiently echo the PRIOR
+ * value before the target lands. `active` is excluded — by then the setting
+ * has settled and a coerced echo is genuine. See `observeSettingsUpdateCoercions`.
+ */
+const GUIDED_LOAD_PRE_ENGAGED_PHASES: ReadonlySet<string> = new Set([
+  'armed',
+  'countdown',
+  'engaging',
+]);
+
 function observeSettingsUpdateCoercions(
   settings: SdkSettingsUpdate,
   watch: CoercionWatch,
   live: LiveState,
   channels: ChannelPublisher,
   slotId: string,
+  guidedLoadPhase: string | undefined,
 ): void {
   if (typeof settings.damperLevel === 'number') {
     observeCoercion('damperLevel', settings.damperLevel, watch, live, channels, slotId);
   }
-  if (typeof settings.chains === 'number') {
+  // VMCP-02.60: while a guided-load flow is pre-engaged, suppress the
+  // guided-load-tracked fields (baseWeight, chains). Both fire coercion on
+  // the FIRST non-matching settings-update echo (threshold=1), so a transient
+  // prior-value read during the ramp false-positives a `setting_coerced`
+  // (observed 150→115 on a 150 lb guided-load). At `active` the settled
+  // echo either clears the check (echo === target) or surfaces a genuine
+  // coercion. Damper is never touched by guided-load, so it stays observed.
+  const rampingGuidedLoad =
+    guidedLoadPhase !== undefined && GUIDED_LOAD_PRE_ENGAGED_PHASES.has(guidedLoadPhase);
+  if (typeof settings.chains === 'number' && !rampingGuidedLoad) {
     observeCoercion('chains', settings.chains, watch, live, channels, slotId);
   }
   const weight = settings.weight ?? settings.baseWeight;
-  if (typeof weight === 'number') {
+  if (typeof weight === 'number' && !rampingGuidedLoad) {
     observeCoercion('baseWeight', weight, watch, live, channels, slotId);
   }
 }
