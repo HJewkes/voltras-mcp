@@ -43,17 +43,24 @@ import {
   type Snapshot,
 } from './adapter';
 import { CONNECTION_TONE_TOKEN } from './colors';
-import { buildBodyMapData, buildWeeklyVolumeData } from './bodymap';
 import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
-import { BodyMapPanel } from './panels/BodyMapPanel';
+// Lazy: BodyMapPanel is the ONLY module (via its own `../bodymap` import) that
+// reaches titan's `/bodymap` subpath and, through it, react-native-body-highlighter
+// (heavy SVG muscle data). Loading it via React.lazy — and deriving the heatmap
+// data inside the panel rather than eagerly here — keeps body-highlighter out of
+// the initial dashboard bundle, in its own async chunk (Track A, VMCP-01.57).
+const BodyMapPanel = React.lazy(() =>
+  import('./panels/BodyMapPanel').then((m) => ({ default: m.BodyMapPanel })),
+);
 import {
   StrengthTrendPanel,
   type ExerciseTrendPoint,
   type PrRecordView,
 } from './panels/StrengthTrendPanel';
 import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
+import { PanelCard } from './panels/PanelCard';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
 import type { PrescriptionView } from './adapter';
 
@@ -228,8 +235,6 @@ function App(): React.JSX.Element {
   const currentSet = buildCurrentSet(snap);
   const heroSets = buildHeroSets(snap, accumulator.setLog);
   const progress = buildSessionProgress(snap, accumulator.setLog);
-  const bodyMapData = buildBodyMapData(snap.activeExercise, accumulator.setLog.length);
-  const weeklyBodyMapData = buildWeeklyVolumeData(muscleVolume);
   const connection = buildConnectionStatus(snap, status);
   const battery = buildBattery(snap);
   // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
@@ -303,7 +308,19 @@ function App(): React.JSX.Element {
             exerciseName={progress.exercise}
           />
           <RestTimerPanel elapsedMs={restElapsedMs} />
-          <BodyMapPanel data={bodyMapData} weeklyData={weeklyBodyMapData} />
+          <React.Suspense
+            fallback={
+              <PanelCard title="Muscle heatmap">
+                <p className="panel-empty">Loading muscle map…</p>
+              </PanelCard>
+            }
+          >
+            <BodyMapPanel
+              activeExercise={snap.activeExercise}
+              sessionSetCount={accumulator.setLog.length}
+              weeklySetsByMuscle={muscleVolume}
+            />
+          </React.Suspense>
         </aside>
       </main>
     </div>

@@ -10,22 +10,36 @@
  * `react-native-svg`, resolved for the browser by the SPA vite build only, so
  * this component is reached solely through the vite bundle (never node vitest).
  */
-import { useState } from 'react';
-import { BodyMap, type BodyMapData, type MuscleGroup } from '@titan-design/react-ui/bodymap';
+import { useMemo, useState } from 'react';
+import { BodyMap, type MuscleGroup } from '@titan-design/react-ui/bodymap';
 import { PanelCard } from './PanelCard';
+import { buildBodyMapData, buildWeeklyVolumeData } from '../bodymap';
+import type { SnapshotActiveExercise } from '../adapter';
 
 export function BodyMapPanel({
-  data,
-  weeklyData,
+  activeExercise,
+  sessionSetCount,
+  weeklySetsByMuscle,
 }: {
-  /** Live heatmap: muscles worked by the current exercise. */
-  data: BodyMapData[];
-  /** Weekly-volume heatmap: MEV/MAV/MRV status over the trailing week. */
-  weeklyData: BodyMapData[];
+  /** Current exercise driving the live heatmap (muscles worked). */
+  activeExercise: SnapshotActiveExercise | null | undefined;
+  /** Sets logged this session — the live heatmap's per-muscle count. */
+  sessionSetCount: number;
+  /** Effective sets per voltras muscle over the trailing week (weekly mode). */
+  weeklySetsByMuscle: Record<string, number>;
 }): React.JSX.Element {
   const [view, setView] = useState<'front' | 'back'>('front');
   const [mode, setMode] = useState<'live' | 'weekly'>('live');
   const [highlighted, setHighlighted] = useState<MuscleGroup | null>(null);
+
+  // Derive heatmap data here (not in the eager App render) so `bodymap.ts` — and
+  // through it titan's `/bodymap` subpath + react-native-body-highlighter — is
+  // reached ONLY via this lazy panel's chunk (Track A tree-shaking, VMCP-01.57).
+  const data = useMemo(
+    () => buildBodyMapData(activeExercise, sessionSetCount),
+    [activeExercise, sessionSetCount],
+  );
+  const weeklyData = useMemo(() => buildWeeklyVolumeData(weeklySetsByMuscle), [weeklySetsByMuscle]);
 
   const onMusclePress = (muscle: MuscleGroup): void => {
     setHighlighted((prev) => (prev === muscle ? null : muscle));
