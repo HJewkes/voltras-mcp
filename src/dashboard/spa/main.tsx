@@ -60,6 +60,8 @@ import {
   type PrRecordView,
 } from './panels/StrengthTrendPanel';
 import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
+import { MesoOverviewPanel } from './panels/MesoOverviewPanel';
+import { type MesoOverviewView } from './panels/meso-overview-view';
 import { CapacityBandPanel } from './panels/CapacityBandPanel';
 import { type CapacityBandPoint } from './panels/capacity-band-view';
 import { PanelCard } from './panels/PanelCard';
@@ -87,6 +89,7 @@ interface Model {
   muscleVolume: Record<string, number>;
   prRecords: PrRecordView[];
   capacityBand: CapacityBandPoint[];
+  meso: MesoOverviewView | null;
 }
 
 function useDashboardModel(): Model {
@@ -102,6 +105,7 @@ function useDashboardModel(): Model {
   const [muscleVolume, setMuscleVolume] = useState<Record<string, number>>({});
   const [prRecords, setPrRecords] = useState<PrRecordView[]>([]);
   const [capacityBand, setCapacityBand] = useState<CapacityBandPoint[]>([]);
+  const [meso, setMeso] = useState<MesoOverviewView | null>(null);
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -154,7 +158,7 @@ function useDashboardModel(): Model {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes, bandRes] =
+        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes, bandRes, mesoRes] =
           await Promise.all([
             fetch('/api/exercise-trend', { cache: 'no-store' }),
             fetch('/api/next-workout', { cache: 'no-store' }),
@@ -163,6 +167,7 @@ function useDashboardModel(): Model {
             fetch('/api/muscle-volume', { cache: 'no-store' }),
             fetch('/api/pr-history', { cache: 'no-store' }),
             fetch('/api/capacity-band', { cache: 'no-store' }),
+            fetch('/api/meso-overview', { cache: 'no-store' }),
           ]);
         if (trendRes.ok) {
           const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
@@ -192,6 +197,10 @@ function useDashboardModel(): Model {
           const data = (await bandRes.json()) as { points?: CapacityBandPoint[] };
           if (!cancelled) setCapacityBand(data.points ?? []);
         }
+        if (mesoRes.ok) {
+          const data = (await mesoRes.json()) as { meso?: MesoOverviewView | null };
+          if (!cancelled) setMeso(data.meso ?? null);
+        }
       } catch {
         // best-effort; keep the last-known values on a transient failure
       }
@@ -217,6 +226,7 @@ function useDashboardModel(): Model {
     muscleVolume,
     prRecords,
     capacityBand,
+    meso,
   };
 }
 
@@ -239,6 +249,7 @@ function App(): React.JSX.Element {
     muscleVolume,
     prRecords,
     capacityBand,
+    meso,
   } = useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
@@ -314,6 +325,7 @@ function App(): React.JSX.Element {
         <aside className="support-rail" aria-label="Session overview">
           <SessionProgressPanel view={progress} />
           <MesoStatusPanel program={program} />
+          <MesoOverviewPanel meso={meso} />
           <StrengthTrendPanel
             points={trend}
             prRecords={prRecords}

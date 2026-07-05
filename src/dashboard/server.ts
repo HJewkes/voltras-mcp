@@ -298,6 +298,11 @@ async function handleRequest(
     sendJson(res, 200, { program });
     return;
   }
+  if (pathname === '/api/meso-overview') {
+    const meso = await fetchMesoOverview(state);
+    sendJson(res, 200, { meso });
+    return;
+  }
   if (pathname === '/api/muscle-volume') {
     const muscles = await fetchMuscleVolume(state);
     sendJson(res, 200, { muscles });
@@ -672,6 +677,125 @@ async function fetchProgramStatus(state: DashboardServerState): Promise<ProgramS
     };
     if (block.focus !== undefined) status.focus = block.focus;
     return status;
+  }
+  return null;
+}
+
+/** One workout in a meso week, tagged with its progress relative to the plan. */
+interface MesoWorkoutView {
+  name: string;
+  status: 'completed' | 'current' | 'upcoming';
+}
+
+/** One week of the active mesocycle, shaped for titan `WeekRow`. */
+export interface MesoWeekView {
+  /** 1-based week index within the block. */
+  weekNumber: number;
+  /** The first week that still has unfinished work (the lifter's live week). */
+  isCurrent: boolean;
+  /** Week whose name marks it a deload (rendered with the deload treatment). */
+  isDeload: boolean;
+  /** Planned volume (total target sets) normalized to the block's peak week, 0-1. */
+  intensityLevel: number;
+  workouts: MesoWorkoutView[];
+}
+
+/** The active mesocycle's week-by-week overview (titan `WeekRow` stack). */
+interface MesoOverviewView {
+  mesoName: string;
+  focus?: string;
+  totalWeeks: number;
+  weeks: MesoWeekView[];
+}
+
+/** Raw per-week rollup before the block-relative view derivation. */
+export interface RawMesoWeek {
+  orderIndex: number;
+  name?: string;
+  /** Total planned target sets across the week's templates. */
+  volume: number;
+  templates: Array<{ name: string; done: boolean }>;
+}
+
+/**
+ * Derive the titan-ready week views from raw block weeks: normalize each week's
+ * planned volume to the block's peak (the intensity bar), flag the deload weeks
+ * by name, mark the first week with unfinished work as current, and tag the very
+ * first unfinished workout `current` (the rest `upcoming`, done ones `completed`).
+ * Pure — no store I/O — so the volume/status math is unit-testable on its own.
+ */
+export function deriveMesoWeekViews(rawWeeks: RawMesoWeek[]): MesoWeekView[] {
+  const sorted = [...rawWeeks].sort((a, b) => a.orderIndex - b.orderIndex);
+  const maxVolume = sorted.reduce((max, w) => Math.max(max, w.volume), 0);
+  const currentWeekOrder = sorted.find((w) => w.templates.some((t) => !t.done))?.orderIndex ?? -1;
+  let currentTagged = false;
+  return sorted.map((week) => ({
+    weekNumber: week.orderIndex + 1,
+    isCurrent: week.orderIndex === currentWeekOrder,
+    isDeload: /deload/i.test(week.name ?? ''),
+    intensityLevel: maxVolume > 0 ? week.volume / maxVolume : 0,
+    workouts: week.templates.map((t) => {
+      if (t.done) return { name: t.name, status: 'completed' as const };
+      if (!currentTagged) {
+        currentTagged = true;
+        return { name: t.name, status: 'current' as const };
+      }
+      return { name: t.name, status: 'upcoming' as const };
+    }),
+  }));
+}
+
+/**
+ * Week-by-week overview of the active mesocycle — the first program's current
+ * (in-progress, non-empty) block, folded into per-week volume + workout-status
+ * data for titan `WeekRow`. Planned volume comes from each template's target
+ * sets; workout status from plan assignments (the same done-signal the program
+ * status + next-workout endpoints use). Returns null when the plan store isn't
+ * available or no block is in progress. Plan metadata only (NF-07).
+ */
+async function fetchMesoOverview(state: DashboardServerState): Promise<MesoOverviewView | null> {
+  const { store } = state;
+  if (
+    store.listTrainingPrograms === undefined ||
+    store.getTrainingBlocksForProgram === undefined ||
+    store.getTrainingWeeksForBlock === undefined ||
+    store.getWorkoutTemplatesForWeek === undefined ||
+    store.getPlannedExercisesForTemplate === undefined ||
+    store.getAssignmentsForTemplate === undefined
+  ) {
+    return null;
+  }
+  const [program] = await store.listTrainingPrograms({ includeArchived: false });
+  if (program === undefined) return null;
+
+  for (const block of await store.getTrainingBlocksForProgram(program.id)) {
+    const rawWeeks: RawMesoWeek[] = [];
+    let planned = 0;
+    let done = 0;
+    for (const week of await store.getTrainingWeeksForBlock(block.id)) {
+      const templates: RawMesoWeek['templates'] = [];
+      let volume = 0;
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        const isDone = (await store.getAssignmentsForTemplate(template.id)).length > 0;
+        planned += 1;
+        if (isDone) done += 1;
+        const exercises = await store.getPlannedExercisesForTemplate(template.id);
+        volume += exercises.reduce((sum, ex) => sum + ex.targetSets, 0);
+        templates.push({ name: template.name, done: isDone });
+      }
+      const raw: RawMesoWeek = { orderIndex: week.orderIndex, volume, templates };
+      if (week.name !== undefined) raw.name = week.name;
+      rawWeeks.push(raw);
+    }
+    if (planned === 0 || done >= planned) continue; // empty or finished block
+
+    const overview: MesoOverviewView = {
+      mesoName: block.name,
+      totalWeeks: block.weeksCount,
+      weeks: deriveMesoWeekViews(rawWeeks),
+    };
+    if (block.focus !== undefined) overview.focus = block.focus;
+    return overview;
   }
   return null;
 }

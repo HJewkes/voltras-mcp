@@ -238,6 +238,15 @@
   overflow-x: auto;
 }
 
+/* Mesocycle overview: a vertical ladder of titan WeekRows, hairline-separated. */
+.meso-overview-weeks {
+  display: flex;
+  flex-direction: column;
+}
+.meso-overview-weeks > * + * {
+  border-top: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
+}
+
 /* "PR history" affordance below the trend chart — opens the PrHistoryModal. */
 .pr-history-link {
   display: block;
