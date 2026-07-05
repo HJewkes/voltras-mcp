@@ -16,11 +16,13 @@
  */
 import {
   DEFAULT_VOLUME_LANDMARKS,
+  MUSCLE_DISPLAY_NAMES,
   MuscleGroup,
   type BodyMapData,
 } from '@titan-design/react-ui/bodymap';
 import { classifyWeeklyVolume } from '@voltras/workout-analytics';
 import type { SnapshotActiveExercise } from './adapter';
+import { compareVolumeChips, toChipVolumeStatus, type VolumeStatusChip } from './volume-status';
 
 /**
  * The volume-status enum BodyMap's data actually expects. Derived from
@@ -118,14 +120,24 @@ export function buildBodyMapData(
  * that fold onto one titan group have their sets summed. Empty input (no recent
  * training) yields a plain body outline.
  */
-export function buildWeeklyVolumeData(weeklySetsByMuscle: Record<string, number>): BodyMapData[] {
+/**
+ * Fold the voltras per-muscle-string weekly set counts onto titan `MuscleGroup`s,
+ * summing strings that share a group and dropping zero/empty entries. Shared by
+ * the heatmap ({@link buildWeeklyVolumeData}) and the chip list
+ * ({@link buildVolumeStatusChips}) so both read the same grouping.
+ */
+function groupWeeklySets(weeklySetsByMuscle: Record<string, number>): Map<MuscleGroup, number> {
   const byGroup = new Map<MuscleGroup, number>();
   for (const [raw, sets] of Object.entries(weeklySetsByMuscle)) {
     const group = toMuscleGroup(raw);
     if (group === null || !(sets > 0)) continue;
     byGroup.set(group, (byGroup.get(group) ?? 0) + sets);
   }
-  return Array.from(byGroup.entries()).map(([group, sets]) => {
+  return byGroup;
+}
+
+export function buildWeeklyVolumeData(weeklySetsByMuscle: Record<string, number>): BodyMapData[] {
+  return Array.from(groupWeeklySets(weeklySetsByMuscle).entries()).map(([group, sets]) => {
     const landmarks = DEFAULT_VOLUME_LANDMARKS[group];
     return {
       muscleGroup: group,
@@ -134,4 +146,27 @@ export function buildWeeklyVolumeData(weeklySetsByMuscle: Record<string, number>
       weeklySets: Math.round(sets),
     };
   });
+}
+
+/**
+ * Build the weekly volume-status chip list from the same `/api/muscle-volume`
+ * data the heatmap uses — a compact "which muscles are under/over this week"
+ * summary rendered as titan `MuscleGroupChip`s. Reuses the landmark
+ * classification (no new computation); returns attention-ordered chips (see
+ * {@link compareVolumeChips}). Empty input yields `[]`.
+ */
+export function buildVolumeStatusChips(
+  weeklySetsByMuscle: Record<string, number>,
+): VolumeStatusChip[] {
+  return Array.from(groupWeeklySets(weeklySetsByMuscle).entries())
+    .map(([group, sets]) => {
+      const landmarks = DEFAULT_VOLUME_LANDMARKS[group];
+      return {
+        muscleGroup: String(group),
+        name: MUSCLE_DISPLAY_NAMES[group] ?? String(group),
+        status: toChipVolumeStatus(classifyWeeklyVolume(sets, landmarks)),
+        weeklySets: Math.round(sets),
+      };
+    })
+    .sort(compareVolumeChips);
 }

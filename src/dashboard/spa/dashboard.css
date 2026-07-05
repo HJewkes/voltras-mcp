@@ -262,6 +262,12 @@
 }
 
 /* BodyMap Live / Weekly-volume mode toggle. */
+.volume-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .bodymap-mode {
   display: flex;
   gap: 6px;

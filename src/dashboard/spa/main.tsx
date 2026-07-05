@@ -54,6 +54,12 @@ import { SessionProgressPanel } from './panels/SessionProgressPanel';
 const BodyMapPanel = React.lazy(() =>
   import('./panels/BodyMapPanel').then((m) => ({ default: m.BodyMapPanel })),
 );
+// Lazy for the same reason as BodyMapPanel: `buildVolumeStatusChips` (via
+// `../bodymap`) pulls titan's `/bodymap` subpath + body-highlighter. Both lazy
+// panels share the resulting async chunk, keeping the main bundle clean.
+const VolumeStatusPanel = React.lazy(() =>
+  import('./panels/VolumeStatusPanel').then((m) => ({ default: m.VolumeStatusPanel })),
+);
 import {
   StrengthTrendPanel,
   type ExerciseTrendPoint,
@@ -333,6 +339,15 @@ function App(): React.JSX.Element {
           />
           <CapacityBandPanel points={capacityBand} />
           <RestTimerPanel elapsedMs={restElapsedMs} />
+          <React.Suspense
+            fallback={
+              <PanelCard title="Weekly volume status">
+                <p className="panel-empty">Loading volume status…</p>
+              </PanelCard>
+            }
+          >
+            <VolumeStatusPanel weeklySetsByMuscle={muscleVolume} />
+          </React.Suspense>
           <React.Suspense
             fallback={
               <PanelCard title="Muscle heatmap">
