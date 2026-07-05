@@ -145,6 +145,7 @@ import type { ModeDivergence } from './mode-divergence-watch.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
+import { reapGuidedLoadScaffold } from './guided-load-reap.js';
 import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -907,6 +908,22 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
               sessionId: guidedSession?.sessionId ?? guidedSet?.sessionId,
             }),
           );
+        }
+        // VMCP-02.62: a guided-load that fails to engage transitions to
+        // `timeout` (the silent ceremony-skip / poll-window expiry). Without
+        // this, the session+set auto-created on `armed` sit ACTIVE until the
+        // inactivity watchdog reaps them ~30-90s later, surfacing a phantom
+        // 0-rep set. Reap the auto-created scaffold immediately on the failure
+        // transition. `requireAutoCreated` guards against tearing down a
+        // legitimately-active explicit set that was open when the flow timed
+        // out. Gated on the phase CHANGE so the SDK's repeated terminal
+        // emissions don't re-fire the reap. Fire-and-forget: the callback is
+        // sync, and the `timeout` channel event above already carries the
+        // failed set's id before the async close lands.
+        if (gls.phase === 'timeout' && lastGuidedLoadPhase !== 'timeout') {
+          void reapGuidedLoadScaffold(state, slotId, { requireAutoCreated: true }).catch((err) => {
+            log.warn('event-bridge: guided-load timeout reap failed', err);
+          });
         }
         lastGuidedLoadPhase = gls.phase;
 
