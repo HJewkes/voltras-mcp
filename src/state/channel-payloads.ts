@@ -35,7 +35,7 @@ import {
 
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
 import { activeModeName } from './active-mode.js';
-import type { StoredSet } from '../store/types.js';
+import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
 
@@ -589,16 +589,7 @@ function closedByFor(cause: SetEndedCause, partialReason: string | undefined): S
  * trigger payloads' `set_so_far` block so the model parses the same
  * structure on every set-level event.
  */
-function serializeRepForPayload(rep: Rep): {
-  rep_number: number;
-  concentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
-  eccentric: { peak_velocity: number; mean_velocity: number } & PhaseEnrichment;
-  rom_m: number | null;
-  impulse_lb_s: number | null;
-  mean_power_lb_mps: number | null;
-  tempo_ratio: number;
-  hold_top_ms: number;
-} {
+export function serializeRepForPayload(rep: Rep): StoredRepVbt {
   return {
     rep_number: rep.repNumber,
     concentric: {
