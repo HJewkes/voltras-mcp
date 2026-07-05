@@ -593,6 +593,107 @@ describe('GET /api/history', () => {
   });
 });
 
+describe('GET /api/capacity-band', () => {
+  const makeSet = (sessionId: string, weightLbs: number, reps: number): StoredSet => ({
+    id: `${sessionId}-set`,
+    sessionId,
+    startedAt: '',
+    endedAt: '',
+    partial: false,
+    trainingMode: 'weight',
+    weightLbs,
+    reps: Array.from({ length: reps }, () => ({}) as StoredSet['reps'][number]),
+  });
+
+  interface BandPoint {
+    date: string;
+    estimate: number;
+    bandLow: number;
+    bandHigh: number;
+    e1rm: number;
+  }
+
+  it('folds history through the state-space model into a ±σ band with session dots', async () => {
+    const sessions: StoredSession[] = [
+      { id: 's1', startedAt: '2026-05-01T00:00:00.000Z', exerciseId: 'bench' },
+      { id: 's2', startedAt: '2026-05-08T00:00:00.000Z', exerciseId: 'bench' },
+      { id: 's3', startedAt: '2026-05-15T00:00:00.000Z', exerciseId: 'bench' },
+      { id: 's4', startedAt: '2026-05-22T00:00:00.000Z', exerciseId: 'bench' },
+    ];
+    const setsById: Record<string, StoredSet[]> = {
+      s1: [makeSet('s1', 100, 5)],
+      s2: [makeSet('s2', 105, 5)],
+      s3: [makeSet('s3', 110, 5)],
+      s4: [makeSet('s4', 115, 5)],
+    };
+    const state = makeFakeState(
+      { primary: {} },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+    const handle = await startWithFake(state);
+    const res = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/capacity-band?exerciseId=bench',
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { points: BandPoint[] };
+    expect(body.points).toHaveLength(4);
+    for (const p of body.points) {
+      expect(p.bandLow).toBeLessThan(p.bandHigh); // non-degenerate corridor
+      expect(p.estimate).toBeGreaterThan(p.bandLow); // estimate sits inside its band
+      expect(p.estimate).toBeLessThan(p.bandHigh);
+      expect(Number.isFinite(p.e1rm)).toBe(true);
+    }
+    // Band tightens as observations accumulate (Kalman variance falls).
+    const first = body.points[0] as BandPoint;
+    const last = body.points[body.points.length - 1] as BandPoint;
+    expect(last.bandHigh - last.bandLow).toBeLessThan(first.bandHigh - first.bandLow);
+    expect(state.store.listSessions).toHaveBeenCalledWith({
+      sort: 'startedAt:asc',
+      limit: HISTORY_DEFAULT_LIMIT,
+      offset: 0,
+      exerciseId: 'bench',
+    });
+  });
+
+  it('returns no band below the minimum-session gate (2 sessions)', async () => {
+    const sessions: StoredSession[] = [
+      { id: 's1', startedAt: '2026-05-01T00:00:00.000Z', exerciseId: 'bench' },
+      { id: 's2', startedAt: '2026-05-08T00:00:00.000Z', exerciseId: 'bench' },
+    ];
+    const setsById: Record<string, StoredSet[]> = {
+      s1: [makeSet('s1', 100, 5)],
+      s2: [makeSet('s2', 105, 5)],
+    };
+    const state = makeFakeState(
+      { primary: {} },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+    const handle = await startWithFake(state);
+    const res = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/capacity-band?exerciseId=bench',
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { points: BandPoint[] };
+    expect(body.points).toEqual([]);
+  });
+
+  it('returns no band when no exercise is resolvable', async () => {
+    const state = makeFakeState({ primary: {} });
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/capacity-band');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { points: BandPoint[] };
+    expect(body.points).toEqual([]);
+    expect(state.store.listSessions).not.toHaveBeenCalled();
+  });
+});
+
 describe('routing', () => {
   it('returns 404 + JSON { error: "not_found" } for unknown paths', async () => {
     const handle = await startWithFake(makeFakeState());

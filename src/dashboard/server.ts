@@ -47,7 +47,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { estimateE1RMFromReps, getRepPeakVelocity } from '@voltras/workout-analytics';
+import {
+  estimateE1RMFromReps,
+  getRepPeakVelocity,
+  StateSpaceStrengthModel,
+} from '@voltras/workout-analytics';
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
@@ -274,6 +278,11 @@ async function handleRequest(
     sendJson(res, 200, { points });
     return;
   }
+  if (pathname === '/api/capacity-band') {
+    const points = await fetchCapacityBand(state, url);
+    sendJson(res, 200, { points });
+    return;
+  }
   if (pathname === '/api/next-workout') {
     const workout = await fetchNextWorkout(state);
     sendJson(res, 200, { workout });
@@ -376,16 +385,26 @@ function activeExerciseId(state: DashboardServerState): string | undefined {
   return undefined;
 }
 
+/** One past session's best (exact, unrounded) e1RM observation, chronological. */
+interface ExerciseE1rmObservation {
+  /** ISO timestamp of the session. */
+  date: string;
+  /** Best exact estimated 1RM (lbs) across the session's sets of this exercise. */
+  e1rm: number;
+}
+
 /**
- * Per-exercise estimated-1RM trend from persisted history. For each past session
- * of the exercise, the best `estimateE1RMFromReps(weight, repCount)` across its
- * sets becomes one chronological point; a running max flags PR sessions. Pure
- * fitness metadata over stored WA reps — no protocol data crosses the boundary.
+ * The chronological per-session best-e1RM series for an exercise from persisted
+ * history — the shared observation stream behind both the strength trend and the
+ * capacity band. For each past session, the best `estimateE1RMFromReps(weight,
+ * repCount)` across its sets is one observation (sessions with no scorable set are
+ * skipped). Exact/unrounded (callers round for their own display). Pure fitness
+ * metadata over stored WA reps — no protocol data crosses the boundary.
  */
-async function fetchExerciseTrend(
+async function fetchExerciseE1rmSeries(
   state: DashboardServerState,
   url: URL,
-): Promise<ExerciseTrendPoint[]> {
+): Promise<ExerciseE1rmObservation[]> {
   const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
   if (exerciseId === undefined || exerciseId === '') return [];
   const limit = parseLimit(url.searchParams.get('limit'));
@@ -396,8 +415,7 @@ async function fetchExerciseTrend(
     exerciseId,
   });
 
-  const points: ExerciseTrendPoint[] = [];
-  let runningMax = Number.NEGATIVE_INFINITY;
+  const series: ExerciseE1rmObservation[] = [];
   for (const session of sessions) {
     const sets = await state.store.getSetsForSession(session.id);
     let best = 0;
@@ -407,12 +425,84 @@ async function fetchExerciseTrend(
       if (Number.isFinite(est) && est > best) best = est;
     }
     if (best <= 0) continue;
-    const e1rm = Math.round(best);
+    series.push({ date: session.startedAt, e1rm: best });
+  }
+  return series;
+}
+
+/**
+ * Per-exercise estimated-1RM trend from persisted history — the shared series
+ * rounded for display, with a running max flagging PR sessions.
+ */
+async function fetchExerciseTrend(
+  state: DashboardServerState,
+  url: URL,
+): Promise<ExerciseTrendPoint[]> {
+  const series = await fetchExerciseE1rmSeries(state, url);
+  const points: ExerciseTrendPoint[] = [];
+  let runningMax = Number.NEGATIVE_INFINITY;
+  for (const obs of series) {
+    const e1rm = Math.round(obs.e1rm);
     const isPR = e1rm > runningMax;
     if (isPR) runningMax = e1rm;
-    points.push({ date: session.startedAt, e1rm, isPR });
+    points.push({ date: obs.date, e1rm, isPR });
   }
   return points;
+}
+
+/** k for the ±k·σ capacity corridor around the Kalman strength estimate (1σ). */
+const CAPACITY_BAND_K_SIGMA = 1;
+/**
+ * Minimum history for an informative band. With 1–2 sessions the state-space
+ * filter has barely departed its seed prior, so the "band" is just the arbitrary
+ * seed half-width — return none and let the panel hide rather than show noise.
+ */
+const MIN_CAPACITY_BAND_SESSIONS = 3;
+
+/**
+ * One dated point on the capacity band: WA's smoothed strength estimate, its
+ * ±k·σ corridor bounds, and the observed session e1RM that produced it. Exact
+ * values — the SPA mapper does titan's rounding/formatting.
+ */
+interface CapacityBandPoint {
+  /** ISO timestamp of the session. */
+  date: string;
+  /** Smoothed latent-strength estimate (lbs) after assimilating this session. */
+  estimate: number;
+  /** Lower corridor bound: `estimate − k·√variance`. */
+  bandLow: number;
+  /** Upper corridor bound: `estimate + k·√variance`. */
+  bandHigh: number;
+  /** The session's observed best e1RM (lbs) — the plotted dot's load. */
+  e1rm: number;
+}
+
+/**
+ * Capacity band = WA `StateSpaceStrengthModel` (a local-linear-trend Kalman
+ * filter) folded over the exercise's per-session e1RM series. Each observation
+ * yields `{ estimate, variance }`; the corridor is `estimate ± k·√variance`, so
+ * it tightens as confidence grows. See `coordination/architecture/
+ * capacity-band-model-2026-07-04.md`. Returns none below the minimum-session gate.
+ * Pure fitness metadata over stored WA reps — no protocol data (NF-07).
+ */
+async function fetchCapacityBand(
+  state: DashboardServerState,
+  url: URL,
+): Promise<CapacityBandPoint[]> {
+  const series = await fetchExerciseE1rmSeries(state, url);
+  if (series.length < MIN_CAPACITY_BAND_SESSIONS) return [];
+  const model = new StateSpaceStrengthModel();
+  return series.map((obs) => {
+    const { estimate, variance } = model.update(obs.e1rm);
+    const sd = Math.sqrt(variance);
+    return {
+      date: obs.date,
+      estimate,
+      bandLow: estimate - CAPACITY_BAND_K_SIGMA * sd,
+      bandHigh: estimate + CAPACITY_BAND_K_SIGMA * sd,
+      e1rm: obs.e1rm,
+    };
+  });
 }
 
 /** Next planned workout for the idle dashboard, shaped for titan `WorkoutCard`. */
