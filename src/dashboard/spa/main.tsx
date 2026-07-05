@@ -60,6 +60,8 @@ import {
   type PrRecordView,
 } from './panels/StrengthTrendPanel';
 import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
+import { CapacityBandPanel } from './panels/CapacityBandPanel';
+import { type CapacityBandPoint } from './panels/capacity-band-view';
 import { PanelCard } from './panels/PanelCard';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
 import type { PrescriptionView } from './adapter';
@@ -84,6 +86,7 @@ interface Model {
   program: ProgramStatusView | null;
   muscleVolume: Record<string, number>;
   prRecords: PrRecordView[];
+  capacityBand: CapacityBandPoint[];
 }
 
 function useDashboardModel(): Model {
@@ -98,6 +101,7 @@ function useDashboardModel(): Model {
   const [program, setProgram] = useState<ProgramStatusView | null>(null);
   const [muscleVolume, setMuscleVolume] = useState<Record<string, number>>({});
   const [prRecords, setPrRecords] = useState<PrRecordView[]>([]);
+  const [capacityBand, setCapacityBand] = useState<CapacityBandPoint[]>([]);
   const lastSuccessRef = useRef<number>(0);
 
   useEffect(() => {
@@ -150,14 +154,16 @@ function useDashboardModel(): Model {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes] = await Promise.all([
-          fetch('/api/exercise-trend', { cache: 'no-store' }),
-          fetch('/api/next-workout', { cache: 'no-store' }),
-          fetch('/api/session-plan', { cache: 'no-store' }),
-          fetch('/api/program-status', { cache: 'no-store' }),
-          fetch('/api/muscle-volume', { cache: 'no-store' }),
-          fetch('/api/pr-history', { cache: 'no-store' }),
-        ]);
+        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes, bandRes] =
+          await Promise.all([
+            fetch('/api/exercise-trend', { cache: 'no-store' }),
+            fetch('/api/next-workout', { cache: 'no-store' }),
+            fetch('/api/session-plan', { cache: 'no-store' }),
+            fetch('/api/program-status', { cache: 'no-store' }),
+            fetch('/api/muscle-volume', { cache: 'no-store' }),
+            fetch('/api/pr-history', { cache: 'no-store' }),
+            fetch('/api/capacity-band', { cache: 'no-store' }),
+          ]);
         if (trendRes.ok) {
           const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
           if (!cancelled) setTrend(data.points ?? []);
@@ -181,6 +187,10 @@ function useDashboardModel(): Model {
         if (prRes.ok) {
           const data = (await prRes.json()) as { records?: PrRecordView[] };
           if (!cancelled) setPrRecords(data.records ?? []);
+        }
+        if (bandRes.ok) {
+          const data = (await bandRes.json()) as { points?: CapacityBandPoint[] };
+          if (!cancelled) setCapacityBand(data.points ?? []);
         }
       } catch {
         // best-effort; keep the last-known values on a transient failure
@@ -206,6 +216,7 @@ function useDashboardModel(): Model {
     program,
     muscleVolume,
     prRecords,
+    capacityBand,
   };
 }
 
@@ -227,6 +238,7 @@ function App(): React.JSX.Element {
     program,
     muscleVolume,
     prRecords,
+    capacityBand,
   } = useDashboardModel();
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
@@ -307,6 +319,7 @@ function App(): React.JSX.Element {
             prRecords={prRecords}
             exerciseName={progress.exercise}
           />
+          <CapacityBandPanel points={capacityBand} />
           <RestTimerPanel elapsedMs={restElapsedMs} />
           <React.Suspense
             fallback={
