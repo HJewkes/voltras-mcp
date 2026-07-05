@@ -13,6 +13,9 @@ export const DebugRecentFramesInput = z.object({
   n: z.number().int().min(1).max(10_000).optional().default(DEFAULT_N),
 });
 
+/** Input for `debug.recording_status` — the opt-in flight recorder has no args. */
+export const DebugRecordingStatusInput = z.object({});
+
 /**
  * Input for `debug.recent_events` — last N bridge-level events.
  *

@@ -37,8 +37,10 @@ import {
   DebugPushTestChannelInput,
   DebugRecentEventsInput,
   DebugRecentFramesInput,
+  DebugRecordingStatusInput,
 } from '../schemas/debug.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
+import { getSessionRecorder } from '../state/session-recorder.js';
 import type { ServerState } from '../state/server-state.js';
 import { wrapHandler } from './helpers.js';
 
@@ -84,6 +86,11 @@ export const RECENT_EVENTS_DESCRIPTION =
   '`{ types: ["set_boundary", "guided_load_state"] }` returns only set-boundary and guided-load phase events; ' +
   '`{ includeRawFrames: true }` restores the legacy firehose (parsed events + raw frames).';
 
+const RECORDING_STATUS_DESCRIPTION =
+  'Returns the opt-in BLE flight-recorder status: whether capture is enabled (VMCP_RECORD_SESSION), ' +
+  'whether a capture file is currently active, its path, the frame count so far, and the capture start time. ' +
+  'Returns a file handle and counts only — never frame bytes. Use it at the bench to confirm capture is live before a set.';
+
 /**
  * Hot-swap the `debug.*` placeholders with their real handlers. The
  * recent_* tools read from the singleton ring buffers populated by the
@@ -110,6 +117,18 @@ export function registerDebugTools(
         frames,
       });
     }),
+  );
+  install(
+    placeholders,
+    'debug.recording_status',
+    DebugRecordingStatusInput,
+    wrapHandler(DebugRecordingStatusInput, () =>
+      // NDA-safe: a handle + counts only, never frame bytes. `enabled` reflects
+      // the VMCP_RECORD_SESSION env; `active`/`path`/`frameCount` let the
+      // operator confirm at the bench that capture is live before a set.
+      Promise.resolve(getSessionRecorder().status()),
+    ),
+    RECORDING_STATUS_DESCRIPTION,
   );
   install(
     placeholders,

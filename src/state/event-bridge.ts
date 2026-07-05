@@ -117,6 +117,7 @@ import { randomUUID } from 'node:crypto';
 import { selectSetReps } from './live-state.js';
 import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
 import { getDebugBuffers } from './debug-buffer.js';
+import { getSessionRecorder } from './session-recorder.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
   buildConnectionChangedPayload,
@@ -446,6 +447,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             bytesLength: data.length,
           },
         });
+        // Opt-in flight recorder: persist the same inbound frame to a JSONL
+        // capture (no-op unless VMCP_RECORD_SESSION is set) so the session can
+        // be replayed off-hardware later. Never throws.
+        getSessionRecorder().record(data);
       }),
     );
   }

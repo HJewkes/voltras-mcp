@@ -60,6 +60,7 @@ function fakeState(
 const ALL_DEBUG_TOOLS = [
   'debug.recent_frames',
   'debug.recent_events',
+  'debug.recording_status',
   'debug.push_test_channel',
   'debug.confirm_channel',
   'debug.compare_rep_streams',
