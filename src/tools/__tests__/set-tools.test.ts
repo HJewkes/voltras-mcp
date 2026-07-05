@@ -734,6 +734,42 @@ describe('set.end', () => {
     expect(stored.trainingMode).toBe('WeightTraining');
   });
 
+  it('re-snapshots a guided-load set header weight at close, not the stale armed value (VMCP-02.57)', async () => {
+    // The guided-load bootstrap mints its set at `armed` time — before the
+    // target-weight settings_update propagates — so the start snapshot holds
+    // a stale (pre-target) weight. A set that runs to a natural close must
+    // persist the settled weight, not the armed-time value.
+    h.live.startSession({
+      sessionId: 'sess-GL',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      autoCreatedBy: 'guided_load',
+    });
+    // Armed: weight not yet propagated (bench 2026-07-05 saw 30 here).
+    h.live.applySettings({ connected: true, weightLbs: 30, trainingMode: 'WeightTraining' });
+    const setId = 'set-GL';
+    h.live.startSet({
+      setId,
+      sessionId: 'sess-GL',
+      startedAt: '2025-01-01T00:00:01.000Z',
+      reps: [],
+      status: 'active',
+      autoCreatedBy: 'guided_load',
+    });
+    // Mirror the bridge: the armed-time (stale) snapshot is what got stored.
+    h.state.setStartDeviceSnapshots.set(setId, h.live.snapshotDevice());
+    h.live.appendRep(makeRep(1));
+    // Target propagates a tick later — the reps are performed at 50.
+    h.live.applySettings({ weightLbs: 50 });
+
+    await finalizeSet(h.state, 'primary', { cause: 'tool', disengageMotor: false });
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.id).toBe(setId);
+    expect(stored.weightLbs).toBe(50);
+  });
+
   it('returns NO_ACTIVE_SET when no set is active', async () => {
     const r = await h.invoke('set.end', {});
     expect(r.isError).toBe(true);

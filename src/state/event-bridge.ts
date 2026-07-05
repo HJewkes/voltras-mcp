@@ -1423,13 +1423,19 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       startedAt,
       reps: [],
       status: 'active',
+      autoCreatedBy: 'guided_load',
     });
     // F4 (VMCP-01.19): the start-snapshot is captured here but the
     // device's `weightLbs` hasn't yet propagated from the guided-load
     // target write — settings_update lands a tick or two later. The
     // exit-reap path in `device.exit_guided_load` lazily re-snapshots
     // from `slot.live.snapshotDevice()` so the persisted row reflects
-    // the target weight, not the pre-guided-load value.
+    // the target weight, not the pre-guided-load value. VMCP-02.57
+    // extends that live re-snapshot to the natural device-signal close
+    // too — keyed off the `autoCreatedBy: 'guided_load'` tag above — so a
+    // guided-load set that runs to completion no longer persists the
+    // stale armed-time header weight (bench 2026-07-05: header 30 for a
+    // set performed entirely at 50).
     state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
     // VMCP-02.15: arm a tight per-set inactivity watchdog so a failed
     // guided-load engagement reaps quickly instead of leaving a zombie
