@@ -510,6 +510,103 @@ describe('GET /api/history', () => {
     expect(body.program).toBeNull();
   });
 
+  it('builds the meso overview: per-week volume ramp, deload, current week + status', async () => {
+    // One template per week; volumes 10/15/20/8 (peak w3), w4 named Deload, w1 done.
+    const setsByTemplate: Record<string, number[]> = { t1: [4, 6], t2: [15], t3: [20], t4: [8] };
+    const base = makeFakeState({ primary: {} });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        listTrainingPrograms: () => Promise.resolve([{ id: 'p1', name: 'Prog', createdAt: '' }]),
+        getTrainingBlocksForProgram: () =>
+          Promise.resolve([
+            {
+              id: 'b1',
+              programId: 'p1',
+              orderIndex: 0,
+              name: 'Hypertrophy',
+              focus: 'hypertrophy',
+              weeksCount: 4,
+            },
+          ]),
+        getTrainingWeeksForBlock: () =>
+          Promise.resolve([
+            { id: 'w1', blockId: 'b1', orderIndex: 0, name: 'Week 1' },
+            { id: 'w2', blockId: 'b1', orderIndex: 1, name: 'Week 2' },
+            { id: 'w3', blockId: 'b1', orderIndex: 2, name: 'Week 3' },
+            { id: 'w4', blockId: 'b1', orderIndex: 3, name: 'Deload' },
+          ]),
+        getWorkoutTemplatesForWeek: (weekId: string) => {
+          const t = { w1: 't1', w2: 't2', w3: 't3', w4: 't4' }[weekId];
+          return Promise.resolve([{ id: t ?? 'x', weekId, name: 'Day A', orderIndex: 0 }]);
+        },
+        getPlannedExercisesForTemplate: (templateId: string) =>
+          Promise.resolve(
+            (setsByTemplate[templateId] ?? []).map((targetSets, i) => ({
+              id: `${templateId}-e${i}`,
+              workoutTemplateId: templateId,
+              exerciseId: `ex${i}`,
+              orderIndex: i,
+              targetSets,
+            })),
+          ),
+        getAssignmentsForTemplate: (templateId: string) =>
+          Promise.resolve(
+            templateId === 't1'
+              ? [{ id: 'a', sessionId: 's', workoutTemplateId: 't1', assignedAt: '' }]
+              : [],
+          ),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/meso-overview');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { meso: Record<string, unknown> | null };
+    expect(body.meso).toEqual({
+      mesoName: 'Hypertrophy',
+      focus: 'hypertrophy',
+      totalWeeks: 4,
+      weeks: [
+        {
+          weekNumber: 1,
+          isCurrent: false,
+          isDeload: false,
+          intensityLevel: 0.5,
+          workouts: [{ name: 'Day A', status: 'completed' }],
+        },
+        {
+          weekNumber: 2,
+          isCurrent: true,
+          isDeload: false,
+          intensityLevel: 0.75,
+          workouts: [{ name: 'Day A', status: 'current' }],
+        },
+        {
+          weekNumber: 3,
+          isCurrent: false,
+          isDeload: false,
+          intensityLevel: 1,
+          workouts: [{ name: 'Day A', status: 'upcoming' }],
+        },
+        {
+          weekNumber: 4,
+          isCurrent: false,
+          isDeload: true,
+          intensityLevel: 0.4,
+          workouts: [{ name: 'Day A', status: 'upcoming' }],
+        },
+      ],
+    });
+  });
+
+  it('returns meso=null when the store exposes no plan methods', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/meso-overview');
+    const body = JSON.parse(res.body) as { meso: unknown };
+    expect(body.meso).toBeNull();
+  });
+
   it('rolls up weekly effective sets per muscle (primary full, secondary half)', async () => {
     const now = new Date().toISOString();
     const base = makeFakeState(
