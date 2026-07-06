@@ -56,19 +56,21 @@ describe('finalizeReps — VMCP-02.66 segmentation', () => {
     const real1 = cleanRep(2, 100);
     const real2 = cleanRep(3, 200);
 
-    const out = finalizeReps([unrack, real1, real2]);
+    const out = finalizeReps([unrack, real1, real2], { segmentationCorrections: true });
 
     expect(out.map((r) => r.repNumber)).toEqual([2, 3]);
   });
 
   it('preserves a zero-displacement rep (empty / single-sample) — not the artifact', () => {
     const empty = rep(1, phaseFrom([]), phaseFrom([]));
-    const out = finalizeReps([empty]);
+    const out = finalizeReps([empty], { segmentationCorrections: true });
     expect(out).toHaveLength(1);
   });
 
   it('keeps every rep with a positive-net-ROM concentric', () => {
-    const out = finalizeReps([cleanRep(1, 0), cleanRep(2, 100)]);
+    const out = finalizeReps([cleanRep(1, 0), cleanRep(2, 100)], {
+      segmentationCorrections: true,
+    });
     expect(out).toHaveLength(2);
   });
 });
@@ -87,7 +89,7 @@ describe('finalizeReps — VMCP-02.65 eccentric idle-tail truncate', () => {
     }
     const finalRep = rep(1, conc, phaseFrom(eccSamples));
 
-    const out = finalizeReps([finalRep]);
+    const out = finalizeReps([finalRep], { segmentationCorrections: true });
 
     expect(out[0].eccentric.samples.length).toBe(3);
     expect(out[0].eccentric.samples.at(-1)?.velocity).toBe(120);
@@ -95,7 +97,7 @@ describe('finalizeReps — VMCP-02.65 eccentric idle-tail truncate', () => {
 
   it('leaves a clean eccentric (no idle tail) untouched', () => {
     const before = cleanRep(1, 0);
-    const out = finalizeReps([before]);
+    const out = finalizeReps([before], { segmentationCorrections: true });
     expect(out[0].eccentric.samples.length).toBe(before.eccentric.samples.length);
   });
 });
@@ -123,5 +125,34 @@ describe('finalizeReps — VMCP-02.69a signed peak recompute', () => {
     const out = finalizeReps([rep(1, conc, ecc)]);
 
     expect(out[0].eccentric.peakVelocity).toBe(-800);
+  });
+});
+
+describe('finalizeReps — VMCP_REP_CORRECTIONS dark switch', () => {
+  it('skips the segmentation corrections (02.66/02.65) by default', () => {
+    // Same fixtures the 02.66/02.65 tests use, but without opting in: the
+    // un-rack rep survives and the idle tail is left intact.
+    const unrackConc = phaseFrom([sample(0, CONCENTRIC, 609, -5), sample(1, CONCENTRIC, 592, -3)]);
+    const unrack = rep(1, unrackConc, phaseFrom([]));
+    const eccSamples: WorkoutSample[] = [sample(2, ECCENTRIC, 0.5, 300)];
+    for (let i = 0; i < 200; i++) {
+      eccSamples.push(sample(3 + i, ECCENTRIC, 0.1, 0));
+    }
+    const finalRep = rep(2, cleanRep(2, 100).concentric, phaseFrom(eccSamples));
+
+    const out = finalizeReps([unrack, finalRep]);
+
+    expect(out.map((r) => r.repNumber)).toEqual([1, 2]); // un-rack NOT dropped
+    expect(out[1].eccentric.samples.length).toBe(eccSamples.length); // tail NOT trimmed
+  });
+
+  it('still recomputes signed peaks (02.69a) when segmentation corrections are off', () => {
+    const conc = phaseFrom([sample(0, CONCENTRIC, 0.1, 300), sample(1, CONCENTRIC, 0.5, 747)]);
+    const stale: Phase = { ...conc, peakVelocity: 11 };
+    const finalRep = rep(1, stale, phaseFrom([sample(2, ECCENTRIC, 0.1, 100)]));
+
+    const out = finalizeReps([finalRep], { segmentationCorrections: false });
+
+    expect(out[0].concentric.peakVelocity).toBe(747);
   });
 });
