@@ -5,9 +5,15 @@
 // wraps a WA derivation we assert it equals that derivation exactly.
 
 import { describe, expect, it } from 'vitest';
-import { estimateSetRpe, getSetTempoSeconds, type Rep } from '@voltras/workout-analytics';
+import {
+  bestE1RMAcrossSets,
+  estimateSetRpe,
+  getSetTempoSeconds,
+  type Rep,
+} from '@voltras/workout-analytics';
 
 import {
+  toExerciseE1RM,
   toExerciseSummary,
   toLiveTempoSeconds,
   toSetRowProps,
@@ -179,5 +185,41 @@ describe('toLiveTempoSeconds', () => {
     expect(tempo).toEqual([2.5, 0.5, 1.5, 0]);
     // Wiring contract: identical to WA's own derivation (no app-side reshaping).
     expect(tempo).toEqual(getSetTempoSeconds({ reps: view.reps }));
+  });
+});
+
+describe('toExerciseE1RM', () => {
+  it('leaves the badge undefined (and not a PR) for an empty active set', () => {
+    const view: WorkoutSetView = {
+      setNumber: 1,
+      kind: 'active',
+      reps: [],
+      weightLbs: 135,
+      targetReps: 8,
+      targetWeightLbs: 135,
+      previous: null,
+    };
+    expect(toExerciseE1RM([view], null)).toEqual({ e1rm: undefined, isPR: false });
+  });
+
+  it('passes the EXACT WA best-across-sets e1RM (lbs) and no PR without history', () => {
+    const views = [
+      completedView([rep(1, 800), rep(2, 700), rep(3, 650)], { weightLbs: 100 }),
+      completedView([rep(1, 800), rep(2, 700)], { setNumber: 2, weightLbs: 120 }),
+    ];
+    const expected = bestE1RMAcrossSets([
+      { load: 100, reps: 3 },
+      { load: 120, reps: 2 },
+    ]);
+    const { e1rm, isPR } = toExerciseE1RM(views, null);
+    expect(e1rm).toEqual({ value: expected, unit: 'lbs' }); // exact — ExerciseCard rounds
+    expect(isPR).toBe(false); // no historical baseline -> never a PR
+  });
+
+  it('flags a PR only when the live e1RM beats the prior historical best', () => {
+    const views = [completedView([rep(1, 800), rep(2, 700), rep(3, 650)], { weightLbs: 100 })];
+    const live = bestE1RMAcrossSets([{ load: 100, reps: 3 }]) as number;
+    expect(toExerciseE1RM(views, live - 1).isPR).toBe(true);
+    expect(toExerciseE1RM(views, live + 1).isPR).toBe(false);
   });
 });

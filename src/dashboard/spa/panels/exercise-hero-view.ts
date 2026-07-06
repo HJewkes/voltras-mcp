@@ -12,9 +12,11 @@
  * NDA: reads WA view-models + adapter view state only; no protocol data.
  */
 import {
+  bestE1RMAcrossSets,
   estimateSetRpe,
   getSetRepPeakVelocities,
   getSetTempoSeconds,
+  isNewE1RM,
 } from '@voltras/workout-analytics';
 import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
 import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
@@ -86,4 +88,33 @@ export function toExerciseSummary(
 export function toLiveTempoSeconds(view: WorkoutSetView | null): TempoDisplayProps['tempo'] | null {
   if (view == null) return null;
   return getSetTempoSeconds({ reps: view.reps });
+}
+
+/** Estimated-1RM badge for titan `ExerciseCard` (value + PR flag). */
+export interface ExerciseE1RM {
+  /** The `ExerciseCard.e1rm` prop, or `undefined` until there is enough data. */
+  e1rm: NonNullable<ExerciseCardProps['e1rm']> | undefined;
+  /** `ExerciseCard.isPR` — true only when the live e1RM beats prior history. */
+  isPR: boolean;
+}
+
+/**
+ * Map the set timeline onto titan `ExerciseCard`'s e1RM badge. The projected 1RM
+ * is WA's best rep-based (Epley) estimate across the exercise's sets
+ * (`bestE1RMAcrossSets`, whose per-set primitive is `estimateE1RMFromReps`) —
+ * EXACT and unrounded, `ExerciseCard` rounds for display. `undefined` until a set
+ * has both a positive load and >=1 captured rep (a rep only lands in the snapshot
+ * once WA has movement samples), so an empty active set shows no badge. `isPR`
+ * is WA's `isNewE1RM` against the exercise's prior historical best — never true
+ * without a baseline (the first-ever session isn't a PR).
+ */
+export function toExerciseE1RM(
+  views: WorkoutSetView[],
+  historyBestE1rm: number | null,
+): ExerciseE1RM {
+  const value = bestE1RMAcrossSets(views.map((v) => ({ load: v.weightLbs, reps: v.reps.length })));
+  return {
+    e1rm: value != null ? { value, unit: 'lbs' } : undefined,
+    isPR: isNewE1RM(value, historyBestE1rm),
+  };
 }
