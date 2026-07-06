@@ -28,19 +28,20 @@ import {
   CardContent,
   DeviationBar,
   ExerciseCard,
+  TempoDisplay,
   VelocityStrip,
   WorkoutCard,
   formatPrescription,
   formatSignedPct,
 } from '@titan-design/react-ui';
-import {
-  bestE1RMAcrossSets,
-  getSetTempoSeconds,
-  isNewE1RM,
-  weightDeviationRatio,
-} from '@voltras/workout-analytics';
+import { getSetTempoSeconds, weightDeviationRatio } from '@voltras/workout-analytics';
 import { type CurrentSetView, type PrescriptionView, type WorkoutSetView } from '../adapter';
-import { toExerciseSummary, toSetRowProps } from './exercise-hero-view';
+import {
+  toExerciseE1RM,
+  toExerciseSummary,
+  toLiveTempoSeconds,
+  toSetRowProps,
+} from './exercise-hero-view';
 
 /** Next planned workout for the idle preview, matching `/api/next-workout`. */
 export interface NextWorkoutView {
@@ -109,13 +110,13 @@ export function ExerciseHeroPanel({
   const named = exercise !== '—';
   const title = named ? exercise : 'Current exercise';
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
-  const e1rmValue = bestE1RMAcrossSets(
-    heroSets.map((v) => ({ load: v.weightLbs, reps: v.reps.length })),
-  );
-  const e1rm = e1rmValue != null ? { value: e1rmValue, unit: 'lbs' as const } : null;
-  const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
+  const { e1rm, isPR } = toExerciseE1RM(heroSets, historyBestE1rm);
   const lastSet = heroSets[heroSets.length - 1];
   const tempo = getSetTempoSeconds({ reps: lastSet?.reps ?? [] });
+  // Live cadence for the in-progress set — a dedicated across-the-room TempoDisplay
+  // dial, mirroring how the live VelocityStrip is surfaced above the card in
+  // addition to the card's own compact per-set values.
+  const liveTempo = toLiveTempoSeconds(heroSets.find((v) => v.kind === 'active') ?? null);
   const prescriptionText = formatPrescription(prescription);
   const activeWeightLbs = lastSet?.weightLbs ?? null;
   // Exact signed ratio (e.g. 0.09). DeviationBar takes the ratio directly; the
@@ -150,6 +151,16 @@ export function ExerciseHeroPanel({
           <VelocityStrip velocities={currentSet.velocitiesMps} variant="full" expanded showInfo />
         </div>
       )}
+      {currentSet.active && liveTempo !== null && (
+        // Live per-rep cadence for the active set — titan's TempoDisplay dial
+        // (eccentric · pause-bottom · concentric · pause-top), colored so the
+        // tempo of the most recent rep reads across the room. The card carries the
+        // same value compactly; this is the active-set close-up.
+        <div className="hero-tempo" aria-label="Live set tempo, eccentric pause concentric pause">
+          <span className="hero-tempo-label">Tempo</span>
+          <TempoDisplay tempo={liveTempo} colored showInfo />
+        </div>
+      )}
       {currentSet.active && weightDeviation !== null && (
         // Working weight vs the attached plan's prescribed weight — "on plan" at
         // a glance via titan DeviationBar (positive = heavier than planned).
@@ -170,7 +181,7 @@ export function ExerciseHeroPanel({
           state="expanded"
           onToggle={() => undefined}
           summary={summary}
-          e1rm={e1rm ?? undefined}
+          e1rm={e1rm}
           isPR={isPR}
           tempo={tempo ?? undefined}
           prescription={prescriptionText ?? undefined}

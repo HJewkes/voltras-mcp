@@ -224,6 +224,22 @@
   letter-spacing: 0.06em;
   font-weight: 700;
 }
+
+/* Live tempo row (titan TempoDisplay) — the active set's per-rep cadence dial,
+   surfaced above the card like the expanded velocity strip. */
+.hero-tempo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.hero-tempo-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
 .hero-deviation-value {
   font-weight: 700;
   color: var(--color-text-primary);
