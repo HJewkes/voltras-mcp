@@ -38,6 +38,8 @@ import { activeModeName } from './active-mode.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
+import type { WeightImpliedResult } from './weight-implied-watch.js';
+import type { BilateralDivergence } from './bilateral-reconciler.js';
 
 /**
  * Convert a velocity from workout-analytics's native scale (mm/s, despite
@@ -1565,6 +1567,98 @@ function chainsCoercionSummary(
 
 function tenthsToLbs(tenths: number): number {
   return Number((tenths / 10).toFixed(1));
+}
+
+function round1(value: number): number {
+  return Number(value.toFixed(1));
+}
+
+/**
+ * Build the meta + content for a `weight_implied_mismatch` channel event
+ * (VMCP-02.68). Fired at set finalize when the force-implied weight (median
+ * concentric peak force ÷ the calibration constant) disagrees with the logged
+ * header weight by more than the configured ratio. Advisory only — mirrors the
+ * `setting_coerced` shape (no coercion, no rewrite of the stored weight). The
+ * `calibration_note` flags that the implied weight rests on a single-session
+ * force/lb constant so the model qualifies the claim to the user.
+ */
+export function buildWeightImpliedMismatchPayload(
+  stored: StoredSet,
+  result: WeightImpliedResult,
+  slotId: string,
+): { meta: Record<string, string>; content: string } {
+  const impliedLbs = round1(result.impliedWeightLbs);
+  const mismatchPct = round1(result.ratio * 100);
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'weight_implied_mismatch',
+    set_id: stored.id,
+    session_id: stored.sessionId,
+    slot_id: slotId,
+    header_weight_lbs: String(stored.weightLbs),
+    implied_weight_lbs: String(impliedLbs),
+    mismatch_pct: String(mismatchPct),
+  };
+  const content = JSON.stringify({
+    summary: `Force-implied weight ${impliedLbs} lb disagrees with the logged header weight ${stored.weightLbs} lb by ${mismatchPct}% for set ${stored.id.slice(0, 8)}.`,
+    header_weight_lbs: stored.weightLbs,
+    implied_weight_lbs: impliedLbs,
+    median_concentric_peak_force: round1(result.medianConcentricPeakForce),
+    mismatch_pct: mismatchPct,
+    rep_count: stored.reps.length,
+    calibration_note:
+      'Implied weight uses a single-cable-session force/lb constant; treat as advisory and re-calibrate per device / movement.',
+    set_context: { slot_id: slotId, set_id: stored.id, session_id: stored.sessionId },
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a `bilateral_divergence` channel event
+ * (VMCP-02.67). Fired when the reconciler pairs two opposite-slot set closes
+ * whose rep counts differ by one or more. Cross-slot by nature, so it carries
+ * both sides' slot / session / set ids and counts rather than being scoped to
+ * a single slot. `delta` is `a.rep_count − b.rep_count` (signed).
+ */
+export function buildBilateralDivergencePayload(divergence: BilateralDivergence): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const { a, b, delta } = divergence;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'bilateral_divergence',
+    slot_id: a.slotId,
+    partner_slot_id: b.slotId,
+    session_id: a.sessionId,
+    partner_session_id: b.sessionId,
+    set_id: a.setId,
+    partner_set_id: b.setId,
+    rep_count: String(a.repCount),
+    partner_rep_count: String(b.repCount),
+    rep_count_delta: String(delta),
+    weight_lbs: String(a.weightLbs),
+  };
+  const content = JSON.stringify({
+    summary: `Bilateral rep-count mismatch at ${a.weightLbs} lb: slot ${a.slotId} logged ${a.repCount} reps vs slot ${b.slotId} ${b.repCount} (delta ${delta}).`,
+    delta,
+    weight_lbs: a.weightLbs,
+    sides: [
+      {
+        slot_id: a.slotId,
+        session_id: a.sessionId,
+        set_id: a.setId,
+        rep_count: a.repCount,
+      },
+      {
+        slot_id: b.slotId,
+        session_id: b.sessionId,
+        set_id: b.setId,
+        rep_count: b.repCount,
+      },
+    ],
+  });
+  return { meta, content };
 }
 
 /**

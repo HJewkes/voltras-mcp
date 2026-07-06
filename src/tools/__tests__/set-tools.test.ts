@@ -52,6 +52,7 @@ const { registerSetTools, finalizeSet } = await import('../set-tools.js');
 const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
+const { BilateralReconciler } = await import('../../state/bilateral-reconciler.js');
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -150,6 +151,13 @@ function makeRep(n: number): Rep {
   return { repNumber: n, concentric: phase, eccentric: phase };
 }
 
+// Like makeRep, but with a non-zero concentric peakForce so the VMCP-02.68
+// force-implied-weight validator has real telemetry to evaluate.
+function makeRepWithForce(n: number, peakForce: number): Rep {
+  const base = makeRep(n);
+  return { ...base, concentric: { ...base.concentric, peakForce } };
+}
+
 const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.get'];
 
 interface Harness {
@@ -211,6 +219,7 @@ function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): 
     setStartDeviceSnapshots: new Map(),
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
+    bilateralReconciler: new BilateralReconciler(),
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -885,6 +894,101 @@ describe('set.end', () => {
     expect(parsed.vbt_summary.first_rep_v).toBe(0);
     expect(parsed.vbt_summary.last_rep_v).toBe(0);
     expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
+  });
+
+  // ── VMCP-02.68 — force-implied-weight mismatch at finalize ──────────────
+  it('publishes weight_implied_mismatch when the force-implied weight disagrees with the header', async () => {
+    startSession(h.live);
+    // Header logged at 30 lb, but the reps were physically performed at ~50
+    // (recorded 30 L set: plateau concentric peakForce ~503 → implied ~49.5).
+    h.live.applySettings({ connected: true, weightLbs: 30, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    for (const f of [104, 503, 504, 505, 506]) {
+      h.live.appendRep(makeRepWithForce(1, f));
+    }
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+
+    const events = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'weight_implied_mismatch',
+    );
+    expect(events).toHaveLength(1);
+    const meta = (events[0][0] as { meta: Record<string, string> }).meta;
+    expect(meta.header_weight_lbs).toBe('30');
+    expect(Number(meta.implied_weight_lbs)).toBeCloseTo(49.6, 1);
+    expect(Number(meta.mismatch_pct)).toBeGreaterThan(10);
+  });
+
+  it('does NOT publish weight_implied_mismatch for a correctly-labeled set', async () => {
+    startSession(h.live);
+    // Header 50, plateau force ~503 → implied ~49.5 → within 10% tolerance.
+    h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    for (const f of [503, 504, 506]) {
+      h.live.appendRep(makeRepWithForce(1, f));
+    }
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+
+    const events = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'weight_implied_mismatch',
+    );
+    expect(events).toHaveLength(0);
+  });
+
+  // ── VMCP-02.67 — bilateral rep-count divergence at finalize ─────────────
+  it('publishes bilateral_divergence when this set pairs with an opposite-slot close of a different rep count', async () => {
+    // Pre-seed the reconciler with the OTHER side's close (12 reps) whose
+    // start is within the pairing window of this set's start.
+    (h.state.bilateralReconciler as InstanceType<typeof BilateralReconciler>).record({
+      slotId: 'secondary',
+      setId: 'set-R',
+      sessionId: 'sess-R',
+      startedAtMs: Date.parse('2025-01-01T00:00:00.500Z'),
+      repCount: 12,
+      weightLbs: 30,
+    });
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 30, trainingMode: 'WeightTraining' });
+    // Force the started_at so the primary close pairs with the seeded R close.
+    await h.invoke('set.start', {});
+    h.live.set!.startedAt = '2025-01-01T00:00:00.000Z';
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+
+    const events = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'bilateral_divergence',
+    );
+    expect(events).toHaveLength(1);
+    const meta = (events[0][0] as { meta: Record<string, string> }).meta;
+    expect(meta.slot_id).toBe('primary');
+    expect(meta.partner_slot_id).toBe('secondary');
+    expect(meta.rep_count).toBe('1');
+    expect(meta.partner_rep_count).toBe('12');
+    expect(meta.rep_count_delta).toBe('-11');
+  });
+
+  it('does NOT publish bilateral_divergence for a single-slot (unpaired) close', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.end', {});
+
+    const events = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'bilateral_divergence',
+    );
+    expect(events).toHaveLength(0);
   });
 
   it('explicit set.end produces unified set_ended with closed_by=tool', async () => {

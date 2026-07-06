@@ -41,13 +41,17 @@ import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/liv
 import {
   buildIdleTimeoutPayload,
   buildSetAbortedByModeRevertPayload,
+  buildBilateralDivergencePayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
+  buildWeightImpliedMismatchPayload,
   serializeRepForPayload,
   summarizePreviousSet,
   type SetEndedCause,
 } from '../state/channel-payloads.js';
 import { finalizeReps } from '../state/rep-finalize.js';
+import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
+import type { ChannelPublisher } from '../state/channel-publisher.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
@@ -616,6 +620,12 @@ export async function finalizeSet(
   );
   const slotChannels = state.channels.forSlot(slotId);
   slotChannels.publish(payload);
+  // VMCP-02.68: advisory flag when the force-implied weight disagrees with the
+  // logged header weight (stale/mis-recorded header). VMCP-02.67: reconcile the
+  // per-side rep count against the paired bilateral set. Both are advisory
+  // channel events only — they never mutate the persisted set.
+  publishWeightImpliedMismatch(stored, slotId, slotChannels);
+  publishBilateralDivergence(state, slotId, stored);
   // VMCP-02.08 / VMCP-02.54: optionally kick off the passive rest_status
   // emission cycle. Starts AFTER the set_ended publish so a channel-consumer
   // receives both the set_ended and the initial (t=0) rest_status in
@@ -632,6 +642,48 @@ export async function finalizeSet(
     state.restTimers.start(slotId, stored.id, slotChannels);
   }
   return stored;
+}
+
+/**
+ * VMCP-02.68: publish a `weight_implied_mismatch` event when the set's
+ * force-implied weight disagrees with the stored header weight past the
+ * configured ratio. No-op when the set has no positive force telemetry or the
+ * disagreement is within tolerance (`evaluateWeightImplied` returns null / an
+ * unflagged result).
+ */
+function publishWeightImpliedMismatch(
+  stored: StoredSet,
+  slotId: string,
+  channels: ChannelPublisher,
+): void {
+  const result = evaluateWeightImplied(stored.weightLbs, stored.reps);
+  if (result === null || !result.flagged) {
+    return;
+  }
+  channels.publish(buildWeightImpliedMismatchPayload(stored, result, slotId));
+}
+
+/**
+ * VMCP-02.67: feed this set close to the bilateral reconciler and publish a
+ * `bilateral_divergence` event when it pairs with a prior opposite-slot close
+ * whose rep count differs. Cross-slot, so it publishes on the top-level
+ * (non-slot-scoped) channel. Silently skipped when no reconciler is wired
+ * (test states that pre-date the feature) — mirrors the coercion-watch
+ * passthrough convention.
+ */
+function publishBilateralDivergence(state: ServerState, slotId: string, stored: StoredSet): void {
+  const divergence = state.bilateralReconciler?.record({
+    slotId,
+    setId: stored.id,
+    sessionId: stored.sessionId,
+    startedAtMs: Date.parse(stored.startedAt),
+    repCount: stored.reps.length,
+    weightLbs: stored.weightLbs,
+  });
+  if (divergence === undefined) {
+    return;
+  }
+  state.channels.publish(buildBilateralDivergencePayload(divergence));
 }
 
 async function liveMetrics(
