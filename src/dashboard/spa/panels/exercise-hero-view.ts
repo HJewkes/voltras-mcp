@@ -11,8 +11,12 @@
  *
  * NDA: reads WA view-models + adapter view state only; no protocol data.
  */
-import { estimateSetRpe, getSetRepPeakVelocities } from '@voltras/workout-analytics';
-import type { ExerciseCardProps, SetRowProps } from '@titan-design/react-ui';
+import {
+  estimateSetRpe,
+  getSetRepPeakVelocities,
+  getSetTempoSeconds,
+} from '@voltras/workout-analytics';
+import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
 import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
 
 /** Rep count shown on a row: null for an active set with no reps yet, else count. */
@@ -68,4 +72,18 @@ export function toExerciseSummary(
     weight: last?.weightLbs ?? 0,
     unit: 'lbs',
   };
+}
+
+/**
+ * Live cadence for the active set as titan `TempoDisplay`'s
+ * `[eccentric, pauseBottom, concentric, pauseTop]` seconds tuple — EXACT,
+ * straight from WA's `getSetTempoSeconds` (the most recent rep that carries real
+ * phase timing). `null` when there is no active set or no rep has timing yet, so
+ * the panel renders nothing rather than an all-zero "instant" cadence (an
+ * uncaptured tempo is absence, not a real zero — see `getSetTempoSeconds`).
+ * TempoDisplay rounds each phase to whole seconds for display.
+ */
+export function toLiveTempoSeconds(view: WorkoutSetView | null): TempoDisplayProps['tempo'] | null {
+  if (view == null) return null;
+  return getSetTempoSeconds({ reps: view.reps });
 }

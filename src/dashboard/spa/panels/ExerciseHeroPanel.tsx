@@ -28,6 +28,7 @@ import {
   CardContent,
   DeviationBar,
   ExerciseCard,
+  TempoDisplay,
   VelocityStrip,
   WorkoutCard,
   formatPrescription,
@@ -40,7 +41,7 @@ import {
   weightDeviationRatio,
 } from '@voltras/workout-analytics';
 import { type CurrentSetView, type PrescriptionView, type WorkoutSetView } from '../adapter';
-import { toExerciseSummary, toSetRowProps } from './exercise-hero-view';
+import { toExerciseSummary, toLiveTempoSeconds, toSetRowProps } from './exercise-hero-view';
 
 /** Next planned workout for the idle preview, matching `/api/next-workout`. */
 export interface NextWorkoutView {
@@ -116,6 +117,10 @@ export function ExerciseHeroPanel({
   const isPR = isNewE1RM(e1rm?.value, historyBestE1rm);
   const lastSet = heroSets[heroSets.length - 1];
   const tempo = getSetTempoSeconds({ reps: lastSet?.reps ?? [] });
+  // Live cadence for the in-progress set — a dedicated across-the-room TempoDisplay
+  // dial, mirroring how the live VelocityStrip is surfaced above the card in
+  // addition to the card's own compact per-set values.
+  const liveTempo = toLiveTempoSeconds(heroSets.find((v) => v.kind === 'active') ?? null);
   const prescriptionText = formatPrescription(prescription);
   const activeWeightLbs = lastSet?.weightLbs ?? null;
   // Exact signed ratio (e.g. 0.09). DeviationBar takes the ratio directly; the
@@ -148,6 +153,16 @@ export function ExerciseHeroPanel({
         // SetRow strips stay mini; this is the active-set close-up.
         <div className="hero-velocity" aria-label="Live set velocity by rep">
           <VelocityStrip velocities={currentSet.velocitiesMps} variant="full" expanded showInfo />
+        </div>
+      )}
+      {currentSet.active && liveTempo !== null && (
+        // Live per-rep cadence for the active set — titan's TempoDisplay dial
+        // (eccentric · pause-bottom · concentric · pause-top), colored so the
+        // tempo of the most recent rep reads across the room. The card carries the
+        // same value compactly; this is the active-set close-up.
+        <div className="hero-tempo" aria-label="Live set tempo, eccentric pause concentric pause">
+          <span className="hero-tempo-label">Tempo</span>
+          <TempoDisplay tempo={liveTempo} colored showInfo />
         </div>
       )}
       {currentSet.active && weightDeviation !== null && (

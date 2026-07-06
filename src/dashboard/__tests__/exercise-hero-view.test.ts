@@ -5,9 +5,13 @@
 // wraps a WA derivation we assert it equals that derivation exactly.
 
 import { describe, expect, it } from 'vitest';
-import { estimateSetRpe, type Rep } from '@voltras/workout-analytics';
+import { estimateSetRpe, getSetTempoSeconds, type Rep } from '@voltras/workout-analytics';
 
-import { toExerciseSummary, toSetRowProps } from '../spa/panels/exercise-hero-view.js';
+import {
+  toExerciseSummary,
+  toLiveTempoSeconds,
+  toSetRowProps,
+} from '../spa/panels/exercise-hero-view.js';
 import type { WorkoutSetView } from '../spa/adapter.js';
 
 /** Build a Rep whose concentric peak velocity (mm/s) is `peakMms`. */
@@ -16,6 +20,19 @@ function rep(repNumber: number, peakMms: number): Rep {
     repNumber,
     concentric: { peakVelocity: peakMms },
     eccentric: {},
+  } as unknown as Rep;
+}
+
+/**
+ * A Rep carrying real phase timing (ms) so WA derives a non-null tempo tuple:
+ * concentric movement 1.5 s (no hold), eccentric movement 2.5 s with a 0.5 s hold
+ * at the bottom → `[ecc-move, ecc-hold, con-move, con-hold]` = `[2.5, 0.5, 1.5, 0]`.
+ */
+function repWithTempo(repNumber: number): Rep {
+  return {
+    repNumber,
+    concentric: { startTime: 0, endTime: 1500, _totalHoldDuration: 0 },
+    eccentric: { startTime: 2000, endTime: 5000, _totalHoldDuration: 500 },
   } as unknown as Rep;
 }
 
@@ -131,5 +148,36 @@ describe('toExerciseSummary', () => {
 
   it('is zeroed when there are no sets', () => {
     expect(toExerciseSummary([], null)).toEqual({ sets: 0, reps: 0, weight: 0, unit: 'lbs' });
+  });
+});
+
+describe('toLiveTempoSeconds', () => {
+  function activeView(reps: Rep[]): WorkoutSetView {
+    return {
+      setNumber: 1,
+      kind: 'active',
+      reps,
+      weightLbs: 135,
+      targetReps: null,
+      targetWeightLbs: null,
+      previous: null,
+    };
+  }
+
+  it('returns null when there is no active set', () => {
+    expect(toLiveTempoSeconds(null)).toBeNull();
+  });
+
+  it('returns null when the active set has no reps yet', () => {
+    expect(toLiveTempoSeconds(activeView([]))).toBeNull();
+  });
+
+  it('maps real Rep[] to the EXACT WA tempo tuple TempoDisplay expects', () => {
+    const view = activeView([repWithTempo(1)]);
+    const tempo = toLiveTempoSeconds(view);
+    // [eccentric-move, pause-bottom, concentric-move, pause-top] seconds — exact.
+    expect(tempo).toEqual([2.5, 0.5, 1.5, 0]);
+    // Wiring contract: identical to WA's own derivation (no app-side reshaping).
+    expect(tempo).toEqual(getSetTempoSeconds({ reps: view.reps }));
   });
 });
