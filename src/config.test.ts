@@ -17,6 +17,7 @@ describe('loadConfig', () => {
       logLevel: 'debug',
       repSource: 'analytics',
       restTimer: 'off',
+      repCorrections: 'off',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -112,5 +113,21 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/on/);
+  });
+
+  it('defaults VMCP_REP_CORRECTIONS to "off"', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.repCorrections).toBe('off');
+  });
+
+  it('honors VMCP_REP_CORRECTIONS="on" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_REP_CORRECTIONS: 'on', HOME: '/home/test' });
+    expect(cfg.repCorrections).toBe('on');
+  });
+
+  it('throws on invalid VMCP_REP_CORRECTIONS, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/on/);
   });
 });

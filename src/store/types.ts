@@ -23,6 +23,37 @@ import type { Rep } from '@voltras/workout-analytics';
 export type TrainingModeName = string;
 
 /**
+ * Per-phase slice of the persisted derived VBT block. Native telemetry
+ * (mm/s, ms) is converted to the payload scale (m/s) at the derivation
+ * boundary, so these read identically to the `set_ended` channel event.
+ */
+export interface StoredRepPhaseVbt {
+  peak_velocity: number;
+  mean_velocity: number;
+  time_to_peak_velocity_ms: number;
+  velocity_drop_pct: number;
+  velocity_envelope_mps: [number, number, number, number];
+}
+
+/**
+ * VMCP-02.64: the per-rep derived VBT block persisted alongside each rep so
+ * cross-session VBT trending reads the finalized (corrected) values directly
+ * instead of recomputing from raw samples — a recompute that would otherwise
+ * reproduce any pre-correction segmentation artifact. Mirrors the `set_ended`
+ * payload's per-rep shape one-for-one.
+ */
+export interface StoredRepVbt {
+  rep_number: number;
+  concentric: StoredRepPhaseVbt;
+  eccentric: StoredRepPhaseVbt;
+  rom_m: number | null;
+  impulse_lb_s: number | null;
+  mean_power_lb_mps: number | null;
+  tempo_ratio: number;
+  hold_top_ms: number;
+}
+
+/**
  * A persisted rep row. Intersected with the upstream analytics `Rep` so that
  * stored reps can be passed straight back into `@voltras/workout-analytics`
  * functions without translation.
@@ -31,11 +62,16 @@ export type TrainingModeName = string;
  * because TypeScript silently drops Rep's fields when an interface extends
  * the type-only re-export chain shipped from `@voltras/workout-analytics`
  * (root → models → rep). The intersection form preserves field visibility.
+ *
+ * `derived` carries the VMCP-02.64 per-rep VBT block. Optional so historical
+ * rows persisted before this field shipped still parse; every row written
+ * through `finalizeSet` now populates it.
  */
 export type StoredRep = Rep & {
   id: string;
   setId: string;
   index: number;
+  derived?: StoredRepVbt;
 };
 
 /**

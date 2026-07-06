@@ -7,11 +7,12 @@
 //   - VMCP_LOG_LEVEL                  — 'debug' | 'info' | 'warn' | 'error', default 'info'.
 //   - VMCP_REP_SOURCE                  — 'analytics' | 'firmware', default 'analytics'.
 //   - VMCP_REST_TIMER                  — 'on' | 'off', default 'off'.
+//   - VMCP_REP_CORRECTIONS             — 'on' | 'off', default 'off'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
-// throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, or VMCP_REST_TIMER
-// is set to an unrecognized value so the failure surfaces before
-// bootstrapState begins.
+// throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER, or
+// VMCP_REP_CORRECTIONS is set to an unrecognized value so the failure surfaces
+// before bootstrapState begins.
 
 import { homedir } from 'node:os';
 
@@ -43,6 +44,22 @@ export type RepSource = 'analytics' | 'firmware';
  */
 export type RestTimerMode = 'off' | 'on';
 
+/**
+ * Whether `finalizeSet` applies the movement-class-dependent rep-segmentation
+ * corrections at set close (VMCP-02.66 un-rack drop + VMCP-02.65 eccentric
+ * idle-tail truncation).
+ *   - `'off'` (DEFAULT) — those two corrections are skipped. They rest on a
+ *     bench-observed assumption (a valid concentric nets positive position) and
+ *     a tunable idle threshold that are only validated on press/row so far; on
+ *     an untested movement class the un-rack filter could silently drop valid
+ *     reps. Kept dark until the VW-16 bench parity run confirms them across
+ *     movement classes, mirroring the VMCP_REP_SOURCE cutover pattern.
+ *   - `'on'` — apply both corrections. The VMCP-02.69a signed-peak recompute
+ *     and VMCP-02.64 derived-VBT persistence are NOT gated by this flag; they
+ *     carry no movement-class dependence and always run.
+ */
+export type RepCorrectionsMode = 'off' | 'on';
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
@@ -50,6 +67,7 @@ export interface Config {
   readonly logLevel: LogLevel;
   readonly repSource: RepSource;
   readonly restTimer: RestTimerMode;
+  readonly repCorrections: RepCorrectionsMode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -65,6 +83,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (restTimer !== 'off' && restTimer !== 'on') {
     throw new Error(`Invalid VMCP_REST_TIMER="${restTimer}". Must be "off" or "on".`);
   }
+  const repCorrections = env.VMCP_REP_CORRECTIONS ?? 'off';
+  if (repCorrections !== 'off' && repCorrections !== 'on') {
+    throw new Error(`Invalid VMCP_REP_CORRECTIONS="${repCorrections}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -75,5 +97,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: (env.VMCP_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     repSource,
     restTimer,
+    repCorrections,
   }) satisfies Config;
 }

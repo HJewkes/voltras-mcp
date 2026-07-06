@@ -43,9 +43,11 @@ import {
   buildSetAbortedByModeRevertPayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
+  serializeRepForPayload,
   summarizePreviousSet,
   type SetEndedCause,
 } from '../state/channel-payloads.js';
+import { finalizeReps } from '../state/rep-finalize.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
@@ -586,7 +588,18 @@ export async function finalizeSet(
   // stored set + vbt_summary); `'firmware'` swaps in the firmware-anchored
   // enriched reps, which feeds toStoredSet -> stored.reps -> computeVbtSummary.
   const finalizedForStore = selectSetReps(finalizedWithCause, state.config?.repSource);
-  const stored = toStoredSet(finalizedForStore, device);
+  // VMCP-02.66/02.65/02.69a: correct the rep array once, here, so the persisted
+  // set and the `set_ended` payload (built from `stored` below) share the same
+  // de-artifacted / idle-truncated / re-peaked reps. The movement-class-dependent
+  // segmentation corrections (02.66/02.65) stay dark behind VMCP_REP_CORRECTIONS
+  // until the VW-16 bench parity run; 02.69a signed peaks always run.
+  const correctedForStore: ActiveSet = {
+    ...finalizedForStore,
+    reps: finalizeReps(finalizedForStore.reps, {
+      segmentationCorrections: state.config?.repCorrections === 'on',
+    }),
+  };
+  const stored = toStoredSet(correctedForStore, device);
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
   // close. The payload carries the full rep array plus a pre-computed VBT
@@ -655,6 +668,9 @@ function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
     id: randomUUID(),
     setId: active.setId,
     index,
+    // VMCP-02.64: persist the per-rep derived VBT block so cross-session
+    // trending reads the finalized values without recomputing from samples.
+    derived: serializeRepForPayload(rep),
   }));
   return {
     id: active.setId,

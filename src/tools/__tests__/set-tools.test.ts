@@ -721,6 +721,45 @@ describe('set.end', () => {
     expect(h.live.set).toBeUndefined();
   });
 
+  it('persists the per-rep derived VBT block on every stored rep (VMCP-02.64)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.reps.length).toBe(2);
+    for (const rep of stored.reps) {
+      const derived = (rep as { derived?: Record<string, unknown> }).derived;
+      expect(derived).toBeDefined();
+      // All 8 derived VBT keys present so cross-session trending reads them
+      // directly instead of recomputing from raw samples.
+      expect(Object.keys(derived as object)).toEqual(
+        expect.arrayContaining([
+          'concentric',
+          'eccentric',
+          'rom_m',
+          'impulse_lb_s',
+          'mean_power_lb_mps',
+          'tempo_ratio',
+          'hold_top_ms',
+        ]),
+      );
+      const conc = (derived as { concentric: Record<string, unknown> }).concentric;
+      expect(Object.keys(conc)).toEqual(
+        expect.arrayContaining([
+          'peak_velocity',
+          'mean_velocity',
+          'velocity_drop_pct',
+          'velocity_envelope_mps',
+        ]),
+      );
+    }
+  });
+
   it('captures the device snapshot at set.start time, not set.end time', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
