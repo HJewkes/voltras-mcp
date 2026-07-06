@@ -53,6 +53,7 @@ import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { ModeDivergenceWatch } from './mode-divergence-watch.js';
 import { CoercionWatch } from './coercion-watch.js';
+import { BilateralReconciler } from './bilateral-reconciler.js';
 import { RestTimerRegistry } from './rest-timer.js';
 import { createPassiveScanState, type PassiveScanState } from './passive-scanner.js';
 import { SlotBindingsStore } from './slot-bindings.js';
@@ -285,6 +286,16 @@ export interface ServerState {
    * mutex). See `state/passive-scanner.ts`.
    */
   passiveScan: PassiveScanState;
+  /**
+   * Cross-slot bilateral rep-count reconciler (VMCP-02.67). `finalizeSet`
+   * records every set close here; when two opposite-slot closes pair by
+   * set-start proximity and their rep counts differ, it returns a divergence
+   * that finalize publishes as a `bilateral_divergence` channel event.
+   * Optional so test states that pre-date this feature (and single-device
+   * flows that never construct it) skip the reconciliation cleanly. See
+   * `state/bilateral-reconciler.ts`.
+   */
+  bilateralReconciler?: BilateralReconciler;
 }
 
 /**
@@ -357,6 +368,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       voice: makeVoiceHolder(),
       slotBindings,
       passiveScan: createPassiveScanState(),
+      bilateralReconciler: new BilateralReconciler(),
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
