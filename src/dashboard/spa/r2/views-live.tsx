@@ -36,6 +36,7 @@ import { CueFlag, FatigueMeter, StatusPill, auraFor } from './status';
 import { HeroVelocityBars, heroZoneColor } from './herobars';
 import { RestRing } from './restring';
 import { RestTimerCompat } from './titan-compat';
+import { WallScale } from './wallscale';
 
 export function LiveView({ sim }: { sim: SimState }): React.JSX.Element {
   const ex = SESSION[LIVE.exerciseIndex];
@@ -101,17 +102,23 @@ export function LiveView({ sim }: { sim: SimState }): React.JSX.Element {
           </F>
           <div>
             <div className="r2-panel-label">Live tempo · CON→HOLD→ECC (real pacing ✓/✗)</div>
-            <F kind="real" name="titan:TempoBar">
-              <TempoBar
-                activePhase={sim.phase}
-                phaseElapsedMs={sim.phaseElapsedMs}
-                completed={sim.completed}
-                target={{
-                  concentric: ex.tempoMs.con / 1000,
-                  hold: ex.tempoMs.hold / 1000,
-                  eccentric: ex.tempoMs.ecc / 1000,
-                }}
-              />
+            <F
+              kind="new"
+              name="TempoBar size='wall' — candidate variant"
+              note="scaled REAL TempoBar DOM ×1.6, capabilities identical"
+            >
+              <WallScale factor={1.6}>
+                <TempoBar
+                  activePhase={sim.phase}
+                  phaseElapsedMs={sim.phaseElapsedMs}
+                  completed={sim.completed}
+                  target={{
+                    concentric: ex.tempoMs.con / 1000,
+                    hold: ex.tempoMs.hold / 1000,
+                    eccentric: ex.tempoMs.ecc / 1000,
+                  }}
+                />
+              </WallScale>
             </F>
           </div>
           <div>
@@ -121,8 +128,12 @@ export function LiveView({ sim }: { sim: SimState }): React.JSX.Element {
                 loss ref = running-best (titan v0.5.0, WA-D01) — WA lib impl pending WA-02.05
               </PendingNote>
             </div>
-            <F kind="new" name="FatigueMeter (C meter + A aura + cue)">
-              <FatigueMeter lossPct={loss} />
+            <F
+              kind="new"
+              name="FatigueMeter size='wall' — candidate variant"
+              note="same gradient/needle/VL-marker structure, wall density"
+            >
+              <FatigueMeter lossPct={loss} size="wall" />
             </F>
           </div>
           <CueFlag lossPct={loss} repCount={reps.length} />

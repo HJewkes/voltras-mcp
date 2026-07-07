@@ -1045,3 +1045,20 @@
   margin-bottom: 8px;
   font-family: ui-monospace, monospace;
 }
+
+/* ==== wall-chunky candidate variants (operator directive) ==== */
+.r2-fmeter-wrap.wall .r2-fmeter {
+  height: 28px;
+  border-radius: 14px;
+}
+.r2-fmeter-wrap.wall .r2-fneedle {
+  width: 6px;
+  height: 38px;
+  top: -5px;
+  border-radius: 3px;
+}
+.r2-fmeter-wrap.wall .r2-fscale {
+  font-size: 13px;
+  margin-top: 8px;
+  font-weight: 700;
+}

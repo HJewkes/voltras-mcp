@@ -43,10 +43,21 @@ export function StatusPill({
   );
 }
 
-export function FatigueMeter({ lossPct }: { lossPct: number }): React.JSX.Element {
+/**
+ * `size='wall'` prototypes a chunky 2–3 m-glanceable density (proposed API:
+ * a size/density prop, not a fork). Identical structure at both sizes:
+ * gradient track, needle, VL10/20/30 scale markers.
+ */
+export function FatigueMeter({
+  lossPct,
+  size = 'md',
+}: {
+  lossPct: number;
+  size?: 'md' | 'wall';
+}): React.JSX.Element {
   const left = Math.min(98, (lossPct / 40) * 100);
   return (
-    <div className="r2-fmeter-wrap">
+    <div className={`r2-fmeter-wrap${size === 'wall' ? ' wall' : ''}`}>
       <div className="r2-fmeter">
         <div className="r2-fneedle" style={{ left: `${left}%` }} />
       </div>

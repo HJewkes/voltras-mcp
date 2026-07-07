@@ -94,7 +94,7 @@ export function F({ kind, name, note, block = true, children }: FProps): React.J
   useEffect(() => register(kind, name), [kind, name, register]);
   const cls = on ? `f-wrap f-${kind}` : 'f-wrap';
   return (
-    <div className={cls} style={{ display: block ? 'block' : 'inline-block' }}>
+    <div className={cls} data-f={name} style={{ display: block ? 'block' : 'inline-block' }}>
       {on && (
         <span className={`f-tag f-tag-${kind}`}>
           {kind === 'mock' ? `mock · ${name}` : name}
