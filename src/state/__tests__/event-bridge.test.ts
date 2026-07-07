@@ -1115,16 +1115,14 @@ describe('wireEventBridge', () => {
       // LiveState's set is cleared.
       expect(live.snapshotSet()).toBeUndefined();
 
-      // Three channel events on a single onSetSummary fire: first the
-      // `set_pre_summary` rest-coaching prompt (kept for backwards-compat
-      // with PT-skill consumers), then the unified `set_ended` event
-      // with `closed_by='device'`, then the initial passive `rest_status`
+      // Two channel events on a single onSetSummary fire (VMCP-02.73 removed
+      // the redundant `set_pre_summary`): the unified `set_ended` event with
+      // `closed_by='device'`, then the initial passive `rest_status`
       // (VMCP-02.08) at t=0 of the rest period.
-      expect(channels.publish).toHaveBeenCalledTimes(3);
-      expect(channels.publish.mock.calls[0][0].meta.event_type).toBe('set_pre_summary');
-      const event = channels.publish.mock.calls[1][0];
+      expect(channels.publish).toHaveBeenCalledTimes(2);
+      const event = channels.publish.mock.calls[0][0];
       expect(event.meta.event_type).toBe('set_ended');
-      expect(channels.publish.mock.calls[2][0].meta.event_type).toBe('rest_status');
+      expect(channels.publish.mock.calls[1][0].meta.event_type).toBe('rest_status');
       expect(event.meta.closed_by).toBe('device');
       expect(event.meta.set_id).toBe('set-dev');
       expect(event.meta.session_id).toBe('sess-dev');
@@ -1157,8 +1155,8 @@ describe('wireEventBridge', () => {
       client.fire.setSummary();
       await flushMicrotasks();
       expect(fakeState.store.putSet).not.toHaveBeenCalled();
-      // The bridge's set_pre_summary publisher also short-circuits when
-      // there is no active set, so `channels.publish` stays untouched.
+      // The onSetSummary handler short-circuits when there is no active set,
+      // so `channels.publish` stays untouched.
       expect(channels.publish).not.toHaveBeenCalled();
       expect(server.server.sendResourceUpdated).not.toHaveBeenCalled();
     });
@@ -1186,11 +1184,11 @@ describe('wireEventBridge', () => {
       });
       await flushMicrotasks();
 
-      // First publish is `set_pre_summary`, second is unified `set_ended`
-      // with `closed_by='device'`, third is the initial `rest_status`
-      // (VMCP-02.08) at t=0 of the rest period.
-      expect(channels.publish).toHaveBeenCalledTimes(3);
-      const setEnded = channels.publish.mock.calls[1][0];
+      // First publish is the unified `set_ended` (`closed_by='device'`),
+      // second is the initial `rest_status` (VMCP-02.08) at t=0 of the rest
+      // period. VMCP-02.73 removed the redundant `set_pre_summary`.
+      expect(channels.publish).toHaveBeenCalledTimes(2);
+      const setEnded = channels.publish.mock.calls[0][0];
       expect(setEnded.meta.event_type).toBe('set_ended');
       expect(setEnded.meta.closed_by).toBe('device');
       expect(setEnded.meta.device_rep_count).toBe('7');
@@ -1234,7 +1232,7 @@ describe('wireEventBridge', () => {
       await flushMicrotasks();
 
       // Filter for the unified `set_ended` payload — call order is now
-      // [set_pre_summary, set_ended, rest_status] (VMCP-02.08).
+      // [set_ended, rest_status] (VMCP-02.08; VMCP-02.73 removed set_pre_summary).
       const setEndedCall = channels.publish.mock.calls.find(
         (c) => c[0].meta.event_type === 'set_ended',
       );
@@ -1325,6 +1323,52 @@ describe('wireEventBridge', () => {
       expect(finalRepNumber).toBe(3);
       expect(totalAtClose).toBe(3);
       nowSpy.mockRestore();
+    });
+
+    it('does NOT re-inflate the count when every rep fired its return boundary (VMCP-02.75 firmware-canonical)', async () => {
+      // Bench 2026-07-07 over-count: all 3 reps (including the last) fired their
+      // onPerRep 'return', so 3 firmware boundaries are captured AND the device
+      // set-close frame reports 3. The old `max(existing+1, device)` appended a
+      // positional 4th rep and reported 4 ("bridge inflated to N+1"). Firmware-
+      // canonical takes the device count verbatim (3), appends nothing, and the
+      // set_ended event's device_rep_count reflects that.
+      let totalAtClose: number | undefined;
+      let firmwareRepsAtClose = 0;
+      const realEndSet = live.endSet.bind(live);
+      vi.spyOn(live, 'endSet').mockImplementation((reason, opts) => {
+        const snap = live.snapshotSet();
+        totalAtClose = snap?.firmwareTotalRepCount;
+        firmwareRepsAtClose = (snap?.firmwareReps ?? []).length;
+        return realEndSet(reason, opts);
+      });
+
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+      for (let rep = 1; rep <= 3; rep++) {
+        client.fire.perRep({
+          phase: 'return',
+          frameCounter: rep,
+          setCounter: 1,
+          repCount: rep,
+          targetWeightTenths: 1000,
+        });
+      }
+      client.fire.setSummary({
+        schemaVersion: 1,
+        targetWeightTenths: 1000,
+        repCount: 3,
+        repDurationMs: 1800,
+        raw: new Uint8Array(110),
+      });
+      await flushMicrotasks();
+
+      // No phantom terminal rep appended; device count taken verbatim.
+      expect(firmwareRepsAtClose).toBe(3);
+      expect(totalAtClose).toBe(3);
+      const setEnded = channels.publish.mock.calls.find(
+        (c) => c[0].meta.event_type === 'set_ended',
+      );
+      expect(setEnded).toBeDefined();
+      expect(setEnded![0].meta.device_rep_count).toBe('3');
     });
   });
 
@@ -1879,7 +1923,7 @@ describe('wireEventBridge', () => {
     });
   });
 
-  describe('onSetSummary → set_pre_summary channel event (PR-C)', () => {
+  describe('onSetSummary handler (VMCP-02.73: no set_pre_summary event)', () => {
     function startSetNow(): void {
       live.startSession({
         sessionId: 'sess-pre',
@@ -1896,7 +1940,7 @@ describe('wireEventBridge', () => {
       });
     }
 
-    it('publishes set_pre_summary on the channel when an active set is in flight', () => {
+    it('does NOT publish a set_pre_summary channel event (removed — set_ended is the single close event)', () => {
       startSetNow();
       live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
       channels.publish.mockClear();
@@ -1907,75 +1951,23 @@ describe('wireEventBridge', () => {
         repDurationMs: 2200,
         raw: new Uint8Array(110),
       });
-      expect(channels.publish).toHaveBeenCalledTimes(1);
-      const event = channels.publish.mock.calls[0][0];
-      expect(event.meta).toMatchObject({
-        source: 'voltras',
-        event_type: 'set_pre_summary',
-        set_id: 'set-pre',
-        session_id: 'sess-pre',
-        device_rep_count: '6',
-        final_rep_duration_ms: '2200',
-        schema_version: '2',
-      });
-      const parsed = JSON.parse(event.content) as {
-        summary: string;
-        pre_summary: { rep_count: number; final_rep_duration_ms: number };
-        set_so_far: unknown;
-      };
-      expect(parsed.summary).toBe('Final rep complete: 6 reps, last rep 2200ms');
-      expect(parsed.pre_summary.rep_count).toBe(6);
-      expect(parsed.set_so_far).not.toBeNull();
-    });
-
-    it('reports the device count verbatim, never re-inflating past it (VMCP-02.75 firmware-canonical)', () => {
-      startSetNow();
-      live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
-      // All 4 reps fire their onPerRep 'return' boundary, so 4 firmware
-      // boundaries are captured and the device's set-close frame also reports 4.
-      for (let rep = 1; rep <= 4; rep++) {
-        client.fire.perRep({
-          phase: 'return',
-          frameCounter: rep,
-          setCounter: 1,
-          repCount: rep,
-          targetWeightTenths: 1000,
-        });
-      }
-      channels.publish.mockClear();
-      // Firmware-canonical (VMCP-02.75): the device is the source of truth for
-      // the rep total. Our captured boundaries already cover the device count
-      // (4), so finalizeFirmwareReps appends no positional terminal rep and
-      // reports 4 verbatim — NOT the old `max(4+1, 4)=5` that over-counted
-      // whenever the last rep's 'return' had already fired (bench 2026-07-07
-      // WT 8→9, RB 11→12). We accept a rare device under-count over any
-      // over-count.
-      client.fire.setSummary({
-        schemaVersion: 1,
-        targetWeightTenths: 1000,
-        repCount: 4,
-        repDurationMs: 1800,
-        raw: new Uint8Array(110),
-      });
+      // Synchronously (before the async finalizeSet resolves) there is no
+      // set_pre_summary publish; nothing on the channel carries that name.
       const preSummary = channels.publish.mock.calls.find(
         (c) => (c[0] as { meta: { event_type: string } }).meta.event_type === 'set_pre_summary',
       );
-      expect(preSummary).toBeDefined();
-      const event = preSummary![0] as { meta: Record<string, string>; content: string };
-      expect(event.meta.device_rep_count).toBe('4');
-      const parsed = JSON.parse(event.content) as { summary: string };
-      expect(parsed.summary).toBe('Final rep complete: 4 reps, last rep 1800ms');
+      expect(preSummary).toBeUndefined();
     });
 
-    it('is a silent drop when no set is active (ghost preSummary after set.end)', () => {
+    it('is a silent drop when no set is active (ghost setSummary after set.end)', () => {
       // No startSet — simulates set.end already running before the device's
-      // preSummary echo arrived.
+      // setSummary echo arrived.
       channels.publish.mockClear();
       expect(() => client.fire.setSummary()).not.toThrow();
       expect(channels.publish).not.toHaveBeenCalled();
     });
 
-    it('does not mutate live state on preSummary (read-only — set_so_far is a snapshot)', () => {
+    it('does not mutate the live rep array on close (reps are owned by the analytics pipeline)', () => {
       startSetNow();
       const before = live.snapshotSet();
       client.fire.setSummary();

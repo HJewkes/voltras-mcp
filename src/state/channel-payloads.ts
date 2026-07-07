@@ -18,7 +18,6 @@
 // are silently dropped on serialization). Values must all be strings —
 // helpers `toFixed(N)` or `String(...)` numbers before assignment.
 
-import type { SetSummaryEvent } from '@voltras/node-sdk';
 import type { Rep } from '@voltras/workout-analytics';
 import {
   getPhaseMeanVelocity,
@@ -718,62 +717,12 @@ function buildSetEndedSummary(
   return cause === 'device_signal' ? `${withLoss} (set ended automatically)` : withLoss;
 }
 
-/**
- * Build the meta + content for a `set_pre_summary` channel event. Fires
- * when the device's vendor `aa 85 5f` set-summary frame lands (per-set,
- * after all reps complete in WT/RB/Damper) — hands PT Claude the rest
- * period coaching prompt right at set close.
- *
- * The `set_so_far` block mirrors the trigger-event shape so the model
- * parses mid-set context with the same schema across `set_target_reached`,
- * `velocity_loss_exceeded`, `idle_timeout`, and now `set_pre_summary`.
- *
- * `payload.targetWeightTenths` is carried through as-is (raw tenths) for
- * completeness — the model can divide by 10 when it wants pounds.
- *
- * (The `set_pre_summary` channel-event name is preserved for now since it's
- * stable wire shape; the SDK-side rename to `onSetSummary` happened in
- * 0.9.0 but the MCP channel event keeps the legacy label until a future
- * MCP-side rename PR.)
- */
-export function buildSetPreSummaryPayload(
-  set: ActiveSet,
-  device: DeviceSnapshot,
-  payload: SetSummaryEvent,
-): { meta: Record<string, string>; content: string } {
-  // Prefer the firmware-parity reconstructed total over the raw frame count,
-  // matching `buildSetEndedPayload`. `set_pre_summary` is the LIVE coaching
-  // prompt the model reads the instant a set closes, so a raw frame count here
-  // is what the model latches onto first — before the corrected `set_ended`
-  // arrives moments later. When a set auto-ends on its final rep that rep never
-  // fires its own `onPerRep` 'return', so the raw frame `repCount` omits it
-  // (bench 2026-07-01: frame said 4 for a 5-rep set). The bridge runs
-  // `finalizeFirmwareRepsOnClose` before this payload is built, so
-  // `firmwareTotalRepCount` is the reconciled truth by now; `?? payload.repCount`
-  // guards the case where no firmware reps were captured.
-  const reconciledRepCount = set.firmwareTotalRepCount ?? payload.repCount;
-  const meta: Record<string, string> = {
-    source: 'voltras',
-    event_type: 'set_pre_summary',
-    set_id: set.setId,
-    session_id: set.sessionId,
-    device_rep_count: String(reconciledRepCount),
-    final_rep_duration_ms: String(payload.repDurationMs),
-    schema_version: String(payload.schemaVersion),
-  };
-  const summary = `Final rep complete: ${reconciledRepCount} reps, last rep ${payload.repDurationMs}ms`;
-  const content = JSON.stringify({
-    summary,
-    pre_summary: {
-      rep_count: reconciledRepCount,
-      final_rep_duration_ms: payload.repDurationMs,
-      schema_version: payload.schemaVersion,
-      target_weight_tenths: payload.targetWeightTenths,
-    },
-    set_so_far: summarizeSetForTrigger(set, device),
-  });
-  return { meta, content };
-}
+// VMCP-02.73: `buildSetPreSummaryPayload` / the `set_pre_summary` channel
+// event were removed. The event derived from the same `aa 85 5f` frame in the
+// same handler tick as `set_ended`, carried no unique data (the reconciled
+// count, final-rep duration, and schema version are all on `set_ended`), and
+// was a second reconciliation surface. No consumer read it by name. `set_ended`
+// (`buildSetEndedPayload`) is now the single per-set close event.
 
 /**
  * Compact mid-set summary used in the trigger DSL channel events

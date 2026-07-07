@@ -127,7 +127,6 @@ import {
   buildIdleRepPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
-  buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
   buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
@@ -691,8 +690,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // in WT/RB/Damper after all reps complete (renamed from `preSummary`
       // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
       // a misnomer — see voltra-private/research/aa-subtype-catalog-2026-05-07-android-deep.md
-      // §7.5). Publishes the `set_pre_summary` channel event so PT Claude
-      // can hand the rest-period coaching prompt right at set close.
+      // §7.5). This is the canonical per-set close signal: it reconciles the
+      // firmware rep pipeline and routes the close through `finalizeSet`, which
+      // emits the single `set_ended` channel event (`closed_by='device'`).
       // Ghost setSummary after `set.end` already closed the set: silent
       // drop (the explicit tool finalize already cleared `live.set`).
       debug.events.push({
@@ -711,7 +711,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (set === undefined) {
         return;
       }
-      const device = live.snapshotDevice();
       // Capture the typed payload onto the active set + close immediately.
       // `aa 85 5f` is the canonical per-set close marker in WT/RB/Damper —
       // it fires after all reps complete with the final rep count, not
@@ -728,15 +727,18 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // `onPerRep` 'return' boundary (the device disengages after the final
       // concentric), so slice the trailing sample window and append it as the
       // terminal FirmwareRep plus record the device's authoritative repCount.
-      // This also records the reconciled `firmwareTotalRepCount` on the set.
+      // This also records the reconciled `firmwareTotalRepCount` on the set,
+      // which `finalizeSet` reads into the `set_ended` payload's
+      // `device_rep_count`.
+      //
+      // VMCP-02.73: the redundant `set_pre_summary` channel event was removed.
+      // It derived from THIS same frame in the same tick as `set_ended`,
+      // carried no unique data, and was a second reconciliation surface. No
+      // consumer read it by name. `set_ended` (emitted by `finalizeSet` below)
+      // is now the single per-set close event.
       finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
-      // VMCP-02.55 (Phase 2): publish `set_pre_summary` AFTER reconciliation so
-      // the live coaching prompt reports the reconciled rep count, not the raw
-      // frame count that omits an auto-ended terminal rep (bench 2026-07-01
-      // 4-vs-5 latch). Re-snapshot to pick up the `firmwareTotalRepCount` that
-      // `finalizeFirmwareRepsOnClose` just recorded.
-      const reconciledSet = live.snapshotSet() ?? set;
-      slotChannels.publish(buildSetPreSummaryPayload(reconciledSet, device, payload));
+      // Poke the set resource so polling clients refresh on the device close
+      // (independent of the channel event; `finalizeSet` does not notify).
       notifySlot(server, slotId, SET_URI, setUriForSlot);
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
