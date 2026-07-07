@@ -37,6 +37,11 @@
 //   GET /api/snapshot    — { session, devices, sets } JSON. Live view of
 //                          the active session, every slot's device snapshot,
 //                          and the active set if any.
+//   GET /api/stream      — Server-Sent Events (`text/event-stream`) live
+//                          overlay (VMCP-01.59): `phase` / `phaseflip` / `rep`
+//                          / `set` derived signals + ~1 Hz `hb` keepalive.
+//                          Additive to /api/snapshot (which stays the source of
+//                          truth); the SPA degrades to poll-only without it.
 //   GET /api/health      — { ok, version, uptimeMs } JSON.
 //   GET /api/history     — { sessions: StoredSession[] } JSON. `?limit=N`
 //                          query parameter, capped at 100.
@@ -55,6 +60,7 @@ import {
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { log } from '../logger.js';
+import type { LiveSignalHub } from '../state/live-signal.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
 import type {
   StoredSession,
@@ -132,6 +138,13 @@ export interface DashboardServerState {
   exercises?: {
     getById(id: string): { muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined;
   };
+  /**
+   * Fan-out hub for the derived live signal, feeding the `GET /api/stream` SSE
+   * endpoint (VMCP-01.59). Optional so the server test fakes (and any wiring
+   * that never opens a telemetry source) can omit it — the stream route still
+   * serves a valid, heartbeat-only `text/event-stream` in that case.
+   */
+  liveSignals?: LiveSignalHub;
 }
 
 export interface DashboardServerHandle {
@@ -268,6 +281,10 @@ async function handleRequest(
     sendJson(res, 200, buildSnapshot(state));
     return;
   }
+  if (pathname === '/api/stream') {
+    serveStream(res, state);
+    return;
+  }
   if (pathname === '/api/history') {
     const sessions = await fetchHistory(state, url);
     sendJson(res, 200, { sessions });
@@ -314,6 +331,51 @@ async function handleRequest(
     return;
   }
   sendJson(res, 404, { error: 'not_found' });
+}
+
+/** SSE keepalive cadence (~1 Hz). Doubles as the client's stream-staleness clock. */
+const STREAM_HEARTBEAT_MS = 1000;
+
+/**
+ * `GET /api/stream` — the VMCP-01.59 Server-Sent Events endpoint. Registers the
+ * response as a subscriber on the live-signal hub and streams `phase` /
+ * `phaseflip` / `rep` / `set` events plus a ~1 Hz `hb` keepalive, in
+ * `text/event-stream`. The poll (`/api/snapshot`) stays the source of truth;
+ * this is a pure live overlay — losing it costs smoothness, never correctness.
+ *
+ * Multi-client-safe (the hub's subscriber set costs nothing) and self-cleaning:
+ * the heartbeat timer and hub subscription are torn down when the socket
+ * closes. Fitness-units-only payloads — no protocol data crosses the wire
+ * (NF-07). When no hub is wired the stream is still valid, just heartbeat-only.
+ */
+function serveStream(res: ServerResponse, state: DashboardServerState): void {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+  });
+  // `retry:` hints the browser's EventSource auto-reconnect backoff (3 s).
+  res.write('retry: 3000\n\n');
+  writeSseEvent(res, 'hb', { t: Date.now() });
+
+  const unsubscribe = state.liveSignals?.subscribe((event) => {
+    writeSseEvent(res, event.type, event.data);
+  });
+  const heartbeat = setInterval(() => {
+    writeSseEvent(res, 'hb', { t: Date.now() });
+  }, STREAM_HEARTBEAT_MS);
+  // Don't let the keepalive timer hold the event loop / process open.
+  heartbeat.unref?.();
+
+  res.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe?.();
+  });
+}
+
+/** Serialize one SSE frame: a named `event:` plus its JSON `data:` payload. */
+function writeSseEvent(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 function buildSnapshot(state: DashboardServerState): SnapshotResponse {

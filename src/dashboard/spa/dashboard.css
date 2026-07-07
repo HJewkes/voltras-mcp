@@ -198,6 +198,13 @@
   font-weight: 700;
 }
 
+/* VMCP-01.59: items fed by the sub-second SSE live overlay, tinted with the
+   accent token so the live-streamed signal reads distinctly from the
+   poll-derived strip values without adding any new layout. */
+.hero-live-stream b {
+  color: var(--color-accent, var(--color-text-primary));
+}
+
 /* Live per-rep velocity chart (titan VelocityStrip, expanded) sits between the
    glanceable status strip and the set card. Reserve the strip's expanded height
    (bars + label/info rows) so the surrounding layout doesn't reflow as reps land. */

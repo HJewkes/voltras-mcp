@@ -42,6 +42,7 @@ import {
   toLiveTempoSeconds,
   toSetRowProps,
 } from './exercise-hero-view';
+import { LiveReadout } from './LiveReadout';
 
 /** Next planned workout for the idle preview, matching `/api/next-workout`. */
 export interface NextWorkoutView {
@@ -140,6 +141,10 @@ export function ExerciseHeroPanel({
           <span className="hero-live-item">
             <b>{currentSet.latestPeakVelocity}</b> peak
           </span>
+          {/* VMCP-01.59: sub-second live phase/velocity from the SSE overlay,
+              layered onto the existing strip. Renders only when the stream is
+              connected; absent it, the strip is unchanged (poll-only). */}
+          <LiveReadout />
         </div>
       )}
       {currentSet.active && currentSet.velocitiesMps.length > 0 && (

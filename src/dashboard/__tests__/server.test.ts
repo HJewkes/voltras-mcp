@@ -19,6 +19,7 @@ import {
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
 import type { StoredSession, StoredSet } from '../../store/types.js';
+import { LiveSignalHub } from '../../state/live-signal.js';
 
 // Track every handle a test acquires so `afterEach` can close stragglers.
 const liveHandles: DashboardServerHandle[] = [];
@@ -827,6 +828,137 @@ describe('routing', () => {
       req.end();
     });
     expect(result.status).toBe(405);
+  });
+});
+
+/**
+ * Open a streaming GET and invoke `onChunk` with the accumulated body every
+ * time bytes arrive. Resolves with a `close()` that aborts the request. Used to
+ * drive the long-lived `/api/stream` SSE endpoint (which never `end()`s).
+ */
+function openStream(
+  host: string,
+  port: number,
+  path: string,
+  onChunk: (body: string) => void,
+): Promise<{ close: () => void }> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    const req = httpRequest({ host, port, path, method: 'GET' }, (res) => {
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => {
+        body += c;
+        onChunk(body);
+      });
+      resolve({
+        close: () => {
+          req.destroy();
+        },
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** Poll until `predicate` is true or the deadline elapses (SSE arrives async). */
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor: timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+describe('GET /api/stream (SSE)', () => {
+  it('responds with text/event-stream headers, a retry hint, and a priming heartbeat', async () => {
+    const hub = new LiveSignalHub();
+    const handle = await startWithFake({ ...makeFakeState(), liveSignals: hub });
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    try {
+      await waitFor(() => body.includes('event: hb'));
+      expect(body).toContain('retry: 3000');
+      expect(body).toContain('event: hb');
+      expect(body).toContain('data: {"t":');
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('streams phase / phaseflip / rep / set events emitted on the hub', async () => {
+    const hub = new LiveSignalHub();
+    const handle = await startWithFake({ ...makeFakeState(), liveSignals: hub });
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    try {
+      // Wait for the subscription to be live (priming hb received) before emitting.
+      await waitFor(() => body.includes('event: hb'));
+      hub.emit({
+        type: 'set',
+        data: { kind: 'started', setId: 'set-1', sessionId: 'sess-1' },
+      });
+      hub.emit({
+        type: 'phaseflip',
+        data: { t: 1000, from: 'con', to: 'hold', repIndex: 3 },
+      });
+      hub.emit({
+        type: 'phase',
+        data: {
+          t: 1000,
+          phase: 'con',
+          phaseElapsedMs: 90,
+          position: 312,
+          velocity: 0.48,
+          force: 74,
+          repInProgress: 3,
+        },
+      });
+      hub.emit({
+        type: 'rep',
+        data: { repIndex: 3, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 },
+      });
+
+      await waitFor(() => body.includes('event: rep'));
+      expect(body).toContain('event: set\ndata: {"kind":"started"');
+      expect(body).toContain('event: phaseflip\ndata: {"t":1000,"from":"con","to":"hold"');
+      expect(body).toContain('event: phase\ndata: {"t":1000,"phase":"con"');
+      expect(body).toContain('event: rep\ndata: {"repIndex":3');
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('unsubscribes from the hub when the client disconnects', async () => {
+    const hub = new LiveSignalHub();
+    const handle = await startWithFake({ ...makeFakeState(), liveSignals: hub });
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    await waitFor(() => body.includes('event: hb'));
+    expect(hub.subscriberCount).toBe(1);
+    stream.close();
+    await waitFor(() => hub.subscriberCount === 0);
+    expect(hub.subscriberCount).toBe(0);
+  });
+
+  it('serves a valid heartbeat-only stream when no hub is wired', async () => {
+    const handle = await startWithFake(makeFakeState());
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    try {
+      await waitFor(() => body.includes('event: hb'));
+      expect(body).toContain('event: hb');
+    } finally {
+      stream.close();
+    }
   });
 });
 
