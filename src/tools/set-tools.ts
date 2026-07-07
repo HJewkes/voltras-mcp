@@ -290,6 +290,12 @@ async function startSet(
   // tell left-arm from right-arm at a glance. Single-device flows still
   // see meta.slot = 'primary' (a meta-key addition, not a behavior change).
   state.channels.forSlot(slotId).publish(payload);
+  // VMCP-01.59: echo the set-start onto the dashboard SSE stream so the client
+  // can reset its live tempo bar. Fitness-units lifecycle metadata only.
+  state.liveSignals?.emit({
+    type: 'set',
+    data: { kind: 'started', setId, sessionId: session.sessionId },
+  });
   // VMCP-02.08: the next set has begun → cancel any in-flight rest_status
   // timer for this slot. No-op when no rest was active (cold start, or the
   // 5-minute cap already disposed it). Sits AFTER the set_started publish
@@ -620,6 +626,12 @@ export async function finalizeSet(
   );
   const slotChannels = state.channels.forSlot(slotId);
   slotChannels.publish(payload);
+  // VMCP-01.59: echo the set-end onto the dashboard SSE stream so the client
+  // clears its live tempo bar back to the non-live (per-rep-summary) mode.
+  state.liveSignals?.emit({
+    type: 'set',
+    data: { kind: 'ended', setId: stored.id, sessionId: stored.sessionId },
+  });
   // VMCP-02.68: advisory flag when the force-implied weight disagrees with the
   // logged header weight (stale/mis-recorded header). VMCP-02.67: reconcile the
   // per-side rep count against the paired bilateral set. Both are advisory

@@ -48,6 +48,7 @@ import { ExerciseService } from '../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import { selectAdapter } from '../adapter/select.js';
 import { noopChannelPublisher, type ChannelPublisher } from './channel-publisher.js';
+import { LiveSignalHub } from './live-signal.js';
 import { ChannelDeliveryTracker } from './channel-delivery.js';
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
@@ -296,6 +297,16 @@ export interface ServerState {
    * `state/bilateral-reconciler.ts`.
    */
   bilateralReconciler?: BilateralReconciler;
+  /**
+   * Fan-out hub for the derived per-sample live signal (VMCP-01.59). The event
+   * bridge derives `{ phase, phaseElapsedMs, position, velocity, force,
+   * repInProgress }` at the `onFrame` choke point and publishes it here; the
+   * dashboard SSE endpoint (`GET /api/stream`) subscribes and streams it to the
+   * browser. Optional so partial test states (which never open the dashboard)
+   * can omit it — the bridge tap and the SSE route both no-op when it's absent.
+   * Fitness-units only; no protocol data crosses this hub (NF-07).
+   */
+  liveSignals?: LiveSignalHub;
 }
 
 /**
@@ -369,6 +380,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       slotBindings,
       passiveScan: createPassiveScanState(),
       bilateralReconciler: new BilateralReconciler(),
+      liveSignals: new LiveSignalHub(),
     };
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');

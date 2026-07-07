@@ -111,11 +111,19 @@ import type {
 } from '@voltras/node-sdk';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
-import { addSampleToSet, completeSet, createRep, createSet } from '@voltras/workout-analytics';
+import {
+  addSampleToSet,
+  completeSet,
+  createRep,
+  createSet,
+  getPhaseMeanVelocity,
+  getRepRangeOfMotion,
+} from '@voltras/workout-analytics';
 import { randomUUID } from 'node:crypto';
 
 import { selectSetReps } from './live-state.js';
 import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
+import { LiveSignalEmitter, mapPhase, mmsToMps, mmToM } from './live-signal.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import { getSessionRecorder } from './session-recorder.js';
 import type { ChannelPublisher } from './channel-publisher.js';
@@ -335,6 +343,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // every IDLE_REP_SUMMARY_WINDOW_MS. Verbose mode bypasses the accumulator
   // entirely (count stays 0).
   const idleRepBatch = { count: 0, sinceMs: 0 };
+  // VMCP-01.59: per-slot derived live-signal emitter. Wraps a phase clock +
+  // ~20 Hz safety throttle and fans `phase` / `phaseflip` / `rep` signals into
+  // the shared hub the dashboard SSE endpoint subscribes to. Undefined when the
+  // state was constructed without a hub (partial test wiring) — the tap no-ops.
+  // The derived schema (`src/state/live-signal.ts`) is shared with VMCP-02.58's
+  // Tier-1 cue matcher: same tap, same fields, derived once.
+  const liveSignals =
+    state.liveSignals !== undefined ? new LiveSignalEmitter(state.liveSignals) : undefined;
   // Latest known state-dump values; transitions synthesize `settings_update`
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
@@ -480,6 +496,25 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         force: frame.force,
       };
 
+      // ── VMCP-01.59: SSE live-signal tap ───────────────────────────────────
+      // Derive a fitness-units-only live signal (phase clock + instantaneous
+      // velocity/position/force) at this frame choke point and fan it out to
+      // the dashboard SSE bridge. Runs for every classified frame — including
+      // idle-arm movement — so the live phase/velocity readout always tracks
+      // the cable. Velocity is converted mm/s → m/s here; force stays lbs;
+      // position is the normalized 0-600 cable extension. No protocol bytes
+      // cross this tap. Shared derivation with VMCP-02.58's Tier-1 cue matcher.
+      if (liveSignals !== undefined) {
+        liveSignals.frame({
+          t: sample.timestamp,
+          phase: mapPhase(phase),
+          position: sample.position,
+          velocity: mmsToMps(sample.velocity),
+          force: sample.force,
+          repInProgress: live.set !== undefined ? live.set.reps.length : null,
+        });
+      }
+
       // ── Idle-arm rep detection ────────────────────────────────────────────
       // When no MCP set is active, route frames through the idle analytics
       // pipeline. A rep boundary in the idle pipeline means the user lifted
@@ -570,6 +605,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             set.reps.length,
           );
           slotChannels.publish(payload);
+          // VMCP-01.59: echo the finalized rep onto the SSE stream as a lean,
+          // fitness-units-only signal so the dashboard can update its live
+          // per-rep readout without waiting for the next 500 ms snapshot poll.
+          if (liveSignals !== undefined) {
+            liveSignals.rep({
+              repIndex: finalizedIndex + 1,
+              vCon: mmsToMps(getPhaseMeanVelocity(finalizedRep.concentric)),
+              rom: mmToM(getRepRangeOfMotion(finalizedRep)),
+              peakVelocity: mmsToMps(finalizedRep.concentric.peakVelocity),
+            });
+          }
           // Reset the idle watchdog — an active lifter must never trip
           // the abandonment alarm. Safe to call unconditionally; no-op
           // when the set has no idle_timeout_ms specs registered.
