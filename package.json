@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
+    "build:dashboard:r2": "vite build --config src/dashboard/spa/r2/vite.config.ts",
     "start": "node ./dist/bin.js",
     "test": "vitest run",
     "test:watch": "vitest",
