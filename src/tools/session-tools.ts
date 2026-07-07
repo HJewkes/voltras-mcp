@@ -176,6 +176,11 @@ async function startSession(
   // session.start time) rather than a tool argument because session.start
   // does not yet take a trainingMode parameter — the mode is set
   // implicitly via prior `device.set_mode` calls.
+  // VMCP-02.72: reset before arming so a latched abort from a PRIOR session
+  // (session.start requires no active session, so any latch is stale) cannot
+  // block this session's first set.start. `arm` alone does not clear the
+  // latch.
+  slot.modeRevertGuard.reset();
   const requestedMode = trainingModeFromSnapshot(slot.live.snapshotDevice().trainingMode);
   if (requestedMode !== undefined) {
     slot.modeRevertGuard.arm(requestedMode);
@@ -231,6 +236,14 @@ async function endSession(state: ServerState, slotId: string | undefined): Promi
       partialReason: 'session_end',
     });
   }
+
+  // VMCP-02.72: clear the mode-revert guard on the session boundary. A latched
+  // safety abort must not outlive the session that produced it — the
+  // set_aborted_by_mode_revert error text tells the user to end + restart the
+  // session to recover, so the latch has to actually reset here (and on
+  // session.start). Without this, the latch survived a full session cycle and
+  // spuriously aborted every subsequent set.start.
+  slot.modeRevertGuard.reset();
 
   const finalizedSession = slot.live.endSession();
   // `endSession` returns undefined only when there was no active session; we

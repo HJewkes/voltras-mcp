@@ -131,11 +131,9 @@ import {
   buildConnectionChangedPayload,
   buildPendingDisconnectNotice,
   buildGuidedLoadStatePayload,
-  buildModeDivergedPayload,
   buildIdleRepPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
-  buildSetPreSummaryPayload,
   buildSetTargetReachedPayload,
   buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
@@ -148,8 +146,6 @@ import {
   type SettingsUpdateAll,
   type SettingsUpdateField,
 } from './channel-payloads.js';
-import { activeModeName } from './active-mode.js';
-import type { ModeDivergence } from './mode-divergence-watch.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
@@ -412,26 +408,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // publish on a phase change collapses intra-countdown spam to one event per
   // transition (the debug event still records every tick).
   let lastGuidedLoadPhase: string | undefined = undefined;
-
-  // VMCP-02.09c: publish a `mode_diverged` channel event when the slot's
-  // ModeDivergenceWatch reports a persistent requested≠applied disagreement.
-  // Names are read from the live snapshot at emit time (the same fields
-  // surfaced as requested_mode / active_mode by VMCP-02.09a), which the
-  // triggering settings_update / state_dump has just refreshed.
-  const publishModeDivergence = (div: ModeDivergence): void => {
-    const device = live.snapshotDevice();
-    const set = live.snapshotSet();
-    const session = live.snapshotSession();
-    slotChannels.publish(
-      buildModeDivergedPayload({
-        requestedMode: device.trainingMode ?? null,
-        activeMode: activeModeName(device.trainingModeRaw),
-        divergedForMs: div.divergedForMs,
-        setId: set?.setId,
-        sessionId: session?.sessionId ?? set?.sessionId,
-      }),
-    );
-  };
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -737,8 +713,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // in WT/RB/Damper after all reps complete (renamed from `preSummary`
       // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
       // a misnomer — see voltra-private/research/aa-subtype-catalog-2026-05-07-android-deep.md
-      // §7.5). Publishes the `set_pre_summary` channel event so PT Claude
-      // can hand the rest-period coaching prompt right at set close.
+      // §7.5). This is the canonical per-set close signal: it reconciles the
+      // firmware rep pipeline and routes the close through `finalizeSet`, which
+      // emits the single `set_ended` channel event (`closed_by='device'`).
       // Ghost setSummary after `set.end` already closed the set: silent
       // drop (the explicit tool finalize already cleared `live.set`).
       debug.events.push({
@@ -757,7 +734,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (set === undefined) {
         return;
       }
-      const device = live.snapshotDevice();
       // Capture the typed payload onto the active set + close immediately.
       // `aa 85 5f` is the canonical per-set close marker in WT/RB/Damper —
       // it fires after all reps complete with the final rep count, not
@@ -774,15 +750,18 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // `onPerRep` 'return' boundary (the device disengages after the final
       // concentric), so slice the trailing sample window and append it as the
       // terminal FirmwareRep plus record the device's authoritative repCount.
-      // This also records the reconciled `firmwareTotalRepCount` on the set.
+      // This also records the reconciled `firmwareTotalRepCount` on the set,
+      // which `finalizeSet` reads into the `set_ended` payload's
+      // `device_rep_count`.
+      //
+      // VMCP-02.73: the redundant `set_pre_summary` channel event was removed.
+      // It derived from THIS same frame in the same tick as `set_ended`,
+      // carried no unique data, and was a second reconciliation surface. No
+      // consumer read it by name. `set_ended` (emitted by `finalizeSet` below)
+      // is now the single per-set close event.
       finalizeFirmwareRepsOnClose(live, set, sampleRing, priorBoundaryTs, payload);
-      // VMCP-02.55 (Phase 2): publish `set_pre_summary` AFTER reconciliation so
-      // the live coaching prompt reports the reconciled rep count, not the raw
-      // frame count that omits an auto-ended terminal rep (bench 2026-07-01
-      // 4-vs-5 latch). Re-snapshot to pick up the `firmwareTotalRepCount` that
-      // `finalizeFirmwareRepsOnClose` just recorded.
-      const reconciledSet = live.snapshotSet() ?? set;
-      slotChannels.publish(buildSetPreSummaryPayload(reconciledSet, device, payload));
+      // Poke the set resource so polling clients refresh on the device close
+      // (independent of the channel event; `finalizeSet` does not notify).
       notifySlot(server, slotId, SET_URI, setUriForSlot);
       void finalizeSet(state, slotId, { cause: 'device_signal', disengageMotor: false }).catch(
         (err) => {
@@ -1024,14 +1003,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // VMCP-02.09c: feed the requested side of the divergence watch. Emits a
-      // `mode_diverged` event if this requested mode disagrees with the last
-      // applied (cmd=0x07) mode past the debounce window.
-      const requestedDivergence = slot.modeDivergenceWatch.onRequested(incomingMode);
-      if (requestedDivergence !== null) {
-        publishModeDivergence(requestedDivergence);
-      }
-
       // Synthesize `settings_update` channel events when the cmd=0x10
       // cascade carries a new value for any of the user-set fields the
       // bridge surfaces. The `__all` block in the payload snapshots every
@@ -1120,15 +1091,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           eccentricPercentTenths: dump.eccentricPercentTenths,
         });
         notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
-
-        // VMCP-02.09c: feed the applied side of the divergence watch (the
-        // transitional Idle frame was already dropped above). Emits a
-        // `mode_diverged` event if this applied mode disagrees with the last
-        // requested (cmd=0x10) mode past the debounce window.
-        const appliedDivergence = slot.modeDivergenceWatch.onApplied(dump.trainingMode);
-        if (appliedDivergence !== null) {
-          publishModeDivergence(appliedDivergence);
-        }
 
         synthStateDumpTransitions(
           dump,
@@ -1384,14 +1346,17 @@ function sliceFrameBufferAndEnrich(
 }
 
 /**
- * VMCP-02.29 PR4: build + append the terminal firmware rep on the device's
- * set-close frame. The last rep has no `onPerRep` 'return' of its own, so its
- * enriched slice runs from the last boundary (`priorBoundaryTs`, floored at set
- * start) to the buffer tip. The `SetSummaryEvent` carries no set/frame counter,
- * so both are recorded as 0 (traceability-only fields). The terminal rep's
- * number is derived positionally inside `finalizeFirmwareReps`; the device's
- * `repCount` is passed only as a reconciliation floor (it omits this very rep
- * when the set auto-ends on it). Measurement-only.
+ * VMCP-02.29 PR4: build the terminal firmware rep's enriched slice on the
+ * device's set-close frame and hand it to `finalizeFirmwareReps` along with the
+ * device's authoritative `repCount`. The last rep has no `onPerRep` 'return' of
+ * its own, so its enriched slice runs from the last boundary (`priorBoundaryTs`,
+ * floored at set start) to the buffer tip. The `SetSummaryEvent` carries no
+ * set/frame counter, so both are recorded as 0 (traceability-only fields).
+ *
+ * VMCP-02.75 (firmware-canonical): `finalizeFirmwareReps` takes `repCount`
+ * verbatim as the rep total and materializes this terminal slice ONLY when the
+ * device counted a rep the captured boundaries don't cover — never as an
+ * unconditional append that would re-inflate the count.
  */
 function finalizeFirmwareRepsOnClose(
   live: LiveState,

@@ -52,7 +52,6 @@ import { LiveSignalHub } from './live-signal.js';
 import { ChannelDeliveryTracker } from './channel-delivery.js';
 import { SetWatchdog } from './set-watchdog.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
-import { ModeDivergenceWatch } from './mode-divergence-watch.js';
 import { CoercionWatch } from './coercion-watch.js';
 import { BilateralReconciler } from './bilateral-reconciler.js';
 import { RestTimerRegistry } from './rest-timer.js';
@@ -84,14 +83,6 @@ export interface SlotState {
    * `mode-revert-guard.ts` for the state machine.
    */
   modeRevertGuard: ModeRevertGuard;
-  /**
-   * Per-slot detector of requested-vs-applied training-mode divergence
-   * (VMCP-02.09c). Fed by the bridge from `onSettingsUpdate` (requested,
-   * cmd=0x10) and `onStateDump` (applied, cmd=0x07); emits a `mode_diverged`
-   * channel event when the two disagree past a debounce window. See
-   * `mode-divergence-watch.ts`.
-   */
-  modeDivergenceWatch: ModeDivergenceWatch;
   /**
    * Per-slot ledger of recently-fired setters awaiting a device echo. Powers
    * the F2/F3 `setting_coerced` channel event: setter tool handlers wrap
@@ -360,7 +351,6 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       client,
       live,
       modeRevertGuard: new ModeRevertGuard(),
-      modeDivergenceWatch: new ModeDivergenceWatch(),
       coercionWatch: new CoercionWatch(),
     });
     const slotBindings = SlotBindingsStore.open(config.slotBindingsPath);

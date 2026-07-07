@@ -403,6 +403,26 @@ describe('session.start', () => {
       ).modeRevertGuard.isAborted(),
     ).toBe(false);
   });
+
+  // ── VMCP-02.72 — latch clears on the session boundary ──────────────────
+  it('clears a latched mode-revert abort left over from a prior session', async () => {
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    const guard = (slot as never as { modeRevertGuard: ModeRevertGuard }).modeRevertGuard;
+
+    // Simulate a stale latch: a prior session armed Damper, the device reported
+    // WeightTraining inside the window → abort latched. session.start requires
+    // no active session, so this latch is always from a prior cycle.
+    guard.arm(4 as never); // Damper
+    guard.onSettingsUpdate(1 as never); // WT within window → latches
+    expect(guard.isAborted()).toBe(true);
+
+    await h.invoke('session.start', { exerciseName: 'Test' });
+
+    // The new session must not inherit the prior abort (the error text tells
+    // the user a session cycle recovers — it now actually does).
+    expect(guard.isAborted()).toBe(false);
+  });
 });
 
 describe('session.end', () => {
@@ -415,6 +435,22 @@ describe('session.end', () => {
     const r = await h.invoke('session.end', {});
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('NO_ACTIVE_SESSION');
+  });
+
+  // ── VMCP-02.72 — latch clears on the session boundary ──────────────────
+  it('clears a latched mode-revert abort on session.end', async () => {
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    const guard = (slot as never as { modeRevertGuard: ModeRevertGuard }).modeRevertGuard;
+
+    await h.invoke('session.start', { exerciseName: 'Test' });
+    // Latch mid-session: guard was armed with WeightTraining at start; the
+    // device reporting ResistanceBand inside the window latches the abort.
+    guard.onSettingsUpdate(2 as never);
+    expect(guard.isAborted()).toBe(true);
+
+    await h.invoke('session.end', {});
+    expect(guard.isAborted()).toBe(false);
   });
 
   it('force-ends an active set as partial with session_end reason (EC-06)', async () => {
