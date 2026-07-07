@@ -6,13 +6,14 @@
  */
 import React from 'react';
 
-export type NavKey = 'live' | 'review' | 'program' | 'body';
+export type NavKey = 'live' | 'review' | 'program' | 'body' | 'specimens';
 
 const ITEMS: Array<{ key: NavKey; label: string; glyph: string }> = [
   { key: 'live', label: 'Live', glyph: '∿' },
   { key: 'review', label: 'Review', glyph: '▮▮' },
   { key: 'program', label: 'Program', glyph: '▦' },
   { key: 'body', label: 'Body', glyph: '☰' },
+  { key: 'specimens', label: 'Specs', glyph: '▤' },
 ];
 
 export function CategoricalNav({

@@ -22,6 +22,7 @@ import { useLiveSim } from './sim';
 import { LiveView, RestView } from './views-live';
 import { ReviewView } from './views-review';
 import { BodyStub, IdleView, ProgramStub } from './views-stubs';
+import { SpecimensView } from './specimens';
 import { LIVE, SESSION } from './fixture';
 
 function Header(): React.JSX.Element {
@@ -66,8 +67,10 @@ function App(): React.JSX.Element {
       <ReviewView exerciseId={reviewExId} />
     ) : nav === 'program' ? (
       <ProgramStub />
-    ) : (
+    ) : nav === 'body' ? (
       <BodyStub />
+    ) : (
+      <SpecimensView sim={sim} />
     );
 
   return (
