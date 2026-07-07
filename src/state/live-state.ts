@@ -679,31 +679,42 @@ export class LiveState {
 
   /**
    * Finalize the firmware-rep pipeline on the device's `aa 85 5f` close
-   * (VMCP-02.29 PR4). Appends the terminal firmware rep — whose enriched slice
-   * the bridge cuts from the last `onPerRep` 'return' boundary to the buffer
-   * tip, because the final rep never emits its own 'return' — and records the
-   * device's authoritative `repCount` as {@link ActiveSet.firmwareTotalRepCount}
-   * in one mutation. Silently dropped when no set is active (mirrors
-   * `appendFirmwareRep`'s stale-event policy). Measurement-only.
+   * (VMCP-02.29 PR4). Records the device's authoritative `repCount` as
+   * {@link ActiveSet.firmwareTotalRepCount} and, when needed, materializes the
+   * terminal enriched slice the bridge cut from the last `onPerRep` 'return'
+   * to the buffer tip. Silently dropped when no set is active (mirrors
+   * `appendFirmwareRep`'s stale-event policy).
+   *
+   * **VMCP-02.75 — firmware-canonical.** The device's `onSetSummary.repCount`
+   * IS the rep total: MCP never counts, only enriches. Take it verbatim — no
+   * `max(existing+1, device)` positional reconstruction. That reconstruction
+   * over-counted by 1 whenever the last rep's `onPerRep` 'return' DID fire
+   * (its boundary was already in `existing`, so appending a positional
+   * terminal rep double-counted it): bench 2026-07-07 WT set ab482e3f 8→9, RB
+   * set 20a4bea8 11→12. Because `firmwareTotalRepCount` feeds the reconciled
+   * `device_rep_count` on both `set_pre_summary` and `set_ended`, the inflation
+   * surfaced regardless of `VMCP_REP_SOURCE`.
+   *
+   * The terminal enriched slice is appended ONLY when the device counted a rep
+   * we captured no boundary for (`existing.length < deviceReportedTotal` — the
+   * final 'return' never fired). When our boundaries already cover the device
+   * count, appending would re-synthesize a phantom rep, so the captured reps
+   * are kept as-is (accepting a rare device under-count over any over-count —
+   * the device is the source of truth).
    */
   finalizeFirmwareReps(finalRep: FirmwareRep, deviceReportedTotal: number): void {
     if (this.set === undefined) {
       return;
     }
     const existing = this.set.firmwareReps ?? [];
-    // The auto-ended terminal rep has no `onPerRep` 'return' of its own, so the
-    // device's `onSetSummary` count omits it (bench 2026-07-01: device reported
-    // 4 for a 5-rep set that auto-ended on the final rep). Derive the terminal
-    // rep number positionally from what we actually reconstructed rather than
-    // trusting the device's pre-terminal counter, and reconcile the total as
-    // `max(positional, deviceReported)` so neither a missing terminal 'return'
-    // (device under-counts) nor a dropped mid-set boundary (positional
-    // under-counts) can silently drop a rep.
-    const positionalRepNumber = existing.length + 1;
+    const needsTerminalRep = existing.length < deviceReportedTotal;
+    const firmwareReps = needsTerminalRep
+      ? [...existing, { ...finalRep, repNumber: existing.length + 1 }]
+      : existing;
     this.set = {
       ...this.set,
-      firmwareReps: [...existing, { ...finalRep, repNumber: positionalRepNumber }],
-      firmwareTotalRepCount: Math.max(positionalRepNumber, deviceReportedTotal),
+      firmwareReps,
+      firmwareTotalRepCount: deviceReportedTotal,
     };
   }
 

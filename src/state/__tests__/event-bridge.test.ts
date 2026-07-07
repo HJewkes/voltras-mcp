@@ -1928,12 +1928,11 @@ describe('wireEventBridge', () => {
       expect(parsed.set_so_far).not.toBeNull();
     });
 
-    it('reports the reconciled count when the set auto-ended on its terminal rep (VMCP-02.55, bench 2026-07-01 4-vs-5)', () => {
+    it('reports the device count verbatim, never re-inflating past it (VMCP-02.75 firmware-canonical)', () => {
       startSetNow();
       live.applySettings({ weightLbs: 100, trainingMode: 'WeightTraining' });
-      // Reps 1-4 each fire their onPerRep 'return' boundary; the 5th rep
-      // auto-ended and the device disengaged before firing its own 'return',
-      // so only 4 firmware boundaries were captured.
+      // All 4 reps fire their onPerRep 'return' boundary, so 4 firmware
+      // boundaries are captured and the device's set-close frame also reports 4.
       for (let rep = 1; rep <= 4; rep++) {
         client.fire.perRep({
           phase: 'return',
@@ -1944,10 +1943,13 @@ describe('wireEventBridge', () => {
         });
       }
       channels.publish.mockClear();
-      // The device's set-close frame reports 4 — it omits the auto-ended
-      // terminal rep. finalizeFirmwareRepsOnClose reconstructs the total to 5
-      // (positional 4+1) BEFORE set_pre_summary publishes, so the live coaching
-      // prompt must report 5, not the raw 4 that previously latched.
+      // Firmware-canonical (VMCP-02.75): the device is the source of truth for
+      // the rep total. Our captured boundaries already cover the device count
+      // (4), so finalizeFirmwareReps appends no positional terminal rep and
+      // reports 4 verbatim — NOT the old `max(4+1, 4)=5` that over-counted
+      // whenever the last rep's 'return' had already fired (bench 2026-07-07
+      // WT 8→9, RB 11→12). We accept a rare device under-count over any
+      // over-count.
       client.fire.setSummary({
         schemaVersion: 1,
         targetWeightTenths: 1000,
@@ -1960,9 +1962,9 @@ describe('wireEventBridge', () => {
       );
       expect(preSummary).toBeDefined();
       const event = preSummary![0] as { meta: Record<string, string>; content: string };
-      expect(event.meta.device_rep_count).toBe('5');
+      expect(event.meta.device_rep_count).toBe('4');
       const parsed = JSON.parse(event.content) as { summary: string };
-      expect(parsed.summary).toBe('Final rep complete: 5 reps, last rep 1800ms');
+      expect(parsed.summary).toBe('Final rep complete: 4 reps, last rep 1800ms');
     });
 
     it('is a silent drop when no set is active (ghost preSummary after set.end)', () => {

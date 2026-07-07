@@ -320,29 +320,39 @@ describe('LiveState', () => {
       expect(set?.firmwareTotalRepCount).toBe(2);
     });
 
-    it('reconstructs the auto-ended terminal rep positionally when the device under-reports (bench 2026-07-01)', () => {
-      // A 5-rep set that auto-ends on the final rep: the device fired an
-      // `onPerRep` 'return' for reps 1-4 only (the terminal rep never gets its
-      // own), and the set-close frame's repCount omits it — reporting 4, not 5.
+    it('trusts the device count verbatim and does NOT synthesize a phantom terminal rep when boundaries already cover it (VMCP-02.75 over-count regression)', () => {
+      // Bench 2026-07-07 WT set ab482e3f: 8 clean reps, every rep (including the
+      // last) fired its `onPerRep` 'return', so all 8 boundaries are in
+      // `firmwareReps` and the device's `onSetSummary` repCount = 8. The old
+      // `max(existing+1, device)` reconstruction appended a positional 9th rep
+      // and reported 9 — the "bridge inflated to 9" over-count. Firmware-canonical
+      // takes the device count verbatim (8) and appends nothing.
       const live = new LiveState();
       live.startSet(
         makeSet({
-          firmwareReps: [
-            firmwareRep(1, true),
-            firmwareRep(2, true),
-            firmwareRep(3, true),
-            firmwareRep(4, true),
-          ],
+          firmwareReps: Array.from({ length: 8 }, (_, i) => firmwareRep(i + 1, true)),
         }),
       );
-      // Device-reported total = 4 (omits the auto-ended terminal rep); the
-      // caller-supplied finalRep carries a deliberately-wrong repNumber (99) to
-      // prove the number is derived positionally, not trusted from the input.
-      live.finalizeFirmwareReps(firmwareRep(99, true), 4);
+      live.finalizeFirmwareReps(firmwareRep(99, true), 8);
       const set = live.snapshotSet();
-      expect(set?.firmwareReps).toHaveLength(5);
-      expect(set?.firmwareReps?.[4].repNumber).toBe(5);
-      expect(set?.firmwareTotalRepCount).toBe(5);
+      expect(set?.firmwareReps).toHaveLength(8);
+      expect(set?.firmwareTotalRepCount).toBe(8);
+    });
+
+    it('materializes the terminal enriched slice only when the device counted a rep with no captured boundary', () => {
+      // The device counted a rep we have no `onPerRep` boundary for (the final
+      // 'return' never fired): `existing.length (1) < deviceReportedTotal (2)`.
+      // The terminal slice fills the enrichment gap without exceeding the
+      // authoritative device count.
+      const live = new LiveState();
+      live.startSet(makeSet({ firmwareReps: [firmwareRep(1, true)] }));
+      // finalRep carries a deliberately-wrong repNumber (99) to prove the
+      // appended slice's number is derived positionally, not trusted from input.
+      live.finalizeFirmwareReps(firmwareRep(99, true), 2);
+      const set = live.snapshotSet();
+      expect(set?.firmwareReps).toHaveLength(2);
+      expect(set?.firmwareReps?.[1].repNumber).toBe(2);
+      expect(set?.firmwareTotalRepCount).toBe(2);
     });
 
     it('finalizeFirmwareReps is a silent no-op when no set is active', () => {
