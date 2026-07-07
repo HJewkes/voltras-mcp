@@ -19,12 +19,12 @@ import {
   SetRow,
   StrengthTrendChart,
   TempoDisplay,
-  VelocityStrip,
   calculateMeanVelocity,
   calculateVelocityLoss,
   formatVelocity,
 } from '@titan-design/react-ui';
-import { E1RM_TREND, SESSION } from './fixture';
+import { VelocityStripCompat } from './titan-compat';
+import { CABLE_ZONES, E1RM_TREND, SESSION } from './fixture';
 import { F, PendingNote } from './fidelity';
 
 function HistoricalTempoMock({ repCount }: { repCount: number }): React.JSX.Element {
@@ -115,13 +115,17 @@ export function ReviewView({ exerciseId }: { exerciseId: string }): React.JSX.El
         </F>
         <div className="r2-panel-label">
           Per-rep velocity · tap a bar to drill (real onRepPress)
-          <PendingNote>VL first→last · barbell zones — pending WA-02.05 / WA-02.04</PendingNote>
+          <PendingNote>
+            zones + fromBest loss live via titan v0.5.0 (#83) — npm 0.4.0 fallback: barbell scale,
+            first→last
+          </PendingNote>
         </div>
-        <F kind="real" name="titan:VelocityStrip (expanded, onRepPress)">
-          <VelocityStrip
+        <F kind="real" name="titan:VelocityStrip (expanded, onRepPress, zones)">
+          <VelocityStripCompat
             velocities={set.velocities}
             expanded
             showInfo
+            zones={CABLE_ZONES}
             onRepPress={(i) => setRepIdx(i)}
           />
         </F>

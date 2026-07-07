@@ -6,12 +6,9 @@
  * lost. Composes the REAL titan VelocityStrip (mini variant) + Metric.
  */
 import React from 'react';
-import {
-  Metric,
-  VelocityStrip,
-  calculateMeanVelocity,
-  formatVelocity,
-} from '@titan-design/react-ui';
+import { Metric, calculateMeanVelocity, formatVelocity } from '@titan-design/react-ui';
+import { VelocityStripCompat } from './titan-compat';
+import { CABLE_ZONES } from './fixture';
 import { F } from './fidelity';
 
 export function PinnedLiveStrip({
@@ -53,7 +50,7 @@ export function PinnedLiveStrip({
           </F>
           <span className="r2-strip-bars">
             <F kind="real" name="titan:VelocityStrip mini" block={false}>
-              <VelocityStrip velocities={reps} variant="mini" />
+              <VelocityStripCompat velocities={reps} variant="mini" zones={CABLE_ZONES} />
             </F>
           </span>
         </>

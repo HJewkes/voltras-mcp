@@ -849,3 +849,199 @@
   color: #8d95a3;
   border: 1px dashed rgba(140, 145, 155, 0.55);
 }
+
+/* ==== Direction-C live/rest composition (operator feedback round 2) ==== */
+.r2-live {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 26px 14px;
+}
+.r2-live-mid {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+.r2-live-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.r2-live-left > .f-wrap:last-child {
+  flex: 1;
+  min-height: 0;
+}
+.r2-live-load {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 4px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.r2-live-load-num {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+.r2-live-load-unit {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-secondary, #9ca3af);
+}
+.r2-live-load-sub {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #6b7280);
+  margin-left: 10px;
+}
+.r2-live-right {
+  gap: 14px;
+  justify-content: flex-start;
+}
+/* HeroVelocityBars — candidate VelocityStrip 'hero' variant */
+.r2-herobars {
+  height: 100%;
+  min-height: 260px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 26px 6px 6px;
+  position: relative;
+  border-bottom: 2px solid var(--color-border-strong, #3a3a3a);
+  width: 100%;
+}
+.r2-herobar {
+  flex: 1;
+  max-width: 64px;
+  border-radius: 5px 5px 0 0;
+  min-height: 4px;
+  position: relative;
+  transform-origin: bottom;
+  transition: height 0.25s ease;
+}
+.r2-herobar.pop {
+  animation: r2barpop 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes r2barpop {
+  0% {
+    transform: scaleY(0.55);
+  }
+  60% {
+    transform: scaleY(1.07);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+.r2-herobar.pending {
+  background: repeating-linear-gradient(
+    90deg,
+    #1c1e23,
+    #1c1e23 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  border: 1px dashed #33363d;
+  min-height: 6px;
+  height: 6px;
+}
+.r2-herobar-lab {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+.r2-herobars-ref {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  border-top: 1px dashed rgba(232, 234, 237, 0.4);
+  pointer-events: none;
+}
+.r2-herobars-ref span {
+  position: absolute;
+  right: 2px;
+  top: -12px;
+  font-family: ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--color-text-secondary, #9ca3af);
+}
+/* C's big numeral — latest-rep mean concentric (WA-D02) */
+.r2-heropeak {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.r2-heropeak-v {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 78px;
+  font-weight: 800;
+  letter-spacing: -3px;
+  line-height: 0.95;
+  transition: color 0.3s;
+}
+.r2-heropeak-u {
+  font-size: 13px;
+  color: var(--color-text-secondary, #9ca3af);
+  font-weight: 700;
+}
+.r2-heropeak-peak {
+  font-size: 11px;
+  color: var(--color-text-tertiary, #6b7280);
+  font-family: ui-monospace, monospace;
+}
+/* RestRing — candidate RestTimer ring variant */
+.r2-rest {
+  height: 100%;
+  align-items: center;
+}
+.r2-rest-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.r2-restring {
+  position: relative;
+  width: 220px;
+  height: 220px;
+}
+.r2-restring svg {
+  width: 100%;
+  height: 100%;
+}
+.r2-restring-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.r2-restring-t {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 58px;
+  font-weight: 800;
+  letter-spacing: -2px;
+}
+.r2-restring-k {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--color-text-secondary, #9ca3af);
+  font-weight: 800;
+}
+.r2-rest-sub {
+  font-size: 12px;
+  color: var(--color-text-secondary, #9ca3af);
+  font-family: ui-monospace, monospace;
+}
+.r2-rest-note {
+  font-size: 11px;
+  color: var(--color-text-secondary, #9ca3af);
+  margin-bottom: 8px;
+  font-family: ui-monospace, monospace;
+}

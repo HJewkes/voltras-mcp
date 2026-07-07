@@ -262,3 +262,15 @@ export const PROGRAM = {
   mesoWeek: 3,
   mesoTotal: 5,
 };
+
+/**
+ * WA-1.6.0-shaped cable velocity zones (`VelocityZones.bands` shape) — fed to
+ * VelocityStrip's `zones` prop (titan #83 / v0.5.0). Cable-aware thresholds
+ * (lower than barbell): the WA-02.04 case, now demonstrable live.
+ */
+export const CABLE_ZONES = [
+  { id: 'strength', label: 'Strength', min: 0, max: 0.45 },
+  { id: 'strength-speed', label: 'Str-Speed', min: 0.45, max: 0.52 },
+  { id: 'power', label: 'Power', min: 0.52, max: 0.6 },
+  { id: 'speed', label: 'Speed', min: 0.6, max: null },
+] as const;
