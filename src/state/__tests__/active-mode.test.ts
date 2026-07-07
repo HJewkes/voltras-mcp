@@ -1,27 +1,29 @@
-// VMCP-02.09 — applied-mode name mapping (cmd=0x07 byte → name).
+// VMCP-02.70 — active-mode derivation keys on the cmd=0x10 echo, not the
+// cmd=0x07 state-dump byte (which is an engagement field, not a mode).
 
 import { describe, expect, it } from 'vitest';
-import { activeModeName } from '../active-mode.js';
+import { activeMode } from '../active-mode.js';
+import type { DeviceSnapshot } from '../live-state.js';
 
-describe('activeModeName', () => {
-  it('returns null when no state-dump has been observed (undefined)', () => {
-    expect(activeModeName(undefined)).toBeNull();
+const device = (over: Partial<DeviceSnapshot> = {}): DeviceSnapshot => ({
+  connected: true,
+  ...over,
+});
+
+describe('activeMode', () => {
+  it('returns the cmd=0x10 echo mode name (= requested_mode)', () => {
+    expect(activeMode(device({ trainingMode: 'Damper' }))).toBe('Damper');
+    expect(activeMode(device({ trainingMode: 'Weight Training' }))).toBe('Weight Training');
   });
 
-  it('maps 0 to "transitional" (mid-mode-switch, no active mode)', () => {
-    expect(activeModeName(0)).toBe('transitional');
+  it('returns null when no mode has been observed yet (fresh connect, no echo)', () => {
+    expect(activeMode(device())).toBeNull();
   });
 
-  it('maps the hardware-confirmed bytes 1 and 2 to mode names', () => {
-    expect(activeModeName(1)).toBe('Weight Training');
-    expect(activeModeName(2)).toBe('Resistance Band');
-  });
-
-  it('renders unconfirmed bytes (>=3) as unverified(<n>) rather than guessing', () => {
-    // 7 = Isokinetic in the SDK enum, but the cmd=0x07 byte for Isokinetic is
-    // not yet hardware-confirmed — we must not assert the name.
-    expect(activeModeName(7)).toBe('unverified(7)');
-    expect(activeModeName(3)).toBe('unverified(3)');
-    expect(activeModeName(8)).toBe('unverified(8)');
+  it('ignores the state-dump raw[0] engagement byte — a Damper set at idle reads raw[0]=1 but active_mode stays Damper', () => {
+    // The whole point of the fix: raw[0] cannot represent Damper (reads 1=WT at
+    // idle). The echo does, so active_mode must not fall back to raw[0].
+    const snap = device({ trainingMode: 'Damper', trainingModeRaw: 1 });
+    expect(activeMode(snap)).toBe('Damper');
   });
 });

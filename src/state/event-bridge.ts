@@ -123,7 +123,6 @@ import {
   buildConnectionChangedPayload,
   buildPendingDisconnectNotice,
   buildGuidedLoadStatePayload,
-  buildModeDivergedPayload,
   buildIdleRepPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
@@ -139,8 +138,6 @@ import {
   type SettingsUpdateAll,
   type SettingsUpdateField,
 } from './channel-payloads.js';
-import { activeModeName } from './active-mode.js';
-import type { ModeDivergence } from './mode-divergence-watch.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
@@ -395,26 +392,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // publish on a phase change collapses intra-countdown spam to one event per
   // transition (the debug event still records every tick).
   let lastGuidedLoadPhase: string | undefined = undefined;
-
-  // VMCP-02.09c: publish a `mode_diverged` channel event when the slot's
-  // ModeDivergenceWatch reports a persistent requested≠applied disagreement.
-  // Names are read from the live snapshot at emit time (the same fields
-  // surfaced as requested_mode / active_mode by VMCP-02.09a), which the
-  // triggering settings_update / state_dump has just refreshed.
-  const publishModeDivergence = (div: ModeDivergence): void => {
-    const device = live.snapshotDevice();
-    const set = live.snapshotSet();
-    const session = live.snapshotSession();
-    slotChannels.publish(
-      buildModeDivergedPayload({
-        requestedMode: device.trainingMode ?? null,
-        activeMode: activeModeName(device.trainingModeRaw),
-        divergedForMs: div.divergedForMs,
-        setId: set?.setId,
-        sessionId: session?.sessionId ?? set?.sessionId,
-      }),
-    );
-  };
 
   // ── Sample-driven rep detection (canonical workout-analytics pipeline) ─
   //
@@ -980,14 +957,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // VMCP-02.09c: feed the requested side of the divergence watch. Emits a
-      // `mode_diverged` event if this requested mode disagrees with the last
-      // applied (cmd=0x07) mode past the debounce window.
-      const requestedDivergence = slot.modeDivergenceWatch.onRequested(incomingMode);
-      if (requestedDivergence !== null) {
-        publishModeDivergence(requestedDivergence);
-      }
-
       // Synthesize `settings_update` channel events when the cmd=0x10
       // cascade carries a new value for any of the user-set fields the
       // bridge surfaces. The `__all` block in the payload snapshots every
@@ -1076,15 +1045,6 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           eccentricPercentTenths: dump.eccentricPercentTenths,
         });
         notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
-
-        // VMCP-02.09c: feed the applied side of the divergence watch (the
-        // transitional Idle frame was already dropped above). Emits a
-        // `mode_diverged` event if this applied mode disagrees with the last
-        // requested (cmd=0x10) mode past the debounce window.
-        const appliedDivergence = slot.modeDivergenceWatch.onApplied(dump.trainingMode);
-        if (appliedDivergence !== null) {
-          publishModeDivergence(appliedDivergence);
-        }
 
         synthStateDumpTransitions(
           dump,

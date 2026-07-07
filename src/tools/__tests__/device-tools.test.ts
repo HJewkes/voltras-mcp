@@ -1126,19 +1126,19 @@ describe('registerDeviceTools', () => {
       expect(payload.eccentricPercentTenths).toBe(50);
     });
 
-    // VMCP-02.09 — requested (cmd=0x10) vs applied (cmd=0x07) modes surfaced
-    // distinctly so callers stop reading `trainingMode` as the active mode.
-    it('surfaces requested_mode and active_mode (mapped from trainingModeRaw)', async () => {
+    // VMCP-02.70 — active_mode keys on the cmd=0x10 echo (the single reliable
+    // mode signal), NOT the cmd=0x07 raw[0] engagement byte. Here the user is in
+    // Isokinetic but raw[0] reads 1 (raw[0] can't represent Iso/Damper at idle);
+    // active_mode must report Isokinetic (= requested_mode), not 'Weight Training'.
+    it('surfaces active_mode from the cmd=0x10 echo, ignoring the raw[0] engagement byte', async () => {
       const slot = state.slots.get('primary')!;
       slot.live = makeFakeLive({ trainingMode: 'Isokinetic', trainingModeRaw: 1 });
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.requested_mode).toBe('Isokinetic');
-      // activeModeName maps the cmd=0x07 byte 1 → 'Weight Training' from its
-      // own verified-name table (not the SDK mock), so this is the space form.
-      expect(payload.active_mode).toBe('Weight Training');
-      // Deprecated aliases retained for one release.
+      expect(payload.active_mode).toBe('Isokinetic');
+      // Deprecated aliases retained for one release; raw[0] stays for diagnostics.
       expect(payload.trainingMode).toBe('Isokinetic');
       expect(payload.trainingModeRaw).toBe(1);
     });

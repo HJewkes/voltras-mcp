@@ -15,7 +15,6 @@ import type { Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionChangedPayload,
   buildGuidedLoadStatePayload,
-  buildModeDivergedPayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
   buildRestStatusPayload,
@@ -197,10 +196,10 @@ describe('buildRepFinalizedPayload', () => {
     expect(parsed.rep.rom_m).toBeCloseTo(0.6, 3);
     expect(parsed.set_context).toEqual({
       weight_lbs: 135,
-      // VMCP-02.09: requested (cmd=0x10) surfaced explicitly; active_mode is
-      // null here because the fixture carries no cmd=0x07 trainingModeRaw.
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo, so it equals
+      // requested_mode (the fixture's trainingMode); training_mode = alias.
       requested_mode: 'WeightTraining',
-      active_mode: null,
+      active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
       rep_count_so_far: 2,
     });
@@ -208,18 +207,18 @@ describe('buildRepFinalizedPayload', () => {
 
   // VMCP-02.09 — when the applied (cmd=0x07) byte is present and diverges from
   // the requested mode, set_context surfaces both distinctly.
-  it('surfaces active_mode from trainingModeRaw, distinct from requested_mode', () => {
+  it('surfaces active_mode from the cmd=0x10 echo (= requested_mode), ignoring raw[0] (VMCP-02.70)', () => {
     const diverged: DeviceSnapshot = {
       connected: true,
       weightLbs: 135,
-      trainingMode: 'Isokinetic', // requested (cmd=0x10)
-      trainingModeRaw: 1, // applied (cmd=0x07) — device actually running WeightTraining
+      trainingMode: 'Isokinetic', // cmd=0x10 echo — the reliable current mode
+      trainingModeRaw: 1, // cmd=0x07 raw[0] engagement byte — cannot represent Iso (reads 1)
     };
     const rep = makeRep(1, 500, 400);
     const { content } = buildRepFinalizedPayload(rep, 0, set, diverged, 2);
     const parsed = JSON.parse(content);
     expect(parsed.set_context.requested_mode).toBe('Isokinetic');
-    expect(parsed.set_context.active_mode).toBe('Weight Training');
+    expect(parsed.set_context.active_mode).toBe('Isokinetic'); // keys on echo, not raw[0]=1
     expect(parsed.set_context.training_mode).toBe('Isokinetic'); // deprecated alias = requested
   });
 
@@ -396,9 +395,10 @@ describe('buildSetStartedPayload', () => {
       set_id: 'set-2',
       session_id: 'sess-1',
       weight_lbs: '135',
-      // VMCP-02.09: requested surfaced explicitly; training_mode kept as alias.
-      // active_mode is omitted from meta when no cmd=0x07 byte is known.
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (== requested_mode);
+      // training_mode kept as alias.
       requested_mode: 'WeightTraining',
+      active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
     });
   });
@@ -414,7 +414,7 @@ describe('buildSetStartedPayload', () => {
       session_id: 'sess-1',
       weight_lbs: 135,
       requested_mode: 'WeightTraining',
-      active_mode: null,
+      active_mode: 'WeightTraining', // VMCP-02.70: = echo (== requested)
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:05:00.000Z',
     });
@@ -422,19 +422,19 @@ describe('buildSetStartedPayload', () => {
   });
 
   // VMCP-02.09 — applied (cmd=0x07) mode surfaced on both meta and content.
-  it('surfaces active_mode from trainingModeRaw on meta and content', () => {
+  it('surfaces active_mode from the cmd=0x10 echo on meta and content (VMCP-02.70)', () => {
     const diverged: DeviceSnapshot = {
       connected: true,
       weightLbs: 135,
       trainingMode: 'Isokinetic',
-      trainingModeRaw: 1,
+      trainingModeRaw: 1, // raw[0] engagement byte — ignored for active_mode
     };
     const { meta, content } = buildSetStartedPayload(set, diverged, 1, null);
     expect(meta.requested_mode).toBe('Isokinetic');
-    expect(meta.active_mode).toBe('Weight Training');
+    expect(meta.active_mode).toBe('Isokinetic');
     const parsed = JSON.parse(content);
     expect(parsed.set.requested_mode).toBe('Isokinetic');
-    expect(parsed.set.active_mode).toBe('Weight Training');
+    expect(parsed.set.active_mode).toBe('Isokinetic');
     expect(parsed.set.training_mode).toBe('Isokinetic');
   });
 
@@ -667,10 +667,10 @@ describe('buildConnectionChangedPayload', () => {
       connected: true,
       battery_percent: 85,
       weight_lbs: 100,
-      // VMCP-02.09: requested surfaced explicitly; active_mode null (fixture has
-      // no cmd=0x07 trainingModeRaw); training_mode retained as alias.
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (== requested_mode);
+      // training_mode retained as alias.
       requested_mode: 'WeightTraining',
-      active_mode: null,
+      active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
       damper_level: 3,
       stale_since_disconnect: null,
@@ -745,49 +745,6 @@ describe('buildConnectionChangedPayload', () => {
   });
 });
 
-describe('buildModeDivergedPayload (VMCP-02.09c)', () => {
-  it('emits meta + content naming requested vs active and the divergence age', () => {
-    const { meta, content } = buildModeDivergedPayload({
-      requestedMode: 'Isokinetic',
-      activeMode: 'Weight Training',
-      divergedForMs: 4200,
-      setId: 'set-9',
-      sessionId: 'sess-3',
-    });
-    expect(meta).toEqual({
-      source: 'voltras',
-      event_type: 'mode_diverged',
-      requested_mode: 'Isokinetic',
-      active_mode: 'Weight Training',
-      diverged_for_ms: '4200',
-      set_id: 'set-9',
-      session_id: 'sess-3',
-    });
-    const parsed = JSON.parse(content);
-    expect(parsed.summary).toBe(
-      'Mode mismatch: requested Isokinetic but the device is running Weight Training (4.2s). ' +
-        'The mode change may not have taken — re-select on the unit.',
-    );
-    expect(parsed.divergence).toEqual({
-      requested_mode: 'Isokinetic',
-      active_mode: 'Weight Training',
-      diverged_for_ms: 4200,
-    });
-    expect(parsed.set_context).toEqual({ set_id: 'set-9', session_id: 'sess-3' });
-  });
-
-  it('omits set/session meta and nulls set_context when no set is active', () => {
-    const { meta, content } = buildModeDivergedPayload({
-      requestedMode: 'Rowing',
-      activeMode: 'unverified(5)',
-      divergedForMs: 2000,
-    });
-    expect(meta.set_id).toBeUndefined();
-    expect(meta.session_id).toBeUndefined();
-    expect(JSON.parse(content).set_context).toBeNull();
-  });
-});
-
 describe('triggerDedupeKey', () => {
   it('uses (type, value) for rep_count_reached', () => {
     expect(triggerDedupeKey({ type: 'rep_count_reached', value: 8 })).toBe('rep_count_reached:8');
@@ -824,10 +781,10 @@ describe('summarizeSetForTrigger', () => {
       set_id: 'set-1',
       session_id: 'sess-1',
       weight_lbs: 135,
-      // VMCP-02.09: requested explicit; active_mode null (no cmd=0x07 byte in
-      // the fixture); training_mode retained as alias.
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (== requested_mode);
+      // training_mode retained as alias.
       requested_mode: 'WeightTraining',
-      active_mode: null,
+      active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:00:00.000Z',
     });
@@ -840,9 +797,9 @@ describe('summarizeSetForTrigger', () => {
     expect(summary.vbt_summary.last_rep_v).toBe(0.7);
   });
 
-  // VMCP-02.09 — applied (cmd=0x07) mode surfaced from trainingModeRaw,
-  // distinct from the requested mode, on the trigger set_so_far block.
-  it('surfaces active_mode from trainingModeRaw, distinct from requested_mode', () => {
+  // VMCP-02.70 — active_mode keys on the cmd=0x10 echo (= requested_mode) on the
+  // trigger set_so_far block; the raw[0] engagement byte is ignored.
+  it('surfaces active_mode from the cmd=0x10 echo (= requested_mode) on set_so_far', () => {
     const set: ActiveSet = {
       setId: 'set-1',
       sessionId: 'sess-1',
@@ -854,11 +811,11 @@ describe('summarizeSetForTrigger', () => {
       connected: true,
       weightLbs: 135,
       trainingMode: 'Isokinetic',
-      trainingModeRaw: 1,
+      trainingModeRaw: 1, // raw[0] engagement byte — ignored for active_mode
     };
     const summary = summarizeSetForTrigger(set, diverged);
     expect(summary.set.requested_mode).toBe('Isokinetic');
-    expect(summary.set.active_mode).toBe('Weight Training');
+    expect(summary.set.active_mode).toBe('Isokinetic');
     expect(summary.set.training_mode).toBe('Isokinetic');
   });
 
@@ -1273,10 +1230,10 @@ describe('buildSettingCoercedPayload', () => {
       set_id: null,
       session_id: null,
       weight_lbs: 30,
-      // VMCP-02.09: requested explicit; active_mode null (no cmd=0x07 byte in
-      // the fixture); training_mode retained as alias.
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (== requested_mode);
+      // training_mode retained as alias.
       requested_mode: 'WeightTraining',
-      active_mode: null,
+      active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
     });
   });

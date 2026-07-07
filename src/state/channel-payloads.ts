@@ -33,7 +33,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
-import { activeModeName } from './active-mode.js';
+import { activeMode } from './active-mode.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
@@ -247,11 +247,11 @@ export function buildRepFinalizedPayload(
     },
     set_context: {
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.09: `requested_mode` (cmd=0x10 intent) vs `active_mode` (cmd=0x07
-      // applied) make "asked for X, running Y" self-evident. `training_mode` is
-      // kept as a deprecated alias (= requested) for one release.
+      // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (the single reliable
+      // mode signal), so it equals `requested_mode`. `training_mode` is kept as
+      // a deprecated alias (= requested) for one release.
       requested_mode: device.trainingMode ?? null,
-      active_mode: activeModeName(device.trainingModeRaw),
+      active_mode: activeMode(device),
       training_mode: device.trainingMode ?? null,
       // The caller passes the current `set.reps.length`; the in-progress
       // new rep sits at the end of that array, so subtract one.
@@ -338,15 +338,15 @@ export function buildSetStartedPayload(
   if (device.weightLbs !== undefined && device.weightLbs > 0) {
     meta.weight_lbs = String(device.weightLbs);
   }
-  // VMCP-02.09: surface requested (cmd=0x10) and applied (cmd=0x07) modes
-  // distinctly; `training_mode` stays as a deprecated alias (= requested).
+  // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (= requested_mode);
+  // `training_mode` stays as a deprecated alias (= requested).
   if (device.trainingMode !== undefined) {
     meta.requested_mode = device.trainingMode;
     meta.training_mode = device.trainingMode;
   }
-  const activeMode = activeModeName(device.trainingModeRaw);
-  if (activeMode !== null) {
-    meta.active_mode = activeMode;
+  const activeModeName = activeMode(device);
+  if (activeModeName !== null) {
+    meta.active_mode = activeModeName;
   }
 
   const summary = buildSetStartedSummary(device, ordinal);
@@ -357,7 +357,7 @@ export function buildSetStartedPayload(
       session_id: set.sessionId,
       weight_lbs: device.weightLbs ?? null,
       requested_mode: device.trainingMode ?? null,
-      active_mode: activeMode,
+      active_mode: activeModeName,
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
     },
@@ -520,8 +520,9 @@ export function buildSetEndedPayload(
       set_id: stored.id,
       session_id: stored.sessionId,
       weight_lbs: stored.weightLbs,
-      // VMCP-02.09: requested mode captured at set start. StoredSet does not
-      // persist the cmd=0x07 applied byte, so active_mode is null on the
+      // VMCP-02.09/02.70: requested mode captured at set start (= active_mode,
+      // which now keys on the same cmd=0x10 echo). A closed/persisted set has no
+      // live device mode to re-derive, so active_mode stays null on the
       // historical set_ended event (it is live on set_started / rep_finalized /
       // get_state). training_mode retained as a deprecated alias (= requested).
       requested_mode: stored.trainingMode,
@@ -737,8 +738,8 @@ export interface SetSoFar {
     set_id: string;
     session_id: string;
     weight_lbs: number | null;
-    // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
-    // retained as a deprecated alias (= requested).
+    // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+    // training_mode retained as a deprecated alias (= requested).
     requested_mode: string | null;
     active_mode: string | null;
     training_mode: string | null;
@@ -765,7 +766,7 @@ export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): 
       session_id: set.sessionId,
       weight_lbs: device.weightLbs ?? null,
       requested_mode: device.trainingMode ?? null,
-      active_mode: activeModeName(device.trainingModeRaw),
+      active_mode: activeMode(device),
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
     },
@@ -1039,64 +1040,15 @@ export function buildGuidedLoadStatePayload(input: GuidedLoadStatePayloadInput):
   return { meta, content };
 }
 
-export interface ModeDivergedPayloadInput {
-  /** Requested-mode name (cmd=0x10), e.g. `"Isokinetic"`. */
-  requestedMode: string | null;
-  /** Applied-mode name (cmd=0x07), e.g. `"Weight Training"` / `"unverified(7)"`. */
-  activeMode: string | null;
-  /** How long the modes had disagreed at emit time, in ms. */
-  divergedForMs: number;
-  /** Active set/session, when one is open. */
-  setId?: string | undefined;
-  sessionId?: string | undefined;
-}
-
-/**
- * Build the meta + content for a `mode_diverged` channel event (VMCP-02.09c).
- * Synthesized by the bridge when the requested (cmd=0x10) and applied (cmd=0x07)
- * training modes disagree past the debounce window — the "asked for X, running
- * Y" condition VMCP-02.09a made visible. Mirrors `set_aborted_by_mode_revert`:
- * a requested≠applied signal lifted to a first-class event so PT Claude can
- * tell the user the mode change may not have taken.
- *
- * The `slot` meta key is injected by the per-slot channel publisher.
- */
-export function buildModeDivergedPayload(input: ModeDivergedPayloadInput): {
-  meta: Record<string, string>;
-  content: string;
-} {
-  const requested = input.requestedMode ?? 'unknown';
-  const active = input.activeMode ?? 'unknown';
-  const seconds = (input.divergedForMs / 1000).toFixed(1);
-  const meta: Record<string, string> = {
-    source: 'voltras',
-    event_type: 'mode_diverged',
-    requested_mode: requested,
-    active_mode: active,
-    diverged_for_ms: String(input.divergedForMs),
-  };
-  if (input.setId !== undefined) {
-    meta.set_id = input.setId;
-  }
-  if (input.sessionId !== undefined) {
-    meta.session_id = input.sessionId;
-  }
-  const content = JSON.stringify({
-    summary:
-      `Mode mismatch: requested ${requested} but the device is running ${active} ` +
-      `(${seconds}s). The mode change may not have taken — re-select on the unit.`,
-    divergence: {
-      requested_mode: input.requestedMode,
-      active_mode: input.activeMode,
-      diverged_for_ms: input.divergedForMs,
-    },
-    set_context:
-      input.setId !== undefined
-        ? { set_id: input.setId, session_id: input.sessionId ?? null }
-        : null,
-  });
-  return { meta, content };
-}
+// VMCP-02.70: `buildModeDivergedPayload` / the `mode_diverged` channel event
+// were removed. The watch compared the cmd=0x10 echo (requested) against the
+// cmd=0x07 state-dump raw[0] (treated as "applied"), but the 2026-07-07 bench
+// proved raw[0] is an engagement field, not a mode — it can't represent Damper
+// (reads 1 at idle) and emits transient 0 on every switch, so the comparison
+// produced false positives. There is one reliable mode signal (the echo), so
+// requested and active no longer diverge. No external consumer read the event.
+// The real mode-clobber it was meant to catch (Bug B) is fixed at the SDK
+// (SDK-01.13, PREPARE removal).
 
 /**
  * Compute the dedupe key for a trigger spec. Used by the bridge's
@@ -1177,10 +1129,10 @@ export function buildConnectionChangedPayload(
       connected: device.connected,
       battery_percent: device.batteryPercent ?? null,
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
-      // retained as a deprecated alias (= requested).
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+      // training_mode retained as a deprecated alias (= requested).
       requested_mode: device.trainingMode ?? null,
-      active_mode: activeModeName(device.trainingModeRaw),
+      active_mode: activeMode(device),
       training_mode: device.trainingMode ?? null,
       damper_level: device.damperLevel ?? null,
       stale_since_disconnect: device.staleSinceDisconnect ?? null,
@@ -1452,10 +1404,10 @@ export function buildSettingCoercedPayload(
       set_id: context.setId,
       session_id: context.sessionId,
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.09: requested (cmd=0x10) vs applied (cmd=0x07) mode; training_mode
-      // retained as a deprecated alias (= requested).
+      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+      // training_mode retained as a deprecated alias (= requested).
       requested_mode: device.trainingMode ?? null,
-      active_mode: activeModeName(device.trainingModeRaw),
+      active_mode: activeMode(device),
       training_mode: device.trainingMode ?? null,
     },
   });

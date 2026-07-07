@@ -458,9 +458,9 @@ describe('debug.confirm_channel', () => {
 // VMCP-02.33: the `debug.recent_events` `types` filter matches diagnostic
 // ring-buffer `type` names, which are a distinct namespace from the
 // claude/channel `event_type` names. The description's filter EXAMPLES had
-// drifted to channel-only names (`rep_finalized`, `setting_coerced`,
-// `mode_diverged`) that match nothing in the buffer. Guard that every name in
-// a `types: [...]` example is a real DebugEvent.type.
+// drifted to channel-only names (`rep_finalized`, `setting_coerced`) that match
+// nothing in the buffer. Guard that every name in a `types: [...]` example is a
+// real DebugEvent.type.
 describe('RECENT_EVENTS_DESCRIPTION filter examples (VMCP-02.33)', () => {
   // The authoritative DebugEvent.type union (debug-buffer.ts) — mirrored here
   // because TS types aren't available at runtime.
@@ -497,7 +497,7 @@ describe('RECENT_EVENTS_DESCRIPTION filter examples (VMCP-02.33)', () => {
     const filterNames = exampleArrays.flatMap((m) =>
       [...m[1].matchAll(/"([^"]+)"/g)].map((q) => q[1]),
     );
-    for (const channelOnly of ['rep_finalized', 'setting_coerced', 'mode_diverged']) {
+    for (const channelOnly of ['rep_finalized', 'setting_coerced']) {
       expect(filterNames).not.toContain(channelOnly);
     }
   });

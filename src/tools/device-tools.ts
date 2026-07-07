@@ -35,7 +35,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { GuidedLoadState } from '@voltras/node-sdk';
-import { activeModeName } from '../state/active-mode.js';
+import { activeMode } from '../state/active-mode.js';
 import { z } from 'zod';
 
 import {
@@ -1583,12 +1583,12 @@ function buildDeviceGetStateResponse(
     'isStale',
     'disconnectedAt',
   ] as const);
-  // VMCP-02.09: name the requested (cmd=0x10) vs applied (cmd=0x07) modes
-  // explicitly so callers stop reading the requested `trainingMode` as if it
-  // were the active one. `trainingMode` / `trainingModeRaw` stay as deprecated
-  // aliases for one release.
+  // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (the single reliable
+  // mode signal) and so equals `requested_mode`. `trainingModeRaw` (the cmd=0x07
+  // state-dump engagement byte) stays on the snapshot for diagnostics only.
+  // `trainingMode` / `trainingModeRaw` remain deprecated aliases for one release.
   out.requested_mode = device.trainingMode ?? null;
-  out.active_mode = activeModeName(device.trainingModeRaw);
+  out.active_mode = activeMode(device);
   out.isRowingActive = isRowingActive;
   out.is_recording = isRecording;
   out.guided_load = {

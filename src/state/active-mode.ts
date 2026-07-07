@@ -1,49 +1,37 @@
-// VMCP-02.09 — applied-mode name mapping.
+// VMCP-02.70 — active-mode derivation keys on the cmd=0x10 echo.
 //
-// `DeviceSnapshot.trainingMode` is the *requested* mode (cmd=0x10 cascade
-// echo, the user's intent). `DeviceSnapshot.trainingModeRaw` is the *applied*
-// mode byte from the cmd=0x07 state-dump (what the device is actually doing).
-// They diverge — see [[separate-user-setting-from-applied-state]]. This helper
-// maps the applied byte to a name so every surface can report `active_mode`
-// alongside `requested_mode` instead of leaking a raw integer.
+// `active_mode` used to be derived from `DeviceSnapshot.trainingModeRaw` (the
+// cmd=0x07 state-dump byte). The 2026-07-07 bench reverse-engineering
+// (coordination/contract-audits/mode-system-rootcause-2026-07-07.md) proved
+// that byte is NOT the applied training mode — it is an *engagement* field
+// (0/1/2/3 = home / WeightTraining-active / band-active / damper-active). It
+// cannot represent Damper as a mode (reads 1 at idle), emits transient 0 on
+// every switch, and only reflects a fitness value (2=RB) while a set is active.
+// Reading it as the applied mode reported Damper as "Weight Training".
 //
-// Hardware-verification gate: the cmd=0x07 byte values are only confirmed on
-// hardware for `0` (transitional / mid-mode-switch), `1` (WeightTraining), and
-// `2` (ResistanceBand) — see `live-state.ts` `trainingModeRaw`. The SDK casts
-// the byte to the full `TrainingMode` enum, but the encodings for Isokinetic /
-// Rowing / Damper / Isometric are NOT yet confirmed. Rather than guess a name
-// for an unconfirmed byte, we render it as `unverified(<n>)` so the feature
-// stays honest. The mode≥3 name mapping is unblocked by a one-set capture
-// folded into the next bench/VW-10 session.
+// The reliable current-mode signal is the cmd=0x10 echo (the device's ACK of a
+// mode write), already surfaced as `DeviceSnapshot.trainingMode`. `active_mode`
+// now keys on it, so it equals `requested_mode` — there is only one reliable
+// mode signal, not a distinct requested-vs-applied pair. The old raw[0]-based
+// `mode_diverged` event (which compared the echo against this non-mode byte and
+// produced false positives for Damper) was removed alongside this change.
+//
+// `trainingModeRaw` is still carried on `DeviceSnapshot` and surfaced by
+// `device.get_state` for diagnostics. The write-echo is only as fresh as the
+// last observed transition; a proactive on-demand mode read is tracked in
+// SDK-01.14 (safe cmd=0x0F queryDeviceSettings).
+
+import type { DeviceSnapshot } from './live-state.js';
 
 /**
- * cmd=0x07 byte → mode name, for the values whose encoding is confirmed on
- * hardware (1 = WeightTraining, 2 = ResistanceBand). Names match the SDK's
- * `TrainingModeNames` display form so `active_mode` and `requested_mode`
- * (sourced from `TrainingModeNames` via the cmd=0x10 cascade) share one naming
- * scheme. Intentionally hardcoded rather than imported from the SDK: the
- * verified set is tiny and stable, and keeping this module free of a
- * `@voltras/node-sdk` value-import means it never widens the SDK mock surface
- * that the tool tests stub. Bytes ≥3 stay `unverified(<n>)` until a hardware
- * capture (see module header).
- */
-const HARDWARE_VERIFIED_ACTIVE_MODE_NAMES: Readonly<Record<number, string>> = {
-  1: 'Weight Training',
-  2: 'Resistance Band',
-};
-
-/**
- * Map an applied-mode raw byte (cmd=0x07 state-dump) to a name.
+ * The device's current training mode name, keyed on the cmd=0x10 echo
+ * (`DeviceSnapshot.trainingMode`). Returns `null` when no mode has been
+ * observed yet (fresh connect before any mode write / cascade replay).
  *
- *   * `undefined` → `null` — no state-dump observed yet, applied mode unknown.
- *   * `0` → `'transitional'` — mid-mode-switch; the device has no active mode.
- *   * `1` / `2` → the confirmed mode name.
- *   * anything else → `'unverified(<n>)'` — the byte→mode encoding is not yet
- *     hardware-confirmed (see module header), so we surface the raw value
- *     rather than guess.
+ * Equal to `requested_mode` by construction (VMCP-02.70): the echo is the
+ * single reliable mode signal. Kept as a named helper so the sourcing decision
+ * lives in one documented place across every payload that reports `active_mode`.
  */
-export function activeModeName(raw?: number): string | null {
-  if (raw === undefined) return null;
-  if (raw === 0) return 'transitional';
-  return HARDWARE_VERIFIED_ACTIVE_MODE_NAMES[raw] ?? `unverified(${raw})`;
+export function activeMode(device: DeviceSnapshot): string | null {
+  return device.trainingMode ?? null;
 }
