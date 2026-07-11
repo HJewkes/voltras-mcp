@@ -59,6 +59,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
+import { buildSnapshotView, type DeviceEntry, type SnapshotResponse } from './read-models/index.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
@@ -152,29 +153,6 @@ export interface DashboardServerHandle {
   readonly port: number;
   /** Stop accepting connections and free the port. Idempotent. */
   close(): Promise<void>;
-}
-
-interface DeviceEntry {
-  slotId: string;
-  device: DeviceSnapshot;
-}
-
-/**
- * The active session's target muscle groups (primary + secondary), joined from
- * the exercise catalog for the dashboard BodyMap. Plain fitness metadata —
- * never protocol data. Null when there is no active session or the exercise is
- * unknown / carries no muscle metadata.
- */
-interface ActiveExerciseMuscles {
-  primaryMuscles: string[];
-  secondaryMuscles: string[];
-}
-
-interface SnapshotResponse {
-  session: ActiveSession | null;
-  devices: DeviceEntry[];
-  sets: { active: ActiveSet | null };
-  activeExercise: ActiveExerciseMuscles | null;
 }
 
 /**
@@ -378,6 +356,12 @@ function writeSseEvent(res: ServerResponse, event: string, data: unknown): void 
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+/**
+ * Gather the live device/session/set state (and the active exercise's catalog
+ * entry) from every slot, then delegate all shaping to the pure snapshot
+ * read-model. This is the I/O boundary — reading the live-state map and the
+ * exercise catalog — while `buildSnapshotView` owns the (testable) output shape.
+ */
 function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   const devices: DeviceEntry[] = [];
   let session: ActiveSession | undefined;
@@ -394,31 +378,10 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
       activeSet = slot.live.snapshotSet();
     }
   }
-  return {
-    session: session ?? null,
-    devices,
-    sets: { active: activeSet ?? null },
-    activeExercise: resolveActiveExerciseMuscles(state, session),
-  };
-}
-
-/**
- * Join the active session's `exerciseId` to its catalog muscle groups. Returns
- * null when there is no session, no `exerciseId`, no catalog wired, or the
- * exercise is unknown — the client renders an empty BodyMap in every such case.
- */
-function resolveActiveExerciseMuscles(
-  state: DashboardServerState,
-  session: ActiveSession | undefined,
-): ActiveExerciseMuscles | null {
   const exerciseId = session?.exerciseId;
-  if (!exerciseId || !state.exercises) return null;
-  const exercise = state.exercises.getById(exerciseId);
-  if (!exercise) return null;
-  return {
-    primaryMuscles: exercise.muscleGroups ?? [],
-    secondaryMuscles: exercise.secondaryMuscleGroups ?? [],
-  };
+  const activeExercise =
+    exerciseId && state.exercises ? state.exercises.getById(exerciseId) : undefined;
+  return buildSnapshotView({ devices, session, activeSet, activeExercise });
 }
 
 async function fetchHistory(
