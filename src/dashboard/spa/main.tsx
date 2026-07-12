@@ -76,7 +76,11 @@ import { PanelCard } from './panels/PanelCard';
 import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
 import type { PrescriptionView } from './adapter';
 
-const POLL_INTERVAL_MS = 500;
+// Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
+// the `snapshot` SSE push, so the poll no longer needs to be fast. It stays as the
+// correctness net that catches anything the stream misses (SSE unavailable/reconnecting,
+// or a connection/settings change that isn't a set boundary).
+const POLL_INTERVAL_MS = 2000;
 const TICK_INTERVAL_MS = 1000;
 /** Strength trend is historical, not live — poll it slowly, and on exercise change. */
 const TREND_INTERVAL_MS = 15_000;
@@ -210,8 +214,17 @@ function useDashboardController(): void {
     };
   }, [exerciseName]);
 
-  // The live SSE subscription now lives in the store; start it once.
-  useEffect(() => createLiveStreamController((m) => dashboardStore.getState().setLive(m)), []);
+  // The live SSE subscription now lives in the store; start it once. The overlay
+  // frames feed `setLive`; the structural `snapshot` push feeds `applySnapshot`
+  // (rev-guarded), so set/session boundaries reflect immediately without the poll.
+  useEffect(
+    () =>
+      createLiveStreamController(
+        (m) => dashboardStore.getState().setLive(m),
+        (snap) => dashboardStore.getState().applySnapshot(snap, Date.now()),
+      ),
+    [],
+  );
 }
 
 function App(): React.JSX.Element {

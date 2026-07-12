@@ -40,8 +40,12 @@ import type { MesoOverviewView } from './panels/meso-overview-view';
 
 export type Status = 'ok' | 'stale' | 'error';
 
-/** Poll is authoritative every 500 ms; a snapshot older than 2 polls is stale. */
-export const STALE_THRESHOLD_MS = 1000;
+/**
+ * No successful snapshot (poll OR SSE push) within this window ⇒ `stale`. Sized above
+ * the 2 s reconciliation poll (VMCP-03.04) so one delayed poll doesn't flash stale;
+ * during an active session the ~set-boundary SSE pushes keep it fresh well inside this.
+ */
+export const STALE_THRESHOLD_MS = 5000;
 
 interface SnapshotSlice {
   snapshot: Snapshot | null;
@@ -51,6 +55,8 @@ interface SnapshotSlice {
   nowMs: number;
   /** Wall-clock of the last successful poll; drives the staleness watchdog. */
   lastSuccessMs: number;
+  /** Highest server `rev` applied so far; older/equal snapshots are dropped. */
+  lastRev: number | null;
 }
 
 interface HistoricalSlice {
@@ -98,6 +104,7 @@ const initialSnapshot: SnapshotSlice = {
   lastUpdate: '—',
   nowMs: 0,
   lastSuccessMs: 0,
+  lastRev: null,
 };
 
 const initialHistorical: HistoricalSlice = {
@@ -117,18 +124,29 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   live: null,
 
   applySnapshot: (data, now) =>
-    set((state) => ({
-      snapshot: data,
-      // Advance the clock in the same update that may set restStartMs, so the rest
-      // count-up reads `now - restStartMs === 0` at the transition (no brief negative).
-      accumulator: reduceSnapshot(state.accumulator, data, now),
-      status: 'ok',
-      lastUpdate: formatClock(new Date(now)),
-      nowMs: now,
-      lastSuccessMs: now,
-    })),
+    set((state) => {
+      // Drop out-of-order snapshots: a stale in-flight poll must not clobber a
+      // fresher SSE push (or vice-versa) and re-trigger the completed-set fold.
+      // Snapshots without a rev (hand-built/empty) always apply.
+      if (data.rev !== undefined && state.lastRev !== null && data.rev <= state.lastRev) {
+        return {};
+      }
+      return {
+        snapshot: data,
+        // Advance the clock in the same update that may set restStartMs, so the rest
+        // count-up reads `now - restStartMs === 0` at the transition (no brief negative).
+        accumulator: reduceSnapshot(state.accumulator, data, now),
+        status: 'ok',
+        lastUpdate: formatClock(new Date(now)),
+        nowMs: now,
+        lastSuccessMs: now,
+        lastRev: data.rev ?? state.lastRev,
+      };
+    }),
 
-  markError: () => set({ status: 'error' }),
+  // Reset the rev guard on an error: a server restart rewinds its rev counter, so
+  // after any connection blip the next snapshot (from either channel) must apply.
+  markError: () => set({ status: 'error', lastRev: null }),
 
   tick: (now) =>
     set((state) => {

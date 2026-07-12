@@ -116,6 +116,13 @@ export interface Snapshot {
   sets: { active: SnapshotActiveSet | null };
   /** Target muscles for the active exercise; null when idle / unknown. */
   activeExercise?: SnapshotActiveExercise | null;
+  /**
+   * Monotonic server send-order stamp (VMCP-03.04). Present on both the poll
+   * response and the `snapshot` SSE push; the store applies a snapshot only when
+   * its `rev` is strictly newer, so the fast push and slow poll can't clobber
+   * each other. Absent on hand-built/empty snapshots (treated as always-apply).
+   */
+  rev?: number;
 }
 
 // ── Formatters (mirror legacy dashboard-html.ts) ─────────────────────────────

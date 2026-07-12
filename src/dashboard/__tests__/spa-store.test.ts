@@ -148,6 +148,61 @@ describe('dashboardStore — historical slice', () => {
   });
 });
 
+describe('dashboardStore — rev-guarded snapshot application (VMCP-03.04)', () => {
+  const withRev = (snap: Snapshot, rev: number): Snapshot => ({ ...snap, rev });
+
+  it('applies a strictly-newer rev and drops stale/equal revs', () => {
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'a' }), 5), 1000);
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('a');
+
+    // stale (lower) — dropped
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'b' }), 4), 1100);
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('a');
+    // equal — dropped
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'c' }), 5), 1200);
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('a');
+    // newer — applied
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'd' }), 6), 1300);
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('d');
+  });
+
+  it('never double-logs a set when a stale poll trails a fresh SSE close', () => {
+    const device: SnapshotDevice = { connected: true, weightLbs: 100, trainingMode: 'weight' };
+    const activeSet: SnapshotActiveSet = { reps: [rep(1, 900)] };
+
+    // set open (rev 10), then the SSE push closes it (rev 11) → logged once
+    dashboardStore
+      .getState()
+      .applySnapshot(withRev(snapshot({ sessionId: 's1', device, activeSet }), 10), 1000);
+    dashboardStore
+      .getState()
+      .applySnapshot(withRev(snapshot({ sessionId: 's1', device }), 11), 2000);
+    expect(dashboardStore.getState().accumulator.setLog).toHaveLength(1);
+
+    // a slow poll built before the close (still shows the active set, rev 10) lands late:
+    // dropped by the guard, so the fold never re-opens then re-logs the set.
+    dashboardStore
+      .getState()
+      .applySnapshot(withRev(snapshot({ sessionId: 's1', device, activeSet }), 10), 2100);
+    expect(dashboardStore.getState().accumulator.setLog).toHaveLength(1);
+    expect(dashboardStore.getState().accumulator.restStartMs).toBe(2000);
+  });
+
+  it('markError resets the guard so the next snapshot applies after a server restart', () => {
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'a' }), 500), 1000);
+    dashboardStore.getState().markError(); // connection blip; server rev counter rewinds
+    // a post-restart snapshot with a low rev must still apply
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'b' }), 1), 2000);
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('b');
+  });
+
+  it('always applies rev-less snapshots (hand-built / empty)', () => {
+    dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'a' }), 9), 1000);
+    dashboardStore.getState().applySnapshot(snapshot({ sessionId: 'b' }), 1100); // no rev
+    expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('b');
+  });
+});
+
 describe('dashboardStore — live slice isolation', () => {
   it('setLive updates only the live slice; shell-read references stay stable', () => {
     dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);

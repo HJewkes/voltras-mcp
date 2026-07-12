@@ -193,6 +193,18 @@ describe('GET /api/snapshot', () => {
     expect(body.sets.active?.setId).toBe('set-A');
   });
 
+  it('stamps a monotonically increasing rev on each snapshot (VMCP-03.04)', async () => {
+    const handle = await startWithFake(makeFakeState({ primary: {} }));
+    const first = JSON.parse(
+      (await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot')).body,
+    ) as { rev: number };
+    const second = JSON.parse(
+      (await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot')).body,
+    ) as { rev: number };
+    expect(typeof first.rev).toBe('number');
+    expect(second.rev).toBeGreaterThan(first.rev);
+  });
+
   it('returns session=null + sets.active=null when no session is active', async () => {
     const handle = await startWithFake(makeFakeState({ primary: {} }));
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
@@ -928,6 +940,26 @@ describe('GET /api/stream (SSE)', () => {
       expect(body).toContain('event: phaseflip\ndata: {"t":1000,"from":"con","to":"hold"');
       expect(body).toContain('event: phase\ndata: {"t":1000,"phase":"con"');
       expect(body).toContain('event: rep\ndata: {"repIndex":3');
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('pushes a rev-stamped snapshot event on each set-lifecycle boundary (VMCP-03.04)', async () => {
+    const hub = new LiveSignalHub();
+    const handle = await startWithFake({ ...makeFakeState(), liveSignals: hub });
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    try {
+      await waitFor(() => body.includes('event: hb'));
+      hub.emit({ type: 'set', data: { kind: 'ended', setId: 'set-1', sessionId: 'sess-1' } });
+      await waitFor(() => body.includes('event: snapshot'));
+      // the set echo AND the structural snapshot (with its ordering rev) both go out
+      expect(body).toContain('event: set\ndata: {"kind":"ended"');
+      expect(body).toMatch(/event: snapshot\ndata: \{.*"rev":\d+/);
+      expect(body).toContain('"devices":');
     } finally {
       stream.close();
     }
