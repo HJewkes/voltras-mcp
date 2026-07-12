@@ -40,7 +40,8 @@
     "@voltras/workout-analytics": "^1.5.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
-    "zod": "^4.4.2"
+    "zod": "^4.4.2",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@emnapi/core": "^1.10.0",

@@ -25,8 +25,10 @@
  * source in this dashboard — see `colors.ts` for the policy and the one place
  * that maps a semantic state (connection tone) onto a titan status token.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import '@titan-design/react-ui/theme/global.css';
 import './dashboard.css';
 
@@ -37,11 +39,11 @@ import {
   buildHeroSets,
   buildSessionProgress,
   fmtDisconnectClock,
-  initialAccumulatorState,
-  reduceSnapshot,
   type AccumulatorState,
   type Snapshot,
 } from './adapter';
+import { dashboardStore, type HistoricalPatch, type Status } from './store';
+import { createLiveStreamController } from './live-stream';
 import { CONNECTION_TONE_TOKEN } from './colors';
 import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
@@ -78,9 +80,6 @@ const POLL_INTERVAL_MS = 500;
 const TICK_INTERVAL_MS = 1000;
 /** Strength trend is historical, not live — poll it slowly, and on exercise change. */
 const TREND_INTERVAL_MS = 15_000;
-const STALE_THRESHOLD_MS = POLL_INTERVAL_MS * 2;
-
-type Status = 'ok' | 'stale' | 'error';
 
 interface Model {
   snapshot: Snapshot | null;
@@ -98,56 +97,59 @@ interface Model {
   meso: MesoOverviewView | null;
 }
 
+/**
+ * Read the render model from the store — every field EXCEPT the live slice, so the
+ * ~20 Hz live SSE writes (rendered only by `LiveReadout`) never re-render the shell.
+ * `useShallow` re-renders only when one of these fields actually changes.
+ */
 function useDashboardModel(): Model {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [accumulator, setAccumulator] = useState<AccumulatorState>(initialAccumulatorState);
-  const [status, setStatus] = useState<Status>('ok');
-  const [lastUpdate, setLastUpdate] = useState<string>('—');
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [trend, setTrend] = useState<ExerciseTrendPoint[]>([]);
-  const [nextWorkout, setNextWorkout] = useState<NextWorkoutView | null>(null);
-  const [prescription, setPrescription] = useState<PrescriptionView | null>(null);
-  const [program, setProgram] = useState<ProgramStatusView | null>(null);
-  const [muscleVolume, setMuscleVolume] = useState<Record<string, number>>({});
-  const [prRecords, setPrRecords] = useState<PrRecordView[]>([]);
-  const [capacityBand, setCapacityBand] = useState<CapacityBandPoint[]>([]);
-  const [meso, setMeso] = useState<MesoOverviewView | null>(null);
-  const lastSuccessRef = useRef<number>(0);
+  return useStore(
+    dashboardStore,
+    useShallow((s) => ({
+      snapshot: s.snapshot,
+      accumulator: s.accumulator,
+      status: s.status,
+      lastUpdate: s.lastUpdate,
+      nowMs: s.nowMs,
+      trend: s.trend,
+      nextWorkout: s.nextWorkout,
+      prescription: s.prescription,
+      program: s.program,
+      muscleVolume: s.muscleVolume,
+      prRecords: s.prRecords,
+      capacityBand: s.capacityBand,
+      meso: s.meso,
+    })),
+  );
+}
+
+/**
+ * Owns the store's I/O: the 500 ms `/api/snapshot` poll + 1 s staleness tick, the
+ * ~15 s historical fan-out (refetched when the active exercise changes), and the live
+ * SSE subscription. Each just calls a store action — no component state lives here.
+ */
+function useDashboardController(): void {
+  // Server resolves the active exercise when no id is given; refetch history on change.
+  const exerciseName = useStore(dashboardStore, (s) => s.snapshot?.session?.exerciseName ?? null);
 
   useEffect(() => {
     let cancelled = false;
-
     const poll = async (): Promise<void> => {
       try {
         const res = await fetch('/api/snapshot', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as Snapshot;
         if (cancelled) return;
-        const now = Date.now();
-        lastSuccessRef.current = now;
-        setSnapshot(data);
-        setAccumulator((prev) => reduceSnapshot(prev, data, now));
-        setStatus('ok');
-        setLastUpdate(formatClock(new Date(now)));
-        // Advance the clock in the same tick that may set restStartMs, so the
-        // rest count-up reads `now - restStartMs === 0` at the transition rather
-        // than a stale (pre-transition) `nowMs` that would go briefly negative.
-        setNowMs(now);
+        dashboardStore.getState().applySnapshot(data, Date.now());
       } catch {
-        if (!cancelled) setStatus('error');
+        if (!cancelled) dashboardStore.getState().markError();
       }
     };
 
     void poll();
     const pollId = setInterval(() => void poll(), POLL_INTERVAL_MS);
-
     const tickId = setInterval(() => {
-      if (cancelled) return;
-      const now = Date.now();
-      setNowMs(now);
-      if (lastSuccessRef.current > 0 && now - lastSuccessRef.current > STALE_THRESHOLD_MS) {
-        setStatus((prev) => (prev === 'error' ? 'error' : 'stale'));
-      }
+      if (!cancelled) dashboardStore.getState().tick(Date.now());
     }, TICK_INTERVAL_MS);
 
     return () => {
@@ -157,9 +159,6 @@ function useDashboardModel(): Model {
     };
   }, []);
 
-  // Strength trend: historical, so on its own slow cadence and refetched when the
-  // active exercise changes (server resolves the active exercise when no id given).
-  const exerciseName = snapshot?.session?.exerciseName ?? null;
   useEffect(() => {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
@@ -175,38 +174,30 @@ function useDashboardModel(): Model {
             fetch('/api/capacity-band', { cache: 'no-store' }),
             fetch('/api/meso-overview', { cache: 'no-store' }),
           ]);
-        if (trendRes.ok) {
-          const data = (await trendRes.json()) as { points?: ExerciseTrendPoint[] };
-          if (!cancelled) setTrend(data.points ?? []);
-        }
-        if (nextRes.ok) {
-          const data = (await nextRes.json()) as { workout?: NextWorkoutView | null };
-          if (!cancelled) setNextWorkout(data.workout ?? null);
-        }
-        if (planRes.ok) {
-          const data = (await planRes.json()) as { plan?: PrescriptionView | null };
-          if (!cancelled) setPrescription(data.plan ?? null);
-        }
-        if (programRes.ok) {
-          const data = (await programRes.json()) as { program?: ProgramStatusView | null };
-          if (!cancelled) setProgram(data.program ?? null);
-        }
-        if (volumeRes.ok) {
-          const data = (await volumeRes.json()) as { muscles?: Record<string, number> | null };
-          if (!cancelled) setMuscleVolume(data.muscles ?? {});
-        }
-        if (prRes.ok) {
-          const data = (await prRes.json()) as { records?: PrRecordView[] };
-          if (!cancelled) setPrRecords(data.records ?? []);
-        }
-        if (bandRes.ok) {
-          const data = (await bandRes.json()) as { points?: CapacityBandPoint[] };
-          if (!cancelled) setCapacityBand(data.points ?? []);
-        }
-        if (mesoRes.ok) {
-          const data = (await mesoRes.json()) as { meso?: MesoOverviewView | null };
-          if (!cancelled) setMeso(data.meso ?? null);
-        }
+        if (cancelled) return;
+        const patch: HistoricalPatch = {};
+        if (trendRes.ok)
+          patch.trend = ((await trendRes.json()) as { points?: ExerciseTrendPoint[] }).points ?? [];
+        if (nextRes.ok)
+          patch.nextWorkout =
+            ((await nextRes.json()) as { workout?: NextWorkoutView | null }).workout ?? null;
+        if (planRes.ok)
+          patch.prescription =
+            ((await planRes.json()) as { plan?: PrescriptionView | null }).plan ?? null;
+        if (programRes.ok)
+          patch.program =
+            ((await programRes.json()) as { program?: ProgramStatusView | null }).program ?? null;
+        if (volumeRes.ok)
+          patch.muscleVolume =
+            ((await volumeRes.json()) as { muscles?: Record<string, number> | null }).muscles ?? {};
+        if (prRes.ok)
+          patch.prRecords = ((await prRes.json()) as { records?: PrRecordView[] }).records ?? [];
+        if (bandRes.ok)
+          patch.capacityBand =
+            ((await bandRes.json()) as { points?: CapacityBandPoint[] }).points ?? [];
+        if (mesoRes.ok)
+          patch.meso = ((await mesoRes.json()) as { meso?: MesoOverviewView | null }).meso ?? null;
+        dashboardStore.getState().applyHistorical(patch);
       } catch {
         // best-effort; keep the last-known values on a transient failure
       }
@@ -219,29 +210,15 @@ function useDashboardModel(): Model {
     };
   }, [exerciseName]);
 
-  return {
-    snapshot,
-    accumulator,
-    status,
-    lastUpdate,
-    nowMs,
-    trend,
-    nextWorkout,
-    prescription,
-    program,
-    muscleVolume,
-    prRecords,
-    capacityBand,
-    meso,
-  };
-}
-
-function formatClock(d: Date): string {
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  // The live SSE subscription now lives in the store; start it once.
+  useEffect(
+    () => createLiveStreamController((m) => dashboardStore.getState().setLive(m)),
+    [],
+  );
 }
 
 function App(): React.JSX.Element {
+  useDashboardController();
   const {
     snapshot,
     accumulator,
