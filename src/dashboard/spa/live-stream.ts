@@ -71,9 +71,7 @@ interface Anchor {
  * (old browser, proxy strips SSE, server predates this build) it stays silent — the
  * graceful poll-only fallback. Safe to start unconditionally.
  */
-export function createLiveStreamController(
-  onModel: (model: LiveModel) => void,
-): () => void {
+export function createLiveStreamController(onModel: (model: LiveModel) => void): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
   // poll-only silently rather than throwing.
   if (typeof EventSource === 'undefined') return () => {};

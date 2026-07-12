@@ -211,10 +211,7 @@ function useDashboardController(): void {
   }, [exerciseName]);
 
   // The live SSE subscription now lives in the store; start it once.
-  useEffect(
-    () => createLiveStreamController((m) => dashboardStore.getState().setLive(m)),
-    [],
-  );
+  useEffect(() => createLiveStreamController((m) => dashboardStore.getState().setLive(m)), []);
 }
 
 function App(): React.JSX.Element {

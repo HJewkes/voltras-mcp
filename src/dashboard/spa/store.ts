@@ -132,8 +132,7 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
 
   tick: (now) =>
     set((state) => {
-      const stale =
-        state.lastSuccessMs > 0 && now - state.lastSuccessMs > STALE_THRESHOLD_MS;
+      const stale = state.lastSuccessMs > 0 && now - state.lastSuccessMs > STALE_THRESHOLD_MS;
       return {
         nowMs: now,
         status: stale ? (state.status === 'error' ? 'error' : 'stale') : state.status,
