@@ -4,7 +4,7 @@
  * workout-status tagging — and the titan `WeekRow` prop mapping.
  */
 import { describe, expect, it } from 'vitest';
-import { deriveMesoWeekViews, type RawMesoWeek } from '../server';
+import { deriveMesoWeekViews, type RawMesoWeek } from '../read-models/meso-overview';
 import { toWeekRowPropsList, type MesoOverviewView } from '../spa/panels/meso-overview-view';
 
 const week = (over: Partial<RawMesoWeek> & { orderIndex: number }): RawMesoWeek => ({
