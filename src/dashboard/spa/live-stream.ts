@@ -24,6 +24,7 @@ import {
   type LiveRepSignal,
   type LiveSetSignal,
 } from '../../state/live-signal';
+import { type Snapshot } from './adapter';
 
 /** The live overlay a consumer renders. Null until the first frame arrives. */
 export interface LiveModel {
@@ -70,8 +71,15 @@ interface Anchor {
  * `onModel` is never called until the first signal arrives; if the stream never connects
  * (old browser, proxy strips SSE, server predates this build) it stays silent — the
  * graceful poll-only fallback. Safe to start unconditionally.
+ *
+ * `onSnapshot` (VMCP-03.04) receives the structural `snapshot` push the server sends on
+ * every set-lifecycle boundary — wire it to the store's `applySnapshot` so structure
+ * updates immediately instead of waiting for the slow reconciliation poll.
  */
-export function createLiveStreamController(onModel: (model: LiveModel) => void): () => void {
+export function createLiveStreamController(
+  onModel: (model: LiveModel) => void,
+  onSnapshot?: (snapshot: Snapshot) => void,
+): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
   // poll-only silently rather than throwing.
   if (typeof EventSource === 'undefined') return () => {};
@@ -168,11 +176,17 @@ export function createLiveStreamController(onModel: (model: LiveModel) => void):
     lastActivity = Date.now();
   };
 
+  const onSnapshotEvent = (e: MessageEvent<string>): void => {
+    lastActivity = Date.now();
+    onSnapshot?.(JSON.parse(e.data) as Snapshot);
+  };
+
   source.addEventListener('phase', onPhase);
   source.addEventListener('phaseflip', onFlip);
   source.addEventListener('rep', onRep);
   source.addEventListener('set', onSet);
   source.addEventListener('hb', onHb);
+  source.addEventListener('snapshot', onSnapshotEvent);
   // EventSource auto-reconnects honoring the server's `retry:` hint; we just
   // let the staleness clock flip `connected` to false in the meantime.
   source.onerror = (): void => commit(true);
@@ -192,6 +206,7 @@ export function createLiveStreamController(onModel: (model: LiveModel) => void):
     source.removeEventListener('rep', onRep);
     source.removeEventListener('set', onSet);
     source.removeEventListener('hb', onHb);
+    source.removeEventListener('snapshot', onSnapshotEvent);
     source.close();
   };
 }

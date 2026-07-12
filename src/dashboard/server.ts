@@ -267,7 +267,7 @@ async function handleRequest(
     return;
   }
   if (pathname === '/api/snapshot') {
-    sendJson(res, 200, buildSnapshot(state));
+    sendJson(res, 200, buildSnapshotWithRev(state));
     return;
   }
   if (pathname === '/api/stream') {
@@ -329,8 +329,14 @@ const STREAM_HEARTBEAT_MS = 1000;
  * `GET /api/stream` — the VMCP-01.59 Server-Sent Events endpoint. Registers the
  * response as a subscriber on the live-signal hub and streams `phase` /
  * `phaseflip` / `rep` / `set` events plus a ~1 Hz `hb` keepalive, in
- * `text/event-stream`. The poll (`/api/snapshot`) stays the source of truth;
- * this is a pure live overlay — losing it costs smoothness, never correctness.
+ * `text/event-stream`.
+ *
+ * Structural push (VMCP-03.04): each `set` lifecycle boundary — the structural
+ * transition the dashboard cares about (session/set start & end) — also pushes a
+ * `snapshot` event carrying the fresh authoritative snapshot + its `rev`, so the
+ * client reflects structure changes immediately instead of waiting for the (now
+ * slow, ~2 s) reconciliation poll. The poll stays the correctness backstop;
+ * losing the stream only costs latency on those transitions, never data.
  *
  * Multi-client-safe (the hub's subscriber set costs nothing) and self-cleaning:
  * the heartbeat timer and hub subscription are torn down when the socket
@@ -349,6 +355,11 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
 
   const unsubscribe = state.liveSignals?.subscribe((event) => {
     writeSseEvent(res, event.type, event.data);
+    // A set lifecycle boundary is a structural transition: push the fresh
+    // snapshot so the client updates structure without waiting for the poll.
+    if (event.type === 'set') {
+      writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
+    }
   });
   const heartbeat = setInterval(() => {
     writeSseEvent(res, 'hb', { t: Date.now() });
@@ -393,6 +404,24 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   const activeExercise =
     exerciseId && state.exercises ? state.exercises.getById(exerciseId) : undefined;
   return buildSnapshotView({ devices, session, activeSet, activeExercise });
+}
+
+/**
+ * Monotonic send-order sequence stamped on every snapshot the server hands out —
+ * over both `/api/snapshot` (poll) and the `snapshot` SSE push. Because it is
+ * assigned synchronously at send time and JS is single-threaded, a higher `rev`
+ * was built no earlier, so it reflects equal-or-fresher state. The client keeps
+ * the last `rev` it applied and drops anything not strictly newer, so a slow
+ * in-flight poll can never clobber a fresh push (or vice-versa), and the
+ * completed-set fold never sees a set boundary twice.
+ */
+let snapshotRev = 0;
+
+/** The authoritative snapshot plus its ordering stamp — the shape both channels send. */
+type RevSnapshot = SnapshotResponse & { rev: number };
+
+function buildSnapshotWithRev(state: DashboardServerState): RevSnapshot {
+  return { ...buildSnapshot(state), rev: ++snapshotRev };
 }
 
 async function fetchHistory(
