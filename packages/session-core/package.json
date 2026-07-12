@@ -1,0 +1,35 @@
+{
+  "name": "@voltras/session-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-agnostic shared workout-state layer: swappable WorkoutDataSource + SessionRepository seams and a canonical WorkoutSession model over @voltras/workout-analytics. Phase-1 scaffold (VMCP-03.01).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@voltras/workout-analytics": "^1.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "license": "UNLICENSED"
+}
