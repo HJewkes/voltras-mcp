@@ -52,14 +52,25 @@ import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  estimateE1RMFromReps,
-  getRepPeakVelocity,
-  StateSpaceStrengthModel,
-} from '@voltras/workout-analytics';
-
 import { DASHBOARD_HTML } from './dashboard-html.js';
-import { buildSnapshotView, type DeviceEntry, type SnapshotResponse } from './read-models/index.js';
+import {
+  buildSnapshotView,
+  buildE1rmSeries,
+  buildExerciseTrend,
+  buildCapacityBand,
+  buildPrHistory,
+  buildMuscleVolume,
+  deriveMesoWeekViews,
+  type DeviceEntry,
+  type SnapshotResponse,
+  type HistorySession,
+  type ExerciseTrendPoint,
+  type CapacityBandPoint,
+  type PrRecordView,
+  type MuscleVolumeEntry,
+  type MesoOverviewView,
+  type RawMesoWeek,
+} from './read-models/index.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
@@ -396,16 +407,6 @@ async function fetchHistory(
   });
 }
 
-/** One point on the per-exercise estimated-1RM trend (titan StrengthTrendChart shape). */
-interface ExerciseTrendPoint {
-  /** ISO timestamp of the session. */
-  date: string;
-  /** Best estimated 1RM (lbs) across that session's sets of this exercise. */
-  e1rm: number;
-  /** True when this session set a new all-time e1RM in the returned window. */
-  isPR: boolean;
-}
-
 /** The active session's exercise id (first slot with a session), for the default trend. */
 function activeExerciseId(state: DashboardServerState): string | undefined {
   for (const [, slot] of state.slots) {
@@ -415,26 +416,17 @@ function activeExerciseId(state: DashboardServerState): string | undefined {
   return undefined;
 }
 
-/** One past session's best (exact, unrounded) e1RM observation, chronological. */
-interface ExerciseE1rmObservation {
-  /** ISO timestamp of the session. */
-  date: string;
-  /** Best exact estimated 1RM (lbs) across the session's sets of this exercise. */
-  e1rm: number;
-}
-
 /**
- * The chronological per-session best-e1RM series for an exercise from persisted
- * history — the shared observation stream behind both the strength trend and the
- * capacity band. For each past session, the best `estimateE1RMFromReps(weight,
- * repCount)` across its sets is one observation (sessions with no scorable set are
- * skipped). Exact/unrounded (callers round for their own display). Pure fitness
- * metadata over stored WA reps — no protocol data crosses the boundary.
+ * Gather the chronological (ascending) history for the requested exercise — its
+ * past sessions plus each session's stored sets — the shared input the strength
+ * trend, capacity band, and PR read-models fold. Resolves the exercise from the
+ * `?exerciseId=` query or falls back to the active session; empty when neither
+ * resolves. This is the I/O half; the derivation lives in `read-models/`.
  */
-async function fetchExerciseE1rmSeries(
+async function gatherExerciseHistory(
   state: DashboardServerState,
   url: URL,
-): Promise<ExerciseE1rmObservation[]> {
+): Promise<HistorySession[]> {
   const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
   if (exerciseId === undefined || exerciseId === '') return [];
   const limit = parseLimit(url.searchParams.get('limit'));
@@ -445,94 +437,28 @@ async function fetchExerciseE1rmSeries(
     exerciseId,
   });
 
-  const series: ExerciseE1rmObservation[] = [];
+  const history: HistorySession[] = [];
   for (const session of sessions) {
     const sets = await state.store.getSetsForSession(session.id);
-    let best = 0;
-    for (const set of sets) {
-      if (set.reps.length < 1) continue;
-      const est = estimateE1RMFromReps(set.weightLbs, set.reps.length).e1RM;
-      if (Number.isFinite(est) && est > best) best = est;
-    }
-    if (best <= 0) continue;
-    series.push({ date: session.startedAt, e1rm: best });
+    history.push({ startedAt: session.startedAt, sets });
   }
-  return series;
+  return history;
 }
 
-/**
- * Per-exercise estimated-1RM trend from persisted history — the shared series
- * rounded for display, with a running max flagging PR sessions.
- */
+/** Per-exercise estimated-1RM trend (titan StrengthTrendChart) from persisted history. */
 async function fetchExerciseTrend(
   state: DashboardServerState,
   url: URL,
 ): Promise<ExerciseTrendPoint[]> {
-  const series = await fetchExerciseE1rmSeries(state, url);
-  const points: ExerciseTrendPoint[] = [];
-  let runningMax = Number.NEGATIVE_INFINITY;
-  for (const obs of series) {
-    const e1rm = Math.round(obs.e1rm);
-    const isPR = e1rm > runningMax;
-    if (isPR) runningMax = e1rm;
-    points.push({ date: obs.date, e1rm, isPR });
-  }
-  return points;
+  return buildExerciseTrend(buildE1rmSeries(await gatherExerciseHistory(state, url)));
 }
 
-/** k for the ±k·σ capacity corridor around the Kalman strength estimate (1σ). */
-const CAPACITY_BAND_K_SIGMA = 1;
-/**
- * Minimum history for an informative band. With 1–2 sessions the state-space
- * filter has barely departed its seed prior, so the "band" is just the arbitrary
- * seed half-width — return none and let the panel hide rather than show noise.
- */
-const MIN_CAPACITY_BAND_SESSIONS = 3;
-
-/**
- * One dated point on the capacity band: WA's smoothed strength estimate, its
- * ±k·σ corridor bounds, and the observed session e1RM that produced it. Exact
- * values — the SPA mapper does titan's rounding/formatting.
- */
-interface CapacityBandPoint {
-  /** ISO timestamp of the session. */
-  date: string;
-  /** Smoothed latent-strength estimate (lbs) after assimilating this session. */
-  estimate: number;
-  /** Lower corridor bound: `estimate − k·√variance`. */
-  bandLow: number;
-  /** Upper corridor bound: `estimate + k·√variance`. */
-  bandHigh: number;
-  /** The session's observed best e1RM (lbs) — the plotted dot's load. */
-  e1rm: number;
-}
-
-/**
- * Capacity band = WA `StateSpaceStrengthModel` (a local-linear-trend Kalman
- * filter) folded over the exercise's per-session e1RM series. Each observation
- * yields `{ estimate, variance }`; the corridor is `estimate ± k·√variance`, so
- * it tightens as confidence grows. See `coordination/architecture/
- * capacity-band-model-2026-07-04.md`. Returns none below the minimum-session gate.
- * Pure fitness metadata over stored WA reps — no protocol data (NF-07).
- */
+/** Capacity band (Kalman corridor) over the exercise's per-session e1RM series. */
 async function fetchCapacityBand(
   state: DashboardServerState,
   url: URL,
 ): Promise<CapacityBandPoint[]> {
-  const series = await fetchExerciseE1rmSeries(state, url);
-  if (series.length < MIN_CAPACITY_BAND_SESSIONS) return [];
-  const model = new StateSpaceStrengthModel();
-  return series.map((obs) => {
-    const { estimate, variance } = model.update(obs.e1rm);
-    const sd = Math.sqrt(variance);
-    return {
-      date: obs.date,
-      estimate,
-      bandLow: estimate - CAPACITY_BAND_K_SIGMA * sd,
-      bandHigh: estimate + CAPACITY_BAND_K_SIGMA * sd,
-      e1rm: obs.e1rm,
-    };
-  });
+  return buildCapacityBand(buildE1rmSeries(await gatherExerciseHistory(state, url)));
 }
 
 /** Next planned workout for the idle dashboard, shaped for titan `WorkoutCard`. */
@@ -706,70 +632,6 @@ async function fetchProgramStatus(state: DashboardServerState): Promise<ProgramS
   return null;
 }
 
-/** One workout in a meso week, tagged with its progress relative to the plan. */
-interface MesoWorkoutView {
-  name: string;
-  status: 'completed' | 'current' | 'upcoming';
-}
-
-/** One week of the active mesocycle, shaped for titan `WeekRow`. */
-export interface MesoWeekView {
-  /** 1-based week index within the block. */
-  weekNumber: number;
-  /** The first week that still has unfinished work (the lifter's live week). */
-  isCurrent: boolean;
-  /** Week whose name marks it a deload (rendered with the deload treatment). */
-  isDeload: boolean;
-  /** Planned volume (total target sets) normalized to the block's peak week, 0-1. */
-  intensityLevel: number;
-  workouts: MesoWorkoutView[];
-}
-
-/** The active mesocycle's week-by-week overview (titan `WeekRow` stack). */
-interface MesoOverviewView {
-  mesoName: string;
-  focus?: string;
-  totalWeeks: number;
-  weeks: MesoWeekView[];
-}
-
-/** Raw per-week rollup before the block-relative view derivation. */
-export interface RawMesoWeek {
-  orderIndex: number;
-  name?: string;
-  /** Total planned target sets across the week's templates. */
-  volume: number;
-  templates: Array<{ name: string; done: boolean }>;
-}
-
-/**
- * Derive the titan-ready week views from raw block weeks: normalize each week's
- * planned volume to the block's peak (the intensity bar), flag the deload weeks
- * by name, mark the first week with unfinished work as current, and tag the very
- * first unfinished workout `current` (the rest `upcoming`, done ones `completed`).
- * Pure — no store I/O — so the volume/status math is unit-testable on its own.
- */
-export function deriveMesoWeekViews(rawWeeks: RawMesoWeek[]): MesoWeekView[] {
-  const sorted = [...rawWeeks].sort((a, b) => a.orderIndex - b.orderIndex);
-  const maxVolume = sorted.reduce((max, w) => Math.max(max, w.volume), 0);
-  const currentWeekOrder = sorted.find((w) => w.templates.some((t) => !t.done))?.orderIndex ?? -1;
-  let currentTagged = false;
-  return sorted.map((week) => ({
-    weekNumber: week.orderIndex + 1,
-    isCurrent: week.orderIndex === currentWeekOrder,
-    isDeload: /deload/i.test(week.name ?? ''),
-    intensityLevel: maxVolume > 0 ? week.volume / maxVolume : 0,
-    workouts: week.templates.map((t) => {
-      if (t.done) return { name: t.name, status: 'completed' as const };
-      if (!currentTagged) {
-        currentTagged = true;
-        return { name: t.name, status: 'current' as const };
-      }
-      return { name: t.name, status: 'upcoming' as const };
-    }),
-  }));
-}
-
 /**
  * Week-by-week overview of the active mesocycle — the first program's current
  * (in-progress, non-empty) block, folded into per-week volume + workout-status
@@ -829,15 +691,12 @@ async function fetchMesoOverview(state: DashboardServerState): Promise<MesoOverv
 const VOLUME_WINDOW_DAYS = 7;
 /** Recent sessions scanned for the rollup (cap; a week rarely exceeds this). */
 const VOLUME_SESSION_SCAN = 60;
-/** Secondary muscles count as a fraction of a working set (standard heuristic). */
-const SECONDARY_SET_WEIGHT = 0.5;
 
 /**
  * Weekly effective sets per catalog muscle over the trailing {@link
- * VOLUME_WINDOW_DAYS} days: each session's set count is attributed to its
- * exercise's primary muscles (full) and secondary muscles (half), joined via the
- * exercise catalog. The client maps these onto titan's volume landmarks. Derived
- * fitness metadata only — no protocol data (NF-07).
+ * VOLUME_WINDOW_DAYS} days. Gathers the in-window sessions, resolves each to its
+ * catalog muscles + set count, and hands the entries to `buildMuscleVolume` for
+ * the primary/secondary attribution. Derived fitness metadata only (NF-07).
  */
 async function fetchMuscleVolume(
   state: DashboardServerState,
@@ -851,7 +710,7 @@ async function fetchMuscleVolume(
     offset: 0,
   });
 
-  const volume: Record<string, number> = {};
+  const entries: MuscleVolumeEntry[] = [];
   for (const session of sessions) {
     if (Number.isFinite(Date.parse(session.startedAt)) && Date.parse(session.startedAt) < cutoff) {
       continue;
@@ -860,114 +719,18 @@ async function fetchMuscleVolume(
     const meta = catalog.getById(session.exerciseId);
     if (meta === undefined) continue;
     const setCount = (await state.store.getSetsForSession(session.id)).length;
-    if (setCount === 0) continue;
-    for (const muscle of meta.muscleGroups) {
-      volume[muscle] = (volume[muscle] ?? 0) + setCount;
-    }
-    for (const muscle of meta.secondaryMuscleGroups ?? []) {
-      volume[muscle] = (volume[muscle] ?? 0) + setCount * SECONDARY_SET_WEIGHT;
-    }
+    entries.push({
+      setCount,
+      primaryMuscles: meta.muscleGroups,
+      secondaryMuscles: meta.secondaryMuscleGroups ?? [],
+    });
   }
-  return volume;
+  return buildMuscleVolume(entries);
 }
 
-const PR_MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/** ISO timestamp → "MMM D" display date (UTC, deterministic). Falls back to raw. */
-function fmtPrDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `${PR_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
-
-/** One PR record for titan PrHistoryModal. */
-interface PrRecordView {
-  type: 'e1rm' | 'weight' | 'reps' | 'velocity';
-  value: number;
-  unit?: 'lbs';
-  date: string;
-}
-
-/**
- * All-time PR records for an exercise (defaults to the active one) from stored
- * history: best estimated 1RM, top set weight, most reps in a set, and fastest
- * rep — each with the date it was set. Derived fitness metadata only (NF-07).
- */
+/** All-time PR records for an exercise (defaults to the active one) from stored history. */
 async function fetchPrHistory(state: DashboardServerState, url: URL): Promise<PrRecordView[]> {
-  const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
-  if (exerciseId === undefined || exerciseId === '') return [];
-  const sessions = await state.store.listSessions({
-    sort: 'startedAt:asc',
-    limit: parseLimit(url.searchParams.get('limit')),
-    offset: 0,
-    exerciseId,
-  });
-
-  const best = { e1rm: 0, weight: 0, reps: 0, velMms: 0 };
-  const dates = { e1rm: '', weight: '', reps: '', velMms: '' };
-  for (const session of sessions) {
-    for (const set of await state.store.getSetsForSession(session.id)) {
-      const reps = set.reps.length;
-      if (reps < 1) continue;
-      const e1 = estimateE1RMFromReps(set.weightLbs, reps).e1RM;
-      if (Number.isFinite(e1) && e1 > best.e1rm) {
-        best.e1rm = e1;
-        dates.e1rm = session.startedAt;
-      }
-      if (set.weightLbs > best.weight) {
-        best.weight = set.weightLbs;
-        dates.weight = session.startedAt;
-      }
-      if (reps > best.reps) {
-        best.reps = reps;
-        dates.reps = session.startedAt;
-      }
-      for (const rep of set.reps) {
-        const pv = getRepPeakVelocity(rep);
-        if (typeof pv === 'number' && Number.isFinite(pv) && pv > best.velMms) {
-          best.velMms = pv;
-          dates.velMms = session.startedAt;
-        }
-      }
-    }
-  }
-
-  const records: PrRecordView[] = [];
-  if (best.e1rm > 0)
-    records.push({
-      type: 'e1rm',
-      value: Math.round(best.e1rm),
-      unit: 'lbs',
-      date: fmtPrDate(dates.e1rm),
-    });
-  if (best.weight > 0)
-    records.push({
-      type: 'weight',
-      value: Math.round(best.weight),
-      unit: 'lbs',
-      date: fmtPrDate(dates.weight),
-    });
-  if (best.reps > 0) records.push({ type: 'reps', value: best.reps, date: fmtPrDate(dates.reps) });
-  if (best.velMms > 0)
-    records.push({
-      type: 'velocity',
-      value: Number((best.velMms / 1000).toFixed(2)),
-      date: fmtPrDate(dates.velMms),
-    });
-  return records;
+  return buildPrHistory(await gatherExerciseHistory(state, url));
 }
 
 function parseLimit(raw: string | null): number {
