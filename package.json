@@ -21,6 +21,7 @@
     "build": "tsc -p tsconfig.json",
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
     "start": "node ./dist/bin.js",
+    "dashboard:sim": "node scripts/dashboard-sim.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
