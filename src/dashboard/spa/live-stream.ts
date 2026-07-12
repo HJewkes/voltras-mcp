@@ -17,8 +17,6 @@
  * NDA: consumes the fitness-units-only SSE schema (`src/state/live-signal.ts`,
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
-import { useEffect, useRef, useState } from 'react';
-
 import {
   type LivePhase,
   type LivePhaseFlip,
@@ -62,132 +60,140 @@ interface Anchor {
 }
 
 /**
- * Subscribe to the live SSE overlay. Returns the current {@link LiveModel}, or
- * `null` until the first signal arrives (or forever, if the stream never
- * connects — the graceful poll-only fallback). Safe to mount unconditionally.
+ * Start the live SSE overlay. Opens `EventSource('/api/stream')` and drives an
+ * interpolated {@link LiveModel} to `onModel` at ~20 Hz, returning a disposer.
+ *
+ * Framework-agnostic (was the `useLiveStream` hook; the anchor/lastRep/activity/commit
+ * refs are now closure state) so the dashboard store owns the subscription: an effect
+ * calls `createLiveStreamController((m) => dashboardStore.getState().setLive(m))`.
+ *
+ * `onModel` is never called until the first signal arrives; if the stream never connects
+ * (old browser, proxy strips SSE, server predates this build) it stays silent — the
+ * graceful poll-only fallback. Safe to start unconditionally.
  */
-export function useLiveStream(): LiveModel | null {
-  const [model, setModel] = useState<LiveModel | null>(null);
-  const anchorRef = useRef<Anchor | null>(null);
-  const lastRepRef = useRef<LiveRepSignal | null>(null);
-  const lastActivityRef = useRef<number>(0);
-  const lastCommitRef = useRef<number>(0);
+export function createLiveStreamController(onModel: (model: LiveModel) => void): () => void {
+  // EventSource is absent in very old browsers / some test envs — degrade to
+  // poll-only silently rather than throwing.
+  if (typeof EventSource === 'undefined') return () => {};
 
-  useEffect(() => {
-    // EventSource is absent in very old browsers / some test envs — degrade to
-    // poll-only silently rather than throwing.
-    if (typeof EventSource === 'undefined') return;
+  const source = new EventSource('/api/stream');
+  let raf = 0;
+  let disposed = false;
 
-    const source = new EventSource('/api/stream');
-    let raf = 0;
-    let disposed = false;
+  let current: LiveModel | null = null;
+  let anchor: Anchor | null = null;
+  let lastRep: LiveRepSignal | null = null;
+  let lastActivity = 0;
+  let lastCommit = 0;
 
-    const commit = (force = false): void => {
-      const now = Date.now();
-      if (!force && now - lastCommitRef.current < COMMIT_INTERVAL_MS) return;
-      lastCommitRef.current = now;
-      const anchor = anchorRef.current;
-      const connected = lastActivityRef.current > 0 && now - lastActivityRef.current < STALE_MS;
-      if (anchor === null) {
-        setModel((prev) => (prev === null ? prev : { ...prev, connected }));
-        return;
+  const commit = (force = false): void => {
+    const now = Date.now();
+    if (!force && now - lastCommit < COMMIT_INTERVAL_MS) return;
+    lastCommit = now;
+    const connected = lastActivity > 0 && now - lastActivity < STALE_MS;
+    if (anchor === null) {
+      // Only the connected flag can change while un-anchored; nothing to emit before
+      // the first real frame.
+      if (current !== null) {
+        current = { ...current, connected };
+        onModel(current);
       }
-      setModel({
-        connected,
-        phase: anchor.phase,
-        phaseElapsedMs: anchor.elapsedAtAnchorMs + Math.max(0, now - anchor.wallAtAnchorMs),
-        velocity: anchor.velocity,
-        position: anchor.position,
-        force: anchor.force,
-        repInProgress: anchor.repInProgress,
-        lastRep: lastRepRef.current,
-      });
+      return;
+    }
+    current = {
+      connected,
+      phase: anchor.phase,
+      phaseElapsedMs: anchor.elapsedAtAnchorMs + Math.max(0, now - anchor.wallAtAnchorMs),
+      velocity: anchor.velocity,
+      position: anchor.position,
+      force: anchor.force,
+      repInProgress: anchor.repInProgress,
+      lastRep,
     };
+    onModel(current);
+  };
 
-    const onPhase = (e: MessageEvent<string>): void => {
-      const data = JSON.parse(e.data) as LivePhaseSignal;
-      lastActivityRef.current = Date.now();
-      // Re-anchor to the real frame — kills interpolation drift.
-      anchorRef.current = {
-        phase: data.phase,
-        elapsedAtAnchorMs: data.phaseElapsedMs,
-        wallAtAnchorMs: Date.now(),
-        velocity: data.velocity,
-        position: data.position,
-        force: data.force,
-        repInProgress: data.repInProgress,
-      };
-      commit(true);
+  const onPhase = (e: MessageEvent<string>): void => {
+    const data = JSON.parse(e.data) as LivePhaseSignal;
+    lastActivity = Date.now();
+    // Re-anchor to the real frame — kills interpolation drift.
+    anchor = {
+      phase: data.phase,
+      elapsedAtAnchorMs: data.phaseElapsedMs,
+      wallAtAnchorMs: Date.now(),
+      velocity: data.velocity,
+      position: data.position,
+      force: data.force,
+      repInProgress: data.repInProgress,
     };
+    commit(true);
+  };
 
-    const onFlip = (e: MessageEvent<string>): void => {
-      const data = JSON.parse(e.data) as LivePhaseFlip;
-      lastActivityRef.current = Date.now();
-      // Hard-reset the phase clock the instant the phase flips.
-      anchorRef.current = {
-        ...(anchorRef.current ?? {
-          velocity: 0,
-          position: 0,
-          force: 0,
-          repInProgress: data.repIndex,
-        }),
-        phase: data.to,
-        elapsedAtAnchorMs: 0,
-        wallAtAnchorMs: Date.now(),
-      };
-      commit(true);
+  const onFlip = (e: MessageEvent<string>): void => {
+    const data = JSON.parse(e.data) as LivePhaseFlip;
+    lastActivity = Date.now();
+    // Hard-reset the phase clock the instant the phase flips.
+    anchor = {
+      ...(anchor ?? {
+        velocity: 0,
+        position: 0,
+        force: 0,
+        repInProgress: data.repIndex,
+      }),
+      phase: data.to,
+      elapsedAtAnchorMs: 0,
+      wallAtAnchorMs: Date.now(),
     };
+    commit(true);
+  };
 
-    const onRep = (e: MessageEvent<string>): void => {
-      lastRepRef.current = JSON.parse(e.data) as LiveRepSignal;
-      lastActivityRef.current = Date.now();
-      commit(true);
-    };
+  const onRep = (e: MessageEvent<string>): void => {
+    lastRep = JSON.parse(e.data) as LiveRepSignal;
+    lastActivity = Date.now();
+    commit(true);
+  };
 
-    const onSet = (e: MessageEvent<string>): void => {
-      const data = JSON.parse(e.data) as LiveSetSignal;
-      lastActivityRef.current = Date.now();
-      if (data.kind === 'ended') {
-        // Clear the live tempo state back to the non-live per-rep-summary mode.
-        anchorRef.current = null;
-        lastRepRef.current = null;
-      }
-      commit(true);
-    };
+  const onSet = (e: MessageEvent<string>): void => {
+    const data = JSON.parse(e.data) as LiveSetSignal;
+    lastActivity = Date.now();
+    if (data.kind === 'ended') {
+      // Clear the live tempo state back to the non-live per-rep-summary mode.
+      anchor = null;
+      lastRep = null;
+    }
+    commit(true);
+  };
 
-    const onHb = (): void => {
-      lastActivityRef.current = Date.now();
-    };
+  const onHb = (): void => {
+    lastActivity = Date.now();
+  };
 
-    source.addEventListener('phase', onPhase);
-    source.addEventListener('phaseflip', onFlip);
-    source.addEventListener('rep', onRep);
-    source.addEventListener('set', onSet);
-    source.addEventListener('hb', onHb);
-    // EventSource auto-reconnects honoring the server's `retry:` hint; we just
-    // let the staleness clock flip `connected` to false in the meantime.
-    source.onerror = (): void => commit(true);
+  source.addEventListener('phase', onPhase);
+  source.addEventListener('phaseflip', onFlip);
+  source.addEventListener('rep', onRep);
+  source.addEventListener('set', onSet);
+  source.addEventListener('hb', onHb);
+  // EventSource auto-reconnects honoring the server's `retry:` hint; we just
+  // let the staleness clock flip `connected` to false in the meantime.
+  source.onerror = (): void => commit(true);
 
-    const tick = (): void => {
-      if (disposed) return;
-      commit();
-      raf = requestAnimationFrame(tick);
-    };
+  const tick = (): void => {
+    if (disposed) return;
+    commit();
     raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
 
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(raf);
-      source.removeEventListener('phase', onPhase);
-      source.removeEventListener('phaseflip', onFlip);
-      source.removeEventListener('rep', onRep);
-      source.removeEventListener('set', onSet);
-      source.removeEventListener('hb', onHb);
-      source.close();
-    };
-  }, []);
-
-  return model;
+  return () => {
+    disposed = true;
+    cancelAnimationFrame(raf);
+    source.removeEventListener('phase', onPhase);
+    source.removeEventListener('phaseflip', onFlip);
+    source.removeEventListener('rep', onRep);
+    source.removeEventListener('set', onSet);
+    source.removeEventListener('hb', onHb);
+    source.close();
+  };
 }
 
 /** Human label for a live phase, for the compact hero readout. */
