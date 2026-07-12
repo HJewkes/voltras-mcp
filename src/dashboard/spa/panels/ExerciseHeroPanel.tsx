@@ -28,6 +28,9 @@ import {
   CardContent,
   DeviationBar,
   ExerciseCard,
+  FatigueMeter,
+  LiveAuraFrame,
+  StatusPill,
   TempoDisplay,
   VelocityStrip,
   WorkoutCard,
@@ -37,6 +40,7 @@ import {
 import { getSetTempoSeconds, weightDeviationRatio } from '@voltras/workout-analytics';
 import { type CurrentSetView, type PrescriptionView, type WorkoutSetView } from '../adapter';
 import {
+  toAutoRegStatus,
   toExerciseIsPR,
   toExerciseSummary,
   toLiveTempoSeconds,
@@ -125,6 +129,10 @@ export function ExerciseHeroPanel({
   // pre-scaled percentage to DeviationBar, which expects a ratio — this also
   // corrects the dot position.)
   const weightDeviation = weightDeviationRatio(activeWeightLbs, prescription?.weightLbs);
+  // Live auto-regulation verdict (productive/threshold/stop) from the set's
+  // velocity loss — drives the StatusPill verdict, the FatigueMeter needle, and
+  // the LiveAuraFrame flood so the across-the-room signal is coherent.
+  const autoReg = toAutoRegStatus(currentSet.velocityLossPct);
 
   return (
     <section className="hero" role="region" aria-label={title}>
@@ -141,35 +149,57 @@ export function ExerciseHeroPanel({
           <span className="hero-live-item">
             <b>{currentSet.latestPeakVelocity}</b> peak
           </span>
+          {autoReg && <StatusPill status={autoReg} />}
           {/* VMCP-01.59: sub-second live phase/velocity from the SSE overlay,
               layered onto the existing strip. Renders only when the stream is
               connected; absent it, the strip is unchanged (poll-only). */}
           <LiveReadout />
         </div>
       )}
-      {currentSet.active && currentSet.velocitiesMps.length > 0 && (
-        // Expanded per-rep velocity chart for the LIVE set — the same titan
-        // VelocityStrip organism the mobile app uses, at full/expanded variant so
-        // the zone-colored bars + velocity-loss read across the room. The nested
-        // SetRow strips stay mini; this is the active-set close-up.
-        <div className="hero-velocity" aria-label="Live set velocity by rep">
-          <VelocityStrip
-            velocities={currentSet.velocitiesMps}
-            variant="expanded"
-            expanded
-            showInfo
-          />
-        </div>
-      )}
-      {currentSet.active && liveTempo !== null && (
-        // Live per-rep cadence for the active set — titan's TempoDisplay dial
-        // (eccentric · pause-bottom · concentric · pause-top), colored so the
-        // tempo of the most recent rep reads across the room. The card carries the
-        // same value compactly; this is the active-set close-up.
-        <div className="hero-tempo" aria-label="Live set tempo, eccentric pause concentric pause">
-          <span className="hero-tempo-label">Tempo</span>
-          <TempoDisplay tempo={liveTempo} colored showInfo />
-        </div>
+      {currentSet.active && (
+        // Live close-up, wrapped in the coaching-category flood frame: the
+        // surface washes amber at VL20 and red at VL28+ so a lifter across the
+        // room feels the auto-reg verdict without reading a number. Quiet
+        // (no flood) while productive.
+        <LiveAuraFrame category={autoReg ?? 'productive'} className="hero-aura">
+          {currentSet.velocitiesMps.length > 0 && (
+            // Expanded per-rep velocity chart for the LIVE set — the same titan
+            // VelocityStrip organism the mobile app uses, at the expanded variant
+            // so the zone-colored bars + velocity-loss read across the room.
+            <div className="hero-velocity" aria-label="Live set velocity by rep">
+              <VelocityStrip
+                velocities={currentSet.velocitiesMps}
+                variant="expanded"
+                expanded
+                showInfo
+              />
+            </div>
+          )}
+          {liveTempo !== null && (
+            // Live per-rep cadence — titan's TempoDisplay dial (eccentric ·
+            // pause-bottom · concentric · pause-top), colored so the most recent
+            // rep's tempo reads across the room.
+            <div
+              className="hero-tempo"
+              aria-label="Live set tempo, eccentric pause concentric pause"
+            >
+              <span className="hero-tempo-label">Tempo</span>
+              <TempoDisplay tempo={liveTempo} colored showInfo />
+            </div>
+          )}
+          {currentSet.velocityLossPct !== null && (
+            // Fatigue auto-regulation — titan's needle-over-zoned-gradient
+            // FatigueMeter (VL10/20/30/stop), driven by the same live velocity
+            // loss as the StatusPill verdict and the flood above.
+            <div
+              className="hero-fatigue"
+              aria-label={`Fatigue auto-regulation, ${currentSet.velocityLoss} velocity loss`}
+            >
+              <span className="hero-fatigue-label">Fatigue</span>
+              <FatigueMeter value={currentSet.velocityLossPct} />
+            </div>
+          )}
+        </LiveAuraFrame>
       )}
       {currentSet.active && weightDeviation !== null && (
         // Working weight vs the attached plan's prescribed weight — "on plan" at
