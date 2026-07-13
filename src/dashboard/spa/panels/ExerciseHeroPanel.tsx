@@ -37,7 +37,7 @@ import {
 import { getSetTempoSeconds, weightDeviationRatio } from '@voltras/workout-analytics';
 import { type CurrentSetView, type PrescriptionView, type WorkoutSetView } from '../adapter';
 import {
-  toExerciseE1RM,
+  toExerciseIsPR,
   toExerciseSummary,
   toLiveTempoSeconds,
   toSetRowProps,
@@ -111,7 +111,7 @@ export function ExerciseHeroPanel({
   const named = exercise !== '—';
   const title = named ? exercise : 'Current exercise';
   const summary = toExerciseSummary(heroSets, currentSet.repTarget);
-  const { e1rm, isPR } = toExerciseE1RM(heroSets, historyBestE1rm);
+  const isPR = toExerciseIsPR(heroSets, historyBestE1rm);
   const lastSet = heroSets[heroSets.length - 1];
   const tempo = getSetTempoSeconds({ reps: lastSet?.reps ?? [] });
   // Live cadence for the in-progress set — a dedicated across-the-room TempoDisplay
@@ -153,7 +153,12 @@ export function ExerciseHeroPanel({
         // the zone-colored bars + velocity-loss read across the room. The nested
         // SetRow strips stay mini; this is the active-set close-up.
         <div className="hero-velocity" aria-label="Live set velocity by rep">
-          <VelocityStrip velocities={currentSet.velocitiesMps} variant="full" expanded showInfo />
+          <VelocityStrip
+            velocities={currentSet.velocitiesMps}
+            variant="expanded"
+            expanded
+            showInfo
+          />
         </div>
       )}
       {currentSet.active && liveTempo !== null && (
@@ -183,10 +188,8 @@ export function ExerciseHeroPanel({
       <div className="hero-card" aria-live="polite" aria-atomic="false">
         <ExerciseCard
           name={title}
-          state="expanded"
-          onToggle={() => undefined}
+          expanded
           summary={summary}
-          e1rm={e1rm}
           isPR={isPR}
           tempo={tempo ?? undefined}
           prescription={prescriptionText ?? undefined}

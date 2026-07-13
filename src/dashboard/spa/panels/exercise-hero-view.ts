@@ -21,36 +21,46 @@ import {
 import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
 import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
 
-/** Rep count shown on a row: null for an active set with no reps yet, else count. */
-function displayRepCount(view: WorkoutSetView): number | null {
-  if (view.kind === 'active' && view.reps.length === 0) return null;
-  return view.reps.length;
-}
-
 /**
- * Map a canonical set view onto titan `SetRow` props. Passes EXACT values — RPE
- * from WA (SetRow rounds to 0.5 + bands), per-rep peak velocity in m/s (SetRow's
- * VelocityStrip formats), raw weights (SetRow rounds). The mm/s→m/s conversion is
- * the app's data-source normalization (WA is unit-agnostic).
+ * Map a canonical set view onto titan `SetRow` props (titan 0.7.0 unified table:
+ * a `state` discriminated union, no PREV column). `completed` → `done` (logged
+ * reps/weight/rpe); `active` → `live`, which always displays a `target` — so an
+ * unplanned live set falls back its target to the reps done so far and the
+ * current working weight. Passes EXACT WA values — RPE (SetRow rounds to 0.5 +
+ * bands), per-rep velocity in m/s (SetRow's VelocityStrip formats), raw weights
+ * (SetRow rounds). The mm/s→m/s conversion is the app's data-source
+ * normalization (WA is unit-agnostic).
  */
 export function toSetRowProps(view: WorkoutSetView): SetRowProps {
   const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mms) =>
     mms != null ? mms / MMS_PER_MPS : 0,
   );
+  const rpe = estimateSetRpe({ reps: view.reps });
+  const repsDone = view.reps.length;
+  const weight = view.weightLbs ?? 0;
+  if (view.kind === 'active') {
+    return {
+      state: 'live',
+      setNumber: view.setNumber,
+      unit: 'lbs',
+      target: {
+        reps: view.targetReps ?? repsDone,
+        weight: view.targetWeightLbs ?? weight,
+      },
+      reps: repsDone,
+      weight,
+      rpe,
+      velocities,
+    };
+  }
   return {
-    mode: view.kind,
+    state: 'done',
     setNumber: view.setNumber,
-    reps: displayRepCount(view),
-    weight: view.weightLbs,
-    rpe: estimateSetRpe({ reps: view.reps }),
     unit: 'lbs',
-    velocities: velocities.length > 0 ? velocities : undefined,
-    previous: view.previous ? { reps: view.previous.reps, weight: view.previous.weightLbs } : null,
-    isNextSet: view.kind === 'active',
-    targets:
-      view.kind === 'active' && view.targetReps != null && view.targetWeightLbs != null
-        ? { reps: view.targetReps, weight: view.targetWeightLbs }
-        : undefined,
+    reps: repsDone,
+    weight,
+    rpe,
+    velocities,
   };
 }
 
@@ -90,31 +100,16 @@ export function toLiveTempoSeconds(view: WorkoutSetView | null): TempoDisplayPro
   return getSetTempoSeconds({ reps: view.reps });
 }
 
-/** Estimated-1RM badge for titan `ExerciseCard` (value + PR flag). */
-export interface ExerciseE1RM {
-  /** The `ExerciseCard.e1rm` prop, or `undefined` until there is enough data. */
-  e1rm: NonNullable<ExerciseCardProps['e1rm']> | undefined;
-  /** `ExerciseCard.isPR` — true only when the live e1RM beats prior history. */
-  isPR: boolean;
-}
-
 /**
- * Map the set timeline onto titan `ExerciseCard`'s e1RM badge. The projected 1RM
- * is WA's best rep-based (Epley) estimate across the exercise's sets
- * (`bestE1RMAcrossSets`, whose per-set primitive is `estimateE1RMFromReps`) —
- * EXACT and unrounded, `ExerciseCard` rounds for display. `undefined` until a set
- * has both a positive load and >=1 captured rep (a rep only lands in the snapshot
- * once WA has movement samples), so an empty active set shows no badge. `isPR`
- * is WA's `isNewE1RM` against the exercise's prior historical best — never true
- * without a baseline (the first-ever session isn't a PR).
+ * PR flag for titan `ExerciseCard`'s `isPR` chip. titan 0.7.0's unified card
+ * dropped the numeric e1RM badge, so the dashboard no longer surfaces the
+ * projected-1RM value — but PR *detection* still rides the same WA estimate:
+ * `bestE1RMAcrossSets` (Epley, per-set primitive `estimateE1RMFromReps`) is
+ * compared to the exercise's prior historical best via `isNewE1RM`. Never true
+ * without a baseline (the first-ever session isn't a PR) or before a set has a
+ * positive load + >=1 captured rep.
  */
-export function toExerciseE1RM(
-  views: WorkoutSetView[],
-  historyBestE1rm: number | null,
-): ExerciseE1RM {
+export function toExerciseIsPR(views: WorkoutSetView[], historyBestE1rm: number | null): boolean {
   const value = bestE1RMAcrossSets(views.map((v) => ({ load: v.weightLbs, reps: v.reps.length })));
-  return {
-    e1rm: value != null ? { value, unit: 'lbs' } : undefined,
-    isPR: isNewE1RM(value, historyBestE1rm),
-  };
+  return isNewE1RM(value, historyBestE1rm);
 }
