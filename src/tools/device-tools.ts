@@ -65,7 +65,13 @@ import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/ser
 import type { ActiveSet, DeviceSnapshot, PendingDisconnectNotice } from '../state/live-state.js';
 import type { ModeRevertAbort } from '../state/mode-revert-guard.js';
 import type { SlotBinding } from '../state/slot-bindings.js';
-import { createSlot, removeSlot, resetPrimarySlot, swapSlots } from '../state/slot-manager.js';
+import {
+  createSlot,
+  removeSlot,
+  resetPrimarySlot,
+  seedConnectedState,
+  swapSlots,
+} from '../state/slot-manager.js';
 import { wireBridgeForSlot } from '../state/event-bridge.js';
 import { getDebugBuffers } from '../state/debug-buffer.js';
 import {
@@ -491,6 +497,14 @@ export function registerDeviceTools(
         slot.unwireBridge?.();
         slot.client = client;
         slot.unwireBridge = wireBridgeForSlot(state, slot);
+        // The bridge's onConnectionStateChange listener wires AFTER
+        // `manager.connect` already fired the SDK's initial 'connected'
+        // event, so LiveState never sees that transition and
+        // `device.connected` stays false (dashboard header shows OFFLINE
+        // while a set streams). `createSlot` compensates via
+        // `seedConnectedState`; the primary-rebind path — the common
+        // single-device case — missed it. Seed here too.
+        seedConnectedState(slot);
       }
       // Refresh lastSeen on the persisted binding (if any) so a stale entry
       // surfaces in slot.bindings_list — VMCP-02.05.

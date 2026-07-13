@@ -323,6 +323,9 @@ interface FakeLive {
         status: 'active' | 'ended' | 'partial';
       };
   markDisconnected: (at: string) => void;
+  // device.connect's primary-rebind path seeds `{connected, deviceId}` via
+  // applySettings (see seedConnectedState in slot-manager.ts).
+  applySettings: (delta: Record<string, unknown>) => void;
   // VMCP-02.32: get_state / bilateral.cascade drain a one-shot disconnect
   // advisory off the slot's live state. The fake returns `undefined` (no
   // pending notice) by default; dedicated tests override it.
@@ -377,6 +380,7 @@ function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>>
     snapshotDevice: () => ({ connected: false, ...overrides }),
     snapshotSet: () => undefined,
     markDisconnected: vi.fn(),
+    applySettings: vi.fn(),
     takePendingDisconnectNotice: vi.fn(() => undefined),
   };
 }
@@ -503,6 +507,27 @@ describe('registerDeviceTools', () => {
         id: 'V-1',
         name: 'Voltra-1',
         rssi: -50,
+      });
+    });
+
+    it('seeds LiveState connected:true on the primary-rebind path (OFFLINE-while-LIVE regression)', async () => {
+      // The bridge's onConnectionStateChange wires AFTER manager.connect
+      // already fired the initial 'connected' event, so without an explicit
+      // seed device.connected stays false and the dashboard header shows
+      // OFFLINE while a set streams. The rebind path must seed like createSlot.
+      state.manager.devices = [{ id: 'V-1', name: 'Voltra-1', rssi: -50 }];
+      const connected = makeFakeClient({
+        isConnected: true,
+        connectionState: 'connected',
+        connectedDeviceId: 'V-1',
+      });
+      state.manager.connect.mockResolvedValueOnce(connected);
+      const reg = placeholders.get('device.connect')!;
+      await invoke(reg, { deviceId: 'V-1' });
+      const primaryLive = state.slots.get('primary')!.live;
+      expect(primaryLive.applySettings).toHaveBeenCalledWith({
+        connected: true,
+        deviceId: 'V-1',
       });
     });
 
