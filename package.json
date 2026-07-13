@@ -49,7 +49,7 @@
     "@emnapi/runtime": "^1.10.0",
     "@eslint/js": "^10.0.1",
     "@react-native/assets-registry": "^0.83.10",
-    "@titan-design/react-ui": "^0.6.0",
+    "@titan-design/react-ui": "^0.7.0",
     "@types/node": "^25.2.3",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",

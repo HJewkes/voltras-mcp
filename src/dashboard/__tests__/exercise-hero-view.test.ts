@@ -13,7 +13,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import {
-  toExerciseE1RM,
+  toExerciseIsPR,
   toExerciseSummary,
   toLiveTempoSeconds,
   toSetRowProps,
@@ -65,30 +65,24 @@ function completedView(reps: Rep[], over: Partial<WorkoutSetView> = {}): Workout
 }
 
 describe('toSetRowProps', () => {
-  it('passes EXACT weight, previous, velocity, and RPE (no pre-rounding)', () => {
+  it('maps a completed set to a `done` row with EXACT weight, velocity, and RPE', () => {
     const reps = [repWithMean(1, 800, 800), repWithMean(2, 600, 600)];
-    const view = completedView(reps, {
-      setNumber: 2,
-      weightLbs: 100.4,
-      previous: { reps: 8, weightLbs: 95.6 },
-    });
+    const view = completedView(reps, { setNumber: 2, weightLbs: 100.4 });
     const props = toSetRowProps(view);
 
-    expect(props.mode).toBe('completed');
+    expect(props.state).toBe('done');
     expect(props.setNumber).toBe(2);
+    expect(props.unit).toBe('lbs');
+    if (props.state !== 'done') throw new Error('expected a done row');
     expect(props.reps).toBe(2);
     expect(props.weight).toBe(100.4); // exact — SetRow rounds for display
-    expect(props.unit).toBe('lbs');
     expect(props.velocities).toEqual([0.8, 0.6]); // mm/s → m/s, unrounded
-    expect(props.previous).toEqual({ reps: 8, weight: 95.6 }); // exact
     // RPE is exactly WA's value — not rounded to 0.5 at this layer.
     expect(props.rpe).toBe(estimateSetRpe({ reps }));
     expect(props.rpe).not.toBeNull();
-    expect(props.isNextSet).toBe(false);
-    expect(props.targets).toBeUndefined();
   });
 
-  it('maps an active set: null reps until first rep, isNextSet, exact targets', () => {
+  it('maps an active set to a `live` row: reps-so-far + exact target', () => {
     const view: WorkoutSetView = {
       setNumber: 3,
       kind: 'active',
@@ -99,25 +93,28 @@ describe('toSetRowProps', () => {
       previous: null,
     };
     const props = toSetRowProps(view);
-    expect(props.mode).toBe('active');
-    expect(props.reps).toBeNull();
-    expect(props.isNextSet).toBe(true);
-    expect(props.targets).toEqual({ reps: 8, weight: 134.5 }); // exact
-    expect(props.velocities).toBeUndefined();
+    expect(props.state).toBe('live');
+    if (props.state !== 'live') throw new Error('expected a live row');
+    expect(props.reps).toBe(0); // no reps yet — the row displays the target
+    expect(props.weight).toBe(135);
+    expect(props.target).toEqual({ reps: 8, weight: 134.5 }); // exact
+    expect(props.velocities).toEqual([]);
   });
 
-  it('omits targets on an active set with no configured rep target', () => {
+  it('falls a `live` row target back to reps-done + working weight when unplanned', () => {
     const view: WorkoutSetView = {
       setNumber: 1,
       kind: 'active',
       reps: [rep(1, 800)],
       weightLbs: 135,
       targetReps: null,
-      targetWeightLbs: 135,
+      targetWeightLbs: null,
       previous: null,
     };
-    expect(toSetRowProps(view).targets).toBeUndefined();
-    expect(toSetRowProps(view).reps).toBe(1);
+    const props = toSetRowProps(view);
+    if (props.state !== 'live') throw new Error('expected a live row');
+    expect(props.reps).toBe(1);
+    expect(props.target).toEqual({ reps: 1, weight: 135 }); // fallback: reps-done + weight
   });
 });
 
@@ -188,8 +185,10 @@ describe('toLiveTempoSeconds', () => {
   });
 });
 
-describe('toExerciseE1RM', () => {
-  it('leaves the badge undefined (and not a PR) for an empty active set', () => {
+describe('toExerciseIsPR', () => {
+  // titan 0.7.0's unified ExerciseCard dropped the numeric e1RM badge; the
+  // dashboard keeps PR *detection* (the `isPR` chip) off the same WA estimate.
+  it('is not a PR for an empty active set', () => {
     const view: WorkoutSetView = {
       setNumber: 1,
       kind: 'active',
@@ -199,27 +198,21 @@ describe('toExerciseE1RM', () => {
       targetWeightLbs: 135,
       previous: null,
     };
-    expect(toExerciseE1RM([view], null)).toEqual({ e1rm: undefined, isPR: false });
+    expect(toExerciseIsPR([view], null)).toBe(false);
   });
 
-  it('passes the EXACT WA best-across-sets e1RM (lbs) and no PR without history', () => {
+  it('is not a PR without a historical baseline', () => {
     const views = [
       completedView([rep(1, 800), rep(2, 700), rep(3, 650)], { weightLbs: 100 }),
       completedView([rep(1, 800), rep(2, 700)], { setNumber: 2, weightLbs: 120 }),
     ];
-    const expected = bestE1RMAcrossSets([
-      { load: 100, reps: 3 },
-      { load: 120, reps: 2 },
-    ]);
-    const { e1rm, isPR } = toExerciseE1RM(views, null);
-    expect(e1rm).toEqual({ value: expected, unit: 'lbs' }); // exact — ExerciseCard rounds
-    expect(isPR).toBe(false); // no historical baseline -> never a PR
+    expect(toExerciseIsPR(views, null)).toBe(false); // no baseline -> never a PR
   });
 
   it('flags a PR only when the live e1RM beats the prior historical best', () => {
     const views = [completedView([rep(1, 800), rep(2, 700), rep(3, 650)], { weightLbs: 100 })];
     const live = bestE1RMAcrossSets([{ load: 100, reps: 3 }]) as number;
-    expect(toExerciseE1RM(views, live - 1).isPR).toBe(true);
-    expect(toExerciseE1RM(views, live + 1).isPR).toBe(false);
+    expect(toExerciseIsPR(views, live - 1)).toBe(true);
+    expect(toExerciseIsPR(views, live + 1)).toBe(false);
   });
 });
