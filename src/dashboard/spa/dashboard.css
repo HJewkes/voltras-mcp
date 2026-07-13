@@ -247,6 +247,31 @@
   letter-spacing: 0.06em;
   font-weight: 700;
 }
+/* Live auto-regulation flood frame (titan LiveAuraFrame) wrapping the live
+   close-up (velocity · tempo · fatigue). The frame owns its charcoal base +
+   threshold/stop wash; this just gives it panel-consistent spacing. */
+.hero-aura {
+  margin-bottom: 12px;
+  border-radius: 12px;
+}
+.hero-aura .hero-velocity:last-child,
+.hero-aura .hero-tempo:last-child,
+.hero-aura .hero-fatigue:last-child {
+  margin-bottom: 0;
+}
+.hero-fatigue {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.hero-fatigue-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
 .hero-deviation-value {
   font-weight: 700;
   color: var(--color-text-primary);

@@ -18,8 +18,27 @@ import {
   getSetTempoSeconds,
   isNewE1RM,
 } from '@voltras/workout-analytics';
-import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
+import type {
+  ExerciseCardProps,
+  SetRowProps,
+  StatusPillStatus,
+  TempoDisplayProps,
+} from '@titan-design/react-ui';
 import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
+
+/**
+ * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
+ * live surface's `StatusPill` (verdict text) and `LiveAuraFrame` (flood), which
+ * take the same `productive | threshold | stop` domain: below VL20 keep going,
+ * VL20–28 approaching fatigue, VL28+ terminate the set. Null (no verdict / no
+ * flood) when loss is not yet derivable (<2 reps).
+ */
+export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null {
+  if (lossPct === null) return null;
+  if (lossPct >= 28) return 'stop';
+  if (lossPct >= 20) return 'threshold';
+  return 'productive';
+}
 
 /**
  * Map a canonical set view onto titan `SetRow` props (titan 0.7.0 unified table:

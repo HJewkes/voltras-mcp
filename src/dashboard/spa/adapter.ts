@@ -166,6 +166,8 @@ export interface CurrentSetView {
   repsLabel: string;
   /** Live set velocity-loss %, via WA `getSetVelocityLossPct`. `"—"` if <2 reps. */
   velocityLoss: string;
+  /** Numeric sibling of {@link velocityLoss}: raw loss %, or null when unshown. */
+  velocityLossPct: number | null;
   latestPeakVelocity: string;
   targetWeight: string;
   /** Per-rep peak velocities in m/s, ordered by rep, for the VelocityStrip. */
@@ -198,11 +200,21 @@ function fmtRepsLabel(count: number, target: number | null): string {
  * under two reps, or when WA can't derive a finite mean (e.g. reps carrying no
  * movement samples), we render the em-dash placeholder rather than `0%`.
  */
-function fmtVelocityLoss(reps: Rep[]): string {
-  if (reps.length < 2) return '—';
+/**
+ * Raw live velocity-loss %, or null when WA can't derive one (<2 reps, or reps
+ * without finite concentric samples). The numeric source shared by the display
+ * string and the auto-reg visuals (StatusPill / FatigueMeter / LiveAuraFrame),
+ * so needle, verdict, and text always agree.
+ */
+function computeVelocityLossPct(reps: Rep[]): number | null {
+  if (reps.length < 2) return null;
   const pct = getSetVelocityLossPct({ reps });
-  if (!Number.isFinite(pct)) return '—';
-  return `${Math.round(pct)}%`;
+  return Number.isFinite(pct) ? pct : null;
+}
+
+function fmtVelocityLoss(reps: Rep[]): string {
+  const pct = computeVelocityLossPct(reps);
+  return pct === null ? '—' : `${Math.round(pct)}%`;
 }
 
 /** Weight precedence: live device weight, else the in-progress target (tenths/10). */
@@ -223,6 +235,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
       repTarget: null,
       repsLabel: '—',
       velocityLoss: '—',
+      velocityLossPct: null,
       latestPeakVelocity: '—',
       targetWeight: '—',
       velocitiesMps: [],
@@ -247,6 +260,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
     repTarget,
     repsLabel: fmtRepsLabel(reps.length, repTarget),
     velocityLoss: fmtVelocityLoss(reps),
+    velocityLossPct: computeVelocityLossPct(reps),
     latestPeakVelocity: fmtVelocity(latest ? repPeakMms(latest) : null),
     targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB) : '—',
     velocitiesMps,

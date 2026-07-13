@@ -13,6 +13,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import {
+  toAutoRegStatus,
   toExerciseIsPR,
   toExerciseSummary,
   toLiveTempoSeconds,
@@ -182,6 +183,29 @@ describe('toLiveTempoSeconds', () => {
     expect(tempo).toEqual([2.5, 0.5, 1.5, 0]);
     // Wiring contract: identical to WA's own derivation (no app-side reshaping).
     expect(tempo).toEqual(getSetTempoSeconds({ reps: view.reps }));
+  });
+});
+
+describe('toAutoRegStatus', () => {
+  // The coaching auto-reg boundaries shared by StatusPill + LiveAuraFrame +
+  // FatigueMeter: <20 productive, 20–28 threshold, 28+ stop. Lock the edges.
+  it('is null when loss is not yet derivable', () => {
+    expect(toAutoRegStatus(null)).toBeNull();
+  });
+
+  it('is productive below VL20', () => {
+    expect(toAutoRegStatus(0)).toBe('productive');
+    expect(toAutoRegStatus(19.9)).toBe('productive');
+  });
+
+  it('is threshold from VL20 up to (not including) VL28', () => {
+    expect(toAutoRegStatus(20)).toBe('threshold');
+    expect(toAutoRegStatus(27.9)).toBe('threshold');
+  });
+
+  it('is stop at VL28 and above', () => {
+    expect(toAutoRegStatus(28)).toBe('stop');
+    expect(toAutoRegStatus(45)).toBe('stop');
   });
 });
 
