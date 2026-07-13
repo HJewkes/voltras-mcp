@@ -153,9 +153,13 @@ export function resetPrimarySlot(state: ServerState): void {
  * `false`. The field shape mirrors the `settingsDelta` produced in
  * `event-bridge.ts` (search for `onConnectionStateChange`).
  *
+ * Called by `createSlot` (new slot) and by `device.connect`'s
+ * primary-slot rebind path (see device-tools.ts) — both wire the bridge
+ * after the initial connect, so both need the seed.
+ *
  * VMCP-01.26 (F12).
  */
-function seedConnectedState(slot: SlotState): void {
+export function seedConnectedState(slot: SlotState): void {
   const { client, live } = slot;
   if (!client.isConnected) return;
   const initial: Partial<DeviceSnapshot> = { connected: true };

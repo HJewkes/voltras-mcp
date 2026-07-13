@@ -46,7 +46,12 @@ const PORT = Number(process.env.VMCP_DASHBOARD_PORT ?? 7724);
 const SETS = Number(process.env.SETS ?? 3);
 const DWELL_MS = Number(process.env.DWELL_MS ?? 8000); // let reps accrue per set
 const REST_MS = Number(process.env.REST_MS ?? 3000);
-const EXERCISE = process.env.EXERCISE ?? 'Bench Press';
+// Default to a seeded-catalog exerciseId (not a free-text name) so the active
+// session resolves to muscle groups and lights the dashboard BodyMap heatmap.
+// `session.start` enforces exerciseId XOR exerciseName, so we send exactly one:
+// an id when EXERCISE_ID is set (the default), else a free-text EXERCISE name.
+const EXERCISE_ID = process.env.EXERCISE_ID ?? 'cable-chest-press';
+const EXERCISE = process.env.EXERCISE; // free-text fallback; only used if EXERCISE_ID=''
 const HOLD = process.env.HOLD !== '0'; // keep server + dashboard alive after the workout
 // Parallel-safe DB path so this never collides with a live session's sqlite.
 const DB_PATH =
@@ -178,8 +183,11 @@ async function main() {
   log('connected — mock telemetry streaming');
   await sleep(500);
 
-  // 3. session
-  await callTool('session.start', { exerciseName: EXERCISE });
+  // 3. session — send exerciseId (catalog-resolved → lights BodyMap) or a name.
+  const sessionArgs = EXERCISE_ID
+    ? { exerciseId: EXERCISE_ID }
+    : { exerciseName: EXERCISE ?? 'Bench Press' };
+  await callTool('session.start', sessionArgs);
   summarize(await snapshot(), 'session.start');
 
   // 4. set.start → dwell (reps accrue) → set.end, repeated
