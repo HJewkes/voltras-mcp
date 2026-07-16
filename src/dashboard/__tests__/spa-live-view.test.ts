@@ -83,6 +83,24 @@ describe('mapStoreToDashboardModel', () => {
       expect(model?.session.plannedSets).toBeNull();
     });
   });
+
+  describe('session.tempo (VW-41)', () => {
+    it('carries the prescription target tempo tuple onto the session model', () => {
+      const prescription: PrescriptionView = { sets: 4, tempo: [3, 0, 1, 0] };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.tempo).toEqual([3, 0, 1, 0]);
+    });
+
+    it('leaves the tempo undefined when the prescription carries none', () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
+      expect(model?.session.tempo).toBeUndefined();
+    });
+
+    it('leaves the tempo undefined when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.tempo).toBeUndefined();
+    });
+  });
 });
 
 describe('deriveRailExercises', () => {

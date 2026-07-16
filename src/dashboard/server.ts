@@ -53,6 +53,7 @@ import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DASHBOARD_HTML } from './dashboard-html.js';
+import { resolveTargetTempo } from './tempo-defaults.js';
 import {
   buildSnapshotView,
   buildE1rmSeries,
@@ -151,7 +152,14 @@ export interface DashboardServerState {
   exercises?: {
     getById(
       id: string,
-    ): { name?: string; muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined;
+    ):
+      | {
+          name?: string;
+          muscleGroups: string[];
+          secondaryMuscleGroups?: string[];
+          movementPattern?: string;
+        }
+      | undefined;
   };
   /**
    * Fan-out hub for the derived live signal, feeding the `GET /api/stream` SSE
@@ -566,6 +574,12 @@ interface PrescriptionView {
   rpe?: number;
   /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
   restSec?: number;
+  /**
+   * Target tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]` (seconds),
+   * resolved from the coach override (none yet) or the exercise default. Absent when
+   * neither resolves — the live view then hides the tempo readout (VW-41).
+   */
+  tempo?: [number, number, number, number];
 }
 
 /**
@@ -607,6 +621,15 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
     if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
     if (match.restSec !== undefined) prescription.restSec = match.restSec;
+    // No coach-set tempo source yet (VW-41.1) — resolve the exercise default only.
+    // The movement pattern, when the catalog knows it, widens coverage to the
+    // per-pattern fallback; unknown exercise/pattern → null → tempo stays absent.
+    const tempo = resolveTargetTempo(
+      exerciseId,
+      undefined,
+      state.exercises?.getById(exerciseId)?.movementPattern,
+    );
+    if (tempo !== null) prescription.tempo = tempo;
     return prescription;
   }
   return null;

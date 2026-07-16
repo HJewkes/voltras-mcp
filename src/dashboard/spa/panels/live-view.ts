@@ -10,7 +10,8 @@
  * GAP fields (no store source yet) are left `null`/omitted rather than invented, so
  * the page hides them exactly as titan's `LiveNoTempo` story does. Each is ticketed:
  *   - `session.title`      → VW-43 (compose from WorkoutTemplate + TrainingBlock)
- *   - `session.tempo`      → VW-41 (defaults config + resolver), VW-46 (coach override)
+ * `session.tempo` is now wired: the prescription carries the resolved target tempo
+ * (VW-41; coach override still pending, VW-46), hidden when the prescription has none.
  * Wiring each is additive here — no consumer change.
  */
 import { type Rep } from '@voltras/workout-analytics';
@@ -170,7 +171,9 @@ function mapSession(
     title: null,
     weightLbs,
     unit: 'lbs',
-    tempo: undefined,
+    // Target tempo tuple [ecc, pauseBottom, con, pauseTop], resolved server-side
+    // from the exercise default (VW-41). Hidden when the prescription carries none.
+    tempo: prescription?.tempo,
     completedSets: setLog.map(mapCompletedSet),
     // Null when the session carries no plan attachment at all — the view then hides the
     // set count rather than implying a one-set prescription.

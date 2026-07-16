@@ -450,6 +450,117 @@ describe('GET /api/history', () => {
     });
   });
 
+  it('surfaces the exercise-default target tempo when a byExercise override matches (VW-41)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-T',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable_hip_thrust',
+      exerciseName: 'Cable Hip Thrust',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-T', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'cable_hip_thrust',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { tempo?: number[] } };
+    // [ecc, pauseBottom, con, pauseTop] — the cable_hip_thrust override.
+    expect(body.plan.tempo).toEqual([2, 1, 1, 2]);
+  });
+
+  it('surfaces the movement-pattern default tempo from the exercise catalog (VW-41)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-M',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'barbell-bench-press',
+      exerciseName: 'Bench Press',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-M', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'barbell-bench-press',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+      },
+      // The catalog knows the pattern but has no byExercise override → pattern fallback.
+      exercises: { getById: () => ({ muscleGroups: ['chest'], movementPattern: 'push' }) },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { tempo?: number[] } };
+    expect(body.plan.tempo).toEqual([3, 0, 1, 0]);
+  });
+
+  it('omits tempo from the prescription when no default resolves (VW-41)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-N',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'unknown_movement',
+      exerciseName: 'Unknown',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-N', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'unknown_movement',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { tempo?: number[] } };
+    expect(body.plan.tempo).toBeUndefined();
+  });
+
   it('omits rest from the prescription when the plan sets no rest target', async () => {
     const session: ActiveSession = {
       sessionId: 'sess-R',
