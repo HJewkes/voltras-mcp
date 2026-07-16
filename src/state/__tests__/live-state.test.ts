@@ -181,6 +181,62 @@ describe('LiveState', () => {
     });
   });
 
+  describe('snapshotCompletedSets (VW-70)', () => {
+    it('returns [] with no active session even after a set closed', () => {
+      const live = new LiveState();
+      live.startSet(makeSet());
+      live.endSet();
+      expect(live.snapshotCompletedSets()).toEqual([]);
+    });
+
+    it('retains a finished set for read-back after set.end (durable rail source)', () => {
+      const live = new LiveState();
+      live.applySettings({ connected: true, weightLbs: 20 });
+      live.startSession(makeSession());
+      live.startSet(makeSet());
+      live.appendRep(makeRep(1));
+      live.appendRep(makeRep(2));
+      live.endSet();
+      const completed = live.snapshotCompletedSets();
+      expect(completed).toHaveLength(1);
+      expect(completed[0].set.setId).toBe('set-1');
+      expect(completed[0].set.reps).toHaveLength(2);
+      // Device snapshotted at close so weight labels stay correct across sets.
+      expect(completed[0].device.weightLbs).toBe(20);
+    });
+
+    it('accumulates every set in the session, oldest-first', () => {
+      const live = new LiveState();
+      live.startSession(makeSession());
+      live.startSet(makeSet({ setId: 'set-1' }));
+      live.endSet();
+      live.startSet(makeSet({ setId: 'set-2' }));
+      live.endSet();
+      expect(live.snapshotCompletedSets().map((r) => r.set.setId)).toEqual(['set-1', 'set-2']);
+    });
+
+    it('is scoped to the current session — a new session starts with an empty rail', () => {
+      const live = new LiveState();
+      live.startSession(makeSession({ sessionId: 'sess-1' }));
+      live.startSet(makeSet({ setId: 'set-1', sessionId: 'sess-1' }));
+      live.endSet();
+      live.endSession();
+      live.startSession(makeSession({ sessionId: 'sess-2' }));
+      expect(live.snapshotCompletedSets()).toEqual([]);
+    });
+
+    it('returns independent copies — mutating the result never churns internal state', () => {
+      const live = new LiveState();
+      live.startSession(makeSession());
+      live.startSet(makeSet());
+      live.appendRep(makeRep(1));
+      live.endSet();
+      const first = live.snapshotCompletedSets();
+      first[0].set.reps.push(makeRep(99));
+      expect(live.snapshotCompletedSets()[0].set.reps).toHaveLength(1);
+    });
+  });
+
   describe('endSet — dropTrailingInProgress (F14 / VMCP-01.28)', () => {
     // Phase enum values from @voltras/workout-analytics:
     //   1 = CONCENTRIC, 3 = ECCENTRIC. Building samples by literal so the

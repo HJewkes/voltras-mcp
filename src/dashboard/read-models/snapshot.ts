@@ -13,7 +13,12 @@
 // command codes cross this seam — the caller only ever passes already-typed
 // session/device/exercise state.
 
-import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../../state/live-state.js';
+import type {
+  DeviceSnapshot,
+  ActiveSession,
+  ActiveSet,
+  CompletedSetRecord,
+} from '../../state/live-state.js';
 
 /** One slot's device snapshot, tagged with its slot id. */
 export interface DeviceEntry {
@@ -35,7 +40,13 @@ export interface ActiveExerciseMuscles {
 export interface SnapshotResponse {
   session: ActiveSession | null;
   devices: DeviceEntry[];
-  sets: { active: ActiveSet | null };
+  /**
+   * `active` is the in-progress set (null between sets); `completed` is the
+   * current session's finished sets, oldest-first (VW-70). Exposing `completed`
+   * makes the rail / rest recap / session totals durable — a consumer no longer
+   * has to have watched the live active→null transition to see a finished set.
+   */
+  sets: { active: ActiveSet | null; completed: CompletedSetRecord[] };
   activeExercise: ActiveExerciseMuscles | null;
 }
 
@@ -60,6 +71,11 @@ export interface SnapshotInput {
   session: ActiveSession | undefined;
   /** The primary active set (first slot that has one), if any. */
   activeSet: ActiveSet | undefined;
+  /**
+   * The current session's finished sets (first slot that has a session),
+   * oldest-first. Optional so callers/tests that predate VW-70 default to none.
+   */
+  completedSets?: CompletedSetRecord[];
   /** The catalog entry for the active session's exercise, if resolved. */
   activeExercise: ExerciseMeta | undefined;
 }
@@ -111,7 +127,7 @@ export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
   return {
     session: resolveSessionView(input.session, input.activeExercise),
     devices: input.devices,
-    sets: { active: input.activeSet ?? null },
+    sets: { active: input.activeSet ?? null, completed: input.completedSets ?? [] },
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),
   };
 }

@@ -421,6 +421,26 @@ const IDLE_REP_BUFFER_CAP = 20;
 const EMPTY_DEVICE: DeviceSnapshot = Object.freeze({ connected: false });
 
 /**
+ * A finished set retained for post-close read-back (VW-70). Pairs the finalized
+ * {@link ActiveSet} with the {@link DeviceSnapshot} captured at close so a
+ * consumer that was NOT streaming live across the set (a reloaded tab, a
+ * late-joining SSE client, a one-off `/api/snapshot` probe) can still render the
+ * rail / rest recap / session totals. The device is snapshotted at close because
+ * header weight can change between sets — using the current device would
+ * mislabel earlier sets.
+ */
+export interface CompletedSetRecord {
+  set: ActiveSet;
+  device: DeviceSnapshot;
+}
+
+/**
+ * Cap on the retained completed-set ring. A single session rarely exceeds this;
+ * the bound only guards a very long-lived process. Oldest record drops first.
+ */
+const COMPLETED_SET_RING_CAP = 50;
+
+/**
  * In-memory snapshot of current device, session, and set state.
  *
  * All mutations are synchronous; readers always see a consistent snapshot
@@ -430,6 +450,13 @@ export class LiveState {
   device: DeviceSnapshot = { ...EMPTY_DEVICE };
   session: ActiveSession | undefined = undefined;
   set: ActiveSet | undefined = undefined;
+  /**
+   * Bounded ring of finished sets (VW-70), each tagged with the device snapshot
+   * at close. Read (session-scoped) by {@link snapshotCompletedSets} so the
+   * dashboard surfaces completed sets durably instead of relying on a browser-
+   * local accumulator that only catches the live active→null transition.
+   */
+  private completedSets: CompletedSetRecord[] = [];
   /**
    * Monotonic count of reps detected while no MCP set was armed. Increments
    * without bound; `idleReps` is capped at `IDLE_REP_BUFFER_CAP`. The PT
@@ -642,6 +669,13 @@ export class LiveState {
         ...this.session,
         setIds: [...this.session.setIds, current.setId],
       };
+    }
+    // VW-70: retain the finished set (with the device snapshot at close) so the
+    // dashboard can render it after the fact — a reloaded tab or late-joining
+    // client no longer depends on having watched the live active→null transition.
+    this.completedSets.push({ set: finalized, device: this.snapshotDevice() });
+    if (this.completedSets.length > COMPLETED_SET_RING_CAP) {
+      this.completedSets.shift();
     }
     this.set = undefined;
     this._analyticsSet = undefined;
@@ -961,6 +995,26 @@ export class LiveState {
       reps: [...this.set.reps],
       ...(this.set.firmwareReps !== undefined ? { firmwareReps: [...this.set.firmwareReps] } : {}),
     };
+  }
+
+  /**
+   * Finished sets for the CURRENT session, oldest-first (VW-70). Scoped to the
+   * active session id so a new session starts with an empty rail without needing
+   * to clear the ring; returns `[]` when no session is active. Each record is an
+   * independent copy (reps array cloned) — finished sets are never mutated in
+   * place, so this is a defensive copy consistent with {@link snapshotSet}.
+   */
+  snapshotCompletedSets(): CompletedSetRecord[] {
+    const sessionId = this.session?.sessionId;
+    if (sessionId === undefined) {
+      return [];
+    }
+    return this.completedSets
+      .filter((record) => record.set.sessionId === sessionId)
+      .map((record) => ({
+        set: { ...record.set, reps: [...record.set.reps] },
+        device: { ...record.device },
+      }));
   }
 
   /**

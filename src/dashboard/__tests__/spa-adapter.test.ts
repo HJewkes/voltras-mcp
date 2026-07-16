@@ -25,6 +25,7 @@ import {
   toMps,
   type Snapshot,
   type SnapshotActiveSet,
+  type SnapshotCompletedSet,
   type SnapshotDevice,
 } from '../spa/adapter.js';
 
@@ -68,12 +69,13 @@ function snapshot(opts: {
   exerciseName?: string;
   device?: SnapshotDevice;
   activeSet?: SnapshotActiveSet | null;
+  completed?: SnapshotCompletedSet[];
 }): Snapshot {
-  const { sessionId, exerciseName, device, activeSet } = opts;
+  const { sessionId, exerciseName, device, activeSet, completed } = opts;
   return {
     session: sessionId == null ? null : { sessionId, exerciseName },
     devices: device ? [{ slotId: 'primary', device }] : [],
-    sets: { active: activeSet ?? null },
+    sets: { active: activeSet ?? null, ...(completed !== undefined ? { completed } : {}) },
   };
 }
 
@@ -373,6 +375,72 @@ describe('reduceSnapshot — completed-set accumulation', () => {
     // New session id → log resets.
     state = reduceSnapshot(state, snapshot({ sessionId: 's2', activeSet: set }), 1_000);
     expect(state.setLog).toHaveLength(0);
+  });
+});
+
+describe('reduceSnapshot — server-provided completed sets (VW-70)', () => {
+  const device: SnapshotDevice = { connected: true, weightLbs: 20, trainingMode: 'weight' };
+  const completed = (reps: Rep[]): SnapshotCompletedSet => ({
+    set: { reps } as SnapshotActiveSet,
+    device,
+  });
+
+  it('rebuilds the log from sets.completed on a SINGLE tick — no live transition needed', () => {
+    // The reload / late-join case: a fresh accumulator (prevSetActive=false) that
+    // never saw the set open still renders the rail because the server ships it.
+    const state = reduceSnapshot(
+      initialAccumulatorState(),
+      snapshot({
+        sessionId: 's1',
+        exerciseName: 'Cable Chest Press',
+        device,
+        completed: [completed([rep(1, 700), rep(2, 680)])],
+      }),
+      1_000,
+    );
+    expect(state.setLog).toHaveLength(1);
+    expect(state.setLog[0].repCount).toBe(2);
+    expect(state.setLog[0].weightLbs).toBe(20);
+    expect(state.setLog[0].exerciseName).toBe('Cable Chest Press');
+  });
+
+  it('is idempotent — re-polling the same completed list does not duplicate rows', () => {
+    const snap = snapshot({
+      sessionId: 's1',
+      device,
+      completed: [completed([rep(1, 700)]), completed([rep(1, 690)])],
+    });
+    let state = reduceSnapshot(initialAccumulatorState(), snap, 0);
+    state = reduceSnapshot(state, snap, 500);
+    state = reduceSnapshot(state, snap, 1_000);
+    expect(state.setLog).toHaveLength(2);
+  });
+
+  it('does not double-count via the legacy active→null accrual when the server ships completed', () => {
+    let state = initialAccumulatorState();
+    const active: SnapshotActiveSet = { reps: [rep(1, 700)] };
+    // Set active, server reports it not-yet-completed.
+    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device, activeSet: active }), 0);
+    // Set closes: server now reports it in `completed` AND active is null. The
+    // server list is authoritative — exactly one row, not two.
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', device, completed: [completed([rep(1, 700)])] }),
+      500,
+    );
+    expect(state.setLog).toHaveLength(1);
+  });
+
+  it('still starts the rest timer on the active→null transition alongside server completed', () => {
+    let state = initialAccumulatorState();
+    const active: SnapshotActiveSet = { reps: [rep(1, 700)] };
+    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device, activeSet: active }), 0);
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', device, completed: [completed([rep(1, 700)])] }),
+      500,
+    );
+    expect(state.restStartMs).toBe(500);
   });
 });
 

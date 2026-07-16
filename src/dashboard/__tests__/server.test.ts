@@ -1187,10 +1187,17 @@ describe('GET /api/stream (SSE)', () => {
     try {
       await waitFor(() => body.includes('event: hb'));
       hub.emit({ type: 'set', data: { kind: 'ended', setId: 'set-1', sessionId: 'sess-1' } });
-      await waitFor(() => body.includes('event: snapshot'));
+      // Wait for the snapshot that FOLLOWS the set echo — a snapshot is also
+      // pushed on connect (VW-70 late-join catch-up), so gate on the set-triggered
+      // one specifically rather than any snapshot event.
+      await waitFor(() => {
+        const setIdx = body.indexOf('event: set\ndata: {"kind":"ended"');
+        return setIdx !== -1 && body.indexOf('event: snapshot', setIdx) !== -1;
+      });
       // the set echo AND the structural snapshot (with its ordering rev) both go out
       expect(body).toContain('event: set\ndata: {"kind":"ended"');
-      expect(body).toMatch(/event: snapshot\ndata: \{.*"rev":\d+/);
+      const afterSet = body.slice(body.indexOf('event: set\ndata: {"kind":"ended"'));
+      expect(afterSet).toMatch(/event: snapshot\ndata: \{.*"rev":\d+/);
       expect(body).toContain('"devices":');
     } finally {
       stream.close();
@@ -1211,7 +1218,7 @@ describe('GET /api/stream (SSE)', () => {
     expect(hub.subscriberCount).toBe(0);
   });
 
-  it('serves a valid heartbeat-only stream when no hub is wired', async () => {
+  it('serves a valid heartbeat + connect-snapshot stream when no hub is wired', async () => {
     const handle = await startWithFake(makeFakeState());
     let body = '';
     const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
@@ -1220,6 +1227,10 @@ describe('GET /api/stream (SSE)', () => {
     try {
       await waitFor(() => body.includes('event: hb'));
       expect(body).toContain('event: hb');
+      // VW-70: the connect-time snapshot is built from state (not the hub), so a
+      // late-joining client catches up even when no live-signal hub is wired.
+      await waitFor(() => body.includes('event: snapshot'));
+      expect(body).toMatch(/event: snapshot\ndata: \{.*"completed":\[\]/);
     } finally {
       stream.close();
     }
