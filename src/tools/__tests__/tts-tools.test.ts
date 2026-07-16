@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@voltras/node-sdk', () => ({}));
 
-const { registerSystemTools, __resetSpeakState } = await import('../tts-tools.js');
+const { registerSystemTools, __resetSpeakState, speak } = await import('../tts-tools.js');
 
 import type { ChildProcess } from 'node:child_process';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -97,6 +97,31 @@ function buildHarness(platform: NodeJS.Platform): Harness {
 function payload(result: ToolResult): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
+
+describe('speak() — direct call (bypassing the MCP tool)', () => {
+  afterEach(() => {
+    __resetSpeakState();
+  });
+
+  it('spawns say with the text and returns ok:true', async () => {
+    const spawnCalls: SpawnCall[] = [];
+    const child = new FakeChild();
+    const fakeSpawn = (command: string, args: ReadonlyArray<string>): ChildProcess => {
+      spawnCalls.push({ command, args });
+      return child as unknown as ChildProcess;
+    };
+
+    const result = await speak(
+      { text: 'go', interrupt: false, blocking: false },
+      { platform: 'darwin', spawn: fakeSpawn },
+    );
+
+    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls[0]!.command).toBe('say');
+    expect(spawnCalls[0]!.args).toEqual(['go']);
+    expect(payload(result)).toEqual({ ok: true });
+  });
+});
 
 describe('system.speak — schema validation', () => {
   let harness: Harness;

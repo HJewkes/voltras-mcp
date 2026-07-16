@@ -31,6 +31,7 @@ import { configureLogger, log } from './logger.js';
 import { bootstrapState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
 import { McpChannelPublisher } from './state/channel-publisher.js';
+import { maybeCueTee } from './voice/cue-emitter.js';
 import { z } from 'zod';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { registerDeviceTools } from './tools/device-tools.js';
@@ -250,7 +251,14 @@ export async function runServer(): Promise<void> {
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
-    state.channels = channels;
+    // When cues are enabled (and we're on macOS, where `say` exists), tee the
+    // channel stream through the deterministic cue emitter. It shares the same
+    // voice-listener ref as `system.speak` (wired at registerSystemTools below)
+    // so spoken cues duck the STT mic. Passthrough is byte-identical otherwise.
+    state.channels = maybeCueTee(channels, {
+      enabled: state.config.cues === 'on' && process.platform === 'darwin',
+      voiceListenerRef: state.voice,
+    });
     state.server = server;
     stateBox.value = state;
     // Wire the SDK event bridge for every slot currently in the slots map.
