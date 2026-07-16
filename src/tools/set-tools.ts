@@ -27,6 +27,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
+import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
 
 import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
@@ -38,6 +39,7 @@ import {
 } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
+import { mmsToMps, mmToM } from '../state/live-signal.js';
 import {
   buildIdleTimeoutPayload,
   buildSetAbortedByModeRevertPayload,
@@ -626,6 +628,34 @@ export async function finalizeSet(
   );
   const slotChannels = state.channels.forSlot(slotId);
   slotChannels.publish(payload);
+  // VW-57: the terminal rep (rep N) never fires a phase-transition
+  // `rep_finalized`, so event-bridge's `onFrame` SSE tap only ever streams reps
+  // 1..N-1 (it emits rep k when rep k+1 *begins*; rep N has no successor). Echo
+  // the final rep onto the SSE stream here — the ONE choke point both close
+  // paths (tool `set.end` and device `onSetSummary`) funnel through — so the
+  // dashboard live tiles get rep N's rom/vCon/peakVelocity/peakForce without
+  // waiting for the next 500 ms snapshot poll. Emitted BEFORE the `set ended`
+  // signal below so the wire order is `rep(N)` -> `set(ended)`. Reuses the exact
+  // WA derivations event-bridge uses for reps 1..N-1 (fitness units only — m/s,
+  // m, lbs — no protocol bytes). No double-emit: the `onFrame` tap tops out at
+  // rep N-1, so rep N is streamed exactly once, here.
+  const terminalRep = correctedForStore.reps[correctedForStore.reps.length - 1];
+  if (terminalRep !== undefined) {
+    const peakConcentricForce = correctedForStore.reps.reduce(
+      (max, rep) => Math.max(max, rep.concentric.peakForce),
+      0,
+    );
+    state.liveSignals?.emit({
+      type: 'rep',
+      data: {
+        repIndex: correctedForStore.reps.length,
+        vCon: mmsToMps(getPhaseMeanVelocity(terminalRep.concentric)),
+        rom: mmToM(getRepRangeOfMotion(terminalRep)),
+        peakVelocity: mmsToMps(terminalRep.concentric.peakVelocity),
+        peakForceSoFar: peakConcentricForce,
+      },
+    });
+  }
   // VMCP-01.59: echo the set-end onto the dashboard SSE stream so the client
   // clears its live tempo bar back to the non-live (per-rep-summary) mode.
   state.liveSignals?.emit({

@@ -40,6 +40,9 @@ import {
   getPhaseRangeOfMotion,
 } from '@voltras/workout-analytics';
 import type { Rep } from '@voltras/workout-analytics';
+// live-signal is a leaf module (no SDK/node imports — see its header), so a
+// static import is safe ahead of the SDK mock below.
+import { LiveSignalHub, mmsToMps, type LiveSignalEvent } from '../live-signal.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -997,6 +1000,7 @@ describe('wireEventBridge', () => {
       >;
       setWatchdog: SetWatchdogT;
       restTimers: RestTimerRegistryT;
+      liveSignals: LiveSignalHub;
       config: { restTimer: 'on' };
     }
     let fakeState: FakeState;
@@ -1037,6 +1041,7 @@ describe('wireEventBridge', () => {
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
+        liveSignals: new LiveSignalHub(),
         // restTimer:'on' so the device-close path arms the passive rest_status
         // cycle these tests assert; production defaults 'off' (VMCP-02.54).
         config: { restTimer: 'on' },
@@ -1068,6 +1073,72 @@ describe('wireEventBridge', () => {
         trainingMode: 'WeightTraining',
       });
     }
+
+    it('streams the terminal rep (rep N) once, after reps 1..N-1 and before set ended — no double-emit (VW-57)', async () => {
+      const events: LiveSignalEvent[] = [];
+      fakeState.liveSignals.subscribe((e) => events.push(e));
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+
+      // Drive three full reps through the real frame path. A rep closes on each
+      // ECCENTRIC->CONCENTRIC transition, so reps 1 and 2 stream from the
+      // onFrame SSE tap (each when its successor begins); rep 3 stays
+      // in-progress until the device close and must be streamed by finalizeSet.
+      const conEcc = (
+        base: number,
+        conVels: [number, number],
+        conForces: [number, number],
+      ): void => {
+        client.fire.frame({
+          sequence: base,
+          timestamp: base,
+          phase: 1,
+          position: 0.1,
+          velocity: conVels[0],
+          force: conForces[0],
+        });
+        client.fire.frame({
+          sequence: base + 1,
+          timestamp: base + 1,
+          phase: 1,
+          position: 0.5,
+          velocity: conVels[1],
+          force: conForces[1],
+        });
+        client.fire.frame({
+          sequence: base + 2,
+          timestamp: base + 2,
+          phase: 3,
+          position: 0.2,
+          velocity: -100,
+          force: 30,
+        });
+      };
+      conEcc(10, [400, 500], [50, 55]); // rep 1
+      conEcc(20, [400, 700], [50, 90]); // rep 2 — highest concentric force (90)
+      conEcc(30, [400, 800], [50, 60]); // rep 3 — terminal, concentric peak vel 800
+
+      client.fire.setSummary();
+      await flushMicrotasks();
+
+      const repEvents = events.filter(
+        (e): e is Extract<LiveSignalEvent, { type: 'rep' }> => e.type === 'rep',
+      );
+      // Exactly N=3 rep signals — was N-1 (2) before VW-57. No gap, no duplicate.
+      expect(repEvents.map((e) => e.data.repIndex)).toEqual([1, 2, 3]);
+
+      // Terminal rep carries the final rep's real WA-derived values.
+      const terminal = repEvents[2].data;
+      expect(terminal.peakVelocity).toBe(mmsToMps(800));
+      // peakForceSoFar is the set-wide concentric max (rep 2's 90), NOT the last
+      // rep's own peak (60) — proves a running max, not the latest value.
+      expect(terminal.peakForceSoFar).toBe(90);
+
+      // Wire order: the terminal rep is emitted strictly BEFORE `set ended`.
+      const repIdx = events.findIndex((e) => e.type === 'rep' && e.data.repIndex === 3);
+      const endedIdx = events.findIndex((e) => e.type === 'set' && e.data.kind === 'ended');
+      expect(repIdx).toBeGreaterThanOrEqual(0);
+      expect(endedIdx).toBeGreaterThan(repIdx);
+    });
 
     it('onInProgress flood does NOT finalize (regression guard — was the SET_START_GRACE_MS bug)', async () => {
       // The legacy bridge used `onInProgress` outside a 500ms grace as the
