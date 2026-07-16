@@ -96,6 +96,33 @@ describe('buildSnapshotView', () => {
     expect(view.devices).toHaveLength(1);
   });
 
+  // VW-70: completed sets are a durable wire field so a consumer that didn't
+  // watch the live active→null transition can still render the rail/recap.
+  it('defaults sets.completed to [] when no completed sets are supplied', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session(),
+      activeSet: undefined,
+      activeExercise: undefined,
+    });
+    expect(view.sets.completed).toEqual([]);
+  });
+
+  it('surfaces the session completed sets on the wire (VW-70)', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session({ sessionId: 'sess-A' }),
+      activeSet: undefined,
+      completedSets: [
+        { set: activeSet({ setId: 'set-1', status: 'ended' }), device: device({ weightLbs: 20 }) },
+        { set: activeSet({ setId: 'set-2', status: 'ended' }), device: device({ weightLbs: 25 }) },
+      ],
+      activeExercise: undefined,
+    });
+    expect(view.sets.completed.map((c) => c.set.setId)).toEqual(['set-1', 'set-2']);
+    expect(view.sets.completed[1]?.device?.weightLbs).toBe(25);
+  });
+
   // Regression (VW-38): `session.start` drops `exerciseName` whenever an
   // `exerciseId` is given (R21), so an id-started session reached the dashboard
   // nameless and every consumer rendered a `—` placeholder.

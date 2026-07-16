@@ -183,11 +183,28 @@ export interface SnapshotActiveExercise {
   secondaryMuscles: string[];
 }
 
+/**
+ * One finished set as the server ships it (VW-70): the finalized set plus the
+ * device snapshot captured at close. The client runs {@link summariseClosedSet}
+ * over these — the same derivation the live accumulator used — so the rail /
+ * recap / totals are identical whether reconstructed live or read back durably.
+ */
+export interface SnapshotCompletedSet {
+  set: SnapshotActiveSet;
+  device: SnapshotDevice | null;
+}
+
 /** Client-side view of the `/api/snapshot` JSON shape (server: buildSnapshot). */
 export interface Snapshot {
   session: { sessionId: string; exerciseName?: string } | null;
   devices: Array<{ slotId: string; device: SnapshotDevice }>;
-  sets: { active: SnapshotActiveSet | null };
+  /**
+   * `active` is the in-progress set; `completed` is the current session's
+   * finished sets, oldest-first (VW-70). `completed` is optional so hand-built
+   * test snapshots and older servers fall back to the legacy client-side
+   * active→null accumulator.
+   */
+  sets: { active: SnapshotActiveSet | null; completed?: SnapshotCompletedSet[] };
   /** Target muscles for the active exercise; null when idle / unknown. */
   activeExercise?: SnapshotActiveExercise | null;
   /**
@@ -635,10 +652,22 @@ export function reduceSnapshot(
     lastSessionId = sessionId;
   }
 
-  // Set just closed: push the snapshot saved at the previous tick, tagged with the
-  // exercise active at that tick (the set that closed belongs to it, not to whatever
-  // exercise the session has since advanced to).
-  if (state.prevSetActive && !activeSet && state.lastActiveSet !== null) {
+  const serverCompleted = snapshot.sets.completed;
+  if (serverCompleted !== undefined) {
+    // VW-70: the server ships the current session's finished sets, so rebuild the
+    // log from them every tick. This is authoritative and idempotent (the same
+    // list re-summarised each poll), and — unlike the active→null accrual below —
+    // it survives a page reload or a late SSE join because it doesn't depend on
+    // having observed the live set-close transition. Tagged with the current
+    // session's exercise (all completed sets in a session belong to it).
+    const exerciseName = snapshot.session?.exerciseName ?? null;
+    setLog = serverCompleted.map((entry) =>
+      summariseClosedSet(entry.set, entry.device, exerciseName),
+    );
+  } else if (state.prevSetActive && !activeSet && state.lastActiveSet !== null) {
+    // Legacy fallback (server without VW-70 completed-set exposure): a set just
+    // closed, so push the snapshot saved at the previous tick, tagged with the
+    // exercise active at that tick.
     setLog = [
       ...setLog,
       summariseClosedSet(state.lastActiveSet, state.lastActiveDevice, state.lastActiveExerciseName),

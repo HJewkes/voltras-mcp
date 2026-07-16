@@ -74,7 +74,12 @@ import {
 } from './read-models/index.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
-import type { DeviceSnapshot, ActiveSession, ActiveSet } from '../state/live-state.js';
+import type {
+  DeviceSnapshot,
+  ActiveSession,
+  ActiveSet,
+  CompletedSetRecord,
+} from '../state/live-state.js';
 import type {
   StoredSession,
   StoredSet,
@@ -117,6 +122,8 @@ export interface DashboardServerState {
         snapshotDevice(): DeviceSnapshot;
         snapshotSession(): ActiveSession | undefined;
         snapshotSet(): ActiveSet | undefined;
+        /** VW-70 completed-set read. Optional so pre-VW-70 test fakes stay minimal. */
+        snapshotCompletedSets?(): CompletedSetRecord[];
       };
     }
   >;
@@ -361,6 +368,12 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
   // `retry:` hints the browser's EventSource auto-reconnect backoff (3 s).
   res.write('retry: 3000\n\n');
   writeSseEvent(res, 'hb', { t: Date.now() });
+  // VW-70: replay the current authoritative snapshot immediately on connect so a
+  // late-joining or reconnecting client catches up on the active set AND the
+  // session's completed sets without waiting for the next `set` boundary — SSE
+  // has no event backlog, so without this a client that connects between sets
+  // sees only heartbeats until the next set starts.
+  writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
 
   const unsubscribe = state.liveSignals?.subscribe((event) => {
     writeSseEvent(res, event.type, event.data);
@@ -397,13 +410,21 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   const devices: DeviceEntry[] = [];
   let session: ActiveSession | undefined;
   let activeSet: ActiveSet | undefined;
+  let completedSets: CompletedSetRecord[] = [];
   for (const [slotId, slot] of state.slots) {
     devices.push({ slotId, device: slot.live.snapshotDevice() });
     // First slot wins for session/set — single-session contract today; if
     // a future slot has its own active session/set, the snapshot still
     // reports the primary one (devices[] always carries every slot).
     if (session === undefined) {
-      session = slot.live.snapshotSession();
+      const slotSession = slot.live.snapshotSession();
+      if (slotSession !== undefined) {
+        session = slotSession;
+        // Completed sets belong to the session that owns them — read them from
+        // the same slot (VW-70). Optional-chained so a minimal test fake without
+        // the method degrades to no completed sets rather than throwing.
+        completedSets = slot.live.snapshotCompletedSets?.() ?? [];
+      }
     }
     if (activeSet === undefined) {
       activeSet = slot.live.snapshotSet();
@@ -412,7 +433,7 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   const exerciseId = session?.exerciseId;
   const activeExercise =
     exerciseId && state.exercises ? state.exercises.getById(exerciseId) : undefined;
-  return buildSnapshotView({ devices, session, activeSet, activeExercise });
+  return buildSnapshotView({ devices, session, activeSet, completedSets, activeExercise });
 }
 
 /**
