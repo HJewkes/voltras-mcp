@@ -46,6 +46,7 @@ import { dashboardStore, type HistoricalPatch, type Status } from './store';
 import { createLiveStreamController } from './live-stream';
 import { CONNECTION_TONE_TOKEN } from './colors';
 import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
+import { LivePagePanel, readLivePageVariant } from './panels/LivePagePanel';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
 // Lazy: BodyMapPanel is the ONLY module (via its own `../bodymap` import) that
@@ -229,6 +230,9 @@ function useDashboardController(): void {
 
 function App(): React.JSX.Element {
   useDashboardController();
+  // `?live=1` swaps the whole viewport for the ported north-star live page. Read once —
+  // the flag cannot change without a reload, and re-reading would not make it reactive.
+  const [livePageVariant] = React.useState(() => readLivePageVariant(window.location.search));
   const {
     snapshot,
     accumulator,
@@ -244,6 +248,11 @@ function App(): React.JSX.Element {
     capacityBand,
     meso,
   } = useDashboardModel();
+
+  // After every hook above, so hook order stays stable regardless of the flag.
+  if (livePageVariant !== null) {
+    return <LivePagePanel variant={livePageVariant} />;
+  }
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
   const snap = snapshot ?? empty;

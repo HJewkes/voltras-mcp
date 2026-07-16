@@ -1,0 +1,42 @@
+/**
+ * Feature-flagged mount for the ported north-star live page (VW-38).
+ *
+ * Opt in with `?live=1` (add `&variant=live-dual` for the dual PREVIEW). Off by default:
+ * the page is a work-in-progress port whose data gaps (VW-41..52) are still open, so it
+ * must not replace the shipped dashboard until it is at least as truthful.
+ *
+ * Self-subscribes to the store's `live` slice for the same reason `LiveReadout` does —
+ * the SSE overlay writes at ~20 Hz, and reading it through the shell's `useDashboardModel`
+ * would re-render every other panel at that rate. The shell passes only the slow slices.
+ */
+import React from 'react';
+import { useStore } from 'zustand';
+import { dashboardStore } from '../store';
+import { LivePage, type LivePageVariant } from '../live-page/LivePage';
+import { mapStoreToDashboardModel } from './live-view';
+
+/** Reads the live-page flag off the URL. Absent ⇒ the page is not mounted at all. */
+export function readLivePageVariant(search: string): LivePageVariant | null {
+  const params = new URLSearchParams(search);
+  if (params.get('live') !== '1') return null;
+  return params.get('variant') === 'live-dual' ? 'live-dual' : 'live';
+}
+
+export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.JSX.Element | null {
+  const snapshot = useStore(dashboardStore, (s) => s.snapshot);
+  const accumulator = useStore(dashboardStore, (s) => s.accumulator);
+  const prescription = useStore(dashboardStore, (s) => s.prescription);
+  const live = useStore(dashboardStore, (s) => s.live);
+
+  const model = mapStoreToDashboardModel({ snapshot, accumulator, live, prescription });
+  if (!model) return null;
+  // The page is one react-native-web flex column rooted at `flex: 1`, but it mounts into
+  // a bare `#root` div with no height — so every `flex: 1` below would resolve against
+  // `auto` and collapse to content height. Pin the viewport here: a wall dashboard is
+  // exactly one screen, never a scrolling document.
+  return (
+    <div style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}>
+      <LivePage variant={variant} model={model} />
+    </div>
+  );
+}
