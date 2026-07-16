@@ -57,10 +57,14 @@ export interface WorkoutSetView {
 
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
+  /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
+  sets: number;
   repsLow?: number;
   repsHigh?: number;
   weightLbs?: number;
   rpe?: number;
+  /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
+  restSec?: number;
 }
 
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */

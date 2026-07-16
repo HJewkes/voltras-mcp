@@ -11,8 +11,6 @@
  * the page hides them exactly as titan's `LiveNoTempo` story does. Each is ticketed:
  *   - `session.title`      → VW-43 (compose from WorkoutTemplate + TrainingBlock)
  *   - `session.tempo`      → VW-41 (defaults config + resolver), VW-46 (coach override)
- *   - `session.plannedSets`→ VW-42 (`targetSets` through the prescription path)
- *   - `live.lastRep.rom`   → VW-44 (WA public rep-ROM helper)
  *   - `live.peakForce`     → VW-45 (set-level peak-force accumulator)
  * Wiring each is additive here — no consumer change.
  */
@@ -113,15 +111,15 @@ function repVelocitiesMps(reps: readonly Rep[]): number[] {
 /**
  * The most-recently finalized rep.
  *
- * `rom` is a GAP (VW-44): `LiveRepSignal` carries no ROM, so it stays null and the
- * page hides the read-out rather than showing a fabricated distance.
+ * `rom` is a straight passthrough: both sides are metres (`LiveRepSignal.rom` is the
+ * concentric range of motion, `RepModel.rom` the same).
  */
 function mapLastRep(live: StoreLiveModel): RepModel | null {
   if (!live.lastRep) return null;
   return {
     vCon: live.lastRep.vCon,
     peakVelocity: live.lastRep.peakVelocity,
-    rom: null,
+    rom: live.lastRep.rom,
   };
 }
 
@@ -166,6 +164,7 @@ function mapSession(
   setLog: readonly StoreCompletedSet[],
   weightLbs: number | null,
   targetReps: number | null,
+  prescription: PrescriptionView | null,
 ): SessionModel {
   return {
     exerciseName: snapshot.session?.exerciseName ?? '—',
@@ -174,7 +173,9 @@ function mapSession(
     unit: 'lbs',
     tempo: undefined,
     completedSets: setLog.map(mapCompletedSet),
-    plannedSets: null,
+    // Null when the session carries no plan attachment at all — the view then hides the
+    // set count rather than implying a one-set prescription.
+    plannedSets: prescription?.sets ?? null,
     targetReps,
   };
 }
@@ -187,7 +188,7 @@ function mapSession(
  * which is exactly the rest-view case.
  */
 export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardModel | null {
-  const { snapshot, accumulator, live } = sources;
+  const { snapshot, accumulator, live, prescription } = sources;
   if (!snapshot) return null;
 
   const currentSet = buildCurrentSet(snapshot);
@@ -199,6 +200,12 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
 
   return {
     live: live ? mapLive(live, currentSet.velocityLossPct, repVelocities) : null,
-    session: mapSession(snapshot, accumulator.setLog, weightLbs, currentSet.repTarget),
+    session: mapSession(
+      snapshot,
+      accumulator.setLog,
+      weightLbs,
+      currentSet.repTarget,
+      prescription,
+    ),
   };
 }
