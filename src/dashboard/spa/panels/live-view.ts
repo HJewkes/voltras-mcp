@@ -16,6 +16,7 @@
  */
 import { type Rep } from '@voltras/workout-analytics';
 import {
+  buildConnectionStatus,
   buildCurrentSet,
   repMeanMms,
   toMps,
@@ -28,6 +29,7 @@ import { type LiveModel as StoreLiveModel } from '../live-stream';
 import {
   formatRepsRange,
   type CompletedSet,
+  type ConnectionInfo,
   type DashboardModel,
   type LiveModel,
   type PlannedExerciseModel,
@@ -49,6 +51,22 @@ export interface LiveViewSources {
    * mapper then reports no rest elapsed rather than a bogus one).
    */
   nowMs?: number;
+  /**
+   * The HTTP poll status (`ok`/`stale`/`error`), folded with the device snapshot into the
+   * idle stage's coarse connection hint (VW-68). Defaults to `ok` when a caller has none —
+   * the hint then reflects only the device flag, which is the honest floor.
+   */
+  pollStatus?: 'ok' | 'stale' | 'error';
+}
+
+/**
+ * The idle stage's connection hint, reusing the shell's own {@link buildConnectionStatus}
+ * classifier (never a second copy of the priority logic — VW-67 owns it). Only the coarse
+ * `connected` flag + label reach the content model.
+ */
+function mapConnection(snapshot: Snapshot, pollStatus: 'ok' | 'stale' | 'error'): ConnectionInfo {
+  const status = buildConnectionStatus(snapshot, pollStatus);
+  return { connected: status.connected, label: status.label };
 }
 
 /**
@@ -223,7 +241,7 @@ function mapSession(
  * which is exactly the rest-view case.
  */
 export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardModel | null {
-  const { snapshot, accumulator, live, prescription, nowMs = 0 } = sources;
+  const { snapshot, accumulator, live, prescription, nowMs = 0, pollStatus = 'ok' } = sources;
   if (!snapshot) return null;
 
   const currentSet = buildCurrentSet(snapshot);
@@ -242,6 +260,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
   return {
     live: live ? mapLive(live, currentSet.velocityLossPct, repVelocities) : null,
     restElapsedMs,
+    connection: mapConnection(snapshot, pollStatus),
     session: mapSession(
       snapshot,
       accumulator.setLog,

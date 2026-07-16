@@ -11,10 +11,11 @@
  */
 import React from 'react';
 import { useStore } from 'zustand';
-import { DashboardShell, defaultNavItems } from '@titan-design/react-ui';
+import { DashboardShell, defaultNavItems, type SessionState } from '@titan-design/react-ui';
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { LivePage, type LivePageVariant } from '../live-page/LivePage';
+import { ColdBootView } from '../live-page/ColdBootView';
 import { mapStoreToDashboardModel } from './live-view';
 
 /** Reads the live-page flag off the URL. Absent ⇒ the page is not mounted at all. */
@@ -29,24 +30,29 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   const accumulator = useStore(dashboardStore, (s) => s.accumulator);
   const prescription = useStore(dashboardStore, (s) => s.prescription);
   const live = useStore(dashboardStore, (s) => s.live);
-  // The HTTP poll status folds into the TopBar's per-device connection glyph, so a
-  // sidecar-unreachable / stale poll degrades the dot rather than showing a false green.
+  // The HTTP poll status folds into BOTH the TopBar's per-device connection glyph (VW-67) and
+  // the idle stage's connection hint (VW-68), so a sidecar-unreachable / stale poll degrades
+  // the dot and flips the empty-state copy rather than showing a false green.
   const status = useStore(dashboardStore, (s) => s.status);
   // The 1 Hz clock (also bumped on every snapshot) — drives the rest stage's count-up
   // between sets. During a live set the `live` slice already re-renders this at ~20 Hz,
   // so the extra subscription only adds ticks while resting, which is when they matter.
   const nowMs = useStore(dashboardStore, (s) => s.nowMs);
 
-  const model = mapStoreToDashboardModel({ snapshot, accumulator, live, prescription, nowMs });
-  // `mapStoreToDashboardModel` returns null iff `snapshot` is null; the extra guard
-  // narrows `snapshot` to non-null for the TopBar mappers below.
-  if (!model || !snapshot) return null;
+  const model = mapStoreToDashboardModel({
+    snapshot,
+    accumulator,
+    live,
+    prescription,
+    nowMs,
+    pollStatus: status,
+  });
 
-  // REAL shell chrome inputs, sourced from the store — never fixtures:
-  //   devices → the connected Voltra(s) (slot binding + BLE id + connection flag),
-  //   state   → the live/rest/idle session pill.
-  const devices = buildTopBarDevices(snapshot, status);
-  const sessionState = buildSessionState(snapshot);
+  // REAL shell chrome inputs, sourced from the store — never fixtures. On cold boot (no
+  // snapshot yet) the mappers have nothing to read, so the chrome falls back to an idle,
+  // device-less shell around the ColdBootView (VW-68) rather than a blank viewport.
+  const devices = snapshot ? buildTopBarDevices(snapshot, status) : [];
+  const sessionState: SessionState = snapshot ? buildSessionState(snapshot) : 'idle';
 
   // The page is one react-native-web flex column rooted at `flex: 1`, but it mounts into
   // a bare `#root` div with no height — so every `flex: 1` below would resolve against
@@ -63,7 +69,10 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
         devices={devices}
         subtitle="wall dashboard"
       >
-        <LivePage variant={variant} model={model} />
+        {/* Cold boot: no snapshot has landed yet (VW-68) — an honest "connecting" state inside
+            the chrome rather than a blank stage. Once the first poll/SSE frame arrives the live
+            page mounts. */}
+        {model === null ? <ColdBootView /> : <LivePage variant={variant} model={model} />}
       </DashboardShell>
     </div>
   );

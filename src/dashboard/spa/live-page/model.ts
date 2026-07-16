@@ -136,6 +136,20 @@ export interface SessionModel {
   targetReps: number | null;
 }
 
+/**
+ * A coarse connection read-out folded from the device snapshot (VW-68) — enough for the idle
+ * stage to shift its copy ("connect a Voltra" vs "waiting for a set"). The shell TopBar owns
+ * the authoritative connection glyph/banner (VW-67); this is only the content-side hint.
+ * Optional: a preview/fixture model omits it, and an absent value means "unknown", never
+ * "disconnected".
+ */
+export interface ConnectionInfo {
+  /** True only when a device is actually live (not merely that the sidecar answered). */
+  connected: boolean;
+  /** Short status label mirrored from `buildConnectionStatus` (LIVE / OFFLINE / WAITING / …). */
+  label: string;
+}
+
 /** The full store read-model the live page reads. */
 export interface DashboardModel {
   /**
@@ -144,6 +158,8 @@ export interface DashboardModel {
    */
   live: LiveModel | null;
   session: SessionModel;
+  /** Coarse connection hint for the idle stage (VW-68); absent ⇒ unknown, never disconnected. */
+  connection?: ConnectionInfo;
   /**
    * Elapsed rest time (ms) since the last set closed — the client-tracked count-up the
    * legacy `RestTimerPanel` reads (`nowMs − restStartMs`). Null before any set has ended
@@ -160,6 +176,19 @@ export interface DashboardModel {
  * decision (no stream ⇒ rest), made once, instead of every layer guarding.
  */
 export type LiveDashboardModel = DashboardModel & { live: LiveModel };
+
+/**
+ * True when the live stage has nothing honest to show: no set streaming, none logged, and no
+ * rest clock running — exactly the inputs under which {@link RestView} would render blank
+ * (VW-68). Covers the no-session idle, the session-started-but-first-set-not-begun, and the
+ * disconnected cases; drives the {@link EmptyLiveView} branch. Kept here (not on the
+ * component) so it is a pure, node-testable model predicate.
+ */
+export function stageIsEmpty(model: DashboardModel): boolean {
+  return (
+    model.live === null && model.session.completedSets.length === 0 && model.restElapsedMs === null
+  );
+}
 
 // --- The fixture instance -----------------------------------------------------
 
@@ -411,7 +440,20 @@ function buildUpcomingRow(
  * the active exercise shows — the pre-VW-49 behaviour.
  */
 export function deriveRailExercises(model: DashboardModel): SessionRailExercise[] {
-  const { session } = model;
+  const { session, live } = model;
+  // NO SESSION at all — the exercise name is the mapper's `'—'` fallback (no `snapshot.session`)
+  // and there is no plan, nothing logged, nothing streaming (VW-68). Emit an EMPTY list so the
+  // rail shows an honest empty treatment rather than a stub `— × — @ 0 lbs` active row for a
+  // session that does not exist. A real session (named exercise) still shows its active row
+  // below even before its first set — that row is honest, only its targets are sparse.
+  if (
+    session.exerciseName === NO_VALUE &&
+    session.plannedExercises.length === 0 &&
+    session.completedSets.length === 0 &&
+    live === null
+  ) {
+    return [];
+  }
   if (session.plannedExercises.length === 0) return [buildActiveRow(model)];
 
   const activeIndex = session.plannedExercises.findIndex((e) => e.active);

@@ -3,10 +3,12 @@ import { ScrollView, View } from 'react-native';
 import { SessionRail } from '@titan-design/react-ui';
 import { ExerciseHeader, LiveView } from './LiveView';
 import { RestView } from './RestView';
+import { EmptyLiveView } from './EmptyLiveView';
 import {
   deriveDualModel,
   deriveRailExercises,
   deriveRailMetrics,
+  stageIsEmpty,
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
@@ -93,6 +95,10 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
             // `slot` names the active voltra — the shell has two connected, so the live view
             // flags which one it is reading from (the multi-device single-view case).
             <LiveView model={model as LiveDashboardModel} slot="L" />
+          ) : stageIsEmpty(model) ? (
+            // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank
+            // RestView (the barren no-session / pre-first-set view).
+            <EmptyLiveView model={model} />
           ) : (
             // No set streaming ⇒ the rest stage: recap of the set just finished + countdown.
             <RestView model={model} />
