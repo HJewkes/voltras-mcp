@@ -212,6 +212,39 @@ export function startDashboardServer(opts: DashboardServerOptions): Promise<Dash
   });
 }
 
+/**
+ * True when a {@link startDashboardServer} rejection is a port-already-bound
+ * (`EADDRINUSE`) failure — i.e. another process already holds the dashboard
+ * port. Callers use this to escalate the log severity (see `server.ts`): a
+ * port conflict is the one bind failure that silently hands the operator a
+ * different server's dashboard, so it must be loud, not routine warn noise.
+ */
+export function isAddressInUse(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && (err as { code?: string }).code === 'EADDRINUSE'
+  );
+}
+
+/**
+ * Operator-facing explanation for an `EADDRINUSE` dashboard bind failure. A
+ * second voltras-mcp instance already holds the port, so THIS session gets no
+ * dashboard — and the dashboard visible on that port belongs to the OTHER
+ * server, not this one. That exact confusion (an operator watching a dead
+ * server's dashboard while live set data flowed to a portless one) is the
+ * incident VW-68 addresses; the single shared daemon removes the race. Emitted
+ * at error level so it can't be mistaken for the routine warn on the deliberately
+ * non-fatal bind path.
+ */
+export function dashboardPortInUseMessage(port: number, host: string): string {
+  return (
+    `dashboard sidecar could NOT bind ${host}:${port} — another voltras-mcp ` +
+    `instance already holds it. THIS session has NO dashboard; any dashboard open ` +
+    `on ${host}:${port} belongs to the OTHER server and will NOT reflect this ` +
+    `session's live set data. Stop the other instance, or set VMCP_DASHBOARD_PORT ` +
+    `to a free port for this session. (VW-68: one shared daemon removes this race.)`
+  );
+}
+
 function makeHandle(server: Server, port: number): DashboardServerHandle {
   let closed = false;
   return {
