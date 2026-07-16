@@ -26,14 +26,10 @@ describe('SystemListenStartInput', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects extra fields (strict)', () => {
-    const result = SystemListenStartInput.safeParse({ wakeWord: 'hey_jarvis', bogus: true });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects empty wake word', () => {
-    const result = SystemListenStartInput.safeParse({ wakeWord: '' });
-    expect(result.success).toBe(false);
+  it('rejects removed wake-word fields + unknown keys (strict)', () => {
+    expect(SystemListenStartInput.safeParse({ wakeWord: 'hey_jarvis' }).success).toBe(false);
+    expect(SystemListenStartInput.safeParse({ wakeWordModelPath: 'x.onnx' }).success).toBe(false);
+    expect(SystemListenStartInput.safeParse({ bogus: true }).success).toBe(false);
   });
 
   it('bounds maxUtteranceSec to a sane range', () => {
@@ -42,16 +38,14 @@ describe('SystemListenStartInput', () => {
     expect(SystemListenStartInput.safeParse({ maxUtteranceSec: 12 }).success).toBe(true);
   });
 
-  it('accepts a custom wakeWordModelPath', () => {
-    const result = SystemListenStartInput.safeParse({
-      wakeWordModelPath: 'voice-models/hey-coach.onnx',
-    });
-    expect(result.success).toBe(true);
+  it('accepts custom wakePhrases', () => {
+    expect(SystemListenStartInput.safeParse({ wakePhrases: ['hey coach'] }).success).toBe(true);
+    expect(SystemListenStartInput.safeParse({ wakePhrases: ['a', 'b'] }).success).toBe(true);
   });
 
-  it('rejects an empty wakeWordModelPath', () => {
-    const result = SystemListenStartInput.safeParse({ wakeWordModelPath: '' });
-    expect(result.success).toBe(false);
+  it('rejects an empty wakePhrases array or empty phrase', () => {
+    expect(SystemListenStartInput.safeParse({ wakePhrases: [] }).success).toBe(false);
+    expect(SystemListenStartInput.safeParse({ wakePhrases: [''] }).success).toBe(false);
   });
 });
 
