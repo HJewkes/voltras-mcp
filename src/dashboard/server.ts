@@ -150,9 +150,7 @@ export interface DashboardServerState {
    * loopback snapshot JSON respects confidentiality NF-07.
    */
   exercises?: {
-    getById(
-      id: string,
-    ):
+    getById(id: string):
       | {
           name?: string;
           muscleGroups: string[];
