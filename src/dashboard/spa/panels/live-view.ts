@@ -42,6 +42,13 @@ export interface LiveViewSources {
   /** SSE live overlay; null until the first frame arrives. */
   live: StoreLiveModel | null;
   prescription: PrescriptionView | null;
+  /**
+   * The store's monotonic clock (`nowMs`), for the rest count-up. Ticks once a second
+   * plus on every snapshot; paired with `accumulator.restStartMs` it yields the elapsed
+   * rest the rest stage renders. Defaults to 0 when a caller has no clock to pass (the
+   * mapper then reports no rest elapsed rather than a bogus one).
+   */
+  nowMs?: number;
 }
 
 /**
@@ -214,7 +221,7 @@ function mapSession(
  * which is exactly the rest-view case.
  */
 export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardModel | null {
-  const { snapshot, accumulator, live, prescription } = sources;
+  const { snapshot, accumulator, live, prescription, nowMs = 0 } = sources;
   if (!snapshot) return null;
 
   const currentSet = buildCurrentSet(snapshot);
@@ -224,8 +231,15 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
   // reads, so the two views cannot disagree about what landed.
   const repVelocities = currentSet.active ? currentSet.velocitiesMps : [];
 
+  // Elapsed rest = the client-tracked count-up the legacy RestTimerPanel uses (main.tsx):
+  // null until a set has closed, then `nowMs − restStartMs`, clamped so a clock skew never
+  // shows a negative. The accumulator clears restStartMs when the next set starts.
+  const restElapsedMs =
+    accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
+
   return {
     live: live ? mapLive(live, currentSet.velocityLossPct, repVelocities) : null,
+    restElapsedMs,
     session: mapSession(
       snapshot,
       accumulator.setLog,

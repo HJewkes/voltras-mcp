@@ -2,6 +2,7 @@
 import { ScrollView, View } from 'react-native';
 import { SessionRail } from '@titan-design/react-ui';
 import { ExerciseHeader, LiveView } from './LiveView';
+import { RestView } from './RestView';
 import {
   deriveDualModel,
   deriveRailExercises,
@@ -43,12 +44,13 @@ export interface LivePageProps {
  * The North Star wall-dashboard CONTENT (mounts inside `DashboardShell`'s children slot):
  * the persistent {@link SessionRail} context beside the live stage.
  *
- * PORTED from titan's `Lab/North Star` specimen, now store-fed. Two deliberate reductions
- * against the lab original, both because the store cannot honestly supply the data:
- *   - The REST stage is NOT ported. Its countdown ring needs a rest TARGET, and nothing
- *     produces one (VW-51) — the lab hardcoded 120s. The dashboard's existing
- *     `RestTimerPanel` hit the same wall and shows count-up elapsed instead. Porting the
- *     ring would mean shipping an invented duration to a wall screen.
+ * PORTED from titan's `Lab/North Star` specimen, now store-fed. One deliberate reduction
+ * against the lab original, because the store cannot honestly supply the data:
+ *   - The REST stage IS now ported ({@link RestView}, VW-60), but only shows what the store
+ *     can source between sets: the recap comes from the completed-set log (the `live`
+ *     overlay is null while resting), peak force / ROM are hidden (no `CompletedSet`
+ *     source), and the countdown ring draws only when a rest TARGET is prescribed (VW-51) —
+ *     otherwise it falls back to the honest count-up, never the lab's hardcoded 120s.
  *   - `live-dual` is a design PREVIEW on fixture data, not this session's telemetry — the
  *     live-signal hub carries no slot identity yet (VW-48), so a real bilateral split is
  *     not derivable. It is labelled as such on screen.
@@ -91,7 +93,10 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
             // `slot` names the active voltra — the shell has two connected, so the live view
             // flags which one it is reading from (the multi-device single-view case).
             <LiveView model={model as LiveDashboardModel} slot="L" />
-          ) : null}
+          ) : (
+            // No set streaming ⇒ the rest stage: recap of the set just finished + countdown.
+            <RestView model={model} />
+          )}
         </View>
       </View>
     </View>
