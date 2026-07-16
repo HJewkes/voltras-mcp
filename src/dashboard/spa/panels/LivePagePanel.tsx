@@ -11,7 +11,9 @@
  */
 import React from 'react';
 import { useStore } from 'zustand';
+import { DashboardShell, defaultNavItems } from '@titan-design/react-ui';
 import { dashboardStore } from '../store';
+import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { LivePage, type LivePageVariant } from '../live-page/LivePage';
 import { mapStoreToDashboardModel } from './live-view';
 
@@ -27,20 +29,42 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   const accumulator = useStore(dashboardStore, (s) => s.accumulator);
   const prescription = useStore(dashboardStore, (s) => s.prescription);
   const live = useStore(dashboardStore, (s) => s.live);
+  // The HTTP poll status folds into the TopBar's per-device connection glyph, so a
+  // sidecar-unreachable / stale poll degrades the dot rather than showing a false green.
+  const status = useStore(dashboardStore, (s) => s.status);
   // The 1 Hz clock (also bumped on every snapshot) — drives the rest stage's count-up
   // between sets. During a live set the `live` slice already re-renders this at ~20 Hz,
   // so the extra subscription only adds ticks while resting, which is when they matter.
   const nowMs = useStore(dashboardStore, (s) => s.nowMs);
 
   const model = mapStoreToDashboardModel({ snapshot, accumulator, live, prescription, nowMs });
-  if (!model) return null;
+  // `mapStoreToDashboardModel` returns null iff `snapshot` is null; the extra guard
+  // narrows `snapshot` to non-null for the TopBar mappers below.
+  if (!model || !snapshot) return null;
+
+  // REAL shell chrome inputs, sourced from the store — never fixtures:
+  //   devices → the connected Voltra(s) (slot binding + BLE id + connection flag),
+  //   state   → the live/rest/idle session pill.
+  const devices = buildTopBarDevices(snapshot, status);
+  const sessionState = buildSessionState(snapshot);
+
   // The page is one react-native-web flex column rooted at `flex: 1`, but it mounts into
   // a bare `#root` div with no height — so every `flex: 1` below would resolve against
   // `auto` and collapse to content height. Pin the viewport here: a wall dashboard is
   // exactly one screen, never a scrolling document.
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}>
-      <LivePage variant={variant} model={model} />
+      {/* SideNav (single-view; nav is a no-op for now) + TopBar chrome around the live page.
+          activeKey pins the Live category; devices + state are the real store-fed inputs. */}
+      <DashboardShell
+        activeKey="live"
+        navItems={defaultNavItems}
+        state={sessionState}
+        devices={devices}
+        subtitle="wall dashboard"
+      >
+        <LivePage variant={variant} model={model} />
+      </DashboardShell>
     </div>
   );
 }

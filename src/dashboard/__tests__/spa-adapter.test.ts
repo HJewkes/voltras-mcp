@@ -13,7 +13,9 @@ import {
   buildCurrentSet,
   buildHeroSets,
   buildSessionProgress,
+  buildSessionState,
   buildSetLogRows,
+  buildTopBarDevices,
   fmtElapsed,
   fmtMode,
   fmtVelocity,
@@ -464,5 +466,67 @@ describe('buildHeroSets — canonical WorkoutSetView timeline', () => {
     expect(rows[1]).toMatchObject({ setNumber: 2, kind: 'active', targetReps: 8 });
     // PREV column source: the active row points back at the completed set.
     expect(rows[1].previous).toEqual({ reps: 2, weightLbs: 100 });
+  });
+});
+
+describe('buildTopBarDevices (shell TopBar connection state)', () => {
+  /** A snapshot carrying an explicit multi-device list. */
+  function withDevices(devices: Snapshot['devices']): Snapshot {
+    return { session: null, devices, sets: { active: null } };
+  }
+
+  it('maps left/right slots to titan sides, primary to no side', () => {
+    const s = withDevices([
+      { slotId: 'left', device: { connected: true, deviceId: 'V-001' } },
+      { slotId: 'right', device: { connected: true, deviceId: 'V-002' } },
+      { slotId: 'primary', device: { connected: true, deviceId: 'V-003' } },
+    ]);
+    expect(buildTopBarDevices(s, 'ok')).toEqual([
+      { id: 'V-001', nickname: 'Left', slot: 'L', state: 'connected' },
+      { id: 'V-002', nickname: 'Right', slot: 'R', state: 'connected' },
+      { id: 'V-003', nickname: 'V-003', slot: null, state: 'connected' },
+    ]);
+  });
+
+  it('falls back to the slot id when no BLE device id is known', () => {
+    const s = withDevices([{ slotId: 'primary', device: { connected: true } }]);
+    expect(buildTopBarDevices(s, 'ok')[0]).toMatchObject({ id: 'primary', nickname: 'Voltra' });
+  });
+
+  it('reflects the real connection flag: disconnected → lost', () => {
+    const s = withDevices([{ slotId: 'left', device: { connected: false, deviceId: 'V-001' } }]);
+    expect(buildTopBarDevices(s, 'ok')[0].state).toBe('lost');
+  });
+
+  it('surfaces a stale-since-disconnect snapshot as degraded', () => {
+    const s = withDevices([
+      { slotId: 'left', device: { connected: true, staleSinceDisconnect: '2026-07-16T00:00:00Z' } },
+    ]);
+    expect(buildTopBarDevices(s, 'ok')[0].state).toBe('degraded');
+  });
+
+  it('degrades a connected device when the poll is stale, and marks it lost on error', () => {
+    const s = withDevices([{ slotId: 'left', device: { connected: true, deviceId: 'V-001' } }]);
+    expect(buildTopBarDevices(s, 'stale')[0].state).toBe('degraded');
+    // Sidecar unreachable — no signal to vouch for, never a false green.
+    expect(buildTopBarDevices(s, 'error')[0].state).toBe('lost');
+  });
+
+  it('returns an empty list when the snapshot carries no devices', () => {
+    expect(buildTopBarDevices(withDevices([]), 'ok')).toEqual([]);
+  });
+});
+
+describe('buildSessionState (shell TopBar status pill)', () => {
+  it('is idle with no session', () => {
+    expect(buildSessionState(snapshot({ sessionId: null }))).toBe('idle');
+  });
+
+  it('is live with an active set', () => {
+    expect(buildSessionState(snapshot({ sessionId: 's1', activeSet: { reps: [] } }))).toBe('live');
+  });
+
+  it('is rest with a session but no active set', () => {
+    expect(buildSessionState(snapshot({ sessionId: 's1', activeSet: null }))).toBe('rest');
   });
 });

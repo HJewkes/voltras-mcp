@@ -19,6 +19,10 @@ import {
   getSetVelocityLossPct,
   type Rep,
 } from '@voltras/workout-analytics';
+// Type-only: erased at build, so this adds no titan runtime dependency to this
+// otherwise WA-only pure module (safe under the node/vitest test env — no import
+// is emitted). These are the shell TopBar's device/state contracts.
+import type { Device, DeviceRowState, SessionState } from '@titan-design/react-ui';
 
 /**
  * mm/s → m/s divisor. The device pipeline records velocities in mm/s; converting
@@ -139,6 +143,8 @@ export const LOW_BATTERY_PCT = 20;
 /** Client-side view of a single device entry in the snapshot. */
 export interface SnapshotDevice {
   connected?: boolean;
+  /** Last-known BLE device id (e.g. `"V-097082"`; DeviceSnapshot.deviceId). */
+  deviceId?: string;
   weightLbs?: number;
   trainingMode?: string;
   batteryPercent?: number;
@@ -423,6 +429,72 @@ export function buildConnectionStatus(
     disconnectedAt: null,
     showBanner: false,
   };
+}
+
+// ── Shell TopBar mappers (real connection + session state) ───────────────────
+
+/** Slot id → titan device side. Single-device (`'primary'`) is bound to no side. */
+function slotSide(slotId: string): 'L' | 'R' | null {
+  if (slotId === 'left') return 'L';
+  if (slotId === 'right') return 'R';
+  return null;
+}
+
+/**
+ * A truthful device label for the TopBar dropdown. We hold no user-assigned
+ * nickname in the snapshot, so we surface what IS real: the bound side for a
+ * left/right slot, else the BLE device id, else a bare "Voltra" — never an
+ * invented cable name.
+ */
+function slotNickname(slotId: string, deviceId: string | undefined): string {
+  if (slotId === 'left') return 'Left';
+  if (slotId === 'right') return 'Right';
+  return deviceId ?? 'Voltra';
+}
+
+/**
+ * Fold one device's snapshot + the HTTP poll status into a titan connection
+ * state. Priority mirrors {@link buildConnectionStatus}: sidecar-unreachable →
+ * device-offline → stale/degraded → live. A green dot must mean the cable is
+ * actually live, not merely that the sidecar last answered.
+ */
+function deviceConnState(
+  device: SnapshotDevice,
+  pollStatus: 'ok' | 'stale' | 'error',
+): DeviceRowState {
+  // Sidecar unreachable — we can't vouch for device state at all.
+  if (pollStatus === 'error') return 'lost';
+  if (device.connected === false) return 'lost';
+  if (device.staleSinceDisconnect != null || device.isStale) return 'degraded';
+  if (pollStatus === 'stale') return device.connected ? 'degraded' : 'lost';
+  return device.connected ? 'connected' : 'available';
+}
+
+/**
+ * The connected Voltra(s) as titan {@link Device}s for the shell TopBar's
+ * connection glyph + dropdown — sourced from the REAL device snapshot (slot
+ * binding + BLE id + connection flag), never a fixture.
+ */
+export function buildTopBarDevices(
+  snapshot: Snapshot,
+  pollStatus: 'ok' | 'stale' | 'error',
+): Device[] {
+  return snapshot.devices.map(({ slotId, device }) => ({
+    id: device.deviceId ?? slotId,
+    nickname: slotNickname(slotId, device.deviceId),
+    slot: slotSide(slotId),
+    state: deviceConnState(device, pollStatus),
+  }));
+}
+
+/**
+ * Global session state for the shell TopBar status pill: an in-progress set →
+ * `live`, a session between sets → `rest`, no session → `idle`. Mirrors the
+ * live page's own live/rest split so the pill and the stage never disagree.
+ */
+export function buildSessionState(snapshot: Snapshot): SessionState {
+  if (!snapshot.session) return 'idle';
+  return snapshot.sets.active ? 'live' : 'rest';
 }
 
 export interface BatteryView {
