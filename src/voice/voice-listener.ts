@@ -1,77 +1,54 @@
-// VoiceListener — wires together the openWakeWord Python sidecar, the
-// `node-record-lpcm16` mic capture, and `nodejs-whisper` STT. Single instance
-// per MCP server; lives on `ServerState.voice` and is allocated on first
-// `system.listen_start` call.
+// VoiceListener — wires `node-record-lpcm16` mic capture to an in-process
+// Silero VAD (onnxruntime-node) + `nodejs-whisper` STT. Single instance per MCP
+// server; lives on `ServerState.voice` and is allocated on first
+// `system.listen_start` call. No Python, no wake-word model — "wake detection"
+// is text-matching on the transcript (see transcript-router).
 //
-// State machine (idle → listening → buffering → transcribing → idle):
+// Pipeline (VMCP-02.77): mic PCM → reframe to 512-sample frames → VAD prob per
+// frame → SpeechSegmenter (VAD prob → utterances) → whisper per utterance →
+// routeTranscript → { safety | wake | ignore }.
 //
-//   idle          : no sidecar, no mic. start() transitions to listening.
-//   listening     : sidecar + mic running, audio frames flowing into both
-//                   the sidecar's stdin and the local 30-s ring buffer.
-//   buffering     : actively appending forward audio for a configurable
-//                   window (default ~12 s) until silence or hard cap.
-//                   Entered atomically when the sidecar emits a `wake` event
-//                   (pre-wake context is snapshotted from the ring first).
-//   transcribing  : window closed; ship the wav buffer to whisper.cpp. While
-//                   we're here we keep listening for the NEXT wake (sidecar
-//                   stays warm). A second wake during transcription is
-//                   enqueued in `_transcriptionQueue` (FIFO, cap 5). When the
-//                   current whisper finishes the next queued buffer is
-//                   immediately dispatched to whisper without requiring a new
-//                   wake event.
-//                   On transcription complete: emit voice_input + either
-//                   process next queued buffer or return to listening.
+//   - VAD is a stateful LSTM, so frames MUST be processed strictly in order:
+//     `drainFrames` awaits each `vad.process` before the next (never fire
+//     concurrently). The audio callback only enqueues; it never blocks.
+//   - whisper is slow + async, so closed segments go on a bounded queue drained
+//     by a separate `drainTranscriptions` loop (single in-flight, FIFO, cap 5).
 //
-// TTS-ducking: `mute()`/`unmute()` let `system.speak` block wake-event
-// processing while the speaker output is live. The pre-wake ring buffer
-// keeps filling during mute (audio stream stays warm); buffered audio that
-// arrived during the muted window is intentionally discarded — we must not
-// transcribe what the TTS read aloud. See `handleWakeEvent` for the guard.
-//
-// TODO(future): wake-word swap. The shipped default is openWakeWord's built-in
-// `hey_jarvis`; the user's preferred `hey coach` requires a custom-trained
-// .onnx (see voice-models/README.md). Swap is config-only — drop the file in
-// voice-models/ and pass `wakeWordModelPath` to listen_start.
+// TTS-ducking: `mute()`/`unmute()` (refcounted) suspend processing while the
+// speaker is live so we never transcribe what the TTS read aloud. Entering the
+// muted state discards any in-progress utterance. The mic stream stays warm.
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { Readable } from 'node:stream';
 
 import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
+import { SpeechSegmenter } from './speech-segmenter.js';
+import { routeTranscript } from './transcript-router.js';
+import { createSileroVad, VAD_FRAME_SAMPLES, type Vad } from './vad.js';
 
-// VMCP-02.38: the package is `"type": "module"`, so the bare CommonJS
-// `require` global is undefined at runtime — calling it threw
-// `LISTENER_START_FAILED: require is not defined` on the first
-// `system.listen_start`. Reconstruct a CJS-style `require` from the module
-// URL (the same pattern used in `tools/server-tools.ts`) so the lazy native
-// loads below resolve. These stay lazy `require` (not top-level `import`) so a
-// missing sox / whisper install only surfaces at start() time, not on import.
+// VMCP-02.38: the package is `"type": "module"`, so the bare CommonJS `require`
+// global is undefined at runtime. Reconstruct a CJS-style `require` from the
+// module URL so the lazy native loads below resolve. Kept lazy so a missing
+// sox / whisper install only surfaces at start() time, not on import.
 const require = createRequire(import.meta.url);
 
-/** Default whisper.cpp model. ~150 MB; sub-second p50 on M-series. */
-export const DEFAULT_STT_MODEL: SttModelName = 'base.en';
+/** Default whisper model. `tiny.en` for the safety path's latency budget. */
+export const DEFAULT_STT_MODEL: SttModelName = 'tiny.en';
 
-/**
- * Default openWakeWord built-in. The user's preferred `hey coach` requires
- * a custom-trained model; absent that, `hey_jarvis` is the closest 2-word
- * built-in shipped by openWakeWord and is auto-downloaded on sidecar boot.
- * See voice-models/README.md for the swap-in path.
- */
-export const DEFAULT_WAKE_WORD = 'hey_jarvis';
+/** Text-matched wake phrase(s) — no trained model needed (whisper transcribes). */
+export const DEFAULT_WAKE_PHRASES: readonly string[] = ['hey coach'];
 
-/** Size of the post-wake utterance buffer in seconds before we hand off to STT. */
+/** Default hard cap on a single utterance before we force it to STT. */
 const DEFAULT_MAX_UTTERANCE_SEC = 12;
 
-/** Seconds of pre-wake audio we replay into the STT buffer for context. */
-const PRE_WAKE_CAPTURE_SEC = 1;
-
-/** PCM format we coordinate with both the recorder and the sidecar. */
+/** PCM format we coordinate with the recorder + VAD. */
 const SAMPLE_RATE_HZ = 16_000;
 const SAMPLE_BYTES = 2;
+const FRAME_BYTES = VAD_FRAME_SAMPLES * SAMPLE_BYTES;
 
 export type SttModelName = 'tiny.en' | 'base.en' | 'small.en';
-export type ListenerStateName = 'idle' | 'listening' | 'buffering' | 'transcribing';
+export type ListenerStateName = 'idle' | 'listening';
 
 export interface VoiceInputEvent {
   transcript: string;
@@ -80,22 +57,21 @@ export interface VoiceInputEvent {
   audioDurationMs: number;
 }
 
-export interface WakeWordEvent {
-  wakeWord: string;
-  confidence: number;
-  capturedAtMs: number;
+/** A hard-coded safety phrase ("stop", "cut the weight", …) was recognized. */
+export interface SafetyPhraseEvent {
+  matchedPhrase: string;
+  transcript: string;
 }
 
 export interface VoiceListenerEvents {
   onVoiceInput?: (event: VoiceInputEvent) => void;
-  onWakeWord?: (event: WakeWordEvent) => void;
+  onSafetyPhrase?: (event: SafetyPhraseEvent) => void;
   onError?: (err: { code: string; message: string }) => void;
 }
 
 /**
- * Audio source contract. Production wires in `node-record-lpcm16`; tests
- * supply a mock stream. The contract is intentionally minimal — a Readable
- * yielding raw PCM frames plus a stop hook.
+ * Audio source contract. Production wires in `node-record-lpcm16`; tests supply
+ * a mock stream. A Readable yielding raw PCM frames plus a stop hook.
  */
 export interface AudioSource {
   stream: Readable;
@@ -104,25 +80,8 @@ export interface AudioSource {
 
 export type AudioSourceFactory = () => AudioSource;
 
-/**
- * Wake-word sidecar contract. Production spawns `python listener.py` and
- * pipes mic frames into its stdin; tests inject a fake. The sidecar's
- * stdout is parsed line-by-line as JSONL.
- */
-export interface WakeSidecar {
-  /** Stream of raw 16 kHz PCM in. The sidecar must read until EOF. */
-  stdin: NodeJS.WritableStream;
-  /** JSONL events out. */
-  stdout: NodeJS.ReadableStream;
-  /** Diagnostic logs; surfaced to the listener's onError when fatal. */
-  stderr: NodeJS.ReadableStream;
-  kill: () => void;
-}
-
-export interface SidecarOptions {
-  modelPath: string | undefined;
-}
-export type WakeSidecarFactory = (opts: SidecarOptions) => WakeSidecar;
+/** VAD factory contract. Production builds the Silero VAD; tests inject a fake. */
+export type VadFactory = () => Vad;
 
 /** STT invocation contract. Production wraps `nodejs-whisper`. */
 export type WhisperFn = (audio: Buffer, model: SttModelName) => Promise<{ transcript: string }>;
@@ -130,50 +89,35 @@ export type WhisperFn = (audio: Buffer, model: SttModelName) => Promise<{ transc
 /** Logical clock; tests inject a fake to keep timestamps deterministic. */
 export type NowFn = () => number;
 
-/** Async timer scheduling, abstracted for tests. */
-export interface Timers {
-  setTimeout: (cb: () => void, ms: number) => unknown;
-  clearTimeout: (handle: unknown) => void;
-}
-
-const DEFAULT_TIMERS: Timers = {
-  setTimeout: (cb, ms) => setTimeout(cb, ms),
-  clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
-};
-
 export interface VoiceListenerDeps {
   audioFactory: AudioSourceFactory;
-  sidecarFactory: WakeSidecarFactory;
+  vadFactory: VadFactory;
   whisper: WhisperFn;
   now?: NowFn;
-  timers?: Timers;
 }
 
 export interface StartArgs {
-  wakeWord: string;
-  wakeWordModelPath: string | undefined;
+  wakePhrases: string[];
   sttModel: SttModelName;
-  maxUtteranceSec: number;
+  maxSegmentMs: number;
 }
 
 /**
- * Normalize listen_start input against MVP defaults. Lives in this module
- * (rather than the schema layer) so the schema stays a pure validator and
- * the defaults are introspectable from tests + the tool handler.
+ * Normalize listen_start input against defaults. Lives here (not the schema
+ * layer) so the schema stays a pure validator and defaults are introspectable.
  */
 export function resolveStartArgs(input: SystemListenStartInputType): StartArgs {
   return {
-    wakeWord: input.wakeWord ?? DEFAULT_WAKE_WORD,
-    wakeWordModelPath: input.wakeWordModelPath,
+    wakePhrases: input.wakePhrases ?? [...DEFAULT_WAKE_PHRASES],
     sttModel: input.sttModel ?? DEFAULT_STT_MODEL,
-    maxUtteranceSec: input.maxUtteranceSec ?? DEFAULT_MAX_UTTERANCE_SEC,
+    maxSegmentMs: (input.maxUtteranceSec ?? DEFAULT_MAX_UTTERANCE_SEC) * 1000,
   };
 }
 
 /**
- * Default audio source: spawn sox via `node-record-lpcm16`. Lazy-required
- * so a missing sox install only surfaces at start() time, not import time
- * (the Linux CI smoke test imports voltras-mcp without sox installed).
+ * Default audio source: spawn sox via `node-record-lpcm16`. Lazy-required so a
+ * missing sox install only surfaces at start() time (Linux CI imports without
+ * sox installed).
  */
 export function defaultAudioFactory(): AudioSource {
   const record = require('node-record-lpcm16') as {
@@ -188,42 +132,14 @@ export function defaultAudioFactory(): AudioSource {
   return { stream: recorder.stream(), stop: () => recorder.stop() };
 }
 
-/**
- * Default wake-word sidecar: spawn `python3 voice-listener/listener.py`.
- * Caller resolves `pythonBin` + `scriptPath` ahead of time so this stays
- * platform-agnostic.
- */
-export function defaultSidecarFactory(pythonBin: string, scriptPath: string): WakeSidecarFactory {
-  return ({ modelPath }: SidecarOptions): WakeSidecar => {
-    const args: string[] = [scriptPath];
-    if (modelPath !== undefined) args.push('--model', modelPath);
-    const child = spawn(pythonBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    return adaptSpawnedChild(child);
-  };
-}
-
-function adaptSpawnedChild(child: ChildProcessWithoutNullStreams): WakeSidecar {
-  return {
-    stdin: child.stdin,
-    stdout: child.stdout,
-    stderr: child.stderr,
-    kill: () => {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // Already exited or unkillable — drop the reference.
-      }
-    },
-  };
+/** Default VAD: the in-process Silero session. Model loads lazily on first frame. */
+export function defaultVadFactory(): Vad {
+  return createSileroVad();
 }
 
 /**
- * Default STT impl: route through `nodejs-whisper`. Lazy-required for the
- * same Linux-import reason as the audio factory.
- *
- * `nodejs-whisper` writes a wav file to disk for whisper.cpp; this thin
- * adapter feeds it the raw buffer through a tempfile so the listener layer
- * stays I/O-free.
+ * Default STT impl: route through `nodejs-whisper`. Lazy-required for the same
+ * Linux-import reason as the audio factory. Writes a tempfile wav per call.
  */
 export function defaultWhisper(): WhisperFn {
   return async (audio: Buffer, model: SttModelName) => {
@@ -271,25 +187,26 @@ function encodePcmAsWav(pcm: Buffer, sampleRate: number): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
-interface SidecarEventWake {
-  event: 'wake';
-  ts: number;
-  score: number;
-  model?: string;
+/** Interpret a 1024-byte (512-sample) frame Buffer as int16 samples. */
+function frameToInt16(frame: Buffer): Int16Array {
+  return new Int16Array(frame.buffer, frame.byteOffset, VAD_FRAME_SAMPLES);
 }
-interface SidecarEventReady {
-  event: 'ready';
-  ts: number;
-  model?: string;
-}
-type SidecarEvent = SidecarEventWake | SidecarEventReady | { event: string; [k: string]: unknown };
 
-/** Maximum number of queued transcription buffers to prevent unbounded growth. */
+function pcmDurationMs(pcmByteLength: number): number {
+  return Math.round((pcmByteLength / (SAMPLE_RATE_HZ * SAMPLE_BYTES)) * 1000);
+}
+
+/** Max queued utterances awaiting whisper before we drop the oldest. */
 const TRANSCRIPTION_QUEUE_CAP = 5;
 
+interface PendingUtterance {
+  audio: Buffer;
+  closedAt: number;
+}
+
 /**
- * Voice listener — owns the sidecar + recorder lifecycle and the post-wake
- * STT pipeline. One instance is enough; `listen_start` is idempotent.
+ * Voice listener — owns the mic + VAD + whisper pipeline. One instance is
+ * enough; `listen_start` is idempotent.
  */
 export class VoiceListener {
   private readonly deps: VoiceListenerDeps;
@@ -297,17 +214,21 @@ export class VoiceListener {
   private state: ListenerStateName = 'idle';
   private startArgs: StartArgs | null = null;
   private audio: AudioSource | null = null;
-  private sidecar: WakeSidecar | null = null;
-  private buffer: Buffer[] = [];
-  private wakeFiredAt: number | null = null;
-  private hardCapHandle: unknown = null;
-  private _muteDepth: number = 0;
-  /** FIFO queue of captured audio buffers for wake events that arrived during
-   * transcription. Capped at TRANSCRIPTION_QUEUE_CAP; oldest dropped when full. */
-  private _transcriptionQueue: Buffer[] = [];
+  private vad: Vad | null = null;
+  private segmenter: SpeechSegmenter | null = null;
+  private _muteDepth = 0;
+
+  /** Raw mic bytes not yet aligned into a full 512-sample frame. */
+  private frameAccum: Buffer = Buffer.alloc(0);
+  /** Frames awaiting VAD; drained strictly in order (VAD is stateful). */
+  private pendingFrames: Buffer[] = [];
+  private drainingFrames = false;
+  /** Closed utterances awaiting whisper; drained one at a time (FIFO). */
+  private transcriptionQueue: PendingUtterance[] = [];
+  private drainingTranscriptions = false;
 
   constructor(deps: VoiceListenerDeps, events: VoiceListenerEvents = {}) {
-    this.deps = { now: () => Date.now(), timers: DEFAULT_TIMERS, ...deps };
+    this.deps = { now: () => Date.now(), ...deps };
     this.events = events;
   }
 
@@ -325,27 +246,18 @@ export class VoiceListener {
   }
 
   /**
-   * Block wake-event processing. Call before TTS playback starts.
-   * The audio stream keeps flowing so no teardown latency occurs on unmute.
-   * Any in-flight buffering/transcribing cycle runs to completion — we only
-   * suppress NEW wake events while muted.
-   *
-   * Reference-counted: each mute() must be paired with an unmute(). The mic
-   * stays ducked until ALL concurrent TTS calls have finished — preventing the
-   * mute→unmute→mute race when two fire-and-forget speaks overlap.
+   * Suspend processing before TTS playback. Refcounted — each mute() pairs with
+   * an unmute(); the mic stays ducked until all concurrent TTS calls finish.
+   * Entering the muted state discards any in-progress utterance so TTS audio is
+   * never transcribed.
    */
   mute(): void {
-    this._muteDepth++;
+    this._muteDepth += 1;
+    if (this._muteDepth === 1) this.segmenter?.flush();
     log.debug('VoiceListener: muted (TTS ducking active)');
   }
 
-  /**
-   * Resume wake-event processing after TTS playback ends.
-   * Does NOT replay audio buffered while muted — discarding TTS-sourced audio
-   * is the whole point of ducking.
-   *
-   * Decrements the refcount; wake events resume only when depth reaches zero.
-   */
+  /** Resume processing after TTS playback ends. */
   unmute(): void {
     this._muteDepth = Math.max(0, this._muteDepth - 1);
     log.debug('VoiceListener: unmuted (TTS ducking lifted)');
@@ -356,233 +268,153 @@ export class VoiceListener {
     if (this.state !== 'idle') return;
     this.startArgs = args;
     const audio = this.deps.audioFactory();
-    let sidecar: WakeSidecar;
     try {
-      sidecar = this.deps.sidecarFactory({ modelPath: args.wakeWordModelPath });
+      this.vad = this.deps.vadFactory();
     } catch (err) {
       audio.stop();
       throw err;
     }
     this.audio = audio;
-    this.sidecar = sidecar;
+    this.segmenter = new SpeechSegmenter({ maxSegmentMs: args.maxSegmentMs });
     this.state = 'listening';
-    this.wireAudioFanout();
-    this.wireSidecarReader();
+    this.wireAudio();
   }
 
-  /** Tear everything down. Idempotent. Drains the overlap queue without
-   * firing whisper for any pending entries. */
+  /** Tear everything down. Idempotent. Drops any pending/queued audio. */
   async stop(): Promise<void> {
     if (this.state === 'idle') return;
-    this.cancelHardCap();
     this.audio?.stop();
-    this.sidecar?.kill();
+    this.segmenter?.flush();
+    this.vad?.reset();
     this.audio = null;
-    this.sidecar = null;
-    this.buffer = [];
-    this.wakeFiredAt = null;
+    this.vad = null;
+    this.segmenter = null;
+    this.frameAccum = Buffer.alloc(0);
+    this.pendingFrames = [];
+    this.transcriptionQueue = [];
     this.startArgs = null;
-    this._transcriptionQueue = [];
     this.state = 'idle';
   }
 
-  /**
-   * Audio fans out to two consumers: the sidecar's stdin (every frame, for
-   * wake-word inference) AND a local rolling buffer that captures the last
-   * `PRE_WAKE_CAPTURE_SEC` seconds so we have pre-trigger context for STT.
-   */
-  private wireAudioFanout(): void {
+  private wireAudio(): void {
     const audio = this.audio;
-    const sidecar = this.sidecar;
-    if (audio === null || sidecar === null) return;
+    if (audio === null) return;
     audio.stream.on('data', (chunk: Buffer) => {
-      this.handleAudioChunk(chunk);
+      this.enqueueFrames(chunk);
     });
     audio.stream.on('error', (err) => {
       this.emitError({ code: 'AUDIO_STREAM_ERROR', message: err.message });
     });
   }
 
-  private handleAudioChunk(chunk: Buffer): void {
-    const sidecar = this.sidecar;
-    if (sidecar !== null) {
-      // Backpressure surfaces as `false`; we drop the frame rather than
-      // queue indefinitely — the sidecar getting starved is a louder failure
-      // mode than a few skipped windows.
-      sidecar.stdin.write(chunk);
+  /** Reframe arbitrary mic chunks into aligned 512-sample frames, then drain. */
+  private enqueueFrames(chunk: Buffer): void {
+    this.frameAccum = Buffer.concat([this.frameAccum, chunk]);
+    while (this.frameAccum.length >= FRAME_BYTES) {
+      // Copy so the frame owns aligned memory (Int16Array needs a 2-byte offset).
+      this.pendingFrames.push(Buffer.from(this.frameAccum.subarray(0, FRAME_BYTES)));
+      this.frameAccum = this.frameAccum.subarray(FRAME_BYTES);
     }
-    if (this.state === 'buffering') {
-      this.buffer.push(chunk);
-    } else {
-      this.appendToRing(chunk);
-    }
+    if (!this.drainingFrames) void this.drainFrames();
   }
 
   /**
-   * Pre-wake ring: keep the last PRE_WAKE_CAPTURE_SEC of audio so the wake
-   * snapshot includes the user's leading consonant. Implemented as a
-   * trim-from-front on each append rather than a true ring-buffer because
-   * the post-wake fast path already migrates the buffer into `buffering`
-   * state — the only cost is a bounded list scan per chunk.
+   * Process frames strictly in order (Silero VAD threads recurrent state, so
+   * concurrent process() calls would corrupt it). Never blocks the audio
+   * callback — it only enqueues. Muted frames are discarded (TTS ducking).
    */
-  private appendToRing(chunk: Buffer): void {
-    this.buffer.push(chunk);
-    const cap = SAMPLE_RATE_HZ * SAMPLE_BYTES * PRE_WAKE_CAPTURE_SEC;
-    let total = this.buffer.reduce((acc, b) => acc + b.length, 0);
-    while (total > cap && this.buffer.length > 1) {
-      total -= this.buffer[0].length;
-      this.buffer.shift();
-    }
-  }
-
-  /** Read JSONL from the sidecar's stdout, dispatch to event handlers. */
-  private wireSidecarReader(): void {
-    const sidecar = this.sidecar;
-    if (sidecar === null) return;
-    let pending = '';
-    sidecar.stdout.on('data', (data: Buffer | string) => {
-      pending += typeof data === 'string' ? data : data.toString('utf8');
-      const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) continue;
-        this.dispatchSidecarLine(trimmed);
-      }
-    });
-    sidecar.stderr.on('data', (data: Buffer | string) => {
-      // Stderr is human-readable; surface the first crash-on-init line as an
-      // error event but ignore steady-state info logs.
-      const text = typeof data === 'string' ? data : data.toString('utf8');
-      if (text.toLowerCase().includes('error')) {
-        this.emitError({ code: 'SIDECAR_ERROR', message: text.trim() });
-      }
-    });
-  }
-
-  private dispatchSidecarLine(line: string): void {
-    let event: SidecarEvent;
+  private async drainFrames(): Promise<void> {
+    this.drainingFrames = true;
     try {
-      event = JSON.parse(line) as SidecarEvent;
-    } catch {
-      this.emitError({ code: 'SIDECAR_PROTOCOL_ERROR', message: `bad JSONL: ${line}` });
-      return;
-    }
-    if (event.event === 'wake') {
-      this.handleWakeEvent(event as SidecarEventWake);
-    }
-    // 'ready' and unknown events are dropped silently.
-  }
-
-  private handleWakeEvent(event: SidecarEventWake): void {
-    if (this._muteDepth > 0) {
-      log.debug('VoiceListener: wake event suppressed (muted — TTS ducking active)');
-      return;
-    }
-    const now = this.deps.now!();
-    if (this.state === 'transcribing') {
-      // A previous utterance is in flight. Snapshot the current ring buffer
-      // (pre-wake context) as the queued entry so it transcribes after the
-      // current whisper call finishes. The sidecar stays warm; no audio is lost.
-      const snapshot = Buffer.concat(this.buffer);
-      if (this._transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
-        // Drop the oldest to prevent unbounded growth (busy room / false wakes).
-        this._transcriptionQueue.shift();
-        this.emitError({
-          code: 'QUEUE_OVERFLOW',
-          message: 'Transcription queue full — oldest queued utterance dropped.',
-        });
+      while (this.pendingFrames.length > 0) {
+        const frame = this.pendingFrames.shift()!;
+        if (this._muteDepth > 0 || this.vad === null || this.segmenter === null) continue;
+        const prob = await this.runVad(frame);
+        if (prob === null) continue;
+        const utterance = this.segmenter.push(prob, frame);
+        if (utterance !== null) this.enqueueTranscription(utterance);
       }
-      this._transcriptionQueue.push(snapshot);
-      this.events.onWakeWord?.({
-        wakeWord: event.model ?? this.startArgs?.wakeWord ?? DEFAULT_WAKE_WORD,
-        confidence: event.score,
-        capturedAtMs: now,
-      });
-      return;
+    } finally {
+      this.drainingFrames = false;
     }
-    if (this.state !== 'listening') return;
-    this.state = 'buffering';
-    this.wakeFiredAt = now;
-    this.events.onWakeWord?.({
-      wakeWord: event.model ?? this.startArgs?.wakeWord ?? DEFAULT_WAKE_WORD,
-      confidence: event.score,
-      capturedAtMs: now,
-    });
-    this.scheduleHardCap();
   }
 
-  private scheduleHardCap(): void {
-    const startArgs = this.startArgs;
-    const timers = this.deps.timers!;
-    if (startArgs === null) return;
-    this.hardCapHandle = timers.setTimeout(() => {
-      void this.flushBufferToWhisper();
-    }, startArgs.maxUtteranceSec * 1000);
-  }
-
-  private cancelHardCap(): void {
-    if (this.hardCapHandle === null) return;
-    this.deps.timers!.clearTimeout(this.hardCapHandle);
-    this.hardCapHandle = null;
-  }
-
-  private async flushBufferToWhisper(): Promise<void> {
-    if (this.state !== 'buffering') return;
-    const startArgs = this.startArgs;
-    if (startArgs === null) return;
-    this.cancelHardCap();
-    this.state = 'transcribing';
-    const audio = Buffer.concat(this.buffer);
-    this.buffer = [];
-    await this.transcribeBuffer(audio, startArgs);
-  }
-
-  /** Transcribe one audio buffer and, when done, process any queued buffers
-   * in FIFO order before returning to the listening state. */
-  private async transcribeBuffer(audio: Buffer, startArgs: StartArgs): Promise<void> {
-    const audioDurationMs = pcmDurationMs(audio.length);
-    const wakeAt = this.wakeFiredAt ?? this.deps.now!();
-    this.wakeFiredAt = null;
+  private async runVad(frame: Buffer): Promise<number | null> {
     try {
-      const { transcript } = await this.deps.whisper(audio, startArgs.sttModel);
-      const latencyMs = this.deps.now!() - wakeAt;
-      this.events.onVoiceInput?.({
-        transcript,
-        latencyMs,
-        sttModel: startArgs.sttModel,
-        audioDurationMs,
+      return await this.vad!.process(frameToInt16(frame));
+    } catch (err) {
+      this.emitError({
+        code: 'VAD_FAILED',
+        message: err instanceof Error ? err.message : String(err),
       });
+      return null;
+    }
+  }
+
+  private enqueueTranscription(audio: Buffer): void {
+    if (this.transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
+      this.transcriptionQueue.shift();
+      this.emitError({
+        code: 'QUEUE_OVERFLOW',
+        message: 'Transcription queue full — oldest queued utterance dropped.',
+      });
+    }
+    this.transcriptionQueue.push({ audio, closedAt: this.deps.now!() });
+    if (!this.drainingTranscriptions) void this.drainTranscriptions();
+  }
+
+  /** Drain queued utterances one at a time through whisper, then route. */
+  private async drainTranscriptions(): Promise<void> {
+    this.drainingTranscriptions = true;
+    try {
+      while (this.transcriptionQueue.length > 0) {
+        const startArgs = this.startArgs;
+        if (startArgs === null) break; // stopped mid-flight
+        await this.transcribeAndRoute(this.transcriptionQueue.shift()!, startArgs);
+      }
+    } finally {
+      this.drainingTranscriptions = false;
+    }
+  }
+
+  private async transcribeAndRoute(item: PendingUtterance, startArgs: StartArgs): Promise<void> {
+    const audioDurationMs = pcmDurationMs(item.audio.length);
+    let transcript: string;
+    try {
+      ({ transcript } = await this.deps.whisper(item.audio, startArgs.sttModel));
     } catch (err) {
       this.emitError({
         code: 'STT_FAILED',
         message: err instanceof Error ? err.message : String(err),
       });
+      return;
     }
+    const latencyMs = this.deps.now!() - item.closedAt;
+    this.route(transcript, startArgs, { latencyMs, audioDurationMs });
+  }
 
-    // After finishing, drain the overlap queue in FIFO order before returning
-    // to `listening`. Each queued entry is a snapshot taken at wake-time, so
-    // wakeAt for latency measurement is approximated as now (the enqueue time
-    // is not stored to avoid a parallel data structure).
-    //
-    // Guard: stop() may have been called while whisper was in flight (state
-    // would be `idle`). In that case the queue is already drained by stop() —
-    // don't re-enter `listening` or process any more buffers.
-    if (this.state !== 'transcribing') return;
-    const next = this._transcriptionQueue.shift();
-    if (next !== undefined) {
-      // Stay in `transcribing`; tail-call into the next buffer.
-      await this.transcribeBuffer(next, startArgs);
-    } else {
-      this.state = 'listening';
+  private route(
+    transcript: string,
+    startArgs: StartArgs,
+    timing: { latencyMs: number; audioDurationMs: number },
+  ): void {
+    const result = routeTranscript(transcript, { wakePhrases: startArgs.wakePhrases });
+    if (result.tier === 'safety') {
+      this.events.onSafetyPhrase?.({ matchedPhrase: result.matchedPhrase!, transcript });
+      return;
     }
+    if (result.tier === 'wake') {
+      this.events.onVoiceInput?.({
+        transcript: result.commandText || transcript,
+        latencyMs: timing.latencyMs,
+        sttModel: startArgs.sttModel,
+        audioDurationMs: timing.audioDurationMs,
+      });
+    }
+    // 'ignore' → drop.
   }
 
   private emitError(err: { code: string; message: string }): void {
     this.events.onError?.(err);
   }
-}
-
-function pcmDurationMs(pcmByteLength: number): number {
-  return Math.round((pcmByteLength / (SAMPLE_RATE_HZ * SAMPLE_BYTES)) * 1000);
 }

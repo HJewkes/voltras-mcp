@@ -1,58 +1,23 @@
-# Wake-word models
+# Voice models
 
-Drop a custom-trained openWakeWord ONNX model file in this directory and point
-`system.listen_start({ wakeWordModelPath })` at it to override the built-in
-default.
+## `silero_vad.onnx`
 
-## Default behavior (no file in this dir)
+The voice listener's speech gate (VMCP-02.77). [Silero VAD](https://github.com/snakers4/silero-vad)
+v4 (LSTM h/c state), MIT-licensed, run in-process via `onnxruntime-node` — see
+`src/voice/vad.ts`. It emits a per-frame speech probability that the
+`SpeechSegmenter` turns into utterances; each utterance is transcribed by
+`nodejs-whisper` (`tiny.en` by default) and routed on the transcript text
+(`src/voice/transcript-router.ts`).
 
-The MVP ships with the integration wired against openWakeWord's **`hey_jarvis`**
-pre-trained model — the closest 2-word built-in to the user's preferred
-"hey coach" phrase. openWakeWord auto-downloads its built-in models on first
-sidecar boot, so the listener works end-to-end out of the box without any
-file living here.
+There is **no wake-word model** — "wake detection" is text-matching the wake
+phrase (default `hey coach`) in the whisper transcript, and the always-on safety
+phrases (stop / unload / …) are matched the same way. Nothing to train or
+download; the VAD model is the only asset here and it ships in the repo.
 
-Other openWakeWord built-ins you can swap to without retraining (pass via
-`system.listen_start({ wakeWord: 'alexa' })` etc.):
+### Contract (introspected from the model)
 
-- `alexa`
-- `hey_jarvis`
-- `hey_mycroft`
-- `hey_rhasspy`
-- `timer`
-- `weather`
+- inputs: `input` float32 `[1,512]`, `sr` int64 scalar (16000), `h`/`c` float32 `[2,1,64]`
+- outputs: `output` float32 `[1,1]` (speech prob), `hn`/`cn` float32 `[2,1,64]`
 
-## Training a custom `hey_coach` model
-
-The user-chosen "hey coach" phrase isn't in the pre-trained set. To produce a
-custom model:
-
-1. Open the [openWakeWord training notebook](https://github.com/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training_simple.ipynb)
-   on Colab (free GPU runtime is sufficient).
-2. Set the `target_phrase` cell to `"hey coach"` and run all cells. The
-   notebook synthesizes ~10k training utterances via Piper TTS, augments them
-   with negative-class data, and trains a small classifier. Total runtime
-   ~30–60 minutes on a Colab T4.
-3. Download the resulting `.onnx` model and drop it in this directory:
-   `voltras-mcp/voice-models/hey-coach.onnx`.
-4. Pass it to the listener:
-   ```ts
-   system.listen_start({
-     wakeWordModelPath: "voice-models/hey-coach.onnx",
-     // wakeWord arg is informational once a custom path is supplied
-   });
-   ```
-
-### Optional: improve precision with real samples
-
-After the synthetic-only model is working, record ~20–50 clips of yourself
-saying the wake phrase (the notebook has a "real-data fine-tuning" cell that
-folds them into the training set). Total user-time: ~30 min. Empirically
-halves the false-reject rate on the speaker's own voice.
-
-## Licensing
-
-openWakeWord is Apache-2.0 and its pre-trained models are MIT-licensed weights
-hosted on HuggingFace. Models trained from the project's notebook (synthetic
-or real data) are redistributable under the same terms — feel free to commit
-them here.
+Verify with the parity harness: `node scripts/vad-parity.mjs` (a speech WAV
+yields many high-probability frames; silence yields ~0).

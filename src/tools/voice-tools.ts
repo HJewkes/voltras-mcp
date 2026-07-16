@@ -1,35 +1,28 @@
-// `system.listen_start` / `system.listen_stop` — voice input MVP.
+// `system.listen_start` / `system.listen_stop` — local voice input.
 //
-// The listener wires an openWakeWord Python sidecar (see
-// voltras-mcp/voice-listener/) to the local mic via `node-record-lpcm16`,
-// then transcribes post-wake utterances with `nodejs-whisper`. Transcripts
-// land on the channel publisher as `voice_input` events; `wake_word_detected`
-// fires the moment the sidecar reports a wake so PT Claude can respond
-// "I'm listening" before STT finishes.
+// The listener runs an in-process Silero VAD (onnxruntime-node) gating
+// `nodejs-whisper` STT over `node-record-lpcm16` mic capture — no Python, no
+// wake-word model. Every detected utterance is transcribed and routed on the
+// transcript text: a `hey coach` wake phrase forwards to the model as a
+// `voice_input` channel event; the always-on safety phrases (stop/unload/…)
+// route through `onSafetyPhrase` (the ungated unload fast-path lands in
+// VMCP-02.78; for now they also surface as `voice_input`).
 //
-// Off-by-default: nothing happens at server boot. The user (or PT Claude)
-// must call `system.listen_start` to arm the mic. `listen_stop` is
-// idempotent — re-callable from a Stop button without race risk.
-//
-// Configuration knobs surface through the schema (wake word, model path,
-// STT variant, max utterance duration). Environment-variable overrides for
-// the Python interpreter + sidecar script path live in `voice-config.ts`.
+// Off-by-default: nothing happens at boot. The user (or PT Claude) calls
+// `system.listen_start` to arm the mic. `listen_stop` is idempotent.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   SystemListenStartInput,
   SystemListenStopInput,
   type SystemListenStartInputType,
 } from '../schemas/voice.js';
-import { buildVoiceInputPayload, buildWakeWordDetectedPayload } from '../state/channel-payloads.js';
+import { buildVoiceInputPayload } from '../state/channel-payloads.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
 import {
   defaultAudioFactory,
-  defaultSidecarFactory,
+  defaultVadFactory,
   defaultWhisper,
   resolveStartArgs,
   VoiceListener,
@@ -62,12 +55,11 @@ export function makeVoiceHolder(deps: VoiceListenerDeps | null = null): VoiceLis
 }
 
 const START_DESCRIPTION = [
-  'Arm the local voice listener. Spawns the openWakeWord Python sidecar +',
-  'mic capture; transcribes post-wake utterances locally via whisper.cpp.',
-  'No audio leaves the machine. Default wake word: `hey_jarvis` (the',
-  'closest 2-word built-in to the preferred `hey coach`; swap to a custom',
-  'model by passing `wakeWordModelPath`). Default STT: `base.en` (~1s p50',
-  'on Apple Silicon). Idempotent — re-arming returns the current state.',
+  'Arm the local voice listener. Runs an in-process Silero VAD + whisper.cpp',
+  'over the mic — no audio leaves the machine, no wake-word model. Say the wake',
+  'phrase (`hey coach`) to address the trainer; safety phrases (stop, unload,',
+  'cut the weight, …) are always-on and need no wake phrase. Default STT:',
+  '`tiny.en` (low latency). Idempotent — re-arming returns the current state.',
 ].join(' ');
 
 const STOP_DESCRIPTION = [
@@ -132,25 +124,21 @@ async function startListener(
   if (state.voice.listener !== null) {
     return textResult({
       status: 'listening',
-      wakeWord: state.voice.listener.getStartArgs()?.wakeWord ?? startArgs.wakeWord,
+      wakePhrases: state.voice.listener.getStartArgs()?.wakePhrases ?? startArgs.wakePhrases,
       sttModel: state.voice.listener.getStartArgs()?.sttModel ?? startArgs.sttModel,
     });
   }
   const deps = state.voice.__deps !== null ? state.voice.__deps : buildProductionDeps();
-  if (deps === null) {
-    return errorResult({
-      code: 'VOICE_DEPS_MISSING',
-      message:
-        'Voice deps unavailable: install Python ≥3.10 + voice-listener/requirements.txt and `brew install sox`.',
-    });
-  }
   const channels = state.channels;
   const listener = new VoiceListener(deps, {
-    onWakeWord: ({ wakeWord, confidence, capturedAtMs }) => {
-      channels.publish(buildWakeWordDetectedPayload(wakeWord, confidence, capturedAtMs));
-    },
     onVoiceInput: ({ transcript, latencyMs, sttModel, audioDurationMs }) => {
       channels.publish(buildVoiceInputPayload(transcript, latencyMs, sttModel, audioDurationMs));
+    },
+    onSafetyPhrase: ({ transcript }) => {
+      // VMCP-02.78: intercept here for the ungated unload fast-path (loaded+active
+      // predicate + unloadSlot + deterministic_stop_triggered). For .77 a
+      // recognized safety phrase still reaches the LLM as voice_input (no regression).
+      channels.publish(buildVoiceInputPayload(transcript, 0, startArgs.sttModel, 0));
     },
     onError: (err) => {
       channels.publish({
@@ -178,7 +166,7 @@ async function startListener(
   state.voice.listener = listener;
   return textResult({
     status: 'listening',
-    wakeWord: startArgs.wakeWord,
+    wakePhrases: startArgs.wakePhrases,
     sttModel: startArgs.sttModel,
   });
 }
@@ -194,40 +182,14 @@ async function stopListener(state: VoiceToolState): Promise<ToolResult> {
 }
 
 /**
- * Build production deps if all the prerequisites are in place. Returns null
- * when the Python sidecar script can't be located — the listener will
- * report this as `VOICE_DEPS_MISSING` rather than crashing.
+ * Build production deps. All native loads (sox mic, onnxruntime VAD, whisper)
+ * are lazy inside their factories, so this never fails synchronously — a
+ * missing install surfaces as `LISTENER_START_FAILED` at start() time.
  */
-function buildProductionDeps(): VoiceListenerDeps | null {
-  const scriptPath = resolveSidecarScript();
-  if (scriptPath === null) return null;
-  const pythonBin = process.env.VOLTRAS_VOICE_PYTHON ?? 'python3';
+function buildProductionDeps(): VoiceListenerDeps {
   return {
     audioFactory: defaultAudioFactory,
-    sidecarFactory: defaultSidecarFactory(pythonBin, scriptPath),
+    vadFactory: defaultVadFactory,
     whisper: defaultWhisper(),
   };
-}
-
-/**
- * Find `voice-listener/listener.py` relative to the package root. Walk up
- * from this module's directory; package layout is `dist/tools/...` after
- * build and `src/tools/...` in dev — both reach the repo root within 4
- * parents. Falls back to the env override for unusual layouts.
- */
-export function resolveSidecarScript(): string | null {
-  const override = process.env.VOLTRAS_VOICE_SIDECAR;
-  if (override !== undefined && existsSync(override)) {
-    return resolve(override);
-  }
-  const here = fileURLToPath(import.meta.url);
-  let dir = dirname(here);
-  for (let i = 0; i < 6; i += 1) {
-    const candidate = join(dir, 'voice-listener', 'listener.py');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
 }

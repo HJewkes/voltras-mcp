@@ -31,8 +31,6 @@
     "typecheck:spa": "tsc -p src/dashboard/spa/tsconfig.json",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
-    "voice:setup": "scripts/setup-voice.sh",
-    "voice:clean": "scripts/clean-voice.sh",
     "prepare": "husky"
   },
   "dependencies": {
@@ -44,6 +42,7 @@
     "@voltras/workout-analytics": "^1.5.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
+    "onnxruntime-node": "^1.27.0",
     "zod": "^4.4.2",
     "zustand": "^5.0.14"
   },
