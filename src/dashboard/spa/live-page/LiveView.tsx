@@ -423,7 +423,7 @@ export function LiveView({
               variant="hero"
               velocities={live.repVelocities}
               liveRepIndex={live.repVelocities.length - 1}
-              targetReps={8}
+              targetReps={session.targetReps ?? undefined}
               height={heroHeight}
               scale="peak"
             />
