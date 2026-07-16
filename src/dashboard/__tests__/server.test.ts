@@ -14,6 +14,8 @@ import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
   startDashboardServer,
+  isAddressInUse,
+  dashboardPortInUseMessage,
   type DashboardServerHandle,
   type DashboardServerState,
 } from '../server.js';
@@ -1248,5 +1250,37 @@ describe('port auto-assignment + collision', () => {
     await expect(
       startDashboardServer({ port: first.port, state: makeFakeState() }),
     ).rejects.toThrow();
+  });
+
+  it('surfaces a port collision as an identifiable EADDRINUSE rejection', async () => {
+    // The loud-error path in server.ts keys off isAddressInUse(err); prove the
+    // rejection a real collision produces is classified as such end-to-end.
+    const first = await startWithFake(makeFakeState(), 0);
+    const err = await startDashboardServer({ port: first.port, state: makeFakeState() }).then(
+      () => {
+        throw new Error('expected collision to reject');
+      },
+      (e: unknown) => e,
+    );
+    expect(isAddressInUse(err)).toBe(true);
+  });
+});
+
+describe('loud port-conflict reporting (VW-68)', () => {
+  it('isAddressInUse classifies only EADDRINUSE errors', () => {
+    expect(isAddressInUse({ code: 'EADDRINUSE' })).toBe(true);
+    expect(isAddressInUse(Object.assign(new Error('x'), { code: 'EADDRINUSE' }))).toBe(true);
+    expect(isAddressInUse({ code: 'EACCES' })).toBe(false);
+    expect(isAddressInUse(new Error('plain'))).toBe(false);
+    expect(isAddressInUse(null)).toBe(false);
+    expect(isAddressInUse('EADDRINUSE')).toBe(false);
+  });
+
+  it('the port-in-use message names the port and warns the dashboard is another server', () => {
+    const msg = dashboardPortInUseMessage(DEFAULT_DASHBOARD_PORT, DEFAULT_DASHBOARD_HOST);
+    expect(msg).toContain(String(DEFAULT_DASHBOARD_PORT));
+    expect(msg).toContain(DEFAULT_DASHBOARD_HOST);
+    expect(msg).toContain('another voltras-mcp');
+    expect(msg).toMatch(/NO dashboard/);
   });
 });

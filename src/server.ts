@@ -53,6 +53,8 @@ import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
 import {
   startDashboardServer,
+  isAddressInUse,
+  dashboardPortInUseMessage,
   DEFAULT_DASHBOARD_PORT,
   DEFAULT_DASHBOARD_HOST,
   type DashboardServerHandle,
@@ -301,7 +303,17 @@ export async function runServer(): Promise<void> {
           `dashboard sidecar listening at http://${DEFAULT_DASHBOARD_HOST}:${dashboardHandle.port}`,
         );
       } catch (err) {
-        log.warn('dashboard sidecar failed to start', err);
+        // A port conflict is not routine warn noise: another voltras-mcp
+        // instance already owns the dashboard port, so this session gets no
+        // dashboard while the operator may be staring at the other server's.
+        // Escalate to a loud, unmistakable error (VW-68). The MCP process
+        // itself still stays up — the bind is deliberately non-fatal so a
+        // stuck port never blocks all tool use.
+        if (isAddressInUse(err)) {
+          log.error(dashboardPortInUseMessage(dashboardPort, DEFAULT_DASHBOARD_HOST));
+        } else {
+          log.warn('dashboard sidecar failed to start', err);
+        }
       }
     }
 
