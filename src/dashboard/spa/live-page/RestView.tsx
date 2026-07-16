@@ -19,6 +19,7 @@ import {
   type CompletedSet,
   type DashboardModel,
 } from './model';
+import { type MassUnit, formatMass } from './mass';
 
 /*
  * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via className.
@@ -55,33 +56,40 @@ function justCompletedSet(model: DashboardModel): CompletedSet | null {
 }
 
 /** The recap card's rows — one `done` row per logged set of the active exercise. */
-function recapRows(model: DashboardModel): SetRowProps[] {
+function recapRows(model: DashboardModel, displayUnit: MassUnit): SetRowProps[] {
   const { session } = model;
-  return activeCompletedSets(session).map((set, i) => ({
-    state: 'done',
-    setNumber: i + 1,
-    unit: session.unit,
-    reps: set.repCount,
+  return activeCompletedSets(session).map((set, i) => {
     // SetRow needs a number; under the mock adapter no weight cascade arrives → 0, the same
-    // fallback the rail uses (never a fabricated load).
-    weight: set.weightLbs ?? 0,
-    velocities: set.reps,
-    // rpe intentionally omitted — the store has none and the specimen's value was invented.
-  }));
+    // fallback the rail uses (never a fabricated load). Converted to the display unit (VW-63).
+    const load = formatMass(set.weightLbs ?? 0, displayUnit);
+    return {
+      state: 'done',
+      setNumber: i + 1,
+      unit: load.unit,
+      reps: set.repCount,
+      weight: load.value,
+      velocities: set.reps,
+      // rpe intentionally omitted — the store has none and the specimen's value was invented.
+    };
+  });
 }
 
 /** The finished set's verdict metrics; entries the store cannot source are null → hidden. */
-function verdictMetrics(set: CompletedSet): MetricSpec[] {
+function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] {
   const mean = meanVelocity(set.reps);
   const peak = peakVelocity(set.reps);
   const loss = velocityLossPct(set.reps);
   const verdict = loss === null ? null : verdictFromLoss(loss);
+  // Load + Peak force are the only mass readouts here — converted to the display unit
+  // (VW-63). Mean/Peak con (m/s), Vel loss (%) and Reps (count) are unit-invariant.
+  const load = set.weightLbs !== null ? formatMass(set.weightLbs, displayUnit) : null;
+  const peakForce = set.peakForceLbs !== null ? formatMass(set.peakForceLbs, displayUnit) : null;
   return [
     set.reps.length > 0 ? { value: mean.toFixed(2), unit: 'm/s', label: 'Mean con' } : null,
     peak !== null ? { value: peak.toFixed(2), unit: 'm/s', label: 'Peak con' } : null,
     loss !== null ? { value: `${Math.round(loss)}%`, label: 'Vel loss', trend: 'down' } : null,
     { value: String(set.repCount), label: 'Reps' },
-    set.weightLbs !== null ? { value: String(set.weightLbs), unit: 'lbs', label: 'Load' } : null,
+    load !== null ? { value: String(load.value), unit: load.unit, label: 'Load' } : null,
     verdict !== null
       ? {
           value: verdict === 'threshold' ? 'MOD' : verdict === 'stop' ? 'HIGH' : 'LOW',
@@ -92,8 +100,8 @@ function verdictMetrics(set: CompletedSet): MetricSpec[] {
     // Peak force: the just-closed set's max concentric force (VW-61), folded at
     // set-close so it survives into rest (the live overlay's `peakForce` is gone by
     // now). Hidden when the store logged no force — never faked.
-    set.peakForceLbs !== null
-      ? { value: String(Math.round(set.peakForceLbs)), unit: 'lbs', label: 'Peak force' }
+    peakForce !== null
+      ? { value: String(peakForce.value), unit: peakForce.unit, label: 'Peak force' }
       : null,
     // Avg ROM: no `CompletedSet` source once the set closes → still hidden, not faked.
   ];
@@ -178,13 +186,21 @@ function RestCountdown({ model }: { model: DashboardModel }): ReactElement | nul
  * A between-sets read-out: the rest countdown, a recap of the set just finished, and the
  * finished set's verdict metrics. Rendered by {@link LivePage} whenever no set is streaming.
  */
-export function RestView({ model }: { model: DashboardModel }): ReactElement {
+export function RestView({
+  model,
+  displayUnit = 'lbs',
+}: {
+  model: DashboardModel;
+  /** Client DISPLAY unit for weight / load / peak-force readouts (VW-63). Store stays lbs. */
+  displayUnit?: MassUnit;
+}): ReactElement {
   const { session } = model;
   const set = justCompletedSet(model);
-  const rows = recapRows(model);
+  const rows = recapRows(model, displayUnit);
   const metrics = set
-    ? verdictMetrics(set).filter((m): m is NonNullable<MetricSpec> => m !== null)
+    ? verdictMetrics(set, displayUnit).filter((m): m is NonNullable<MetricSpec> => m !== null)
     : [];
+  const summaryLoad = formatMass(session.weightLbs ?? 0, displayUnit);
 
   return (
     <View style={{ flex: 1, flexDirection: 'row', padding: 20, gap: 20 }}>
@@ -200,8 +216,8 @@ export function RestView({ model }: { model: DashboardModel }): ReactElement {
               summary={{
                 sets: session.plannedSets ?? rows.length,
                 reps: session.targetReps ?? NO_VALUE,
-                weight: session.weightLbs ?? 0,
-                unit: session.unit,
+                weight: summaryLoad.value,
+                unit: summaryLoad.unit,
               }}
               {...(session.tempo ? { tempo: session.tempo } : {})}
               indicator="velocity-loss"

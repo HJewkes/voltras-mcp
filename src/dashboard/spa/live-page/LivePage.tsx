@@ -1,6 +1,7 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
-import { ScrollView, View } from 'react-native';
-import { SessionRail } from '@titan-design/react-ui';
+import { useCallback, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { SessionRail, alpha, getSemanticColors } from '@titan-design/react-ui';
 import { ExerciseHeader, LiveView } from './LiveView';
 import { RestView } from './RestView';
 import { EmptyLiveView } from './EmptyLiveView';
@@ -12,6 +13,81 @@ import {
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
+import { type MassUnit } from './mass';
+
+const t = getSemanticColors('dark');
+
+/** localStorage key for the client's chosen weight/force display unit (VW-63). */
+const DISPLAY_UNIT_KEY = 'voltras.live.displayUnit';
+
+/** Read the persisted display-unit preference; lbs unless kg was explicitly stored. SSR-safe. */
+function readStoredUnit(): MassUnit {
+  if (typeof window === 'undefined') return 'lbs';
+  return window.localStorage.getItem(DISPLAY_UNIT_KEY) === 'kg' ? 'kg' : 'lbs';
+}
+
+/**
+ * The DISPLAY unit preference (VW-63) — a CLIENT choice, independent of the model's source
+ * unit (always lbs). Persisted to localStorage so a wall keeps its unit across reloads. This
+ * NEVER mutates the store/model; conversion happens at each readout.
+ */
+function useDisplayUnit(): [MassUnit, (unit: MassUnit) => void] {
+  const [unit, setUnit] = useState<MassUnit>(readStoredUnit);
+  const choose = useCallback((next: MassUnit) => {
+    setUnit(next);
+    if (typeof window !== 'undefined') window.localStorage.setItem(DISPLAY_UNIT_KEY, next);
+  }, []);
+  return [unit, choose];
+}
+
+/** A subtle corner segmented control toggling the wall's weight/force display unit (VW-63). */
+function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassUnit) => void }) {
+  const units: MassUnit[] = ['lbs', 'kg'];
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        bottom: 14,
+        right: 18,
+        zIndex: 10,
+        flexDirection: 'row',
+        borderRadius: 8,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: t['border-default'],
+        backgroundColor: alpha(t['surface-overlay'], 0.85),
+      }}
+    >
+      {units.map((u) => {
+        const active = u === unit;
+        return (
+          <Pressable
+            key={u}
+            onPress={() => onChange(u)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 5,
+              backgroundColor: active ? t['surface-raised'] : 'transparent',
+            }}
+          >
+            <Text
+              style={{
+                color: active ? t['text-primary'] : t['text-tertiary'],
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 1.5,
+              }}
+            >
+              {u.toUpperCase()}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 
 export type LivePageVariant = 'live' | 'live-dual';
 
@@ -60,8 +136,9 @@ export interface LivePageProps {
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
 export function LivePage({ variant = 'live', model }: LivePageProps) {
-  const exercises = deriveRailExercises(model);
-  const metrics = deriveRailMetrics(model);
+  const [displayUnit, setDisplayUnit] = useDisplayUnit();
+  const exercises = deriveRailExercises(model, displayUnit);
+  const metrics = deriveRailMetrics(model, displayUnit);
   const completedSets = model.session.completedSets.length;
   const isLive = model.live !== null;
 
@@ -87,13 +164,15 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
           breakpoints below this are a later pass. */}
       <View style={{ flex: 1, minWidth: PANEL_MIN_WIDTH }}>
         {/* workout title + targets — page-level, always visible, independent of single/dual. */}
-        <ExerciseHeader session={model.session} />
+        <ExerciseHeader session={model.session} displayUnit={displayUnit} />
         <View style={{ flex: 1 }}>
           {variant === 'live-dual' ? (
             <DualLiveStage />
           ) : model.live !== null ? (
             // `slot` names the active voltra — the shell has two connected, so the live view
-            // flags which one it is reading from (the multi-device single-view case).
+            // flags which one it is reading from (the multi-device single-view case). The live
+            // stage body carries no weight/force readout (velocity/tempo only), so it needs no
+            // display unit — the page header + rest stage are the mass consumers.
             <LiveView model={model as LiveDashboardModel} slot="L" />
           ) : stageIsEmpty(model) ? (
             // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank
@@ -101,10 +180,12 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
             <EmptyLiveView model={model} />
           ) : (
             // No set streaming ⇒ the rest stage: recap of the set just finished + countdown.
-            <RestView model={model} />
+            <RestView model={model} displayUnit={displayUnit} />
           )}
         </View>
       </View>
+      {/* Subtle wall-corner unit toggle — overlays the stage, out of the reading path. */}
+      <UnitToggle unit={displayUnit} onChange={setDisplayUnit} />
     </View>
   );
 }

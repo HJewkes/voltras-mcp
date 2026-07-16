@@ -15,6 +15,7 @@
  * it is NOT what the mounted page reads.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
+import { type MassUnit, convertMass, formatMass } from './mass';
 
 // --- Store read-model shapes (mirror voltras-mcp dashboard store) -------------
 
@@ -368,7 +369,7 @@ function bestRepsSoFar(done: CompletedSet[], live: LiveModel | null): number | n
  * no settings cascade arrives, so weight reads 0/unknown (the standing weight-seed gap).
  * On real hardware it is the live value.
  */
-function buildActiveRow(model: DashboardModel): SessionRailExercise {
+function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRailExercise {
   const { session, live } = model;
   const done = activeCompletedSets(session);
   const setStates: SessionRailExercise['setStates'] = done.map((set) => ({
@@ -395,6 +396,7 @@ function buildActiveRow(model: DashboardModel): SessionRailExercise {
     }
   }
 
+  const load = formatMass(session.weightLbs ?? 0, displayUnit);
   return {
     name: session.exerciseName,
     // PROGRESS aggregates for the active exercise (VW-68), not a prescription stub: what has
@@ -405,8 +407,8 @@ function buildActiveRow(model: DashboardModel): SessionRailExercise {
     summary: {
       sets: done.length + (live ? 1 : 0),
       reps: bestRepsSoFar(done, live) ?? NO_VALUE,
-      weight: session.weightLbs ?? 0,
-      unit: session.unit,
+      weight: load.value,
+      unit: load.unit,
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
@@ -419,15 +421,20 @@ function buildActiveRow(model: DashboardModel): SessionRailExercise {
  * (tagged with its name) as `done` columns. Empty strip when nothing was logged for it —
  * a real, if skipped, planned exercise, never an invented one.
  */
-function buildDoneRow(planned: PlannedExerciseModel, session: SessionModel): SessionRailExercise {
+function buildDoneRow(
+  planned: PlannedExerciseModel,
+  session: SessionModel,
+  displayUnit: MassUnit,
+): SessionRailExercise {
   const logged = session.completedSets.filter((s) => s.exerciseName === planned.name);
+  const load = formatMass(planned.weightLbs ?? 0, displayUnit);
   return {
     name: planned.name,
     summary: {
       sets: planned.plannedSets,
       reps: planned.repsLabel,
-      weight: planned.weightLbs ?? 0,
-      unit: session.unit,
+      weight: load.value,
+      unit: load.unit,
     },
     indicator: 'velocity-loss',
     setStates: logged.map((set) => ({ status: 'done', velocities: set.reps })),
@@ -441,7 +448,7 @@ function buildDoneRow(planned: PlannedExerciseModel, session: SessionModel): Ses
  */
 function buildUpcomingRow(
   planned: PlannedExerciseModel,
-  unit: SessionModel['unit'],
+  displayUnit: MassUnit,
 ): SessionRailExercise {
   const setStates: SessionRailExercise['setStates'] = [];
   if (planned.targetReps !== null) {
@@ -449,13 +456,14 @@ function buildUpcomingRow(
       setStates.push({ status: 'todo', planned: planned.targetReps });
     }
   }
+  const load = formatMass(planned.weightLbs ?? 0, displayUnit);
   return {
     name: planned.name,
     summary: {
       sets: planned.plannedSets,
       reps: planned.repsLabel,
-      weight: planned.weightLbs ?? 0,
-      unit,
+      weight: load.value,
+      unit: load.unit,
     },
     indicator: 'velocity-loss',
     upcoming: true,
@@ -469,7 +477,10 @@ function buildUpcomingRow(
  * `upcoming` ones. Without a plan the store cannot honestly list more than one, so only
  * the active exercise shows — the pre-VW-49 behaviour.
  */
-export function deriveRailExercises(model: DashboardModel): SessionRailExercise[] {
+export function deriveRailExercises(
+  model: DashboardModel,
+  displayUnit: MassUnit = 'lbs',
+): SessionRailExercise[] {
   const { session, live } = model;
   // NO SESSION at all — no `snapshot.session`, no plan, nothing logged, nothing streaming
   // (VW-68). Emit an EMPTY list so the rail shows an honest empty treatment rather than a stub
@@ -483,13 +494,13 @@ export function deriveRailExercises(model: DashboardModel): SessionRailExercise[
   ) {
     return [];
   }
-  if (session.plannedExercises.length === 0) return [buildActiveRow(model)];
+  if (session.plannedExercises.length === 0) return [buildActiveRow(model, displayUnit)];
 
   const activeIndex = session.plannedExercises.findIndex((e) => e.active);
   return session.plannedExercises.map((planned, i) => {
-    if (planned.active) return buildActiveRow(model);
-    if (activeIndex === -1 || i > activeIndex) return buildUpcomingRow(planned, session.unit);
-    return buildDoneRow(planned, session);
+    if (planned.active) return buildActiveRow(model, displayUnit);
+    if (activeIndex === -1 || i > activeIndex) return buildUpcomingRow(planned, displayUnit);
+    return buildDoneRow(planned, session, displayUnit);
   });
 }
 
@@ -518,18 +529,25 @@ function formatLoad(lbs: number): string {
  * No Fatigue tile: the read-models carry only a per-set live velocity loss, not an
  * honest session-wide fatigue signal, so it is omitted rather than fabricated.
  */
-export function deriveRailMetrics(model: DashboardModel): MetricTileData[] | null {
+export function deriveRailMetrics(
+  model: DashboardModel,
+  displayUnit: MassUnit = 'lbs',
+): MetricTileData[] | null {
   const sets = model.session.completedSets;
   if (sets.length === 0) return null;
   let reps = 0;
-  let load = 0;
+  let loadLbs = 0;
   for (const set of sets) {
     reps += set.repCount;
-    load += (set.weightLbs ?? 0) * set.repCount;
+    loadLbs += (set.weightLbs ?? 0) * set.repCount;
   }
+  // Volume is a rep COUNT — unit-invariant, never converted. Load is a mass total (lbs),
+  // converted to the display unit and suffixed so the compact "k" value stays unambiguous
+  // on the wall (the tile carries no separate unit field).
+  const load = convertMass(loadLbs, displayUnit);
   return [
     { label: 'Volume', value: String(reps) },
-    { label: 'Load', value: formatLoad(load) },
+    { label: 'Load', value: `${formatLoad(load)} ${displayUnit}` },
   ];
 }
 
