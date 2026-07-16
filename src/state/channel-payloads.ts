@@ -98,35 +98,33 @@ function repRangeOfMotion(rep: Rep): number | null {
  * Concentric impulse for a rep in pound-seconds (lb·s).
  *
  * `getRepConcentricImpulse` integrates `WorkoutSample.force` over time. The
- * bridge passes raw frame force through in tenths-of-lbs (the WorkoutSample
- * contract wants lbs — VMCP-02.46), so the helper's output is inflated 10x;
- * we correct with `/ 10` here at the serialization boundary, mirroring the
- * `mmsToMps` / `mmToM` pattern of fixing units at emit rather than mutating
- * WA's inputs. Null when the concentric phase has no samples (matches
- * `repRangeOfMotion`), so the model distinguishes "no data" from a true 0.
+ * bridge now builds `WorkoutSample.force` in pounds (the single tenths→lb
+ * conversion happens at the frame choke point in `event-bridge.ts`), so the
+ * helper's output is already in lb·s and needs no unit correction here. Null
+ * when the concentric phase has no samples (matches `repRangeOfMotion`), so
+ * the model distinguishes "no data" from a true 0.
  */
 function repConcentricImpulseLbS(rep: Rep): number | null {
   if (rep.concentric.samples.length === 0) {
     return null;
   }
-  return Number((getRepConcentricImpulse(rep) / 10).toFixed(3));
+  return Number(getRepConcentricImpulse(rep).toFixed(3));
 }
 
 /**
  * Mean concentric power for a rep in pound-metres per second (lb·m/s).
  *
  * `getRepMeanConcentricPower` is work / concentric-time, where work is
- * `Σ force × |Δposition|`. Force arrives in tenths-of-lbs (÷10) and position
- * in millimetres (÷1000), so the helper output is inflated 10 000x relative
- * to lb·m/s; we correct with `/ 10000`. Same boundary-conversion rationale
- * as `repConcentricImpulseLbS`. Null when the concentric phase has no
- * samples.
+ * `Σ force × |Δposition|`. Force now arrives in pounds (converted once at the
+ * bridge) but position is still in millimetres, so the helper output is
+ * inflated 1000x relative to lb·m/s; we correct with `/ 1000` — only the
+ * mm→m term remains. Null when the concentric phase has no samples.
  */
 function repMeanConcentricPowerLbMps(rep: Rep): number | null {
   if (rep.concentric.samples.length === 0) {
     return null;
   }
-  return Number((getRepMeanConcentricPower(rep) / 10000).toFixed(3));
+  return Number((getRepMeanConcentricPower(rep) / 1000).toFixed(3));
 }
 
 /**

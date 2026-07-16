@@ -123,7 +123,13 @@ import { randomUUID } from 'node:crypto';
 
 import { selectSetReps } from './live-state.js';
 import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
-import { LiveSignalEmitter, mapPhase, mmsToMps, mmToM } from './live-signal.js';
+import {
+  LiveSignalEmitter,
+  mapPhase,
+  mmsToMps,
+  mmToM,
+  FRAME_FORCE_TENTHS_PER_LB,
+} from './live-signal.js';
 import { getDebugBuffers } from './debug-buffer.js';
 import { getSessionRecorder } from './session-recorder.js';
 import type { ChannelPublisher } from './channel-publisher.js';
@@ -472,6 +478,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         phase: frame.phase as unknown as number,
         position: frame.position,
         velocity: frame.velocity,
+        // Raw diagnostics buffer: force is the device's native unit (tenths of
+        // a pound), left unconverted on purpose so the debug trace mirrors the
+        // wire exactly. Fitness-units conversion happens on the WorkoutSample
+        // below, not here.
         force: frame.force,
       });
 
@@ -484,7 +494,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         phase: phase as unknown as WorkoutSample['phase'],
         position: frame.position,
         velocity: frame.velocity,
-        force: frame.force,
+        // Single tenths→lb conversion point. WA's `WorkoutSample.force`
+        // contract is pounds; the device reports tenths. Converting here means
+        // every downstream force-derived output (peak force, impulse, mean
+        // power) is in pounds with no per-emit-site re-correction.
+        force: frame.force / FRAME_FORCE_TENTHS_PER_LB,
       };
 
       // ── VMCP-01.59: SSE live-signal tap ───────────────────────────────────
@@ -492,8 +506,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // velocity/position/force) at this frame choke point and fan it out to
       // the dashboard SSE bridge. Runs for every classified frame — including
       // idle-arm movement — so the live phase/velocity readout always tracks
-      // the cable. Velocity is converted mm/s → m/s here; force stays lbs;
-      // position is the normalized 0-600 cable extension. No protocol bytes
+      // the cable. Velocity is converted mm/s → m/s here; force is read from
+      // the WorkoutSample above, already converted tenths → lbs; position is
+      // the normalized 0-600 cable extension. No protocol bytes
       // cross this tap. Shared derivation with VMCP-02.58's Tier-1 cue matcher.
       if (liveSignals !== undefined) {
         liveSignals.frame({

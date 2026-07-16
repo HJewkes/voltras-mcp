@@ -278,11 +278,11 @@ describe('buildRepFinalizedPayload', () => {
     expect(parsed.rep.hold_top_ms).toBe(100);
   });
 
-  // VMCP-02.46: impulse + mean-power are added at the rep level by correcting
-  // WA's tenths-of-lbs (force ÷10) and mm (position ÷1000) inflation at the
-  // emit boundary — the bridge's WorkoutSample passthrough is left untouched.
-  it('emits impulse_lb_s + mean_power_lb_mps with the tenths/mm inflation corrected', () => {
-    // Concentric: 3 samples, force held at 500 tenths (= 50 lb), position
+  // The bridge converts frame force tenths→lb when it builds the WorkoutSample,
+  // so `WorkoutSample.force` is already pounds here. impulse needs no unit
+  // correction; mean-power only corrects the mm→m position term (÷1000).
+  it('emits impulse_lb_s + mean_power_lb_mps in fitness units (lb·s / lb·m/s)', () => {
+    // Concentric: 3 samples, force held at 50 lb (post-bridge units), position
     // 0 → 100 → 200 mm across 1000 → 1200 ms (0.2 s of movement, no hold).
     //   impulse = ∫F dt = 50 lb × 0.2 s = 10.0 lb·s
     //   work    = ∫F dx = 50 lb × 0.2 m = 10.0 lb·m
@@ -290,9 +290,9 @@ describe('buildRepFinalizedPayload', () => {
     const concentric = {
       ...makePhase({ samples: 0, startTime: 1000, endTime: 1200, movementSampleCount: 3 }),
       samples: [
-        { sequence: 0, timestamp: 1000, phase: 1, position: 0, velocity: 0, force: 500 },
-        { sequence: 1, timestamp: 1100, phase: 1, position: 100, velocity: 0, force: 500 },
-        { sequence: 2, timestamp: 1200, phase: 1, position: 200, velocity: 0, force: 500 },
+        { sequence: 0, timestamp: 1000, phase: 1, position: 0, velocity: 0, force: 50 },
+        { sequence: 1, timestamp: 1100, phase: 1, position: 100, velocity: 0, force: 50 },
+        { sequence: 2, timestamp: 1200, phase: 1, position: 200, velocity: 0, force: 50 },
       ] as Rep['concentric']['samples'],
     };
     const rep: Rep = {

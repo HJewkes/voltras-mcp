@@ -1,11 +1,12 @@
 // VMCP-02.68 — force-implied-weight validator.
 //
-// A plateau set's median concentric peak force is very nearly linear in the
-// header (logged) weight: force ≈ FORCE_PER_LB × lbs. Inverting that lets us
-// compute the weight the reps were PHYSICALLY performed at from telemetry
-// alone, and flag when it disagrees with the stored header weight — the
-// signature of a stale / mis-recorded header (VMCP-02.57: two "30 lb" sets
-// were actually lifted at 50).
+// A plateau set's median concentric peak force (in pounds) slightly exceeds
+// the header (logged) weight: dynamic concentric peak overshoots the static
+// load by a small, roughly constant fraction, so weight ≈ peakForce /
+// PEAK_OVERSHOOT_FACTOR. Inverting that lets us compute the weight the reps
+// were PHYSICALLY performed at from telemetry alone, and flag when it
+// disagrees with the stored header weight — the signature of a stale /
+// mis-recorded header (VMCP-02.57: two "30 lb" sets were actually lifted at 50).
 //
 // This module is pure (no device, no channel, no protocol). The finalize
 // path (`finalizeSet` in `src/tools/set-tools.ts`) feeds it the persisted
@@ -15,19 +16,25 @@
 import type { Rep } from '@voltras/workout-analytics';
 
 /**
- * Empirical proportionality constant between a plateau set's median
- * concentric peak force (device force units) and the header weight in pounds:
- *   force ≈ FORCE_PER_LB × lbs.
+ * Overshoot of a plateau set's median concentric peak force (in POUNDS, after
+ * the bridge's tenths→lb conversion) over the header weight in pounds:
+ *   peakForce ≈ PEAK_OVERSHOOT_FACTOR × lbs.
  *
- * CALIBRATION CAVEAT: derived from a SINGLE cable session (bench 2026-07-05,
- * upper-body bilateral). Plateau median concentric peak force measured 503–506
- * at 50 lb, 817 at 80 lb, and 1168 at 115 lb — all landing on ~10.17 × lbs.
- * This ratio is almost certainly per-device / per-movement / per-cable-geometry
- * (attachment, pulley ratio, line angle) and MUST be re-calibrated before it is
- * trusted on a different machine, attachment, or exercise. The mismatch flag is
- * advisory only — it never coerces or rewrites the stored weight.
+ * De-conflation note: the old `FORCE_PER_LB = 10.17` bundled two effects — a
+ * ×10 unit conversion (tenths→lb) and this residual ~1.7% overshoot. The ×10
+ * now lives at the single bridge conversion point (`FRAME_FORCE_TENTHS_PER_LB`),
+ * so only the overshoot residual belongs here. Bench 2026-07-05 (single cable
+ * session, upper-body bilateral) measured plateau median concentric peak force
+ * landing ~1.017× the header weight in pounds.
+ *
+ * CALIBRATION CAVEAT: this residual rests on one session and is almost
+ * certainly per-device / per-movement / per-cable-geometry (attachment, pulley
+ * ratio, line angle). It needs proper empirical calibration via a controlled
+ * isometric hold (separate ticket) before it is trusted on a different machine,
+ * attachment, or exercise. The mismatch flag stays advisory only — it never
+ * coerces or rewrites the stored weight.
  */
-export const FORCE_PER_LB = 10.17;
+export const PEAK_OVERSHOOT_FACTOR = 1.017;
 
 /**
  * Relative disagreement (|implied − header| / header) above which the
@@ -42,7 +49,7 @@ export interface WeightImpliedResult {
   flagged: boolean;
   /** Median of the per-rep concentric peak force across the set. */
   medianConcentricPeakForce: number;
-  /** `medianConcentricPeakForce / FORCE_PER_LB`. */
+  /** `medianConcentricPeakForce / PEAK_OVERSHOOT_FACTOR`. */
   impliedWeightLbs: number;
   /** `|impliedWeightLbs − headerWeightLbs| / headerWeightLbs`. */
   ratio: number;
@@ -80,7 +87,7 @@ export function evaluateWeightImplied(
   if (median === null || median <= 0 || headerWeightLbs <= 0) {
     return null;
   }
-  const impliedWeightLbs = median / FORCE_PER_LB;
+  const impliedWeightLbs = median / PEAK_OVERSHOOT_FACTOR;
   const ratio = Math.abs(impliedWeightLbs - headerWeightLbs) / headerWeightLbs;
   return {
     flagged: ratio > WEIGHT_IMPLIED_MISMATCH_RATIO,

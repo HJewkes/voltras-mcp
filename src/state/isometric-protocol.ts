@@ -23,7 +23,7 @@
 export interface ForceSample {
   /** Milliseconds since the start of the trial (`0` for the first sample). */
   tMs: number;
-  /** Cable force in pounds (the SDK's `TelemetryFrame.force` is already lbs). */
+  /** Cable force in pounds (converted from the SDK's tenths-of-a-pound frame force). */
   forceLbs: number;
 }
 

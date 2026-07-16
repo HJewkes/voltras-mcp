@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 
 import {
-  FORCE_PER_LB,
+  PEAK_OVERSHOOT_FACTOR,
   medianConcentricPeakForce,
   evaluateWeightImplied,
 } from '../weight-implied-watch.js';
+import { FRAME_FORCE_TENTHS_PER_LB } from '../live-signal.js';
 
 /** Minimal Rep carrying only the concentric peak force the validator reads. */
 function repWithForce(peakForce: number): Rep {
@@ -33,11 +34,14 @@ function reps(forces: number[]): Rep[] {
   return forces.map(repWithForce);
 }
 
-// Ground truth captured from the recorded upper-body bilateral session
-// (~/.voltras/vmcp.sqlite). Each entry is the full per-rep concentric
-// peakForce array for a set, its logged header weight, and the expected flag.
-// The two "30 lb" sets were physically lifted at 50 (VMCP-02.57), so their
-// force-implied weight lands near 50 and must FLAG against the 30 header.
+// Ground truth captured from the recorded upper-body bilateral session. Each
+// entry is the full per-rep concentric peakForce array for a set (in the raw
+// device unit, tenths of a pound), its logged header weight, and the expected
+// flag. The bridge now converts frame force tenths→lb before WA sees it, so
+// the validator receives pounds; the test applies the same ÷FRAME_FORCE_TENTHS_PER_LB
+// (see `forcesLbs` below). The two "30 lb" sets were physically lifted at 50
+// (VMCP-02.57), so their force-implied weight lands near 50 and must FLAG
+// against the 30 header.
 const GROUND_TRUTH = [
   {
     label: '30 L (cc1812aa) — really 50',
@@ -102,18 +106,24 @@ describe('evaluateWeightImplied — recorded-session ground truth', () => {
   it.each(GROUND_TRUTH)(
     'flags $label as flag=$expectFlag',
     ({ forces, headerLbs, expectedMedian, expectFlag }) => {
-      const result = evaluateWeightImplied(headerLbs, reps([...forces]));
+      const forcesLbs = forces.map((f) => f / FRAME_FORCE_TENTHS_PER_LB);
+      const expectedMedianLbs = expectedMedian / FRAME_FORCE_TENTHS_PER_LB;
+      const result = evaluateWeightImplied(headerLbs, reps(forcesLbs));
       expect(result).not.toBeNull();
-      expect(result!.medianConcentricPeakForce).toBe(expectedMedian);
-      // Implied weight ≈ median / 10.17 — always lands near 50/80/115.
-      expect(result!.impliedWeightLbs).toBeCloseTo(expectedMedian / FORCE_PER_LB, 5);
+      expect(result!.medianConcentricPeakForce).toBeCloseTo(expectedMedianLbs, 5);
+      // Implied weight ≈ median / 1.017 — always lands near 50/80/115.
+      expect(result!.impliedWeightLbs).toBeCloseTo(expectedMedianLbs / PEAK_OVERSHOOT_FACTOR, 5);
       expect(result!.flagged).toBe(expectFlag);
     },
   );
 
   it('confirms exactly the two 30→50 sets are flagged', () => {
     const flagged = GROUND_TRUTH.filter(
-      (g) => evaluateWeightImplied(g.headerLbs, reps([...g.forces]))!.flagged,
+      (g) =>
+        evaluateWeightImplied(
+          g.headerLbs,
+          reps(g.forces.map((f) => f / FRAME_FORCE_TENTHS_PER_LB)),
+        )!.flagged,
     ).map((g) => g.label);
     expect(flagged).toEqual(['30 L (cc1812aa) — really 50', '30 R (fd15c14f) — really 50']);
   });
@@ -129,8 +139,8 @@ describe('evaluateWeightImplied — guards', () => {
   });
 
   it('does not flag a correctly-labeled set within the 10% tolerance', () => {
-    // 508 / 10.17 ≈ 49.95 lb vs a 50 lb header → ~0.1% disagreement.
-    const result = evaluateWeightImplied(50, reps([508, 508, 508]));
+    // 50.8 lb / 1.017 ≈ 49.95 lb vs a 50 lb header → ~0.1% disagreement.
+    const result = evaluateWeightImplied(50, reps([50.8, 50.8, 50.8]));
     expect(result!.flagged).toBe(false);
     expect(result!.ratio).toBeLessThan(0.1);
   });

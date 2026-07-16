@@ -213,13 +213,13 @@ export const dashboardFixture: DashboardModel = {
   restElapsedMs: null,
   live: {
     velocity: 0.41,
-    force: 498,
+    force: 49.8,
     phase: 'concentric',
     phaseElapsedMs: 700,
     lastRep: { vCon: 0.405, rom: 0.58, peakVelocity: 0.61 },
     repVelocities: [0.52, 0.5, 0.48, 0.46, 0.44, 0.405],
     velocityLossPct: 22,
-    peakForce: 542,
+    peakForce: 54.2,
   },
   session: {
     hasSession: true,
@@ -264,7 +264,7 @@ export const dashboardFixture: DashboardModel = {
         mode: 'weight',
         repCount: 8,
         reps: [0.55, 0.54, 0.52, 0.51, 0.49, 0.47, 0.45, 0.43],
-        peakForceLbs: 512,
+        peakForceLbs: 51.2,
       },
       {
         exerciseName: 'Cable Chest Press',
@@ -272,7 +272,7 @@ export const dashboardFixture: DashboardModel = {
         mode: 'weight',
         repCount: 8,
         reps: [0.53, 0.52, 0.5, 0.48, 0.46, 0.44, 0.42, 0.4],
-        peakForceLbs: 505,
+        peakForceLbs: 50.5,
       },
     ],
   },
