@@ -14,7 +14,7 @@
  * and hard-reset to 0 on `phaseflip`. Commits are capped so this tiny live
  * subtree re-renders at ~20 Hz, not the whole dashboard.
  *
- * NDA: consumes the fitness-units-only SSE schema (`src/state/live-signal.ts`,
+ * Confidentiality: consumes the fitness-units-only SSE schema (`src/state/live-signal.ts`,
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
 import {

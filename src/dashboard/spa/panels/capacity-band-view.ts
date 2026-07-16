@@ -9,7 +9,7 @@
  * pre-rounding. Titan imports are TYPES only (erased at build), so this runs in the
  * node test environment.
  *
- * NDA: reads derived fitness metadata only; no protocol data (NF-07).
+ * Confidentiality: reads derived fitness metadata only; no protocol data (NF-07).
  */
 import type { CapacityBandDataPoint, WorkoutDot, WorkoutDotStatus } from '@titan-design/react-ui';
 

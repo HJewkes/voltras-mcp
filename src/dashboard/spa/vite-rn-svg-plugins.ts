@@ -12,7 +12,7 @@
  * (Rollup) plugins are needed here; titan's dev-server optimizer variant is
  * intentionally omitted.
  *
- * NDA: pure build tooling — no protocol data of any kind.
+ * Confidentiality: pure build tooling — no protocol data of any kind.
  */
 import { createRequire } from 'node:module';
 import { dirname, resolve as resolvePath } from 'node:path';

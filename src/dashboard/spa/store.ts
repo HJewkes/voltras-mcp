@@ -20,7 +20,7 @@
  * The derivation seam (`adapter.ts` + the `*-view.ts` mappers) is untouched — those stay
  * pure and are called as selectors over this store's state.
  *
- * NDA: state here is `/api/snapshot` + fitness-units SSE only — no protocol bytes.
+ * Confidentiality: state here is `/api/snapshot` + fitness-units SSE only — no protocol bytes.
  */
 import { createStore } from 'zustand/vanilla';
 

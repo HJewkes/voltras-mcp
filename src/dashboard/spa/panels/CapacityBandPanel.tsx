@@ -9,7 +9,7 @@
  *
  * Hidden until the band has points — the server gates on a minimum session count
  * (`MIN_CAPACITY_BAND_SESSIONS`), so an empty series means "not enough history yet".
- * NDA: derived fitness metadata only.
+ * Confidentiality: derived fitness metadata only.
  */
 import { CapacityBandChart } from '@titan-design/react-ui';
 import { PanelCard } from './PanelCard';

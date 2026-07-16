@@ -123,7 +123,7 @@ export function registerDebugTools(
     'debug.recording_status',
     DebugRecordingStatusInput,
     wrapHandler(DebugRecordingStatusInput, () =>
-      // NDA-safe: a handle + counts only, never frame bytes. `enabled` reflects
+      // Confidentiality-safe: a handle + counts only, never frame bytes. `enabled` reflects
       // the VMCP_RECORD_SESSION env; `active`/`path`/`frameCount` let the
       // operator confirm at the bench that capture is live before a set.
       Promise.resolve(getSessionRecorder().status()),

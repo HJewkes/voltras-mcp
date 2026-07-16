@@ -5,7 +5,7 @@
  * unit/format helpers, and the completed-set accumulator that mirrors the legacy
  * `dashboard-html.ts` `updateSetLog` / `updateRestState` state machine exactly.
  *
- * NDA: this module only reads `/api/snapshot` JSON — no protocol bytes, frames,
+ * Confidentiality: this module only reads `/api/snapshot` JSON — no protocol bytes, frames,
  * or command codes cross this boundary.
  *
  * Velocity math is routed through `@voltras/workout-analytics`

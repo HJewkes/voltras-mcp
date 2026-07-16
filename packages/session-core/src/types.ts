@@ -2,7 +2,7 @@
  * Shared value types for @voltras/session-core — SDK-free by construction.
  *
  * Everything here is at the `WorkoutSample` (fitness-unit) grain, never
- * `TelemetryFrame` / protocol bytes (NDA / ESLint NF-07). The domain atoms are
+ * `TelemetryFrame` / protocol bytes (confidentiality / ESLint NF-07). The domain atoms are
  * re-exported from `@voltras/workout-analytics` so consumers import them from one
  * place.
  *

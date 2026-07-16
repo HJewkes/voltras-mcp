@@ -8,7 +8,7 @@
  * dashboard's existing BodyMap taps.
  *
  * The chart is hidden until there are ≥2 points (a single dot isn't a trend);
- * the PR-history button appears whenever records exist. NDA: derived fitness
+ * the PR-history button appears whenever records exist. Confidentiality: derived fitness
  * metadata only.
  */
 import { useState } from 'react';

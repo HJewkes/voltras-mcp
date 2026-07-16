@@ -8,7 +8,7 @@
  * threads the block's `totalWeeks` onto each row. Titan imports are TYPES only
  * (erased at build), so this runs in the node test environment.
  *
- * NDA: plan metadata only; no protocol data (NF-07).
+ * Confidentiality: plan metadata only; no protocol data (NF-07).
  */
 import type { WeekRowProps } from '@titan-design/react-ui';
 

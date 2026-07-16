@@ -1,4 +1,4 @@
-// Integration test: NDA structural redaction sweep (Wave 4, Task 16).
+// Integration test: confidentiality structural redaction sweep (Wave 4, Task 16).
 //
 // Drives a representative session through the full MCP transport, captures
 // every tool result and resource read into a single JSON buffer, then runs
@@ -360,7 +360,7 @@ function findBannedFieldNames(value: unknown, path = '$'): string[] {
   return violations;
 }
 
-describe('VMCP NDA structural redaction sweep (integration, AC-11)', () => {
+describe('VMCP confidentiality structural redaction sweep (integration, AC-11)', () => {
   let h: Harness;
 
   beforeAll(async () => {
