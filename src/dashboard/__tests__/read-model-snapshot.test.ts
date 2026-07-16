@@ -11,7 +11,7 @@ import {
   buildSnapshotView,
   resolveActiveExerciseMuscles,
   type DeviceEntry,
-  type ExerciseMuscleMeta,
+  type ExerciseMeta,
 } from '../read-models/snapshot';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state';
 
@@ -40,7 +40,7 @@ const activeSet = (over: Partial<ActiveSet> = {}): ActiveSet => ({
 
 describe('resolveActiveExerciseMuscles', () => {
   it('maps a catalog entry to primary + secondary muscle arrays', () => {
-    const meta: ExerciseMuscleMeta = {
+    const meta: ExerciseMeta = {
       muscleGroups: ['chest'],
       secondaryMuscleGroups: ['shoulders', 'triceps'],
     };
@@ -94,6 +94,41 @@ describe('buildSnapshotView', () => {
     expect(view.sets.active).toBeNull();
     expect(view.activeExercise).toBeNull();
     expect(view.devices).toHaveLength(1);
+  });
+
+  // Regression (VW-38): `session.start` drops `exerciseName` whenever an
+  // `exerciseId` is given (R21), so an id-started session reached the dashboard
+  // nameless and every consumer rendered a `—` placeholder.
+  it('surfaces the catalog name for a session started by exerciseId', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session({ exerciseId: 'cable-chest-press' }),
+      activeSet: undefined,
+      activeExercise: { name: 'Cable Chest Press', muscleGroups: ['chest'] },
+    });
+    expect(view.session?.exerciseName).toBe('Cable Chest Press');
+    expect(view.session?.exerciseId).toBe('cable-chest-press');
+  });
+
+  it('leaves exerciseName absent when the id resolves to no catalog entry', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session({ exerciseId: 'not-in-catalog' }),
+      activeSet: undefined,
+      activeExercise: undefined,
+    });
+    expect(view.session?.exerciseName).toBeUndefined();
+    expect(view.session?.exerciseId).toBe('not-in-catalog');
+  });
+
+  it('keeps a name the session already carries instead of the catalog name', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session({ exerciseId: 'cable-chest-press', exerciseName: 'Guided Load (auto)' }),
+      activeSet: undefined,
+      activeExercise: { name: 'Cable Chest Press', muscleGroups: ['chest'] },
+    });
+    expect(view.session?.exerciseName).toBe('Guided Load (auto)');
   });
 
   it('reports activeExercise=null when no exercise metadata was resolved', () => {
