@@ -100,13 +100,15 @@ describe('buildCurrentSet', () => {
     expect(view.velocitiesMps).toEqual([]);
   });
 
-  it('maps weight/mode/reps/latest-peak/target and per-rep velocities', () => {
+  it('maps weight/mode/reps/latest-peak/target, bars use MEAN concentric', () => {
+    // Reps with DISTINCT peak vs mean, so the bar series (mean) and the
+    // latest-peak readout (peak) can be told apart (VW-58).
     const view = buildCurrentSet(
       snapshot({
         sessionId: 's1',
         device: { connected: true, weightLbs: 135, trainingMode: 'isokinetic' },
         activeSet: {
-          reps: [rep(1, 800), rep(2, 700), rep(3, 650)],
+          reps: [repWithMean(1, 900, 800), repWithMean(2, 800, 700), repWithMean(3, 750, 650)],
           latestInProgress: { targetWeightTenths: 1400 },
         },
       }),
@@ -115,8 +117,10 @@ describe('buildCurrentSet', () => {
     expect(view.weight).toBe('135.0 lbs');
     expect(view.mode).toBe('isokinetic');
     expect(view.reps).toBe(3);
-    expect(view.latestPeakVelocity).toBe('0.65 m/s'); // latest rep, mm/s→m/s
+    // latestPeakVelocity stays PEAK (latest rep peak 750 mm/s → 0.75 m/s).
+    expect(view.latestPeakVelocity).toBe('0.75 m/s');
     expect(view.targetWeight).toBe('140.0 lbs'); // tenths/10
+    // VelocityStrip bars are MEAN concentric (mm/s→m/s), NOT the peaks above.
     expect(view.velocitiesMps).toEqual([0.8, 0.7, 0.65]);
   });
 
@@ -166,6 +170,23 @@ describe('buildCurrentSet', () => {
       snapshot({ sessionId: 's1', activeSet: { reps: [repWithMean(1, 800, 800)] } }),
     );
     expect(view.velocityLoss).toBe('—');
+  });
+
+  it('bars and velocity-loss % are the SAME metric — bar drop matches loss (VW-58)', () => {
+    // Peaks fall only slightly (900→850) while means fall hard (800→600). If the
+    // bars used peak, the visible drop (~6%) would contradict the stated 25%
+    // loss. On mean, the first→last bar drop equals the loss the verdict uses.
+    const view = buildCurrentSet(
+      snapshot({
+        sessionId: 's1',
+        activeSet: { reps: [repWithMean(1, 900, 800), repWithMean(2, 850, 600)] },
+      }),
+    );
+    expect(view.velocitiesMps).toEqual([0.8, 0.6]);
+    const [first, last] = view.velocitiesMps;
+    const barDropPct = Math.round(((first - last) / first) * 100);
+    expect(view.velocityLoss).toBe(`${barDropPct}%`);
+    expect(view.velocityLoss).toBe('25%');
   });
 });
 

@@ -9,11 +9,16 @@
  * or command codes cross this boundary.
  *
  * Velocity math is routed through `@voltras/workout-analytics`
- * (`getRepPeakVelocity`) rather than hand-reading `rep.concentric.peakVelocity`.
- * WA peak velocities are millimetres/second; divide by 1000 for m/s (matches the
- * legacy dashboard's `fmtVelocity`).
+ * (`getRepPeakVelocity` / `getRepMeanVelocity`) rather than hand-reading
+ * `rep.concentric`. WA velocities are millimetres/second; divide by 1000 for m/s
+ * (matches the legacy dashboard's `fmtVelocity`).
  */
-import { getRepPeakVelocity, getSetVelocityLossPct, type Rep } from '@voltras/workout-analytics';
+import {
+  getRepMeanVelocity,
+  getRepPeakVelocity,
+  getSetVelocityLossPct,
+  type Rep,
+} from '@voltras/workout-analytics';
 
 /**
  * mm/s → m/s divisor. The device pipeline records velocities in mm/s; converting
@@ -25,6 +30,20 @@ export const MMS_PER_MPS = 1000;
 /** Peak concentric velocity (mm/s) for a rep, via WA. Null when unavailable. */
 export function repPeakMms(rep: Rep): number | null {
   const v = getRepPeakVelocity(rep);
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Mean concentric velocity (MCV, mm/s) for a rep, via WA. Null when unavailable.
+ *
+ * MCV is the VBT decision metric: the velocity-loss %, FatigueMeter, and
+ * StatusPill verdict all derive from per-rep MCV (`getSetVelocityLossPct`
+ * folds `getRepMeanVelocity` over the first/last rep). The live VelocityStrip
+ * bars use this — not {@link repPeakMms} — so the visible bar-to-bar drop is the
+ * same quantity as the stated loss %/verdict shown beside it (VW-58).
+ */
+export function repMeanMms(rep: Rep): number | null {
+  const v = getRepMeanVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
@@ -282,9 +301,13 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
   const targetTenths = set.latestInProgress?.targetWeightTenths;
   const repTarget = resolveRepTarget(set);
 
+  // MEAN concentric velocity per rep (not peak): the VelocityStrip bars must
+  // read the same metric as the velocity-loss %/FatigueMeter/StatusPill rendered
+  // beside them, so the visible bar-drop and the stated loss %/verdict agree
+  // across the room (VW-58).
   const velocitiesMps: number[] = [];
   for (const rep of reps) {
-    velocitiesMps.push(toMps(repPeakMms(rep)) ?? 0);
+    velocitiesMps.push(toMps(repMeanMms(rep)) ?? 0);
   }
 
   return {
