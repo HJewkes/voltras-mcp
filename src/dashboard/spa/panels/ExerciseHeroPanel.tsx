@@ -184,7 +184,7 @@ export function ExerciseHeroPanel({
               aria-label="Live set tempo, eccentric pause concentric pause"
             >
               <span className="hero-tempo-label">Tempo</span>
-              <TempoDisplay tempo={liveTempo} colored showInfo />
+              <TempoDisplay tempo={liveTempo} showInfo />
             </div>
           )}
           {currentSet.velocityLossPct !== null && (
