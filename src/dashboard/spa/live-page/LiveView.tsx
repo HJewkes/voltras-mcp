@@ -16,6 +16,7 @@ import {
   type IconProps,
 } from '@titan-design/react-ui';
 import { type DashboardModel, type LiveDashboardModel, verdictFromLoss } from './model';
+import { type MassUnit, formatMass } from './mass';
 
 const t = getSemanticColors('dark');
 
@@ -242,10 +243,18 @@ function resolveTargets(
  * visible across single/dual. The targets shrink with width and only wrap under the name
  * (at the set-heading size ratio) once too tight to shrink further. NOT a published component.
  */
-export function ExerciseHeader({ session }: { session: DashboardModel['session'] }) {
+export function ExerciseHeader({
+  session,
+  displayUnit = 'lbs',
+}: {
+  session: DashboardModel['session'];
+  /** Client DISPLAY unit for the load readout (VW-63). Store weight stays lbs. */
+  displayUnit?: MassUnit;
+}) {
   const [w, setW] = useState(0);
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
   const targets = resolveTargets(session);
+  const load = targets ? formatMass(targets.load, displayUnit) : null;
   const wrap = w > 0 && w < HEADER_WRAP;
   const targetSize = wrap
     ? Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO) // set-heading ratio on the second line
@@ -283,12 +292,12 @@ export function ExerciseHeader({ session }: { session: DashboardModel['session']
       {/* targets: pinned right when inline, tucked under the name (smaller) when wrapped.
           Hidden outright when the prescription is unknown — SetsRepsLoad needs real
           sets/reps/load, and a `0 × — @ 0` line is worse than no line. */}
-      {targets && (
+      {targets && load && (
         <SetsRepsLoad
           sets={targets.sets}
           reps={targets.reps}
-          load={targets.load}
-          unit={session.unit}
+          load={load.value}
+          unit={load.unit}
           fontSize={targetSize}
         />
       )}

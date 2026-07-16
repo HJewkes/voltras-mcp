@@ -291,6 +291,15 @@ describe('deriveRailExercises — planned-exercise list (VW-49)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('Bench');
   });
+
+  it('converts the active row summary weight to the chosen display unit (VW-63)', () => {
+    const session = sessionModel({ exerciseName: 'Bench', weightLbs: 140 });
+    const [lbsRow] = deriveRailExercises(railModel(session), 'lbs');
+    expect(lbsRow.summary).toMatchObject({ weight: 140, unit: 'lbs' });
+    const [kgRow] = deriveRailExercises(railModel(session), 'kg');
+    // 140 lb → 63.5 kg → 64.
+    expect(kgRow.summary).toMatchObject({ weight: 64, unit: 'kg' });
+  });
 });
 
 describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
@@ -299,10 +308,22 @@ describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
       exerciseName: 'Bench',
       completedSets: [completed('Squat', 5, 200), completed('Bench', 8, 135)],
     });
-    // 13 reps; 5*200 + 8*135 = 2080 lbs → "2.1k".
+    // 13 reps; 5*200 + 8*135 = 2080 lbs → "2.1k". The Load tile suffixes its unit (VW-63).
     expect(deriveRailMetrics(railModel(session))).toEqual([
       { label: 'Volume', value: '13' },
-      { label: 'Load', value: '2.1k' },
+      { label: 'Load', value: '2.1k lbs' },
+    ]);
+  });
+
+  it('converts the Load total to kg while leaving Volume (a rep count) untouched (VW-63)', () => {
+    const session = sessionModel({
+      exerciseName: 'Bench',
+      completedSets: [completed('Squat', 5, 200), completed('Bench', 8, 135)],
+    });
+    // 2080 lbs × 0.45359237 = 943.5 kg → "943 kg"; the 13-rep Volume is unit-invariant.
+    expect(deriveRailMetrics(railModel(session), 'kg')).toEqual([
+      { label: 'Volume', value: '13' },
+      { label: 'Load', value: '943 kg' },
     ]);
   });
 
