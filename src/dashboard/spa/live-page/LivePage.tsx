@@ -5,6 +5,7 @@ import { ExerciseHeader, LiveView } from './LiveView';
 import {
   deriveDualModel,
   deriveRailExercises,
+  deriveRailMetrics,
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
@@ -56,6 +57,7 @@ export interface LivePageProps {
  */
 export function LivePage({ variant = 'live', model }: LivePageProps) {
   const exercises = deriveRailExercises(model);
+  const metrics = deriveRailMetrics(model);
   const completedSets = model.session.completedSets.length;
   const isLive = model.live !== null;
 
@@ -70,9 +72,12 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
         setsDone={completedSets + liveSetProgress(model)}
         running={isLive}
         width={272}
+        // Session rollup tiles (Volume / Load), folded from the exercise-tagged set log
+        // (VW-52). Undefined before the first set closes, so the header hides them rather
+        // than showing zeros. No Fatigue tile — no honest session-wide signal to source it.
+        metrics={metrics ?? undefined}
       />
-      {/* Rail header metrics (Volume/Load/Fatigue) are OMITTED: they need a session-level
-          rollup that does not exist yet (VW-52). The lab hardcoded 76% / 7.3k / MOD. */}
+      {/* The lab hardcoded 76% / 7.3k / MOD here; the tiles above are the real rollup. */}
 
       {/* Panel floors at ~phone width so the live view stops collapsing; rail-aware
           breakpoints below this are a later pass. */}

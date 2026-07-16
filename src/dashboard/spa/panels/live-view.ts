@@ -26,9 +26,11 @@ import {
 } from '../adapter';
 import { type LiveModel as StoreLiveModel } from '../live-stream';
 import {
+  formatRepsRange,
   type CompletedSet,
   type DashboardModel,
   type LiveModel,
+  type PlannedExerciseModel,
   type RepModel,
   type SessionModel,
 } from '../live-page/model';
@@ -151,11 +153,29 @@ function mapLive(
 /** A closed set on the session read-model. */
 function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
   return {
+    exerciseName: set.exerciseName,
     weightLbs: set.weightLbs,
     mode: mapMode(set.mode),
     repCount: set.repCount,
     reps: repVelocitiesMps(set.reps),
   };
+}
+
+/**
+ * The prescription's ordered planned-exercise list (VW-49) → the session model's list.
+ * Empty when the session carries no plan — the rail then shows only the active exercise.
+ */
+function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExerciseModel[] {
+  const list = prescription?.exercises;
+  if (list === undefined) return [];
+  return list.map((e) => ({
+    name: e.name,
+    plannedSets: e.sets,
+    targetReps: e.repsLow ?? null,
+    repsLabel: formatRepsRange(e.repsLow, e.repsHigh),
+    weightLbs: e.weightLbs ?? null,
+    active: e.active,
+  }));
 }
 
 /** The session read-model. */
@@ -175,6 +195,10 @@ function mapSession(
     // from the exercise default (VW-41). Hidden when the prescription carries none.
     tempo: prescription?.tempo,
     completedSets: setLog.map(mapCompletedSet),
+    // The full ordered planned-exercise list (VW-49) — empty without a plan.
+    plannedExercises: mapPlannedExercises(prescription),
+    // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
+    restSec: prescription?.restSec ?? null,
     // Null when the session carries no plan attachment at all — the view then hides the
     // set count rather than implying a one-set prescription.
     plannedSets: prescription?.sets ?? null,

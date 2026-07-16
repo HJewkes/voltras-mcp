@@ -55,6 +55,24 @@ export interface WorkoutSetView {
   previous: { reps: number; weightLbs: number } | null;
 }
 
+/**
+ * One entry in the session's ordered planned-exercise list (VW-49). Mirrors the
+ * server's `PlannedExerciseView` — the two must stay identical (see server.ts).
+ */
+export interface PlannedExerciseView {
+  /** Display name, or the exercise id when the catalog carries no name. Never invented. */
+  name: string;
+  /** 0-based position within the workout template. */
+  order: number;
+  /** Prescribed set count. */
+  sets: number;
+  repsLow?: number;
+  repsHigh?: number;
+  weightLbs?: number;
+  /** True for the exercise the live session is currently on. */
+  active: boolean;
+}
+
 /** Prescribed targets for the active exercise, matching `/api/session-plan`. */
 export interface PrescriptionView {
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
@@ -71,6 +89,13 @@ export interface PrescriptionView {
    * neither resolves — the live view then hides the tempo readout (VW-41).
    */
   tempo?: [number, number, number, number];
+  /**
+   * The session's FULL ordered planned-exercise list (VW-49), present only when a
+   * template attachment resolves — the same condition that produces the prescription
+   * itself. Lets the rail render `upcoming` rows beyond the active exercise. Absent
+   * when the session carries no plan.
+   */
+  exercises?: PlannedExerciseView[];
 }
 
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
@@ -396,6 +421,13 @@ export interface CompletedSet {
   weightLbs: number | null;
   mode: string | null;
   repCount: number;
+  /**
+   * The exercise this set belongs to (`snapshot.session.exerciseName` captured at
+   * set-close), so consumers can split a multi-exercise log: the active-exercise rail
+   * row counts only its own sets while the session rollup sums all (VW-50 / VW-52).
+   * Null when the snapshot carried no exercise name at close.
+   */
+  exerciseName: string | null;
   /** Best (max) per-rep peak concentric velocity for the set, in mm/s. */
   bestPeakVelocityMms: number | null;
   /**
@@ -415,6 +447,8 @@ export interface AccumulatorState {
   lastActiveSet: SnapshotActiveSet | null;
   /** Device snapshot saved at the same tick as `lastActiveSet`. */
   lastActiveDevice: SnapshotDevice | null;
+  /** Exercise name saved at the same tick as `lastActiveSet`, tagged onto the closed set. */
+  lastActiveExerciseName: string | null;
   /** Session id seen at the previous tick — detects session change. */
   lastSessionId: string | null;
   /** Completed sets accumulated during the current session. */
@@ -428,13 +462,18 @@ export function initialAccumulatorState(): AccumulatorState {
     prevSetActive: false,
     lastActiveSet: null,
     lastActiveDevice: null,
+    lastActiveExerciseName: null,
     lastSessionId: null,
     setLog: [],
     restStartMs: null,
   };
 }
 
-function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | null): CompletedSet {
+function summariseClosedSet(
+  set: SnapshotActiveSet,
+  device: SnapshotDevice | null,
+  exerciseName: string | null,
+): CompletedSet {
   const reps = Array.isArray(set.reps) ? set.reps : [];
   let bestPeak: number | null = null;
   for (const rep of reps) {
@@ -446,6 +485,7 @@ function summariseClosedSet(set: SnapshotActiveSet, device: SnapshotDevice | nul
     weightLbs,
     mode: device?.trainingMode ?? null,
     repCount: reps.length,
+    exerciseName,
     bestPeakVelocityMms: bestPeak,
     reps: [...reps],
   };
@@ -476,14 +516,20 @@ export function reduceSnapshot(
     lastSessionId = sessionId;
   }
 
-  // Set just closed: push the snapshot saved at the previous tick.
+  // Set just closed: push the snapshot saved at the previous tick, tagged with the
+  // exercise active at that tick (the set that closed belongs to it, not to whatever
+  // exercise the session has since advanced to).
   if (state.prevSetActive && !activeSet && state.lastActiveSet !== null) {
-    setLog = [...setLog, summariseClosedSet(state.lastActiveSet, state.lastActiveDevice)];
+    setLog = [
+      ...setLog,
+      summariseClosedSet(state.lastActiveSet, state.lastActiveDevice, state.lastActiveExerciseName),
+    ];
   }
 
-  // Save this tick's active-set + device snapshots together for next-tick close.
+  // Save this tick's active-set + device + exercise snapshots together for next-tick close.
   const lastActiveSet = activeSet ? activeSet : null;
   const lastActiveDevice = activeSet ? device : null;
+  const lastActiveExerciseName = activeSet ? (snapshot.session?.exerciseName ?? null) : null;
 
   // Rest-timer transitions.
   const setIsActive = !!activeSet;
@@ -495,6 +541,7 @@ export function reduceSnapshot(
     prevSetActive: setIsActive,
     lastActiveSet,
     lastActiveDevice,
+    lastActiveExerciseName,
     lastSessionId,
     setLog,
     restStartMs,

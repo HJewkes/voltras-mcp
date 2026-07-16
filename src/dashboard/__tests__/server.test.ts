@@ -439,7 +439,7 @@ describe('GET /api/history', () => {
     const handle = await startWithFake(state);
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
     expect(res.status).toBe(200);
-    const body = JSON.parse(res.body) as { plan: Record<string, number> | null };
+    const body = JSON.parse(res.body) as { plan: Record<string, unknown> | null };
     expect(body.plan).toEqual({
       sets: 3,
       repsLow: 8,
@@ -447,7 +447,80 @@ describe('GET /api/history', () => {
       weightLbs: 62,
       rpe: 8,
       restSec: 120,
+      // The full ordered planned list (VW-49). No exercise catalog here, so names fall
+      // back to the raw exercise ids — a real identifier, never invented.
+      exercises: [
+        { name: 'squat', order: 0, sets: 3, active: false },
+        {
+          name: 'bench',
+          order: 1,
+          sets: 3,
+          repsLow: 8,
+          repsHigh: 10,
+          weightLbs: 62,
+          active: true,
+        },
+      ],
     });
+  });
+
+  it('names the ordered planned list from the catalog and flags the active one (VW-49)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-L',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench Press',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-L', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        // Deliberately out of order — the server must sort by orderIndex.
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe2',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 1,
+              targetSets: 3,
+            },
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'squat',
+              orderIndex: 0,
+              targetSets: 4,
+            },
+            { id: 'pe3', workoutTemplateId: 't1', exerciseId: 'row', orderIndex: 2, targetSets: 3 },
+          ]),
+      },
+      exercises: {
+        getById: (id: string) =>
+          ({
+            squat: { name: 'Back Squat', muscleGroups: [] },
+            bench: { name: 'Bench Press', muscleGroups: [] },
+          })[id],
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as {
+      plan: { exercises: Array<{ name: string; order: number; active: boolean }> };
+    };
+    // Ordered by orderIndex; active flag on 'bench'; unknown 'row' falls back to its id.
+    expect(body.plan.exercises).toEqual([
+      { name: 'Back Squat', order: 0, sets: 4, active: false },
+      { name: 'Bench Press', order: 1, sets: 3, active: true },
+      { name: 'row', order: 2, sets: 3, active: false },
+    ]);
   });
 
   it('surfaces the exercise-default target tempo when a byExercise override matches (VW-41)', async () => {
@@ -593,8 +666,11 @@ describe('GET /api/history', () => {
     };
     const handle = await startWithFake(state);
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
-    const body = JSON.parse(res.body) as { plan: Record<string, number> };
-    expect(body.plan).toEqual({ sets: 4 });
+    const body = JSON.parse(res.body) as { plan: Record<string, unknown> };
+    expect(body.plan).toEqual({
+      sets: 4,
+      exercises: [{ name: 'bench', order: 0, sets: 4, active: true }],
+    });
     expect(body.plan.restSec).toBeUndefined();
   });
 

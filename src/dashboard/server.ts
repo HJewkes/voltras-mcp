@@ -562,6 +562,24 @@ async function fetchNextWorkout(state: DashboardServerState): Promise<NextWorkou
   return null;
 }
 
+/**
+ * One entry in the session's ordered planned-exercise list (VW-49). Mirrors the
+ * client's `PlannedExerciseView` in `spa/adapter.ts` — the two must stay identical.
+ */
+interface PlannedExerciseView {
+  /** Display name, or the exercise id when the catalog carries no name. Never invented. */
+  name: string;
+  /** 0-based position within the workout template. */
+  order: number;
+  /** Prescribed set count. */
+  sets: number;
+  repsLow?: number;
+  repsHigh?: number;
+  weightLbs?: number;
+  /** True for the exercise the live session is currently on. */
+  active: boolean;
+}
+
 /** Prescribed targets for the active exercise, from its attached plan template. */
 interface PrescriptionView {
   /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
@@ -578,6 +596,12 @@ interface PrescriptionView {
    * neither resolves — the live view then hides the tempo readout (VW-41).
    */
   tempo?: [number, number, number, number];
+  /**
+   * The session's FULL ordered planned-exercise list (VW-49) from the matched
+   * template, so the rail can render `upcoming` rows beyond the active exercise.
+   * Present whenever the prescription is; only real planned exercises, never invented.
+   */
+  exercises?: PlannedExerciseView[];
 }
 
 /**
@@ -628,9 +652,37 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
       state.exercises?.getById(exerciseId)?.movementPattern,
     );
     if (tempo !== null) prescription.tempo = tempo;
+    prescription.exercises = buildPlannedExerciseList(planned, exerciseId, state.exercises);
     return prescription;
   }
   return null;
+}
+
+/**
+ * The template's planned exercises as an ordered `PlannedExerciseView[]` (VW-49):
+ * sorted by `orderIndex`, named from the exercise catalog (falling back to the raw
+ * exercise id — a real identifier, never an invented label), with the active exercise
+ * flagged. Only real planned rows; an empty template yields an empty list.
+ */
+function buildPlannedExerciseList(
+  planned: StoredPlannedExercise[],
+  activeExerciseId: string,
+  catalog: DashboardServerState['exercises'],
+): PlannedExerciseView[] {
+  return [...planned]
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((p) => {
+      const entry: PlannedExerciseView = {
+        name: catalog?.getById(p.exerciseId)?.name ?? p.exerciseId,
+        order: p.orderIndex,
+        sets: p.targetSets,
+        active: p.exerciseId === activeExerciseId,
+      };
+      if (p.targetRepsLow !== undefined) entry.repsLow = p.targetRepsLow;
+      if (p.targetRepsHigh !== undefined) entry.repsHigh = p.targetRepsHigh;
+      if (p.targetWeightLbs !== undefined) entry.weightLbs = p.targetWeightLbs;
+      return entry;
+    });
 }
 
 /** Current-block program status for the meso overview (titan MesoStatusCard). */
