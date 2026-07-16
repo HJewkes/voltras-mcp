@@ -1779,3 +1779,45 @@ export function buildVoltrasAvailablePayload(
   });
   return { meta, content };
 }
+
+/**
+ * Build the meta + content for a `deterministic_stop_triggered` channel event
+ * (VMCP-02.78). Fired by the voice safety fast-path when it hears an emergency
+ * phrase and unloads the cable directly — without waiting on the LLM. The event
+ * exists so PT Claude stays coherent: it learns the cable was already unloaded
+ * (`unloaded: true`) and must NOT re-issue `device.unload`.
+ *
+ * `predicateReason` is why the fast-path fired (`active_set` while a set was
+ * armed, or `loaded` when the cable carried tension). `setId` is present only
+ * when the stop interrupted an armed set — omitted from meta when null so
+ * attribute filtering never sees a "null" string.
+ */
+export function buildDeterministicStopTriggeredPayload(args: {
+  slot: string;
+  setId: string | null;
+  matchedPhrase: string;
+  predicateReason: string;
+}): { meta: Record<string, string>; content: string } {
+  const { slot, setId, matchedPhrase, predicateReason } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'deterministic_stop_triggered',
+    slot,
+    matched_phrase: matchedPhrase,
+    predicate_reason: predicateReason,
+    unloaded: 'true',
+  };
+  if (setId !== null) {
+    meta.set_id = setId;
+  }
+  const summary = `Emergency stop: heard "${matchedPhrase}" — cable unloaded (slot ${slot}).`;
+  const content = JSON.stringify({
+    summary,
+    slot,
+    set_id: setId,
+    matched_phrase: matchedPhrase,
+    predicate_reason: predicateReason,
+    unloaded: true,
+  });
+  return { meta, content };
+}

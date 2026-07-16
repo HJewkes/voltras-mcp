@@ -14,6 +14,7 @@ import type { Rep } from '@voltras/workout-analytics';
 
 import {
   buildConnectionChangedPayload,
+  buildDeterministicStopTriggeredPayload,
   buildGuidedLoadStatePayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
@@ -1513,5 +1514,67 @@ describe('buildGuidedLoadStatePayload (VMCP-02.03)', () => {
     };
     expect(parsed.guided_load.requested_target_lbs).toBeNull();
     expect(parsed.set_context).toBeNull();
+  });
+});
+
+describe('buildDeterministicStopTriggeredPayload (VMCP-02.78)', () => {
+  it('meta carries event_type/matched_phrase/predicate_reason/unloaded/slot', () => {
+    const { meta } = buildDeterministicStopTriggeredPayload({
+      slot: 'left',
+      setId: 'set-7',
+      matchedPhrase: 'stop stop',
+      predicateReason: 'active_set',
+    });
+    expect(meta.source).toBe('voltras');
+    expect(meta.event_type).toBe('deterministic_stop_triggered');
+    expect(meta.slot).toBe('left');
+    expect(meta.matched_phrase).toBe('stop stop');
+    expect(meta.predicate_reason).toBe('active_set');
+    expect(meta.unloaded).toBe('true');
+  });
+
+  it('includes set_id in meta when setId is given', () => {
+    const { meta } = buildDeterministicStopTriggeredPayload({
+      slot: 'right',
+      setId: 'set-7',
+      matchedPhrase: 'stop',
+      predicateReason: 'active_set',
+    });
+    expect(meta.set_id).toBe('set-7');
+  });
+
+  it('omits set_id from meta when setId is null', () => {
+    const { meta } = buildDeterministicStopTriggeredPayload({
+      slot: 'right',
+      setId: null,
+      matchedPhrase: 'stop',
+      predicateReason: 'loaded',
+    });
+    expect(meta.set_id).toBeUndefined();
+    expect(meta.predicate_reason).toBe('loaded');
+  });
+
+  it('content parses and carries the summary plus flat fields', () => {
+    const { content } = buildDeterministicStopTriggeredPayload({
+      slot: 'left',
+      setId: null,
+      matchedPhrase: 'stop the machine',
+      predicateReason: 'loaded',
+    });
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      slot: string;
+      set_id: string | null;
+      matched_phrase: string;
+      predicate_reason: string;
+      unloaded: boolean;
+    };
+    expect(parsed.summary).toContain('stop the machine');
+    expect(parsed.summary).toContain('slot left');
+    expect(parsed.slot).toBe('left');
+    expect(parsed.set_id).toBeNull();
+    expect(parsed.matched_phrase).toBe('stop the machine');
+    expect(parsed.predicate_reason).toBe('loaded');
+    expect(parsed.unloaded).toBe(true);
   });
 });

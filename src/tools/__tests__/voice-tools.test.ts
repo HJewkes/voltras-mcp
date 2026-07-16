@@ -16,6 +16,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';
 import type { AudioSource, Vad, VoiceListenerDeps } from '../../voice/voice-listener.js';
 import type { ToolResult } from '../helpers.js';
+import type { VoiceSafetyContext } from '../voice-tools.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -30,7 +31,7 @@ interface Harness {
   whisperTranscripts: string[];
 }
 
-function buildHarness(): Harness {
+function buildHarness(safety: VoiceSafetyContext | null = null): Harness {
   const audio = new PassThrough();
   const probs: number[] = [];
   const vad: Vad = { process: async () => probs.shift() ?? 0, reset: vi.fn() };
@@ -58,7 +59,7 @@ function buildHarness(): Harness {
       },
     } as unknown as RegisteredTool);
   }
-  registerVoiceTools({} as McpServer, { channels: publisher, voice: holder }, placeholders);
+  registerVoiceTools({} as McpServer, { channels: publisher, voice: holder }, placeholders, safety);
   if (slots.start === undefined || slots.stop === undefined) {
     throw new Error('callbacks not registered');
   }
@@ -158,7 +159,7 @@ describe('system.listen_* — channel events', () => {
     expect(JSON.parse(inputs[0].content).transcript).toBe('start a set');
   });
 
-  it('surfaces a safety phrase as voice_input too (the .78 unload hook lands later)', async () => {
+  it('with no safety context, a safety phrase falls back to voice_input', async () => {
     const h = buildHarness();
     await h.start({});
     h.whisperTranscripts.push('cut the weight');
@@ -167,5 +168,93 @@ describe('system.listen_* — channel events', () => {
     const inputs = h.events.filter((e) => e.meta.event_type === 'voice_input');
     expect(inputs).toHaveLength(1);
     expect(JSON.parse(inputs[0].content).transcript).toBe('cut the weight');
+  });
+});
+
+interface FakeSafety {
+  ctx: VoiceSafetyContext;
+  unloadCalls: string[];
+  acks: string[];
+}
+
+function fakeSafety(over?: Partial<VoiceSafetyContext>): FakeSafety {
+  const unloadCalls: string[] = [];
+  const acks: string[] = [];
+  const ctx: VoiceSafetyContext = {
+    evaluate: over?.evaluate ?? (() => ({ warranted: true, reason: 'active_set', setId: 'set-1' })),
+    unload:
+      over?.unload ??
+      (async (slotId: string) => {
+        unloadCalls.push(slotId);
+      }),
+    speakAck: over?.speakAck ?? ((text: string) => acks.push(text)),
+  };
+  return { ctx, unloadCalls, acks };
+}
+
+async function driveSafetyPhrase(h: Harness): Promise<void> {
+  await h.start({});
+  h.whisperTranscripts.push('cut the weight');
+  feedSegment(h);
+  await settle();
+}
+
+describe('Tier-A safety fast-path (VMCP-02.78)', () => {
+  it('warranted → unloads, acks, publishes deterministic_stop_triggered, no voice_input', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls).toEqual(['primary']);
+    expect(safety.acks).toHaveLength(1);
+    const stops = h.events.filter((e) => e.meta.event_type === 'deterministic_stop_triggered');
+    expect(stops).toHaveLength(1);
+    expect(stops[0].meta).toMatchObject({
+      matched_phrase: 'cut the weight',
+      predicate_reason: 'active_set',
+      slot: 'primary',
+      set_id: 'set-1',
+      unloaded: 'true',
+    });
+    expect(h.events.some((e) => e.meta.event_type === 'voice_input')).toBe(false);
+  });
+
+  it('not warranted → no unload, falls back to voice_input', async () => {
+    const safety = fakeSafety({
+      evaluate: () => ({ warranted: false, reason: 'none', setId: null }),
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls).toEqual([]);
+    expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
+    expect(h.events.some((e) => e.meta.event_type === 'deterministic_stop_triggered')).toBe(false);
+  });
+
+  it('unload failure → voice_input + SAFETY_UNLOAD_FAILED, no stop event', async () => {
+    const safety = fakeSafety({
+      unload: () => Promise.reject(new Error('BLE write failed')),
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
+    const failed = h.events.filter((e) => e.meta.error_code === 'SAFETY_UNLOAD_FAILED');
+    expect(failed).toHaveLength(1);
+    expect(safety.acks).toEqual([]);
+    expect(h.events.some((e) => e.meta.event_type === 'deterministic_stop_triggered')).toBe(false);
+  });
+
+  it('evaluate throwing (unknown slot) → conversational voice_input fallback', async () => {
+    const safety = fakeSafety({
+      evaluate: () => {
+        throw new Error('unknown slot');
+      },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls).toEqual([]);
+    expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
   });
 });

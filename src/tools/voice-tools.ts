@@ -18,13 +18,17 @@ import {
   SystemListenStopInput,
   type SystemListenStartInputType,
 } from '../schemas/voice.js';
-import { buildVoiceInputPayload } from '../state/channel-payloads.js';
-import type { ChannelPublisher } from '../state/channel-publisher.js';
+import {
+  buildDeterministicStopTriggeredPayload,
+  buildVoiceInputPayload,
+} from '../state/channel-payloads.js';
+import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
 import {
   defaultAudioFactory,
   defaultVadFactory,
   defaultWhisper,
   resolveStartArgs,
+  type SttModelName,
   VoiceListener,
   type VoiceListenerDeps,
 } from '../voice/voice-listener.js';
@@ -54,6 +58,95 @@ export function makeVoiceHolder(deps: VoiceListenerDeps | null = null): VoiceLis
   return { listener: null, __deps: deps };
 }
 
+/**
+ * Server-provided hooks the Tier-A safety fast-path needs — kept minimal so
+ * voice-tools stays decoupled from ServerState/device-tools. Built in server.ts
+ * from `isSafetyUnloadWarranted` + `unloadSlot` + `speak`.
+ */
+export interface VoiceSafetyContext {
+  /** Whether an emergency unload is warranted for the slot, + the active set id. */
+  evaluate(slotId: string): { warranted: boolean; reason: string; setId: string | null };
+  /** Unload the slot (idempotent mode-bounce that slackens the cable). */
+  unload(slotId: string): Promise<void>;
+  /** Speak a deterministic ack, interrupting any in-flight speech. */
+  speakAck(text: string): void;
+}
+
+/** Single-arm bench flows unload the primary slot; bilateral demux is VW-48. */
+const SAFETY_SLOT = 'primary';
+
+/** Deterministic ack spoken the instant the cable is cut. */
+const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
+
+/**
+ * Tier-A ungated safety path: a recognized stop phrase → immediate unload when a
+ * set is active/loaded, bypassing the LLM. When nothing is loaded (or the safety
+ * context isn't wired, e.g. tests) the phrase still reaches the model as
+ * voice_input so it can respond conversationally. On unload failure the model is
+ * told so it can retry `device.unload` as the backstop.
+ */
+async function runSafetyFastPath(
+  channels: ChannelPublisher,
+  safety: VoiceSafetyContext | null,
+  ev: { matchedPhrase: string; transcript: string; sttModel: SttModelName },
+): Promise<void> {
+  const verdict = safety === null ? null : evaluateSafely(safety);
+  if (safety === null || verdict === null || !verdict.warranted) {
+    publishVoiceInput(channels, ev); // not loaded/active, or no safety context → let the model handle it
+    return;
+  }
+  try {
+    await safety.unload(SAFETY_SLOT);
+  } catch (err) {
+    publishVoiceInput(channels, ev);
+    channels.publish(safetyUnloadFailedPayload(err));
+    return;
+  }
+  safety.speakAck(SAFETY_ACK_TEXT);
+  channels.publish(
+    buildDeterministicStopTriggeredPayload({
+      slot: SAFETY_SLOT,
+      setId: verdict.setId,
+      matchedPhrase: ev.matchedPhrase,
+      predicateReason: verdict.reason,
+    }),
+  );
+}
+
+/** Run the predicate, treating a thrown getSlot (unknown slot) as "not warranted". */
+function evaluateSafely(
+  safety: VoiceSafetyContext,
+): { warranted: boolean; reason: string; setId: string | null } | null {
+  try {
+    return safety.evaluate(SAFETY_SLOT);
+  } catch {
+    return null;
+  }
+}
+
+function publishVoiceInput(
+  channels: ChannelPublisher,
+  ev: { transcript: string; sttModel: SttModelName },
+): void {
+  channels.publish(buildVoiceInputPayload(ev.transcript, 0, ev.sttModel, 0));
+}
+
+function safetyUnloadFailedPayload(err: unknown): ChannelEvent {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    meta: {
+      source: 'voltras',
+      event_type: 'voice_input_failed',
+      error_code: 'SAFETY_UNLOAD_FAILED',
+    },
+    content: JSON.stringify({
+      summary: `Safety unload FAILED — call device.unload now. ${message}`,
+      error_code: 'SAFETY_UNLOAD_FAILED',
+      message,
+    }),
+  };
+}
+
 const START_DESCRIPTION = [
   'Arm the local voice listener. Runs an in-process Silero VAD + whisper.cpp',
   'over the mic — no audio leaves the machine, no wake-word model. Say the wake',
@@ -71,6 +164,7 @@ export function registerVoiceTools(
   _server: McpServer,
   state: VoiceToolState,
   placeholders: PlaceholderTools,
+  safety: VoiceSafetyContext | null = null,
 ): void {
   const startTool = placeholders.get('system.listen_start');
   const stopTool = placeholders.get('system.listen_stop');
@@ -83,7 +177,7 @@ export function registerVoiceTools(
   startTool.update({
     description: START_DESCRIPTION,
     paramsSchema: SystemListenStartInput.shape,
-    callback: makeStartCallback(state),
+    callback: makeStartCallback(state, safety),
   });
   stopTool.update({
     description: STOP_DESCRIPTION,
@@ -94,13 +188,14 @@ export function registerVoiceTools(
 
 function makeStartCallback(
   state: VoiceToolState,
+  safety: VoiceSafetyContext | null,
 ): (args: unknown, extra?: unknown) => Promise<ToolResult> {
   return async (args: unknown, _extra?: unknown): Promise<ToolResult> => {
     const parsed = SystemListenStartInput.safeParse(args);
     if (!parsed.success) {
       return errorResult({ code: 'INVALID_INPUT', message: parsed.error.message });
     }
-    return startListener(state, parsed.data);
+    return startListener(state, parsed.data, safety);
   };
 }
 
@@ -119,6 +214,7 @@ function makeStopCallback(
 async function startListener(
   state: VoiceToolState,
   input: SystemListenStartInputType,
+  safety: VoiceSafetyContext | null,
 ): Promise<ToolResult> {
   const startArgs = resolveStartArgs(input);
   if (state.voice.listener !== null) {
@@ -134,11 +230,12 @@ async function startListener(
     onVoiceInput: ({ transcript, latencyMs, sttModel, audioDurationMs }) => {
       channels.publish(buildVoiceInputPayload(transcript, latencyMs, sttModel, audioDurationMs));
     },
-    onSafetyPhrase: ({ transcript }) => {
-      // VMCP-02.78: intercept here for the ungated unload fast-path (loaded+active
-      // predicate + unloadSlot + deterministic_stop_triggered). For .77 a
-      // recognized safety phrase still reaches the LLM as voice_input (no regression).
-      channels.publish(buildVoiceInputPayload(transcript, 0, startArgs.sttModel, 0));
+    onSafetyPhrase: ({ matchedPhrase, transcript }) => {
+      void runSafetyFastPath(channels, safety, {
+        matchedPhrase,
+        transcript,
+        sttModel: startArgs.sttModel,
+      });
     },
     onError: (err) => {
       channels.publish({
