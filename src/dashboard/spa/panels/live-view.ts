@@ -11,7 +11,6 @@
  * the page hides them exactly as titan's `LiveNoTempo` story does. Each is ticketed:
  *   - `session.title`      → VW-43 (compose from WorkoutTemplate + TrainingBlock)
  *   - `session.tempo`      → VW-41 (defaults config + resolver), VW-46 (coach override)
- *   - `live.peakForce`     → VW-45 (set-level peak-force accumulator)
  * Wiring each is additive here — no consumer change.
  */
 import { type Rep } from '@voltras/workout-analytics';
@@ -144,7 +143,7 @@ function mapLive(
     lastRep: mapLastRep(live),
     repVelocities,
     velocityLossPct,
-    peakForce: null,
+    peakForce: live.peakForce,
   };
 }
 

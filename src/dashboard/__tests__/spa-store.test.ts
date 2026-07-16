@@ -48,6 +48,7 @@ const liveModel = (velocity: number): LiveModel => ({
   force: 60,
   repInProgress: 1,
   lastRep: null,
+  peakForce: 0,
 });
 
 /** Reset every data field between tests (the store is a module singleton). */

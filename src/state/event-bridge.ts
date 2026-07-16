@@ -277,6 +277,21 @@ interface BufferedSample {
 const IDLE_REP_SUMMARY_WINDOW_MS = 5_000;
 
 /**
+ * Peak CONCENTRIC force across the reps closed so far in a set (indices 0
+ * through `throughIndex`, inclusive), in lbs — a running set-level max the live
+ * telemetry echoes on each finalized rep. Concentric-only to match the rest of
+ * the live per-rep signal family (`vCon`/`rom`/`peakVelocity`); the both-phase
+ * `getRepPeakForce` used by the coach channel is deliberately NOT reused here.
+ * Self-resetting each set: the caller passes the fresh set's rep list, so the
+ * fold starts from 0 every set with no cross-set accumulator to manage.
+ */
+export function peakConcentricForceSoFar(reps: readonly Rep[], throughIndex: number): number {
+  return reps
+    .slice(0, throughIndex + 1)
+    .reduce((max, rep) => Math.max(max, rep.concentric.peakForce), 0);
+}
+
+/**
  * Bootstrap orchestrator: wire the bridge for every slot currently in
  * `state.slots` and populate each slot's `unwireBridge` tear-down hook in
  * place. Each slot's listeners persist for the slot's lifetime and are torn
@@ -590,6 +605,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
               vCon: mmsToMps(getPhaseMeanVelocity(finalizedRep.concentric)),
               rom: mmToM(getRepRangeOfMotion(finalizedRep)),
               peakVelocity: mmsToMps(finalizedRep.concentric.peakVelocity),
+              peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
             });
           }
           // Reset the idle watchdog — an active lifter must never trip

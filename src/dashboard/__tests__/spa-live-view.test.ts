@@ -21,7 +21,7 @@ function snapshot(): Snapshot {
 }
 
 /** A live overlay carrying one finalized rep. */
-function liveWithRep(rom: number): StoreLiveModel {
+function liveWithRep(rom: number, peakForce = 0): StoreLiveModel {
   return {
     connected: true,
     phase: 'con',
@@ -30,7 +30,8 @@ function liveWithRep(rom: number): StoreLiveModel {
     position: 120,
     force: 480,
     repInProgress: 2,
-    lastRep: { repIndex: 1, vCon: 0.41, rom, peakVelocity: 0.6 },
+    lastRep: { repIndex: 1, vCon: 0.41, rom, peakVelocity: 0.6, peakForceSoFar: peakForce },
+    peakForce,
   };
 }
 
@@ -55,6 +56,18 @@ describe('mapStoreToDashboardModel', () => {
       const live: StoreLiveModel = { ...liveWithRep(0.58), lastRep: null };
       const model = mapStoreToDashboardModel(sources({ live }));
       expect(model?.live?.lastRep).toBeNull();
+    });
+  });
+
+  describe('live.peakForce (VW-45)', () => {
+    it('carries the set-level peak concentric force onto the live model', () => {
+      const model = mapStoreToDashboardModel(sources({ live: liveWithRep(0.58, 542) }));
+      expect(model?.live?.peakForce).toBe(542);
+    });
+
+    it('has no live model at all when nothing is streaming', () => {
+      const model = mapStoreToDashboardModel(sources({ live: null }));
+      expect(model?.live).toBeNull();
     });
   });
 
