@@ -16,6 +16,7 @@
  */
 import { type Rep } from '@voltras/workout-analytics';
 import {
+  buildConnectionStatus,
   buildCurrentSet,
   repMeanMms,
   toMps,
@@ -28,6 +29,7 @@ import { type LiveModel as StoreLiveModel } from '../live-stream';
 import {
   formatRepsRange,
   type CompletedSet,
+  type ConnectionInfo,
   type DashboardModel,
   type LiveModel,
   type PlannedExerciseModel,
@@ -49,6 +51,22 @@ export interface LiveViewSources {
    * mapper then reports no rest elapsed rather than a bogus one).
    */
   nowMs?: number;
+  /**
+   * The HTTP poll status (`ok`/`stale`/`error`), folded with the device snapshot into the
+   * idle stage's coarse connection hint (VW-68). Defaults to `ok` when a caller has none —
+   * the hint then reflects only the device flag, which is the honest floor.
+   */
+  pollStatus?: 'ok' | 'stale' | 'error';
+}
+
+/**
+ * The idle stage's connection hint, reusing the shell's own {@link buildConnectionStatus}
+ * classifier (never a second copy of the priority logic — VW-67 owns it). Only the coarse
+ * `connected` flag + label reach the content model.
+ */
+function mapConnection(snapshot: Snapshot, pollStatus: 'ok' | 'stale' | 'error'): ConnectionInfo {
+  const status = buildConnectionStatus(snapshot, pollStatus);
+  return { connected: status.connected, label: status.label };
 }
 
 /**
@@ -187,6 +205,18 @@ function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExer
   }));
 }
 
+/**
+ * The active exercise's display name (VW-68). A resolved session name when there is one;
+ * otherwise the neutral ordinal `Exercise N` — never a fabricated specific name, and never a
+ * bare em-dash. `N` is the active exercise's 1-based position in the plan (1 with no plan).
+ */
+function resolveExerciseName(snapshot: Snapshot, plannedExercises: PlannedExerciseModel[]): string {
+  const raw = snapshot.session?.exerciseName;
+  if (raw) return raw;
+  const activeIdx = plannedExercises.findIndex((e) => e.active);
+  return `Exercise ${activeIdx >= 0 ? activeIdx + 1 : 1}`;
+}
+
 /** The session read-model. */
 function mapSession(
   snapshot: Snapshot,
@@ -195,8 +225,12 @@ function mapSession(
   targetReps: number | null,
   prescription: PrescriptionView | null,
 ): SessionModel {
+  const plannedExercises = mapPlannedExercises(prescription);
   return {
-    exerciseName: snapshot.session?.exerciseName ?? '—',
+    // A real training session is open when the snapshot carries one, regardless of whether its
+    // exercise is named yet — lets the idle stage tell "no session" from "session, no set".
+    hasSession: snapshot.session != null,
+    exerciseName: resolveExerciseName(snapshot, plannedExercises),
     title: null,
     weightLbs,
     unit: 'lbs',
@@ -205,7 +239,7 @@ function mapSession(
     tempo: prescription?.tempo,
     completedSets: setLog.map(mapCompletedSet),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
-    plannedExercises: mapPlannedExercises(prescription),
+    plannedExercises,
     // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
     restSec: prescription?.restSec ?? null,
     // Null when the session carries no plan attachment at all — the view then hides the
@@ -223,7 +257,7 @@ function mapSession(
  * which is exactly the rest-view case.
  */
 export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardModel | null {
-  const { snapshot, accumulator, live, prescription, nowMs = 0 } = sources;
+  const { snapshot, accumulator, live, prescription, nowMs = 0, pollStatus = 'ok' } = sources;
   if (!snapshot) return null;
 
   const currentSet = buildCurrentSet(snapshot);
@@ -242,6 +276,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
   return {
     live: live ? mapLive(live, currentSet.velocityLossPct, repVelocities) : null,
     restElapsedMs,
+    connection: mapConnection(snapshot, pollStatus),
     session: mapSession(
       snapshot,
       accumulator.setLog,

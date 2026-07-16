@@ -251,6 +251,10 @@ export function ExerciseHeader({ session }: { session: DashboardModel['session']
     ? Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO) // set-heading ratio on the second line
     : Math.round(clampLerp(w || HEADER_WIDE, HEADER_WRAP, HEADER_WIDE, 22, 28));
 
+  // No open session ⇒ no exercise to title (VW-68). Hide the header rather than showing the
+  // `Exercise N` ordinal for a wall that is merely idle/waiting. (Hooks above run first.)
+  if (!session.hasSession) return null;
+
   return (
     <View
       onLayout={onLayout}

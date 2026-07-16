@@ -29,6 +29,7 @@ import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/li
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
+    hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: null,
     weightLbs: 140,
@@ -395,13 +396,16 @@ describe('deriveRailExercises', () => {
     // No rep target is configured, so a `todo` set cannot state its expected reps and
     // the strip honestly stops at the active set rather than guessing.
     const [exercise] = deriveRailExercises(model!);
-    expect(exercise.summary.sets).toBe(3);
+    // summary.sets is PROGRESS now (VW-68): sets banked + the one in progress, not the
+    // prescribed count — 0 done + 1 active = 1, regardless of the plan's 3.
+    expect(exercise.summary.sets).toBe(1);
     expect(exercise.setStates.filter((s) => s.status === 'todo')).toHaveLength(0);
   });
 
-  it('falls back to the sets accounted for when no plan is attached', () => {
+  it('counts the in-progress set toward summary progress when no plan is attached', () => {
     const model = mapStoreToDashboardModel(sources({ live: liveWithRep(0.58) }));
     const [exercise] = deriveRailExercises(model!);
+    // 0 completed + 1 active set in progress = 1 (VW-68 progress aggregate).
     expect(exercise.summary.sets).toBe(1);
   });
 });

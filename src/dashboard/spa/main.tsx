@@ -29,6 +29,22 @@ import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
+// Brand faces (VW-68). titan components request `Space Grotesk` (headings), `Nunito Sans` (UI),
+// and `Inter` (body) — by family name, via `--font-family-*` and inline styles — but nothing
+// registered those @font-faces, so every one fell back to the system grotesque (a heavy,
+// clashing heading). Self-host them (latin subset, the weights the design uses) so the wall
+// renders the real type ramp offline, no CDN. Imported before the theme so the faces are
+// declared when the first class resolves.
+import '@fontsource/space-grotesk/latin-400.css';
+import '@fontsource/space-grotesk/latin-500.css';
+import '@fontsource/space-grotesk/latin-700.css';
+import '@fontsource/nunito-sans/latin-400.css';
+import '@fontsource/nunito-sans/latin-600.css';
+import '@fontsource/nunito-sans/latin-700.css';
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/inter/latin-700.css';
 import '@titan-design/react-ui/theme/global.css';
 import './dashboard.css';
 

@@ -102,6 +102,17 @@ export interface PlannedExerciseModel {
 
 /** The session read-model. */
 export interface SessionModel {
+  /**
+   * True when a real training session is open (`snapshot.session` present), regardless of
+   * whether its exercise is named yet (VW-68). Lets the idle stage distinguish "no session —
+   * waiting for a set" from "session open, first set not begun" and gate the exercise header.
+   */
+  hasSession: boolean;
+  /**
+   * The active exercise's display name. A real name when the session resolves one; otherwise
+   * the neutral ordinal `Exercise N` (VW-68) — never a fabricated specific name, and never a
+   * bare em-dash. `N` is the active exercise's 1-based position in the plan (1 with no plan).
+   */
   exerciseName: string;
   /** Human session-block title. Null until composable from the plan (VW-43). */
   title: string | null;
@@ -136,6 +147,20 @@ export interface SessionModel {
   targetReps: number | null;
 }
 
+/**
+ * A coarse connection read-out folded from the device snapshot (VW-68) — enough for the idle
+ * stage to shift its copy ("connect a Voltra" vs "waiting for a set"). The shell TopBar owns
+ * the authoritative connection glyph/banner (VW-67); this is only the content-side hint.
+ * Optional: a preview/fixture model omits it, and an absent value means "unknown", never
+ * "disconnected".
+ */
+export interface ConnectionInfo {
+  /** True only when a device is actually live (not merely that the sidecar answered). */
+  connected: boolean;
+  /** Short status label mirrored from `buildConnectionStatus` (LIVE / OFFLINE / WAITING / …). */
+  label: string;
+}
+
 /** The full store read-model the live page reads. */
 export interface DashboardModel {
   /**
@@ -144,6 +169,8 @@ export interface DashboardModel {
    */
   live: LiveModel | null;
   session: SessionModel;
+  /** Coarse connection hint for the idle stage (VW-68); absent ⇒ unknown, never disconnected. */
+  connection?: ConnectionInfo;
   /**
    * Elapsed rest time (ms) since the last set closed — the client-tracked count-up the
    * legacy `RestTimerPanel` reads (`nowMs − restStartMs`). Null before any set has ended
@@ -160,6 +187,19 @@ export interface DashboardModel {
  * decision (no stream ⇒ rest), made once, instead of every layer guarding.
  */
 export type LiveDashboardModel = DashboardModel & { live: LiveModel };
+
+/**
+ * True when the live stage has nothing honest to show: no set streaming, none logged, and no
+ * rest clock running — exactly the inputs under which {@link RestView} would render blank
+ * (VW-68). Covers the no-session idle, the session-started-but-first-set-not-begun, and the
+ * disconnected cases; drives the {@link EmptyLiveView} branch. Kept here (not on the
+ * component) so it is a pure, node-testable model predicate.
+ */
+export function stageIsEmpty(model: DashboardModel): boolean {
+  return (
+    model.live === null && model.session.completedSets.length === 0 && model.restElapsedMs === null
+  );
+}
 
 // --- The fixture instance -----------------------------------------------------
 
@@ -181,6 +221,7 @@ export const dashboardFixture: DashboardModel = {
     peakForce: 542,
   },
   session: {
+    hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: 'Push A · Hypertrophy',
     weightLbs: 140,
@@ -306,6 +347,19 @@ export function velocityLossPct(reps: number[]): number | null {
 }
 
 /**
+ * The best (most reps) set so far for the active exercise — the max rep count across its
+ * completed sets, including the set in progress (VW-68). Null when nothing has landed yet, so
+ * the summary shows an honest `—` rather than a fabricated 0. On real hardware completed sets
+ * carry no per-set reps until VW-70, so this reads from the live overlay's landed reps too.
+ */
+function bestRepsSoFar(done: CompletedSet[], live: LiveModel | null): number | null {
+  const counts = done.map((s) => s.repCount);
+  if (live) counts.push(live.repVelocities.length);
+  const best = counts.length > 0 ? Math.max(...counts) : 0;
+  return best > 0 ? best : null;
+}
+
+/**
  * The rail row for the ACTIVE exercise: its OWN completed sets (filtered from the
  * session-wide log so a prior exercise's sets don't bleed into its count — VW-50), the
  * set in progress, and any remaining planned sets.
@@ -343,9 +397,14 @@ function buildActiveRow(model: DashboardModel): SessionRailExercise {
 
   return {
     name: session.exerciseName,
+    // PROGRESS aggregates for the active exercise (VW-68), not a prescription stub: what has
+    // actually happened this session — sets banked, the best (most reps) set so far, the real
+    // load — rather than the `— × — @ 0` target echo. The plan's target set count is still
+    // legible from the `todo` columns in the strip. Honest empties (0 sets, `—` reps) when
+    // nothing has landed yet; the values fill in as sets close (dark until VW-70 carries reps).
     summary: {
-      sets: session.plannedSets ?? accountedFor,
-      reps: session.targetReps ?? NO_VALUE,
+      sets: done.length + (live ? 1 : 0),
+      reps: bestRepsSoFar(done, live) ?? NO_VALUE,
       weight: session.weightLbs ?? 0,
       unit: session.unit,
     },
@@ -411,7 +470,19 @@ function buildUpcomingRow(
  * the active exercise shows — the pre-VW-49 behaviour.
  */
 export function deriveRailExercises(model: DashboardModel): SessionRailExercise[] {
-  const { session } = model;
+  const { session, live } = model;
+  // NO SESSION at all — no `snapshot.session`, no plan, nothing logged, nothing streaming
+  // (VW-68). Emit an EMPTY list so the rail shows an honest empty treatment rather than a stub
+  // active row for a session that does not exist. A real session (even one whose exercise is
+  // only the `Exercise N` ordinal) still shows its active row below before its first set.
+  if (
+    !session.hasSession &&
+    session.plannedExercises.length === 0 &&
+    session.completedSets.length === 0 &&
+    live === null
+  ) {
+    return [];
+  }
   if (session.plannedExercises.length === 0) return [buildActiveRow(model)];
 
   const activeIndex = session.plannedExercises.findIndex((e) => e.active);
