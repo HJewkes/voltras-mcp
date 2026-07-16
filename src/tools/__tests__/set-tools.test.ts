@@ -8,6 +8,8 @@
 //   * set.live_metrics returns the live snapshot or `{ active: false }`
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
+import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
+import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../../state/live-signal.js';
 import type { LiveState as LiveStateType, FirmwareRep } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { RepSource } from '../../config.js';
@@ -695,6 +697,72 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
     // Points callers at get_state for inspection.
     expect(body.message).toMatch(/device\.get_state/);
     expect(body.message).toMatch(/mode_revert_latched/);
+  });
+});
+
+describe('set.end terminal-rep SSE echo (VW-57)', () => {
+  let h: Harness;
+  let hub: LiveSignalHub;
+  let events: LiveSignalEvent[];
+
+  beforeEach(() => {
+    h = setup();
+    hub = new LiveSignalHub();
+    h.state.liveSignals = hub;
+    events = [];
+    hub.subscribe((e) => events.push(e));
+  });
+
+  // A rep with empty sample buffers but explicit concentric peaks. finalizeReps'
+  // signed-peak pass is a no-op on empty samples, so these peaks survive to the
+  // emit verbatim — letting us assert exact wire values.
+  function makeConcRep(n: number, peakForce: number, peakVelocity: number): Rep {
+    const base = makeRep(n);
+    return { ...base, concentric: { ...base.concentric, peakForce, peakVelocity } };
+  }
+
+  it('emits the terminal rep (rep N) with the final rep values, before the set ended signal (tool close)', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    const reps = [
+      makeConcRep(1, 50, 300),
+      makeConcRep(2, 95, 400), // highest concentric force in the set
+      makeConcRep(3, 60, 800), // terminal rep
+    ];
+    for (const rep of reps) h.live.appendRep(rep);
+
+    await finalizeSet(h.state, 'primary', { cause: 'tool', disengageMotor: false });
+
+    const repEvents = events.filter(
+      (e): e is Extract<LiveSignalEvent, { type: 'rep' }> => e.type === 'rep',
+    );
+    // This harness injects reps directly (no frame path), so finalizeSet is the
+    // only emitter — exactly one terminal rep signal, never reps 1..N-1.
+    expect(repEvents).toHaveLength(1);
+    expect(repEvents[0].data).toEqual({
+      repIndex: 3,
+      vCon: mmsToMps(getPhaseMeanVelocity(reps[2].concentric)),
+      rom: mmToM(getRepRangeOfMotion(reps[2])),
+      peakVelocity: mmsToMps(800),
+      peakForceSoFar: 95, // set-wide concentric max (rep 2), not the last rep's 60
+    });
+
+    // Wire order: terminal rep strictly before `set ended`.
+    const repIdx = events.findIndex((e) => e.type === 'rep');
+    const endedIdx = events.findIndex((e) => e.type === 'set' && e.data.kind === 'ended');
+    expect(endedIdx).toBeGreaterThan(repIdx);
+  });
+
+  it('emits no rep signal for a set that closed with zero reps', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+
+    await finalizeSet(h.state, 'primary', { cause: 'tool', disengageMotor: false });
+
+    expect(events.filter((e) => e.type === 'rep')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'set' && e.data.kind === 'ended')).toHaveLength(1);
   });
 });
 

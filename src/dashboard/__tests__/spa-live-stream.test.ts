@@ -1,6 +1,9 @@
 // Unit tests for the SSE live-overlay controller (VMCP-01.59), focused on the
-// VW-45 set-level peak-concentric-force field: it climbs as reps land, survives
-// interim live frames, and resets to 0 when the set ends.
+// VW-45 set-level peak-concentric-force field: it climbs as reps land and
+// survives interim live frames. VW-57 changed the reset boundary: the final-rep
+// readout (peak force + last rep) now persists through `set ended` — so the
+// terminal rep the server streams right before `ended` stays visible — and is
+// cleared only when the next set arms (`set started`).
 //
 // The controller talks to `EventSource` + `requestAnimationFrame`, neither of
 // which exists in the node test env, so a minimal `MockEventSource` captures the
@@ -55,6 +58,7 @@ function repSignal(peakForceSoFar: number): LiveRepSignal {
 }
 
 const setEnded: LiveSetSignal = { kind: 'ended', setId: 's1', sessionId: 'sess1' };
+const setStarted: LiveSetSignal = { kind: 'started', setId: 's2', sessionId: 'sess1' };
 
 beforeEach(() => {
   MockEventSource.instances = [];
@@ -95,15 +99,30 @@ describe('createLiveStreamController — live.peakForce (VW-45)', () => {
     dispose();
   });
 
-  it('resets the peak to 0 when the set ends', () => {
+  it('keeps the peak force and last rep visible after the set ends (VW-57)', () => {
     const { models, es, dispose } = start();
     es.emit('phase', phaseFrame());
     es.emit('rep', repSignal(185));
     expect(models.at(-1)!.peakForce).toBe(185);
+    // `set ended` stops the live tempo bar but must NOT wipe the terminal rep
+    // the server streams immediately before it — it stays on screen until the
+    // next set arms.
     es.emit('set', setEnded);
-    // The next set's first frame re-anchors; the peak now reads 0 until a rep lands.
+    expect(models.at(-1)!.peakForce).toBe(185);
+    expect(models.at(-1)!.lastRep?.repIndex).toBe(1);
+    dispose();
+  });
+
+  it('clears the peak and last rep when the next set arms (VW-57)', () => {
+    const { models, es, dispose } = start();
+    es.emit('phase', phaseFrame());
+    es.emit('rep', repSignal(185));
+    es.emit('set', setEnded);
+    // The next set arms, then its first frame re-anchors and rebuilds the model.
+    es.emit('set', setStarted);
     es.emit('phase', phaseFrame());
     expect(models.at(-1)!.peakForce).toBe(0);
+    expect(models.at(-1)!.lastRep).toBeNull();
     dispose();
   });
 });

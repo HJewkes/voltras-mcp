@@ -171,8 +171,15 @@ export function createLiveStreamController(
     const data = JSON.parse(e.data) as LiveSetSignal;
     lastActivity = Date.now();
     if (data.kind === 'ended') {
-      // Clear the live tempo state back to the non-live per-rep-summary mode.
+      // Stop the live in-motion tempo bar, but KEEP the terminal rep's stats
+      // (lastRep / peakForce) on screen. VW-57 streams the final rep (rep N)
+      // immediately before this `ended` signal; the completed-set per-rep
+      // summary should stay visible until the next set arms rather than flashing
+      // for a single commit. The stale readout is cleared on the next
+      // `set started` below.
       anchor = null;
+    } else if (data.kind === 'started') {
+      // A new set arming clears the previous set's final-rep readout.
       lastRep = null;
       peakForce = 0;
     }
