@@ -8,7 +8,7 @@
 // output shape. Keeping it pure makes the snapshot contract unit-testable
 // without standing up an HTTP server (see `read-models/architecture` §3).
 //
-// NDA boundary (NF-07): every value shaped here is plain fitness metadata
+// Confidentiality boundary (NF-07): every value shaped here is plain fitness
 // (weights, mode strings, muscle names). No protocol bytes, frame buffers, or
 // command codes cross this seam — the caller only ever passes already-typed
 // session/device/exercise state.

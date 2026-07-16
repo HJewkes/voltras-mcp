@@ -31,7 +31,7 @@ The three known lossy directions are documented and tested (`codecs/__tests__/ro
 ## Boundaries
 
 - **SDK-free by construction**: everything is at the `WorkoutSample` (fitness-unit) grain,
-  never `TelemetryFrame` / protocol bytes (NDA / ESLint NF-07).
+  never `TelemetryFrame` / protocol bytes (confidentiality / ESLint NF-07).
 - **No platform code yet**: no store bodies, no BLE/SSE adapters. Those land in VMCP-03.02
   (dashboard store) and the Phase-2 platform adapters. The reference stored-shapes in
   `codecs/stored-shapes.ts` mirror the real platform schemas and become the conformance

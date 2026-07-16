@@ -9,7 +9,7 @@
  * same titan components the same way. Titan imports are TYPES only (erased at
  * build), so this runs in the node test environment.
  *
- * NDA: reads WA view-models + adapter view state only; no protocol data.
+ * Confidentiality: reads WA view-models + adapter view state only; no protocol data.
  */
 import {
   bestE1RMAcrossSets,

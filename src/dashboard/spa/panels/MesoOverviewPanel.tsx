@@ -8,7 +8,7 @@
  * `GET /api/meso-overview`.
  *
  * Hidden when no mesocycle is in progress (server returns null / no weeks).
- * NDA: plan metadata only.
+ * Confidentiality: plan metadata only.
  */
 import { WeekRow } from '@titan-design/react-ui';
 import { PanelCard } from './PanelCard';

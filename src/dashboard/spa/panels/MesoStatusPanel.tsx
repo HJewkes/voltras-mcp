@@ -8,7 +8,7 @@
  *
  * MesoStatusCard carries its own header/badge, so it renders inside a plain
  * region wrapper rather than PanelCard (which would double the chrome). Hidden
- * when no program is active. NDA: plan metadata only.
+ * when no program is active. Confidentiality: plan metadata only.
  */
 import { MesoStatusCard } from '@titan-design/react-ui';
 

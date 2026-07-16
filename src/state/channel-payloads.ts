@@ -991,7 +991,7 @@ export interface GuidedLoadStatePayloadInput {
  * regular channel stream so PT Claude can react to engagement/failure without
  * polling `debug.recent_events`.
  *
- * NDA: deliberately omits `fitnessModeRaw` (the decoded firmware mode byte) —
+ * Confidentiality: deliberately omits `fitnessModeRaw` (the decoded firmware mode byte) —
  * the phase/outcome pair expresses the state semantically. The debug event
  * retains `fitnessModeRaw` for diagnostics; the customer-facing channel must
  * not surface firmware mode bytes.

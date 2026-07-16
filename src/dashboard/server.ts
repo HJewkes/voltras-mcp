@@ -146,7 +146,7 @@ export interface DashboardServerState {
    * (VMCP-01.47). Optional so the server test fakes need not fabricate a
    * catalog; the real `ServerState` always supplies it. Names and muscle groups
    * are plain fitness metadata (not protocol data), so surfacing them in the
-   * loopback snapshot JSON respects NDA NF-07.
+   * loopback snapshot JSON respects confidentiality NF-07.
    */
   exercises?: {
     getById(

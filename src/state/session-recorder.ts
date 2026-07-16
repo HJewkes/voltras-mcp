@@ -13,7 +13,7 @@
 // debug ring buffer; this persists that same stream so it survives past the
 // 256-frame ring and a process restart.
 //
-// NDA (NF-07): a capture holds raw protocol bytes. It is written ONLY to a
+// Confidentiality (NF-07): a capture holds raw protocol bytes. It is written ONLY to a
 // local, gitignored private dir (default `~/.voltras/captures`, never inside a
 // repo). Nothing here is surfaced in tool I/O, logs, commits, or the dashboard
 // — `status()` returns a file handle + counts, NEVER frame bytes. `record()`

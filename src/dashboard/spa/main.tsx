@@ -11,7 +11,7 @@
  * client-side by `reduceSnapshot` — a set is logged when `sets.active`
  * transitions non-null → null across polls (see adapter.ts).
  *
- * NDA: consumes `/api/snapshot` JSON only — no protocol bytes, frames, or
+ * Confidentiality: consumes `/api/snapshot` JSON only — no protocol bytes, frames, or
  * command codes cross this boundary.
  *
  * Theming: titan components emit Tailwind class strings (e.g. `text-text-primary`)

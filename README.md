@@ -190,6 +190,6 @@ Every event carries a `slot` meta key identifying which slot fired it (`primary`
 
 `rep_finalized` fires when the _next_ rep begins, not when the current one ends — intrinsic to the analytics pipeline's ECC→CONC boundary detection. The terminal rep (rep N) never sees a closing transition; `set.end` finalizes it via `completeSet()` and the `set_ended` channel event covers that case. Coaching surfaces should treat each `rep_finalized` event as "user just started a new rep, here's the prior one's metrics."
 
-## Privacy / NDA
+## Privacy / Confidentiality
 
 No protocol bytes, raw frame payloads, or proprietary command codes appear in any tool I/O, schema, log line, or commit. Only typed values from the SDK public surface cross the MCP boundary.

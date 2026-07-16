@@ -58,7 +58,7 @@ non-null → null across two polls.
 }
 ```
 
-**NDA boundary: this is JSON only.** No protocol bytes, frames, or command
+**Confidentiality boundary: this is JSON only.** No protocol bytes, frames, or command
 codes ever cross into the dashboard — the snapshot is built from already-typed
 session/device/exercise state (`src/state/live-state.ts`), not from anything
 on the wire. If you're adding a field to the snapshot, it must already be a

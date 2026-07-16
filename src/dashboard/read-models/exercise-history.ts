@@ -8,7 +8,7 @@
 // `HistorySession[]` here; these functions decide the output. Keeping them pure
 // makes the e1RM / Kalman / PR math unit-testable without an HTTP server or store.
 //
-// NDA boundary (NF-07): every value here is derived fitness metadata (weights,
+// Confidentiality boundary (NF-07): every value here is derived fitness metadata
 // estimated 1RMs, velocities). No protocol bytes, frames, or command codes cross
 // this seam — the caller only ever passes already-typed stored reps.
 

@@ -7,7 +7,7 @@
 // node imports so the browser SPA can `import type` the schema without pulling
 // server code into the bundle.
 //
-// ── NDA boundary (NF-07) ──────────────────────────────────────────────────
+// ── Confidentiality boundary (NF-07) ──────────────────────────────────────
 //
 // Everything here is expressed in fitness units only: velocity in m/s, force
 // in lbs, position as the normalized 0-600 cable extension, and a semantic

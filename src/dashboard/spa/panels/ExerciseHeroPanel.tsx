@@ -21,7 +21,7 @@
  *
  * a11y (preserves Phase 5): ARIA region named for the exercise; the set list is
  * aria-live="polite" so a completed set announces once (row count changes only on
- * set close — see reduceSnapshot). NDA: renders adapter view-models only.
+ * set close — see reduceSnapshot). Confidentiality: renders adapter view-models only.
  */
 import {
   Card,

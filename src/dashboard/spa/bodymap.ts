@@ -11,7 +11,7 @@
  * it is imported EXCLUSIVELY from the `.tsx` panel — never from `adapter.ts` or
  * any node-vitest `.ts`, which would load the native RN sources and crash.
  *
- * NDA: derived purely from `/api/snapshot` JSON muscle metadata — no protocol
+ * Confidentiality: derived purely from `/api/snapshot` JSON muscle metadata — no protocol
  * data crosses this boundary.
  */
 import {
