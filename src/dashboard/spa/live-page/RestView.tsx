@@ -81,12 +81,16 @@ function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] 
   const loss = velocityLossPct(set.reps);
   const verdict = loss === null ? null : verdictFromLoss(loss);
   // Load + Peak force are the only mass readouts here — converted to the display unit
-  // (VW-63). Mean/Peak con (m/s), Vel loss (%) and Reps (count) are unit-invariant.
+  // (VW-63). The two velocity tiles (m/s), Vel loss (%) and Reps (count) are unit-invariant.
   const load = set.weightLbs !== null ? formatMass(set.weightLbs, displayUnit) : null;
   const peakForce = set.peakForceLbs !== null ? formatMass(set.peakForceLbs, displayUnit) : null;
   return [
+    // Both velocity tiles read the MEAN-concentric basis (VW-62): `set.reps` are per-rep MEAN
+    // concentric velocities. "Mean con" is their session average; the next tile is the best
+    // rep's MEAN concentric velocity (its max), NOT peak instantaneous velocity — so it is
+    // labelled "Best MCV", not "Peak con", which misread as instantaneous peak on the wall.
     set.reps.length > 0 ? { value: mean.toFixed(2), unit: 'm/s', label: 'Mean con' } : null,
-    peak !== null ? { value: peak.toFixed(2), unit: 'm/s', label: 'Peak con' } : null,
+    peak !== null ? { value: peak.toFixed(2), unit: 'm/s', label: 'Best MCV' } : null,
     loss !== null ? { value: `${Math.round(loss)}%`, label: 'Vel loss', trend: 'down' } : null,
     { value: String(set.repCount), label: 'Reps' },
     load !== null ? { value: String(load.value), unit: load.unit, label: 'Load' } : null,

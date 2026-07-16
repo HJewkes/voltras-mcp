@@ -303,19 +303,26 @@ describe('deriveRailExercises — planned-exercise list (VW-49)', () => {
 });
 
 describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
-  it('folds Volume (Σ reps) and Load (Σ reps×weight) over the whole session', () => {
+  it('folds Volume (Σ reps) and Tonnage (Σ reps×weight) over the whole session', () => {
     const session = sessionModel({
       exerciseName: 'Bench',
       completedSets: [completed('Squat', 5, 200), completed('Bench', 8, 135)],
     });
-    // 13 reps; 5*200 + 8*135 = 2080 lbs → "2.1k". The Load tile suffixes its unit (VW-63).
+    // 13 reps; 5*200 + 8*135 = 2080 lbs → "2.1k". The Tonnage tile suffixes its unit (VW-63).
     expect(deriveRailMetrics(railModel(session))).toEqual([
       { label: 'Volume', value: '13' },
-      { label: 'Load', value: '2.1k lbs' },
+      { label: 'Tonnage', value: '2.1k lbs' },
     ]);
   });
 
-  it('converts the Load total to kg while leaving Volume (a rep count) untouched (VW-63)', () => {
+  it('labels the Σ reps×weight tile "Tonnage", not "Load" — the verdict "Load" is the weight', () => {
+    // Disambiguation: the rail tonnage total and the verdict working-weight tile must not
+    // share the word "Load" (they are different quantities — 200 lbs of tonnage vs 20 lbs).
+    const session = sessionModel({ completedSets: [completed('Bench', 8, 135)] });
+    expect(deriveRailMetrics(railModel(session))?.map((t) => t.label)).not.toContain('Load');
+  });
+
+  it('converts the Tonnage total to kg while leaving Volume (a rep count) untouched (VW-63)', () => {
     const session = sessionModel({
       exerciseName: 'Bench',
       completedSets: [completed('Squat', 5, 200), completed('Bench', 8, 135)],
@@ -323,7 +330,7 @@ describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
     // 2080 lbs × 0.45359237 = 943.5 kg → "943 kg"; the 13-rep Volume is unit-invariant.
     expect(deriveRailMetrics(railModel(session), 'kg')).toEqual([
       { label: 'Volume', value: '13' },
-      { label: 'Load', value: '943 kg' },
+      { label: 'Tonnage', value: '943 kg' },
     ]);
   });
 
@@ -333,7 +340,10 @@ describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
 
   it('surfaces no Fatigue tile — there is no honest session-wide fatigue signal', () => {
     const session = sessionModel({ completedSets: [completed('Bench', 8, 135)] });
-    expect(deriveRailMetrics(railModel(session))?.map((t) => t.label)).toEqual(['Volume', 'Load']);
+    expect(deriveRailMetrics(railModel(session))?.map((t) => t.label)).toEqual([
+      'Volume',
+      'Tonnage',
+    ]);
   });
 });
 
@@ -428,5 +438,55 @@ describe('deriveRailExercises', () => {
     const [exercise] = deriveRailExercises(model!);
     // 0 completed + 1 active set in progress = 1 (VW-68 progress aggregate).
     expect(exercise.summary.sets).toBe(1);
+  });
+});
+
+describe('0-rep force-closed sets are filtered from the wall (bench finding)', () => {
+  /** A store set-log entry with a given rep count, tagged to the active exercise. */
+  function storeSet(repCount: number, weightLbs = 20): StoreCompletedSet {
+    return {
+      weightLbs,
+      mode: 'weight',
+      repCount,
+      exerciseName: 'Cable Chest Press',
+      bestPeakVelocityMms: null,
+      peakForceLbs: null,
+      reps: [],
+    };
+  }
+
+  /** Model built from a set log of a real set followed by an armed-then-abandoned empty. */
+  function modelWithTimeoutSet(): DashboardModel {
+    const accumulator = {
+      ...initialAccumulatorState(),
+      setLog: [storeSet(10), storeSet(0)],
+    };
+    return mapStoreToDashboardModel(sources({ accumulator }))!;
+  }
+
+  it('keeps only the real set in the read-model — the 0-rep timeout set is dropped', () => {
+    const model = modelWithTimeoutSet();
+    expect(model.session.completedSets).toHaveLength(1);
+    expect(model.session.completedSets[0].repCount).toBe(10);
+  });
+
+  it('counts one set in the rail tally, not two', () => {
+    const [exercise] = deriveRailExercises(modelWithTimeoutSet());
+    expect(exercise.summary.sets).toBe(1);
+    expect(exercise.setStates).toHaveLength(1);
+  });
+
+  it('folds only the real set into the session rollup tiles', () => {
+    // Real set alone: 10 reps, 10×20 = 200 lbs tonnage → "200 lbs" (the empty set adds nothing).
+    expect(deriveRailMetrics(railModel(modelWithTimeoutSet().session))).toEqual([
+      { label: 'Volume', value: '10' },
+      { label: 'Tonnage', value: '200 lbs' },
+    ]);
+  });
+
+  it('a set the lifter actually worked keeps showing (repCount ≥ 1)', () => {
+    const accumulator = { ...initialAccumulatorState(), setLog: [storeSet(1)] };
+    const model = mapStoreToDashboardModel(sources({ accumulator }))!;
+    expect(model.session.completedSets).toHaveLength(1);
   });
 });
