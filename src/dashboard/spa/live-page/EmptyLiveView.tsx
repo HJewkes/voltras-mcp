@@ -32,8 +32,6 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
   // A KNOWN disconnect (the mapper folded a real connection status that says so). Undefined
   // connection = unknown ⇒ do NOT claim disconnected; the shell owns the authoritative banner.
   const disconnected = connection?.connected === false;
-  // `'—'` is the no-session fallback (`live-view.ts`); a real name means a session is open.
-  const named = session.exerciseName !== '—';
 
   const { icon, title, description } = disconnected
     ? {
@@ -42,8 +40,10 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
         description:
           'Connect a Voltra — live velocity, tempo and fatigue appear here once a set begins.',
       }
-    : named
+    : session.hasSession
       ? {
+          // A session is open — name it (a real name, or the neutral `Exercise N` ordinal;
+          // the mapper never emits a bare em-dash here — VW-68).
           icon: DumbbellIcon,
           title: `Ready · ${session.exerciseName}`,
           description: 'Start the first set — live velocity, tempo and fatigue will appear here.',

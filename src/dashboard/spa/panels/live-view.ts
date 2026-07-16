@@ -205,6 +205,18 @@ function mapPlannedExercises(prescription: PrescriptionView | null): PlannedExer
   }));
 }
 
+/**
+ * The active exercise's display name (VW-68). A resolved session name when there is one;
+ * otherwise the neutral ordinal `Exercise N` — never a fabricated specific name, and never a
+ * bare em-dash. `N` is the active exercise's 1-based position in the plan (1 with no plan).
+ */
+function resolveExerciseName(snapshot: Snapshot, plannedExercises: PlannedExerciseModel[]): string {
+  const raw = snapshot.session?.exerciseName;
+  if (raw) return raw;
+  const activeIdx = plannedExercises.findIndex((e) => e.active);
+  return `Exercise ${activeIdx >= 0 ? activeIdx + 1 : 1}`;
+}
+
 /** The session read-model. */
 function mapSession(
   snapshot: Snapshot,
@@ -213,8 +225,12 @@ function mapSession(
   targetReps: number | null,
   prescription: PrescriptionView | null,
 ): SessionModel {
+  const plannedExercises = mapPlannedExercises(prescription);
   return {
-    exerciseName: snapshot.session?.exerciseName ?? '—',
+    // A real training session is open when the snapshot carries one, regardless of whether its
+    // exercise is named yet — lets the idle stage tell "no session" from "session, no set".
+    hasSession: snapshot.session != null,
+    exerciseName: resolveExerciseName(snapshot, plannedExercises),
     title: null,
     weightLbs,
     unit: 'lbs',
@@ -223,7 +239,7 @@ function mapSession(
     tempo: prescription?.tempo,
     completedSets: setLog.map(mapCompletedSet),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
-    plannedExercises: mapPlannedExercises(prescription),
+    plannedExercises,
     // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
     restSec: prescription?.restSec ?? null,
     // Null when the session carries no plan attachment at all — the view then hides the

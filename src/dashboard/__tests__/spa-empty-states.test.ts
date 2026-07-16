@@ -20,6 +20,7 @@ import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/li
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
+    hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: null,
     weightLbs: 140,
@@ -76,9 +77,9 @@ describe('stageIsEmpty (VW-68)', () => {
 });
 
 describe('deriveRailExercises empty-rail tidy (VW-68)', () => {
-  it('emits no rows when there is NO session (— fallback, no plan/log/stream)', () => {
-    // The mapper's no-session fallback name — the operator's barren connected-idle case.
-    expect(deriveRailExercises(model({ session: sessionModel({ exerciseName: '—' }) }))).toEqual(
+  it('emits no rows when there is NO session (no plan/log/stream)', () => {
+    // The operator's barren connected-idle case: no open session at all (VW-68).
+    expect(deriveRailExercises(model({ session: sessionModel({ hasSession: false }) }))).toEqual(
       [],
     );
   });
@@ -151,5 +152,52 @@ describe('mapStoreToDashboardModel connection hint (VW-68)', () => {
     );
     expect(m?.connection?.connected).toBe(false);
     expect(m?.connection?.label).toBe('NO SIGNAL');
+  });
+});
+
+// --- Honest exercise naming (VW-68) --------------------------------------------------------
+
+function sessionSnapshot(exerciseName?: string): Snapshot {
+  return {
+    session: { sessionId: 's1', ...(exerciseName ? { exerciseName } : {}) },
+    devices: [],
+    sets: { active: null },
+  };
+}
+
+describe('honest exercise naming (VW-68)', () => {
+  it('reports no open session when the snapshot carries none', () => {
+    expect(mapStoreToDashboardModel(sources())?.session.hasSession).toBe(false);
+  });
+
+  it('names an unresolved-exercise session with the neutral "Exercise 1" ordinal, not an em-dash', () => {
+    const m = mapStoreToDashboardModel(sources({ snapshot: sessionSnapshot() }));
+    expect(m?.session.hasSession).toBe(true);
+    expect(m?.session.exerciseName).toBe('Exercise 1');
+  });
+
+  it('uses the real exercise name when the session resolves one', () => {
+    const m = mapStoreToDashboardModel(sources({ snapshot: sessionSnapshot('Cable Chest Press') }));
+    expect(m?.session.exerciseName).toBe('Cable Chest Press');
+  });
+});
+
+// --- Active-row progress placeholder (VW-68) -----------------------------------------------
+
+describe('active-row progress placeholder (VW-68)', () => {
+  it('summarises real progress (sets banked + best reps across sets), not a prescription', () => {
+    const s = sessionModel({
+      completedSets: [completed('Cable Chest Press', 8), completed('Cable Chest Press', 10)],
+    });
+    const [row] = deriveRailExercises(model({ session: s }));
+    expect(row.summary.sets).toBe(2); // 2 banked, none in progress
+    expect(row.summary.reps).toBe(10); // best set so far
+    expect(row.summary.weight).toBe(140);
+  });
+
+  it('shows an honest em-dash for reps before any set has landed', () => {
+    const [row] = deriveRailExercises(model({ session: sessionModel() }));
+    expect(row.summary.sets).toBe(0);
+    expect(row.summary.reps).toBe('—');
   });
 });
