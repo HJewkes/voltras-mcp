@@ -188,7 +188,9 @@ describe('toLiveTempoSeconds', () => {
 
 describe('toAutoRegStatus', () => {
   // The coaching auto-reg boundaries shared by StatusPill + LiveAuraFrame +
-  // FatigueMeter: <20 productive, 20–28 threshold, 28+ stop. Lock the edges.
+  // FatigueMeter, on the canonical VL20/VL30 bands: <20 productive, 20–30
+  // threshold, 30+ stop. These MUST match `verdictFromLoss` (live-page/model.ts)
+  // so the live pill and the rest-view aura never disagree. Lock the edges.
   it('is null when loss is not yet derivable', () => {
     expect(toAutoRegStatus(null)).toBeNull();
   });
@@ -198,13 +200,14 @@ describe('toAutoRegStatus', () => {
     expect(toAutoRegStatus(19.9)).toBe('productive');
   });
 
-  it('is threshold from VL20 up to (not including) VL28', () => {
+  it('is threshold from VL20 up to (not including) VL30', () => {
     expect(toAutoRegStatus(20)).toBe('threshold');
-    expect(toAutoRegStatus(27.9)).toBe('threshold');
+    expect(toAutoRegStatus(28)).toBe('threshold');
+    expect(toAutoRegStatus(29.9)).toBe('threshold');
   });
 
-  it('is stop at VL28 and above', () => {
-    expect(toAutoRegStatus(28)).toBe('stop');
+  it('is stop at VL30 and above', () => {
+    expect(toAutoRegStatus(30)).toBe('stop');
     expect(toAutoRegStatus(45)).toBe('stop');
   });
 });

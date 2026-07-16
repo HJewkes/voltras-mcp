@@ -17,7 +17,7 @@
 import { type Rep } from '@voltras/workout-analytics';
 import {
   buildCurrentSet,
-  repPeakMms,
+  repMeanMms,
   toMps,
   type AccumulatorState,
   type CompletedSet as StoreCompletedSet,
@@ -98,20 +98,21 @@ function mapMode(trainingMode: string | null): CompletedSet['mode'] {
 }
 
 /**
- * Per-rep velocities (m/s), ordered by rep.
+ * Per-rep MEAN concentric velocities (m/s), ordered by rep.
  *
- * These are PEAK concentric velocities — the specimen's arrays were mean-concentric.
- * The mean is the metric we actually want here, and WA has the helper for it
- * (`getSetRepMeanVelocities`), but only on main: the installed WA 1.5.0 exports
- * `getSetRepPeakVelocities` and nothing else, so the swap is gated on the next WA
- * publish (already pending — the tempo-order merge makes it a major bump). Peak reads
- * high vs mean, so the strip is optimistic until then; it matches the existing hero's
- * VelocityStrip, which reads the same array.
+ * MEAN-concentric — the VBT decision metric, and the same quantity the live
+ * VelocityStrip bars now show (VW-58 routed those through `repMeanMms`). A set must
+ * not flip its bars from mean → peak the instant it closes, so the completed-set
+ * strip reads mean too (VW-62). This is the PER-REP swap, which is unblocked: the
+ * installed WA 1.5.0 exports `getRepMeanVelocity` (wrapped by `repMeanMms`). The
+ * set-level `getSetRepMeanVelocities` sibling is not published in 1.5.0, so the
+ * hero's `getSetRepPeakVelocities` path stays peak until then (see
+ * `exercise-hero-view.ts`).
  */
 function repVelocitiesMps(reps: readonly Rep[]): number[] {
   const out: number[] = [];
   for (const rep of reps) {
-    const mps = toMps(repPeakMms(rep));
+    const mps = toMps(repMeanMms(rep));
     if (mps !== null) out.push(mps);
   }
   return out;
@@ -165,6 +166,7 @@ function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
     mode: mapMode(set.mode),
     repCount: set.repCount,
     reps: repVelocitiesMps(set.reps),
+    peakForceLbs: set.peakForceLbs,
   };
 }
 

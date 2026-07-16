@@ -6,7 +6,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { initialAccumulatorState, type PrescriptionView, type Snapshot } from '../spa/adapter.js';
+import type { Rep } from '@voltras/workout-analytics';
+
+import {
+  initialAccumulatorState,
+  type CompletedSet as StoreCompletedSet,
+  type PrescriptionView,
+  type Snapshot,
+} from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
   deriveRailExercises,
@@ -42,7 +49,7 @@ function railModel(session: SessionModel): DashboardModel {
 
 /** A completed set tagged with the exercise that owned it (VW-50). */
 function completed(exerciseName: string, repCount: number, weightLbs = 100): CompletedSet {
-  return { exerciseName, weightLbs, mode: 'weight', repCount, reps: [] };
+  return { exerciseName, weightLbs, mode: 'weight', repCount, reps: [], peakForceLbs: null };
 }
 
 /** A snapshot with an active session and no device/set activity. */
@@ -333,6 +340,50 @@ describe('rest-recap derives (VW-60)', () => {
     it('clamps to zero when the last rep is the fastest (no loss, never negative)', () => {
       expect(velocityLossPct([0.4, 0.45, 0.5])).toBe(0);
     });
+  });
+});
+
+describe('mapCompletedSet (VW-61 / VW-62)', () => {
+  /** A closed store set carrying WA reps, injected via the accumulator's set log. */
+  function storeSet(reps: Rep[], peakForceLbs: number | null): StoreCompletedSet {
+    return {
+      weightLbs: 140,
+      mode: 'weight',
+      repCount: reps.length,
+      exerciseName: 'Cable Chest Press',
+      bestPeakVelocityMms: null,
+      peakForceLbs,
+      reps,
+    };
+  }
+
+  /** A rep whose MEAN concentric velocity (500 mm/s) differs from its PEAK (800). */
+  function repMeanVsPeak(repNumber: number): Rep {
+    return {
+      repNumber,
+      concentric: { peakVelocity: 800, _totalVelocity: 500, _movementSampleCount: 1 },
+      eccentric: {},
+    } as unknown as Rep;
+  }
+
+  function modelWithSet(set: StoreCompletedSet): CompletedSet {
+    const accumulator = { ...initialAccumulatorState(), setLog: [set] };
+    const model = mapStoreToDashboardModel(sources({ accumulator }));
+    return model!.session.completedSets[0];
+  }
+
+  it('carries the set-close peak concentric force through to the view model (VW-61)', () => {
+    expect(modelWithSet(storeSet([repMeanVsPeak(1)], 511)).peakForceLbs).toBe(511);
+  });
+
+  it('carries a null peak force through unchanged (hidden, never faked)', () => {
+    expect(modelWithSet(storeSet([repMeanVsPeak(1)], null)).peakForceLbs).toBeNull();
+  });
+
+  it('builds the recap bars from MEAN concentric velocity, not peak (VW-62)', () => {
+    // Mean is 500 mm/s → 0.5 m/s; peak is 800 → 0.8. The bars must read the mean so a
+    // closing set does not flip peak→mean vs the live strip.
+    expect(modelWithSet(storeSet([repMeanVsPeak(1)], null)).reps).toEqual([0.5]);
   });
 });
 

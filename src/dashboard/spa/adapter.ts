@@ -47,6 +47,20 @@ export function repMeanMms(rep: Rep): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * Peak CONCENTRIC force (lbs) for a rep. Null when the rep logged no concentric
+ * force (empty phase → `peakForce` defaults to 0).
+ *
+ * Reads `rep.concentric.peakForce` directly rather than WA's `getRepPeakForce`,
+ * which returns `max(concentric, eccentric)` — the recap tile is a concentric
+ * (lifting) verdict, so folding in eccentric peaks would overstate it. WA force
+ * samples are already lbs (`WorkoutSample.force`), so no conversion is needed.
+ */
+export function repPeakConcentricForceLbs(rep: Rep): number | null {
+  const f = rep.concentric.peakForce;
+  return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : null;
+}
+
 /** Convert a mm/s velocity to m/s (2-dp) as a number for chart props. */
 export function toMps(mmPerSec: number | null | undefined): number | null {
   if (mmPerSec == null || !Number.isFinite(mmPerSec)) return null;
@@ -454,6 +468,12 @@ export interface CompletedSet {
   /** Best (max) per-rep peak concentric velocity for the set, in mm/s. */
   bestPeakVelocityMms: number | null;
   /**
+   * Best (max) per-rep peak CONCENTRIC force for the set, in lbs (VW-61). Lets the
+   * rest recap show the just-closed set's peak force (VW-45 is live-overlay-only, so
+   * it vanishes the instant rest begins). Null when no rep logged concentric force.
+   */
+  peakForceLbs: number | null;
+  /**
    * Full WA `Rep[]` retained at set-close (source of truth). The reps are
    * already in `SnapshotActiveSet.reps` before the set closes, so retaining
    * them costs no backend/wire change and lets the hero derive RPE, per-rep
@@ -499,9 +519,12 @@ function summariseClosedSet(
 ): CompletedSet {
   const reps = Array.isArray(set.reps) ? set.reps : [];
   let bestPeak: number | null = null;
+  let peakForce: number | null = null;
   for (const rep of reps) {
     const v = repPeakMms(rep);
     if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
+    const f = repPeakConcentricForceLbs(rep);
+    if (f != null && (peakForce === null || f > peakForce)) peakForce = f;
   }
   const weightLbs = resolveWeightLbs(device, set);
   return {
@@ -510,6 +533,7 @@ function summariseClosedSet(
     repCount: reps.length,
     exerciseName,
     bestPeakVelocityMms: bestPeak,
+    peakForceLbs: peakForce,
     reps: [...reps],
   };
 }
