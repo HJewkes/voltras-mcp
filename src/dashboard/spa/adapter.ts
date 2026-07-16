@@ -65,6 +65,12 @@ export interface PrescriptionView {
   rpe?: number;
   /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
   restSec?: number;
+  /**
+   * Target tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]` (seconds),
+   * resolved from the coach override (none yet) or the exercise default. Absent when
+   * neither resolves — the live view then hides the tempo readout (VW-41).
+   */
+  tempo?: [number, number, number, number];
 }
 
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
