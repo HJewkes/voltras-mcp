@@ -8,10 +8,11 @@
 export {
   buildSnapshotView,
   resolveActiveExerciseMuscles,
+  resolveSessionView,
   type DeviceEntry,
   type ActiveExerciseMuscles,
   type SnapshotResponse,
-  type ExerciseMuscleMeta,
+  type ExerciseMeta,
   type SnapshotInput,
 } from './snapshot.js';
 

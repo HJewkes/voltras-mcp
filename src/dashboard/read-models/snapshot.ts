@@ -41,11 +41,13 @@ export interface SnapshotResponse {
 
 /**
  * The exercise-catalog entry the caller resolved from the active session's
- * `exerciseId` — the minimal muscle-group slice the snapshot needs. `undefined`
- * when there is no active session, no `exerciseId`, no catalog wired, or the
- * exercise is unknown; the derivation collapses all of those to a null BodyMap.
+ * `exerciseId` — the minimal slice the snapshot needs: the display `name` and
+ * the BodyMap's muscle groups. `undefined` when there is no active session, no
+ * `exerciseId`, no catalog wired, or the exercise is unknown; the derivation
+ * collapses all of those to a null BodyMap and an absent `exerciseName`.
  */
-export interface ExerciseMuscleMeta {
+export interface ExerciseMeta {
+  name?: string;
   muscleGroups: string[];
   secondaryMuscleGroups?: string[];
 }
@@ -59,7 +61,7 @@ export interface SnapshotInput {
   /** The primary active set (first slot that has one), if any. */
   activeSet: ActiveSet | undefined;
   /** The catalog entry for the active session's exercise, if resolved. */
-  activeExercise: ExerciseMuscleMeta | undefined;
+  activeExercise: ExerciseMeta | undefined;
 }
 
 /**
@@ -68,7 +70,7 @@ export interface SnapshotInput {
  * no catalog) — the client renders an empty BodyMap in every such case.
  */
 export function resolveActiveExerciseMuscles(
-  exercise: ExerciseMuscleMeta | undefined,
+  exercise: ExerciseMeta | undefined,
 ): ActiveExerciseMuscles | null {
   if (!exercise) return null;
   return {
@@ -78,14 +80,36 @@ export function resolveActiveExerciseMuscles(
 }
 
 /**
+ * Pure: join the catalog's display name onto the active session.
+ *
+ * `session.start` enforces "exerciseId XOR exerciseName" (R21) and drops the
+ * name whenever an id is given, so id-started sessions reach here nameless and
+ * every consumer renders a placeholder. Resolving the name here — rather than
+ * per-consumer — keeps `exerciseId` authoritative on the wire while giving the
+ * dashboard something to display.
+ *
+ * An unresolvable id leaves `exerciseName` absent: a prettified id would be
+ * invented data, and an honest blank is the better failure. A session that
+ * already carries its own name (name-started, or an auto-created guided-load
+ * session) keeps it — the catalog never overwrites what the caller supplied.
+ */
+export function resolveSessionView(
+  session: ActiveSession | undefined,
+  exercise: ExerciseMeta | undefined,
+): ActiveSession | null {
+  if (!session) return null;
+  if (session.exerciseName !== undefined || exercise?.name === undefined) return session;
+  return { ...session, exerciseName: exercise.name };
+}
+
+/**
  * Pure: shape gathered device/session state into the `/api/snapshot` payload.
  * A missing session/set becomes an explicit `null` (the wire contract), and the
- * active exercise is joined to its muscle groups. Byte-for-byte equivalent to
- * the assembly that previously lived inline in `server.ts`.
+ * active exercise is joined to both its display name and its muscle groups.
  */
 export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
   return {
-    session: input.session ?? null,
+    session: resolveSessionView(input.session, input.activeExercise),
     devices: input.devices,
     sets: { active: input.activeSet ?? null },
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),

@@ -142,13 +142,16 @@ export interface DashboardServerState {
   };
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
-   * its target muscle groups for the dashboard BodyMap (VMCP-01.47). Optional so
-   * the server test fakes need not fabricate a catalog; the real `ServerState`
-   * always supplies it. Muscle groups are plain fitness metadata (not protocol
-   * data), so surfacing them in the loopback snapshot JSON respects NDA NF-07.
+   * its display name and its target muscle groups for the dashboard BodyMap
+   * (VMCP-01.47). Optional so the server test fakes need not fabricate a
+   * catalog; the real `ServerState` always supplies it. Names and muscle groups
+   * are plain fitness metadata (not protocol data), so surfacing them in the
+   * loopback snapshot JSON respects NDA NF-07.
    */
   exercises?: {
-    getById(id: string): { muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined;
+    getById(
+      id: string,
+    ): { name?: string; muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined;
   };
   /**
    * Fan-out hub for the derived live signal, feeding the `GET /api/stream` SSE
