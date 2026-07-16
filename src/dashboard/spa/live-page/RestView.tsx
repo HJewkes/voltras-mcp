@@ -28,9 +28,10 @@ import {
  * velocity loss). In the real rest state that overlay is null BY DEFINITION — no set is
  * streaming — so this recap sources the JUST-COMPLETED set from `session.completedSets`
  * instead. Fields the store cannot supply once the set closes are HIDDEN, never faked:
- *   - Peak force: `CompletedSet` carries no force at all (`live.peakForce`/VW-45 lives only
- *     on the streaming overlay and is gone the instant rest begins) → the tile is omitted.
- *   - Avg ROM: `CompletedSet` carries no rom either → omitted.
+ *   - Peak force: NOW sourced — `CompletedSet.peakForceLbs` folds the set's max concentric
+ *     force at set-close (VW-61), so the tile survives into rest (the live overlay's
+ *     `peakForce`/VW-45 is gone the instant rest begins). Hidden when the fold is null.
+ *   - Avg ROM: `CompletedSet` carries no rom → still omitted.
  *   - RPE: the specimen fabricated `8 + i*0.5`; the store has no RPE → omitted from rows.
  *   - The countdown ring needs a rest TARGET (`session.restSec`/VW-51); when the coach left
  *     it unset we do NOT invent one (the lab hardcoded 120s) — we fall back to the honest
@@ -88,7 +89,13 @@ function verdictMetrics(set: CompletedSet): MetricSpec[] {
           trend: verdict === 'productive' ? 'up' : 'neutral',
         }
       : null,
-    // Peak force + Avg ROM: no `CompletedSet` source once the set closes → hidden, not faked.
+    // Peak force: the just-closed set's max concentric force (VW-61), folded at
+    // set-close so it survives into rest (the live overlay's `peakForce` is gone by
+    // now). Hidden when the store logged no force — never faked.
+    set.peakForceLbs !== null
+      ? { value: String(Math.round(set.peakForceLbs)), unit: 'lbs', label: 'Peak force' }
+      : null,
+    // Avg ROM: no `CompletedSet` source once the set closes → still hidden, not faked.
   ];
 }
 

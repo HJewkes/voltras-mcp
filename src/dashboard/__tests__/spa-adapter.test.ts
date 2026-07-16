@@ -48,6 +48,19 @@ function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
   } as unknown as Rep;
 }
 
+/**
+ * Build a Rep carrying a concentric peak force (lbs) and a larger ECCENTRIC peak,
+ * so the fold proves it reads `concentric.peakForce` (VW-61) and never WA's
+ * `getRepPeakForce` (which maxes concentric with eccentric).
+ */
+function repWithForce(repNumber: number, conForceLbs: number, eccForceLbs = 0): Rep {
+  return {
+    repNumber,
+    concentric: { peakVelocity: 700, peakForce: conForceLbs },
+    eccentric: { peakForce: eccForceLbs },
+  } as unknown as Rep;
+}
+
 function snapshot(opts: {
   sessionId?: string | null;
   exerciseName?: string;
@@ -277,6 +290,9 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       // No exercise name in this snapshot → null tag (VW-50).
       exerciseName: null,
       bestPeakVelocityMms: 900,
+      // These reps carry no concentric force (the `rep` helper sets only peak
+      // velocity), so the peak-force fold is null — hidden, never faked (VW-61).
+      peakForceLbs: null,
       // Full WA reps retained (source of truth) so the shared mappers can derive
       // RPE / per-rep velocity for the hero.
       reps: [rep(1, 900), rep(2, 800)],
@@ -355,6 +371,31 @@ describe('reduceSnapshot — completed-set accumulation', () => {
     // New session id → log resets.
     state = reduceSnapshot(state, snapshot({ sessionId: 's2', activeSet: set }), 1_000);
     expect(state.setLog).toHaveLength(0);
+  });
+});
+
+describe('reduceSnapshot — peak concentric force fold (VW-61)', () => {
+  function closeSetWith(reps: Rep[]) {
+    let state = initialAccumulatorState();
+    const device: SnapshotDevice = { connected: true, weightLbs: 100, trainingMode: 'weight' };
+    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device, activeSet: { reps } }), 0);
+    return reduceSnapshot(state, snapshot({ sessionId: 's1', device }), 500);
+  }
+
+  it('folds the MAX per-rep concentric force across the set', () => {
+    const state = closeSetWith([repWithForce(1, 420), repWithForce(2, 511), repWithForce(3, 388)]);
+    expect(state.setLog[0].peakForceLbs).toBe(511);
+  });
+
+  it('reads concentric force only — a bigger eccentric peak never counts', () => {
+    // Eccentric peak (900) dwarfs every concentric peak; the fold must ignore it.
+    const state = closeSetWith([repWithForce(1, 420, 900), repWithForce(2, 450, 880)]);
+    expect(state.setLog[0].peakForceLbs).toBe(450);
+  });
+
+  it('is null when no rep logged concentric force (never faked)', () => {
+    const state = closeSetWith([rep(1, 900), rep(2, 800)]);
+    expect(state.setLog[0].peakForceLbs).toBeNull();
   });
 });
 

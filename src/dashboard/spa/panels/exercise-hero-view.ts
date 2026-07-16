@@ -30,12 +30,17 @@ import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
  * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
  * live surface's `StatusPill` (verdict text) and `LiveAuraFrame` (flood), which
  * take the same `productive | threshold | stop` domain: below VL20 keep going,
- * VL20–28 approaching fatigue, VL28+ terminate the set. Null (no verdict / no
+ * VL20–VL30 approaching fatigue, VL30+ terminate the set. Null (no verdict / no
  * flood) when loss is not yet derivable (<2 reps).
+ *
+ * CANONICAL BANDS: 20/30 — identical to the rest view's `verdictFromLoss`
+ * (`live-page/model.ts`), so the live StatusPill and the rest-view aura never
+ * disagree (they previously split at 28 vs 30).
+ * TODO(VW-64): consume WA `velocityLossVerdict` once published (the eventual SSOT).
  */
 export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null {
   if (lossPct === null) return null;
-  if (lossPct >= 28) return 'stop';
+  if (lossPct >= 30) return 'stop';
   if (lossPct >= 20) return 'threshold';
   return 'productive';
 }
@@ -51,6 +56,10 @@ export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null
  * normalization (WA is unit-agnostic).
  */
 export function toSetRowProps(view: WorkoutSetView): SetRowProps {
+  // TODO(VW-62): swap to the set-level MEAN sibling once WA publishes
+  // `getSetRepMeanVelocities` (WA 1.5.0 exports only the peak fold). The per-rep
+  // strips already moved to mean (`panels/live-view.ts`); this set-level path stays
+  // peak until the sibling ships, so the hero's SetRow reads optimistic vs the recap.
   const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mms) =>
     mms != null ? mms / MMS_PER_MPS : 0,
   );

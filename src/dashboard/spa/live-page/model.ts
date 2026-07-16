@@ -70,8 +70,14 @@ export interface CompletedSet {
    */
   mode: 'weight' | 'chains' | 'eccentric' | 'isokinetic';
   repCount: number;
-  /** Per-rep velocities (m/s). */
+  /** Per-rep MEAN concentric velocities (m/s) — same basis as the live bars (VW-62). */
   reps: number[];
+  /**
+   * Peak concentric force logged during the set (lbs), or null when the store could
+   * not source it. Lets the rest recap show the finished set's peak force (VW-45/VW-61
+   * — the live overlay's `peakForce` is gone once rest begins). Hidden when null.
+   */
+  peakForceLbs: number | null;
 }
 
 /**
@@ -216,6 +222,7 @@ export const dashboardFixture: DashboardModel = {
         mode: 'weight',
         repCount: 8,
         reps: [0.55, 0.54, 0.52, 0.51, 0.49, 0.47, 0.45, 0.43],
+        peakForceLbs: 512,
       },
       {
         exerciseName: 'Cable Chest Press',
@@ -223,6 +230,7 @@ export const dashboardFixture: DashboardModel = {
         mode: 'weight',
         repCount: 8,
         reps: [0.53, 0.52, 0.5, 0.48, 0.46, 0.44, 0.42, 0.4],
+        peakForceLbs: 505,
       },
     ],
   },
@@ -237,15 +245,20 @@ export function meanVelocity(reps: number[]): number {
 }
 
 /**
- * Verdict status from velocity loss %, matching FatigueMeter's VL20/VL30 bands.
+ * Verdict status from velocity loss %, on the canonical VL20/VL30 bands: below VL20
+ * keep going (`productive`), VL20–VL30 approaching fatigue (`threshold`), VL30+
+ * terminate the set (`stop`).
  *
  * Null loss (fewer than 2 reps, so no loss is computable yet) reads as `productive`:
  * no fatigue signal is not a fatigue signal.
  *
- * NOTE (unreconciled): these bands are 20/30, but the dashboard's existing
- * `toAutoRegStatus` (`panels/exercise-hero-view.ts`) bands at 20/28 — so the aura here
- * and the StatusPill elsewhere can disagree between 28% and 30%. One of the two must
- * become canonical; the burn-down flags it and it is NOT resolved by this port.
+ * CANONICAL BANDS: 20/30. The dashboard's `toAutoRegStatus`
+ * (`panels/exercise-hero-view.ts`) now bands identically, so the rest-view aura and the
+ * live StatusPill agree across the whole 20–30% range. The autoregulation spec frames
+ * velocity loss as a configurable fatigue proxy (its moderate-fatigue zone is 20–30%),
+ * so it does not mandate exact productive/threshold/stop cutpoints — 20/30 is the
+ * dashboard default the rest of the surface already names.
+ * TODO(VW-64): consume WA `velocityLossVerdict` once published (the eventual SSOT).
  */
 export function verdictFromLoss(lossPct: number | null): 'productive' | 'threshold' | 'stop' {
   if (lossPct === null) return 'productive';
@@ -280,8 +293,9 @@ export function peakVelocity(reps: number[]): number | null {
  *
  * This is RE-DERIVED from the recorded per-rep velocities — the store does not retain the
  * live set's `velocityLossPct` once the set closes, so the recap recomputes it from the
- * same array the strip shows. (Those velocities are peak-concentric under the installed
- * WA, per the mapper's note, so this reads on the same basis as the live hero did.)
+ * same array the strip shows. Those velocities are MEAN-concentric (VW-62), the same
+ * basis WA's `getSetVelocityLossPct` folds over, so this loss reads on the canonical
+ * metric rather than the optimistic peak the port originally carried.
  */
 export function velocityLossPct(reps: number[]): number | null {
   if (reps.length < 2) return null;
