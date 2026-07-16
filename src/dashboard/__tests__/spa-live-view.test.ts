@@ -11,6 +11,8 @@ import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
   deriveRailExercises,
   deriveRailMetrics,
+  peakVelocity,
+  velocityLossPct,
   type CompletedSet,
   type DashboardModel,
   type SessionModel,
@@ -35,7 +37,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
 
 /** Wrap a session in a rest-state (no live overlay) dashboard model. */
 function railModel(session: SessionModel): DashboardModel {
-  return { live: null, session };
+  return { live: null, session, restElapsedMs: null };
 }
 
 /** A completed set tagged with the exercise that owned it (VW-50). */
@@ -148,6 +150,25 @@ describe('mapStoreToDashboardModel', () => {
     it('leaves rest null when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.restSec).toBeNull();
+    });
+  });
+
+  describe('restElapsedMs (VW-60)', () => {
+    it('reports the count-up since the last set closed (nowMs − restStartMs)', () => {
+      const accumulator = { ...initialAccumulatorState(), restStartMs: 1_000 };
+      const model = mapStoreToDashboardModel(sources({ accumulator, nowMs: 46_000 }));
+      expect(model?.restElapsedMs).toBe(45_000);
+    });
+
+    it('clamps a backwards clock to zero rather than a negative elapsed', () => {
+      const accumulator = { ...initialAccumulatorState(), restStartMs: 5_000 };
+      const model = mapStoreToDashboardModel(sources({ accumulator, nowMs: 4_000 }));
+      expect(model?.restElapsedMs).toBe(0);
+    });
+
+    it('is null before any set has closed (no rest clock running)', () => {
+      const model = mapStoreToDashboardModel(sources({ nowMs: 46_000 }));
+      expect(model?.restElapsedMs).toBeNull();
     });
   });
 
@@ -284,6 +305,34 @@ describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
   it('surfaces no Fatigue tile — there is no honest session-wide fatigue signal', () => {
     const session = sessionModel({ completedSets: [completed('Bench', 8, 135)] });
     expect(deriveRailMetrics(railModel(session))?.map((t) => t.label)).toEqual(['Volume', 'Load']);
+  });
+});
+
+describe('rest-recap derives (VW-60)', () => {
+  describe('peakVelocity', () => {
+    it('returns the fastest rep of the set', () => {
+      expect(peakVelocity([0.55, 0.54, 0.52, 0.51])).toBe(0.55);
+    });
+
+    it('returns null for a set that logged no reps', () => {
+      expect(peakVelocity([])).toBeNull();
+    });
+  });
+
+  describe('velocityLossPct', () => {
+    it('is the drop from the fastest rep to the last, as a percentage', () => {
+      // best 0.5, last 0.4 → 20% loss.
+      expect(velocityLossPct([0.5, 0.48, 0.45, 0.4])).toBeCloseTo(20, 5);
+    });
+
+    it('is null with fewer than two reps (no loss is computable from one point)', () => {
+      expect(velocityLossPct([0.5])).toBeNull();
+      expect(velocityLossPct([])).toBeNull();
+    });
+
+    it('clamps to zero when the last rep is the fastest (no loss, never negative)', () => {
+      expect(velocityLossPct([0.4, 0.45, 0.5])).toBe(0);
+    });
   });
 });
 

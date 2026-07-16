@@ -27,8 +27,12 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   const accumulator = useStore(dashboardStore, (s) => s.accumulator);
   const prescription = useStore(dashboardStore, (s) => s.prescription);
   const live = useStore(dashboardStore, (s) => s.live);
+  // The 1 Hz clock (also bumped on every snapshot) — drives the rest stage's count-up
+  // between sets. During a live set the `live` slice already re-renders this at ~20 Hz,
+  // so the extra subscription only adds ticks while resting, which is when they matter.
+  const nowMs = useStore(dashboardStore, (s) => s.nowMs);
 
-  const model = mapStoreToDashboardModel({ snapshot, accumulator, live, prescription });
+  const model = mapStoreToDashboardModel({ snapshot, accumulator, live, prescription, nowMs });
   if (!model) return null;
   // The page is one react-native-web flex column rooted at `flex: 1`, but it mounts into
   // a bare `#root` div with no height — so every `flex: 1` below would resolve against

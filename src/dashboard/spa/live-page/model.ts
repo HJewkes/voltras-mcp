@@ -138,6 +138,14 @@ export interface DashboardModel {
    */
   live: LiveModel | null;
   session: SessionModel;
+  /**
+   * Elapsed rest time (ms) since the last set closed — the client-tracked count-up the
+   * legacy `RestTimerPanel` reads (`nowMs − restStartMs`). Null before any set has ended
+   * (pre-session idle) or once the next set begins. Drives the rest stage's countdown /
+   * count-up; it is a CLOCK value, not a plan field, so it ticks between sets and is
+   * null otherwise. Never fabricated — sourced from the accumulator's `restStartMs`.
+   */
+  restElapsedMs: number | null;
 }
 
 /**
@@ -154,6 +162,8 @@ export type LiveDashboardModel = DashboardModel & { live: LiveModel };
  * ~22% velocity loss (the VL20–VL30 mid-zone → `threshold` verdict / amber aura).
  */
 export const dashboardFixture: DashboardModel = {
+  // Mid-set fixture: a set is streaming, so there is no rest clock running.
+  restElapsedMs: null,
   live: {
     velocity: 0.41,
     force: 498,
@@ -247,9 +257,38 @@ export function verdictFromLoss(lossPct: number | null): 'productive' | 'thresho
 /** Placeholder shown where the rail demands a value the store cannot supply yet. */
 const NO_VALUE = '—';
 
-/** The active exercise's completed sets — those tagged with the active exercise's name. */
-function activeCompletedSets(session: SessionModel): CompletedSet[] {
+/**
+ * The active exercise's completed sets — those tagged with the active exercise's name.
+ * Exported so the rest stage recaps the SAME per-exercise slice the rail counts (VW-50)
+ * rather than duplicating the filter.
+ */
+export function activeCompletedSets(session: SessionModel): CompletedSet[] {
   return session.completedSets.filter((s) => s.exerciseName === session.exerciseName);
+}
+
+/** Peak of a per-rep velocity array (m/s), or null when the set logged no reps. */
+export function peakVelocity(reps: number[]): number | null {
+  if (reps.length === 0) return null;
+  return Math.max(...reps);
+}
+
+/**
+ * Velocity loss of a completed set (%): the drop from the set's fastest rep to its last,
+ * as a non-negative percentage — the same "vs the set's best rep" definition
+ * {@link verdictFromLoss} bands on. Null when fewer than 2 reps landed (no loss is
+ * computable from one point).
+ *
+ * This is RE-DERIVED from the recorded per-rep velocities — the store does not retain the
+ * live set's `velocityLossPct` once the set closes, so the recap recomputes it from the
+ * same array the strip shows. (Those velocities are peak-concentric under the installed
+ * WA, per the mapper's note, so this reads on the same basis as the live hero did.)
+ */
+export function velocityLossPct(reps: number[]): number | null {
+  if (reps.length < 2) return null;
+  const best = Math.max(...reps);
+  if (best <= 0) return null;
+  const last = reps[reps.length - 1];
+  return Math.max(0, ((best - last) / best) * 100);
 }
 
 /**
@@ -435,6 +474,7 @@ export function deriveDualModel(): {
   const scale = (v: number) => Number((v * 0.92).toFixed(3));
   const right: DashboardModel = {
     session: base.session,
+    restElapsedMs: null,
     live: {
       ...baseLive,
       velocity: scale(baseLive.velocity),
