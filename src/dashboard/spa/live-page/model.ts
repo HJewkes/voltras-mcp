@@ -313,6 +313,19 @@ export function verdictFromLoss(lossPct: number | null): 'productive' | 'thresho
 const NO_VALUE = '—';
 
 /**
+ * True for a set worth showing — one that recorded at least one rep. A completed set with
+ * ZERO reps is not a real working set: the only path that finalizes an empty set is the
+ * inactivity force-close (a lifter armed a set, walked away, and it auto-closed), and it
+ * carries no rep to recap. Filtering these at the read layer keeps them in the durable
+ * log while excluding them from the recap table, the rail's set tally, and the per-set
+ * strip — a 0-rep timed-out set was appearing as "Set N · 0 reps" and inflating the
+ * "N/N sets" count on the wall.
+ */
+export function isRealCompletedSet(set: CompletedSet): boolean {
+  return set.repCount > 0;
+}
+
+/**
  * The active exercise's completed sets — those tagged with the active exercise's name.
  * Exported so the rest stage recaps the SAME per-exercise slice the rail counts (VW-50)
  * rather than duplicating the filter.
@@ -521,10 +534,14 @@ function formatLoad(lbs: number): string {
 }
 
 /**
- * Session-level rollup tiles for the rail header (VW-52): Volume (Σ reps) and Load
+ * Session-level rollup tiles for the rail header (VW-52): Volume (Σ reps) and Tonnage
  * (Σ reps×weight), folded over the WHOLE session's completed sets — every exercise, not
  * just the active one (that split is what VW-50's per-set exercise tag preserves).
  * Returns null before any set closes so the header hides rather than showing zeros.
+ *
+ * The Σ reps×weight tile is labelled "Tonnage", NOT "Load": the verdict panel's "Load"
+ * tile is the working WEIGHT (e.g. 20 lbs), and reusing "Load" here for the tonnage total
+ * (e.g. 200 lbs) put the same word against two different quantities on the wall.
  *
  * No Fatigue tile: the read-models carry only a per-set live velocity loss, not an
  * honest session-wide fatigue signal, so it is omitted rather than fabricated.
@@ -541,13 +558,13 @@ export function deriveRailMetrics(
     reps += set.repCount;
     loadLbs += (set.weightLbs ?? 0) * set.repCount;
   }
-  // Volume is a rep COUNT — unit-invariant, never converted. Load is a mass total (lbs),
+  // Volume is a rep COUNT — unit-invariant, never converted. Tonnage is a mass total (lbs),
   // converted to the display unit and suffixed so the compact "k" value stays unambiguous
   // on the wall (the tile carries no separate unit field).
-  const load = convertMass(loadLbs, displayUnit);
+  const tonnage = convertMass(loadLbs, displayUnit);
   return [
     { label: 'Volume', value: String(reps) },
-    { label: 'Load', value: `${formatLoad(load)} ${displayUnit}` },
+    { label: 'Tonnage', value: `${formatLoad(tonnage)} ${displayUnit}` },
   ];
 }
 

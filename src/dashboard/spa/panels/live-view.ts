@@ -28,6 +28,7 @@ import {
 import { type LiveModel as StoreLiveModel } from '../live-stream';
 import {
   formatRepsRange,
+  isRealCompletedSet,
   type CompletedSet,
   type ConnectionInfo,
   type DashboardModel,
@@ -237,7 +238,10 @@ function mapSession(
     // Target tempo tuple [ecc, pauseBottom, con, pauseTop], resolved server-side
     // from the exercise default (VW-41). Hidden when the prescription carries none.
     tempo: prescription?.tempo,
-    completedSets: setLog.map(mapCompletedSet),
+    // Drop 0-rep sets (an armed-then-abandoned set force-closes empty via the inactivity
+    // watchdog) so they never reach the recap, the rail tally, or the rollup — the store
+    // keeps them, the wall does not show them. See `isRealCompletedSet`.
+    completedSets: setLog.map(mapCompletedSet).filter(isRealCompletedSet),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
     plannedExercises,
     // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
