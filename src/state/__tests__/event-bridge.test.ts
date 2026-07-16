@@ -887,6 +887,33 @@ describe('wireEventBridge', () => {
       });
     });
 
+    it('converts frame force tenths→lb once at the bridge: ~210 raw → peak_force ≈ 21 lb', () => {
+      // Regression for the missing peak-force conversion. Frames arrive in the
+      // raw device unit (tenths of a pound); the bridge builds WA WorkoutSamples
+      // in pounds. A ~210-raw concentric peak must surface as ~21 lb in the
+      // rep_finalized payload — NOT the 10x-inflated 210.
+      const fireForce = (seq: number, phase: number, force: number): void => {
+        client.fire.frame({
+          sequence: seq,
+          timestamp: 1000 + seq,
+          phase,
+          position: 0.1 * seq,
+          velocity: 500,
+          force,
+        });
+      };
+      startSet(live);
+      fireForce(1, 1, 205); // C — rep 1 starts
+      fireForce(2, 1, 210); // C — concentric peak (raw 210)
+      fireForce(3, 3, 100); // E — lower eccentric force
+      fireForce(4, 1, 30); // ECC->CONC — rep 1 finalized + published
+
+      expect(channels.publish).toHaveBeenCalledTimes(1);
+      const parsed = JSON.parse(channels.publish.mock.calls[0][0].content);
+      expect(parsed.rep.peak_force).toBeCloseTo(21.0, 5);
+      expect(parsed.rep.peak_force).toBeLessThan(30); // guards against the 10x bug
+    });
+
     it('publishes rep_finalized for rep 2 when rep 3 begins (length 2 -> 3)', () => {
       startSet(live);
       feedFrame(1, 1); // C, rep 1 starts (no publish)
@@ -1129,9 +1156,11 @@ describe('wireEventBridge', () => {
       // Terminal rep carries the final rep's real WA-derived values.
       const terminal = repEvents[2].data;
       expect(terminal.peakVelocity).toBe(mmsToMps(800));
-      // peakForceSoFar is the set-wide concentric max (rep 2's 90), NOT the last
-      // rep's own peak (60) — proves a running max, not the latest value.
-      expect(terminal.peakForceSoFar).toBe(90);
+      // peakForceSoFar is the set-wide concentric max. Frames fire in the raw
+      // device unit (tenths); the bridge converts to lbs (÷10), so rep 2's raw
+      // 90 becomes 9.0 lb — and that beats the terminal rep's own 60→6.0,
+      // proving a running max, not the latest value.
+      expect(terminal.peakForceSoFar).toBe(9);
 
       // Wire order: the terminal rep is emitted strictly BEFORE `set ended`.
       const repIdx = events.findIndex((e) => e.type === 'rep' && e.data.repIndex === 3);

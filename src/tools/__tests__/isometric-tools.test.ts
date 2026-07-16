@@ -34,6 +34,7 @@ import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { TelemetryFrame } from '@voltras/node-sdk';
+import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
@@ -134,16 +135,19 @@ async function pumpTrialFrames(
   const ticks = Math.floor(durationMs / cadenceMs);
   for (let i = 0; i <= ticks; i++) {
     const t = (i * cadenceMs) / durationMs;
-    let force: number;
-    if (t < 0.4) force = peakLbs * (t / 0.4);
-    else if (t < 0.9) force = peakLbs;
-    else force = peakLbs * Math.max(0, 1 - (t - 0.9) * 5);
+    let forceLbs: number;
+    if (t < 0.4) forceLbs = peakLbs * (t / 0.4);
+    else if (t < 0.9) forceLbs = peakLbs;
+    else forceLbs = peakLbs * Math.max(0, 1 - (t - 0.9) * 5);
     const frame: TelemetryFrame = {
       sequence: i,
       phase: 0 as TelemetryFrame['phase'],
       position: 0,
       velocity: 0,
-      force,
+      // Frames carry the raw device unit (tenths of a pound); the isometric
+      // tool converts tenths→lb, so emit peakLbs × FRAME_FORCE_TENTHS_PER_LB
+      // to land plateau/inferred-weight assertions back on the intended lbs.
+      force: forceLbs * FRAME_FORCE_TENTHS_PER_LB,
       timestamp: Date.now(),
     };
     for (const l of client.listeners) {

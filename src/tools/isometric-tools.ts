@@ -13,9 +13,9 @@
 // unsubscribe handle. The listener pushes a `{ tMs, forceLbs }` sample into
 // a per-trial buffer. After `durationMs` we call the unsubscribe handle in
 // a `finally` so the listener is always removed even on error / cancel
-// paths. The SDK's `TelemetryFrame.force` is already in pounds (positive
-// concentric, negative eccentric) — we take the absolute value because the
-// isometric protocol only cares about magnitude of the pull.
+// paths. The SDK's `TelemetryFrame.force` is in tenths of a pound (positive
+// concentric, negative eccentric); we convert to pounds and take the absolute
+// value because the isometric protocol only cares about magnitude of the pull.
 //
 // Why push (subscribe) over pull (polling `live.snapshotDeviceState`):
 //   * The SDK fires `onFrame` per BLE notification (~11 Hz); polling at a
@@ -42,6 +42,7 @@ import {
   IsometricMeasureImbalanceInputRefined,
 } from '../schemas/isometric.js';
 import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
+import { FRAME_FORCE_TENTHS_PER_LB } from '../state/live-signal.js';
 import {
   aggregateSide,
   analyzeTrial,
@@ -302,7 +303,16 @@ async function captureTrial(
   const samples: ForceSample[] = [];
   const startMs = Date.now();
   const unsubscribe = client.onFrame((frame: TelemetryFrame) => {
-    samples.push({ tMs: Date.now() - startMs, forceLbs: Math.abs(frame.force) });
+    // Same tenths→lb conversion as the main telemetry bridge, applied here
+    // because the isometric flow builds its own force samples and never routes
+    // through event-bridge. CALIBRATION CAVEAT: the isometric assessment's
+    // empirical validity (plateau detection, inferred working weight) has NOT
+    // been re-verified against hardware after this scale change — it is flagged
+    // for a separate isometric-hold calibration ticket.
+    samples.push({
+      tMs: Date.now() - startMs,
+      forceLbs: Math.abs(frame.force) / FRAME_FORCE_TENTHS_PER_LB,
+    });
   });
   try {
     await sleep(durationMs);

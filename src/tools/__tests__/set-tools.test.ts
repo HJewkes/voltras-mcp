@@ -968,10 +968,11 @@ describe('set.end', () => {
   it('publishes weight_implied_mismatch when the force-implied weight disagrees with the header', async () => {
     startSession(h.live);
     // Header logged at 30 lb, but the reps were physically performed at ~50
-    // (recorded 30 L set: plateau concentric peakForce ~503 → implied ~49.5).
+    // (recorded 30 L set: plateau concentric peakForce ~50.3 lb → implied ~49.5).
+    // Forces are in post-bridge pounds (the bridge already applied tenths→lb).
     h.live.applySettings({ connected: true, weightLbs: 30, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {});
-    for (const f of [104, 503, 504, 505, 506]) {
+    for (const f of [10.4, 50.3, 50.4, 50.5, 50.6]) {
       h.live.appendRep(makeRepWithForce(1, f));
     }
     h.channels.publish.mockClear();
@@ -991,10 +992,11 @@ describe('set.end', () => {
 
   it('does NOT publish weight_implied_mismatch for a correctly-labeled set', async () => {
     startSession(h.live);
-    // Header 50, plateau force ~503 → implied ~49.5 → within 10% tolerance.
+    // Header 50, plateau force ~50.3 lb → implied ~49.5 → within 10% tolerance.
+    // Forces are in post-bridge pounds (the bridge already applied tenths→lb).
     h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
     await h.invoke('set.start', {});
-    for (const f of [503, 504, 506]) {
+    for (const f of [50.3, 50.4, 50.6]) {
       h.live.appendRep(makeRepWithForce(1, f));
     }
     h.channels.publish.mockClear();

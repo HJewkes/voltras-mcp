@@ -49,6 +49,16 @@ export function mmToM(mm: number): number {
 }
 
 /**
+ * Raw cable-force units per pound. The device reports cable force in tenths of
+ * a pound; workout-analytics' `WorkoutSample.force` contract is pounds. Divide
+ * raw frame force by this once, at the point a `WorkoutSample` is built, so
+ * every force-derived analytics output (peak force, impulse, mean power) is in
+ * pounds and no downstream emit site has to re-correct. Single source of truth
+ * for the tenths→lb factor.
+ */
+export const FRAME_FORCE_TENTHS_PER_LB = 10;
+
+/**
  * A single derived per-sample live signal, emitted at the native frame cadence
  * (~11 Hz, safety-capped at ~20 Hz). `phaseElapsedMs` is the wall-clock time
  * spent in the current phase so far (monotonic within a phase, reset to 0 on a
