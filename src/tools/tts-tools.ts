@@ -59,7 +59,7 @@ export interface VoiceListenerRef {
   readonly listener: MutableVoiceListener | null;
 }
 
-interface SpeakDeps {
+export interface SpeakDeps {
   readonly platform: NodeJS.Platform;
   readonly spawn: SpawnFn;
   /** Optional — resolved at call time so late-armed listeners are seen. */
@@ -131,7 +131,7 @@ function makeSpeakCallback(
         message: `TTS requires macOS \`say\` binary; current platform: ${deps.platform}`,
       });
     }
-    return runSay(parsed.data, deps);
+    return speak(parsed.data, deps);
   };
 }
 
@@ -143,7 +143,7 @@ function buildSayArgs(input: SystemSpeakInputType): string[] {
   return args;
 }
 
-async function runSay(input: SystemSpeakInputType, deps: SpeakDeps): Promise<ToolResult> {
+export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promise<ToolResult> {
   if (input.interrupt) interruptInFlight();
 
   const voiceListener = deps.voiceListenerRef?.listener ?? null;

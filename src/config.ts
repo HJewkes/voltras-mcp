@@ -8,6 +8,7 @@
 //   - VMCP_REP_SOURCE                  — 'analytics' | 'firmware', default 'analytics'.
 //   - VMCP_REST_TIMER                  — 'on' | 'off', default 'off'.
 //   - VMCP_REP_CORRECTIONS             — 'on' | 'off', default 'off'.
+//   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER, or
@@ -60,6 +61,20 @@ export type RestTimerMode = 'off' | 'on';
  */
 export type RepCorrectionsMode = 'off' | 'on';
 
+/**
+ * Whether the server speaks deterministic coaching cues off channel events
+ * (VMCP-02.79) — set intros, target-hit / slowdown / set-complete prompts —
+ * instead of relying on the model to generate them on the fly.
+ *   - `'off'` (DEFAULT) — no automatic spoken cues; the model drives all TTS
+ *     via `system.speak`. Opt-in by design: cues are audible, and event-timed
+ *     cues would double up with model-generated ones until the PT skill is
+ *     told to cede those categories.
+ *   - `'on'` — the CueTeePublisher speaks templated cues at the instant the
+ *     triggering event fires. Independently a no-op on non-macOS hosts (cues
+ *     route through the macOS `say` binary).
+ */
+export type CuesMode = 'off' | 'on';
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
@@ -68,6 +83,7 @@ export interface Config {
   readonly repSource: RepSource;
   readonly restTimer: RestTimerMode;
   readonly repCorrections: RepCorrectionsMode;
+  readonly cues: CuesMode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -87,6 +103,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (repCorrections !== 'off' && repCorrections !== 'on') {
     throw new Error(`Invalid VMCP_REP_CORRECTIONS="${repCorrections}". Must be "off" or "on".`);
   }
+  const cues = env.VMCP_CUES ?? 'off';
+  if (cues !== 'off' && cues !== 'on') {
+    throw new Error(`Invalid VMCP_CUES="${cues}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -98,5 +118,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     repSource,
     restTimer,
     repCorrections,
+    cues,
   }) satisfies Config;
 }
