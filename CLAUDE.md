@@ -43,6 +43,6 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `src/types/` — non-test type-only modules (excluded from coverage)
 
-## NDA / Privacy
+## Confidentiality / Privacy
 
 No protocol bytes, raw frame payloads, or proprietary command codes may appear in any tool input, output, schema, log line, error message, or commit. ESLint flags `Buffer.*` references inside any function whose name ends with `Handler` (NF-07). Only typed values from the SDK's public surface cross the MCP boundary.
