@@ -144,11 +144,14 @@ describe('LiveSignalEmitter', () => {
     const { hub, events } = collect();
     const emitter = new LiveSignalEmitter(hub);
     emitter.set({ kind: 'started', setId: 's1', sessionId: 'sess1' });
-    emitter.rep({ repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 });
+    emitter.rep({ repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63, peakForceSoFar: 205 });
 
     expect(events).toEqual([
       { type: 'set', data: { kind: 'started', setId: 's1', sessionId: 'sess1' } },
-      { type: 'rep', data: { repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 } },
+      {
+        type: 'rep',
+        data: { repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63, peakForceSoFar: 205 },
+      },
     ]);
   });
 });

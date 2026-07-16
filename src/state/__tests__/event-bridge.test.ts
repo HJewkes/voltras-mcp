@@ -39,6 +39,7 @@ import {
   completeSet,
   getPhaseRangeOfMotion,
 } from '@voltras/workout-analytics';
+import type { Rep } from '@voltras/workout-analytics';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -69,7 +70,7 @@ vi.mock('@voltras/node-sdk', () => ({
 
 const { LiveState } = await import('../live-state.js');
 type LiveStateT = InstanceType<typeof LiveState>;
-const { wireBridgeForSlot } = await import('../event-bridge.js');
+const { wireBridgeForSlot, peakConcentricForceSoFar } = await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
@@ -3891,5 +3892,32 @@ describe('rep_finalized — REP_SOURCE switch (VMCP-02.29 PR5)', () => {
     expect(meta.rep_count).toBe('2');
     expect((content.rep as { rep_number: number }).rep_number).toBe(2);
     expect((content.set_context as { rep_count_so_far: number }).rep_count_so_far).toBe(2);
+  });
+});
+
+// VW-45: the set-level peak concentric force fold echoed on the SSE `rep`
+// signal. The helper reads only `rep.concentric.peakForce`, so tests pass
+// minimal reps carrying just that field.
+describe('peakConcentricForceSoFar', () => {
+  const repWithForce = (peakForce: number): Rep =>
+    ({ concentric: { peakForce } }) as unknown as Rep;
+
+  it('holds the running set-level max even when a MIDDLE rep is the peak', () => {
+    // Concentric peaks (lbs): rep0=140, rep1=205 (set best), rep2=150, plus a
+    // still-in-progress rep the fold must ignore.
+    const reps = [repWithForce(140), repWithForce(205), repWithForce(150), repWithForce(999)];
+    // Finalizing rep index 2 folds reps 0..2 — the answer is the middle rep's
+    // 205, NOT rep2's latest 150 (and never the in-progress 999).
+    expect(peakConcentricForceSoFar(reps, 2)).toBe(205);
+  });
+
+  it('counts only reps through the finalized index, not later in-progress ones', () => {
+    const reps = [repWithForce(120), repWithForce(160), repWithForce(300)];
+    // After the first rep closes (index 0) the peak is just rep0's 120.
+    expect(peakConcentricForceSoFar(reps, 0)).toBe(120);
+  });
+
+  it('is 0 when no rep has closed yet', () => {
+    expect(peakConcentricForceSoFar([], -1)).toBe(0);
   });
 });

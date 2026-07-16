@@ -43,6 +43,8 @@ export interface LiveModel {
   repInProgress: number | null;
   /** The most recent finalized rep echo, or null. */
   lastRep: LiveRepSignal | null;
+  /** Peak concentric force this set, lbs. Resets to 0 when the set ends. */
+  peakForce: number;
 }
 
 /** Below this heartbeat gap the stream is treated as stale (poll-only). */
@@ -91,6 +93,7 @@ export function createLiveStreamController(
   let current: LiveModel | null = null;
   let anchor: Anchor | null = null;
   let lastRep: LiveRepSignal | null = null;
+  let peakForce = 0;
   let lastActivity = 0;
   let lastCommit = 0;
 
@@ -117,6 +120,7 @@ export function createLiveStreamController(
       force: anchor.force,
       repInProgress: anchor.repInProgress,
       lastRep,
+      peakForce,
     };
     onModel(current);
   };
@@ -156,7 +160,9 @@ export function createLiveStreamController(
   };
 
   const onRep = (e: MessageEvent<string>): void => {
-    lastRep = JSON.parse(e.data) as LiveRepSignal;
+    const data = JSON.parse(e.data) as LiveRepSignal;
+    lastRep = data;
+    peakForce = data.peakForceSoFar;
     lastActivity = Date.now();
     commit(true);
   };
@@ -168,6 +174,7 @@ export function createLiveStreamController(
       // Clear the live tempo state back to the non-live per-rep-summary mode.
       anchor = null;
       lastRep = null;
+      peakForce = 0;
     }
     commit(true);
   };

@@ -92,6 +92,8 @@ export interface LiveRepSignal {
   rom: number;
   /** Peak concentric velocity, m/s. */
   peakVelocity: number;
+  /** Peak CONCENTRIC force observed in the set so far (through this rep), lbs. */
+  peakForceSoFar: number;
 }
 
 /** Set lifecycle echo so a client can reset / clear its live tempo bar. */

@@ -48,7 +48,7 @@ export interface LiveModel {
   repVelocities: number[];
   /** Velocity loss vs the set's best rep (%). Null until 2 reps land. */
   velocityLossPct: number | null;
-  /** Peak concentric force this set (lbs). Null until an accumulator exists (VW-45). */
+  /** Peak concentric force this set (lbs); the store folds a running set-level max (VW-45). */
   peakForce: number | null;
 }
 
