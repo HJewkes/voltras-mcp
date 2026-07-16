@@ -14,7 +14,7 @@
  * The fixture below is retained as the dual-mode preview's data and a render check;
  * it is NOT what the mounted page reads.
  */
-import type { SessionRailExercise } from '@titan-design/react-ui';
+import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 
 // --- Store read-model shapes (mirror voltras-mcp dashboard store) -------------
 
@@ -54,6 +54,13 @@ export interface LiveModel {
 
 /** A logged set on the session read-model. */
 export interface CompletedSet {
+  /**
+   * The exercise this set belongs to. A multi-exercise session accumulates every
+   * closed set in one log; the active-exercise rail row filters on this so it counts
+   * only its own sets, while the session rollup sums all (VW-50 / VW-52). Null when
+   * the store could not tag it.
+   */
+  exerciseName: string | null;
   /** Null when the settings cascade has not reported a weight (e.g. mock adapter). */
   weightLbs: number | null;
   /**
@@ -65,6 +72,26 @@ export interface CompletedSet {
   repCount: number;
   /** Per-rep velocities (m/s). */
   reps: number[];
+}
+
+/**
+ * One planned exercise in the session's ordered list (VW-49) — the metadata the rail
+ * needs to render a non-active row (a done exercise before the active one, or an
+ * upcoming one after it). The active exercise's live detail lives on the top-level
+ * {@link SessionModel} fields; this carries only the plan-side targets.
+ */
+export interface PlannedExerciseModel {
+  name: string;
+  /** Prescribed set count — the rail row's column count and summary sets. */
+  plannedSets: number;
+  /** Rep target sizing an upcoming row's `todo` columns; null when no rep range. */
+  targetReps: number | null;
+  /** Preformatted reps cell for the rail summary: `"8–10"`, `8`, or the em-dash. */
+  repsLabel: number | string;
+  /** Null when the plan prescribes no working weight. */
+  weightLbs: number | null;
+  /** True for the exercise the live session is currently on. */
+  active: boolean;
 }
 
 /** The session read-model. */
@@ -82,6 +109,17 @@ export interface SessionModel {
    */
   tempo?: [number, number, number, number];
   completedSets: CompletedSet[];
+  /**
+   * The session's FULL ordered planned-exercise list (VW-49), including the active
+   * one (flagged). Empty when no plan is attached — the rail then shows only the
+   * active exercise. Drives the rail's `upcoming` rows.
+   */
+  plannedExercises: PlannedExerciseModel[];
+  /**
+   * Prescribed rest between sets, seconds (VW-51). Null when the coach left it unset or
+   * no plan is attached — the rest timer then hides its target rather than inventing one.
+   */
+  restSec: number | null;
   /** Prescribed set count. Null until `targetSets` reaches the view (VW-42). */
   plannedSets: number | null;
   /**
@@ -134,14 +172,43 @@ export const dashboardFixture: DashboardModel = {
     tempo: [3, 1, 1, 0],
     plannedSets: 4,
     targetReps: 8,
+    restSec: 120,
+    plannedExercises: [
+      {
+        name: 'Cable Chest Press',
+        plannedSets: 4,
+        targetReps: 8,
+        repsLabel: 8,
+        weightLbs: 140,
+        active: true,
+      },
+      {
+        name: 'Incline DB Press',
+        plannedSets: 3,
+        targetReps: 10,
+        repsLabel: '10–12',
+        weightLbs: 60,
+        active: false,
+      },
+      {
+        name: 'Cable Fly',
+        plannedSets: 3,
+        targetReps: 12,
+        repsLabel: '12–15',
+        weightLbs: 30,
+        active: false,
+      },
+    ],
     completedSets: [
       {
+        exerciseName: 'Cable Chest Press',
         weightLbs: 140,
         mode: 'weight',
         repCount: 8,
         reps: [0.55, 0.54, 0.52, 0.51, 0.49, 0.47, 0.45, 0.43],
       },
       {
+        exerciseName: 'Cable Chest Press',
         weightLbs: 140,
         mode: 'weight',
         repCount: 8,
@@ -180,22 +247,23 @@ export function verdictFromLoss(lossPct: number | null): 'productive' | 'thresho
 /** Placeholder shown where the rail demands a value the store cannot supply yet. */
 const NO_VALUE = '—';
 
+/** The active exercise's completed sets — those tagged with the active exercise's name. */
+function activeCompletedSets(session: SessionModel): CompletedSet[] {
+  return session.completedSets.filter((s) => s.exerciseName === session.exerciseName);
+}
+
 /**
- * The session rail's exercise list, projected from the model: the ACTIVE exercise only —
- * its completed sets, the set in progress, and any remaining planned sets.
- *
- * Deliberately ONE exercise. The lab fixture appended two hardcoded upcoming accessories
- * (Incline DB Press, Cable Fly); the store cannot produce an upcoming list at all today
- * — `fetchSessionPlan` resolves only the active exercise's prescription — so inventing
- * them here would put fake exercises on a wall screen. The full list is VW-49.
+ * The rail row for the ACTIVE exercise: its OWN completed sets (filtered from the
+ * session-wide log so a prior exercise's sets don't bleed into its count — VW-50), the
+ * set in progress, and any remaining planned sets.
  *
  * `weight` falls back to 0 because SessionRail requires a number: under the mock adapter
  * no settings cascade arrives, so weight reads 0/unknown (the standing weight-seed gap).
  * On real hardware it is the live value.
  */
-export function deriveRailExercises(model: DashboardModel): SessionRailExercise[] {
+function buildActiveRow(model: DashboardModel): SessionRailExercise {
   const { session, live } = model;
-  const done = session.completedSets;
+  const done = activeCompletedSets(session);
   const setStates: SessionRailExercise['setStates'] = done.map((set) => ({
     status: 'done',
     velocities: set.reps,
@@ -220,19 +288,124 @@ export function deriveRailExercises(model: DashboardModel): SessionRailExercise[
     }
   }
 
-  return [
-    {
-      name: session.exerciseName,
-      summary: {
-        sets: session.plannedSets ?? accountedFor,
-        reps: session.targetReps ?? NO_VALUE,
-        weight: session.weightLbs ?? 0,
-        unit: session.unit,
-      },
-      ...(session.tempo ? { tempo: session.tempo } : {}),
-      indicator: 'velocity-loss',
-      setStates,
+  return {
+    name: session.exerciseName,
+    summary: {
+      sets: session.plannedSets ?? accountedFor,
+      reps: session.targetReps ?? NO_VALUE,
+      weight: session.weightLbs ?? 0,
+      unit: session.unit,
     },
+    ...(session.tempo ? { tempo: session.tempo } : {}),
+    indicator: 'velocity-loss',
+    setStates,
+  };
+}
+
+/**
+ * A DONE row for a planned exercise the session has already moved past: its logged sets
+ * (tagged with its name) as `done` columns. Empty strip when nothing was logged for it —
+ * a real, if skipped, planned exercise, never an invented one.
+ */
+function buildDoneRow(planned: PlannedExerciseModel, session: SessionModel): SessionRailExercise {
+  const logged = session.completedSets.filter((s) => s.exerciseName === planned.name);
+  return {
+    name: planned.name,
+    summary: {
+      sets: planned.plannedSets,
+      reps: planned.repsLabel,
+      weight: planned.weightLbs ?? 0,
+      unit: session.unit,
+    },
+    indicator: 'velocity-loss',
+    setStates: logged.map((set) => ({ status: 'done', velocities: set.reps })),
+  };
+}
+
+/**
+ * An UPCOMING (dimmed) row for a not-yet-reached planned exercise: `todo` columns sized
+ * to its planned sets × rep target. No columns when the plan states no rep target — a
+ * `todo` set must declare its expected reps, and we will not guess.
+ */
+function buildUpcomingRow(
+  planned: PlannedExerciseModel,
+  unit: SessionModel['unit'],
+): SessionRailExercise {
+  const setStates: SessionRailExercise['setStates'] = [];
+  if (planned.targetReps !== null) {
+    for (let i = 0; i < planned.plannedSets; i++) {
+      setStates.push({ status: 'todo', planned: planned.targetReps });
+    }
+  }
+  return {
+    name: planned.name,
+    summary: {
+      sets: planned.plannedSets,
+      reps: planned.repsLabel,
+      weight: planned.weightLbs ?? 0,
+      unit,
+    },
+    indicator: 'velocity-loss',
+    upcoming: true,
+    setStates,
+  };
+}
+
+/**
+ * The session rail's exercise list. With a plan attached (VW-49) the FULL ordered list
+ * renders: exercises already done, the active one (rich live detail), and dimmed
+ * `upcoming` ones. Without a plan the store cannot honestly list more than one, so only
+ * the active exercise shows — the pre-VW-49 behaviour.
+ */
+export function deriveRailExercises(model: DashboardModel): SessionRailExercise[] {
+  const { session } = model;
+  if (session.plannedExercises.length === 0) return [buildActiveRow(model)];
+
+  const activeIndex = session.plannedExercises.findIndex((e) => e.active);
+  return session.plannedExercises.map((planned, i) => {
+    if (planned.active) return buildActiveRow(model);
+    if (activeIndex === -1 || i > activeIndex) return buildUpcomingRow(planned, session.unit);
+    return buildDoneRow(planned, session);
+  });
+}
+
+/** Format a prescribed rep range for a rail summary cell: `"8–10"`, `8`, or the em-dash. */
+export function formatRepsRange(
+  low: number | null | undefined,
+  high: number | null | undefined,
+): number | string {
+  if (low == null && high == null) return NO_VALUE;
+  if (low != null && high != null) return low === high ? low : `${low}–${high}`;
+  return (low ?? high) as number;
+}
+
+/** Format a load total (lbs) compactly: `"7.3k"` at ≥1000, else a rounded integer. */
+function formatLoad(lbs: number): string {
+  if (lbs >= 1000) return `${(lbs / 1000).toFixed(1)}k`;
+  return String(Math.round(lbs));
+}
+
+/**
+ * Session-level rollup tiles for the rail header (VW-52): Volume (Σ reps) and Load
+ * (Σ reps×weight), folded over the WHOLE session's completed sets — every exercise, not
+ * just the active one (that split is what VW-50's per-set exercise tag preserves).
+ * Returns null before any set closes so the header hides rather than showing zeros.
+ *
+ * No Fatigue tile: the read-models carry only a per-set live velocity loss, not an
+ * honest session-wide fatigue signal, so it is omitted rather than fabricated.
+ */
+export function deriveRailMetrics(model: DashboardModel): MetricTileData[] | null {
+  const sets = model.session.completedSets;
+  if (sets.length === 0) return null;
+  let reps = 0;
+  let load = 0;
+  for (const set of sets) {
+    reps += set.repCount;
+    load += (set.weightLbs ?? 0) * set.repCount;
+  }
+  return [
+    { label: 'Volume', value: String(reps) },
+    { label: 'Load', value: formatLoad(load) },
   ];
 }
 

@@ -253,12 +253,47 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       weightLbs: 100,
       mode: 'weight',
       repCount: 2,
+      // No exercise name in this snapshot → null tag (VW-50).
+      exerciseName: null,
       bestPeakVelocityMms: 900,
       // Full WA reps retained (source of truth) so the shared mappers can derive
       // RPE / per-rep velocity for the hero.
       reps: [rep(1, 900), rep(2, 800)],
     });
     expect(state.restStartMs).toBe(2_000);
+  });
+
+  it('tags each closed set with the exercise active when it closed (VW-50)', () => {
+    let state = initialAccumulatorState();
+    const device: SnapshotDevice = { connected: true, weightLbs: 100, trainingMode: 'weight' };
+    const set: SnapshotActiveSet = { reps: [rep(1, 900)] };
+
+    // Exercise A: one set opens then closes.
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', exerciseName: 'Exercise A', device, activeSet: set }),
+      0,
+    );
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', exerciseName: 'Exercise A', device }),
+      500,
+    );
+    // Exercise B (same session): a second set opens then closes.
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', exerciseName: 'Exercise B', device, activeSet: set }),
+      1_000,
+    );
+    state = reduceSnapshot(
+      state,
+      snapshot({ sessionId: 's1', exerciseName: 'Exercise B', device }),
+      1_500,
+    );
+
+    // Both sets are in one session log, each tagged with the exercise that owned it —
+    // so a consumer can count per-exercise without the log bleeding across exercises.
+    expect(state.setLog.map((s) => s.exerciseName)).toEqual(['Exercise A', 'Exercise B']);
   });
 
   it('captures weight/mode from the tick the set was still open', () => {

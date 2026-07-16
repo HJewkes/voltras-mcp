@@ -8,8 +8,40 @@ import { describe, expect, it } from 'vitest';
 
 import { initialAccumulatorState, type PrescriptionView, type Snapshot } from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
-import { deriveRailExercises } from '../spa/live-page/model.js';
+import {
+  deriveRailExercises,
+  deriveRailMetrics,
+  type CompletedSet,
+  type DashboardModel,
+  type SessionModel,
+} from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
+
+/** A session read-model with honest empty defaults, overridable per test. */
+function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
+  return {
+    exerciseName: 'Cable Chest Press',
+    title: null,
+    weightLbs: 140,
+    unit: 'lbs',
+    completedSets: [],
+    plannedExercises: [],
+    restSec: null,
+    plannedSets: null,
+    targetReps: null,
+    ...over,
+  };
+}
+
+/** Wrap a session in a rest-state (no live overlay) dashboard model. */
+function railModel(session: SessionModel): DashboardModel {
+  return { live: null, session };
+}
+
+/** A completed set tagged with the exercise that owned it (VW-50). */
+function completed(exerciseName: string, repCount: number, weightLbs = 100): CompletedSet {
+  return { exerciseName, weightLbs, mode: 'weight', repCount, reps: [] };
+}
 
 /** A snapshot with an active session and no device/set activity. */
 function snapshot(): Snapshot {
@@ -100,6 +132,158 @@ describe('mapStoreToDashboardModel', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.tempo).toBeUndefined();
     });
+  });
+
+  describe('session.restSec (VW-51)', () => {
+    it('carries the prescribed inter-set rest onto the session model', () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, restSec: 120 } }));
+      expect(model?.session.restSec).toBe(120);
+    });
+
+    it('leaves rest null when the prescription carries none', () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
+      expect(model?.session.restSec).toBeNull();
+    });
+
+    it('leaves rest null when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.restSec).toBeNull();
+    });
+  });
+
+  describe('session.plannedExercises (VW-49)', () => {
+    it('maps the ordered planned-exercise list, formatting rep ranges', () => {
+      const prescription: PrescriptionView = {
+        sets: 3,
+        exercises: [
+          { name: 'Squat', order: 0, sets: 3, repsLow: 5, active: false },
+          {
+            name: 'Bench',
+            order: 1,
+            sets: 3,
+            repsLow: 8,
+            repsHigh: 10,
+            weightLbs: 135,
+            active: true,
+          },
+        ],
+      };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.plannedExercises).toEqual([
+        {
+          name: 'Squat',
+          plannedSets: 3,
+          targetReps: 5,
+          repsLabel: 5,
+          weightLbs: null,
+          active: false,
+        },
+        {
+          name: 'Bench',
+          plannedSets: 3,
+          targetReps: 8,
+          repsLabel: '8–10',
+          weightLbs: 135,
+          active: true,
+        },
+      ]);
+    });
+
+    it('leaves the list empty when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.plannedExercises).toEqual([]);
+    });
+  });
+});
+
+describe('deriveRailExercises — per-exercise completed sets (VW-50)', () => {
+  it('counts only the active exercise’s own sets when the log spans exercises', () => {
+    const session = sessionModel({
+      exerciseName: 'Exercise B',
+      completedSets: [
+        completed('Exercise A', 8),
+        completed('Exercise A', 8),
+        completed('Exercise B', 8),
+      ],
+    });
+    const [row] = deriveRailExercises(railModel(session));
+    // Two of the three logged sets belong to Exercise A; only the one on B counts here.
+    expect(row.setStates.filter((s) => s.status === 'done')).toHaveLength(1);
+  });
+});
+
+describe('deriveRailExercises — planned-exercise list (VW-49)', () => {
+  it('renders done / active / upcoming rows in plan order', () => {
+    const session = sessionModel({
+      exerciseName: 'Bench',
+      completedSets: [completed('Squat', 5)],
+      plannedExercises: [
+        {
+          name: 'Squat',
+          plannedSets: 3,
+          targetReps: 5,
+          repsLabel: 5,
+          weightLbs: 225,
+          active: false,
+        },
+        {
+          name: 'Bench',
+          plannedSets: 3,
+          targetReps: 8,
+          repsLabel: '8–10',
+          weightLbs: 135,
+          active: true,
+        },
+        {
+          name: 'Row',
+          plannedSets: 3,
+          targetReps: 10,
+          repsLabel: '10–12',
+          weightLbs: 95,
+          active: false,
+        },
+      ],
+    });
+    const rows = deriveRailExercises(railModel(session));
+    expect(rows.map((r) => r.name)).toEqual(['Squat', 'Bench', 'Row']);
+    // Squat precedes the active exercise: a done row (not dimmed) carrying its logged set.
+    expect(rows[0].upcoming).toBeUndefined();
+    expect(rows[0].setStates.filter((s) => s.status === 'done')).toHaveLength(1);
+    // Bench is the active exercise — never dimmed.
+    expect(rows[1].upcoming).toBeUndefined();
+    // Row follows the active exercise: dimmed, with todo columns sized to its plan.
+    expect(rows[2].upcoming).toBe(true);
+    expect(rows[2].setStates).toHaveLength(3);
+    expect(rows[2].setStates.every((s) => s.status === 'todo')).toBe(true);
+  });
+
+  it('shows only the active exercise when no plan is attached', () => {
+    const rows = deriveRailExercises(railModel(sessionModel({ exerciseName: 'Bench' })));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('Bench');
+  });
+});
+
+describe('deriveRailMetrics — session rollup tiles (VW-52)', () => {
+  it('folds Volume (Σ reps) and Load (Σ reps×weight) over the whole session', () => {
+    const session = sessionModel({
+      exerciseName: 'Bench',
+      completedSets: [completed('Squat', 5, 200), completed('Bench', 8, 135)],
+    });
+    // 13 reps; 5*200 + 8*135 = 2080 lbs → "2.1k".
+    expect(deriveRailMetrics(railModel(session))).toEqual([
+      { label: 'Volume', value: '13' },
+      { label: 'Load', value: '2.1k' },
+    ]);
+  });
+
+  it('omits the tiles entirely before any set closes', () => {
+    expect(deriveRailMetrics(railModel(sessionModel()))).toBeNull();
+  });
+
+  it('surfaces no Fatigue tile — there is no honest session-wide fatigue signal', () => {
+    const session = sessionModel({ completedSets: [completed('Bench', 8, 135)] });
+    expect(deriveRailMetrics(railModel(session))?.map((t) => t.label)).toEqual(['Volume', 'Load']);
   });
 });
 
