@@ -431,6 +431,7 @@ describe('GET /api/history', () => {
               targetRepsHigh: 10,
               targetWeightLbs: 62,
               targetRpe: 8,
+              restSec: 120,
             },
           ]),
       },
@@ -439,7 +440,51 @@ describe('GET /api/history', () => {
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body) as { plan: Record<string, number> | null };
-    expect(body.plan).toEqual({ repsLow: 8, repsHigh: 10, weightLbs: 62, rpe: 8 });
+    expect(body.plan).toEqual({
+      sets: 3,
+      repsLow: 8,
+      repsHigh: 10,
+      weightLbs: 62,
+      rpe: 8,
+      restSec: 120,
+    });
+  });
+
+  it('omits rest from the prescription when the plan sets no rest target', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-R',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-R', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 4,
+            },
+          ]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: Record<string, number> };
+    expect(body.plan).toEqual({ sets: 4 });
+    expect(body.plan.restSec).toBeUndefined();
   });
 
   it('returns plan=null when no template is attached to the active session', async () => {

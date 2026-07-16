@@ -555,10 +555,14 @@ async function fetchNextWorkout(state: DashboardServerState): Promise<NextWorkou
 
 /** Prescribed targets for the active exercise, from its attached plan template. */
 interface PrescriptionView {
+  /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
+  sets: number;
   repsLow?: number;
   repsHigh?: number;
   weightLbs?: number;
   rpe?: number;
+  /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
+  restSec?: number;
 }
 
 /**
@@ -594,11 +598,12 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
     const match = planned.find((p) => p.exerciseId === exerciseId);
     if (match === undefined) continue;
-    const prescription: PrescriptionView = {};
+    const prescription: PrescriptionView = { sets: match.targetSets };
     if (match.targetRepsLow !== undefined) prescription.repsLow = match.targetRepsLow;
     if (match.targetRepsHigh !== undefined) prescription.repsHigh = match.targetRepsHigh;
     if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
     if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
+    if (match.restSec !== undefined) prescription.restSec = match.restSec;
     return prescription;
   }
   return null;
