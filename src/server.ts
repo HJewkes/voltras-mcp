@@ -34,7 +34,9 @@ import { McpChannelPublisher } from './state/channel-publisher.js';
 import { maybeCueTee } from './voice/cue-emitter.js';
 import { z } from 'zod';
 import { errorResult, type ToolResult } from './tools/helpers.js';
-import { registerDeviceTools } from './tools/device-tools.js';
+import { spawn } from 'node:child_process';
+
+import { registerDeviceTools, unloadSlot, isSafetyUnloadWarranted } from './tools/device-tools.js';
 import { registerSessionTools } from './tools/session-tools.js';
 import { registerSetTools } from './tools/set-tools.js';
 import { registerMetricsTools } from './tools/metrics-tools.js';
@@ -43,8 +45,8 @@ import { registerMockTools } from './tools/mock-tools.js';
 import { registerTimerTools } from './tools/timer-tools.js';
 import { registerServerTools } from './tools/server-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
-import { registerSystemTools } from './tools/tts-tools.js';
-import { registerVoiceTools } from './tools/voice-tools.js';
+import { registerSystemTools, speak, type SpeakDeps } from './tools/tts-tools.js';
+import { registerVoiceTools, type VoiceSafetyContext } from './tools/voice-tools.js';
 import { registerSlotTools } from './tools/slot-tools.js';
 import { registerProgressionTools } from './tools/progression-tools.js';
 import { registerIsometricTools } from './tools/isometric-tools.js';
@@ -289,7 +291,29 @@ export async function runServer(): Promise<void> {
     registerServerTools(server, state, placeholders);
     registerDebugTools(server, state, placeholders);
     registerSystemTools(server, placeholders, undefined, state.voice);
-    registerVoiceTools(server, state, placeholders);
+    // VMCP-02.78: Tier-A ungated safety fast-path. The listener calls into this
+    // context when it hears a stop phrase — unloading the cable directly (no LLM
+    // round-trip) when a set is active/loaded. Shares the same voice-listener ref
+    // as `system.speak` so the "stopping" ack ducks the mic.
+    const voiceSafety: VoiceSafetyContext = {
+      evaluate: (slotId) => {
+        const verdict = isSafetyUnloadWarranted(state, slotId);
+        const setId = state.slots.get(slotId)?.live.snapshotSet()?.setId ?? null;
+        return { warranted: verdict.warranted, reason: verdict.reason, setId };
+      },
+      unload: (slotId) => unloadSlot(state, slotId),
+      speakAck: (text) => {
+        const deps: SpeakDeps = {
+          platform: process.platform,
+          spawn: spawn as SpeakDeps['spawn'],
+          voiceListenerRef: state.voice,
+        };
+        void speak({ text, interrupt: true, blocking: false }, deps).catch(() => {
+          // Best-effort ack — never let a failed cue affect the unload.
+        });
+      },
+    };
+    registerVoiceTools(server, state, placeholders, voiceSafety);
     registerSlotTools(server, state, placeholders);
     registerProgressionTools(server, state, placeholders);
     registerIsometricTools(server, state, placeholders);

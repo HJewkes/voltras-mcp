@@ -974,24 +974,7 @@ export function registerDeviceTools(
     DeviceUnloadInput,
     wrapHandler(DeviceUnloadInput, async (input) => {
       const slotId = input.slot ?? PRIMARY_SLOT;
-      const slot = getSlot(state, slotId);
-      // VMCP-02.41: capture whether we are tearing down an active guided-load
-      // flow BEFORE the mode-bounce. `unloadDevice()` physically drops the
-      // cable but never touches the SDK's guided-load state machine, so
-      // `guidedLoadState.phase` — and the `load_state` / `guided_load.phase`
-      // that get_state derives from it — would stay stale at `active` /
-      // `loaded` after the unload. When unload is the teardown for an active
-      // flow, drive the SDK through `exitGuidedLoad()` too: that transitions
-      // the phase to `exited` (refreshing get_state), fires onGuidedLoadState
-      // so the bridge publishes the terminal `guided_load_state` channel event
-      // (outcome: 'ended'), and lets us reap the auto-created scaffold —
-      // automating the validated unload-then-exit_guided_load recovery.
-      const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
-      await slot.client.unloadDevice();
-      if (wasGuidedLoadActive) {
-        await slot.client.exitGuidedLoad();
-        await reapGuidedLoadScaffold(state, slotId);
-      }
+      await unloadSlot(state, slotId);
       return { ok: true };
     }),
     UNLOAD_DESCRIPTION,
@@ -1664,6 +1647,60 @@ function deriveLoadState(
   if (guidedLoadState.phase === 'engaging' || guidedLoadState.phase === 'active') return 'loaded';
   if (isRowingActive) return 'loaded';
   return 'unloaded';
+}
+
+/**
+ * Reusable unload for a slot — single source of truth shared by the
+ * `device.unload` tool AND the VMCP-02.78 voice safety fast-path (which must
+ * unload WITHOUT the MCP/LLM round-trip, so it cannot go through the tool).
+ *
+ * VMCP-02.41: capture whether we are tearing down an active guided-load flow
+ * BEFORE the mode-bounce. `unloadDevice()` physically drops the cable but never
+ * touches the SDK's guided-load state machine, so `guidedLoadState.phase` — and
+ * the `load_state` / `guided_load.phase` that get_state derives from it — would
+ * stay stale at `active` / `loaded` after the unload. When unload is the
+ * teardown for an active flow, drive the SDK through `exitGuidedLoad()` too:
+ * that transitions the phase to `exited` (refreshing get_state), fires
+ * onGuidedLoadState so the bridge publishes the terminal `guided_load_state`
+ * channel event (outcome: 'ended'), and lets us reap the auto-created scaffold.
+ */
+export async function unloadSlot(state: ServerState, slotId: string): Promise<void> {
+  const slot = getSlot(state, slotId);
+  const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
+  await slot.client.unloadDevice();
+  if (wasGuidedLoadActive) {
+    await slot.client.exitGuidedLoad();
+    await reapGuidedLoadScaffold(state, slotId);
+  }
+}
+
+/**
+ * Whether an emergency unload is warranted for this slot right now. Biases to
+ * act: warranted when the device is connected AND (a set is active OR the cable
+ * reads loaded).
+ *
+ * `deriveLoadState` reads `unloaded` during ordinary weight-training reps (the
+ * cable is slack between/at rep boundaries), so the active-set check is the
+ * operative gate for barbell/DB work; the `loaded` branch covers guided-load
+ * and rowing where the cable is continuously hot. `unloadSlot` is idempotent,
+ * so a false-positive is safe — better an unnecessary unload than a missed one.
+ */
+export function isSafetyUnloadWarranted(
+  state: ServerState,
+  slotId: string,
+): { warranted: boolean; reason: 'active_set' | 'loaded' | 'none' } {
+  const slot = getSlot(state, slotId);
+  if (!slot.client.isConnected) return { warranted: false, reason: 'none' };
+  const set = slot.live.snapshotSet();
+  if (set !== undefined && set.status === 'active')
+    return { warranted: true, reason: 'active_set' };
+  const load = deriveLoadState(
+    slot.client.isConnected,
+    slot.client.guidedLoadState,
+    slot.client.isRowingActive,
+  );
+  if (load === 'loaded') return { warranted: true, reason: 'loaded' };
+  return { warranted: false, reason: 'none' };
 }
 
 /**
