@@ -280,8 +280,12 @@ export function ExerciseHeader({
       }}
     >
       <Text
-        className="text-text-primary"
         style={{
+          // Resolved dark-theme token, not the `text-text-primary` className: the
+          // className→CSS-var path renders black on the standalone wall SPA (the var
+          // is only defined inside titan's themed provider), leaving the stage heading
+          // near-invisible. Inline literal-hex matches LivePage's `t['text-primary']`.
+          color: t['text-primary'],
           fontSize: HEADER_NAME_SIZE,
           fontFamily: '"Space Grotesk", sans-serif',
           fontWeight: '700',
