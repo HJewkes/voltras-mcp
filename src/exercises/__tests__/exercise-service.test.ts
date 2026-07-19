@@ -119,6 +119,47 @@ describe('ExerciseService', () => {
     });
   });
 
+  describe('getClassification', () => {
+    it('projects the classification subset for a known exercise', () => {
+      getExerciseByIdSpy.mockReturnValue({
+        ...benchPress,
+        secondaryMuscleGroups: ['triceps', 'shoulders'],
+      });
+      const service = new ExerciseService();
+
+      const result = service.getClassification('bench-press');
+
+      expect(getExerciseByIdSpy).toHaveBeenCalledWith('bench-press');
+      expect(result).toEqual({
+        muscleGroups: ['chest'],
+        secondaryMuscleGroups: ['triceps', 'shoulders'],
+        movementPattern: 'push',
+        exerciseType: 'compound',
+      });
+    });
+
+    it('omits secondaryMuscleGroups when the catalog entry has none', () => {
+      getExerciseByIdSpy.mockReturnValue(benchPress); // no secondaryMuscleGroups
+      const service = new ExerciseService();
+
+      const result = service.getClassification('bench-press');
+
+      expect(result).toEqual({
+        muscleGroups: ['chest'],
+        movementPattern: 'push',
+        exerciseType: 'compound',
+      });
+      expect(result).not.toHaveProperty('secondaryMuscleGroups');
+    });
+
+    it('returns null (not a guess) when the id has no catalog entry', () => {
+      getExerciseByIdSpy.mockReturnValue(undefined);
+      const service = new ExerciseService();
+
+      expect(service.getClassification('does-not-exist')).toBeNull();
+    });
+  });
+
   describe('output shape', () => {
     // R22: returned exercises expose only the catalog's public fields. The
     // service is a pure pass-through, so this also verifies no fields are
