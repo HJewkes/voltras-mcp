@@ -18,10 +18,15 @@ import { type Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionStatus,
   buildCurrentSet,
+  initialAccumulatorState,
+  reduceSnapshot,
   repMeanMms,
+  repPeakConcentricForceLbs,
+  repPeakMms,
   toMps,
   type AccumulatorState,
   type CompletedSet as StoreCompletedSet,
+  type CurrentSetView,
   type PrescriptionView,
   type Snapshot,
 } from '../adapter';
@@ -32,6 +37,7 @@ import {
   type CompletedSet,
   type ConnectionInfo,
   type DashboardModel,
+  type DualDashboardModel,
   type LiveModel,
   type PlannedExerciseModel,
   type RepModel,
@@ -288,5 +294,116 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
       currentSet.repTarget,
       prescription,
     ),
+  };
+}
+
+// --- Dual (bilateral) per-slot projection (VW-71) ----------------------------
+
+/**
+ * A per-slot SUB-SNAPSHOT: the shared session/exercise plus ONLY the given slot's device
+ * and its own sets (VW-71). Lets the per-limb projection reuse the single-view builders
+ * (`buildCurrentSet` / `reduceSnapshot` / `mapSession`) unchanged — a slot's telemetry is
+ * simply the snapshot those builders see. Returns null when no device is bound to the slot,
+ * which the dual mapper turns into an honest awaiting side.
+ */
+function slotSnapshot(snapshot: Snapshot, slotId: string): Snapshot | null {
+  const entry = snapshot.devices.find((d) => d.slotId === slotId);
+  if (entry === undefined) return null;
+  return {
+    session: snapshot.session,
+    devices: [entry],
+    sets: { active: entry.sets?.active ?? null, completed: entry.sets?.completed ?? [] },
+    activeExercise: snapshot.activeExercise,
+    rev: snapshot.rev,
+  };
+}
+
+/** The most-recent rep of a slot's active set as a RepModel, or null when none has landed. */
+function lastRepModel(reps: readonly Rep[]): RepModel | null {
+  const last = reps.length > 0 ? reps[reps.length - 1] : null;
+  if (last === null) return null;
+  return {
+    vCon: toMps(repMeanMms(last)) ?? 0,
+    // No public per-rep ROM source yet (VW-44) — hidden here exactly as the single view.
+    rom: null,
+    peakVelocity: toMps(repPeakMms(last)) ?? 0,
+  };
+}
+
+/** Max per-rep peak CONCENTRIC force across a slot's set (lbs), or null when none logged. */
+function peakConcentricForce(reps: readonly Rep[]): number | null {
+  let peak: number | null = null;
+  for (const rep of reps) {
+    const f = repPeakConcentricForceLbs(rep);
+    if (f !== null && (peak === null || f > peak)) peak = f;
+  }
+  return peak;
+}
+
+/**
+ * The live overlay for ONE slot, sourced from its SNAPSHOT rather than the SSE stream.
+ *
+ * The SSE live-signal hub is still slot-blind (VW-48), so the sub-rep instantaneous fields
+ * — instantaneous velocity/force and the movement phase that drives the live tempo-bar fill
+ * — have no honest per-slot source yet and stay zero/idle (the tempo card then shows the
+ * static prescription, never a fabricated fill). Everything the dual `LiveView` actually
+ * renders — the per-rep velocity hero, the velocity-loss verdict, the last-rep readout — is
+ * derived from the per-rep telemetry in the slot's own active set, so each limb reflects its
+ * own device. Null when the slot is not mid-set (no active set).
+ */
+function snapshotLiveModel(currentSet: CurrentSetView, reps: readonly Rep[]): LiveModel | null {
+  if (!currentSet.active) return null;
+  return {
+    velocity: 0,
+    force: 0,
+    phase: 'idle',
+    phaseElapsedMs: 0,
+    lastRep: lastRepModel(reps),
+    repVelocities: currentSet.velocitiesMps,
+    velocityLossPct: currentSet.velocityLossPct,
+    peakForce: peakConcentricForce(reps),
+  };
+}
+
+/**
+ * Project ONE slot's telemetry onto a {@link DashboardModel} (VW-71), reusing the
+ * single-view builders over the slot's sub-snapshot. Returns null when nothing is bound to
+ * the slot, so the dual stage shows an awaiting side rather than a fabricated one.
+ *
+ * `live` is snapshot-sourced ({@link snapshotLiveModel}) because the SSE overlay is
+ * slot-blind (VW-48). The completed-set log is rebuilt from the slot's own completed sets
+ * via a fresh accumulator (VW-70 style — idempotent, no cross-tick state); rest timing
+ * stays client-global on the single view, so the per-limb rest count-up is left null.
+ */
+function mapSlotToDashboardModel(sources: LiveViewSources, slotId: string): DashboardModel | null {
+  const { snapshot, prescription, nowMs = 0, pollStatus = 'ok' } = sources;
+  if (!snapshot) return null;
+  const sub = slotSnapshot(snapshot, slotId);
+  if (!sub) return null;
+
+  const currentSet = buildCurrentSet(sub);
+  const reps = sub.sets.active?.reps ?? [];
+  const weightLbs = sub.devices[0]?.device.weightLbs ?? null;
+  const { setLog } = reduceSnapshot(initialAccumulatorState(), sub, nowMs);
+
+  return {
+    live: snapshotLiveModel(currentSet, reps),
+    restElapsedMs: null,
+    connection: mapConnection(sub, pollStatus),
+    session: mapSession(sub, setLog, weightLbs, currentSet.repTarget, prescription),
+  };
+}
+
+/**
+ * Project the store slices onto the dual (bilateral) stage's per-limb models (VW-71): one
+ * {@link DashboardModel} per Voltra slot, or null for an unbound slot. Left/right map to the
+ * `'left'`/`'right'` slot ids the slot-binding layer assigns; a single-device `'primary'`
+ * slot is not a limb and yields two null sides (the dual stage is only meaningful with L/R
+ * bindings). Never fabricates the missing limb — an unbound slot is an honest awaiting side.
+ */
+export function mapStoreToDualModel(sources: LiveViewSources): DualDashboardModel {
+  return {
+    left: mapSlotToDashboardModel(sources, 'left'),
+    right: mapSlotToDashboardModel(sources, 'right'),
   };
 }

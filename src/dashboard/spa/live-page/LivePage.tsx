@@ -1,16 +1,22 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { SessionRail, alpha, getSemanticColors } from '@titan-design/react-ui';
-import { ExerciseHeader, LiveView } from './LiveView';
+import {
+  EmptyState,
+  SessionRail,
+  BluetoothIcon,
+  alpha,
+  getSemanticColors,
+} from '@titan-design/react-ui';
+import { ExerciseHeader, LiveView, VerticalSlotLabel, type VoltraSlot } from './LiveView';
 import { RestView } from './RestView';
 import { EmptyLiveView } from './EmptyLiveView';
 import {
-  deriveDualModel,
   deriveRailExercises,
   deriveRailMetrics,
   stageIsEmpty,
   type DashboardModel,
+  type DualDashboardModel,
   type LiveDashboardModel,
 } from './model';
 import { type MassUnit } from './mass';
@@ -116,6 +122,12 @@ export interface LivePageProps {
   variant?: LivePageVariant;
   /** The dashboard store snapshot, projected by `panels/live-view.ts`. */
   model: DashboardModel;
+  /**
+   * The per-limb models for the dual (bilateral) stage (VW-71), projected by
+   * `mapStoreToDualModel`. Required for `variant === 'live-dual'`; ignored otherwise. A
+   * null side is an unbound slot and renders an awaiting state, never a fabricated limb.
+   */
+  dual?: DualDashboardModel;
 }
 
 /**
@@ -135,7 +147,7 @@ export interface LivePageProps {
  *
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
-export function LivePage({ variant = 'live', model }: LivePageProps) {
+export function LivePage({ variant = 'live', model, dual }: LivePageProps) {
   const [displayUnit, setDisplayUnit] = useDisplayUnit();
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
@@ -167,7 +179,7 @@ export function LivePage({ variant = 'live', model }: LivePageProps) {
         <ExerciseHeader session={model.session} displayUnit={displayUnit} />
         <View style={{ flex: 1 }}>
           {variant === 'live-dual' ? (
-            <DualLiveStage />
+            <DualLiveStage dual={dual} displayUnit={displayUnit} />
           ) : model.live !== null ? (
             // `slot` names the active voltra — the shell has two connected, so the live view
             // flags which one it is reading from (the multi-device single-view case). The live
@@ -202,23 +214,90 @@ function liveSetProgress(model: DashboardModel): number {
   return Math.min(live.repVelocities.length / session.targetReps, 1);
 }
 
+/** side → the vertical slot badge + awaiting-state label. */
+const DUAL_SIDE: Record<'left' | 'right', { slot: VoltraSlot; label: string }> = {
+  left: { slot: 'L', label: 'Left Voltra' },
+  right: { slot: 'R', label: 'Right Voltra' },
+};
+
 /**
- * Dual-mode stage — a design PREVIEW on FIXTURE data (VW-48), not live telemetry.
- *
- * The stage SCROLLS so two full live read-outs never clip on a height-restricted wall.
- * Each layer compresses its height-drivers (shorter hero, tighter gaps — see
- * {@link LiveView}'s `side`/`dual` handling) so a tall wall fits both with little or no
- * scroll.
+ * An unbound slot's honest awaiting state (VW-71): the side's vertical badge beside a
+ * "bind a Voltra" prompt. NEVER a fabricated limb — this is what the missing side shows so
+ * a one-Voltra session reads as "one bound, one waiting", not a mirrored duplicate.
  */
-function DualLiveStage() {
-  const { left, right } = deriveDualModel();
+function AwaitingSlotView({ side }: { side: 'left' | 'right' }) {
+  const { slot, label } = DUAL_SIDE[side];
+  return (
+    <View style={{ flex: 1, flexDirection: 'row' }}>
+      <VerticalSlotLabel slot={slot} />
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 18 }}>
+        <EmptyState
+          icon={BluetoothIcon}
+          title={`${label} — not bound`}
+          description="Bind a Voltra to this side to see its live velocity, tempo and fatigue."
+        />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * One half of the dual stage (VW-71) for a single Voltra slot: the same live / rest / empty
+ * selection the single view makes, on THIS slot's own model — so each limb reflects its own
+ * device. A null model is an unbound slot ⇒ {@link AwaitingSlotView}. Non-live sides keep the
+ * side's vertical badge so the recap/idle halves still read as left vs right.
+ */
+function DualSideView({
+  model,
+  side,
+  displayUnit,
+}: {
+  model: DashboardModel | null;
+  side: 'left' | 'right';
+  displayUnit: MassUnit;
+}) {
+  if (model === null) return <AwaitingSlotView side={side} />;
+  // Mid-set: the live layer carries its own vertical slot badge via `side`.
+  if (model.live !== null) return <LiveView model={model as LiveDashboardModel} side={side} />;
+  const { slot } = DUAL_SIDE[side];
+  return (
+    <View style={{ flex: 1, flexDirection: 'row' }}>
+      <VerticalSlotLabel slot={slot} />
+      <View style={{ flex: 1 }}>
+        {stageIsEmpty(model) ? (
+          <EmptyLiveView model={model} />
+        ) : (
+          <RestView model={model} displayUnit={displayUnit} />
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Dual-mode stage — REAL per-limb telemetry (VW-71), one {@link DualSideView} per slot from
+ * `mapStoreToDualModel`. Falls back to two awaiting sides when no dual model is supplied.
+ *
+ * The stage SCROLLS so two full read-outs never clip on a height-restricted wall. Each live
+ * layer compresses its height-drivers (shorter hero, tighter gaps — see {@link LiveView}'s
+ * `side`/`dual` handling) so a tall wall fits both with little or no scroll.
+ */
+function DualLiveStage({
+  dual,
+  displayUnit,
+}: {
+  dual?: DualDashboardModel;
+  displayUnit: MassUnit;
+}) {
+  const left = dual?.left ?? null;
+  const right = dual?.right ?? null;
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
       <View style={{ flex: 1, minHeight: 340 }}>
-        <LiveView model={left as LiveDashboardModel} side="left" />
+        <DualSideView model={left} side="left" displayUnit={displayUnit} />
       </View>
       <View style={{ flex: 1, minHeight: 340 }}>
-        <LiveView model={right as LiveDashboardModel} side="right" />
+        <DualSideView model={right} side="right" displayUnit={displayUnit} />
       </View>
     </ScrollView>
   );

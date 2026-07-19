@@ -194,10 +194,24 @@ export interface SnapshotCompletedSet {
   device: SnapshotDevice | null;
 }
 
+/** One slot's device entry on the snapshot, with its OWN sets (VW-71). */
+export interface SnapshotDeviceEntry {
+  slotId: string;
+  device: SnapshotDevice;
+  /**
+   * This slot's own active + completed sets (VW-71). The top-level {@link
+   * Snapshot.sets} reports only the primary slot's; this per-slot field is what the
+   * dual (bilateral) view reads so each limb reflects its own device. Optional so a
+   * slot with no set state (or a pre-VW-71 server / hand-built test snapshot) omits
+   * it — the dual view then shows an awaiting state for that side, never a fake one.
+   */
+  sets?: { active: SnapshotActiveSet | null; completed?: SnapshotCompletedSet[] };
+}
+
 /** Client-side view of the `/api/snapshot` JSON shape (server: buildSnapshot). */
 export interface Snapshot {
   session: { sessionId: string; exerciseName?: string } | null;
-  devices: Array<{ slotId: string; device: SnapshotDevice }>;
+  devices: SnapshotDeviceEntry[];
   /**
    * `active` is the in-progress set; `completed` is the current session's
    * finished sets, oldest-first (VW-70). `completed` is optional so hand-built

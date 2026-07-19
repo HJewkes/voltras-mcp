@@ -16,7 +16,7 @@ import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { LivePage, type LivePageVariant } from '../live-page/LivePage';
 import { ColdBootView } from '../live-page/ColdBootView';
-import { mapStoreToDashboardModel } from './live-view';
+import { mapStoreToDashboardModel, mapStoreToDualModel } from './live-view';
 
 /** Reads the live-page flag off the URL. Absent ⇒ the page is not mounted at all. */
 export function readLivePageVariant(search: string): LivePageVariant | null {
@@ -39,14 +39,12 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   // so the extra subscription only adds ticks while resting, which is when they matter.
   const nowMs = useStore(dashboardStore, (s) => s.nowMs);
 
-  const model = mapStoreToDashboardModel({
-    snapshot,
-    accumulator,
-    live,
-    prescription,
-    nowMs,
-    pollStatus: status,
-  });
+  const sources = { snapshot, accumulator, live, prescription, nowMs, pollStatus: status };
+  const model = mapStoreToDashboardModel(sources);
+  // Per-limb models for the dual (bilateral) stage (VW-71) — derived from the same store
+  // slices, per bound slot. Only built when the dual variant is mounted; each side is null
+  // for an unbound slot so the stage shows an awaiting side, never a fabricated one.
+  const dual = variant === 'live-dual' ? mapStoreToDualModel(sources) : undefined;
 
   // REAL shell chrome inputs, sourced from the store — never fixtures. On cold boot (no
   // snapshot yet) the mappers have nothing to read, so the chrome falls back to an idle,
@@ -72,7 +70,11 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
         {/* Cold boot: no snapshot has landed yet (VW-68) — an honest "connecting" state inside
             the chrome rather than a blank stage. Once the first poll/SSE frame arrives the live
             page mounts. */}
-        {model === null ? <ColdBootView /> : <LivePage variant={variant} model={model} />}
+        {model === null ? (
+          <ColdBootView />
+        ) : (
+          <LivePage variant={variant} model={model} dual={dual} />
+        )}
       </DashboardShell>
     </div>
   );
