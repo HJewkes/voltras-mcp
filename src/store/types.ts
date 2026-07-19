@@ -83,6 +83,13 @@ export type StoredRep = Rep & {
 export const _STORED_REP_SHAPE_CHECK = null as unknown as StoredRep satisfies Rep;
 
 /**
+ * A set's role in the session. Starts as warm-up vs working; kept open-ended
+ * so back-off/drop sets can be distinguished later without a schema migration.
+ * Persisted values other than these are read through untouched (forward-compat).
+ */
+export type SetRole = 'warmup' | 'working';
+
+/**
  * A persisted set row. `partial` is true when the set ended for any reason
  * other than an explicit `set.end` call; `partialReason` carries the cause.
  */
@@ -96,13 +103,16 @@ export interface StoredSet {
   trainingMode: TrainingModeName;
   weightLbs: number;
   /**
-   * Marks a warm-up (ramp-up) set. Warm-ups flow through the same
-   * `set.start`/`set.end` path as working sets; this first-class flag lets
-   * progression scoring exclude them explicitly rather than inferring them
-   * from load alone (see `selectWorkingSets`). Absent/`false` ⇒ a working set,
-   * which keeps every pre-flag row and fixture behaving exactly as before.
+   * The set's role in the session. Warm-ups flow through the same
+   * `set.start`/`set.end` path as working sets; this first-class marker lets
+   * progression scoring select working sets explicitly rather than inferring
+   * them from load alone (see `selectWorkingSets`). An open-ended enum on
+   * purpose — load alone also mis-separates back-off/drop sets, so future
+   * values (`'backoff'`, `'dropset'`, …) slot in here without a second
+   * migration. Absent ⇒ `'working'`, which keeps every pre-marker row and
+   * fixture behaving exactly as before.
    */
-  isWarmup?: boolean;
+  role?: SetRole;
   reps: StoredRep[];
 }
 

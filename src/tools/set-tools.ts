@@ -37,7 +37,7 @@ import {
   SetStartInput,
   type WatchConfig,
 } from '../schemas/set.js';
-import type { StoredRep, StoredSet } from '../store/types.js';
+import type { SetRole, StoredRep, StoredSet } from '../store/types.js';
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
 import { mmsToMps, mmToM } from '../state/live-signal.js';
 import {
@@ -91,7 +91,7 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot, input.isWarmup)),
+    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot, input.role)),
   );
   install(
     placeholders,
@@ -155,7 +155,7 @@ async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
   slotIdInput: string | undefined,
-  isWarmup: boolean | undefined,
+  role: SetRole | undefined,
 ): Promise<{ setId: string }> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   const slot = getSlot(state, slotId);
@@ -255,7 +255,9 @@ async function startSet(
       startedAt,
       reps: [],
       status: 'active',
-      ...(isWarmup === true ? { isWarmup: true } : {}),
+      // Stamp only a non-default role; `'working'`/absent stays off the set so
+      // the default path is byte-identical to pre-marker behaviour.
+      ...(role !== undefined && role !== 'working' ? { role } : {}),
       ...(watch !== undefined ? { watch } : {}),
     });
   } finally {
@@ -777,7 +779,7 @@ function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
     ...(active.partialReason !== undefined ? { partialReason: active.partialReason } : {}),
     trainingMode: device.trainingMode ?? 'Unknown',
     weightLbs: device.weightLbs ?? 0,
-    ...(active.isWarmup === true ? { isWarmup: true } : {}),
+    ...(active.role !== undefined && active.role !== 'working' ? { role: active.role } : {}),
     reps,
   };
 }

@@ -830,12 +830,12 @@ describe('plan.suggest_progression', () => {
 
   // VMCP-progression-warmups: the load heuristic alone can't catch a warmup
   // performed AT working weight (a heavy low-rep primer). The explicit
-  // `isWarmup` flag must exclude it so it can't poison the tally.
-  it('VMCP-progression-warmups: excludes flagged warmups even at the session top load', async () => {
-    // Arrange: 3 flagged warmups at 135 lb (== working weight) with only 3
-    // reps each + 2 working sets at 135 lb × 12 reps. By load alone all five
-    // sit at top load → missed=3 >= majority=3 → a bogus -5 deload. The flag
-    // must drop the three warmups, leaving two band-topping working sets.
+  // `role: 'warmup'` marker must exclude it so it can't poison the tally.
+  it('VMCP-progression-warmups: excludes role:warmup sets even at the session top load', async () => {
+    // Arrange: 3 warmups at 135 lb (== working weight) with only 3 reps each +
+    // 2 working sets at 135 lb × 12 reps. By load alone all five sit at top
+    // load → missed=3 >= majority=3 → a bogus -5 deload. The role marker must
+    // drop the three warmups, leaving two band-topping working sets.
     const h = setup();
     primeProgramWithBenchPlan(h);
     h.store.listSessions.mockResolvedValueOnce([
@@ -843,7 +843,7 @@ describe('plan.suggest_progression', () => {
     ]);
     const warmup = (setId: string): StoredSet => ({
       ...setWithReps(setId, 3, undefined, 135),
-      isWarmup: true,
+      role: 'warmup',
     });
     h.store.getSetsForSession.mockResolvedValueOnce([
       warmup('w1'),
@@ -859,7 +859,7 @@ describe('plan.suggest_progression', () => {
       exerciseId: 'bench-press',
     });
 
-    // Assert: flagged warmups excluded → both working sets topped the band.
+    // Assert: warmups excluded → both working sets topped the band.
     expect(r.isError).toBeUndefined();
     const body = parseResult(r) as { suggestion: { delta: number } };
     expect(body.suggestion.delta).not.toBe(-5);

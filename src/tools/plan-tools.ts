@@ -624,13 +624,15 @@ async function resolveBasisSession(
 }
 
 /**
- * Warmups and working sets flow through the same `set.start`/`set.end` path.
- * Two signals separate them, applied in order:
+ * Non-working and working sets flow through the same `set.start`/`set.end`
+ * path. Two signals select the working sets, applied in order:
  *
- *   1. The explicit `StoredSet.isWarmup` flag (set at `set.start`). A flagged
- *      warmup is never a working set — even a heavy primer at working weight,
- *      which the load heuristic below would wrongly keep.
- *   2. Session-relative top load, for the (still common) unflagged warmups: a
+ *   1. The explicit `StoredSet.role` marker (set at `set.start`). Only
+ *      `role === 'working'` (absent ⇒ working) is scored — a `'warmup'` set is
+ *      never a working set, even a heavy primer at working weight that the load
+ *      heuristic below would wrongly keep, and future non-working roles
+ *      (`'backoff'`, `'dropset'`) fall out here for free.
+ *   2. Session-relative top load, for the (still common) unmarked warmups: a
  *      warmup is a sub-working-weight ramp-up, so treat the sets at the
  *      session's heaviest load as the working sets — the ones the rep band is
  *      actually prescribed against.
@@ -642,7 +644,7 @@ async function resolveBasisSession(
  * the plan's original target has been outgrown.
  */
 function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
-  const working = sets.filter((set) => set.isWarmup !== true);
+  const working = sets.filter((set) => (set.role ?? 'working') === 'working');
   if (working.length === 0) return working;
   const topLoad = Math.max(...working.map((set) => set.weightLbs));
   return working.filter((set) => set.weightLbs >= topLoad);

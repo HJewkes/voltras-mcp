@@ -36,6 +36,7 @@ import {
 
 import type { RepSource } from '../config.js';
 import type { TrainingModeName } from '../schemas/common.js';
+import type { SetRole } from '../store/types.js';
 import type { WatchConfig } from '../schemas/set.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
@@ -228,11 +229,11 @@ export interface ActiveSet {
    */
   autoCreatedBy?: 'guided_load';
   /**
-   * Marks a warm-up set flagged at `set.start` time. Carried onto the
-   * persisted row ({@link StoredSet.isWarmup}) so progression scoring can
-   * exclude warm-ups explicitly. Undefined ⇒ a working set.
+   * The set's role, supplied at `set.start` time. Carried onto the persisted
+   * row ({@link StoredSet.role}) so progression scoring can select working
+   * sets explicitly. Undefined ⇒ a working set.
    */
-  isWarmup?: boolean;
+  role?: SetRole;
   /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires

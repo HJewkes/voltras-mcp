@@ -129,12 +129,12 @@ describe('SqliteSessionStore', () => {
       expect(await store.getSet('missing-set')).toBeUndefined();
     });
 
-    it('round-trips the isWarmup flag; a working set reads back without the key', async () => {
-      await store.putSet(makeSet({ id: 'set-warm', isWarmup: true }));
+    it('round-trips the role marker; a working set reads back without the key', async () => {
+      await store.putSet(makeSet({ id: 'set-warm', role: 'warmup' }));
       await store.putSet(makeSet({ id: 'set-work' }));
-      expect((await store.getSet('set-warm'))?.isWarmup).toBe(true);
-      // Default (working) sets keep the pre-flag shape: no isWarmup key.
-      expect(await store.getSet('set-work')).not.toHaveProperty('isWarmup');
+      expect((await store.getSet('set-warm'))?.role).toBe('warmup');
+      // Default (working) sets keep the pre-marker shape: no role key.
+      expect(await store.getSet('set-work')).not.toHaveProperty('role');
     });
 
     it('coerces non-finite rep numbers to 0 rather than storing null (VMCP-01.41)', async () => {
@@ -320,10 +320,10 @@ describe('SqliteSessionStore.open() error paths', () => {
     }
   });
 
-  it('migrates a v3 DB forward by adding is_warmup, backfilling existing rows to 0', async () => {
+  it('migrates a v3 DB forward by adding role, backfilling existing rows to working', async () => {
     const dbPath = join(workdir, 'v3-migrate.sqlite');
     const seed = new DatabaseSync(dbPath);
-    // v3 `sets` shape: no is_warmup column yet.
+    // v3 `sets` shape: no role column yet.
     seed.exec(`
       CREATE TABLE sets (
         id TEXT PRIMARY KEY,
@@ -347,11 +347,44 @@ describe('SqliteSessionStore.open() error paths', () => {
       const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
         (c) => c.name,
       );
-      expect(names).toContain('is_warmup');
+      expect(names).toContain('role');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
       expect(version.user_version).toBe(4);
-      // The pre-flag row backfills as a working set (no isWarmup key on read).
-      expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
+      // The pre-marker row backfills as a working set (no role key on read).
+      expect(await store.getSet('legacy')).not.toHaveProperty('role');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('repairs a pre-release v4 DB that still has the superseded is_warmup column', async () => {
+    // The short-lived first v4 shipped `is_warmup` (INTEGER) instead of `role`.
+    // A dev DB left in that state (user_version already 4) must still gain the
+    // `role` column — the migration runs unconditionally, not gated on version.
+    const dbPath = join(workdir, 'v4-iswarmup.sqlite');
+    const seed = new DatabaseSync(dbPath);
+    seed.exec(`
+      CREATE TABLE sets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        partial INTEGER NOT NULL,
+        partial_reason TEXT,
+        training_mode TEXT NOT NULL,
+        weight_lbs REAL NOT NULL,
+        is_warmup INTEGER NOT NULL DEFAULT 0
+      );
+      PRAGMA user_version = 4;
+    `);
+    seed.close();
+
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      await store.putSession(makeSession());
+      // putSet writes the `role` column — proves the repair added it.
+      await expect(store.putSet(makeSet({ id: 'set-r', role: 'warmup' }))).resolves.toBeUndefined();
+      expect((await store.getSet('set-r'))?.role).toBe('warmup');
     } finally {
       await store.close();
     }

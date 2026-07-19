@@ -5,12 +5,19 @@
 // eccentric) is auto-populated from `state.live.snapshotDevice()` at handler
 // time — accepting those as input would duplicate live device state and create
 // drift between the snapshot and the stored set. The one exception is
-// `set.start`'s `isWarmup` flag: warm-up-vs-working is caller *intent* the
+// `set.start`'s `role` marker: warm-up-vs-working is caller *intent* the
 // device can't report, so it must ride on the input.
 
 import { z } from 'zod';
 
 import { SlotIdSchema } from './common.js';
+
+/**
+ * A set's role, as supplied at `set.start`. Mirrors `StoredSet['role']`;
+ * open-ended by design (see that type) so back-off/drop roles can be added
+ * without a migration. Omitted at `set.start` ⇒ `'working'`.
+ */
+export const SetRoleSchema = z.enum(['warmup', 'working']);
 
 /**
  * Trigger DSL — server-evaluated conditions a coach can register at
@@ -97,17 +104,17 @@ export type WatchConfig = z.infer<typeof WatchConfig>;
  * mode, weight, chains, eccentric) still derives from the live device
  * snapshot at handler time.
  *
- * `isWarmup` is the one explicit set-level attribute a caller may set at start
+ * `role` is the one explicit set-level attribute a caller may set at start
  * time: it marks the new set as a warm-up so progression scoring excludes it
- * (see `StoredSet.isWarmup`). It's intent the device snapshot can't recover —
- * a warm-up and a working set look identical to the hardware — so it rides on
- * the input rather than the snapshot. Omitted ⇒ a working set, the default
- * path unchanged.
+ * (see `StoredSet.role`). It's intent the device snapshot can't recover — a
+ * warm-up and a working set look identical to the hardware — so it rides on
+ * the input rather than the snapshot. Omitted ⇒ `'working'`, the default path
+ * unchanged.
  */
 export const SetStartInput = z.object({
   watch: WatchConfig.optional(),
   slot: SlotIdSchema,
-  isWarmup: z.boolean().optional(),
+  role: SetRoleSchema.optional(),
 });
 
 /** Input for `set.end` — operates on the active set in the slot's `live.set`. */
