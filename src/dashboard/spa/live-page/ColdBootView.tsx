@@ -1,10 +1,15 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { type ReactElement } from 'react';
 import { View, Text } from 'react-native';
-import { Spinner } from '@titan-design/react-ui';
+import { Spinner, getSemanticColors } from '@titan-design/react-ui';
+
+// Our own RN Text colour comes from the resolved dark-theme token, not a `text-*` className
+// (className colours render black on the standalone wall SPA). See RestView's note.
+const t = getSemanticColors('dark');
 
 /*
- * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via className.
+ * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via inline token `t[...]`
+ * (NOT a `text-*` className — those do not resolve for our RN Text in the standalone SPA).
  *
  * The cold-boot stage (VW-68). `mapStoreToDashboardModel` returns null until the FIRST
  * snapshot lands (poll or SSE) — before that there is no session, no device, nothing to
@@ -20,8 +25,7 @@ export function ColdBootView(): ReactElement {
     >
       <Spinner size="lg" />
       <Text
-        className="text-text-secondary"
-        style={{ fontSize: 14, fontWeight: '600', letterSpacing: 0.5 }}
+        style={{ color: t['text-secondary'], fontSize: 14, fontWeight: '600', letterSpacing: 0.5 }}
       >
         Connecting to the sidecar…
       </Text>

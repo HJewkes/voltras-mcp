@@ -54,8 +54,8 @@ function VerticalSlotLabel({ slot }: { slot: VoltraSlot }) {
     >
       {/* Fixed width holds the full label before rotation (a bare rotate clips to the strip). */}
       <Text
-        className="text-text-tertiary"
         style={{
+          color: t['text-tertiary'],
           width: 150,
           textAlign: 'center',
           fontSize: 12,

@@ -7,13 +7,12 @@ import {
   Metric,
   MetricGroup,
   ExerciseCard,
+  getSemanticColors,
   type MetricProps,
   type SetRowProps,
 } from '@titan-design/react-ui';
 import {
   activeCompletedSets,
-  meanVelocity,
-  peakVelocity,
   velocityLossPct,
   verdictFromLoss,
   type CompletedSet,
@@ -21,8 +20,15 @@ import {
 } from './model';
 import { type MassUnit, formatMass } from './mass';
 
+/** Resolved dark-theme tokens. Our own RN `Text` colours MUST come from here, not a
+ * `text-*` className: className colours do not resolve on the standalone wall SPA (the
+ * heading + these eyebrows rendered black on black until switched to inline tokens). Titan's
+ * own components resolve colour to inline hex internally, so they are unaffected. */
+const t = getSemanticColors('dark');
+
 /*
- * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via className.
+ * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via inline token `t[...]`
+ * (NOT a `text-*` className — those do not resolve for our RN Text in the standalone SPA).
  *
  * PORTED from titan's `Lab/North Star` RestView specimen, now STORE-FED. The specimen read
  * everything off the mid-set `live` overlay (its per-rep velocities, peak force, ROM, live
@@ -74,26 +80,24 @@ function recapRows(model: DashboardModel, displayUnit: MassUnit): SetRowProps[] 
   });
 }
 
-/** The finished set's verdict metrics; entries the store cannot source are null → hidden. */
+/**
+ * The finished set's verdict metrics — a 2×2 of the four readouts that matter at a glance:
+ *   [ Reps ] [ Load ]
+ *   [ Vloss] [ Fatg ]
+ * Velocity/force detail (mean/peak MCV, peak force) is intentionally dropped — the wall
+ * verdict is the top-line summary, not the full analytics. Entries the store cannot source
+ * are null → hidden (a 1-rep set has no velocity loss, so Vloss/Fatg fall away honestly).
+ */
 function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] {
-  const mean = meanVelocity(set.reps);
-  const peak = peakVelocity(set.reps);
   const loss = velocityLossPct(set.reps);
   const verdict = loss === null ? null : verdictFromLoss(loss);
-  // Load + Peak force are the only mass readouts here — converted to the display unit
-  // (VW-63). The two velocity tiles (m/s), Vel loss (%) and Reps (count) are unit-invariant.
+  // The load's UNIT is its label (e.g. value "20", label "lbs"/"kg") — no separate "Load"
+  // caption. Converted to the client display unit (VW-63); the store stays lbs.
   const load = set.weightLbs !== null ? formatMass(set.weightLbs, displayUnit) : null;
-  const peakForce = set.peakForceLbs !== null ? formatMass(set.peakForceLbs, displayUnit) : null;
   return [
-    // Both velocity tiles read the MEAN-concentric basis (VW-62): `set.reps` are per-rep MEAN
-    // concentric velocities. "Mean con" is their session average; the next tile is the best
-    // rep's MEAN concentric velocity (its max), NOT peak instantaneous velocity — so it is
-    // labelled "Best MCV", not "Peak con", which misread as instantaneous peak on the wall.
-    set.reps.length > 0 ? { value: mean.toFixed(2), unit: 'm/s', label: 'Mean con' } : null,
-    peak !== null ? { value: peak.toFixed(2), unit: 'm/s', label: 'Best MCV' } : null,
-    loss !== null ? { value: `${Math.round(loss)}%`, label: 'Vel loss', trend: 'down' } : null,
     { value: String(set.repCount), label: 'Reps' },
-    load !== null ? { value: String(load.value), unit: load.unit, label: 'Load' } : null,
+    load !== null ? { value: String(load.value), label: load.unit } : null,
+    loss !== null ? { value: `${Math.round(loss)}%`, label: 'Vel loss', trend: 'down' } : null,
     verdict !== null
       ? {
           value: verdict === 'threshold' ? 'MOD' : verdict === 'stop' ? 'HIGH' : 'LOW',
@@ -101,13 +105,6 @@ function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] 
           trend: verdict === 'productive' ? 'up' : 'neutral',
         }
       : null,
-    // Peak force: the just-closed set's max concentric force (VW-61), folded at
-    // set-close so it survives into rest (the live overlay's `peakForce` is gone by
-    // now). Hidden when the store logged no force — never faked.
-    peakForce !== null
-      ? { value: String(peakForce.value), unit: peakForce.unit, label: 'Peak force' }
-      : null,
-    // Avg ROM: no `CompletedSet` source once the set closes → still hidden, not faked.
   ];
 }
 
@@ -137,10 +134,7 @@ function nextSetInfo(model: DashboardModel): string | undefined {
 /** A section eyebrow label — the specimen's tertiary all-caps caption. */
 function Eyebrow({ children }: { children: string }): ReactElement {
   return (
-    <Text
-      className="text-text-tertiary"
-      style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1 }}
-    >
+    <Text style={{ color: t['text-tertiary'], fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
       {children}
     </Text>
   );
@@ -175,11 +169,7 @@ function RestCountdown({ model }: { model: DashboardModel }): ReactElement | nul
     <View style={{ gap: 8 }}>
       <Eyebrow>REST</Eyebrow>
       <TimerReadout mode="up" elapsedMs={restElapsedMs} running />
-      {info && (
-        <Text className="text-text-secondary" style={{ fontSize: 13 }}>
-          {info}
-        </Text>
-      )}
+      {info && <Text style={{ color: t['text-secondary'], fontSize: 13 }}>{info}</Text>}
     </View>
   );
 }
