@@ -288,6 +288,89 @@ describe('metrics.compute — vbt.profile', () => {
     expect(result.isError).toBe(true);
     expect((parsePayload(result) as { code: string }).code).toBe('NOT_FOUND');
   });
+
+  it('targetVelocity → dispatches estimateLoad and attaches a recommendation', async () => {
+    const loadSpy = vi.spyOn(analytics, 'estimateLoad').mockReturnValue(135);
+    const setA = makeSet('s-a', 'sess-1', 100);
+    const setB = makeSet('s-b', 'sess-1', 150);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 's-a' ? setA : id === 's-b' ? setB : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, {
+      pipeline: 'vbt.profile',
+      setIds: ['s-a', 's-b'],
+      targetVelocity: 0.75,
+    });
+
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(loadSpy.mock.calls[0]?.[1]).toBe(0.75);
+    expect(result.isError).toBeUndefined();
+    const payload = parsePayload(result) as {
+      estimated1RM: number;
+      recommendation: { targetVelocity: number; recommendedLoad: number; confidence: string };
+    };
+    expect(payload.estimated1RM).toBe(200); // bare profile still present
+    expect(payload.recommendation).toEqual({
+      targetVelocity: 0.75,
+      recommendedLoad: 135,
+      confidence: 'high',
+    });
+    loadSpy.mockRestore();
+  });
+
+  it('omitting targetVelocity leaves the response as the bare profile', async () => {
+    const loadSpy = vi.spyOn(analytics, 'estimateLoad');
+    const setA = makeSet('s-a', 'sess-1', 100);
+    const setB = makeSet('s-b', 'sess-1', 150);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 's-a' ? setA : id === 's-b' ? setB : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'vbt.profile', setIds: ['s-a', 's-b'] });
+
+    expect(loadSpy).not.toHaveBeenCalled();
+    expect(parsePayload(result)).not.toHaveProperty('recommendation');
+    loadSpy.mockRestore();
+  });
+
+  it('degenerate flat profile (slope 0) → honest null recommendation, estimateLoad NOT called', async () => {
+    buildSpy.mockReturnValue({
+      dataPoints: [],
+      slope: 0,
+      intercept: 0.5,
+      rSquared: 0,
+      estimated1RM: 0,
+      confidence: 'low',
+      mvt: 0.17,
+    });
+    const loadSpy = vi.spyOn(analytics, 'estimateLoad').mockReturnValue(0);
+    const setA = makeSet('s-a', 'sess-1', 100);
+    const setB = makeSet('s-b', 'sess-1', 100);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 's-a' ? setA : id === 's-b' ? setB : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, {
+      pipeline: 'vbt.profile',
+      setIds: ['s-a', 's-b'],
+      targetVelocity: 0.75,
+    });
+
+    expect(loadSpy).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    expect((parsePayload(result) as { recommendation: unknown }).recommendation).toBeNull();
+    loadSpy.mockRestore();
+  });
 });
 
 describe('metrics.compute — fatigue.set', () => {

@@ -31,7 +31,18 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
 
   // Multi-set load-velocity profile fitting + optional 1RM estimate.
   // Analytics: buildProfile(points) from @voltras/workout-analytics.
-  z.object({ pipeline: z.literal('vbt.profile'), setIds: z.array(IdSchema).min(2) }),
+  //
+  // `targetVelocity` (optional, m/s) inverts the fitted profile via
+  // `estimateLoad` to recommend the load for that mean concentric velocity —
+  // the load half of VBT that the warm-up ramp uses to size its next set. It
+  // co-locates on this variant because the recommendation *requires* the
+  // profile this pipeline already builds; a separate mode would have to rebuild
+  // it. Omitted → the response is the bare profile (backward compatible).
+  z.object({
+    pipeline: z.literal('vbt.profile'),
+    setIds: z.array(IdSchema).min(2),
+    targetVelocity: z.number().positive().optional(),
+  }),
 
   // Per-rep quality flags. Requires a baseline set whose reps establish
   // the expected ROM / phase timings / mean velocity. The handler builds

@@ -38,6 +38,8 @@ import {
   assessRepQuality,
   buildProfile,
   computeReadiness,
+  estimateLoad,
+  type LoadVelocityProfile,
   computeSessionFatigue,
   computeStrengthEstimate,
   computeVBTSetFatigueIndex,
@@ -108,7 +110,9 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
         load: s.weightLbs,
         velocity: getSetMeanVelocity(toAnalyticsSet(s)),
       }));
-      return buildProfile(points);
+      const profile = buildProfile(points);
+      if (input.targetVelocity === undefined) return profile;
+      return { ...profile, recommendation: recommendLoad(profile, input.targetVelocity) };
     }
 
     case 'fatigue.set': {
@@ -199,6 +203,33 @@ function mean(xs: number[]): number {
   return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
+/** Load recommendation derived by inverting a load-velocity profile. */
+interface LoadRecommendation {
+  /** The target mean concentric velocity the load was solved for (m/s). */
+  targetVelocity: number;
+  /** Recommended load in lb for that velocity (clamped ≥ 0 upstream). */
+  recommendedLoad: number;
+  /** The parent profile's fit confidence, surfaced so callers can weigh it. */
+  confidence: LoadVelocityProfile['confidence'];
+}
+
+/**
+ * Invert a fitted profile to the load for `targetVelocity`. A flat profile
+ * (slope 0 — e.g. every observed set moved at the same velocity) is
+ * non-invertible: `estimateLoad` returns a meaningless 0, so we report an
+ * honest `null` instead of a fabricated load. Confidence rides along so a
+ * low-R² fit is never mistaken for a trustworthy prescription.
+ */
+function recommendLoad(
+  profile: LoadVelocityProfile,
+  targetVelocity: number,
+): LoadRecommendation | null {
+  if (profile.slope === 0 || !Number.isFinite(profile.slope)) return null;
+  const recommendedLoad = estimateLoad(profile, targetVelocity);
+  if (!Number.isFinite(recommendedLoad)) return null;
+  return { targetVelocity, recommendedLoad, confidence: profile.confidence };
+}
+
 class CodedError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -239,6 +270,7 @@ export function registerMetricsTools(
     pipeline: z.string(),
     setId: z.string().optional(),
     setIds: z.array(z.string()).optional(),
+    targetVelocity: z.number().optional(),
     sessionId: z.string().optional(),
     baselineSetId: z.string().optional(),
     baselineSessionId: z.string().optional(),
