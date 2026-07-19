@@ -624,21 +624,28 @@ async function resolveBasisSession(
 }
 
 /**
- * Warmups and working sets flow through the same `set.start`/`set.end` path and
- * carry no explicit warmup flag (see `StoredSet`), so the only signal that
- * separates them is load: a warmup is a sub-working-weight ramp-up. Treat the
- * sets at the session's heaviest load as the working sets — the ones the rep
- * band is actually prescribed against. Judging progression on the full set list
- * lets light, low-rep warmups inflate the "missed" tally into a bogus deload
- * (VMCP-progression-warmups), and a single high-velocity-loss warmup can
- * suppress a legit +5. Session-relative top load (not `targetWeightLbs`) is used
- * so the filter tracks the load actually lifted, even after the plan's original
- * target has been outgrown.
+ * Warmups and working sets flow through the same `set.start`/`set.end` path.
+ * Two signals separate them, applied in order:
+ *
+ *   1. The explicit `StoredSet.isWarmup` flag (set at `set.start`). A flagged
+ *      warmup is never a working set — even a heavy primer at working weight,
+ *      which the load heuristic below would wrongly keep.
+ *   2. Session-relative top load, for the (still common) unflagged warmups: a
+ *      warmup is a sub-working-weight ramp-up, so treat the sets at the
+ *      session's heaviest load as the working sets — the ones the rep band is
+ *      actually prescribed against.
+ *
+ * Judging progression on the full set list lets light, low-rep warmups inflate
+ * the "missed" tally into a bogus deload (VMCP-progression-warmups), and a
+ * single high-velocity-loss warmup can suppress a legit +5. Session-relative
+ * top load (not `targetWeightLbs`) tracks the load actually lifted, even after
+ * the plan's original target has been outgrown.
  */
 function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
-  if (sets.length === 0) return sets;
-  const topLoad = Math.max(...sets.map((set) => set.weightLbs));
-  return sets.filter((set) => set.weightLbs >= topLoad);
+  const working = sets.filter((set) => set.isWarmup !== true);
+  if (working.length === 0) return working;
+  const topLoad = Math.max(...working.map((set) => set.weightLbs));
+  return working.filter((set) => set.weightLbs >= topLoad);
 }
 
 /**

@@ -91,7 +91,7 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot)),
+    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot, input.isWarmup)),
   );
   install(
     placeholders,
@@ -155,6 +155,7 @@ async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
   slotIdInput: string | undefined,
+  isWarmup: boolean | undefined,
 ): Promise<{ setId: string }> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   const slot = getSlot(state, slotId);
@@ -254,6 +255,7 @@ async function startSet(
       startedAt,
       reps: [],
       status: 'active',
+      ...(isWarmup === true ? { isWarmup: true } : {}),
       ...(watch !== undefined ? { watch } : {}),
     });
   } finally {
@@ -775,6 +777,7 @@ function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
     ...(active.partialReason !== undefined ? { partialReason: active.partialReason } : {}),
     trainingMode: device.trainingMode ?? 'Unknown',
     weightLbs: device.weightLbs ?? 0,
+    ...(active.isWarmup === true ? { isWarmup: true } : {}),
     reps,
   };
 }
