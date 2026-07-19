@@ -11,8 +11,9 @@
  * fabricated number. This extends the precedent titan #111 set for `tempo?`. See
  * `panels/live-view.ts` for the ticket per gap.
  *
- * The fixture below is retained as the dual-mode preview's data and a render check;
- * it is NOT what the mounted page reads.
+ * The dual (bilateral) stage is now store-fed per slot (VW-71) — one
+ * {@link DashboardModel} per limb, projected by `panels/live-view.ts`'s
+ * `mapStoreToDualModel`. The fixture-fabricating `deriveDualModel` it replaced is gone.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 import { type MassUnit, convertMass, formatMass } from './mass';
@@ -190,6 +191,18 @@ export interface DashboardModel {
 export type LiveDashboardModel = DashboardModel & { live: LiveModel };
 
 /**
+ * The dual (bilateral) stage's per-limb read-models (VW-71): one {@link DashboardModel}
+ * per Voltra slot. A side is `null` when no device is bound to that slot (or the slot
+ * reports no telemetry) — the dual stage then shows an awaiting state for it rather than
+ * fabricating the missing limb. Each present side picks its own live/rest/empty stage,
+ * exactly as the single view does, from that slot's own snapshot.
+ */
+export interface DualDashboardModel {
+  left: DashboardModel | null;
+  right: DashboardModel | null;
+}
+
+/**
  * True when the live stage has nothing honest to show: no set streaming, none logged, and no
  * rest clock running — exactly the inputs under which {@link RestView} would render blank
  * (VW-68). Covers the no-session idle, the session-started-but-first-set-not-begun, and the
@@ -201,82 +214,6 @@ export function stageIsEmpty(model: DashboardModel): boolean {
     model.live === null && model.session.completedSets.length === 0 && model.restElapsedMs === null
   );
 }
-
-// --- The fixture instance -----------------------------------------------------
-
-/**
- * A mid-set cable chest press: 6 reps in, velocity decaying from 0.52 → 0.405 m/s,
- * ~22% velocity loss (the VL20–VL30 mid-zone → `threshold` verdict / amber aura).
- */
-export const dashboardFixture: DashboardModel = {
-  // Mid-set fixture: a set is streaming, so there is no rest clock running.
-  restElapsedMs: null,
-  live: {
-    velocity: 0.41,
-    force: 49.8,
-    phase: 'concentric',
-    phaseElapsedMs: 700,
-    lastRep: { vCon: 0.405, rom: 0.58, peakVelocity: 0.61 },
-    repVelocities: [0.52, 0.5, 0.48, 0.46, 0.44, 0.405],
-    velocityLossPct: 22,
-    peakForce: 54.2,
-  },
-  session: {
-    hasSession: true,
-    exerciseName: 'Cable Chest Press',
-    title: 'Push A · Hypertrophy',
-    weightLbs: 140,
-    unit: 'lbs',
-    tempo: [3, 1, 1, 0],
-    plannedSets: 4,
-    targetReps: 8,
-    restSec: 120,
-    plannedExercises: [
-      {
-        name: 'Cable Chest Press',
-        plannedSets: 4,
-        targetReps: 8,
-        repsLabel: 8,
-        weightLbs: 140,
-        active: true,
-      },
-      {
-        name: 'Incline DB Press',
-        plannedSets: 3,
-        targetReps: 10,
-        repsLabel: '10–12',
-        weightLbs: 60,
-        active: false,
-      },
-      {
-        name: 'Cable Fly',
-        plannedSets: 3,
-        targetReps: 12,
-        repsLabel: '12–15',
-        weightLbs: 30,
-        active: false,
-      },
-    ],
-    completedSets: [
-      {
-        exerciseName: 'Cable Chest Press',
-        weightLbs: 140,
-        mode: 'weight',
-        repCount: 8,
-        reps: [0.55, 0.54, 0.52, 0.51, 0.49, 0.47, 0.45, 0.43],
-        peakForceLbs: 51.2,
-      },
-      {
-        exerciseName: 'Cable Chest Press',
-        weightLbs: 140,
-        mode: 'weight',
-        repCount: 8,
-        reps: [0.53, 0.52, 0.5, 0.48, 0.46, 0.44, 0.42, 0.4],
-        peakForceLbs: 50.5,
-      },
-    ],
-  },
-};
 
 // --- Derived projections (store read-model → titan presentational props) -------
 
@@ -578,53 +515,4 @@ export function deriveRailMetrics(
     { label: 'Volume', value: String(reps) },
     { label: 'Tonnage', value: `${formatLoad(tonnage)} ${displayUnit}` },
   ];
-}
-
-// --- Dual-mode (bilateral) projection -----------------------------------------
-
-/**
- * A bilateral (dual-mode) PREVIEW pair — NOT REAL DATA, and structurally incapable of
- * being real: the "right" side is the fixture's left scaled by a constant.
- *
- * ⚠ This fabricates. It takes NO model argument ON PURPOSE — it always reads the
- * fixture, so store data can never be laundered through it onto a wall screen. A real
- * dual-mode path needs slot identity threaded through the live-signal hub and SSE
- * stream, which today are process-global and slot-blind (VW-48, the largest gap in the
- * burn-down). Until that lands the dual variant is a design preview only and its caller
- * must label it as such.
- */
-export function deriveDualModel(): {
-  left: DashboardModel;
-  right: DashboardModel;
-} {
-  const base = dashboardFixture;
-  const baseLive = base.live;
-  if (!baseLive) return { left: base, right: base };
-  // Left is the dominant side — the fixture verbatim.
-  const left: DashboardModel = base;
-  // Right lags: ~8% slower per-rep concentric velocity, +7 pts velocity loss, ~6% less force.
-  const scale = (v: number) => Number((v * 0.92).toFixed(3));
-  const right: DashboardModel = {
-    session: base.session,
-    restElapsedMs: null,
-    live: {
-      ...baseLive,
-      velocity: scale(baseLive.velocity),
-      force: Math.round(baseLive.force * 0.94),
-      peakForce: baseLive.peakForce !== null ? Math.round(baseLive.peakForce * 0.94) : null,
-      velocityLossPct: baseLive.velocityLossPct !== null ? baseLive.velocityLossPct + 7 : null,
-      repVelocities: baseLive.repVelocities.map(scale),
-      lastRep: baseLive.lastRep
-        ? {
-            vCon: scale(baseLive.lastRep.vCon),
-            rom:
-              baseLive.lastRep.rom !== null
-                ? Number((baseLive.lastRep.rom * 0.96).toFixed(2))
-                : null,
-            peakVelocity: scale(baseLive.lastRep.peakVelocity),
-          }
-        : null,
-    },
-  };
-  return { left, right };
 }

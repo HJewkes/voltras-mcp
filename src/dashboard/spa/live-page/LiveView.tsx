@@ -45,7 +45,7 @@ const SLOT_META: Record<VoltraSlot, { label: string }> = {
 };
 
 /** The voltra name set vertically down the far-left edge of a layer (dual / multi-device). */
-function VerticalSlotLabel({ slot }: { slot: VoltraSlot }) {
+export function VerticalSlotLabel({ slot }: { slot: VoltraSlot }) {
   const { label } = SLOT_META[slot];
   return (
     <View

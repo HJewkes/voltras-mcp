@@ -270,6 +270,50 @@ describe('GET /api/snapshot', () => {
     };
     expect(body.devices.map((d) => d.slotId).sort()).toEqual(['primary', 'secondary']);
   });
+
+  it('carries each slot’s OWN active set on its device entry (VW-71 per-slot sets)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-B',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      setIds: [],
+      status: 'active',
+    };
+    const leftSet: ActiveSet = {
+      setId: 'set-L',
+      sessionId: 'sess-B',
+      startedAt: '2026-05-09T12:00:05.000Z',
+      reps: [],
+      status: 'active',
+    };
+    const rightSet: ActiveSet = { ...leftSet, setId: 'set-R' };
+    const handle = await startWithFake(
+      makeFakeState({
+        left: { device: { connected: true }, session, activeSet: leftSet },
+        right: { device: { connected: true }, activeSet: rightSet },
+      }),
+    );
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as {
+      devices: Array<{
+        slotId: string;
+        sets?: { active: ActiveSet | null; completed: ActiveSet[] };
+      }>;
+    };
+    const bySlot = Object.fromEntries(body.devices.map((d) => [d.slotId, d]));
+    // Each slot reports its OWN active set — not the first-slot-wins top-level `sets`.
+    expect(bySlot.left?.sets?.active?.setId).toBe('set-L');
+    expect(bySlot.right?.sets?.active?.setId).toBe('set-R');
+    expect(bySlot.left?.sets?.completed).toEqual([]);
+  });
+
+  it('reports sets.active=null on a slot with no active set (VW-71)', async () => {
+    const handle = await startWithFake(makeFakeState({ left: { device: { connected: true } } }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as {
+      devices: Array<{ slotId: string; sets?: { active: ActiveSet | null } }>;
+    };
+    expect(body.devices[0]?.sets?.active).toBeNull();
+  });
 });
 
 describe('GET /api/history', () => {

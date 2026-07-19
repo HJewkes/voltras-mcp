@@ -19,12 +19,17 @@ import {
   deriveRailExercises,
   deriveRailMetrics,
   peakVelocity,
+  stageIsEmpty,
   velocityLossPct,
   type CompletedSet,
   type DashboardModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
-import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
+import {
+  mapStoreToDashboardModel,
+  mapStoreToDualModel,
+  type LiveViewSources,
+} from '../spa/panels/live-view.js';
 
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
@@ -488,5 +493,114 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
     const accumulator = { ...initialAccumulatorState(), setLog: [storeSet(1)] };
     const model = mapStoreToDashboardModel(sources({ accumulator }))!;
     expect(model.session.completedSets).toHaveLength(1);
+  });
+});
+
+describe('mapStoreToDualModel — per-slot bilateral telemetry (VW-71)', () => {
+  /** A WA rep whose MEAN concentric velocity is `meanMms` mm/s, with optional peak fields. */
+  function rep(
+    meanMms: number,
+    opts: { peakMms?: number; peakForce?: number; repNumber?: number } = {},
+  ): Rep {
+    return {
+      repNumber: opts.repNumber ?? 1,
+      concentric: {
+        peakVelocity: opts.peakMms ?? meanMms,
+        _totalVelocity: meanMms,
+        _movementSampleCount: 1,
+        ...(opts.peakForce !== undefined ? { peakForce: opts.peakForce } : {}),
+      },
+      eccentric: {},
+    } as unknown as Rep;
+  }
+
+  type DeviceEntry = Snapshot['devices'][number];
+
+  /** A slot device entry with its own active set (per-slot telemetry). */
+  function activeSlot(slotId: string, weightLbs: number, reps: Rep[]): DeviceEntry {
+    return {
+      slotId,
+      device: { connected: true, weightLbs },
+      sets: { active: { reps }, completed: [] },
+    };
+  }
+
+  /** A snapshot carrying the given per-slot device entries, in a live session. */
+  function dualSnapshot(devices: DeviceEntry[]): Snapshot {
+    return {
+      session: { sessionId: 's1', exerciseName: 'Cable Chest Press' },
+      devices,
+      sets: { active: null },
+    };
+  }
+
+  function dualSources(devices: DeviceEntry[]): LiveViewSources {
+    return { ...sources(), snapshot: dualSnapshot(devices) };
+  }
+
+  it('projects each bound slot from its OWN active set — the two sides differ', () => {
+    const dual = mapStoreToDualModel(
+      dualSources([
+        activeSlot('left', 140, [rep(520), rep(400)]),
+        activeSlot('right', 135, [rep(500), rep(450)]),
+      ]),
+    );
+    // Left reads its own reps / weight, right its own — never one mirrored onto the other.
+    expect(dual.left?.live?.repVelocities).toEqual([0.52, 0.4]);
+    expect(dual.left?.session.weightLbs).toBe(140);
+    expect(dual.right?.live?.repVelocities).toEqual([0.5, 0.45]);
+    expect(dual.right?.session.weightLbs).toBe(135);
+    // Each side's velocity loss is computed from its own reps: left drops harder than right.
+    expect(dual.left?.live?.velocityLossPct).toBeGreaterThan(dual.right!.live!.velocityLossPct!);
+  });
+
+  it('folds each slot’s own peak concentric force from its set reps', () => {
+    const dual = mapStoreToDualModel(
+      dualSources([
+        activeSlot('left', 140, [rep(520, { peakForce: 300 }), rep(400, { peakForce: 280 })]),
+      ]),
+    );
+    expect(dual.left?.live?.peakForce).toBe(300);
+  });
+
+  it('leaves the sub-rep overlay idle — instantaneous velocity/phase are slot-blind (VW-48)', () => {
+    const dual = mapStoreToDualModel(dualSources([activeSlot('left', 140, [rep(520)])]));
+    // No honest per-slot instantaneous source yet: the live tempo bar stays idle rather than
+    // borrowing the process-global SSE overlay onto one limb.
+    expect(dual.left?.live?.phase).toBe('idle');
+    expect(dual.left?.live?.velocity).toBe(0);
+  });
+
+  it('shows the OTHER side as awaiting (null) when only one slot is bound', () => {
+    const dual = mapStoreToDualModel(dualSources([activeSlot('left', 140, [rep(520)])]));
+    expect(dual.left).not.toBeNull();
+    expect(dual.right).toBeNull();
+  });
+
+  it('yields two null sides when no L/R slots are bound (single-device primary)', () => {
+    const dual = mapStoreToDualModel(
+      dualSources([{ slotId: 'primary', device: { connected: true, weightLbs: 50 } }]),
+    );
+    expect(dual.left).toBeNull();
+    expect(dual.right).toBeNull();
+  });
+
+  it('a slot between sets recaps its OWN completed sets (rest side, not empty)', () => {
+    const restingLeft: DeviceEntry = {
+      slotId: 'left',
+      device: { connected: true, weightLbs: 140 },
+      sets: {
+        active: null,
+        completed: [
+          { set: { reps: [rep(500), rep(460)] }, device: { connected: true, weightLbs: 140 } },
+        ],
+      },
+    };
+    const dual = mapStoreToDualModel(dualSources([restingLeft]));
+    // No active set ⇒ no live overlay, but the slot's completed set makes it a REST side,
+    // not an empty one — the recap comes from this slot's own log.
+    expect(dual.left?.live).toBeNull();
+    expect(dual.left?.session.completedSets).toHaveLength(1);
+    expect(stageIsEmpty(dual.left!)).toBe(false);
   });
 });

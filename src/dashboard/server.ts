@@ -445,7 +445,18 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   let activeSet: ActiveSet | undefined;
   let completedSets: CompletedSetRecord[] = [];
   for (const [slotId, slot] of state.slots) {
-    devices.push({ slotId, device: slot.live.snapshotDevice() });
+    // Per-slot sets (VW-71): each slot's OWN active + completed sets ride on its
+    // device entry so a bilateral (dual-Voltra) view reads per-limb telemetry. The
+    // top-level `sets` below still reports the primary slot's for the single view.
+    const slotActive = slot.live.snapshotSet();
+    devices.push({
+      slotId,
+      device: slot.live.snapshotDevice(),
+      sets: {
+        active: slotActive ?? null,
+        completed: slot.live.snapshotCompletedSets?.() ?? [],
+      },
+    });
     // First slot wins for session/set — single-session contract today; if
     // a future slot has its own active session/set, the snapshot still
     // reports the primary one (devices[] always carries every slot).
@@ -460,7 +471,7 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
       }
     }
     if (activeSet === undefined) {
-      activeSet = slot.live.snapshotSet();
+      activeSet = slotActive;
     }
   }
   const exerciseId = session?.exerciseId;

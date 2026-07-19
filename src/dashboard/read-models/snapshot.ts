@@ -24,6 +24,15 @@ import type {
 export interface DeviceEntry {
   slotId: string;
   device: DeviceSnapshot;
+  /**
+   * This slot's OWN active + completed sets (VW-71). The top-level `sets` reports
+   * only the primary (first) slot's sets — a single-session convenience; this
+   * per-slot field is what a bilateral (dual-Voltra) view reads so each limb
+   * reflects its own device rather than the primary's. Optional so a slot with no
+   * set state (and pre-VW-71 callers/test fakes) simply omit it — a consumer then
+   * shows an awaiting state for that side rather than a fabricated one.
+   */
+  sets?: { active: ActiveSet | null; completed: CompletedSetRecord[] };
 }
 
 /**
