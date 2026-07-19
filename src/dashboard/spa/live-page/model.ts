@@ -374,13 +374,26 @@ function bestRepsSoFar(done: CompletedSet[], live: LiveModel | null): number | n
 }
 
 /**
+ * A rail summary's `weight` + `unit`: the formatted load, or `NO_VALUE` ("—") when the load
+ * is unset (`null`) — a discovery / no-prescription load, NOT a faked 0. The unit label still
+ * resolves from the display unit so the placeholder reads "— lbs" / "— kg".
+ */
+function summaryLoad(
+  lbs: number | null,
+  displayUnit: MassUnit,
+): { weight: number | string; unit: MassUnit } {
+  if (lbs === null) return { weight: NO_VALUE, unit: formatMass(0, displayUnit).unit };
+  const load = formatMass(lbs, displayUnit);
+  return { weight: load.value, unit: load.unit };
+}
+
+/**
  * The rail row for the ACTIVE exercise: its OWN completed sets (filtered from the
  * session-wide log so a prior exercise's sets don't bleed into its count — VW-50), the
  * set in progress, and any remaining planned sets.
  *
- * `weight` falls back to 0 because SessionRail requires a number: under the mock adapter
- * no settings cascade arrives, so weight reads 0/unknown (the standing weight-seed gap).
- * On real hardware it is the live value.
+ * `weight` shows the live value, or `—` when no weight is set yet (never a faked 0).
+ * On real hardware it is the live cascade value.
  */
 function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRailExercise {
   const { session, live } = model;
@@ -409,19 +422,20 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     }
   }
 
-  const load = formatMass(session.weightLbs ?? 0, displayUnit);
   return {
     name: session.exerciseName,
+    // `plannedSets` (prescribed) drives the rail header total + pace bar; `summary.sets` below
+    // is the live DONE count. Keeping them distinct stops the header under-counting by the
+    // active exercise's remaining sets (its done-count is 0 before the first set closes).
+    ...(session.plannedSets !== null ? { plannedSets: session.plannedSets } : {}),
     // PROGRESS aggregates for the active exercise (VW-68), not a prescription stub: what has
     // actually happened this session — sets banked, the best (most reps) set so far, the real
-    // load — rather than the `— × — @ 0` target echo. The plan's target set count is still
-    // legible from the `todo` columns in the strip. Honest empties (0 sets, `—` reps) when
-    // nothing has landed yet; the values fill in as sets close (dark until VW-70 carries reps).
+    // load — rather than the `— × — @ 0` target echo. Honest empties (0 sets, `—` reps, `—`
+    // load) when nothing has landed / no weight is set — never a faked 0.
     summary: {
       sets: done.length + (live ? 1 : 0),
       reps: bestRepsSoFar(done, live) ?? NO_VALUE,
-      weight: load.value,
-      unit: load.unit,
+      ...summaryLoad(session.weightLbs, displayUnit),
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
@@ -440,14 +454,13 @@ function buildDoneRow(
   displayUnit: MassUnit,
 ): SessionRailExercise {
   const logged = session.completedSets.filter((s) => s.exerciseName === planned.name);
-  const load = formatMass(planned.weightLbs ?? 0, displayUnit);
   return {
     name: planned.name,
+    plannedSets: planned.plannedSets,
     summary: {
       sets: planned.plannedSets,
       reps: planned.repsLabel,
-      weight: load.value,
-      unit: load.unit,
+      ...summaryLoad(planned.weightLbs, displayUnit),
     },
     indicator: 'velocity-loss',
     setStates: logged.map((set) => ({ status: 'done', velocities: set.reps })),
@@ -469,14 +482,13 @@ function buildUpcomingRow(
       setStates.push({ status: 'todo', planned: planned.targetReps });
     }
   }
-  const load = formatMass(planned.weightLbs ?? 0, displayUnit);
   return {
     name: planned.name,
+    plannedSets: planned.plannedSets,
     summary: {
       sets: planned.plannedSets,
       reps: planned.repsLabel,
-      weight: load.value,
-      unit: load.unit,
+      ...summaryLoad(planned.weightLbs, displayUnit),
     },
     indicator: 'velocity-loss',
     upcoming: true,
