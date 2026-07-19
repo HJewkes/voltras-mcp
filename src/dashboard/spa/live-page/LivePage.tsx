@@ -4,9 +4,11 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import {
   EmptyState,
   SessionRail,
+  Surface,
   BluetoothIcon,
   alpha,
   getSemanticColors,
+  useOnSurfaceColor,
 } from '@titan-design/react-ui';
 import { ExerciseHeader, LiveView, VerticalSlotLabel, type VoltraSlot } from './LiveView';
 import { RestView } from './RestView';
@@ -21,6 +23,9 @@ import {
 } from './model';
 import { type MassUnit } from './mass';
 
+// Semantic reads for the corner UnitToggle's own chrome — its translucent (alpha) overlay
+// ground, active-segment plane, and border. These are NOT on-surface text roles, so they come
+// from the token map rather than `useOnSurfaceColor`; the toggle's text uses the hook.
 const t = getSemanticColors('dark');
 
 /** localStorage key for the client's chosen weight/force display unit (VW-63). */
@@ -49,6 +54,8 @@ function useDisplayUnit(): [MassUnit, (unit: MassUnit) => void] {
 /** A subtle corner segmented control toggling the wall's weight/force display unit (VW-63). */
 function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassUnit) => void }) {
   const units: MassUnit[] = ['lbs', 'kg'];
+  const activeText = useOnSurfaceColor('primary');
+  const inactiveText = useOnSurfaceColor('tertiary');
   return (
     <View
       style={{
@@ -80,7 +87,7 @@ function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassU
           >
             <Text
               style={{
-                color: active ? t['text-primary'] : t['text-tertiary'],
+                color: active ? activeText : inactiveText,
                 fontSize: 11,
                 fontWeight: '700',
                 letterSpacing: 1.5,
@@ -141,9 +148,9 @@ export interface LivePageProps {
  *     overlay is null while resting), peak force / ROM are hidden (no `CompletedSet`
  *     source), and the countdown ring draws only when a rest TARGET is prescribed (VW-51) —
  *     otherwise it falls back to the honest count-up, never the lab's hardcoded 120s.
- *   - `live-dual` is a design PREVIEW on fixture data, not this session's telemetry — the
- *     live-signal hub carries no slot identity yet (VW-48), so a real bilateral split is
- *     not derivable. It is labelled as such on screen.
+ *   - `live-dual` renders REAL per-slot telemetry (VW-71), one {@link DualLiveStage} half per
+ *     bound Voltra from `mapStoreToDualModel`. An unbound slot shows an honest awaiting side,
+ *     never a fabricated or mirrored limb.
  *
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
@@ -155,8 +162,10 @@ export function LivePage({ variant = 'live', model, dual }: LivePageProps) {
   const isLive = model.live !== null;
 
   return (
-    // Layout via `style`, colour via className — see the PORTING RULE above.
-    <View className="bg-surface-base" style={{ flex: 1, flexDirection: 'row' }}>
+    // The page's charcoal plane (surface-base) and the on-surface colour context root: every
+    // stage below (header, live/rest/empty) resolves its text colour from this Surface instead
+    // of grabbing a token. Layout still via `style` — see the PORTING RULE above.
+    <Surface level="base" style={{ flex: 1, flexDirection: 'row' }}>
       <SessionRail
         title={model.session.title ?? UNTITLED_SESSION}
         exercises={exercises}
@@ -198,7 +207,7 @@ export function LivePage({ variant = 'live', model, dual }: LivePageProps) {
       </View>
       {/* Subtle wall-corner unit toggle — overlays the stage, out of the reading path. */}
       <UnitToggle unit={displayUnit} onChange={setDisplayUnit} />
-    </View>
+    </Surface>
   );
 }
 
