@@ -95,6 +95,14 @@ export interface StoredSet {
   partialReason?: string;
   trainingMode: TrainingModeName;
   weightLbs: number;
+  /**
+   * Marks a warm-up (ramp-up) set. Warm-ups flow through the same
+   * `set.start`/`set.end` path as working sets; this first-class flag lets
+   * progression scoring exclude them explicitly rather than inferring them
+   * from load alone (see `selectWorkingSets`). Absent/`false` ⇒ a working set,
+   * which keeps every pre-flag row and fixture behaving exactly as before.
+   */
+  isWarmup?: boolean;
   reps: StoredRep[];
 }
 

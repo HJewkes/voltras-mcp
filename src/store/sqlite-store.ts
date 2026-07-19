@@ -34,7 +34,7 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
@@ -55,7 +55,8 @@ const SCHEMA_SQL = `
     partial INTEGER NOT NULL,
     partial_reason TEXT,
     training_mode TEXT NOT NULL,
-    weight_lbs REAL NOT NULL
+    weight_lbs REAL NOT NULL,
+    is_warmup INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
 
@@ -167,6 +168,21 @@ const MIGRATE_V1_TO_V2_SQL = `
  */
 const MIGRATE_V2_TO_V3_SQL = `-- v2→v3 schema additions are folded into SCHEMA_SQL via CREATE IF NOT EXISTS.`;
 
+/**
+ * v3→v4: add the `is_warmup` marker to `sets`. Unlike v2→v3 (all `CREATE
+ * TABLE IF NOT EXISTS`), this is an `ALTER TABLE ADD COLUMN`, which SQLite has
+ * no `IF NOT EXISTS` form for — and `applyMigrations` runs the v3→v4 body on a
+ * fresh DB too (its `SCHEMA_SQL` already has the column). So the column-exists
+ * probe below is load-bearing, not defensive: it keeps the migration a no-op
+ * when `sets` already carries `is_warmup`. `DEFAULT 0` backfills every existing
+ * row as a working set.
+ */
+function migrateV3ToV4(db: DatabaseSync): void {
+  const columns = db.prepare(`PRAGMA table_info(sets)`).all() as { name: string }[];
+  if (columns.some((c) => c.name === 'is_warmup')) return;
+  db.exec(`ALTER TABLE sets ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0`);
+}
+
 interface SessionRow {
   id: string;
   started_at: string;
@@ -185,6 +201,7 @@ interface SetRow {
   partial_reason: string | null;
   training_mode: string;
   weight_lbs: number;
+  is_warmup: number;
 }
 
 interface RepRow {
@@ -334,8 +351,8 @@ export class SqliteSessionStore implements SessionStore {
     const upsertSet = this.db.prepare(
       `INSERT OR REPLACE INTO sets
          (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_mode, weight_lbs, is_warmup)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -353,6 +370,7 @@ export class SqliteSessionStore implements SessionStore {
         s.partialReason ?? null,
         s.trainingMode,
         s.weightLbs,
+        s.isWarmup === true ? 1 : 0,
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -658,9 +676,10 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 0 = brand-new DB (CREATE TABLE IF NOT EXISTS will populate it).
   // 1 = pre-Phase-0.5.1 schema (migrated forward in `applyMigrations`).
   // 2 = Phase 0.5.1 schema; v3 added the planning tables (additive only).
+  // 3 = v3 planning schema; v4 added `sets.is_warmup` (additive column).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
-  if (found !== 0 && found !== 1 && found !== 2 && found !== SCHEMA_VERSION) {
+  if (found !== 0 && found !== 1 && found !== 2 && found !== 3 && found !== SCHEMA_VERSION) {
     throw createSchemaIncompatibleError(path, found);
   }
 }
@@ -679,6 +698,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 2) {
     db.exec(MIGRATE_V2_TO_V3_SQL);
+  }
+  if (current <= 3) {
+    migrateV3ToV4(db);
   }
 }
 
@@ -764,6 +786,7 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
     reps,
   };
   if (row.partial_reason !== null) out.partialReason = row.partial_reason;
+  if (row.is_warmup !== 0) out.isWarmup = true;
   return out;
 }
 

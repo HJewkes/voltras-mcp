@@ -452,7 +452,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(3);
+      expect(version.user_version).toBe(4);
     } finally {
       await second.close();
     }
@@ -506,7 +506,7 @@ describe('SqliteSessionStore — v3 migration idempotency', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(3);
+      expect(version.user_version).toBe(4);
     } finally {
       await store.close();
     }

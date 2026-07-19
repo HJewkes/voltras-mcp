@@ -228,6 +228,12 @@ export interface ActiveSet {
    */
   autoCreatedBy?: 'guided_load';
   /**
+   * Marks a warm-up set flagged at `set.start` time. Carried onto the
+   * persisted row ({@link StoredSet.isWarmup}) so progression scoring can
+   * exclude warm-ups explicitly. Undefined ⇒ a working set.
+   */
+  isWarmup?: boolean;
+  /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
    * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.

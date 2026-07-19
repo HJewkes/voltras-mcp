@@ -129,6 +129,14 @@ describe('SqliteSessionStore', () => {
       expect(await store.getSet('missing-set')).toBeUndefined();
     });
 
+    it('round-trips the isWarmup flag; a working set reads back without the key', async () => {
+      await store.putSet(makeSet({ id: 'set-warm', isWarmup: true }));
+      await store.putSet(makeSet({ id: 'set-work' }));
+      expect((await store.getSet('set-warm'))?.isWarmup).toBe(true);
+      // Default (working) sets keep the pre-flag shape: no isWarmup key.
+      expect(await store.getSet('set-work')).not.toHaveProperty('isWarmup');
+    });
+
     it('coerces non-finite rep numbers to 0 rather than storing null (VMCP-01.41)', async () => {
       // Simulate bad upstream data: non-finite numeric fields on a rep. Plain
       // JSON.stringify renders NaN/Infinity as `null`, which reads back as
@@ -306,7 +314,44 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(3);
+      expect(version.user_version).toBe(4);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('migrates a v3 DB forward by adding is_warmup, backfilling existing rows to 0', async () => {
+    const dbPath = join(workdir, 'v3-migrate.sqlite');
+    const seed = new DatabaseSync(dbPath);
+    // v3 `sets` shape: no is_warmup column yet.
+    seed.exec(`
+      CREATE TABLE sets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        partial INTEGER NOT NULL,
+        partial_reason TEXT,
+        training_mode TEXT NOT NULL,
+        weight_lbs REAL NOT NULL
+      );
+      INSERT INTO sets (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs)
+        VALUES ('legacy', 'sess-1', '2025-01-01T00:00:00.000Z', '2025-01-01T00:01:00.000Z', 0, 'WeightTraining', 135);
+      PRAGMA user_version = 3;
+    `);
+    seed.close();
+
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+      expect(names).toContain('is_warmup');
+      const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
+      expect(version.user_version).toBe(4);
+      // The pre-flag row backfills as a working set (no isWarmup key on read).
+      expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
       await store.close();
     }

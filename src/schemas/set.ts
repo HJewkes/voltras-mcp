@@ -1,11 +1,12 @@
 // Input schemas for `set.*` tools.
 //
 // All set operations target the currently active set (or the live device for
-// `set.start`). None of these tools accept explicit set metadata — set
-// metadata (training mode, weight, chains, eccentric) is auto-populated from
-// `state.live.snapshotDevice()` at handler time. Adding fields here would
-// duplicate live device state and create drift between the snapshot and the
-// stored set.
+// `set.start`). *Device-derived* set metadata (training mode, weight, chains,
+// eccentric) is auto-populated from `state.live.snapshotDevice()` at handler
+// time — accepting those as input would duplicate live device state and create
+// drift between the snapshot and the stored set. The one exception is
+// `set.start`'s `isWarmup` flag: warm-up-vs-working is caller *intent* the
+// device can't report, so it must ride on the input.
 
 import { z } from 'zod';
 
@@ -95,10 +96,18 @@ export type WatchConfig = z.infer<typeof WatchConfig>;
  * without it, the set has no notify semantics. Set metadata itself (training
  * mode, weight, chains, eccentric) still derives from the live device
  * snapshot at handler time.
+ *
+ * `isWarmup` is the one explicit set-level attribute a caller may set at start
+ * time: it marks the new set as a warm-up so progression scoring excludes it
+ * (see `StoredSet.isWarmup`). It's intent the device snapshot can't recover —
+ * a warm-up and a working set look identical to the hardware — so it rides on
+ * the input rather than the snapshot. Omitted ⇒ a working set, the default
+ * path unchanged.
  */
 export const SetStartInput = z.object({
   watch: WatchConfig.optional(),
   slot: SlotIdSchema,
+  isWarmup: z.boolean().optional(),
 });
 
 /** Input for `set.end` — operates on the active set in the slot's `live.set`. */
