@@ -1,15 +1,13 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { type ReactElement } from 'react';
-import { View, Text } from 'react-native';
-import { Spinner, getSemanticColors } from '@titan-design/react-ui';
-
-// Our own RN Text colour comes from the resolved dark-theme token, not a `text-*` className
-// (className colours render black on the standalone wall SPA). See RestView's note.
-const t = getSemanticColors('dark');
+import { Text } from 'react-native';
+import { Spinner, Surface, useOnSurfaceColor } from '@titan-design/react-ui';
 
 /*
- * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via inline token `t[...]`
- * (NOT a `text-*` className — those do not resolve for our RN Text in the standalone SPA).
+ * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via the on-surface context.
+ * The `<Surface>` root owns the charcoal plane AND seeds the on-surface colour context, so our
+ * RN Text reads its colour through `useOnSurfaceColor` (literal hex) instead of a `text-*`
+ * className, which does not resolve for raw RN Text on the standalone wall SPA (renders black).
  *
  * The cold-boot stage (VW-68). `mapStoreToDashboardModel` returns null until the FIRST
  * snapshot lands (poll or SSE) — before that there is no session, no device, nothing to
@@ -18,17 +16,16 @@ const t = getSemanticColors('dark');
  * here we do not yet know whether a device or session exists.
  */
 export function ColdBootView(): ReactElement {
+  const textColor = useOnSurfaceColor('secondary');
   return (
-    <View
-      className="bg-surface-base"
+    <Surface
+      level="base"
       style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 }}
     >
       <Spinner size="lg" />
-      <Text
-        style={{ color: t['text-secondary'], fontSize: 14, fontWeight: '600', letterSpacing: 0.5 }}
-      >
+      <Text style={{ color: textColor, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 }}>
         Connecting to the sidecar…
       </Text>
-    </View>
+    </Surface>
   );
 }

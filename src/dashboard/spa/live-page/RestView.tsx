@@ -7,7 +7,8 @@ import {
   Metric,
   MetricGroup,
   ExerciseCard,
-  getSemanticColors,
+  Surface,
+  useOnSurfaceColor,
   type MetricProps,
   type SetRowProps,
 } from '@titan-design/react-ui';
@@ -20,15 +21,12 @@ import {
 } from './model';
 import { type MassUnit, formatMass } from './mass';
 
-/** Resolved dark-theme tokens. Our own RN `Text` colours MUST come from here, not a
- * `text-*` className: className colours do not resolve on the standalone wall SPA (the
- * heading + these eyebrows rendered black on black until switched to inline tokens). Titan's
- * own components resolve colour to inline hex internally, so they are unaffected. */
-const t = getSemanticColors('dark');
-
 /*
- * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via inline token `t[...]`
- * (NOT a `text-*` className — those do not resolve for our RN Text in the standalone SPA).
+ * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via the on-surface context.
+ * The `<Surface>` root owns the charcoal plane AND seeds the on-surface colour context, so our
+ * RN Text reads its colour through `useOnSurfaceColor` (literal hex) rather than a `text-*`
+ * className — those do not resolve for raw RN Text in the standalone SPA (render black). Titan's
+ * own components resolve colour to inline hex internally, so they are unaffected.
  *
  * PORTED from titan's `Lab/North Star` RestView specimen, now STORE-FED. The specimen read
  * everything off the mid-set `live` overlay (its per-rep velocities, peak force, ROM, live
@@ -133,10 +131,9 @@ function nextSetInfo(model: DashboardModel): string | undefined {
 
 /** A section eyebrow label — the specimen's tertiary all-caps caption. */
 function Eyebrow({ children }: { children: string }): ReactElement {
+  const color = useOnSurfaceColor('tertiary');
   return (
-    <Text style={{ color: t['text-tertiary'], fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
-      {children}
-    </Text>
+    <Text style={{ color, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>{children}</Text>
   );
 }
 
@@ -148,6 +145,8 @@ function Eyebrow({ children }: { children: string }): ReactElement {
 function RestCountdown({ model }: { model: DashboardModel }): ReactElement | null {
   const { session, restElapsedMs } = model;
   const info = nextSetInfo(model);
+  // Hoisted above the early returns so the hook count stays stable (rules of hooks).
+  const nextInfoColor = useOnSurfaceColor('secondary');
   if (session.restSec !== null) {
     return (
       <RestTimer
@@ -169,7 +168,7 @@ function RestCountdown({ model }: { model: DashboardModel }): ReactElement | nul
     <View style={{ gap: 8 }}>
       <Eyebrow>REST</Eyebrow>
       <TimerReadout mode="up" elapsedMs={restElapsedMs} running />
-      {info && <Text style={{ color: t['text-secondary'], fontSize: 13 }}>{info}</Text>}
+      {info && <Text style={{ color: nextInfoColor, fontSize: 13 }}>{info}</Text>}
     </View>
   );
 }
@@ -197,7 +196,9 @@ export function RestView({
   const summaryLoad = formatMass(session.weightLbs ?? 0, displayUnit);
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row', padding: 20, gap: 20 }}>
+    // The rest stage's charcoal plane (surface-base) + on-surface colour context for the
+    // eyebrows/next-set text below — same charcoal it sat on before, now context-seeded.
+    <Surface level="base" style={{ flex: 1, flexDirection: 'row', padding: 20, gap: 20 }}>
       {/* left: the countdown + the just-completed exercise recap. */}
       <View style={{ flex: 2, gap: 20 }}>
         <RestCountdown model={model} />
@@ -236,6 +237,6 @@ export function RestView({
           </View>
         </View>
       )}
-    </View>
+    </Surface>
   );
 }

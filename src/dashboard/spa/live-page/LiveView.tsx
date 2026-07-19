@@ -11,6 +11,7 @@ import {
   CircleSlashIcon,
   Tooltip,
   getSemanticColors,
+  useOnSurfaceColor,
   alpha,
   neumorphicShadows,
   type IconProps,
@@ -18,6 +19,10 @@ import {
 import { type DashboardModel, type LiveDashboardModel, verdictFromLoss } from './model';
 import { type MassUnit, formatMass } from './mass';
 
+// Verdict STATUS tones (success/warning/error) for the alert cue — semantic status colours,
+// not on-surface text roles, so they come from the token map rather than `useOnSurfaceColor`.
+// The stage sits on the LiveAuraFrame (its own verdict-flooded plane), not a charcoal Surface;
+// the text below resolves via the on-surface context seeded by the LivePage Surface root.
 const t = getSemanticColors('dark');
 
 /** Raised-card elevation shared by the alert + tempo cards. */
@@ -47,6 +52,7 @@ const SLOT_META: Record<VoltraSlot, { label: string }> = {
 /** The voltra name set vertically down the far-left edge of a layer (dual / multi-device). */
 export function VerticalSlotLabel({ slot }: { slot: VoltraSlot }) {
   const { label } = SLOT_META[slot];
+  const labelColor = useOnSurfaceColor('tertiary');
   return (
     <View
       className="border-border"
@@ -55,7 +61,7 @@ export function VerticalSlotLabel({ slot }: { slot: VoltraSlot }) {
       {/* Fixed width holds the full label before rotation (a bare rotate clips to the strip). */}
       <Text
         style={{
-          color: t['text-tertiary'],
+          color: labelColor,
           width: 150,
           textAlign: 'center',
           fontSize: 12,
@@ -252,6 +258,9 @@ export function ExerciseHeader({
   displayUnit?: MassUnit;
 }) {
   const [w, setW] = useState(0);
+  // Hoisted above the early return so the hook count stays stable (rules of hooks). On-surface
+  // primary text from the Surface context — see the note at the heading below.
+  const nameColor = useOnSurfaceColor('primary');
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
   const targets = resolveTargets(session);
   const load = targets ? formatMass(targets.load, displayUnit) : null;
@@ -281,11 +290,11 @@ export function ExerciseHeader({
     >
       <Text
         style={{
-          // Resolved dark-theme token, not the `text-text-primary` className: the
-          // className→CSS-var path renders black on the standalone wall SPA (the var
-          // is only defined inside titan's themed provider), leaving the stage heading
-          // near-invisible. Inline literal-hex matches LivePage's `t['text-primary']`.
-          color: t['text-primary'],
+          // On-surface primary text from the Surface context (LivePage's Surface root), not the
+          // `text-text-primary` className — the className→CSS-var path renders black on the
+          // standalone wall SPA (the var only exists inside titan's themed provider). The hook
+          // returns literal hex, so the stage heading stays legible.
+          color: nameColor,
           fontSize: HEADER_NAME_SIZE,
           fontFamily: '"Space Grotesk", sans-serif',
           fontWeight: '700',
