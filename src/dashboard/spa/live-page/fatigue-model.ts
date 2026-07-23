@@ -154,10 +154,25 @@ export interface LiveFatigueModel {
   targetTempoSeconds: [number, number, number, number] | null;
 }
 
-/** One side (limb) of the diverging dual-Voltra velocity hero. */
+/**
+ * One side (limb) of the diverging dual-Voltra velocity hero.
+ *
+ * Reconciled with titan's `DualVelocityStream` (hero cleared Gate-2, titan #120):
+ * `repVelocitiesMps` → the component's `velocities`, `label` → its `label`. The
+ * rich `set` slot descriptor (`VelocitySet` — done/todo/range/amrap/myo rendering)
+ * is a FUTURE add: the live dual path takes the simple `velocities` array today
+ * (and is thin anyway while the SSE hub is slot-blind, VW-48), so it is not built
+ * here yet. `bestVelocityMps` / `velocityLossPct` have no direct titan prop; they
+ * are kept for the diverging datum + the per-limb verdict/loss context.
+ */
 export interface DivergingHeroSide {
-  /** Per-rep MEAN concentric velocity, m/s, ordered by rep. */
+  /** Per-rep MEAN concentric velocity, m/s, ordered by rep. Feeds the component `velocities`. */
   repVelocitiesMps: number[];
+  /**
+   * The bound limb/device label for this side (feeds the component `label`) — the
+   * device identity on this slot. `null` when the slot carries no device identity.
+   */
+  label: string | null;
   /**
    * The best (reference) mean concentric velocity for this side, m/s — the datum
    * the per-rep bars diverge from. `null` when the side has no reps.
@@ -170,12 +185,28 @@ export interface DivergingHeroSide {
 /**
  * The diverging dual-Voltra velocity hero: left vs right, mirrored around a shared
  * center axis. A `null` side is an unbound slot (an honest "awaiting" limb — never
- * fabricated). `scaleMaxMps` is the shared velocity scale so both limbs read on one
- * axis.
+ * fabricated).
+ *
+ * Reconciled with titan's diverging hero props (titan #120): `left`/`right` →
+ * `DualVelocityStream` sides, `scaleMaxMps` → the component `scale`, `targetReps` →
+ * the planned dashed-stub count, `liveRepIndex` → the live-rep pop. The component's
+ * optional `zones` (velocity-zone bands) is a FUTURE add — not built here yet.
  */
 export interface DivergingHeroModel {
   left: DivergingHeroSide | null;
   right: DivergingHeroSide | null;
-  /** Shared velocity scale max (m/s). `null` when neither side has any data. */
+  /** Shared velocity scale max (m/s), feeds the component `scale`. `null` when neither side has data. */
   scaleMaxMps: number | null;
+  /**
+   * Planned rep target for the dashed stubs (feeds the component `targetReps`).
+   * `null` when the session carries no prescription. Sourced from the prescription's
+   * low rep bound (the committed planned count).
+   */
+  targetReps: number | null;
+  /**
+   * 0-based index of the current (latest) rep across the bound limbs — drives the
+   * live-rep pop (feeds the component `liveRepIndex`). `null` when no bound side has
+   * landed a rep yet.
+   */
+  liveRepIndex: number | null;
 }

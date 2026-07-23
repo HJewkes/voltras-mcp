@@ -212,26 +212,53 @@ function buildHeroSide(entry: SnapshotDeviceEntry | undefined): DivergingHeroSid
   }
   const best = velocities.length > 0 ? Math.max(...velocities) : null;
   const velocityLossPct = reps.length < 2 ? null : getSetVelocityLossPct({ reps: reps as Rep[] });
-  return { repVelocitiesMps: velocities, bestVelocityMps: best, velocityLossPct };
+  return {
+    repVelocitiesMps: velocities,
+    // The bound device identity on this slot — the only per-slot label the snapshot
+    // carries client-side. `null` when the slot has no device identity yet.
+    label: entry.device.deviceId ?? null,
+    bestVelocityMps: best,
+    velocityLossPct,
+  };
 }
 
 function slotEntry(snapshot: Snapshot, slotId: string): SnapshotDeviceEntry | undefined {
   return snapshot.devices.find((d) => d.slotId === slotId);
 }
 
+/** The rep count of a slot's active set (0 when unbound / no active set). */
+function activeRepCount(entry: SnapshotDeviceEntry | undefined): number {
+  return entry?.sets?.active?.reps?.length ?? 0;
+}
+
 /**
  * Project the store onto the diverging dual-Voltra velocity hero model. Left/right
  * map to the `'left'`/`'right'` slot ids; an unbound slot yields a `null` side (an
- * honest awaiting limb). `scaleMaxMps` is the shared axis max across both sides.
+ * honest awaiting limb). `scaleMaxMps` is the shared axis max across both sides;
+ * `targetReps` (planned dashed stubs) comes from the prescription; `liveRepIndex`
+ * (live-rep pop) is the latest rep across the bound limbs.
  */
 export function mapStoreToDivergingHeroModel(sources: LiveViewSources): DivergingHeroModel {
-  const { snapshot } = sources;
-  if (!snapshot) return { left: null, right: null, scaleMaxMps: null };
+  const { snapshot, prescription } = sources;
+  const targetReps = prescription?.repsLow ?? null;
+  if (!snapshot) {
+    return { left: null, right: null, scaleMaxMps: null, targetReps, liveRepIndex: null };
+  }
 
-  const left = buildHeroSide(slotEntry(snapshot, 'left'));
-  const right = buildHeroSide(slotEntry(snapshot, 'right'));
+  const leftEntry = slotEntry(snapshot, 'left');
+  const rightEntry = slotEntry(snapshot, 'right');
+  const left = buildHeroSide(leftEntry);
+  const right = buildHeroSide(rightEntry);
   const peaks = [left?.bestVelocityMps, right?.bestVelocityMps].filter(
     (v): v is number => typeof v === 'number',
   );
-  return { left, right, scaleMaxMps: peaks.length > 0 ? Math.max(...peaks) : null };
+  // 0-based index of the current (latest) rep across the bound limbs; null before any lands.
+  const maxReps = Math.max(activeRepCount(leftEntry), activeRepCount(rightEntry));
+  return {
+    left,
+    right,
+    scaleMaxMps: peaks.length > 0 ? Math.max(...peaks) : null,
+    targetReps,
+    liveRepIndex: maxReps > 0 ? maxReps - 1 : null,
+  };
 }
