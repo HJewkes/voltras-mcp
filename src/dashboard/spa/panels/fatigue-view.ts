@@ -23,6 +23,7 @@
  */
 import {
   estimateSetRpe,
+  getRepConcentricTime,
   getRepRangeOfMotion,
   getSetFatigueVerdict,
   getSetTempoSeconds,
@@ -85,8 +86,47 @@ function toPhaseSegments(samples: readonly VelocitySample[]): PhaseSegment[] {
   return segments;
 }
 
+/** Clamp to the unit interval. */
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/**
+ * Normalized concentric-duration deviation from the prescribed tempo, 0..1.
+ * `null` when there is no prescribed concentric target to compare against.
+ */
+function tempoDeviationFor(rep: Rep, targetConcSec: number | null): number | null {
+  if (targetConcSec == null || targetConcSec <= 0) return null;
+  const actual = getRepConcentricTime(rep); // seconds (raw duration, NOT formatTempo)
+  if (!Number.isFinite(actual) || actual <= 0) return null;
+  return Number(clamp01(Math.abs(actual - targetConcSec) / targetConcSec).toFixed(3));
+}
+
+/**
+ * Normalized velocity collapse within the concentric, 0..1 — the peak → mid-trough
+ * drop, ignoring the natural lockout taper. The `getPhaseVelocityDropPct` concept
+ * measured over a window that drops the first sample (ramp-up) and the trailing
+ * ~20% (lockout taper), so a smooth rep (velocity holds near its own peak through
+ * the middle) reads ~0 while a mid-rep stall reads high. Ratio → unit-invariant.
+ */
+function grindSignatureFor(rep: Rep): number {
+  const vels = rep.concentric.samples.map((s) => Math.abs(s.velocity)).filter(Number.isFinite);
+  if (vels.length < 3) return 0;
+  const peak = Math.max(...vels);
+  if (peak <= 0) return 0;
+  const tail = Math.max(1, Math.floor(vels.length * 0.2));
+  const middle = vels.slice(1, vels.length - tail);
+  if (middle.length === 0) return 0;
+  const trough = Math.min(...middle);
+  return Number(clamp01((peak - trough) / peak).toFixed(3));
+}
+
 /** One rep's velocity-time curve (concentric then eccentric, in stream order). */
-function buildVelocityCurve(rep: Rep, repNumber: number): RepVelocityCurve {
+function buildVelocityCurve(
+  rep: Rep,
+  repNumber: number,
+  targetConcSec: number | null,
+): RepVelocityCurve {
   const ordered: Sample[] = [...rep.concentric.samples, ...rep.eccentric.samples];
   const base = ordered.length > 0 ? ordered[0].timestamp : 0;
   const samples: VelocitySample[] = ordered.map((s) => ({
@@ -98,9 +138,8 @@ function buildVelocityCurve(rep: Rep, repNumber: number): RepVelocityCurve {
     repNumber,
     samples,
     phaseSegments: toPhaseSegments(samples),
-    // GAP: the per-rep tempo-deviation tint rule is not yet defined; the component
-    // draws the neutral on-track tint until it lands. See the contract note.
-    tempoDeviation: null,
+    tempoDeviation: tempoDeviationFor(rep, targetConcSec),
+    grindSignature: grindSignatureFor(rep),
   };
 }
 
@@ -137,6 +176,9 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   const reps: readonly Rep[] = active.reps ?? [];
   const rpe = estimateSetRpe({ reps: reps as Rep[] });
   const workingStandard = workingRomMetres(reps);
+  // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
+  // tuple's index 2 — is the reference the per-rep tempo-deviation tint compares to.
+  const targetConcSec = prescription?.tempo?.[2] ?? null;
 
   return {
     rpe,
@@ -149,7 +191,9 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     romWorkingStandardM: workingStandard,
     romShortThresholdM:
       workingStandard == null ? null : Number((workingStandard * 0.75).toFixed(3)),
-    velocityCurves: reps.map((rep, i) => buildVelocityCurve(rep, rep.repNumber ?? i + 1)),
+    velocityCurves: reps.map((rep, i) =>
+      buildVelocityCurve(rep, rep.repNumber ?? i + 1, targetConcSec),
+    ),
     tempoSeconds: getSetTempoSeconds({ reps: reps as Rep[] }),
     targetTempoSeconds: prescription?.tempo ?? null,
   };

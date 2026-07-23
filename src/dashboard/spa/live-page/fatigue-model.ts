@@ -55,6 +55,14 @@ export interface PhaseSegment {
 /**
  * One rep's velocity-time curve for the ghost-spark (current rep drawn solid,
  * prior reps faded).
+ *
+ * The line color is driven by TWO normalized per-rep signals (the "green-intensity
+ * control-aware" rule). The mapper provides the numbers; the color MAPPING lives in
+ * the ghost-spark component. Component logic (for reference, not this layer's code):
+ * `grindSignature < ~0.35` → stay green, intensity by `tempoDeviation` (brightest at
+ * 0 → deepest green at 1, hue held); otherwise → warm hue amber (at 0.35) → red (at
+ * 1.0) by `grindSignature`. So a slow-but-smooth rep stays green (just deeper); only
+ * a stalling/collapsing rep warms.
  */
 export interface RepVelocityCurve {
   /** 1-based rep number. */
@@ -64,13 +72,20 @@ export interface RepVelocityCurve {
   /** Contiguous phase runs, for the phase-colored zero-axis. */
   phaseSegments: PhaseSegment[];
   /**
-   * Tempo-deviation tint, 0..1 — 0 = on-track (green), 1 = off (amber/red) — used
-   * to tint the curve line. `null` when there is no target tempo to deviate from.
-   * GAP: the deviation metric (per-rep tempo vs prescribed tempo) is not yet
-   * defined; the mapper leaves this `null` and the component draws the neutral
-   * on-track tint until the tempo-deviation rule lands.
+   * Normalized concentric-duration deviation from the prescribed tempo, 0..1
+   * (0 = on-tempo, 1 = well off). Drives GREEN INTENSITY when the rep is controlled.
+   * `null` when there is no prescribed tempo to deviate from (nothing to compare to).
    */
   tempoDeviation: number | null;
+  /**
+   * Normalized velocity COLLAPSE within the concentric, 0..1 (0 = smooth, 1 = full
+   * collapse) — the peak → mid-concentric-trough drop, ignoring the natural lockout
+   * taper (the `getPhaseVelocityDropPct` concept, measured over a window that drops
+   * the ramp-up and the lockout tail so a smooth rep reads ~0). Warms the line hue
+   * amber→red past the control threshold. Always computed per rep (no prescription
+   * needed); a rep with too few concentric samples reads `0`.
+   */
+  grindSignature: number;
 }
 
 /** One per-rep point of the ROM-progression mini-chart. */
