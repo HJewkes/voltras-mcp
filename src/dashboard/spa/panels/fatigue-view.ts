@@ -214,8 +214,13 @@ function buildHeroSide(entry: SnapshotDeviceEntry | undefined): DivergingHeroSid
   const velocityLossPct = reps.length < 2 ? null : getSetVelocityLossPct({ reps: reps as Rep[] });
   return {
     repVelocitiesMps: velocities,
-    // The bound device identity on this slot — the only per-slot label the snapshot
-    // carries client-side. `null` when the slot has no device identity yet.
+    // PROVISIONAL: the bound device serial (e.g. "V-097082") — the only per-slot
+    // identity the snapshot carries client-side. `null` when the slot has no device
+    // identity yet.
+    // DATA GAP: the intended label is a friendly user-assigned SLOT/LIMB name (e.g.
+    // "Left Arm"). No such name is on the /api/snapshot wire today — it would need to
+    // be surfaced from the slot binding (slot_bind / slot_identify). Do NOT fall back
+    // to the raw 'left'/'right' slotId (that's the hardcoded L/R we moved away from).
     label: entry.device.deviceId ?? null,
     bestVelocityMps: best,
     velocityLossPct,
@@ -240,6 +245,10 @@ function activeRepCount(entry: SnapshotDeviceEntry | undefined): number {
  */
 export function mapStoreToDivergingHeroModel(sources: LiveViewSources): DivergingHeroModel {
   const { snapshot, prescription } = sources;
+  // PROVISIONAL: planned reps from the prescription's low bound. The single-view
+  // (`live-view.ts` / adapter `resolveRepTarget`) sources its `targetReps` from the
+  // active set's `rep_count_reached` watch trigger instead — converge the dual onto
+  // that same path when the live dual is actually built out.
   const targetReps = prescription?.repsLow ?? null;
   if (!snapshot) {
     return { left: null, right: null, scaleMaxMps: null, targetReps, liveRepIndex: null };
