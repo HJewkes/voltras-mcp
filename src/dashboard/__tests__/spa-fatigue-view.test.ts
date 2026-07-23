@@ -316,10 +316,10 @@ describe('mapStoreToDivergingHeroModel', () => {
     } as unknown as Rep;
   }
 
-  function slot(slotId: string, reps: Rep[]): Snapshot['devices'][number] {
+  function slot(slotId: string, reps: Rep[], deviceId?: string): Snapshot['devices'][number] {
     return {
       slotId,
-      device: { connected: true, weightLbs: 100 },
+      device: { connected: true, weightLbs: 100, ...(deviceId ? { deviceId } : {}) },
       sets: { active: { reps }, completed: [] },
     };
   }
@@ -327,7 +327,7 @@ describe('mapStoreToDivergingHeroModel', () => {
   function dualSnapshot(left: Rep[], right: Rep[]): Snapshot {
     return {
       session: { sessionId: 's1' },
-      devices: [slot('left', left), slot('right', right)],
+      devices: [slot('left', left, 'V-LEFT01'), slot('right', right, 'V-RIGHT1')],
       sets: { active: null, completed: [] },
     };
   }
@@ -363,5 +363,38 @@ describe('mapStoreToDivergingHeroModel', () => {
   it('reports no scale when neither side has data', () => {
     const hero = mapStoreToDivergingHeroModel(sources({ snapshot: dualSnapshot([], []) }));
     expect(hero.scaleMaxMps).toBeNull();
+  });
+
+  it('carries the bound device label per side; null when the slot has no device identity', () => {
+    const snap: Snapshot = {
+      session: { sessionId: 's1' },
+      // left bound with a device id; right bound but no device id yet.
+      devices: [slot('left', [meanRep(500, 1)], 'V-LEFT01'), slot('right', [meanRep(500, 1)])],
+      sets: { active: null, completed: [] },
+    };
+    const hero = mapStoreToDivergingHeroModel(sources({ snapshot: snap }));
+    expect(hero.left!.label).toBe('V-LEFT01');
+    expect(hero.right!.label).toBeNull();
+  });
+
+  it('wires targetReps from the prescription and liveRepIndex to the latest rep across limbs', () => {
+    const hero = mapStoreToDivergingHeroModel(
+      sources({
+        // left is one rep ahead of right → liveRepIndex tracks the furthest-along limb.
+        snapshot: dualSnapshot(
+          [meanRep(600, 1), meanRep(500, 2), meanRep(480, 3)],
+          [meanRep(550, 1)],
+        ),
+        prescription: { sets: 3, repsLow: 8, repsHigh: 12 },
+      }),
+    );
+    expect(hero.targetReps).toBe(8);
+    expect(hero.liveRepIndex).toBe(2); // 0-based index of the 3rd (latest) rep
+  });
+
+  it('reports a null liveRepIndex before any rep lands, and null targetReps without a plan', () => {
+    const hero = mapStoreToDivergingHeroModel(sources({ snapshot: dualSnapshot([], []) }));
+    expect(hero.liveRepIndex).toBeNull();
+    expect(hero.targetReps).toBeNull();
   });
 });
