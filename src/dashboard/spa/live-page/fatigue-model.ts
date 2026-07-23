@@ -10,11 +10,10 @@
  * `panels/fatigue-view.ts` projects the store/snapshot onto these types.
  *
  * PROVISIONAL / pre-Gate-2 (titan DoD): the mapper is wired only as a labeled
- * provisional path that validates the data-path and surfaces gaps — it does not
- * claim "done". The one genuine gap it surfaces is the aggregated `verdict`,
- * whose computation is WA's `getSetFatigueVerdict` (the fatigue-verdict module),
- * absent from the installed `@voltras/workout-analytics@1.5.0`. Until WA
- * republishes and voltras-mcp bumps, `verdict` is `null` (see the mapper).
+ * provisional path that validates the data-path — it does not claim "done" and no
+ * component renders it yet. Every field is now sourced from real WA analytics
+ * (`@voltras/workout-analytics` 1.7.0, incl. `getSetFatigueVerdict` /
+ * `getSetWorkingROM`); `verdict` is `null` only for a cold-start set (< 2 reps).
  *
  * Units: every velocity here is m/s and every distance is metres — converted
  * from WA's native mm/s & mm at the mapper boundary, exactly as the existing
@@ -98,12 +97,10 @@ export interface LiveFatigueModel {
   /** Reps in reserve = 10 − RPE. `null` when `rpe` is `null`. */
   repsInReserve: number | null;
   /**
-   * The aggregated verdict + the three per-dimension lights.
-   *
-   * `null` = warming up / indeterminate. PROVISIONAL: always `null` on the
-   * installed WA 1.5.0 (no `getSetFatigueVerdict`); populated once WA republishes
-   * with the fatigue-verdict module and voltras-mcp bumps. The shape is WA's
-   * `FatigueVerdict` verbatim so the swap is a one-liner in the mapper.
+   * The aggregated verdict + the three per-dimension lights, from WA
+   * `getSetFatigueVerdict` (velocity/ROM/tempo with strict precedence so a
+   * clean-looking velocity cannot mask a cheat rep). `null` = warming up (a
+   * cold-start set, < 2 reps). The shape is WA's `FatigueVerdict` verbatim.
    */
   verdict: {
     state: FatigueVerdictState;
@@ -117,10 +114,9 @@ export interface LiveFatigueModel {
   /** ROM progression: per-rep ROM points (metres), ordered by rep. */
   romProgression: RepRomPoint[];
   /**
-   * The working-range standard the ROM chart draws its reference line at (metres).
-   * `null` until a standard is established (needs ≥ 3 reps). PROVISIONAL: computed
-   * inline as the trimmed peak ROM (drop rep 1 + the in-progress rep); superseded
-   * by WA `getSetWorkingROM` post-bump.
+   * The working-range standard the ROM chart draws its reference line at (metres),
+   * from WA `getSetWorkingROM` (trimmed peak: drop rep 1 + the in-progress rep).
+   * `null` until a standard is established (needs ≥ 3 reps).
    */
   romWorkingStandardM: number | null;
   /**

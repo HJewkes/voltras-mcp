@@ -39,7 +39,7 @@
     "@fontsource/space-grotesk": "^5.2.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@voltras/node-sdk": "^0.11.0",
-    "@voltras/workout-analytics": "^1.5.0",
+    "@voltras/workout-analytics": "^1.7.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
     "onnxruntime-node": "^1.27.0",
