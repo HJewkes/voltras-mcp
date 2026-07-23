@@ -171,6 +171,11 @@ export interface DivergingHeroSide {
   /**
    * The bound limb/device label for this side (feeds the component `label`) — the
    * device identity on this slot. `null` when the slot carries no device identity.
+   *
+   * DATA GAP: the intended label is a friendly user-assigned slot/limb name (e.g.
+   * "Left Arm"), which is not on the /api/snapshot wire today — the mapper falls back
+   * to the device serial. A real friendly name would need surfacing from the slot
+   * binding (slot_bind / slot_identify). See the mapper note.
    */
   label: string | null;
   /**
