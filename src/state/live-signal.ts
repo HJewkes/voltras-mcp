@@ -117,12 +117,21 @@ export interface LiveSetSignal {
   tempo?: string;
 }
 
-/** Discriminated union of everything the live-signal hub fans out. */
+/**
+ * Discriminated union of everything the live-signal hub fans out.
+ *
+ * `slotId` (VW-48) tags every event with the originating Voltra slot (e.g.
+ * `'primary'`, `'left'`, `'right'`) so a single shared {@link LiveSignalHub} can
+ * carry a bilateral session's two devices without conflating their telemetry.
+ * The hub itself stays slot-agnostic (a flat fan-out); consumers demux on this
+ * field. Threaded from `LiveSignalEmitter`'s constructor — one emitter per slot,
+ * each stamping its own `slotId` on every event it produces.
+ */
 export type LiveSignalEvent =
-  | { type: 'phase'; data: LivePhaseSignal }
-  | { type: 'phaseflip'; data: LivePhaseFlip }
-  | { type: 'rep'; data: LiveRepSignal }
-  | { type: 'set'; data: LiveSetSignal };
+  | { type: 'phase'; slotId: string; data: LivePhaseSignal }
+  | { type: 'phaseflip'; slotId: string; data: LivePhaseFlip }
+  | { type: 'rep'; slotId: string; data: LiveRepSignal }
+  | { type: 'set'; slotId: string; data: LiveSetSignal };
 
 export type LiveSignalListener = (event: LiveSignalEvent) => void;
 
@@ -221,6 +230,11 @@ export class PhaseClock {
  * and fans derived signals into a {@link LiveSignalHub}. The bridge constructs
  * one per slot and calls `frame()` at the `onFrame` choke point; `rep()` /
  * `set()` are thin pass-throughs for the coarser lifecycle echoes.
+ *
+ * `slotId` (VW-48) is stamped onto every event this instance emits so a shared
+ * hub can carry two slots' telemetry (bilateral sessions) without a consumer
+ * conflating them — the hub itself does no slot-aware routing, it only fans
+ * out; demuxing by `slotId` is the consumer's job.
  */
 export class LiveSignalEmitter {
   private readonly clock = new PhaseClock();
@@ -228,6 +242,7 @@ export class LiveSignalEmitter {
 
   constructor(
     private readonly hub: LiveSignalHub,
+    private readonly slotId: string,
     private readonly minPhaseIntervalMs: number = MIN_PHASE_INTERVAL_MS,
   ) {}
 
@@ -236,19 +251,19 @@ export class LiveSignalEmitter {
     // A flip always fires immediately — it's the crisp phase boundary the
     // client snaps to. Never throttled.
     if (flip !== null) {
-      this.hub.emit({ type: 'phaseflip', data: flip });
+      this.hub.emit({ type: 'phaseflip', slotId: this.slotId, data: flip });
     }
     if (input.t - this.lastPhaseEmitMs >= this.minPhaseIntervalMs) {
       this.lastPhaseEmitMs = input.t;
-      this.hub.emit({ type: 'phase', data: phase });
+      this.hub.emit({ type: 'phase', slotId: this.slotId, data: phase });
     }
   }
 
   rep(data: LiveRepSignal): void {
-    this.hub.emit({ type: 'rep', data });
+    this.hub.emit({ type: 'rep', slotId: this.slotId, data });
   }
 
   set(data: LiveSetSignal): void {
-    this.hub.emit({ type: 'set', data });
+    this.hub.emit({ type: 'set', slotId: this.slotId, data });
   }
 }

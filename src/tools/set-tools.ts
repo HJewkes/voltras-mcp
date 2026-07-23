@@ -298,6 +298,7 @@ async function startSet(
   // can reset its live tempo bar. Fitness-units lifecycle metadata only.
   state.liveSignals?.emit({
     type: 'set',
+    slotId,
     data: { kind: 'started', setId, sessionId: session.sessionId },
   });
   // VMCP-02.08: the next set has begun → cancel any in-flight rest_status
@@ -649,6 +650,7 @@ export async function finalizeSet(
     );
     state.liveSignals?.emit({
       type: 'rep',
+      slotId,
       data: {
         repIndex: correctedForStore.reps.length,
         vCon: mmsToMps(getPhaseMeanVelocity(terminalRep.concentric)),
@@ -662,6 +664,7 @@ export async function finalizeSet(
   // clears its live tempo bar back to the non-live (per-rep-summary) mode.
   state.liveSignals?.emit({
     type: 'set',
+    slotId,
     data: { kind: 'ended', setId: stored.id, sessionId: stored.sessionId },
   });
   // VMCP-02.68: advisory flag when the force-implied weight disagrees with the

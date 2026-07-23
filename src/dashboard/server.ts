@@ -409,7 +409,13 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
   writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
 
   const unsubscribe = state.liveSignals?.subscribe((event) => {
-    writeSseEvent(res, event.type, event.data);
+    // VW-48: stamp the originating slot onto the wire payload as a sibling
+    // `slot` field. Additive — existing single-Voltra clients (`live-stream.ts`)
+    // JSON.parse the event body without a `slot`-aware type and simply ignore
+    // the extra key, so this is backward-compatible. A future dual-aware client
+    // demuxes on `slot` to route `phase`/`phaseflip`/`rep`/`set` events to the
+    // correct per-limb live model instead of the single shared one.
+    writeSseEvent(res, event.type, { slot: event.slotId, ...event.data });
     // A set lifecycle boundary is a structural transition: push the fresh
     // snapshot so the client updates structure without waiting for the poll.
     if (event.type === 'set') {

@@ -99,7 +99,7 @@ describe('LiveSignalEmitter', () => {
 
   it('emits a phase frame per sample through a full con→hold→ecc→idle rep', () => {
     const { hub, events } = collect();
-    const emitter = new LiveSignalEmitter(hub);
+    const emitter = new LiveSignalEmitter(hub, 'primary');
     // 90 ms cadence keeps each frame above the 50 ms throttle floor.
     emitter.frame(frame({ t: 0, phase: 'con', repInProgress: 1 }));
     emitter.frame(frame({ t: 90, phase: 'con', repInProgress: 1 }));
@@ -120,7 +120,7 @@ describe('LiveSignalEmitter', () => {
 
   it('never drops a flip even when the phase frame is throttled', () => {
     const { hub, events } = collect();
-    const emitter = new LiveSignalEmitter(hub);
+    const emitter = new LiveSignalEmitter(hub, 'primary');
     emitter.frame(frame({ t: 0, phase: 'con' })); // seeds + emits phase
     // 20 ms later (< 50 ms floor) the phase flips: phase frame throttled, but
     // the flip MUST still fire so the client can snap immediately.
@@ -131,7 +131,7 @@ describe('LiveSignalEmitter', () => {
 
   it('drops sub-50 ms phase frames as a safety cap but keeps native cadence', () => {
     const { hub, events } = collect();
-    const emitter = new LiveSignalEmitter(hub);
+    const emitter = new LiveSignalEmitter(hub, 'primary');
     emitter.frame(frame({ t: 0, phase: 'con' }));
     emitter.frame(frame({ t: 20, phase: 'con' })); // throttled (20 ms gap)
     emitter.frame(frame({ t: 40, phase: 'con' })); // throttled (40 ms gap)
@@ -142,17 +142,33 @@ describe('LiveSignalEmitter', () => {
 
   it('fans rep + set lifecycle echoes through the hub', () => {
     const { hub, events } = collect();
-    const emitter = new LiveSignalEmitter(hub);
+    const emitter = new LiveSignalEmitter(hub, 'primary');
     emitter.set({ kind: 'started', setId: 's1', sessionId: 'sess1' });
     emitter.rep({ repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63, peakForceSoFar: 205 });
 
     expect(events).toEqual([
-      { type: 'set', data: { kind: 'started', setId: 's1', sessionId: 'sess1' } },
+      {
+        type: 'set',
+        slotId: 'primary',
+        data: { kind: 'started', setId: 's1', sessionId: 'sess1' },
+      },
       {
         type: 'rep',
+        slotId: 'primary',
         data: { repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63, peakForceSoFar: 205 },
       },
     ]);
+  });
+
+  it('stamps a distinct slotId per emitter so a shared hub can carry two slots (VW-48)', () => {
+    const { hub, events } = collect();
+    const left = new LiveSignalEmitter(hub, 'left');
+    const right = new LiveSignalEmitter(hub, 'right');
+    left.set({ kind: 'started', setId: 'left-set', sessionId: 'sess1' });
+    right.set({ kind: 'started', setId: 'right-set', sessionId: 'sess1' });
+
+    expect(events.map((e) => e.slotId)).toEqual(['left', 'right']);
+    expect(events.map((e) => e.type === 'set' && e.data.setId)).toEqual(['left-set', 'right-set']);
   });
 });
 
@@ -164,8 +180,16 @@ describe('LiveSignalHub', () => {
       throw new Error('bad consumer');
     });
     hub.subscribe((e) => seen.push(e.type));
-    hub.emit({ type: 'set', data: { kind: 'started', setId: 's', sessionId: 'z' } });
-    hub.emit({ type: 'set', data: { kind: 'ended', setId: 's', sessionId: 'z' } });
+    hub.emit({
+      type: 'set',
+      slotId: 'primary',
+      data: { kind: 'started', setId: 's', sessionId: 'z' },
+    });
+    hub.emit({
+      type: 'set',
+      slotId: 'primary',
+      data: { kind: 'ended', setId: 's', sessionId: 'z' },
+    });
     expect(seen).toEqual(['set', 'set']);
   });
 
@@ -176,7 +200,11 @@ describe('LiveSignalHub', () => {
     expect(hub.subscriberCount).toBe(1);
     off();
     expect(hub.subscriberCount).toBe(0);
-    hub.emit({ type: 'set', data: { kind: 'ended', setId: 's', sessionId: 'z' } });
+    hub.emit({
+      type: 'set',
+      slotId: 'primary',
+      data: { kind: 'ended', setId: 's', sessionId: 'z' },
+    });
     expect(seen).toHaveLength(0);
   });
 });

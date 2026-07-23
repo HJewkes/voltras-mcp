@@ -1190,14 +1190,17 @@ describe('GET /api/stream (SSE)', () => {
       await waitFor(() => body.includes('event: hb'));
       hub.emit({
         type: 'set',
+        slotId: 'primary',
         data: { kind: 'started', setId: 'set-1', sessionId: 'sess-1' },
       });
       hub.emit({
         type: 'phaseflip',
+        slotId: 'primary',
         data: { t: 1000, from: 'con', to: 'hold', repIndex: 3 },
       });
       hub.emit({
         type: 'phase',
+        slotId: 'primary',
         data: {
           t: 1000,
           phase: 'con',
@@ -1210,14 +1213,64 @@ describe('GET /api/stream (SSE)', () => {
       });
       hub.emit({
         type: 'rep',
+        slotId: 'primary',
         data: { repIndex: 3, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 },
       });
 
       await waitFor(() => body.includes('event: rep'));
-      expect(body).toContain('event: set\ndata: {"kind":"started"');
-      expect(body).toContain('event: phaseflip\ndata: {"t":1000,"from":"con","to":"hold"');
-      expect(body).toContain('event: phase\ndata: {"t":1000,"phase":"con"');
-      expect(body).toContain('event: rep\ndata: {"repIndex":3');
+      // VW-48: the wire payload carries a `slot` field (stamped ahead of the
+      // event's own fields) so a dual-aware client can demux per-limb telemetry
+      // off a single SSE connection.
+      expect(body).toContain('event: set\ndata: {"slot":"primary","kind":"started"');
+      expect(body).toContain(
+        'event: phaseflip\ndata: {"slot":"primary","t":1000,"from":"con","to":"hold"',
+      );
+      expect(body).toContain('event: phase\ndata: {"slot":"primary","t":1000,"phase":"con"');
+      expect(body).toContain('event: rep\ndata: {"slot":"primary","repIndex":3');
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('tags events from two different slots distinctly so a dual session can demux (VW-48)', async () => {
+    const hub = new LiveSignalHub();
+    const handle = await startWithFake({ ...makeFakeState(), liveSignals: hub });
+    let body = '';
+    const stream = await openStream(DEFAULT_DASHBOARD_HOST, handle.port, '/api/stream', (b) => {
+      body = b;
+    });
+    try {
+      await waitFor(() => body.includes('event: hb'));
+      hub.emit({
+        type: 'phase',
+        slotId: 'left',
+        data: {
+          t: 1000,
+          phase: 'con',
+          phaseElapsedMs: 90,
+          position: 100,
+          velocity: 0.2,
+          force: 50,
+          repInProgress: 1,
+        },
+      });
+      hub.emit({
+        type: 'phase',
+        slotId: 'right',
+        data: {
+          t: 1000,
+          phase: 'ecc',
+          phaseElapsedMs: 45,
+          position: 200,
+          velocity: 0.3,
+          force: 60,
+          repInProgress: 2,
+        },
+      });
+
+      await waitFor(() => body.includes('"slot":"right"'));
+      expect(body).toContain('event: phase\ndata: {"slot":"left","t":1000,"phase":"con"');
+      expect(body).toContain('event: phase\ndata: {"slot":"right","t":1000,"phase":"ecc"');
     } finally {
       stream.close();
     }
@@ -1232,17 +1285,23 @@ describe('GET /api/stream (SSE)', () => {
     });
     try {
       await waitFor(() => body.includes('event: hb'));
-      hub.emit({ type: 'set', data: { kind: 'ended', setId: 'set-1', sessionId: 'sess-1' } });
+      hub.emit({
+        type: 'set',
+        slotId: 'primary',
+        data: { kind: 'ended', setId: 'set-1', sessionId: 'sess-1' },
+      });
       // Wait for the snapshot that FOLLOWS the set echo — a snapshot is also
       // pushed on connect (VW-70 late-join catch-up), so gate on the set-triggered
       // one specifically rather than any snapshot event.
       await waitFor(() => {
-        const setIdx = body.indexOf('event: set\ndata: {"kind":"ended"');
+        const setIdx = body.indexOf('event: set\ndata: {"slot":"primary","kind":"ended"');
         return setIdx !== -1 && body.indexOf('event: snapshot', setIdx) !== -1;
       });
       // the set echo AND the structural snapshot (with its ordering rev) both go out
-      expect(body).toContain('event: set\ndata: {"kind":"ended"');
-      const afterSet = body.slice(body.indexOf('event: set\ndata: {"kind":"ended"'));
+      expect(body).toContain('event: set\ndata: {"slot":"primary","kind":"ended"');
+      const afterSet = body.slice(
+        body.indexOf('event: set\ndata: {"slot":"primary","kind":"ended"'),
+      );
       expect(afterSet).toMatch(/event: snapshot\ndata: \{.*"rev":\d+/);
       expect(body).toContain('"devices":');
     } finally {

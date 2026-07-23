@@ -366,8 +366,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // state was constructed without a hub (partial test wiring) — the tap no-ops.
   // The derived schema (`src/state/live-signal.ts`) is shared with VMCP-02.58's
   // Tier-1 cue matcher: same tap, same fields, derived once.
+  //
+  // VW-48: this slot's `slotId` is threaded into the emitter so every event it
+  // fans onto the (process-wide, shared-across-slots) hub is stamped with its
+  // origin — the fix for the SSE stream being slot-blind on bilateral sessions.
   const liveSignals =
-    state.liveSignals !== undefined ? new LiveSignalEmitter(state.liveSignals) : undefined;
+    state.liveSignals !== undefined ? new LiveSignalEmitter(state.liveSignals, slotId) : undefined;
   // Latest known state-dump values; transitions synthesize `settings_update`
   // channel events (Bug 26 / C1). Initialised to `undefined` so the first
   // state-dump frame always emits a baseline event.
