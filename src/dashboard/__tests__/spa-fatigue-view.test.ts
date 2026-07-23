@@ -177,13 +177,27 @@ describe('mapStoreToFatigueModel', () => {
     expect(model!.tempoSeconds).toHaveLength(4);
   });
 
-  it('keeps the verdict null on the installed WA (provisional — populated post WA bump)', () => {
+  it('flows a REAL multi-dimension verdict end to end (velocity-ok + cut ROM → form breaking down)', () => {
+    // Constant velocity (loss 0 → velocity ok) but the last rep is cut to 60% of the
+    // working standard — the cheat rep the strict-precedence verdict must catch.
     const reps = buildReps([
       { concVel: 500, rom: 100 },
-      { concVel: 400, rom: 100 },
-      { concVel: 300, rom: 100 },
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 60 },
     ]);
     const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }));
+    expect(model!.verdict).not.toBeNull();
+    expect(model!.verdict).toEqual({
+      state: 'form-breakdown',
+      tone: 'alarm',
+      dimensions: { velocityLoss: 'ok', rom: 'alarm', tempo: 'ok' },
+    });
+  });
+
+  it('still yields a null verdict for a cold-start set (< 2 reps)', () => {
+    const reps = buildReps([{ concVel: 500, rom: 100 }]);
+    const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }));
+    expect(model).not.toBeNull();
     expect(model!.verdict).toBeNull();
   });
 });

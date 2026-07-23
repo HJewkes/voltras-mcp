@@ -6,19 +6,16 @@
  * projection — no I/O, no component imports — the sibling of
  * `live-view.ts:mapStoreToDashboardModel`.
  *
- * Why this is labeled PROVISIONAL:
- *   1. The titan components it feeds are being hardened in parallel and are not
- *      merged, so their final prop types cannot be imported — this validates the
- *      data-path against a proposed contract, it does not finalize it.
- *   2. The aggregated `verdict` is WA `getSetFatigueVerdict` (the fatigue-verdict
- *      module), absent from the installed `@voltras/workout-analytics@1.5.0`.
- *      Until WA republishes and voltras-mcp bumps, `verdict` stays `null` and the
- *      card renders "warming up". The `romWorkingStandardM` is likewise computed
- *      inline here as a stand-in for WA `getSetWorkingROM` until the bump.
+ * Why this is still labeled PROVISIONAL: the titan components it feeds are being
+ * hardened in parallel and are not merged, so their final prop types cannot be
+ * imported — this validates the real data-path against a proposed contract, it
+ * does not finalize it, and no component renders it yet.
  *
- * Everything else the card/hero need IS available today: the full WA `Rep[]`
- * (with per-sample streams) already crosses `/api/snapshot`, and per-rep ROM,
- * the tempo tuple, velocity loss, and RPE all derive from the installed WA.
+ * The data path is now REAL end to end: the full WA `Rep[]` (with per-sample
+ * streams) crosses `/api/snapshot`, and every model field — the multi-dimension
+ * `verdict` (WA `getSetFatigueVerdict`), the working-ROM standard (WA
+ * `getSetWorkingROM`), per-rep ROM, the tempo tuple, velocity loss, and RPE — is
+ * computed from `@voltras/workout-analytics` (bumped to 1.7.0 for the verdict).
  *
  * Units: velocities → m/s, distances → m, converted from WA-native mm/s & mm at
  * this boundary (as the existing live-view mapping does). No force/impulse/power
@@ -27,9 +24,10 @@
 import {
   estimateSetRpe,
   getRepRangeOfMotion,
-  getSetRepROMs,
+  getSetFatigueVerdict,
   getSetTempoSeconds,
   getSetVelocityLossPct,
+  getSetWorkingROM,
   MovementPhase,
   type Rep,
 } from '@voltras/workout-analytics';
@@ -107,17 +105,13 @@ function buildVelocityCurve(rep: Rep, repNumber: number): RepVelocityCurve {
 }
 
 /**
- * The working ROM standard (metres) — PROVISIONAL stand-in for WA `getSetWorkingROM`:
- * trim rep 1 (setup) and the last (in-progress/truncated) rep, take the peak of the
- * remaining reps. `null` until ≥ 3 reps establish a middle. Superseded by the WA
- * function post-bump (same trim policy, so the value is stable across the swap).
+ * The working ROM standard (metres) — WA `getSetWorkingROM` (trimmed peak: drop
+ * rep 1 + the in-progress/last rep; `null` until ≥ 3 reps establish a middle),
+ * converted from WA-native mm to metres at this boundary.
  */
 function workingRomMetres(reps: readonly Rep[]): number | null {
-  const roms = getSetRepROMs({ reps: reps as Rep[] });
-  if (roms.length < 3) return null;
-  const established = roms.slice(1, -1).filter((r) => Number.isFinite(r) && r > 0);
-  if (established.length === 0) return null;
-  return toMetres(Math.max(...established));
+  const standardMm = getSetWorkingROM({ reps: reps as Rep[] });
+  return standardMm == null ? null : toMetres(standardMm);
 }
 
 /** The per-rep ROM progression (metres), skipping reps with no finite ROM. */
@@ -147,10 +141,10 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   return {
     rpe,
     repsInReserve: rpe == null ? null : Number((10 - rpe).toFixed(2)),
-    // PROVISIONAL: WA `getSetFatigueVerdict` is not in the installed 1.5.0. Swap to
-    //   verdict: reps.length < 2 ? null : getSetFatigueVerdict({ reps })
-    // once WA republishes with the fatigue-verdict module and voltras-mcp bumps.
-    verdict: null,
+    // The multi-dimension verdict from WA (velocity/ROM/tempo with strict precedence).
+    // `null` for a cold-start set (< 2 reps) — mirrors `getSetFatigueVerdict`'s own gate
+    // — which the card renders as a neutral "warming up".
+    verdict: reps.length < 2 ? null : getSetFatigueVerdict({ reps: reps as Rep[] }),
     romProgression: romProgression(reps),
     romWorkingStandardM: workingStandard,
     romShortThresholdM:
