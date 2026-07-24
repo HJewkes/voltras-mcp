@@ -409,6 +409,12 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
   writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
 
   const unsubscribe = state.liveSignals?.subscribe((event) => {
+    // Verbatim forwarder. The originating slot (VW-48) is already a field ON
+    // the payload — stamped by `LiveSignalEmitter` — so there is nothing to
+    // merge here, and no way for a future signal field to go missing because
+    // someone forgot to add it to a per-event-type merge. Additive for existing
+    // single-Voltra clients (`live-stream.ts`), which JSON.parse the body and
+    // simply ignore the extra `slot` key; a dual-aware client demuxes on it.
     writeSseEvent(res, event.type, event.data);
     // A set lifecycle boundary is a structural transition: push the fresh
     // snapshot so the client updates structure without waiting for the poll.

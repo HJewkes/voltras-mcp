@@ -280,8 +280,14 @@ describe('SqliteSessionStore.open() error paths', () => {
     const e = caught as Error & { code?: string };
     expect(e.code).toBe('SCHEMA_INCOMPATIBLE');
     expect(e.message).toContain(dbPath);
-    expect(e.message).toContain('99');
-    expect(e.message).toContain('3');
+    // Report BOTH the version found on disk and the version we require. Assert
+    // the full `expected <n>` phrase rather than a bare digit: a bare digit
+    // matches anywhere in the message — including the random temp path inside
+    // `dbPath` — so `toContain('3')` passed by accident on macOS (long
+    // `/var/folders/...` paths nearly always contain a '3') while failing on
+    // CI's short `/tmp/...`. It had also gone stale: SCHEMA_VERSION is 4.
+    expect(e.message).toContain('user_version=99');
+    expect(e.message).toMatch(/expected 4\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {

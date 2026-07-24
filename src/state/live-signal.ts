@@ -65,6 +65,13 @@ export const FRAME_FORCE_TENTHS_PER_LB = 10;
  * phase flip) — the load-bearing input a live tempo bar interpolates against.
  */
 export interface LivePhaseSignal {
+  /**
+   * Originating Voltra slot (`'primary'` for single-Voltra/bench, `'left'` /
+   * `'right'` for bilateral). VW-48: carried on the payload itself so it
+   * survives serialization verbatim and a dual-aware client can demux without
+   * a separate envelope type. See {@link LiveSignalEmitter}.
+   */
+  slot: string;
   /** Frame timestamp, ms since epoch. */
   t: number;
   phase: LivePhase;
@@ -86,6 +93,8 @@ export interface LivePhaseSignal {
  * to ~90 ms for the next sample.
  */
 export interface LivePhaseFlip {
+  /** Originating Voltra slot — see {@link LivePhaseSignal.slot}. */
+  slot: string;
   t: number;
   from: LivePhase;
   to: LivePhase;
@@ -94,6 +103,8 @@ export interface LivePhaseFlip {
 
 /** Echo of a finalized rep (mirrors the channel `rep_finalized`, lean shape). */
 export interface LiveRepSignal {
+  /** Originating Voltra slot — see {@link LivePhaseSignal.slot}. */
+  slot: string;
   /** 1-based rep number. */
   repIndex: number;
   /** Mean concentric velocity, m/s. */
@@ -108,6 +119,8 @@ export interface LiveRepSignal {
 
 /** Set lifecycle echo so a client can reset / clear its live tempo bar. */
 export interface LiveSetSignal {
+  /** Originating Voltra slot — see {@link LivePhaseSignal.slot}. */
+  slot: string;
   kind: 'started' | 'ended';
   setId: string;
   sessionId: string;
@@ -117,7 +130,29 @@ export interface LiveSetSignal {
   tempo?: string;
 }
 
-/** Discriminated union of everything the live-signal hub fans out. */
+/**
+ * The phase payloads as {@link PhaseClock} derives them — before a slot is
+ * known. The clock is pure phase math over one device's frames and has no
+ * concept of slots; {@link LiveSignalEmitter} stamps its own `slot` on the way
+ * out. Kept as `Omit`s so the wire types stay the single source of truth.
+ */
+export type LivePhaseSignalCore = Omit<LivePhaseSignal, 'slot'>;
+export type LivePhaseFlipCore = Omit<LivePhaseFlip, 'slot'>;
+export type LiveRepSignalCore = Omit<LiveRepSignal, 'slot'>;
+export type LiveSetSignalCore = Omit<LiveSetSignal, 'slot'>;
+
+/**
+ * Discriminated union of everything the live-signal hub fans out.
+ *
+ * VW-48: the originating Voltra slot (`'primary'`, `'left'`, `'right'`) rides
+ * on the PAYLOAD (see {@link LivePhaseSignal.slot}), not on this envelope, so a
+ * single shared {@link LiveSignalHub} can carry a bilateral session's two
+ * devices without conflating their telemetry — and so `serveStream` stays a
+ * dumb verbatim forwarder rather than merging a field in per event type. The
+ * hub itself is slot-agnostic (a flat fan-out); consumers demux on `data.slot`,
+ * which is typed end-to-end including at the SPA client's `JSON.parse(...) as
+ * LivePhaseSignal` boundary.
+ */
 export type LiveSignalEvent =
   | { type: 'phase'; data: LivePhaseSignal }
   | { type: 'phaseflip'; data: LivePhaseFlip }
@@ -189,8 +224,8 @@ export class PhaseClock {
   private phase: LivePhase | null = null;
   private phaseStartedAtMs = 0;
 
-  advance(input: LiveFrameInput): { phase: LivePhaseSignal; flip: LivePhaseFlip | null } {
-    let flip: LivePhaseFlip | null = null;
+  advance(input: LiveFrameInput): { phase: LivePhaseSignalCore; flip: LivePhaseFlipCore | null } {
+    let flip: LivePhaseFlipCore | null = null;
     if (this.phase === null) {
       // First observed frame: seed the clock, no flip (nothing to flip from).
       this.phase = input.phase;
@@ -221,6 +256,13 @@ export class PhaseClock {
  * and fans derived signals into a {@link LiveSignalHub}. The bridge constructs
  * one per slot and calls `frame()` at the `onFrame` choke point; `rep()` /
  * `set()` are thin pass-throughs for the coarser lifecycle echoes.
+ *
+ * `slotId` (VW-48) is stamped as `slot` onto the PAYLOAD of every event this
+ * instance emits, so a shared hub can carry two slots' telemetry (bilateral
+ * sessions) without a consumer conflating them — the hub itself does no
+ * slot-aware routing, it only fans out; demuxing on `data.slot` is the
+ * consumer's job. Stamping here (rather than merging at the SSE boundary) is
+ * what keeps `slot` typed all the way to the client.
  */
 export class LiveSignalEmitter {
   private readonly clock = new PhaseClock();
@@ -228,6 +270,7 @@ export class LiveSignalEmitter {
 
   constructor(
     private readonly hub: LiveSignalHub,
+    private readonly slotId: string,
     private readonly minPhaseIntervalMs: number = MIN_PHASE_INTERVAL_MS,
   ) {}
 
@@ -235,20 +278,24 @@ export class LiveSignalEmitter {
     const { phase, flip } = this.clock.advance(input);
     // A flip always fires immediately — it's the crisp phase boundary the
     // client snaps to. Never throttled.
+    // `slot` is stamped FIRST in every payload so the serialized key order is
+    // identical across all emit paths (emitter-derived and the direct
+    // `set-tools` lifecycle echoes). The Core types are `Omit<…, 'slot'>`, so
+    // the spread can never clobber it.
     if (flip !== null) {
-      this.hub.emit({ type: 'phaseflip', data: flip });
+      this.hub.emit({ type: 'phaseflip', data: { slot: this.slotId, ...flip } });
     }
     if (input.t - this.lastPhaseEmitMs >= this.minPhaseIntervalMs) {
       this.lastPhaseEmitMs = input.t;
-      this.hub.emit({ type: 'phase', data: phase });
+      this.hub.emit({ type: 'phase', data: { slot: this.slotId, ...phase } });
     }
   }
 
-  rep(data: LiveRepSignal): void {
-    this.hub.emit({ type: 'rep', data });
+  rep(data: LiveRepSignalCore): void {
+    this.hub.emit({ type: 'rep', data: { slot: this.slotId, ...data } });
   }
 
-  set(data: LiveSetSignal): void {
-    this.hub.emit({ type: 'set', data });
+  set(data: LiveSetSignalCore): void {
+    this.hub.emit({ type: 'set', data: { slot: this.slotId, ...data } });
   }
 }

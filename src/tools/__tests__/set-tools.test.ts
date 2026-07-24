@@ -741,6 +741,7 @@ describe('set.end terminal-rep SSE echo (VW-57)', () => {
     // only emitter — exactly one terminal rep signal, never reps 1..N-1.
     expect(repEvents).toHaveLength(1);
     expect(repEvents[0].data).toEqual({
+      slot: 'primary',
       repIndex: 3,
       vCon: mmsToMps(getPhaseMeanVelocity(reps[2].concentric)),
       rom: mmToM(getRepRangeOfMotion(reps[2])),
