@@ -1190,18 +1190,16 @@ describe('GET /api/stream (SSE)', () => {
       await waitFor(() => body.includes('event: hb'));
       hub.emit({
         type: 'set',
-        slotId: 'primary',
-        data: { kind: 'started', setId: 'set-1', sessionId: 'sess-1' },
+        data: { slot: 'primary', kind: 'started', setId: 'set-1', sessionId: 'sess-1' },
       });
       hub.emit({
         type: 'phaseflip',
-        slotId: 'primary',
-        data: { t: 1000, from: 'con', to: 'hold', repIndex: 3 },
+        data: { slot: 'primary', t: 1000, from: 'con', to: 'hold', repIndex: 3 },
       });
       hub.emit({
         type: 'phase',
-        slotId: 'primary',
         data: {
+          slot: 'primary',
           t: 1000,
           phase: 'con',
           phaseElapsedMs: 90,
@@ -1213,14 +1211,14 @@ describe('GET /api/stream (SSE)', () => {
       });
       hub.emit({
         type: 'rep',
-        slotId: 'primary',
-        data: { repIndex: 3, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 },
+        data: { slot: 'primary', repIndex: 3, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 },
       });
 
       await waitFor(() => body.includes('event: rep'));
-      // VW-48: the wire payload carries a `slot` field (stamped ahead of the
-      // event's own fields) so a dual-aware client can demux per-limb telemetry
-      // off a single SSE connection.
+      // VW-48 (Shape A): `slot` is a field ON the payload — `serveStream`
+      // forwards it verbatim rather than merging it in — so a dual-aware client
+      // can demux per-limb telemetry off a single SSE connection, with the
+      // field typed at its `JSON.parse` boundary.
       expect(body).toContain('event: set\ndata: {"slot":"primary","kind":"started"');
       expect(body).toContain(
         'event: phaseflip\ndata: {"slot":"primary","t":1000,"from":"con","to":"hold"',
@@ -1243,8 +1241,8 @@ describe('GET /api/stream (SSE)', () => {
       await waitFor(() => body.includes('event: hb'));
       hub.emit({
         type: 'phase',
-        slotId: 'left',
         data: {
+          slot: 'left',
           t: 1000,
           phase: 'con',
           phaseElapsedMs: 90,
@@ -1256,8 +1254,8 @@ describe('GET /api/stream (SSE)', () => {
       });
       hub.emit({
         type: 'phase',
-        slotId: 'right',
         data: {
+          slot: 'right',
           t: 1000,
           phase: 'ecc',
           phaseElapsedMs: 45,
@@ -1287,8 +1285,7 @@ describe('GET /api/stream (SSE)', () => {
       await waitFor(() => body.includes('event: hb'));
       hub.emit({
         type: 'set',
-        slotId: 'primary',
-        data: { kind: 'ended', setId: 'set-1', sessionId: 'sess-1' },
+        data: { slot: 'primary', kind: 'ended', setId: 'set-1', sessionId: 'sess-1' },
       });
       // Wait for the snapshot that FOLLOWS the set echo — a snapshot is also
       // pushed on connect (VW-70 late-join catch-up), so gate on the set-triggered

@@ -149,25 +149,32 @@ describe('LiveSignalEmitter', () => {
     expect(events).toEqual([
       {
         type: 'set',
-        slotId: 'primary',
-        data: { kind: 'started', setId: 's1', sessionId: 'sess1' },
+        data: { slot: 'primary', kind: 'started', setId: 's1', sessionId: 'sess1' },
       },
       {
         type: 'rep',
-        slotId: 'primary',
-        data: { repIndex: 4, vCon: 0.41, rom: 0.52, peakVelocity: 0.63, peakForceSoFar: 205 },
+        data: {
+          slot: 'primary',
+          repIndex: 4,
+          vCon: 0.41,
+          rom: 0.52,
+          peakVelocity: 0.63,
+          peakForceSoFar: 205,
+        },
       },
     ]);
   });
 
-  it('stamps a distinct slotId per emitter so a shared hub can carry two slots (VW-48)', () => {
+  it('stamps a distinct slot per emitter so a shared hub can carry two slots (VW-48)', () => {
     const { hub, events } = collect();
     const left = new LiveSignalEmitter(hub, 'left');
     const right = new LiveSignalEmitter(hub, 'right');
     left.set({ kind: 'started', setId: 'left-set', sessionId: 'sess1' });
     right.set({ kind: 'started', setId: 'right-set', sessionId: 'sess1' });
 
-    expect(events.map((e) => e.slotId)).toEqual(['left', 'right']);
+    // Shape A: the slot rides ON the payload, so it survives serialization
+    // verbatim and is typed at the client's JSON.parse boundary.
+    expect(events.map((e) => e.data.slot)).toEqual(['left', 'right']);
     expect(events.map((e) => e.type === 'set' && e.data.setId)).toEqual(['left-set', 'right-set']);
   });
 });
@@ -182,13 +189,11 @@ describe('LiveSignalHub', () => {
     hub.subscribe((e) => seen.push(e.type));
     hub.emit({
       type: 'set',
-      slotId: 'primary',
-      data: { kind: 'started', setId: 's', sessionId: 'z' },
+      data: { slot: 'primary', kind: 'started', setId: 's', sessionId: 'z' },
     });
     hub.emit({
       type: 'set',
-      slotId: 'primary',
-      data: { kind: 'ended', setId: 's', sessionId: 'z' },
+      data: { slot: 'primary', kind: 'ended', setId: 's', sessionId: 'z' },
     });
     expect(seen).toEqual(['set', 'set']);
   });
@@ -202,8 +207,7 @@ describe('LiveSignalHub', () => {
     expect(hub.subscriberCount).toBe(0);
     hub.emit({
       type: 'set',
-      slotId: 'primary',
-      data: { kind: 'ended', setId: 's', sessionId: 'z' },
+      data: { slot: 'primary', kind: 'ended', setId: 's', sessionId: 'z' },
     });
     expect(seen).toHaveLength(0);
   });

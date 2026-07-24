@@ -41,8 +41,12 @@ class MockEventSource {
   }
 }
 
+// VW-48 (Shape A): wire payloads carry their originating `slot`, so these
+// fixtures do too — single-Voltra/bench streams `'primary'`. Today's
+// single-mode client ignores the field; the P2 demux will key on it.
 function phaseFrame(): LivePhaseSignal {
   return {
+    slot: 'primary',
     t: Date.now(),
     phase: 'con',
     phaseElapsedMs: 300,
@@ -54,11 +58,16 @@ function phaseFrame(): LivePhaseSignal {
 }
 
 function repSignal(peakForceSoFar: number): LiveRepSignal {
-  return { repIndex: 1, vCon: 0.41, rom: 0.55, peakVelocity: 0.6, peakForceSoFar };
+  return { slot: 'primary', repIndex: 1, vCon: 0.41, rom: 0.55, peakVelocity: 0.6, peakForceSoFar };
 }
 
-const setEnded: LiveSetSignal = { kind: 'ended', setId: 's1', sessionId: 'sess1' };
-const setStarted: LiveSetSignal = { kind: 'started', setId: 's2', sessionId: 'sess1' };
+const setEnded: LiveSetSignal = { slot: 'primary', kind: 'ended', setId: 's1', sessionId: 'sess1' };
+const setStarted: LiveSetSignal = {
+  slot: 'primary',
+  kind: 'started',
+  setId: 's2',
+  sessionId: 'sess1',
+};
 
 beforeEach(() => {
   MockEventSource.instances = [];
