@@ -240,12 +240,16 @@ describe('slot.identify', () => {
 
       expect(result.isError).toBe(true);
       const body = payload(result) as Record<string, unknown>;
-      // getSlot throws "Unknown slot: right" which mapSdkError converts to
-      // code UNKNOWN — the existing convention for un-coded Error throws.
-      // We accept either UNKNOWN (from getSlot's un-coded throw) or
-      // SLOT_NOT_BOUND (if the handler guards it explicitly first).
-      expect(typeof body.code).toBe('string');
-      expect(String(body.message)).toMatch(/slot|right/i);
+      // getSlot throws "Unknown slot: right" unconditionally for an
+      // unregistered slot id (before the isConnected guard even runs), which
+      // mapSdkError converts to code UNKNOWN — the existing convention for
+      // un-coded Error throws. That is the only reachable path here (the
+      // SLOT_NOT_BOUND-from-disconnected-slot case is covered separately
+      // below), so assert the exact code + message rather than a
+      // `/slot|right/i` alternation that would match almost any message in
+      // this domain.
+      expect(body.code).toBe('UNKNOWN');
+      expect(String(body.message)).toBe('Unknown slot: right');
       expect(client.setMode).not.toHaveBeenCalled();
     });
 
