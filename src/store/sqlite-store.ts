@@ -19,10 +19,12 @@
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
 import { DatabaseSync } from 'node:sqlite';
+import type { Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
 import type {
   SessionListFilter,
   SessionStore,
+  StoredIdleRep,
   StoredIsometricMeasurement,
   StoredIsometricSideMeasurement,
   StoredIsometricTrial,
@@ -45,6 +47,14 @@ const SCHEMA_VERSION = 7;
  * special case, so multi-user does not require retrofitting every query later.
  */
 export const LOCAL_USER_ID = 'local';
+
+/**
+ * Page size `listIdleReps` falls back to when the caller names none. Idle reps
+ * accrue at telemetry pace during long rests, so an unbounded default would
+ * hand a caller an unbounded result set; matching `listSessions`, the bound is
+ * explicit rather than absent.
+ */
+const IDLE_REP_LIST_DEFAULT_LIMIT = 100;
 
 const SCHEMA_SQL = `
   -- ── Identity (v6) ────────────────────────────────────────────────────
@@ -1028,6 +1038,18 @@ interface RepRow {
   payload: string;
 }
 
+interface IdleRepRow {
+  id: string;
+  user_id: string | null;
+  session_id: string | null;
+  device_id: string | null;
+  slot: string | null;
+  side: string | null;
+  observed_at: string;
+  weight_lbs: number | null;
+  payload: string | null;
+}
+
 interface IsometricMeasurementRow {
   id: string;
   measured_at: string;
@@ -1290,7 +1312,12 @@ export class SqliteSessionStore implements SessionStore {
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
-        insertRep.run(rep.id, rep.setId, rep.index, serializeRepPayload(rep));
+        insertRep.run(
+          rep.id,
+          rep.setId,
+          rep.index,
+          serializeRepPayload(rep, `SqliteSessionStore.putSet: rep ${rep.id}`),
+        );
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -1346,6 +1373,79 @@ export class SqliteSessionStore implements SessionStore {
       .all(sessionId) as unknown as SetRow[];
     const sets = rows.map((row) => rowToSet(row, this.loadRepsForSet(row.id)));
     return Promise.resolve(sets);
+  }
+
+  // --- Idle reps (v7 schema) ---
+
+  async putIdleRep(rep: StoredIdleRep): Promise<void> {
+    // `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`, for the reason
+    // `putSession` / `putSet` spell out: a replace is a delete-then-insert, and
+    // `idle_reps` sits on the `users` cascade. Ids are generated per detection
+    // so the conflict branch is not expected in practice — which is precisely
+    // why it must not be a destructive one when it does fire.
+    // EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+    this.db
+      .prepare(
+        `INSERT INTO idle_reps
+           (id, user_id, session_id, device_id, slot, side, observed_at,
+            weight_lbs, payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           user_id = excluded.user_id,
+           session_id = excluded.session_id,
+           device_id = excluded.device_id,
+           slot = excluded.slot,
+           side = excluded.side,
+           observed_at = excluded.observed_at,
+           weight_lbs = excluded.weight_lbs,
+           payload = excluded.payload`,
+      )
+      .run(
+        rep.id,
+        rep.userId ?? null,
+        rep.sessionId ?? null,
+        rep.deviceId ?? null,
+        rep.slot ?? null,
+        rep.side ?? null,
+        rep.observedAt,
+        // Absent stays NULL. A `0` here would read downstream as a measured
+        // unloaded pull rather than as an unknown load.
+        rep.weightLbs ?? null,
+        rep.rep === undefined
+          ? null
+          : serializeRepPayload(rep.rep, `SqliteSessionStore.putIdleRep: idle rep ${rep.id}`),
+      );
+    return Promise.resolve();
+  }
+
+  async listIdleReps(filter: {
+    sessionId?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<StoredIdleRep[]> {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.sessionId !== undefined) {
+      where.push('session_id = ?');
+      params.push(filter.sessionId);
+    }
+    if (filter.from !== undefined) {
+      where.push('observed_at >= ?');
+      params.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      where.push('observed_at <= ?');
+      params.push(filter.to);
+    }
+    const sql =
+      `SELECT * FROM idle_reps` +
+      (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+      ` ORDER BY observed_at ASC LIMIT ?`;
+    const rows = this.db
+      .prepare(sql)
+      .all(...params, filter.limit ?? IDLE_REP_LIST_DEFAULT_LIMIT) as unknown as IdleRepRow[];
+    return Promise.resolve(rows.map(rowToIdleRep));
   }
 
   // --- Isometric assessments (v6 schema) ---
@@ -1690,8 +1790,12 @@ export class SqliteSessionStore implements SessionStore {
  * a coercion is logged so bad upstream data is observable rather than silent.
  * (Rejecting the write instead would drop the whole set, which is worse for a
  * store whose primary job is not losing recorded work.)
+ *
+ * `context` identifies the offending row in the warning — set reps and idle
+ * reps share this helper, and a bare rep id would not say which table to look
+ * in.
  */
-function serializeRepPayload(rep: StoredRep): string {
+function serializeRepPayload(rep: Rep, context: string): string {
   let coerced = false;
   const json = JSON.stringify(rep, (_key, value: unknown) => {
     if (typeof value === 'number' && !Number.isFinite(value)) {
@@ -1701,7 +1805,7 @@ function serializeRepPayload(rep: StoredRep): string {
     return value;
   });
   if (coerced) {
-    log.warn(`SqliteSessionStore.putSet: coerced non-finite number(s) to 0 in rep ${rep.id}`);
+    log.warn(`${context}: coerced non-finite number(s) to 0`);
   }
   return json;
 }
@@ -1888,6 +1992,47 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.settings_json !== null) out.settingsJson = row.settings_json;
   if (row.settings_hash !== null) out.settingsHash = row.settings_hash;
   return out;
+}
+
+function rowToIdleRep(row: IdleRepRow): StoredIdleRep {
+  const out: StoredIdleRep = {
+    id: row.id,
+    observedAt: row.observed_at,
+  };
+  // Absent stays absent, exactly as in `rowToSet`: an idle rep is observed with
+  // whatever context existed at that instant, and a NULL here is a real gap.
+  if (row.user_id !== null) out.userId = row.user_id;
+  // A NULL session is the ordinary "no session was running" case, not a defect.
+  if (row.session_id !== null) out.sessionId = row.session_id;
+  if (row.device_id !== null) out.deviceId = row.device_id;
+  if (row.slot !== null) out.slot = row.slot;
+  // `side` is free text at the SQLite level (the CHECK constraint guards new
+  // writes, not pre-existing rows); narrow on read so nothing but the two legal
+  // values can pass as a measured limb — same treatment `rowToSet` gives it.
+  if (row.side === 'left' || row.side === 'right') out.side = row.side;
+  if (row.weight_lbs !== null) out.weightLbs = row.weight_lbs;
+  if (row.payload !== null) {
+    const rep = parseRepPayload(row.payload, row.id);
+    if (rep !== undefined) out.rep = rep;
+  }
+  return out;
+}
+
+/**
+ * Parse a stored rep payload, returning `undefined` when it no longer parses.
+ *
+ * A row whose JSON is unreadable still carries a real observation in its
+ * columns (when, which device, which limb, what load); throwing here would
+ * discard that whole row — and every other row in the same page — over one bad
+ * blob. The failure is logged so it is observable rather than silent.
+ */
+function parseRepPayload(payload: string, rowId: string): Rep | undefined {
+  try {
+    return JSON.parse(payload) as Rep;
+  } catch {
+    log.warn(`SqliteSessionStore: unparseable rep payload on idle rep ${rowId}; reading as absent`);
+    return undefined;
+  }
 }
 
 /**
