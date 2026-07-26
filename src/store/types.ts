@@ -160,6 +160,90 @@ export interface StoredSet {
 }
 
 /**
+ * One isometric trial as measured (VMCP-04.11). Mirrors `TrialAnalysis` in
+ * `state/isometric-protocol.ts` field-for-field so a stored trial can be fed
+ * straight back into `aggregateSide` without translation.
+ *
+ * This is the durable unit of an isometric assessment: the per-trial numbers
+ * are persisted, and every side/pair-level statistic (mean plateau of the best
+ * 2 valid trials, CV, inferred working weight, asymmetry %, the ≥10 / ≥15
+ * flags) is RECOMPUTED on read from these rows. Persist observations, compute
+ * conclusions — a stored asymmetry verdict would go stale the moment the
+ * thresholds move, and there is no way to tell a stale one from a fresh one.
+ */
+export interface StoredIsometricTrial {
+  /** Row identity. Trials have no natural key; the writer generates a UUID. */
+  id: string;
+  /** 1-indexed trial number within the side, as run. */
+  index: number;
+  peakForceLbs: number;
+  plateauForceLbs: number;
+  plateauStartMs: number;
+  plateauEndMs: number;
+  /** Whether the trial passed the protocol's validity gates at analysis time. */
+  valid: boolean;
+  /** Set when `valid === false`; names the gate that failed. */
+  invalidReason?: string;
+}
+
+/**
+ * The trials one limb contributed to an isometric measurement, plus the
+ * identity of the unit that recorded them.
+ *
+ * Identity follows the schema-v5 rules on `sets` exactly (see `StoredSet`):
+ *
+ *   deviceId  GROUND TRUTH. The only join key. Absent under the mock adapter
+ *             or when the slot has no connected device id.
+ *   side      The limb, as declared for this assessment. What analytics reads.
+ *   slot      DIAGNOSTIC ONLY. `slot.swap` reassigns slot ids between units, so
+ *             a slot id names a position at a moment in time — never join on it.
+ */
+export interface StoredIsometricSideMeasurement {
+  /** Absent — never defaulted — when the side could not be established. */
+  side?: StoredSide;
+  /** Absent when the slot had no connected device id at measurement time. */
+  deviceId?: string;
+  /** Diagnostic only. Never a join key. */
+  slot?: string;
+  trials: StoredIsometricTrial[];
+}
+
+/**
+ * A completed isometric assessment (VMCP-04.11). `isometric.measure_imbalance`
+ * writes one row per run with both limbs' trials; the shape is a `sides` array
+ * rather than left/right columns so a single-side `measure_max` run can be
+ * persisted through the same table later without a schema change.
+ *
+ * `analysisVersion` is the algorithm-version guard required of any persisted
+ * derived value: the per-trial peak/plateau/valid numbers come out of
+ * `analyzeTrial`, so a change to the plateau window or the validity gates
+ * changes what an identical hold would record. Bump it there and old rows stay
+ * identifiable instead of being silently compared against new ones.
+ */
+export interface StoredIsometricMeasurement {
+  id: string;
+  /** ISO-8601 instant the assessment finished. */
+  measuredAt: string;
+  /** Version of the trial-analysis algorithm that produced these numbers. */
+  analysisVersion: number;
+  /**
+   * Which limb was tested first. A protocol fact, not a conclusion: within-
+   * session fatigue biases the second side, so any cross-side comparison needs
+   * to know the order it was collected in.
+   */
+  firstSideTested?: StoredSide;
+  /** Hold duration per trial, in ms, as configured for this run. */
+  durationMs: number;
+  /** Trials requested per side. The trials actually recorded are in `sides`. */
+  trialsRequested: number;
+  /** Rest between trials on the same side, in ms. */
+  restMs: number;
+  /** Rest between sides, in ms. Absent for a single-side measurement. */
+  betweenSidesRestMs?: number;
+  sides: StoredIsometricSideMeasurement[];
+}
+
+/**
  * A persisted session row. `endedAt` is undefined while the session is still
  * active and is filled in once `session.end` runs.
  */
@@ -313,6 +397,34 @@ export interface SessionStore {
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
+
+  // --- Isometric assessments (v6 schema) ---
+
+  /**
+   * Persist a completed isometric assessment together with every trial both
+   * limbs contributed.
+   *
+   * Same `INSERT OR REPLACE` prohibition as `putSession` / `putSet`:
+   * `isometric_measurements` is the FK parent of `isometric_trials` with
+   * `ON DELETE CASCADE`, so a delete-then-insert on a re-put would take the
+   * trials with it (#79). Upsert the parent in place.
+   */
+  putIsometricMeasurement(m: StoredIsometricMeasurement): Promise<void>;
+
+  /** Look up an isometric measurement by id; `undefined` when no row matches. */
+  getIsometricMeasurement(id: string): Promise<StoredIsometricMeasurement | undefined>;
+
+  /**
+   * Return every isometric measurement in which `deviceId` recorded trials,
+   * most recent first. Keyed on the device id because that is the only stable
+   * identity: `side` is resolved per-run and `slot` is a position, not a unit.
+   * Each returned measurement carries all of its sides, not just the matched
+   * one, so the caller can compute the asymmetry for that run.
+   */
+  getIsometricMeasurementsForDevice(
+    deviceId: string,
+    opts?: { limit?: number },
+  ): Promise<StoredIsometricMeasurement[]>;
 
   // --- Block-periodization planning (v3 schema) ---
 

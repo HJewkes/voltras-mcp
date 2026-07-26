@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 import { SqliteSessionStore } from '../sqlite-store.js';
-import type { StoredRep, StoredSession, StoredSet } from '../types.js';
+import type { StoredIsometricMeasurement, StoredRep, StoredSession, StoredSet } from '../types.js';
 
 const EMPTY_PHASE: Phase = {
   samples: [],
@@ -352,9 +352,9 @@ describe('SqliteSessionStore.open() error paths', () => {
     // matches anywhere in the message — including the random temp path inside
     // `dbPath` — so `toContain('3')` passed by accident on macOS (long
     // `/var/folders/...` paths nearly always contain a '3') while failing on
-    // CI's short `/tmp/...`. It had also gone stale: SCHEMA_VERSION is 5.
+    // CI's short `/tmp/...`. It had also gone stale: SCHEMA_VERSION is 6.
     expect(e.message).toContain('user_version=99');
-    expect(e.message).toMatch(/expected 5\b/);
+    expect(e.message).toMatch(/expected 6\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -387,7 +387,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(5);
+      expect(version.user_version).toBe(6);
     } finally {
       await store.close();
     }
@@ -422,7 +422,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       );
       expect(names).toContain('is_warmup');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(5);
+      expect(version.user_version).toBe(6);
       // The pre-flag row backfills as a working set (no isWarmup key on read).
       expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
@@ -579,7 +579,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  it('adds slot and device_id to sets and stamps user_version = 5', async () => {
+  it('adds slot and device_id to sets and stamps the current user_version', async () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
@@ -589,7 +589,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
       expect(names).toContain('slot');
       expect(names).toContain('device_id');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(5);
+      expect(version.user_version).toBe(6);
     } finally {
       await store.close();
     }
@@ -793,6 +793,354 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
         raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>
       ).filter((c) => c.name === 'slot' || c.name === 'device_id');
       expect(slotCols).toHaveLength(2);
+      const n = (raw.prepare('SELECT COUNT(*) AS n FROM reps').get() as { n: number }).n;
+      expect(n).toBe(9);
+    } finally {
+      await second.close();
+    }
+  });
+});
+
+// --- v5 → v6: the isometric assessment tables (VMCP-04.11) ----------------
+//
+// Same standard of proof as the v4 → v6 suite above: the interesting question
+// is not "does the new table exist" but "does the user's existing history
+// survive the upgrade". These tests build a real v5-shaped file — including
+// the identity triple v5 added to `sets`, populated — run the upgrade by
+// opening the store, then assert both halves: every pre-v6 row is byte-for-byte
+// intact, AND assessments write and read back correctly afterwards.
+
+/**
+ * The `sets` DDL exactly as v5 shipped it. Spelled out literally, like
+ * `V4_SCHEMA_SQL`, so the fixture cannot drift forward with the code under test.
+ */
+const V5_SCHEMA_SQL = `
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    exercise_id TEXT,
+    exercise_name TEXT,
+    notes TEXT
+  );
+  CREATE TABLE sets (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    partial INTEGER NOT NULL,
+    partial_reason TEXT,
+    training_mode TEXT NOT NULL,
+    weight_lbs REAL NOT NULL,
+    is_warmup INTEGER NOT NULL DEFAULT 0,
+    slot TEXT,
+    device_id TEXT,
+    side TEXT
+  );
+  CREATE TABLE reps (
+    id TEXT PRIMARY KEY,
+    set_id TEXT NOT NULL,
+    rep_index INTEGER NOT NULL,
+    payload TEXT NOT NULL
+  );
+  CREATE TABLE program_assignments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    planned_exercise_id TEXT,
+    workout_template_id TEXT,
+    assigned_at TEXT NOT NULL
+  );
+`;
+
+/** Seed a v5 DB at `dbPath` with sessions, sided sets, reps and an assignment. */
+function seedV5Database(dbPath: string): void {
+  const seed = new DatabaseSync(dbPath);
+  seed.exec(V5_SCHEMA_SQL);
+  seed.exec(`
+    INSERT INTO sessions (id, started_at, ended_at, exercise_id, exercise_name, notes) VALUES
+      ('v5-sess-1', '2025-08-01T10:00:00.000Z', '2025-08-01T10:45:00.000Z', 'split-squat', 'Split Squat', 'bilateral'),
+      ('v5-sess-2', '2025-08-02T10:00:00.000Z', NULL, NULL, NULL, NULL);
+    INSERT INTO sets (id, session_id, started_at, ended_at, partial, partial_reason, training_mode, weight_lbs, is_warmup, slot, device_id, side) VALUES
+      ('v5-set-1', 'v5-sess-1', '2025-08-01T10:01:00.000Z', '2025-08-01T10:02:00.000Z', 0, NULL, 'WeightTraining', 45, 1, 'left', 'AA:BB:CC:01', 'left'),
+      ('v5-set-2', 'v5-sess-1', '2025-08-01T10:05:00.000Z', '2025-08-01T10:06:30.000Z', 1, 'disconnect', 'WeightTraining', 135, 0, 'right', 'AA:BB:CC:02', 'right'),
+      ('v5-set-3', 'v5-sess-2', '2025-08-02T10:01:00.000Z', '2025-08-02T10:02:00.000Z', 0, NULL, 'WeightTraining', 95, 0, 'primary', NULL, NULL);
+    INSERT INTO program_assignments (id, session_id, planned_exercise_id, workout_template_id, assigned_at) VALUES
+      ('v5-assign-1', 'v5-sess-1', NULL, NULL, '2025-08-01T09:59:00.000Z');
+  `);
+  const insertRep = seed.prepare(
+    `INSERT INTO reps (id, set_id, rep_index, payload) VALUES (?, ?, ?, ?)`,
+  );
+  for (const setId of ['v5-set-1', 'v5-set-2', 'v5-set-3']) {
+    for (let i = 0; i < 3; i++) {
+      insertRep.run(`${setId}-rep-${i}`, setId, i, JSON.stringify(makeRep(setId, i)));
+    }
+  }
+  seed.exec('PRAGMA user_version = 5');
+  seed.close();
+}
+
+function makeTrial(idPrefix: string, index: number, plateauForceLbs: number) {
+  return {
+    id: `${idPrefix}-trial-${index}`,
+    index,
+    peakForceLbs: plateauForceLbs + 8,
+    plateauForceLbs,
+    plateauStartMs: 1500,
+    plateauEndMs: 2000,
+    valid: true,
+  };
+}
+
+/** A two-sided assessment: left on device 01, right on device 02. */
+function makeMeasurement(id: string, measuredAt: string): StoredIsometricMeasurement {
+  return {
+    id,
+    measuredAt,
+    analysisVersion: 1,
+    firstSideTested: 'right',
+    durationMs: 5000,
+    trialsRequested: 3,
+    restMs: 90_000,
+    betweenSidesRestMs: 120_000,
+    sides: [
+      {
+        side: 'left',
+        deviceId: 'AA:BB:CC:01',
+        slot: 'left',
+        trials: [
+          makeTrial(`${id}-l`, 1, 200),
+          makeTrial(`${id}-l`, 2, 196),
+          { ...makeTrial(`${id}-l`, 3, 120), valid: false, invalidReason: 'peak_before_1s' },
+        ],
+      },
+      {
+        side: 'right',
+        deviceId: 'AA:BB:CC:02',
+        slot: 'right',
+        trials: [makeTrial(`${id}-r`, 1, 170), makeTrial(`${id}-r`, 2, 168)],
+      },
+    ],
+  };
+}
+
+describe('v5 → v6 migration: isometric assessment tables', () => {
+  let workdir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), 'vmcp-store-v6-'));
+    dbPath = join(workdir, 'v5-migrate.sqlite');
+    seedV5Database(dbPath);
+  });
+
+  afterEach(() => {
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it('adds the isometric tables and stamps the current user_version', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const tables = (
+        raw.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{
+          name: string;
+        }>
+      ).map((t) => t.name);
+      expect(tables).toContain('isometric_measurements');
+      expect(tables).toContain('isometric_trials');
+      const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
+      expect(version.user_version).toBe(6);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('leaves the sets table untouched — no added column, no rewritten row', async () => {
+    // v6 adds tables only. If this ever starts failing, the migration has
+    // grown a side effect on existing data that nothing else here would catch.
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+      expect(names).toEqual([
+        'id',
+        'session_id',
+        'started_at',
+        'ended_at',
+        'partial',
+        'partial_reason',
+        'training_mode',
+        'weight_lbs',
+        'is_warmup',
+        'slot',
+        'device_id',
+        'side',
+      ]);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('leaves every pre-v6 row intact and readable, identity included', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const count = (table: string) =>
+        (raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+      expect(count('sessions')).toBe(2);
+      expect(count('sets')).toBe(3);
+      expect(count('reps')).toBe(9);
+      // The FK child of `sessions` must still be there — the #79 cascade class
+      // of bug is exactly what a careless migration would reintroduce.
+      expect(count('program_assignments')).toBe(1);
+      // The new tables start empty: there is no historical imbalance data to
+      // backfill, and inventing some would be worse than the gap.
+      expect(count('isometric_measurements')).toBe(0);
+      expect(count('isometric_trials')).toBe(0);
+
+      // Field-level survival, not just row counts.
+      expect(await store.getSession('v5-sess-1')).toEqual({
+        id: 'v5-sess-1',
+        startedAt: '2025-08-01T10:00:00.000Z',
+        endedAt: '2025-08-01T10:45:00.000Z',
+        exerciseId: 'split-squat',
+        exerciseName: 'Split Squat',
+        notes: 'bilateral',
+      });
+
+      const warmup = await store.getSet('v5-set-1');
+      expect(warmup?.isWarmup).toBe(true);
+      expect(warmup?.weightLbs).toBe(45);
+      expect(warmup?.deviceId).toBe('AA:BB:CC:01');
+      expect(warmup?.side).toBe('left');
+      expect(warmup?.reps).toHaveLength(3);
+
+      const partial = await store.getSet('v5-set-2');
+      expect(partial?.partial).toBe(true);
+      expect(partial?.partialReason).toBe('disconnect');
+      expect(partial?.side).toBe('right');
+      expect(partial?.reps.map((r) => r.index)).toEqual([0, 1, 2]);
+
+      // The side-unknown row stays side-unknown.
+      expect(await store.getSet('v5-set-3')).not.toHaveProperty('side');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('round-trips an assessment written into the migrated DB', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const written = makeMeasurement('meas-1', '2025-08-03T10:30:00.000Z');
+      await store.putIsometricMeasurement(written);
+
+      const read = await store.getIsometricMeasurement('meas-1');
+      expect(read?.measuredAt).toBe('2025-08-03T10:30:00.000Z');
+      expect(read?.analysisVersion).toBe(1);
+      expect(read?.firstSideTested).toBe('right');
+      expect(read?.betweenSidesRestMs).toBe(120_000);
+
+      // BOTH sides' values are present — an asymmetry with one side missing is
+      // not a measurement.
+      const left = read?.sides.find((s) => s.side === 'left');
+      const right = read?.sides.find((s) => s.side === 'right');
+      expect(left?.deviceId).toBe('AA:BB:CC:01');
+      expect(right?.deviceId).toBe('AA:BB:CC:02');
+      expect(left?.trials.map((t) => t.plateauForceLbs)).toEqual([200, 196, 120]);
+      expect(right?.trials.map((t) => t.plateauForceLbs)).toEqual([170, 168]);
+      // Trial-level validity survives, invalid reason included.
+      expect(left?.trials[2]).toMatchObject({ valid: false, invalidReason: 'peak_before_1s' });
+      expect(right?.trials.every((t) => t.valid)).toBe(true);
+
+      // Legacy history is undisturbed by the new write.
+      expect((await store.getSet('v5-set-1'))?.reps).toHaveLength(3);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('looks assessments up by device id, not by slot', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      await store.putIsometricMeasurement(makeMeasurement('meas-1', '2025-08-03T10:30:00.000Z'));
+      await store.putIsometricMeasurement(makeMeasurement('meas-2', '2025-08-10T10:30:00.000Z'));
+      // A run where the SAME physical unit sat in the opposite slot — the
+      // post-`slot.swap` case that makes slot unusable as a key.
+      const swapped = makeMeasurement('meas-3', '2025-08-17T10:30:00.000Z');
+      swapped.sides[0] = { ...swapped.sides[0], slot: 'right' };
+      swapped.sides[1] = { ...swapped.sides[1], slot: 'left' };
+      await store.putIsometricMeasurement(swapped);
+
+      const forDevice = await store.getIsometricMeasurementsForDevice('AA:BB:CC:01');
+      // All three runs, most recent first — the swap does not hide one.
+      expect(forDevice.map((m) => m.id)).toEqual(['meas-3', 'meas-2', 'meas-1']);
+      // Each match carries both limbs, so the asymmetry is computable per run.
+      expect(forDevice.every((m) => m.sides.length === 2)).toBe(true);
+      // The unit that never trained is absent, not empty-handed.
+      expect(await store.getIsometricMeasurementsForDevice('AA:BB:CC:99')).toEqual([]);
+
+      const limited = await store.getIsometricMeasurementsForDevice('AA:BB:CC:02', { limit: 2 });
+      expect(limited.map((m) => m.id)).toEqual(['meas-3', 'meas-2']);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('keeps a device-less side as a gap rather than a placeholder', async () => {
+    // The mock adapter (and any close after the unit dropped) has no device id.
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const m = makeMeasurement('meas-anon', '2025-08-04T10:30:00.000Z');
+      m.sides[1] = { side: 'right', slot: 'right', trials: m.sides[1].trials };
+      await store.putIsometricMeasurement(m);
+
+      const read = await store.getIsometricMeasurement('meas-anon');
+      const right = read?.sides.find((s) => s.side === 'right');
+      expect(right).not.toHaveProperty('deviceId');
+      expect(right?.trials).toHaveLength(2);
+      // …and it is not reachable by any device id, including the other side's.
+      const forOther = await store.getIsometricMeasurementsForDevice('AA:BB:CC:02');
+      expect(forOther.map((x) => x.id)).not.toContain('meas-anon');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('re-putting a measurement updates in place instead of cascading its trials away', async () => {
+    // Regression guard for the `INSERT OR REPLACE` class of bug (#79):
+    // `isometric_trials` references `isometric_measurements` ON DELETE CASCADE,
+    // so a delete-then-insert on the parent would silently drop every trial.
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const first = makeMeasurement('meas-retry', '2025-08-05T10:30:00.000Z');
+      await store.putIsometricMeasurement(first);
+      await store.putIsometricMeasurement({ ...first, firstSideTested: 'left' });
+
+      const read = await store.getIsometricMeasurement('meas-retry');
+      expect(read?.firstSideTested).toBe('left');
+      expect(read?.sides.flatMap((s) => s.trials)).toHaveLength(5);
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const rows = (
+        raw.prepare('SELECT COUNT(*) AS n FROM isometric_trials').get() as { n: number }
+      ).n;
+      // Replaced wholesale, not duplicated.
+      expect(rows).toBe(5);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('is idempotent — reopening an already-migrated DB is a no-op', async () => {
+    const first = SqliteSessionStore.open(dbPath);
+    await first.putIsometricMeasurement(makeMeasurement('meas-1', '2025-08-06T10:30:00.000Z'));
+    await first.close();
+
+    const second = SqliteSessionStore.open(dbPath);
+    try {
+      expect((await second.getIsometricMeasurement('meas-1'))?.sides).toHaveLength(2);
+      const raw = (second as unknown as { db: DatabaseSync }).db;
       const n = (raw.prepare('SELECT COUNT(*) AS n FROM reps').get() as { n: number }).n;
       expect(n).toBe(9);
     } finally {

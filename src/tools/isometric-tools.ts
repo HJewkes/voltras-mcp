@@ -32,9 +32,14 @@
 // description nudges callers toward that workflow. Open question 1 in the
 // brief flags this for hardware validation.
 
+import { randomUUID } from 'node:crypto';
+
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TelemetryFrame } from '@voltras/node-sdk';
 import type { z } from 'zod';
+
+import { log } from '../logger.js';
+import type { StoredIsometricMeasurement, StoredIsometricSideMeasurement } from '../store/types.js';
 
 import {
   IsometricMeasureMaxInput,
@@ -97,6 +102,12 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
+  '',
+  'The per-trial measurements are persisted (keyed on the device id of the',
+  'unit that recorded them) so asymmetry can be trended across sessions;',
+  'the response carries the resulting measurementId, or null if the write',
+  'failed. The asymmetry percentage itself is not stored — it is recomputed',
+  'from the stored trials.',
 ].join(' ');
 
 /**
@@ -192,7 +203,28 @@ interface MeasureImbalanceResult {
   right: SideSummary;
   imbalance: ReturnType<typeof computeImbalance>;
   totalElapsedMs: number;
+  /**
+   * Id of the persisted `isometric_measurements` row, or `null` when the write
+   * failed. Reported rather than thrown: a bilateral assessment costs the user
+   * ten-plus minutes of maximal effort, so a store hiccup must not discard the
+   * result the protocol just produced. A `null` here says "these numbers exist
+   * only in this response".
+   */
+  measurementId: string | null;
 }
+
+/**
+ * Version of the trial-analysis algorithm whose output gets persisted
+ * (`analyzeTrial` in state/isometric-protocol.ts: the 500 ms plateau window and
+ * the continuous-rise / peak-after-1s / plateau-≥90%-of-peak validity gates).
+ *
+ * BUMP THIS whenever those change. The stored per-trial peak/plateau/valid
+ * numbers are derived from raw force samples that are NOT persisted, so they
+ * can never be recomputed — without a version stamp, rows measured under old
+ * rules would sit next to rows measured under new ones with nothing to tell
+ * them apart.
+ */
+const ISOMETRIC_ANALYSIS_VERSION = 1;
 
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
@@ -256,6 +288,15 @@ async function measureImbalance(
   const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis);
   const imbalance = computeImbalance(left, right);
 
+  const measurementId = await persistMeasurement(state, {
+    firstSideTested: order[0],
+    input,
+    sides: [
+      { side: 'left', slotId: leftSlotId, trials: leftAnalysis?.trials ?? [] },
+      { side: 'right', slotId: rightSlotId, trials: rightAnalysis?.trials ?? [] },
+    ],
+  });
+
   return {
     ok: true,
     testOrder: order as TestOrder,
@@ -263,6 +304,90 @@ async function measureImbalance(
     right,
     imbalance,
     totalElapsedMs: Date.now() - startedAt,
+    measurementId,
+  };
+}
+
+interface PersistSideInput {
+  side: 'left' | 'right';
+  slotId: string;
+  trials: TrialAnalysis[];
+}
+
+/**
+ * Write the assessment to the store (VMCP-04.11). Until this landed the tool
+ * computed a real left/right asymmetry and dropped it on the floor, so nothing
+ * about limb asymmetry survived the response — the one question bilateral
+ * training exists to answer had no history behind it.
+ *
+ * What goes in: the per-trial measurements, plus the protocol parameters they
+ * were collected under. What stays out: the asymmetry percentage and its
+ * flagged/meaningful verdicts. Those are conclusions — one division and two
+ * threshold comparisons away from the stored trials — and `computeImbalance`
+ * recomputes them on read for free, always against current thresholds. A stored
+ * verdict would be indistinguishable from a fresh one the day the thresholds
+ * move.
+ *
+ * Identity: each side's trials carry the DEVICE ID read from that slot's
+ * connected client at measurement time. That is the join key. `slot` rides
+ * along for diagnostics only — `slot.swap` reassigns slot ids between physical
+ * units, so a series keyed on slot would flip limbs mid-history with nothing
+ * erroring. `side` is the limb the caller declared for this run (the whole
+ * premise of the call: `primarySide` says which slot is on which limb), and it
+ * is frozen at write time for the same reason `set.end` freezes it.
+ *
+ * Never throws. See `measurementId` on the result for why a store failure must
+ * not take the measurement down with it.
+ */
+async function persistMeasurement(
+  state: ServerState,
+  args: {
+    firstSideTested: 'left' | 'right';
+    input: MeasureImbalanceInput;
+    sides: PersistSideInput[];
+  },
+): Promise<string | null> {
+  const measurement: StoredIsometricMeasurement = {
+    id: randomUUID(),
+    measuredAt: new Date().toISOString(),
+    analysisVersion: ISOMETRIC_ANALYSIS_VERSION,
+    firstSideTested: args.firstSideTested,
+    durationMs: args.input.durationMs,
+    trialsRequested: args.input.trials,
+    restMs: args.input.restMs,
+    betweenSidesRestMs: args.input.betweenSidesRestMs,
+    sides: args.sides.map((s) => toStoredSide(state, s)),
+  };
+  try {
+    await state.store.putIsometricMeasurement(measurement);
+    return measurement.id;
+  } catch (err) {
+    log.warn('isometric.measure_imbalance: persisting the measurement failed', err);
+    return null;
+  }
+}
+
+function toStoredSide(state: ServerState, side: PersistSideInput): StoredIsometricSideMeasurement {
+  // Absent — never defaulted — when the slot has no connected device id (mock
+  // adapter, or a device that dropped mid-assessment). A gap reads downstream
+  // as "we don't know which unit measured this"; a placeholder device id would
+  // be indistinguishable from a real one and would pollute every per-device
+  // series it landed in.
+  const deviceId = getSlot(state, side.slotId).client.connectedDeviceId;
+  return {
+    side: side.side,
+    ...(typeof deviceId === 'string' ? { deviceId } : {}),
+    slot: side.slotId,
+    trials: side.trials.map((t) => ({
+      id: randomUUID(),
+      index: t.index,
+      peakForceLbs: t.peakForceLbs,
+      plateauForceLbs: t.plateauForceLbs,
+      plateauStartMs: t.plateauStartMs,
+      plateauEndMs: t.plateauEndMs,
+      valid: t.valid,
+      ...(t.invalidReason !== undefined ? { invalidReason: t.invalidReason } : {}),
+    })),
   };
 }
 

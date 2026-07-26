@@ -23,6 +23,9 @@ import { log } from '../logger.js';
 import type {
   SessionListFilter,
   SessionStore,
+  StoredIsometricMeasurement,
+  StoredIsometricSideMeasurement,
+  StoredIsometricTrial,
   StoredPlannedExercise,
   StoredProgramAssignment,
   StoredRep,
@@ -34,7 +37,7 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
@@ -151,6 +154,50 @@ const SCHEMA_SQL = `
     ON program_assignments(planned_exercise_id);
   CREATE INDEX IF NOT EXISTS idx_program_assignments_template
     ON program_assignments(workout_template_id);
+
+  -- v6 (VMCP-04.11): isometric assessments. One isometric_measurements row
+  -- per run of isometric.measure_imbalance, with one isometric_trials row per
+  -- trial per limb. Per-trial numbers are the durable record; every side- and
+  -- pair-level statistic (mean plateau of the best 2, CV, inferred working
+  -- weight, asymmetry %, the flagged/meaningful thresholds) is recomputed on
+  -- read. analysis_version versions the trial-analysis algorithm that
+  -- produced the stored numbers.
+  --
+  -- device_id lives on the TRIAL row and is the join key; side is the limb as
+  -- declared for the run; slot is diagnostic only (see the v5 note on sets).
+
+  CREATE TABLE IF NOT EXISTS isometric_measurements (
+    id TEXT PRIMARY KEY,
+    measured_at TEXT NOT NULL,
+    analysis_version INTEGER NOT NULL,
+    first_side_tested TEXT,
+    duration_ms INTEGER NOT NULL,
+    trials_requested INTEGER NOT NULL,
+    rest_ms INTEGER NOT NULL,
+    between_sides_rest_ms INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_isometric_measurements_measured_at
+    ON isometric_measurements(measured_at);
+
+  CREATE TABLE IF NOT EXISTS isometric_trials (
+    id TEXT PRIMARY KEY,
+    measurement_id TEXT NOT NULL
+      REFERENCES isometric_measurements(id) ON DELETE CASCADE,
+    device_id TEXT,
+    side TEXT,
+    slot TEXT,
+    trial_index INTEGER NOT NULL,
+    peak_force_lbs REAL NOT NULL,
+    plateau_force_lbs REAL NOT NULL,
+    plateau_start_ms INTEGER NOT NULL,
+    plateau_end_ms INTEGER NOT NULL,
+    valid INTEGER NOT NULL,
+    invalid_reason TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_isometric_trials_measurement
+    ON isometric_trials(measurement_id, side, trial_index);
+  CREATE INDEX IF NOT EXISTS idx_isometric_trials_device
+    ON isometric_trials(device_id);
 `;
 
 /**
@@ -233,6 +280,26 @@ function migrateV4ToV5(db: DatabaseSync): void {
   if (!names.has('side')) db.exec(`ALTER TABLE sets ADD COLUMN side TEXT`);
 }
 
+/**
+ * v5→v6 (VMCP-04.11): add the `isometric_measurements` / `isometric_trials`
+ * pair. `isometric.measure_imbalance` computed a real left/right asymmetry and
+ * then discarded it; these tables are the write that was missing.
+ *
+ * PURELY ADDITIVE — TWO NEW TABLES, NO CHANGE TO ANY EXISTING ONE. Unlike
+ * v3→v4 and v4→v5 there is no `ALTER TABLE` to probe for, because nothing
+ * existing is touched: no column is added to `sets`, no row anywhere is
+ * rewritten, and no pre-v6 data is read, backfilled or reinterpreted. The
+ * `CREATE TABLE IF NOT EXISTS` guards in `SCHEMA_SQL` do the whole job the
+ * moment `db.exec(SCHEMA_SQL)` runs at open time, so this migration is the same
+ * documented stub as v2→v3 rather than a per-column probe.
+ *
+ * NO BACKFILL, DELIBERATELY. There is no historical imbalance data to recover:
+ * every assessment run before v6 was computed in memory and dropped, and the
+ * force samples behind it were never persisted either. A DB that upgrades to v6
+ * starts with an empty assessment history, which is the truth.
+ */
+const MIGRATE_V5_TO_V6_SQL = `-- v5→v6 schema additions are folded into SCHEMA_SQL via CREATE TABLE IF NOT EXISTS.`;
+
 interface SessionRow {
   id: string;
   started_at: string;
@@ -262,6 +329,32 @@ interface RepRow {
   set_id: string;
   rep_index: number;
   payload: string;
+}
+
+interface IsometricMeasurementRow {
+  id: string;
+  measured_at: string;
+  analysis_version: number;
+  first_side_tested: string | null;
+  duration_ms: number;
+  trials_requested: number;
+  rest_ms: number;
+  between_sides_rest_ms: number | null;
+}
+
+interface IsometricTrialRow {
+  id: string;
+  measurement_id: string;
+  device_id: string | null;
+  side: string | null;
+  slot: string | null;
+  trial_index: number;
+  peak_force_lbs: number;
+  plateau_force_lbs: number;
+  plateau_start_ms: number;
+  plateau_end_ms: number;
+  valid: number;
+  invalid_reason: string | null;
 }
 
 interface TrainingProgramRow {
@@ -504,6 +597,109 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(sets);
   }
 
+  // --- Isometric assessments (v6 schema) ---
+
+  async putIsometricMeasurement(m: StoredIsometricMeasurement): Promise<void> {
+    // `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`: `isometric_trials`
+    // references this row `ON DELETE CASCADE`, so the delete half of a
+    // replace would drop every trial of the measurement being re-put — the
+    // #79 cascade, one table over.
+    const upsertMeasurement = this.db.prepare(
+      `INSERT INTO isometric_measurements
+         (id, measured_at, analysis_version, first_side_tested,
+          duration_ms, trials_requested, rest_ms, between_sides_rest_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         measured_at = excluded.measured_at,
+         analysis_version = excluded.analysis_version,
+         first_side_tested = excluded.first_side_tested,
+         duration_ms = excluded.duration_ms,
+         trials_requested = excluded.trials_requested,
+         rest_ms = excluded.rest_ms,
+         between_sides_rest_ms = excluded.between_sides_rest_ms`,
+    );
+    // Trials are replaced wholesale on a re-put, exactly like `putSet` does
+    // with reps: the trial array is the measurement's content, not an
+    // independently-addressed collection.
+    const deleteTrials = this.db.prepare(`DELETE FROM isometric_trials WHERE measurement_id = ?`);
+    const insertTrial = this.db.prepare(
+      `INSERT INTO isometric_trials
+         (id, measurement_id, device_id, side, slot, trial_index,
+          peak_force_lbs, plateau_force_lbs, plateau_start_ms, plateau_end_ms,
+          valid, invalid_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    this.db.exec('BEGIN');
+    try {
+      upsertMeasurement.run(
+        m.id,
+        m.measuredAt,
+        m.analysisVersion,
+        m.firstSideTested ?? null,
+        m.durationMs,
+        m.trialsRequested,
+        m.restMs,
+        m.betweenSidesRestMs ?? null,
+      );
+      deleteTrials.run(m.id);
+      for (const side of m.sides) {
+        for (const trial of side.trials) {
+          insertTrial.run(
+            trial.id,
+            m.id,
+            side.deviceId ?? null,
+            side.side ?? null,
+            side.slot ?? null,
+            trial.index,
+            trial.peakForceLbs,
+            trial.plateauForceLbs,
+            trial.plateauStartMs,
+            trial.plateauEndMs,
+            trial.valid ? 1 : 0,
+            trial.invalidReason ?? null,
+          );
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return Promise.resolve();
+  }
+
+  async getIsometricMeasurement(id: string): Promise<StoredIsometricMeasurement | undefined> {
+    const row = this.db.prepare(`SELECT * FROM isometric_measurements WHERE id = ?`).get(id) as
+      | IsometricMeasurementRow
+      | undefined;
+    if (!row) return Promise.resolve(undefined);
+    return Promise.resolve(rowToIsometricMeasurement(row, this.loadTrialsForMeasurement(row.id)));
+  }
+
+  async getIsometricMeasurementsForDevice(
+    deviceId: string,
+    opts: { limit?: number } = {},
+  ): Promise<StoredIsometricMeasurement[]> {
+    // Match on the trial rows' device_id (the join key), then load each
+    // matched measurement in full so the caller gets BOTH limbs of the run —
+    // an asymmetry is meaningless with one side of it missing.
+    const rows = this.db
+      .prepare(
+        `SELECT m.* FROM isometric_measurements m
+         WHERE EXISTS (
+           SELECT 1 FROM isometric_trials t
+           WHERE t.measurement_id = m.id AND t.device_id = ?
+         )
+         ORDER BY m.measured_at DESC
+         LIMIT ?`,
+      )
+      .all(deviceId, opts.limit ?? 50) as unknown as IsometricMeasurementRow[];
+    return Promise.resolve(
+      rows.map((row) => rowToIsometricMeasurement(row, this.loadTrialsForMeasurement(row.id))),
+    );
+  }
+
   // --- Block-periodization planning (v3 schema) ---
 
   async putTrainingProgram(p: StoredTrainingProgram): Promise<void> {
@@ -717,6 +913,14 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve();
   }
 
+  private loadTrialsForMeasurement(measurementId: string): IsometricTrialRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM isometric_trials WHERE measurement_id = ? ORDER BY side ASC, trial_index ASC`,
+      )
+      .all(measurementId) as unknown as IsometricTrialRow[];
+  }
+
   private loadRepsForSet(setId: string): StoredRep[] {
     const rows = this.db
       .prepare(`SELECT * FROM reps WHERE set_id = ? ORDER BY rep_index ASC`)
@@ -760,6 +964,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 3 = v3 planning schema; v4 added `sets.is_warmup` (additive column).
   // 4 = v4 schema; v5 added `sets.slot` / `sets.device_id` / `sets.side`
   //     (additive columns).
+  // 5 = v5 schema; v6 added the isometric assessment tables (additive tables).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -768,6 +973,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 2 &&
     found !== 3 &&
     found !== 4 &&
+    found !== 5 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -794,6 +1000,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 4) {
     migrateV4ToV5(db);
+  }
+  if (current <= 5) {
+    db.exec(MIGRATE_V5_TO_V6_SQL);
   }
 }
 
@@ -888,6 +1097,60 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // than casting, so a row carrying anything other than the two legal values
   // reads back as side-unknown instead of as a bogus side.
   if (row.side === 'left' || row.side === 'right') out.side = row.side;
+  return out;
+}
+
+/**
+ * Reassemble a measurement plus its flat trial rows into the nested
+ * `sides → trials` shape. Trials are grouped by their identity triple
+ * (`device_id` / `side` / `slot`) rather than by `side` alone: side is the
+ * nullable, resolved field, so grouping on it would silently merge two
+ * side-unknown units into one pseudo-limb. The device id is the ground truth
+ * and leads the key.
+ */
+function rowToIsometricMeasurement(
+  row: IsometricMeasurementRow,
+  trialRows: IsometricTrialRow[],
+): StoredIsometricMeasurement {
+  const groups = new Map<string, StoredIsometricSideMeasurement>();
+  for (const t of trialRows) {
+    const key = `${t.device_id ?? ''} ${t.side ?? ''} ${t.slot ?? ''}`;
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { trials: [] };
+      // `side` is free text at the SQLite level; narrow on read so a row
+      // carrying anything else reads back side-unknown, not as a bogus limb —
+      // same treatment `rowToSet` gives `sets.side`.
+      if (t.side === 'left' || t.side === 'right') group.side = t.side;
+      if (t.device_id !== null) group.deviceId = t.device_id;
+      if (t.slot !== null) group.slot = t.slot;
+      groups.set(key, group);
+    }
+    const trial: StoredIsometricTrial = {
+      id: t.id,
+      index: t.trial_index,
+      peakForceLbs: t.peak_force_lbs,
+      plateauForceLbs: t.plateau_force_lbs,
+      plateauStartMs: t.plateau_start_ms,
+      plateauEndMs: t.plateau_end_ms,
+      valid: t.valid !== 0,
+    };
+    if (t.invalid_reason !== null) trial.invalidReason = t.invalid_reason;
+    group.trials.push(trial);
+  }
+  const out: StoredIsometricMeasurement = {
+    id: row.id,
+    measuredAt: row.measured_at,
+    analysisVersion: row.analysis_version,
+    durationMs: row.duration_ms,
+    trialsRequested: row.trials_requested,
+    restMs: row.rest_ms,
+    sides: [...groups.values()],
+  };
+  if (row.first_side_tested === 'left' || row.first_side_tested === 'right') {
+    out.firstSideTested = row.first_side_tested;
+  }
+  if (row.between_sides_rest_ms !== null) out.betweenSidesRestMs = row.between_sides_rest_ms;
   return out;
 }
 
