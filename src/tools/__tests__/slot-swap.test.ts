@@ -13,6 +13,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
+import type { SlotBindingUpdate } from '../../state/slot-bindings.js';
+
 class FakeVoltraSDKError extends Error {
   readonly code: string;
   constructor(message: string, code: string) {
@@ -85,6 +87,7 @@ interface State {
     touch: Mock<(deviceId: string) => void>;
     remove: Mock<(deviceId: string) => unknown>;
     list: Mock<() => unknown[]>;
+    reassign: Mock<(updates: readonly SlotBindingUpdate[]) => void>;
   };
 }
 
@@ -95,6 +98,7 @@ function makeFakeSlotBindings(): State['slotBindings'] {
     touch: vi.fn(),
     remove: vi.fn(() => null),
     list: vi.fn(() => []),
+    reassign: vi.fn(),
   };
 }
 
@@ -375,6 +379,64 @@ describe('slot.swap tool', () => {
       primary: { deviceId: 'V-PRI' },
       left: { deviceId: 'V-LEFT' },
     });
+    expect(state.slots.get('primary')?.client).toBe(primaryClient);
+    expect(state.slots.get('left')?.client).toBe(leftClient);
+  });
+
+  // VMCP-04.10 — the persisted binding must move with the devices, or the
+  // next `device.connect {slot: 'auto'}` rebuilds the pre-swap mapping.
+  it('reassigns the persisted bindings to follow the devices, in one batch', async () => {
+    const slots = new Map<string, FakeSlot>();
+    for (const [slotId, deviceId] of [
+      ['left', 'V-097082'],
+      ['right', 'V-212006'],
+    ]) {
+      slots.set(slotId, {
+        slotId,
+        client: makeFakeClient({ connected: true, deviceId }),
+        live: new LiveState(),
+        modeRevertGuard: new ModeRevertGuard(),
+        unwireBridge: vi.fn(),
+      });
+    }
+    const state: State = {
+      config: { adapter: 'node', dbPath: '/tmp/test.sqlite', logLevel: 'info' },
+      manager: {},
+      slots,
+      slotBindings: makeFakeSlotBindings(),
+    };
+    const { invoke } = setup(state);
+
+    const r = await invoke('slot.swap', {});
+
+    expect(r.isError).toBeUndefined();
+    expect(state.slotBindings.reassign).toHaveBeenCalledTimes(1);
+    expect(state.slotBindings.reassign).toHaveBeenCalledWith([
+      { deviceId: 'V-097082', physicalSide: 'right' },
+      { deviceId: 'V-212006', physicalSide: 'left' },
+    ]);
+  });
+
+  it('surfaces a binding-write failure as a structured error and does not swap', async () => {
+    const { state, primaryClient, leftClient } = makeStateWithBoth({
+      primaryConnected: true,
+      leftConnected: true,
+    });
+    state.slotBindings.reassign.mockImplementation(() => {
+      const err = new Error('slot-bindings: failed to persist reassignment') as Error & {
+        code: string;
+      };
+      err.code = 'SLOT_BINDINGS_WRITE_FAILED';
+      throw err;
+    });
+    const { invoke } = setup(state);
+
+    const r = await invoke('slot.swap', {});
+
+    expect(r.isError).toBe(true);
+    expect(r.payload.code).toBe('SLOT_BINDINGS_WRITE_FAILED');
+    // Slots untouched — a swap the file can't record is refused outright
+    // rather than left half-applied.
     expect(state.slots.get('primary')?.client).toBe(primaryClient);
     expect(state.slots.get('left')?.client).toBe(leftClient);
   });

@@ -29,6 +29,22 @@ import { log } from '../logger.js';
 
 export type PhysicalSide = 'left' | 'right';
 
+/**
+ * A single binding change inside a `reassign` batch. `physicalSide: null`
+ * removes the binding — used when a device lands in a slot that carries no
+ * physical-side meaning (`'primary'`), where the honest answer is "side
+ * unknown" rather than a plausible guess that later reads as measured data.
+ */
+export interface SlotBindingUpdate {
+  deviceId: string;
+  physicalSide: PhysicalSide | null;
+}
+
+/** Narrow an arbitrary slot id to a physical side. `'primary'` is not one. */
+export function isPhysicalSide(value: string): value is PhysicalSide {
+  return value === 'left' || value === 'right';
+}
+
 export interface SlotBinding {
   deviceId: string;
   physicalSide: PhysicalSide;
@@ -161,6 +177,52 @@ export class SlotBindingsStore {
     return existing;
   }
 
+  /**
+   * Apply several binding changes as ONE on-disk write, or none at all.
+   *
+   * `slot.swap` exchanges two devices between slot keys, which flips the
+   * side of BOTH devices at once. Running that as two `bind` calls would
+   * leave a window on disk where both devices claim the same side — and a
+   * reader that catches that window resolves an L/R series with a
+   * sign flip and no error anywhere. One batch, one atomic tmp+rename,
+   * no window.
+   *
+   * Unlike `bind` / `touch` / `remove`, a write failure here THROWS
+   * (`SLOT_BINDINGS_WRITE_FAILED`) after restoring the in-memory cache to
+   * its pre-call state. A silently-dropped write would leave memory and
+   * disk disagreeing about which device is on which side, which is exactly
+   * the corruption this method exists to prevent — the caller needs to know
+   * so it can abort rather than proceed on a half-applied swap.
+   */
+  reassign(updates: readonly SlotBindingUpdate[]): void {
+    if (updates.length === 0) return;
+    const rollback = new Map([...this.bindings].map(([k, v]) => [k, { ...v }] as const));
+    const now = new Date(Date.now()).toISOString();
+    for (const update of updates) {
+      if (update.physicalSide === null) {
+        this.bindings.delete(update.deviceId);
+        continue;
+      }
+      this.bindings.set(update.deviceId, {
+        deviceId: update.deviceId,
+        physicalSide: update.physicalSide,
+        boundAt: now,
+        lastSeen: now,
+      });
+    }
+    try {
+      this.write();
+    } catch (err) {
+      this.bindings = rollback;
+      const msg = err instanceof Error ? err.message : String(err);
+      const failure = new Error(
+        `slot-bindings: failed to persist reassignment at ${this.path}: ${msg}`,
+      ) as Error & { code: string };
+      failure.code = 'SLOT_BINDINGS_WRITE_FAILED';
+      throw failure;
+    }
+  }
+
   /** Drop every binding. Test-facing helper; no tool calls this directly. */
   clear(): void {
     this.bindings.clear();
@@ -173,16 +235,21 @@ export class SlotBindingsStore {
    * parent directory is created if missing (matches the SQLite open path's
    * implicit-mkdir behaviour at `~/.voltras/`).
    */
-  private persist(): void {
+  private write(): void {
     const payload: BindingsFile = {
       version: CURRENT_VERSION,
       bindings: this.list(),
     };
+    mkdirSync(dirname(this.path), { recursive: true });
+    const tmp = `${this.path}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    renameSync(tmp, this.path);
+  }
+
+  /** Best-effort variant of `write` for the single-entry mutators. */
+  private persist(): void {
     try {
-      mkdirSync(dirname(this.path), { recursive: true });
-      const tmp = `${this.path}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-      renameSync(tmp, this.path);
+      this.write();
     } catch (err) {
       // Persistence failure is logged but not propagated — losing the
       // binding write means the next session re-runs the ritual, which is

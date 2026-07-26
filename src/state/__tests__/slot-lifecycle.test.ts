@@ -8,6 +8,10 @@
 // soft cap of MAX_SLOTS — stay locked down even if the tool layer is
 // later refactored.
 
+import { chmodSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 // SDK stub — `VoltraClient` is constructed by `resetPrimarySlot` and
@@ -46,21 +50,39 @@ const { getSlot, PRIMARY_SLOT, MAX_SLOTS } = await import('../server-state.js');
 const { createSlot, removeSlot, resetPrimarySlot, swapSlots } = await import('../slot-manager.js');
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
 const { CoercionWatch } = await import('../coercion-watch.js');
+const { SlotBindingsStore } = await import('../slot-bindings.js');
 
 /** Build a connected `VoltraClient` stub (matches the slot-cap policy's
  * isConnected check). Slot-cap tests need slots whose clients claim to be
  * connected so the cap actually triggers. */
-function connectedClient(): InstanceType<typeof VoltraClient> {
-  const c = new VoltraClient() as InstanceType<typeof VoltraClient> & { isConnected: boolean };
+function connectedClient(deviceId?: string): InstanceType<typeof VoltraClient> {
+  const c = new VoltraClient() as InstanceType<typeof VoltraClient> & {
+    isConnected: boolean;
+    connectedDeviceId: string | null;
+  };
   c.isConnected = true;
+  if (deviceId !== undefined) c.connectedDeviceId = deviceId;
   return c;
 }
 
 import type { ServerState } from '../server-state.js';
 
-function makeStateWithPrimary(opts: { primaryConnected?: boolean } = {}): ServerState {
+/**
+ * Each state gets its OWN bindings file under a fresh tmpdir — `swapSlots`
+ * writes through to disk (VMCP-04.10), and a shared path would let one
+ * test's swap leak into the next one's assertions.
+ */
+function makeBindingsStore(): InstanceType<typeof SlotBindingsStore> {
+  const dir = mkdtempSync(join(tmpdir(), 'vmcp-slot-lifecycle-'));
+  return SlotBindingsStore.open(join(dir, 'slot-bindings.json'));
+}
+
+function makeStateWithPrimary(
+  opts: { primaryConnected?: boolean; primaryDeviceId?: string } = {},
+): ServerState {
   const slots = new Map();
-  const client = opts.primaryConnected === true ? connectedClient() : new VoltraClient();
+  const client =
+    opts.primaryConnected === true ? connectedClient(opts.primaryDeviceId) : new VoltraClient();
   slots.set(PRIMARY_SLOT, {
     slotId: PRIMARY_SLOT,
     client,
@@ -68,7 +90,7 @@ function makeStateWithPrimary(opts: { primaryConnected?: boolean } = {}): Server
     modeRevertGuard: new ModeRevertGuard(),
     coercionWatch: new CoercionWatch(),
   });
-  return { slots } as unknown as ServerState;
+  return { slots, slotBindings: makeBindingsStore() } as unknown as ServerState;
 }
 
 describe('createSlot', () => {
@@ -432,3 +454,154 @@ describe('swapSlots', () => {
     expect(wireMock).toHaveBeenCalledTimes(2);
   });
 });
+
+// VMCP-04.10 — before this, `slot.swap` moved the slots in memory and left
+// `~/.voltras/slot-bindings.json` asserting the pre-swap sides. Nothing
+// errored; the persisted side simply became a lie, and any left/right
+// series read through it came back sign-flipped.
+describe('swapSlots — persisted device↔side bindings', () => {
+  function makeBilateralState(opts: { bindingsPath?: string } = {}): {
+    state: ServerState;
+    bindingsPath: string;
+    leftClient: InstanceType<typeof VoltraClient>;
+    rightClient: InstanceType<typeof VoltraClient>;
+  } {
+    const bindingsPath =
+      opts.bindingsPath ??
+      join(mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-')), 'slot-bindings.json');
+    const state = {
+      slots: new Map(),
+      slotBindings: SlotBindingsStore.open(bindingsPath),
+    } as unknown as ServerState;
+    const leftClient = connectedClient('V-A');
+    const rightClient = connectedClient('V-B');
+    createSlot(state, 'left', leftClient);
+    createSlot(state, 'right', rightClient);
+    return { state, bindingsPath, leftClient, rightClient };
+  }
+
+  /** Read the file back through a fresh store — proves the write landed on
+   * disk rather than only in the live cache. */
+  function reloadSides(path: string): Record<string, string> {
+    const reopened = SlotBindingsStore.open(path);
+    return Object.fromEntries(reopened.list().map((b) => [b.deviceId, b.physicalSide]));
+  }
+
+  it('flips the persisted side of BOTH devices, and the reload follows the devices', () => {
+    const { state, bindingsPath } = makeBilateralState();
+    state.slotBindings.bind('V-A', 'left');
+    state.slotBindings.bind('V-B', 'right');
+
+    swapSlots(state);
+
+    // In memory: the devices exchanged slot keys.
+    expect(getSlot(state, 'left').client.connectedDeviceId).toBe('V-B');
+    expect(getSlot(state, 'right').client.connectedDeviceId).toBe('V-A');
+    // On disk: the sides followed the DEVICES, not the slot keys.
+    expect(reloadSides(bindingsPath)).toEqual({ 'V-A': 'right', 'V-B': 'left' });
+  });
+
+  it('never leaves both devices claiming the same side on disk', () => {
+    const { state, bindingsPath } = makeBilateralState();
+    state.slotBindings.bind('V-A', 'left');
+    state.slotBindings.bind('V-B', 'right');
+
+    swapSlots(state);
+
+    const sides = Object.values(reloadSides(bindingsPath));
+    expect(new Set(sides).size).toBe(sides.length);
+  });
+
+  it('resolves sets recorded either side of a swap consistently when joined on deviceId', () => {
+    const { state, bindingsPath } = makeBilateralState();
+    state.slotBindings.bind('V-A', 'left');
+    state.slotBindings.bind('V-B', 'right');
+
+    // A set recorded BEFORE the swap, stamped the way the store records it:
+    // deviceId as the joinable identity, slotId as a diagnostic.
+    const before = { setId: 's1', deviceId: 'V-A', slotId: getSlotIdOf(state, 'V-A') };
+
+    swapSlots(state);
+
+    const after = { setId: 's2', deviceId: 'V-A', slotId: getSlotIdOf(state, 'V-A') };
+
+    // The slot id DID change across the swap — this is the trap. Joining on
+    // it would place the two sets on opposite sides of the body.
+    expect(before.slotId).toBe('left');
+    expect(after.slotId).toBe('right');
+
+    // Joined on deviceId against the reloaded file, both sets resolve to the
+    // same, corrected side. A swap re-labels a mapping that was wrong all
+    // along; it does not mean the hardware moved mid-session.
+    const sides = reloadSides(bindingsPath);
+    expect(sides[before.deviceId]).toBe('right');
+    expect(sides[after.deviceId]).toBe('right');
+  });
+
+  it('drops the binding for a device that lands in `primary` rather than guessing a side', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-'));
+    const bindingsPath = join(dir, 'slot-bindings.json');
+    const state = {
+      slots: new Map(),
+      slotBindings: SlotBindingsStore.open(bindingsPath),
+    } as unknown as ServerState;
+    createSlot(state, PRIMARY_SLOT, connectedClient('V-A'));
+    createSlot(state, 'left', connectedClient('V-B'));
+    state.slotBindings.bind('V-A', 'left');
+    state.slotBindings.bind('V-B', 'right');
+
+    swapSlots(state);
+
+    // V-A took the `left` slot, so it is bound left. V-B landed in
+    // `primary`, which carries no left/right meaning — its persisted
+    // `right` is dropped rather than kept or guessed at: a gap is
+    // detectable downstream, a plausible wrong side is not.
+    expect(reloadSides(bindingsPath)).toEqual({ 'V-A': 'left' });
+  });
+
+  it('leaves memory AND disk untouched when the binding write fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-swap-bindings-'));
+    const bindingsPath = join(dir, 'slot-bindings.json');
+    const { state } = makeBilateralState({ bindingsPath });
+    state.slotBindings.bind('V-A', 'left');
+    state.slotBindings.bind('V-B', 'right');
+    const fileBefore = readFileSync(bindingsPath, 'utf8');
+    // Read-only directory: the tmpfile write inside `persist` fails EACCES.
+    chmodSync(dir, 0o500);
+
+    try {
+      expect(() => swapSlots(state)).toThrow(/failed to persist/i);
+
+      // The in-memory slots never moved, so memory and disk still agree —
+      // a failed swap is a no-op, not a half-applied one.
+      expect(getSlot(state, 'left').client.connectedDeviceId).toBe('V-A');
+      expect(getSlot(state, 'right').client.connectedDeviceId).toBe('V-B');
+      expect(readFileSync(bindingsPath, 'utf8')).toBe(fileBefore);
+      // The cache rolled back too, so a later successful write can't
+      // resurrect the half-applied state.
+      expect(state.slotBindings.get('V-A')?.physicalSide).toBe('left');
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+
+  it('swaps normally when neither device has a persisted binding yet', () => {
+    const { state, bindingsPath } = makeBilateralState();
+
+    swapSlots(state);
+
+    // No prior bindings to correct, but the swap still records what it now
+    // knows: each device's side is its post-swap slot.
+    expect(getSlot(state, 'left').client.connectedDeviceId).toBe('V-B');
+    expect(reloadSides(bindingsPath)).toEqual({ 'V-A': 'right', 'V-B': 'left' });
+  });
+});
+
+/** Which slot key currently holds `deviceId`. Stands in for the slot stamp
+ * the set recorder writes at set-close time. */
+function getSlotIdOf(state: ServerState, deviceId: string): string {
+  for (const slot of state.slots.values()) {
+    if (slot.client.connectedDeviceId === deviceId) return slot.slotId;
+  }
+  throw new Error(`no slot holds ${deviceId}`);
+}
