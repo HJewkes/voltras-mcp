@@ -82,7 +82,13 @@ function toAnalyticsSet(stored: StoredSet): AnalyticsSet {
  * accept, sourced from each `StoredSet.weightLbs`.
  */
 function weightsOf(sets: readonly StoredSet[]): number[] {
-  return sets.map((s) => s.weightLbs);
+  // 0 for a set with no recorded weight. This is a COMPUTE boundary, not a
+  // storage one: the analytics functions take a weights array positionally
+  // aligned with `sets`, so dropping an entry would silently shift every later
+  // set's load onto the wrong set. A 0 contributes no volume and no strength
+  // estimate — the same result the pre-v6 sentinel produced — while the stored
+  // row keeps the gap.
+  return sets.map((s) => s.weightLbs ?? 0);
 }
 
 /**

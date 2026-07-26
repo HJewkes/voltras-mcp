@@ -93,8 +93,15 @@ function summariseSession(
   let estimatedTotalVolumeLbs = 0;
 
   for (const set of sets) {
-    if (set.weightLbs > topWeightLbs) {
-      topWeightLbs = set.weightLbs;
+    // A weightless set (schema v6: no recorded header weight, as opposed to a
+    // `0` sentinel) contributes to neither the top weight nor the volume
+    // estimate. Behaviour is unchanged for pre-v6 rows, whose sentinel `0`
+    // already contributed zero volume and never won the max.
+    if (set.weightLbs !== undefined) {
+      if (set.weightLbs > topWeightLbs) {
+        topWeightLbs = set.weightLbs;
+      }
+      estimatedTotalVolumeLbs += set.weightLbs * set.reps.length;
     }
     const repCount = set.reps.length;
     totalReps += repCount;
@@ -102,7 +109,6 @@ function summariseSession(
     if (!set.partial) {
       completedReps += repCount;
     }
-    estimatedTotalVolumeLbs += set.weightLbs * repCount;
   }
 
   return {

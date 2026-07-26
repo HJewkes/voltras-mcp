@@ -21,7 +21,12 @@ import {
 
 /** One stored set the history derivations read: its load and its reps. */
 export interface HistorySet {
-  weightLbs: number;
+  /**
+   * Load for the set. Absent as of schema v6 when no header weight was
+   * recorded — previously a `0` sentinel that every load-based derivation
+   * read as a real unloaded set.
+   */
+  weightLbs?: number;
   reps: readonly Rep[];
 }
 
@@ -289,14 +294,19 @@ export function buildPrHistory(sessions: readonly HistorySession[]): PrRecordVie
     for (const set of session.sets) {
       const reps = set.reps.length;
       if (reps < 1) continue;
-      const e1 = estimateE1RMFromReps(set.weightLbs, reps).e1RM;
-      if (Number.isFinite(e1) && e1 > best.e1rm) {
-        best.e1rm = e1;
-        dates.e1rm = session.startedAt;
-      }
-      if (set.weightLbs > best.weight) {
-        best.weight = set.weightLbs;
-        dates.weight = session.startedAt;
+      // Both records are load-based, so a set with no recorded weight sets
+      // neither. It still counts toward the rep record below, which needs no
+      // load. (Pre-v6 these rows carried a 0 and lost both comparisons anyway.)
+      if (set.weightLbs !== undefined) {
+        const e1 = estimateE1RMFromReps(set.weightLbs, reps).e1RM;
+        if (Number.isFinite(e1) && e1 > best.e1rm) {
+          best.e1rm = e1;
+          dates.e1rm = session.startedAt;
+        }
+        if (set.weightLbs > best.weight) {
+          best.weight = set.weightLbs;
+          dates.weight = session.startedAt;
+        }
       }
       if (reps > best.reps) {
         best.reps = reps;

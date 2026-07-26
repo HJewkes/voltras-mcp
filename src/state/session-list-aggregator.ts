@@ -59,15 +59,22 @@ export function aggregateSession(
   const setCount = sets.length;
   const totalReps = sets.reduce((acc, s) => acc + s.reps.length, 0);
 
+  // Only sets that actually recorded a weight. `topWeightLbs` was already
+  // nullable, so a session of entirely weightless sets now reports null rather
+  // than the fabricated 0 the old sentinel produced.
   let topWeightLbs: number | null = null;
-  if (sets.length > 0) {
-    topWeightLbs = Math.max(...sets.map((s) => s.weightLbs));
+  const weights = sets.map((s) => s.weightLbs).filter((w): w is number => w !== undefined);
+  if (weights.length > 0) {
+    topWeightLbs = Math.max(...weights);
   }
 
   // Preserve insertion order while deduplicating (first-appearance ordering).
+  // Sets with no recorded mode contribute nothing: listing them would put the
+  // 'Unknown' sentinel back on the wire under a different name.
   const seen = new Set<string>();
   const trainingModes: string[] = [];
   for (const s of sets) {
+    if (s.trainingMode === undefined) continue;
     if (!seen.has(s.trainingMode)) {
       seen.add(s.trainingMode);
       trainingModes.push(s.trainingMode);

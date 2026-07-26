@@ -37,38 +37,151 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
+
+/**
+ * The implicit local user. v6 introduces a user dimension across the whole
+ * schema; a single-user history is modelled as one row rather than as a
+ * special case, so multi-user does not require retrofitting every query later.
+ */
+const LOCAL_USER_ID = 'local';
 
 const SCHEMA_SQL = `
+  -- ── Identity (v6) ────────────────────────────────────────────────────
+  -- Declared before everything that references it. SQLite resolves foreign
+  -- keys at DML time rather than DDL time, so the order is for readers.
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    display_name TEXT,
+    created_at TEXT NOT NULL,
+    -- Exactly one row carries is_default=1: the implicit local user every
+    -- pre-v6 row is attributed to. Seeded by seedLocalUser.
+    is_default INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     started_at TEXT NOT NULL,
     ended_at TEXT,
     exercise_id TEXT,
     exercise_name TEXT,
-    notes TEXT
+    notes TEXT,
+    -- v6 additions. sessions is an FK parent (program_assignments cascades
+    -- off it), so it takes ADD COLUMN only and is never rebuilt.
+    user_id TEXT REFERENCES users(id),
+    bilateral_group_id TEXT,
+    source TEXT NOT NULL DEFAULT 'local',
+    -- The exercise→muscle map lives in the WA catalog, outside this DB. Without
+    -- the catalog version a re-classification silently rewrites every
+    -- historical per-muscle rollup and old charts stop reproducing.
+    catalog_version TEXT,
+    -- Denormalized from diet_phases, stamped at write. The table is the
+    -- source of truth and is retroactively correctable; this column is what
+    -- filters cheaply.
+    diet_phase TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+  -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
+  -- before applyMigrations, so on an existing DB the CREATE TABLE above is a
+  -- no-op and the v6 columns do not exist yet — an index naming one fails the
+  -- whole open. They are created in migrateV6ToV7, after the ALTERs.
+
+  -- ── sets (rebuilt in v7 — see migrateV6ToV7) ─────────────────────────
+  -- Conventions for every v6 column:
+  --   * timestamps are ISO-8601 TEXT, matching v1.
+  --   * every *_version column is TEXT <component>@<semver>.
+  --   * NULLABLE unless a default is genuinely correct. A gap is detectable
+  --     downstream; a silent default is not — which is the whole reason
+  --     training_mode and weight_lbs stopped being NOT NULL here.
 
   CREATE TABLE IF NOT EXISTS sets (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
+    -- Denormalised from the parent session, deliberately: every per-user
+    -- analytics query filters sets directly and would otherwise join.
+    user_id TEXT REFERENCES users(id),
     started_at TEXT NOT NULL,
     ended_at TEXT NOT NULL,
     partial INTEGER NOT NULL,
     partial_reason TEXT,
-    training_mode TEXT NOT NULL,
-    weight_lbs REAL NOT NULL,
-    is_warmup INTEGER NOT NULL DEFAULT 0,
-    -- Identity triple (v5). device_id = ground truth / the only join key;
-    -- side = what per-side analytics reads, resolved at write time;
-    -- slot = diagnostic only, a position at a moment, NEVER a join key.
+
+    -- v6: the two silent defaults are gone. 'Unknown' and 0 were sentinels
+    -- that read as measurements — a rendered "0 lb" could be a missing
+    -- snapshot or a real unloaded set, and nothing downstream could tell.
+    training_mode TEXT,
+    weight_lbs REAL,
+
+    -- Structure. Set-level exercise identity is what makes per-exercise
+    -- analysis possible at all; the session-level column stays as a hint.
+    exercise_id TEXT,
+    set_purpose TEXT NOT NULL DEFAULT 'working'
+      CHECK (set_purpose IN ('working','warmup','probe','technique')),
+    -- Generated, never written: is_warmup and set_purpose cannot drift because
+    -- there is only one stored value. Reads keep working unchanged.
+    is_warmup INTEGER GENERATED ALWAYS AS (set_purpose = 'warmup') VIRTUAL,
+    -- Physical configuration (bench height, attachment, stance), INFERRED by
+    -- ROM clustering. Distinct from the settings context below, which is
+    -- readable device config. Conflating the two breaks like-vs-like matching.
+    setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
+    set_index_in_session INTEGER,
+
+    -- Identity triple (v5, retained verbatim). device_id = ground truth and
+    -- the ONLY join key; side = what per-side analytics reads, resolved at
+    -- write time; slot = diagnostic only, a position at a moment in time.
     -- See migrateV4ToV5 and StoredSet in types.ts.
-    slot TEXT,
     device_id TEXT,
-    side TEXT
+    side TEXT CHECK (side IN ('left','right')),
+    slot TEXT,
+    bilateral_group_id TEXT,
+    -- 'live' = the two sides were paired as they happened. 'inferred' exists
+    -- only so a heuristically-paired row could be rendered differently from an
+    -- observed one; no inference backfill is run (see migrateV6ToV7).
+    group_source TEXT CHECK (group_source IN ('live','inferred')),
+
+    -- Device settings context: an OBSERVATION of readable device config.
+    -- Individually queryable, and hashed for like-vs-like matching. A chains
+    -- set and a constant-load set are indistinguishable without this.
+    chains_lbs REAL,
+    damper_level INTEGER,
+    eccentric_pct REAL,
+    inverse_chains INTEGER,
+    assist_mode TEXT,
+    settings_json TEXT,
+    -- 'v1:<hash>' over the whole context. The version prefix is load-bearing:
+    -- without it, adding a tenth settings dimension makes old hashes match new
+    -- ones wrongly and the mismatch is undetectable.
+    settings_hash TEXT,
+
+    -- Firmware ground truth. firmware_rep_count is canonical for COUNTING and
+    -- is written verbatim — never max()'d against the derived array length.
+    firmware_rep_count INTEGER,
+    firmware_peak_force_lbs REAL,
+    firmware_peak_power REAL,
+    firmware_time_to_peak_ms INTEGER,
+    firmware_rep_duration_ms INTEGER,
+    firmware_reps_json TEXT,
+
+    -- Capture provenance. Both of these are markers rather than fixes: they
+    -- record what scale and what resolution a row was captured at, so a later
+    -- conversion or rate change splits the corpus cleanly instead of blending
+    -- two incompatible populations into one untellable mix.
+    sample_rate_hz REAL,
+    position_units TEXT CHECK (position_units IN ('device_native','meters')),
+    derive_version TEXT,
+
+    -- Context.
+    battery_pct INTEGER,
+    -- ACHIEVED rest before this set, not prescribed rest.
+    rest_before_sec REAL,
+    -- VOLTRA_ADAPTER=mock writes into the same store as real hardware. Without
+    -- this marker any corpus fit silently ingests synthetic rows.
+    source TEXT NOT NULL DEFAULT 'local'
+      CHECK (source IN ('local','imported','mock'))
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
+  -- The four v7 sets indexes are created by the rebuild in migrateV6ToV7, for
+  -- the same ordering reason noted on sessions above.
 
   CREATE TABLE IF NOT EXISTS reps (
     id TEXT PRIMARY KEY,
@@ -109,7 +222,15 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     block_id TEXT NOT NULL REFERENCES training_blocks(id) ON DELETE CASCADE,
     order_index INTEGER NOT NULL,
-    name TEXT
+    name TEXT,
+    -- v6. PRESCRIBED phase — what the plan says this week is. The observed
+    -- counterpart lives in diet_phases; the two are different claims and
+    -- collapsing them loses the ability to compare plan against reality.
+    phase_type TEXT,
+    is_deload INTEGER NOT NULL DEFAULT 0,
+    -- Mesocycle week index. order_index is position within the block, which
+    -- is not the same thing once a block is edited.
+    week_index INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_training_weeks_block
     ON training_weeks(block_id, order_index);
@@ -136,7 +257,15 @@ const SCHEMA_SQL = `
     target_weight_lbs REAL,
     target_rpe REAL,
     rest_sec INTEGER,
-    notes TEXT
+    notes TEXT,
+    -- v6. The canonical tempo 4-tuple is [ecc, pauseBottom, con, pauseTop] and
+    -- the ordering is a known footgun that has already been shipped wrong once.
+    -- Store it as a NAMED OBJECT, never a bare array:
+    --   {"ecc":3,"pause_bottom":1,"con":1,"pause_top":0}
+    -- A named object cannot be silently mis-ordered by a consumer; a tuple can.
+    target_tempo_json TEXT,
+    target_rom_m REAL,
+    target_rir REAL
   );
   CREATE INDEX IF NOT EXISTS idx_planned_exercises_template
     ON planned_exercises(workout_template_id, order_index);
@@ -198,6 +327,279 @@ const SCHEMA_SQL = `
     ON isometric_trials(measurement_id, side, trial_index);
   CREATE INDEX IF NOT EXISTS idx_isometric_trials_device
     ON isometric_trials(device_id);
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- v6: identity, capture and state.
+  --
+  -- Every table below is created with no writer in this release. That is
+  -- deliberate and it is what makes v6 cheap: an empty column costs nothing,
+  -- whereas a column added later is a second migration against data that has
+  -- meanwhile accumulated. The expensive thing is not the DDL, it is doing
+  -- the DDL twice.
+  -- ═══════════════════════════════════════════════════════════════════════
+
+  CREATE TABLE IF NOT EXISTS training_profile (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    declared_tier TEXT,
+    declared_at TEXT,
+    years_training REAL,
+    history_consistent INTEGER,
+    ever_plateaued INTEGER,
+    reported_sets_per_muscle REAL,
+    goal TEXT,
+    goal_set_at TEXT,
+    days_available INTEGER,
+    days_reliable INTEGER,
+    onboarded_at TEXT,
+    -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
+    -- actually gave and which we assumed on their behalf.
+    provenance_json TEXT,
+    updated_at TEXT NOT NULL
+  );
+
+  -- Migrates ~/.voltras/slot-bindings.json into the DB. A JSON file cannot
+  -- express per-user bindings, and two people sharing a wall have two
+  -- different notions of "left".
+  CREATE TABLE IF NOT EXISTS device_bindings (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('left','right')),
+    bound_at TEXT NOT NULL,
+    last_seen TEXT,
+    PRIMARY KEY (user_id, device_id)
+  );
+
+  -- Physical setup, INFERRED from ROM clustering rather than declared.
+  CREATE TABLE IF NOT EXISTS exercise_setups (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    label TEXT,
+    detected_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    cluster_version TEXT,
+    retired_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_exercise_setups_user_exercise
+    ON exercise_setups(user_id, exercise_id);
+
+  -- STATE ONLY. No baseline VALUES live here: median ROM, tempo mean and decay
+  -- slope are computed from stored reps, because a value persisted from a
+  -- formula that later changes becomes a silent lie. Adding value columns
+  -- later is a pure ALTER, so the reversible choice is the empty one.
+  CREATE TABLE IF NOT EXISTS exercise_baselines (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
+    side TEXT CHECK (side IN ('left','right')),
+    state TEXT NOT NULL
+      CHECK (state IN ('COLD','SHAPE_ONLY','PROVISIONAL','CALIBRATED','STALE')),
+    confidence REAL,
+    -- DISTINCT sessions, not sets: promotion requires observations separated
+    -- in time, not repeated within one bout.
+    observed_sessions INTEGER NOT NULL DEFAULT 0,
+    anchor_count INTEGER NOT NULL DEFAULT 0,
+    anchor_spread REAL,
+    first_observed_at TEXT,
+    updated_at TEXT NOT NULL,
+    invalidated_at TEXT,
+    invalidation_reason TEXT,
+    algorithm_version TEXT NOT NULL,
+    UNIQUE (user_id, exercise_id, setup_id, side)
+  );
+
+  -- Stores the label's INPUTS, not only its verdict, so a changed filter can
+  -- re-derive past verdicts instead of stranding them.
+  CREATE TABLE IF NOT EXISTS failure_anchors (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    set_id TEXT REFERENCES sets(id) ON DELETE SET NULL,
+    exercise_id TEXT NOT NULL,
+    setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
+    side TEXT CHECK (side IN ('left','right')),
+    observed_at TEXT NOT NULL,
+    -- 'harvested' = observed in ordinary training; 'prescribed' = deliberately
+    -- taken to failure. Named to avoid colliding with set_purpose='probe',
+    -- which is a different risk class entirely.
+    source TEXT NOT NULL CHECK (source IN ('harvested','prescribed')),
+    terminal_velocity_mps REAL,
+    load_lbs REAL,
+    rep_count INTEGER,
+    -- Set index and session position are recorded so the selection bias in
+    -- harvested anchors can be corrected for later.
+    set_index_in_session INTEGER,
+    session_position_sec REAL,
+    filter_inputs_json TEXT NOT NULL,
+    filter_verdict TEXT NOT NULL,
+    filter_version TEXT NOT NULL,
+    self_reported_rir REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_failure_anchors_key
+    ON failure_anchors(user_id, exercise_id, setup_id, side, observed_at);
+
+  -- Persisting inputs AND the thresholds in force at issue time is what lets a
+  -- changed threshold be re-scored against history — the mechanism by which an
+  -- over-firing guard eventually gets settled with evidence instead of taste.
+  CREATE TABLE IF NOT EXISTS advisory_decisions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    set_id TEXT REFERENCES sets(id) ON DELETE SET NULL,
+    code TEXT NOT NULL,
+    issued_at TEXT NOT NULL,
+    inputs_json TEXT NOT NULL,
+    thresholds_json TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    user_response TEXT CHECK (user_response IN ('accepted','declined','ignored')),
+    responded_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_advisory_user_code
+    ON advisory_decisions(user_id, code, issued_at);
+
+  CREATE TABLE IF NOT EXISTS cue_state (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT,
+    fault_code TEXT NOT NULL,
+    escalation_rung INTEGER NOT NULL DEFAULT 0,
+    sessions_persisted INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    resolved_at TEXT,
+    UNIQUE (user_id, exercise_id, fault_code)
+  );
+
+  -- Check-ins, RIR self-reports and "that was hard" are one table, not three.
+  -- muscle_group is not optional in practice: recovery autoregulation is
+  -- per-muscle, and a session-scoped check-in cannot answer "are your quads
+  -- recovered".
+  CREATE TABLE IF NOT EXISTS self_reports (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    set_id TEXT REFERENCES sets(id) ON DELETE SET NULL,
+    muscle_group TEXT,
+    kind TEXT NOT NULL,
+    question_code TEXT,
+    value_num REAL,
+    value_text TEXT,
+    recorded_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_self_reports_user
+    ON self_reports(user_id, kind, recorded_at);
+
+  CREATE TABLE IF NOT EXISTS device_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    device_id TEXT,
+    slot TEXT,
+    kind TEXT NOT NULL,
+    at TEXT NOT NULL,
+    detail_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_device_events_session ON device_events(session_id, at);
+  CREATE INDEX IF NOT EXISTS idx_device_events_at ON device_events(at);
+
+  -- Reps performed outside an open set. Real work that currently leaves no
+  -- durable trace, so recorded volume under-counts by an unknown amount.
+  CREATE TABLE IF NOT EXISTS idle_reps (
+    id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    device_id TEXT,
+    slot TEXT,
+    side TEXT CHECK (side IN ('left','right')),
+    observed_at TEXT NOT NULL,
+    weight_lbs REAL,
+    payload TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_idle_reps_session ON idle_reps(session_id, observed_at);
+
+  -- NOTE: isometric imbalance persistence is deliberately NOT here. The
+  -- migration design called for an imbalance_measurements table holding the
+  -- pair-level result (left/right peak, imbalance %). v6 shipped a better
+  -- shape first: isometric_measurements + isometric_trials keeps the
+  -- PER-TRIAL numbers as the durable record and recomputes every side- and
+  -- pair-level statistic on read. That is the correct side of the
+  -- persist-observations / compute-conclusions line — the design here would
+  -- have stored a derived asymmetry % that a changed analysis version turns
+  -- into a silent lie. Superseded on purpose; do not re-add.
+
+  -- ACTUAL (observed) diet phase, time-ranged and retroactively correctable.
+  -- Distinct from training_weeks.phase_type, which is the PRESCRIBED phase.
+  CREATE TABLE IF NOT EXISTS diet_phases (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    declared_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_diet_phases_user ON diet_phases(user_id, started_at);
+
+  -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
+  -- observed-regularity proxy that is wrong in both directions.
+  CREATE TABLE IF NOT EXISTS commitments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+    sessions_per_week INTEGER NOT NULL,
+    days_json TEXT,
+    declared_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS body_metrics (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recorded_at TEXT NOT NULL,
+    bodyweight_lbs REAL,
+    height_in REAL,
+    notes TEXT
+  );
+
+  -- The cardiovascular hard-gate is a fixed rule in code, never a model
+  -- decision, and is never softened by anything in this table.
+  CREATE TABLE IF NOT EXISTS limitations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    body_region TEXT,
+    pain_class TEXT,
+    severity TEXT,
+    declared_at TEXT NOT NULL,
+    -- Undiagnosed constraints loosen over weeks rather than persisting forever.
+    loosens_at TEXT,
+    resolved_at TEXT,
+    notes TEXT
+  );
+
+  -- Without a log we cannot tell whether a swap helped, cannot honour "don't
+  -- re-suggest what I declined", and cannot rate-limit churn.
+  CREATE TABLE IF NOT EXISTS exercise_substitutions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    from_exercise_id TEXT NOT NULL,
+    to_exercise_id TEXT NOT NULL,
+    reason_code TEXT,
+    rationale_text TEXT,
+    proposed_by TEXT CHECK (proposed_by IN ('user','system','llm')),
+    accepted INTEGER,
+    at TEXT NOT NULL
+  );
+
+  -- "Don't count the two weeks they told us they'd be travelling."
+  CREATE TABLE IF NOT EXISTS disruption_windows (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    declared_at TEXT NOT NULL,
+    reason TEXT
+  );
 `;
 
 /**
@@ -232,8 +634,11 @@ const MIGRATE_V2_TO_V3_SQL = `-- v2→v3 schema additions are folded into SCHEMA
  * row as a working set.
  */
 function migrateV3ToV4(db: DatabaseSync): void {
-  const columns = db.prepare(`PRAGMA table_info(sets)`).all() as { name: string }[];
-  if (columns.some((c) => c.name === 'is_warmup')) return;
+  // `columnNames` reads `table_xinfo`, not `table_info`. That distinction is
+  // load-bearing as of v6: `is_warmup` became a GENERATED column, and
+  // `table_info` omits generated columns entirely — so a `table_info` probe
+  // would miss it on a fresh v6 DB and try to ADD a column that already exists.
+  if (columnNames(db, 'sets').has('is_warmup')) return;
   db.exec(`ALTER TABLE sets ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0`);
 }
 
@@ -273,8 +678,7 @@ function migrateV3ToV4(db: DatabaseSync): void {
  * untouched — `ADD COLUMN` rewrites no row data.
  */
 function migrateV4ToV5(db: DatabaseSync): void {
-  const columns = db.prepare(`PRAGMA table_info(sets)`).all() as { name: string }[];
-  const names = new Set(columns.map((c) => c.name));
+  const names = columnNames(db, 'sets');
   if (!names.has('slot')) db.exec(`ALTER TABLE sets ADD COLUMN slot TEXT`);
   if (!names.has('device_id')) db.exec(`ALTER TABLE sets ADD COLUMN device_id TEXT`);
   if (!names.has('side')) db.exec(`ALTER TABLE sets ADD COLUMN side TEXT`);
@@ -300,6 +704,277 @@ function migrateV4ToV5(db: DatabaseSync): void {
  */
 const MIGRATE_V5_TO_V6_SQL = `-- v5→v6 schema additions are folded into SCHEMA_SQL via CREATE TABLE IF NOT EXISTS.`;
 
+/**
+ * Column names currently present on `table`, GENERATED COLUMNS INCLUDED.
+ *
+ * `table_xinfo` rather than `table_info` deliberately: `table_info` omits
+ * generated columns, so probing with it would report v7's generated
+ * `sets.is_warmup` as missing and every `ADD COLUMN` guard keyed on it would
+ * fire against a column that is already there.
+ */
+function columnNames(db: DatabaseSync, table: string): Set<string> {
+  const columns = db.prepare(`PRAGMA table_xinfo(${table})`).all() as { name: string }[];
+  return new Set(columns.map((c) => c.name));
+}
+
+/**
+ * Add `column` to `table` when it is absent. SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, and every migration body also runs against fresh
+ * DBs whose `SCHEMA_SQL` already declares the column, so the probe is
+ * load-bearing rather than defensive.
+ */
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl: string): void {
+  if (columnNames(db, table).has(column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
+/**
+ * Seed the implicit local user. Idempotent, and safe to run on every open:
+ * v6 attributes every pre-existing row to this id, so it must exist before any
+ * backfill references it.
+ */
+function seedLocalUser(db: DatabaseSync): void {
+  db.prepare(
+    `INSERT INTO users (id, display_name, created_at, is_default)
+     VALUES (?, ?, ?, 1)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run(LOCAL_USER_ID, 'Local', new Date().toISOString());
+}
+
+/**
+ * v5→v6: the consolidated data-layer migration. Identity (a user dimension),
+ * capture provenance on `sets`, and the state tables that record decisions.
+ *
+ * WHY ONE MIGRATION RATHER THAN A SEQUENCE. A column with no writer is inert
+ * and costs nothing; a column added later is a second migration against data
+ * that has meanwhile accumulated. More pointedly, the `sets` rebuild below
+ * MUST happen before anything foreign-keys into `sets`, and this same
+ * migration introduces three such children (`failure_anchors`,
+ * `advisory_decisions`, `self_reports`). Splitting the work would mean either
+ * rebuilding later with children present, or relying on an ordering the code
+ * has no way to enforce.
+ *
+ * THE REBUILD IS THE ONLY NON-ADDITIVE OPERATION. `training_mode` and
+ * `weight_lbs` must lose their `NOT NULL`, and SQLite has no `ALTER COLUMN`,
+ * so a 12-step table rebuild is unavoidable. Since we are rebuilding anyway it
+ * absorbs every new `sets` column in one pass rather than ~25 separate
+ * `ALTER`s. This is the one seam that must not be split across two releases:
+ * every other cut in this plan is column-fill or new tables, neither of which
+ * re-migrates live data.
+ *
+ * `sessions` takes `ADD COLUMN` ONLY and is deliberately not rebuilt — it is
+ * an FK parent (`program_assignments` cascades off it), which makes a rebuild
+ * a data-loss hazard rather than merely slower.
+ */
+function migrateV6ToV7(db: DatabaseSync): void {
+  seedLocalUser(db);
+
+  addColumnIfMissing(db, 'sessions', 'user_id', 'TEXT REFERENCES users(id)');
+  addColumnIfMissing(db, 'sessions', 'bilateral_group_id', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'source', `TEXT NOT NULL DEFAULT 'local'`);
+  addColumnIfMissing(db, 'sessions', 'catalog_version', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'diet_phase', 'TEXT');
+
+  addColumnIfMissing(db, 'training_weeks', 'phase_type', 'TEXT');
+  addColumnIfMissing(db, 'training_weeks', 'is_deload', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'training_weeks', 'week_index', 'INTEGER');
+
+  addColumnIfMissing(db, 'planned_exercises', 'target_tempo_json', 'TEXT');
+  addColumnIfMissing(db, 'planned_exercises', 'target_rom_m', 'REAL');
+  addColumnIfMissing(db, 'planned_exercises', 'target_rir', 'REAL');
+
+  // Declared here rather than in SCHEMA_SQL: it names a column the ALTERs above
+  // have only just added.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, started_at)`);
+
+  db.exec(`UPDATE sessions SET user_id = '${LOCAL_USER_ID}' WHERE user_id IS NULL`);
+  // `order_index` is position within a block; `week_index` is the mesocycle
+  // week. They coincide today, which makes this backfill exactly right now and
+  // keeps them free to diverge later.
+  db.exec(`UPDATE training_weeks SET week_index = order_index WHERE week_index IS NULL`);
+
+  rebuildSetsForV7(db);
+  // Also runs for the fresh-DB case, where the rebuild is a no-op and
+  // SCHEMA_SQL deliberately did not declare these.
+  createV7SetsIndexes(db);
+}
+
+/**
+ * The `sets` indexes that name v6-only columns. Idempotent, and called from
+ * both the rebuild (which drops the old table and with it every index) and the
+ * fresh-DB path.
+ */
+function createV7SetsIndexes(db: DatabaseSync): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_sets_user_exercise ON sets(user_id, exercise_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_sets_bilateral ON sets(bilateral_group_id);
+    CREATE INDEX IF NOT EXISTS idx_sets_setup ON sets(setup_id);
+    CREATE INDEX IF NOT EXISTS idx_sets_settings_hash ON sets(user_id, exercise_id, settings_hash);
+  `);
+}
+
+/**
+ * The `sets` table rebuild (SQLite's documented 12-step ALTER procedure).
+ *
+ * No-op once `sets` already carries the v6 shape, which is the fresh-DB case:
+ * `SCHEMA_SQL` creates the v6 table directly and this body finds nothing to do.
+ *
+ * FOREIGN KEYS ARE OFF FOR THE DURATION and the result is verified with
+ * `PRAGMA foreign_key_check` before the transaction commits. `PRAGMA
+ * foreign_keys` is a no-op inside a transaction, so the toggle has to sit
+ * outside `BEGIN`. The new FK children created by this same migration are
+ * necessarily empty when this runs, so the check has nothing to fail on — but
+ * it runs anyway, because "should be empty" is not a guarantee.
+ *
+ * `reps` is a logical child of `sets` with no `REFERENCES` clause, so
+ * `DROP TABLE sets` does not cascade into it and rep payloads survive the
+ * rebuild untouched.
+ */
+function rebuildSetsForV7(db: DatabaseSync): void {
+  const existing = columnNames(db, 'sets');
+  if (existing.has('set_purpose')) return;
+
+  // Pre-v5 DBs reach v6 through migrateV4ToV5, so the identity triple is
+  // always present by now. Selected explicitly rather than assumed.
+  const hasIdentity = existing.has('slot') && existing.has('device_id') && existing.has('side');
+  if (!hasIdentity) {
+    throw new Error(
+      'sets is missing the v5 identity columns at the v6 rebuild; migrations ran out of order',
+    );
+  }
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+      CREATE TABLE sets_v7 (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        user_id TEXT REFERENCES users(id),
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        partial INTEGER NOT NULL,
+        partial_reason TEXT,
+        training_mode TEXT,
+        weight_lbs REAL,
+        exercise_id TEXT,
+        set_purpose TEXT NOT NULL DEFAULT 'working'
+          CHECK (set_purpose IN ('working','warmup','probe','technique')),
+        is_warmup INTEGER GENERATED ALWAYS AS (set_purpose = 'warmup') VIRTUAL,
+        setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
+        set_index_in_session INTEGER,
+        device_id TEXT,
+        side TEXT CHECK (side IN ('left','right')),
+        slot TEXT,
+        bilateral_group_id TEXT,
+        group_source TEXT CHECK (group_source IN ('live','inferred')),
+        chains_lbs REAL,
+        damper_level INTEGER,
+        eccentric_pct REAL,
+        inverse_chains INTEGER,
+        assist_mode TEXT,
+        settings_json TEXT,
+        settings_hash TEXT,
+        firmware_rep_count INTEGER,
+        firmware_peak_force_lbs REAL,
+        firmware_peak_power REAL,
+        firmware_time_to_peak_ms INTEGER,
+        firmware_rep_duration_ms INTEGER,
+        firmware_reps_json TEXT,
+        sample_rate_hz REAL,
+        position_units TEXT CHECK (position_units IN ('device_native','meters')),
+        derive_version TEXT,
+        battery_pct INTEGER,
+        rest_before_sec REAL,
+        source TEXT NOT NULL DEFAULT 'local'
+          CHECK (source IN ('local','imported','mock'))
+      )
+    `);
+
+    // The backfills. Each one is either information-preserving or explicitly
+    // noted as lossy in the migration notes — nothing here infers a value the
+    // data never had.
+    //
+    //   training_mode  'Unknown' was only ever a sentinel, never a real mode.
+    //                  Converting it to NULL is strictly information-preserving.
+    //   weight_lbs     A stored 0 is ambiguous: missing-snapshot sentinel or a
+    //                  genuine unloaded set. NULLIF collapses both to NULL and
+    //                  therefore LOSES A GENUINE ZERO. Applied anyway — the
+    //                  sentinel dominates (the device clamps at 5 lb and
+    //                  nothing prescribes 0 lb), and an honest NULL beats a
+    //                  confident wrong number. Pre-v6 NULLs must not be read as
+    //                  certain gaps.
+    //   exercise_id    Inherited from the parent session. Correct wherever a
+    //                  session held one exercise, which is nearly all of them;
+    //                  where a session was genuinely multi-exercise the
+    //                  session-level value was already wrong and this
+    //                  faithfully reproduces that wrongness rather than
+    //                  inventing a better one.
+    //   set_purpose    Historical probe rungs are indistinguishable from
+    //                  working sets and are permanently lost as such.
+    //   position_units Every existing row is device-native BY DEFINITION —
+    //                  no conversion has ever run. This is the one place a
+    //                  DEFAULT is safe, because it records what already is
+    //                  rather than assuming what might be.
+    //   source         Mock-adapter rows already in the DB are mislabelled
+    //                  'local'; nothing distinguished them at write time and
+    //                  they are NOT separable after the fact.
+    //
+    // Deliberately NOT backfilled: device_id / side / slot (discarded at write
+    // time — historical rows are permanently side-unknown, and inferring a side
+    // would manufacture data that looks measured), bilateral_group_id (a
+    // heuristic pairing lacks the opposite-slot guard the live path has, so it
+    // can create false pairs the live path cannot — and an inferred group still
+    // yields no side), and every settings/firmware/capture column, which were
+    // never captured at all.
+    db.exec(`
+      INSERT INTO sets_v7 (
+        id, session_id, user_id, started_at, ended_at, partial, partial_reason,
+        training_mode, weight_lbs, exercise_id, set_purpose,
+        set_index_in_session, device_id, side, slot, position_units, source
+      )
+      SELECT
+        s.id,
+        s.session_id,
+        '${LOCAL_USER_ID}',
+        s.started_at,
+        s.ended_at,
+        s.partial,
+        s.partial_reason,
+        NULLIF(s.training_mode, 'Unknown'),
+        NULLIF(s.weight_lbs, 0),
+        (SELECT sess.exercise_id FROM sessions sess WHERE sess.id = s.session_id),
+        CASE WHEN s.is_warmup = 1 THEN 'warmup' ELSE 'working' END,
+        ROW_NUMBER() OVER (PARTITION BY s.session_id ORDER BY s.started_at),
+        s.device_id,
+        CASE WHEN s.side IN ('left','right') THEN s.side ELSE NULL END,
+        s.slot,
+        'device_native',
+        'local'
+      FROM sets s
+    `);
+
+    db.exec(`DROP TABLE sets`);
+    db.exec(`ALTER TABLE sets_v7 RENAME TO sets`);
+    // DROP TABLE took every index with it; recreate before the FK check.
+    createV7SetsIndexes(db);
+
+    const violations = db.prepare(`PRAGMA foreign_key_check`).all();
+    if (violations.length > 0) {
+      throw new Error(
+        `v5→v6 sets rebuild left ${String(violations.length)} foreign-key violation(s); rolled back`,
+      );
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 interface SessionRow {
   id: string;
   started_at: string;
@@ -316,9 +991,12 @@ interface SetRow {
   ended_at: string;
   partial: number;
   partial_reason: string | null;
-  training_mode: string;
-  weight_lbs: number;
+  // Nullable as of v6: the 'Unknown' / 0 sentinels are gone.
+  training_mode: string | null;
+  weight_lbs: number | null;
+  // Generated from set_purpose — read, never written.
   is_warmup: number;
+  set_purpose: string;
   slot: string | null;
   device_id: string | null;
   side: string | null;
@@ -498,10 +1176,15 @@ export class SqliteSessionStore implements SessionStore {
     // delete-then-insert, and `sets` is the parent of `reps`. The re-put paths
     // (force-end on disconnect followed by an explicit re-end) hit the conflict
     // branch on every retry — see the #79 regression on `sessions`.
+    // EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS. A column present in the
+    // INSERT but missing from the DO UPDATE silently never updates on a re-put,
+    // which is invisible until a force-end/re-end retry writes the wrong value.
+    // `is_warmup` is absent by design — it is a generated column as of v6 and
+    // SQLite rejects writes to it; `set_purpose` is the stored value.
     const upsertSet = this.db.prepare(
       `INSERT INTO sets
          (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs, is_warmup, slot, device_id, side)
+          training_mode, weight_lbs, set_purpose, slot, device_id, side)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
@@ -511,7 +1194,7 @@ export class SqliteSessionStore implements SessionStore {
          partial_reason = excluded.partial_reason,
          training_mode = excluded.training_mode,
          weight_lbs = excluded.weight_lbs,
-         is_warmup = excluded.is_warmup,
+         set_purpose = excluded.set_purpose,
          slot = excluded.slot,
          device_id = excluded.device_id,
          side = excluded.side`,
@@ -530,9 +1213,9 @@ export class SqliteSessionStore implements SessionStore {
         s.endedAt,
         s.partial ? 1 : 0,
         s.partialReason ?? null,
-        s.trainingMode,
-        s.weightLbs,
-        s.isWarmup === true ? 1 : 0,
+        s.trainingMode ?? null,
+        s.weightLbs ?? null,
+        s.isWarmup === true ? 'warmup' : 'working',
         s.slot ?? null,
         s.deviceId ?? null,
         s.side ?? null,
@@ -965,6 +1648,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 4 = v4 schema; v5 added `sets.slot` / `sets.device_id` / `sets.side`
   //     (additive columns).
   // 5 = v5 schema; v6 added the isometric assessment tables (additive tables).
+  // 5 = v5 schema; v6 rebuilt `sets` (nullability + capture columns), added a
+  //     user dimension, and introduced the state tables.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -974,6 +1659,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 3 &&
     found !== 4 &&
     found !== 5 &&
+    found !== 6 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -1003,6 +1689,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 5) {
     db.exec(MIGRATE_V5_TO_V6_SQL);
+  }
+  if (current <= 6) {
+    migrateV6ToV7(db);
   }
 }
 
@@ -1083,10 +1772,14 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
     startedAt: row.started_at,
     endedAt: row.ended_at,
     partial: row.partial !== 0,
-    trainingMode: row.training_mode,
-    weightLbs: row.weight_lbs,
     reps,
   };
+  // Absent, never coalesced. Substituting 0 / 'Unknown' here would reintroduce
+  // the exact silent default v6 exists to remove — a gap is detectable
+  // downstream, a plausible wrong value is not. Choosing how to DISPLAY a gap
+  // belongs to the read-model, not the store.
+  if (row.training_mode !== null) out.trainingMode = row.training_mode;
+  if (row.weight_lbs !== null) out.weightLbs = row.weight_lbs;
   if (row.partial_reason !== null) out.partialReason = row.partial_reason;
   if (row.is_warmup !== 0) out.isWarmup = true;
   // Absent (not null / not `'primary'`) on pre-v5 rows: unknown slot is not

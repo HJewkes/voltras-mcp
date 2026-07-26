@@ -220,15 +220,28 @@ describe('SqliteSessionStore', () => {
       expect(sideless).not.toHaveProperty('side');
     });
 
-    it('reads an out-of-range side value back as side-unknown', async () => {
-      // `side` is a bare TEXT column, so nothing at the SQLite level stops a
-      // future writer (or a hand-edited DB) putting a slot id in it. Reading
-      // such a row back as absent keeps a bogus value from being mistaken for
-      // a measured limb.
+    it('rejects an out-of-range side value at write time (v6 CHECK)', async () => {
+      // v6 gave `side` a CHECK constraint, so a bogus limb is now refused by
+      // the DB rather than merely narrowed away on read. Write-time refusal is
+      // the stronger guarantee: a value that never lands cannot be read by
+      // anything that bypasses our mapper.
       await store.putSet(makeSet({ id: 'set-bogus', slot: 'primary' }));
       const raw = (store as unknown as { db: DatabaseSync }).db;
-      raw.prepare(`UPDATE sets SET side = ? WHERE id = ?`).run('primary', 'set-bogus');
-      expect(await store.getSet('set-bogus')).not.toHaveProperty('side');
+      expect(() =>
+        raw.prepare(`UPDATE sets SET side = ? WHERE id = ?`).run('primary', 'set-bogus'),
+      ).toThrow(/CHECK constraint failed/);
+    });
+
+    it('still reads a pre-v6 out-of-range side value back as side-unknown', async () => {
+      // The read-time narrowing stays, because rows written BEFORE the CHECK
+      // existed can still carry anything. Constraint checking is suppressed
+      // here to reproduce such a row; nothing in production writes this way.
+      await store.putSet(makeSet({ id: 'set-legacy-side', slot: 'primary' }));
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      raw.exec('PRAGMA ignore_check_constraints = ON');
+      raw.prepare(`UPDATE sets SET side = ? WHERE id = ?`).run('primary', 'set-legacy-side');
+      raw.exec('PRAGMA ignore_check_constraints = OFF');
+      expect(await store.getSet('set-legacy-side')).not.toHaveProperty('side');
     });
 
     it('getSetsForSession keeps each set attributed to its own slot', async () => {
@@ -352,9 +365,9 @@ describe('SqliteSessionStore.open() error paths', () => {
     // matches anywhere in the message — including the random temp path inside
     // `dbPath` — so `toContain('3')` passed by accident on macOS (long
     // `/var/folders/...` paths nearly always contain a '3') while failing on
-    // CI's short `/tmp/...`. It had also gone stale: SCHEMA_VERSION is 6.
+    // CI's short `/tmp/...`. It had also gone stale: SCHEMA_VERSION is 7.
     expect(e.message).toContain('user_version=99');
-    expect(e.message).toMatch(/expected 6\b/);
+    expect(e.message).toMatch(/expected 7\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -380,14 +393,23 @@ describe('SqliteSessionStore.open() error paths', () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
-      const cols = raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>;
+      const cols = raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>;
       const names = cols.map((c) => c.name);
-      expect(names).not.toContain('chains_lbs');
+      // `eccentric_percent` stays gone. `chains_lbs` does NOT: v6 re-introduces
+      // that NAME for a different thing — the per-set device settings context —
+      // having dropped the v1 column as unread. What matters is that the v1
+      // column's DATA did not survive: the v6 rebuild selects named columns and
+      // never carries the old one forward, so the row reads back NULL.
       expect(names).not.toContain('eccentric_percent');
+      expect(names).toContain('chains_lbs');
+      const carried = raw.prepare('SELECT chains_lbs FROM sets').all() as Array<{
+        chains_lbs: number | null;
+      }>;
+      expect(carried.every((r) => r.chains_lbs === null)).toBe(true);
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(6);
+      expect(version.user_version).toBe(7);
     } finally {
       await store.close();
     }
@@ -417,12 +439,14 @@ describe('SqliteSessionStore.open() error paths', () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
-      const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
+      // `table_xinfo`, not `table_info`: v6 made `is_warmup` a GENERATED column
+      // off `set_purpose`, and `table_info` omits generated columns.
+      const names = (raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>).map(
         (c) => c.name,
       );
       expect(names).toContain('is_warmup');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(6);
+      expect(version.user_version).toBe(7);
       // The pre-flag row backfills as a working set (no isWarmup key on read).
       expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
@@ -435,10 +459,12 @@ describe('SqliteSessionStore.open() error paths', () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
-      const cols = raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>;
+      const cols = raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>;
       const names = cols.map((c) => c.name);
-      expect(names).not.toContain('chains_lbs');
+      // `eccentric_percent` was dropped in v2 and never came back. `chains_lbs`
+      // is a v6 settings-context column that happens to reuse the old name.
       expect(names).not.toContain('eccentric_percent');
+      expect(names).toContain('chains_lbs');
     } finally {
       await store.close();
     }
@@ -589,7 +615,9 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
       expect(names).toContain('slot');
       expect(names).toContain('device_id');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(6);
+      // A v4 DB runs the whole forward chain in one open, so it lands on the
+      // CURRENT version, not on v5. v5 is a waypoint, never a resting state.
+      expect(version.user_version).toBe(7);
     } finally {
       await store.close();
     }
@@ -949,22 +977,39 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       expect(tables).toContain('isometric_measurements');
       expect(tables).toContain('isometric_trials');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(6);
+      expect(version.user_version).toBe(7);
     } finally {
       await store.close();
     }
   });
 
-  it('leaves the sets table untouched — no added column, no rewritten row', async () => {
-    // v6 adds tables only. If this ever starts failing, the migration has
-    // grown a side effect on existing data that nothing else here would catch.
+  it('adds the isometric tables without itself touching sets', async () => {
+    // ORIGINAL INTENT (v6): the isometric migration adds TABLES only, so `sets`
+    // must come out of it byte-identical. That guard is now structural — the
+    // v5→v6 body is a documented no-op stub, since its `CREATE TABLE IF NOT
+    // EXISTS` bodies live in SCHEMA_SQL.
+    //
+    // It can no longer be asserted through `open()`, because open() runs the
+    // WHOLE forward chain and v6→v7 rebuilds `sets` deliberately. Asserting the
+    // v5-era column list here would be asserting that v7 had not landed. What
+    // this checks instead is the part that is still this migration's job: the
+    // isometric tables exist, and the pre-existing `sets` columns all survived
+    // the chain (see the v6→v7 suite for the rebuild's own guarantees).
     const store = SqliteSessionStore.open(dbPath);
     try {
       const raw = (store as unknown as { db: DatabaseSync }).db;
-      const names = (raw.prepare('PRAGMA table_info(sets)').all() as Array<{ name: string }>).map(
+      const tables = (
+        raw.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{
+          name: string;
+        }>
+      ).map((t) => t.name);
+      expect(tables).toContain('isometric_measurements');
+      expect(tables).toContain('isometric_trials');
+
+      const names = (raw.prepare('PRAGMA table_xinfo(sets)').all() as Array<{ name: string }>).map(
         (c) => c.name,
       );
-      expect(names).toEqual([
+      for (const preexisting of [
         'id',
         'session_id',
         'started_at',
@@ -977,7 +1022,9 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
         'slot',
         'device_id',
         'side',
-      ]);
+      ]) {
+        expect(names).toContain(preexisting);
+      }
     } finally {
       await store.close();
     }
