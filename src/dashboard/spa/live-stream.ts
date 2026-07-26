@@ -14,6 +14,14 @@
  * and hard-reset to 0 on `phaseflip`. Commits are capped so this tiny live
  * subtree re-renders at ~20 Hz, not the whole dashboard.
  *
+ * Slot demux (VW-48 P2): a bilateral session puts TWO Voltras on one stream, and
+ * the server stamps every payload with its originating `slot` (`src/state/live-signal.ts`).
+ * All interpolation state — anchor, last rep, peak force, commit throttle and the
+ * staleness clock — is held per slot in a lazily-grown map, so one arm's motion can
+ * never smear onto the other. `onModel` is called once per slot with the slot id.
+ * Payloads without a `slot` (a server predating VW-48) fall back to
+ * {@link PRIMARY_SLOT}, which is exactly what single-Voltra streams already send.
+ *
  * Confidentiality: consumes the fitness-units-only SSE schema (`src/state/live-signal.ts`,
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
@@ -47,6 +55,12 @@ export interface LiveModel {
   peakForce: number;
 }
 
+/**
+ * The slot a single-Voltra (bench) stream reports, and the fallback for payloads
+ * that carry no `slot` at all (a server older than VW-48).
+ */
+export const PRIMARY_SLOT = 'primary';
+
 /** Below this heartbeat gap the stream is treated as stale (poll-only). */
 const STALE_MS = 3000;
 /** Max live-subtree commit cadence (~20 Hz) — smooth enough, cheap. */
@@ -60,6 +74,31 @@ interface Anchor {
   position: number;
   force: number;
   repInProgress: number | null;
+}
+
+/**
+ * Everything the interpolator needs for ONE slot. Held per slot so two arms
+ * interpolate, throttle and go stale independently — a shared anchor would
+ * re-time one arm's tempo bar off the other arm's frames.
+ */
+interface SlotState {
+  current: LiveModel | null;
+  anchor: Anchor | null;
+  lastRep: LiveRepSignal | null;
+  peakForce: number;
+  lastActivity: number;
+  lastCommit: number;
+}
+
+function createSlotState(): SlotState {
+  return {
+    current: null,
+    anchor: null,
+    lastRep: null,
+    peakForce: 0,
+    lastActivity: 0,
+    lastCommit: 0,
+  };
 }
 
 /**
@@ -77,9 +116,12 @@ interface Anchor {
  * `onSnapshot` (VMCP-03.04) receives the structural `snapshot` push the server sends on
  * every set-lifecycle boundary — wire it to the store's `applySnapshot` so structure
  * updates immediately instead of waiting for the slow reconciliation poll.
+ *
+ * `onModel`'s second argument is the originating slot ({@link PRIMARY_SLOT} for a
+ * single-Voltra stream). Slot-blind consumers may ignore it and behave exactly as before.
  */
 export function createLiveStreamController(
-  onModel: (model: LiveModel) => void,
+  onModel: (model: LiveModel, slot: string) => void,
   onSnapshot?: (snapshot: Snapshot) => void,
 ): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
@@ -90,46 +132,73 @@ export function createLiveStreamController(
   let raf = 0;
   let disposed = false;
 
-  let current: LiveModel | null = null;
-  let anchor: Anchor | null = null;
-  let lastRep: LiveRepSignal | null = null;
-  let peakForce = 0;
-  let lastActivity = 0;
-  let lastCommit = 0;
+  /**
+   * Per-slot interpolation state, grown lazily on a slot's first signal. Insertion
+   * order is the order slots first spoke, which is what the derived single-slot
+   * accessor in the store falls back to.
+   */
+  const slots = new Map<string, SlotState>();
 
-  const commit = (force = false): void => {
+  const slotOf = (data: { slot?: string }): string => data.slot ?? PRIMARY_SLOT;
+
+  const stateFor = (slot: string): SlotState => {
+    let state = slots.get(slot);
+    if (state === undefined) {
+      state = createSlotState();
+      slots.set(slot, state);
+    }
+    return state;
+  };
+
+  const commitSlot = (slot: string, s: SlotState, force = false): void => {
     const now = Date.now();
-    if (!force && now - lastCommit < COMMIT_INTERVAL_MS) return;
-    lastCommit = now;
-    const connected = lastActivity > 0 && now - lastActivity < STALE_MS;
-    if (anchor === null) {
+    if (!force && now - s.lastCommit < COMMIT_INTERVAL_MS) return;
+    s.lastCommit = now;
+    const connected = s.lastActivity > 0 && now - s.lastActivity < STALE_MS;
+    if (s.anchor === null) {
       // Only the connected flag can change while un-anchored; nothing to emit before
       // the first real frame.
-      if (current !== null) {
-        current = { ...current, connected };
-        onModel(current);
+      if (s.current !== null) {
+        s.current = { ...s.current, connected };
+        onModel(s.current, slot);
       }
       return;
     }
-    current = {
+    s.current = {
       connected,
-      phase: anchor.phase,
-      phaseElapsedMs: anchor.elapsedAtAnchorMs + Math.max(0, now - anchor.wallAtAnchorMs),
-      velocity: anchor.velocity,
-      position: anchor.position,
-      force: anchor.force,
-      repInProgress: anchor.repInProgress,
-      lastRep,
-      peakForce,
+      phase: s.anchor.phase,
+      phaseElapsedMs: s.anchor.elapsedAtAnchorMs + Math.max(0, now - s.anchor.wallAtAnchorMs),
+      velocity: s.anchor.velocity,
+      position: s.anchor.position,
+      force: s.anchor.force,
+      repInProgress: s.anchor.repInProgress,
+      lastRep: s.lastRep,
+      peakForce: s.peakForce,
     };
-    onModel(current);
+    onModel(s.current, slot);
+  };
+
+  const commitAll = (force = false): void => {
+    for (const [slot, s] of slots) commitSlot(slot, s, force);
+  };
+
+  /**
+   * Stream-level liveness (heartbeat, snapshot push) refreshes EVERY known slot:
+   * `connected` describes the SSE transport, which both slots share. A slot only
+   * looks disconnected once the whole stream stops — preserving the single-slot
+   * behaviour where a quiet rest period does not flip `connected` to false.
+   */
+  const touchAll = (now: number): void => {
+    for (const s of slots.values()) s.lastActivity = now;
   };
 
   const onPhase = (e: MessageEvent<string>): void => {
     const data = JSON.parse(e.data) as LivePhaseSignal;
-    lastActivity = Date.now();
+    const slot = slotOf(data);
+    const s = stateFor(slot);
+    s.lastActivity = Date.now();
     // Re-anchor to the real frame — kills interpolation drift.
-    anchor = {
+    s.anchor = {
       phase: data.phase,
       elapsedAtAnchorMs: data.phaseElapsedMs,
       wallAtAnchorMs: Date.now(),
@@ -138,15 +207,17 @@ export function createLiveStreamController(
       force: data.force,
       repInProgress: data.repInProgress,
     };
-    commit(true);
+    commitSlot(slot, s, true);
   };
 
   const onFlip = (e: MessageEvent<string>): void => {
     const data = JSON.parse(e.data) as LivePhaseFlip;
-    lastActivity = Date.now();
+    const slot = slotOf(data);
+    const s = stateFor(slot);
+    s.lastActivity = Date.now();
     // Hard-reset the phase clock the instant the phase flips.
-    anchor = {
-      ...(anchor ?? {
+    s.anchor = {
+      ...(s.anchor ?? {
         velocity: 0,
         position: 0,
         force: 0,
@@ -156,20 +227,24 @@ export function createLiveStreamController(
       elapsedAtAnchorMs: 0,
       wallAtAnchorMs: Date.now(),
     };
-    commit(true);
+    commitSlot(slot, s, true);
   };
 
   const onRep = (e: MessageEvent<string>): void => {
     const data = JSON.parse(e.data) as LiveRepSignal;
-    lastRep = data;
-    peakForce = data.peakForceSoFar;
-    lastActivity = Date.now();
-    commit(true);
+    const slot = slotOf(data);
+    const s = stateFor(slot);
+    s.lastRep = data;
+    s.peakForce = data.peakForceSoFar;
+    s.lastActivity = Date.now();
+    commitSlot(slot, s, true);
   };
 
   const onSet = (e: MessageEvent<string>): void => {
     const data = JSON.parse(e.data) as LiveSetSignal;
-    lastActivity = Date.now();
+    const slot = slotOf(data);
+    const s = stateFor(slot);
+    s.lastActivity = Date.now();
     if (data.kind === 'ended') {
       // Stop the live in-motion tempo bar, but KEEP the terminal rep's stats
       // (lastRep / peakForce) on screen. VW-57 streams the final rep (rep N)
@@ -177,21 +252,21 @@ export function createLiveStreamController(
       // summary should stay visible until the next set arms rather than flashing
       // for a single commit. The stale readout is cleared on the next
       // `set started` below.
-      anchor = null;
+      s.anchor = null;
     } else if (data.kind === 'started') {
       // A new set arming clears the previous set's final-rep readout.
-      lastRep = null;
-      peakForce = 0;
+      s.lastRep = null;
+      s.peakForce = 0;
     }
-    commit(true);
+    commitSlot(slot, s, true);
   };
 
   const onHb = (): void => {
-    lastActivity = Date.now();
+    touchAll(Date.now());
   };
 
   const onSnapshotEvent = (e: MessageEvent<string>): void => {
-    lastActivity = Date.now();
+    touchAll(Date.now());
     onSnapshot?.(JSON.parse(e.data) as Snapshot);
   };
 
@@ -203,11 +278,14 @@ export function createLiveStreamController(
   source.addEventListener('snapshot', onSnapshotEvent);
   // EventSource auto-reconnects honoring the server's `retry:` hint; we just
   // let the staleness clock flip `connected` to false in the meantime.
-  source.onerror = (): void => commit(true);
+  source.onerror = (): void => commitAll(true);
 
+  // ONE rAF loop drives every slot: the frame clock is a property of the browser,
+  // not of a Voltra. Each slot still interpolates off its own anchor and respects
+  // its own commit throttle inside the shared tick.
   const tick = (): void => {
     if (disposed) return;
-    commit();
+    commitAll();
     raf = requestAnimationFrame(tick);
   };
   raf = requestAnimationFrame(tick);
