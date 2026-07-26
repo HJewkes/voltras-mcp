@@ -65,7 +65,7 @@ export interface BilateralDivergence {
 }
 
 /**
- * VW-… (schema v7 grouping): a matched opposite-slot pair, divergent or not.
+ * A matched opposite-slot pair, divergent or not (schema v7 grouping).
  *
  * The two sides of a bilateral effort stay as two rows on purpose — merging
  * them would force picking one of two firmware-canonical rep counts and erase
