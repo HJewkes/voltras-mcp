@@ -1114,7 +1114,7 @@ function rowToIsometricMeasurement(
 ): StoredIsometricMeasurement {
   const groups = new Map<string, StoredIsometricSideMeasurement>();
   for (const t of trialRows) {
-    const key = `${t.device_id ?? ''} ${t.side ?? ''} ${t.slot ?? ''}`;
+    const key = `${t.device_id ?? ''}\0${t.side ?? ''}\0${t.slot ?? ''}`;
     let group = groups.get(key);
     if (group === undefined) {
       group = { trials: [] };
