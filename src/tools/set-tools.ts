@@ -38,7 +38,15 @@ import {
   type WatchConfig,
 } from '../schemas/set.js';
 import type { StoredRep, StoredSet } from '../store/types.js';
+import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
+import {
+  CURRENT_POSITION_UNITS,
+  hashSettingsContext,
+  measureSampleRateHz,
+  readSettingsContext,
+} from '../state/set-capture.js';
 import { mmsToMps, mmToM } from '../state/live-signal.js';
 import {
   buildIdleTimeoutPayload,
@@ -57,6 +65,29 @@ import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
+
+/**
+ * The v7 capture fields stamped onto a stored set at close. A subset of
+ * `StoredSet`, so it cannot drift from what the store can actually persist.
+ */
+type SetCapture = Pick<
+  StoredSet,
+  | 'userId'
+  | 'exerciseId'
+  | 'restBeforeSec'
+  | 'batteryPct'
+  | 'source'
+  | 'positionUnits'
+  | 'sampleRateHz'
+  | 'firmwareRepCount'
+  | 'firmwareRepsJson'
+  | 'chainsLbs'
+  | 'damperLevel'
+  | 'eccentricPct'
+  | 'inverseChains'
+  | 'assistMode'
+  | 'settingsHash'
+>;
 
 class ToolError extends Error {
   readonly code: string;
@@ -629,8 +660,14 @@ export async function finalizeSet(
     slotId,
     deviceId: slot.client.connectedDeviceId,
     side: resolvePersistedSide(state, slot.client.connectedDeviceId),
+    capture: buildSetCapture(state, slotId, correctedForStore, device),
   });
   await state.store.putSet(stored);
+  // Record this close so the NEXT set on this slot can measure its achieved
+  // rest. In-memory on purpose: after a restart the previous close time is
+  // genuinely unknown, and an absent rest beats one computed across a gap of
+  // unknown length.
+  state.lastSetEndedAtMs.set(slotId, Date.parse(stored.endedAt));
   // Push a lifecycle event so a channel-enabled host wakes the model on set
   // close. The payload carries the full rep array plus a pre-computed VBT
   // summary (first/last rep velocity + velocity-loss %), so PT Claude can
@@ -809,7 +846,12 @@ function resolvePersistedSide(state: ServerState, deviceId: string | null): Phys
 function toStoredSet(
   active: ActiveSet,
   device: DeviceSnapshot,
-  identity: { slotId: string; deviceId: string | null; side: PhysicalSide | null },
+  identity: {
+    slotId: string;
+    deviceId: string | null;
+    side: PhysicalSide | null;
+    capture?: SetCapture;
+  },
 ): StoredSet {
   const reps: StoredRep[] = active.reps.map((rep, index) => ({
     ...rep,
@@ -837,6 +879,63 @@ function toStoredSet(
     slot: identity.slotId,
     ...(typeof identity.deviceId === 'string' ? { deviceId: identity.deviceId } : {}),
     ...(identity.side !== null ? { side: identity.side } : {}),
+    ...(identity.capture ?? {}),
     reps,
+  };
+}
+
+/**
+ * The v7 capture block: everything observable at close that used to be dropped.
+ *
+ * Spread onto the stored set rather than assembled inline so that "what we
+ * capture" is one readable list rather than twenty conditionals buried in a
+ * literal. Every field is omitted when unknown — none of these has a
+ * meaningful default, and a plausible wrong value is worse than a gap because
+ * it is undetectable downstream.
+ */
+function buildSetCapture(
+  state: ServerState,
+  slotId: string,
+  active: ActiveSet,
+  device: DeviceSnapshot,
+): SetCapture {
+  const settings = readSettingsContext(device);
+  const settingsHash = hashSettingsContext(settings);
+  const sampleRateHz = measureSampleRateHz(active.reps);
+  // The exercise is stamped from the session that OWNS this set, guarded on
+  // the session id: a set closing after its session was torn down must not
+  // inherit a later session's exercise.
+  const session = getSlot(state, slotId).live.snapshotSession();
+  const exerciseId = session?.sessionId === active.sessionId ? session.exerciseId : undefined;
+
+  // Achieved rest: the gap since this slot's previous close. Absent for the
+  // first set of a run and across a restart.
+  const previousEndMs = state.lastSetEndedAtMs.get(slotId);
+  const startedAtMs = Date.parse(active.startedAt);
+  const restBeforeSec =
+    previousEndMs !== undefined && Number.isFinite(startedAtMs) && startedAtMs > previousEndMs
+      ? Math.round(((startedAtMs - previousEndMs) / 1000) * 10) / 10
+      : undefined;
+
+  return {
+    userId: LOCAL_USER_ID,
+    // Mock-adapter rows are marked as such. Without this, any corpus fit
+    // silently ingests synthetic sets alongside real hardware.
+    source: state.config?.adapter === 'mock' ? 'mock' : 'local',
+    positionUnits: CURRENT_POSITION_UNITS,
+    ...(exerciseId !== undefined ? { exerciseId } : {}),
+    ...(restBeforeSec !== undefined ? { restBeforeSec } : {}),
+    ...(device.batteryPercent !== undefined ? { batteryPct: device.batteryPercent } : {}),
+    ...(sampleRateHz !== undefined ? { sampleRateHz } : {}),
+    // VERBATIM, never max()'d against the derived array length. The device
+    // counts reps; our side only enriches them.
+    ...(active.firmwareTotalRepCount !== undefined
+      ? { firmwareRepCount: active.firmwareTotalRepCount }
+      : {}),
+    ...(active.firmwareReps !== undefined && active.firmwareReps.length > 0
+      ? { firmwareRepsJson: JSON.stringify(active.firmwareReps) }
+      : {}),
+    ...settings,
+    ...(settingsHash !== undefined ? { settingsHash } : {}),
   };
 }

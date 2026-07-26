@@ -44,7 +44,7 @@ const SCHEMA_VERSION = 7;
  * schema; a single-user history is modelled as one row rather than as a
  * special case, so multi-user does not require retrofitting every query later.
  */
-const LOCAL_USER_ID = 'local';
+export const LOCAL_USER_ID = 'local';
 
 const SCHEMA_SQL = `
   -- ── Identity (v6) ────────────────────────────────────────────────────
@@ -991,7 +991,7 @@ interface SetRow {
   ended_at: string;
   partial: number;
   partial_reason: string | null;
-  // Nullable as of v6: the 'Unknown' / 0 sentinels are gone.
+  // Nullable as of v7: the 'Unknown' / 0 sentinels are gone.
   training_mode: string | null;
   weight_lbs: number | null;
   // Generated from set_purpose — read, never written.
@@ -1000,6 +1000,25 @@ interface SetRow {
   slot: string | null;
   device_id: string | null;
   side: string | null;
+  user_id: string | null;
+  exercise_id: string | null;
+  set_index_in_session: number | null;
+  rest_before_sec: number | null;
+  battery_pct: number | null;
+  source: string | null;
+  position_units: string | null;
+  sample_rate_hz: number | null;
+  firmware_rep_count: number | null;
+  firmware_reps_json: string | null;
+  bilateral_group_id: string | null;
+  group_source: string | null;
+  chains_lbs: number | null;
+  damper_level: number | null;
+  eccentric_pct: number | null;
+  inverse_chains: number | null;
+  assist_mode: string | null;
+  settings_json: string | null;
+  settings_hash: string | null;
 }
 
 interface RepRow {
@@ -1183,11 +1202,19 @@ export class SqliteSessionStore implements SessionStore {
     // SQLite rejects writes to it; `set_purpose` is the stored value.
     const upsertSet = this.db.prepare(
       `INSERT INTO sets
-         (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs, set_purpose, slot, device_id, side)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
+          training_mode, weight_lbs, set_purpose, slot, device_id, side,
+          exercise_id, set_index_in_session, rest_before_sec, battery_pct,
+          source, position_units, sample_rate_hz,
+          firmware_rep_count, firmware_reps_json,
+          bilateral_group_id, group_source,
+          chains_lbs, damper_level, eccentric_pct, inverse_chains, assist_mode,
+          settings_json, settings_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
+         user_id = excluded.user_id,
          started_at = excluded.started_at,
          ended_at = excluded.ended_at,
          partial = excluded.partial,
@@ -1197,7 +1224,25 @@ export class SqliteSessionStore implements SessionStore {
          set_purpose = excluded.set_purpose,
          slot = excluded.slot,
          device_id = excluded.device_id,
-         side = excluded.side`,
+         side = excluded.side,
+         exercise_id = excluded.exercise_id,
+         set_index_in_session = excluded.set_index_in_session,
+         rest_before_sec = excluded.rest_before_sec,
+         battery_pct = excluded.battery_pct,
+         source = excluded.source,
+         position_units = excluded.position_units,
+         sample_rate_hz = excluded.sample_rate_hz,
+         firmware_rep_count = excluded.firmware_rep_count,
+         firmware_reps_json = excluded.firmware_reps_json,
+         bilateral_group_id = excluded.bilateral_group_id,
+         group_source = excluded.group_source,
+         chains_lbs = excluded.chains_lbs,
+         damper_level = excluded.damper_level,
+         eccentric_pct = excluded.eccentric_pct,
+         inverse_chains = excluded.inverse_chains,
+         assist_mode = excluded.assist_mode,
+         settings_json = excluded.settings_json,
+         settings_hash = excluded.settings_hash`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -1209,6 +1254,7 @@ export class SqliteSessionStore implements SessionStore {
       upsertSet.run(
         s.id,
         s.sessionId,
+        s.userId ?? null,
         s.startedAt,
         s.endedAt,
         s.partial ? 1 : 0,
@@ -1219,6 +1265,28 @@ export class SqliteSessionStore implements SessionStore {
         s.slot ?? null,
         s.deviceId ?? null,
         s.side ?? null,
+        s.exerciseId ?? null,
+        s.setIndexInSession ?? null,
+        s.restBeforeSec ?? null,
+        s.batteryPct ?? null,
+        // NOT NULL with a column DEFAULT of 'local'. Binding an explicit NULL
+        // overrides the default and violates the constraint, so the default is
+        // reproduced here. Not a sentinel: a row this server wrote genuinely IS
+        // local provenance unless the adapter says otherwise.
+        s.source ?? 'local',
+        s.positionUnits ?? null,
+        s.sampleRateHz ?? null,
+        s.firmwareRepCount ?? null,
+        s.firmwareRepsJson ?? null,
+        s.bilateralGroupId ?? null,
+        s.groupSource ?? null,
+        s.chainsLbs ?? null,
+        s.damperLevel ?? null,
+        s.eccentricPct ?? null,
+        s.inverseChains === undefined ? null : s.inverseChains ? 1 : 0,
+        s.assistMode ?? null,
+        s.settingsJson ?? null,
+        s.settingsHash ?? null,
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -1790,6 +1858,35 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // than casting, so a row carrying anything other than the two legal values
   // reads back as side-unknown instead of as a bogus side.
   if (row.side === 'left' || row.side === 'right') out.side = row.side;
+
+  // v7 capture columns. Absent stays absent throughout — every one of these is
+  // unrecoverable if it was not captured, so a NULL is a real gap and must not
+  // be papered over with a default.
+  if (row.user_id !== null) out.userId = row.user_id;
+  if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  if (row.set_index_in_session !== null) out.setIndexInSession = row.set_index_in_session;
+  if (row.rest_before_sec !== null) out.restBeforeSec = row.rest_before_sec;
+  if (row.battery_pct !== null) out.batteryPct = row.battery_pct;
+  if (row.source === 'local' || row.source === 'imported' || row.source === 'mock') {
+    out.source = row.source;
+  }
+  if (row.position_units === 'device_native' || row.position_units === 'meters') {
+    out.positionUnits = row.position_units;
+  }
+  if (row.sample_rate_hz !== null) out.sampleRateHz = row.sample_rate_hz;
+  if (row.firmware_rep_count !== null) out.firmwareRepCount = row.firmware_rep_count;
+  if (row.firmware_reps_json !== null) out.firmwareRepsJson = row.firmware_reps_json;
+  if (row.bilateral_group_id !== null) out.bilateralGroupId = row.bilateral_group_id;
+  if (row.group_source === 'live' || row.group_source === 'inferred') {
+    out.groupSource = row.group_source;
+  }
+  if (row.chains_lbs !== null) out.chainsLbs = row.chains_lbs;
+  if (row.damper_level !== null) out.damperLevel = row.damper_level;
+  if (row.eccentric_pct !== null) out.eccentricPct = row.eccentric_pct;
+  if (row.inverse_chains !== null) out.inverseChains = row.inverse_chains !== 0;
+  if (row.assist_mode !== null) out.assistMode = row.assist_mode;
+  if (row.settings_json !== null) out.settingsJson = row.settings_json;
+  if (row.settings_hash !== null) out.settingsHash = row.settings_hash;
   return out;
 }
 

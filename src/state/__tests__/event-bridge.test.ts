@@ -1071,6 +1071,9 @@ describe('wireEventBridge', () => {
         channels,
         server,
         setStartDeviceSnapshots: new Map(),
+        // v7: finalizeSet records each close here so the next set can measure its
+        // achieved rest. Empty stub — these harnesses assert other behaviour.
+        lastSetEndedAtMs: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
         // VMCP-04.08: finalizeSet resolves the persisted `side` through the
@@ -1527,6 +1530,9 @@ describe('wireEventBridge', () => {
         channels,
         server,
         setStartDeviceSnapshots: new Map(),
+        // v7: finalizeSet records each close here so the next set can measure its
+        // achieved rest. Empty stub — these harnesses assert other behaviour.
+        lastSetEndedAtMs: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
         // VMCP-04.08: finalizeSet resolves the persisted `side` through the
@@ -2863,6 +2869,9 @@ describe('wireEventBridge — guided-load auto-create', () => {
       channels: makeFakeChannels(),
       server: makeFakeServer(),
       setStartDeviceSnapshots: new Map(),
+      // v7: finalizeSet records each close here so the next set can measure its
+      // achieved rest. Empty stub — these harnesses assert other behaviour.
+      lastSetEndedAtMs: new Map(),
       setWatchdog: new SetWatchdog(),
       restTimers: new RestTimerRegistry(),
       // VMCP-04.08: finalizeSet resolves the persisted `side` through the

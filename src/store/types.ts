@@ -175,6 +175,95 @@ export interface StoredSet {
    * populates it.
    */
   slot?: string;
+
+  // ── v7 capture (Wave 1) ────────────────────────────────────────────────
+  // Everything below was observable at set close and discarded. None of it is
+  // recoverable after the fact, which is why the columns exist before every
+  // writer does.
+
+  /** Owning user. `'local'` under the single-user model. */
+  userId?: string;
+  /**
+   * Exercise this set was performed for, stamped from the active session at
+   * close. Set-level rather than session-level because a session is routinely
+   * multi-exercise, and per-exercise analysis has no key without it.
+   */
+  exerciseId?: string;
+  /** Ordinal within the owning session, 1-based, in start-time order. */
+  setIndexInSession?: number;
+  /**
+   * ACHIEVED rest before this set, in seconds — measured from the previous
+   * set's close on the same slot. Not the prescribed rest, which is a plan
+   * value and lives on `planned_exercises`.
+   *
+   * Absent for the first set of a slot's run and across a server restart: the
+   * previous close time is in-memory, and a gap is the honest answer.
+   */
+  restBeforeSec?: number;
+  /** Battery percentage reported by the unit at close. */
+  batteryPct?: number;
+  /**
+   * Provenance of the row. `VOLTRA_ADAPTER=mock` writes into the same store as
+   * real hardware, so without this any corpus fit silently ingests synthetic
+   * sets. `'imported'` is reserved for a future import path.
+   */
+  source?: 'local' | 'imported' | 'mock';
+  /**
+   * Scale of `WorkoutSample.position` on this set's reps. A MARKER, not a
+   * conversion: it records which scale the samples are already in so existing
+   * rows stay interpretable when the bridge conversion lands, rather than
+   * being silently rescaled.
+   */
+  positionUnits?: 'device_native' | 'meters';
+  /**
+   * Telemetry sample rate for this set, in Hz, MEASURED from the sample
+   * timestamps rather than assumed. There is no configured rate to read: the
+   * rate is emergent from the device stream. Recording it now means a later
+   * rate change splits the corpus cleanly instead of blending two resolutions
+   * into one untellable mix.
+   */
+  sampleRateHz?: number;
+  /**
+   * Device rep count as the firmware reported it, VERBATIM. Canonical for
+   * counting — never reconciled against the derived rep array length, and
+   * never `max()`'d with it. The device counts; we only enrich.
+   */
+  firmwareRepCount?: number;
+  /** Per-rep firmware boundaries as JSON, for cross-checking segmentation. */
+  firmwareRepsJson?: string;
+  /**
+   * Groups the two sides of one bilateral effort. Present only when the live
+   * path actually paired them (`groupSource: 'live'`); never inferred, because
+   * a heuristic pairing lacks the opposite-slot guard the live path has and
+   * would create pairs the live path could not.
+   */
+  bilateralGroupId?: string;
+  /** How `bilateralGroupId` was established. Always `'live'` on new writes. */
+  groupSource?: 'live' | 'inferred';
+
+  // ── Device settings context (an observation of readable config) ────────
+  // Distinct from `setupId`, which is inferred physical configuration. A
+  // chains set and a constant-load set are indistinguishable without these.
+
+  /** User's chains setting in lbs, from the cmd=0x10 cascade echo. */
+  chainsLbs?: number;
+  /** Damper resistance level (0-9). */
+  damperLevel?: number;
+  /** Eccentric overload percentage. */
+  eccentricPct?: number;
+  /** Inverse-chains flag, as reported. */
+  inverseChains?: boolean;
+  /** Assist-mode raw value. */
+  assistMode?: string;
+  /** Long tail of settings (isokinetic params, band max force) as JSON. */
+  settingsJson?: string;
+  /**
+   * Versioned hash over the whole settings context, `'v1:<hash>'`. The version
+   * prefix is load-bearing: without it, adding a tenth settings dimension makes
+   * old hashes compare equal to new ones and the mismatch is undetectable.
+   */
+  settingsHash?: string;
+
   reps: StoredRep[];
 }
 

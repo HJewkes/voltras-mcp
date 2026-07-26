@@ -98,6 +98,9 @@ function makeFixture(overrides: {
     slots,
     store: { putSession: vi.fn(async () => undefined), putSet: vi.fn(async () => undefined) },
     setStartDeviceSnapshots: new Map(),
+    // v7: finalizeSet records each close here so the next set can measure its
+    // achieved rest. Empty stub — these harnesses assert other behaviour.
+    lastSetEndedAtMs: new Map(),
   };
   return { state, client, live };
 }

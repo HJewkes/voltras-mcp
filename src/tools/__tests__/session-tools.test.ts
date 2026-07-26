@@ -243,6 +243,7 @@ function setup(): Harness {
     },
     restTimers: { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn(), has: vi.fn(() => false) },
     setStartDeviceSnapshots,
+    lastSetEndedAtMs: new Map(),
     channels: { forSlot: () => slotPublisher },
     // VMCP-04.08: finalizeSet resolves the persisted `side` through the
     // bindings store. Nothing here binds a device, so an empty store is
@@ -266,6 +267,7 @@ function setup(): Harness {
     clientEndSet,
     setWatchdogCancel,
     setStartDeviceSnapshots,
+    lastSetEndedAtMs: new Map(),
     published,
   };
 }

@@ -249,6 +249,9 @@ function setup(
     exercises: {} as never,
     channels,
     setStartDeviceSnapshots: new Map(),
+    // v7: finalizeSet records each close here so the next set can measure its
+    // achieved rest. Empty stub — these harnesses assert other behaviour.
+    lastSetEndedAtMs: new Map(),
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
     bilateralReconciler: new BilateralReconciler(),
@@ -802,6 +805,88 @@ describe('set.end', () => {
   let h: Harness;
   beforeEach(() => {
     h = setup();
+  });
+
+  it('stamps v7 capture provenance onto the persisted set', async () => {
+    // Wave 1-S: the values observable at close that used to be dropped. Each is
+    // unrecoverable afterwards, so what is asserted is that they actually reach
+    // the row — not merely that they are computable.
+    startSession(h.live);
+    h.live.applySettings({
+      connected: true,
+      weightLbs: 75,
+      trainingMode: 'WeightTraining',
+      batteryPercent: 88,
+      damperLevel: 4,
+      chainSettingLbs: 20,
+      eccentricPercentTenths: 1100,
+    });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.userId).toBe('local');
+    expect(stored.batteryPct).toBe(88);
+    expect(stored.damperLevel).toBe(4);
+    expect(stored.chainsLbs).toBe(20);
+    expect(stored.eccentricPct).toBe(110);
+    expect(stored.settingsHash).toMatch(/^v1:/);
+    // The marker records the scale the samples are ALREADY in; it must not read
+    // 'meters' until the bridge conversion lands.
+    expect(stored.positionUnits).toBe('device_native');
+    // Provenance, so a corpus fit can exclude synthetic rows.
+    expect(stored.source).toBe('local');
+  });
+
+  it('records no rest before the first set of a slot', async () => {
+    // Achieved rest is the gap since this slot's previous close. The first set
+    // of a run has no previous close, and absent is the honest answer — a 0
+    // would read as "they went straight into it".
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    const first = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(first).not.toHaveProperty('restBeforeSec');
+    // ...and the close is recorded, so the NEXT set on this slot can measure one.
+    expect(h.state.lastSetEndedAtMs.get('primary')).toBeGreaterThan(0);
+  });
+
+  it('marks sets written under the mock adapter as synthetic', async () => {
+    // The highest-value provenance item: VOLTRA_ADAPTER=mock writes into the
+    // same store as real hardware, so without this any corpus fit silently
+    // ingests generated sets alongside measured ones.
+    (h.state as { config: { adapter: string } }).config = { adapter: 'mock' };
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    expect((h.store.putSet.mock.calls[0][0] as StoredSet).source).toBe('mock');
+  });
+
+  it('persists the firmware rep count verbatim, never reconciled with the array length', async () => {
+    // Firmware-canonical counting: the device counts reps and our side only
+    // enriches. A max(derived.length, reported) reconciliation is exactly the
+    // over-count bug this replaces, so a disagreement must persist AS a
+    // disagreement — that is the whole diagnostic value of storing both.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.appendRep(makeRep(3));
+    (h.live.set as { firmwareTotalRepCount?: number }).firmwareTotalRepCount = 2;
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.firmwareRepCount).toBe(2);
+    expect(stored.reps.length).toBe(3);
   });
 
   it('persists with partial=false and reps from live state', async () => {
