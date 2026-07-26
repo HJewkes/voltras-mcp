@@ -23,6 +23,9 @@ import {
 // otherwise WA-only pure module (safe under the node/vitest test env — no import
 // is emitted). These are the shell TopBar's device/state contracts.
 import type { Device, DeviceRowState, SessionState } from '@titan-design/react-ui';
+// Every user-facing limb/side label goes through here — never off `slotId` inline
+// (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
+import { limbLabel, limbSlotBadge } from './limb';
 
 /**
  * mm/s → m/s divisor. The device pipeline records velocities in mm/s; converting
@@ -464,25 +467,6 @@ export function buildConnectionStatus(
 
 // ── Shell TopBar mappers (real connection + session state) ───────────────────
 
-/** Slot id → titan device side. Single-device (`'primary'`) is bound to no side. */
-function slotSide(slotId: string): 'L' | 'R' | null {
-  if (slotId === 'left') return 'L';
-  if (slotId === 'right') return 'R';
-  return null;
-}
-
-/**
- * A truthful device label for the TopBar dropdown. We hold no user-assigned
- * nickname in the snapshot, so we surface what IS real: the bound side for a
- * left/right slot, else the BLE device id, else a bare "Voltra" — never an
- * invented cable name.
- */
-function slotNickname(slotId: string, deviceId: string | undefined): string {
-  if (slotId === 'left') return 'Left';
-  if (slotId === 'right') return 'Right';
-  return deviceId ?? 'Voltra';
-}
-
 /**
  * Fold one device's snapshot + the HTTP poll status into a titan connection
  * state. Priority mirrors {@link buildConnectionStatus}: sidecar-unreachable →
@@ -510,11 +494,11 @@ export function buildTopBarDevices(
   snapshot: Snapshot,
   pollStatus: 'ok' | 'stale' | 'error',
 ): Device[] {
-  return snapshot.devices.map(({ slotId, device }) => ({
-    id: device.deviceId ?? slotId,
-    nickname: slotNickname(slotId, device.deviceId),
-    slot: slotSide(slotId),
-    state: deviceConnState(device, pollStatus),
+  return snapshot.devices.map((entry) => ({
+    id: entry.device.deviceId ?? entry.slotId,
+    nickname: limbLabel(entry),
+    slot: limbSlotBadge(entry),
+    state: deviceConnState(entry.device, pollStatus),
   }));
 }
 
