@@ -36,6 +36,7 @@ import type { ServerState } from '../../state/server-state.js';
 import type { TelemetryFrame } from '@voltras/node-sdk';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
+import type { StoredIsometricMeasurement } from '../../store/types.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -112,12 +113,41 @@ interface FakeSlot {
   client: FakeClient;
 }
 
-function makeState(slots: Record<string, FakeClient>): ServerState {
+/**
+ * Records what `isometric.measure_imbalance` persists (VMCP-04.11) without
+ * touching SQLite — the store contract is what the tool depends on, and the
+ * SQLite half of it is covered by the v5→v6 migration suite.
+ */
+interface FakeStore {
+  putIsometricMeasurement: Mock<(m: StoredIsometricMeasurement) => Promise<void>>;
+  written: StoredIsometricMeasurement[];
+  /** Set to make every write reject, standing in for a broken DB. */
+  failWith: Error | null;
+}
+
+function makeFakeStore(): FakeStore {
+  const store = { written: [], failWith: null } as unknown as FakeStore;
+  store.putIsometricMeasurement = vi.fn(async (m: StoredIsometricMeasurement): Promise<void> => {
+    if (store.failWith !== null) throw store.failWith;
+    store.written.push(m);
+    return Promise.resolve();
+  });
+  return store;
+}
+
+function makeState(
+  slots: Record<string, FakeClient>,
+  opts: { store?: FakeStore; deviceIds?: Record<string, string | null> } = {},
+): ServerState {
   const slotMap = new Map<string, FakeSlot>();
   for (const [slotId, client] of Object.entries(slots)) {
+    // `connectedDeviceId` is the ground-truth identity the tool stamps onto the
+    // persisted measurement; `null` models the mock adapter / a dropped unit.
+    (client as unknown as { connectedDeviceId: string | null }).connectedDeviceId =
+      opts.deviceIds?.[slotId] ?? null;
     slotMap.set(slotId, { slotId, client });
   }
-  return { slots: slotMap } as unknown as ServerState;
+  return { slots: slotMap, store: opts.store } as unknown as ServerState;
 }
 
 /**
@@ -287,12 +317,17 @@ describe('isometric.measure_imbalance', () => {
   let measureImbalanceCb: Callback;
   let leftClient: FakeClient;
   let rightClient: FakeClient;
+  let store: FakeStore;
 
   beforeEach(() => {
     vi.useFakeTimers();
     leftClient = makeFakeClient();
     rightClient = makeFakeClient();
-    const state = makeState({ left: leftClient, right: rightClient });
+    store = makeFakeStore();
+    const state = makeState(
+      { left: leftClient, right: rightClient },
+      { store, deviceIds: { left: 'AA:BB:CC:01', right: 'AA:BB:CC:02' } },
+    );
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
     measureImbalanceCb = slots.get('isometric.measure_imbalance')!.callback;
@@ -401,5 +436,110 @@ describe('isometric.measure_imbalance', () => {
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
     expect(leftClient.subscribeCount).toBe(0);
+  });
+
+  // --- persistence (VMCP-04.11) ---------------------------------------
+  //
+  // The protocol computed a real asymmetry and dropped it before this landed.
+  // These cases pin down WHAT is written: the per-trial observations, keyed on
+  // the device id — not the verdict, and not the slot.
+
+  /** Drive a full 2-trial-per-side run with left stronger than right. */
+  async function runImbalance(): Promise<unknown> {
+    const promise = measureImbalanceCb({
+      primarySlot: 'left',
+      secondarySlot: 'right',
+      primarySide: 'left',
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      betweenSidesRestMs: 60_000,
+      testNonDominantFirst: false,
+      dominantSide: 'unknown',
+    });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    return payload(await promise);
+  }
+
+  it('persists both sides trials keyed on device_id, with a timestamp', async () => {
+    const body = (await runImbalance()) as { measurementId: string | null };
+
+    expect(store.putIsometricMeasurement).toHaveBeenCalledTimes(1);
+    const written = store.written[0];
+    expect(body.measurementId).toBe(written.id);
+    expect(Date.parse(written.measuredAt)).not.toBeNaN();
+    expect(written.analysisVersion).toBeGreaterThanOrEqual(1);
+    // Protocol parameters ride along: the numbers are only interpretable
+    // against the hold duration and trial count they were collected under.
+    expect(written.durationMs).toBe(3000);
+    expect(written.trialsRequested).toBe(2);
+    expect(written.restMs).toBe(30_000);
+    expect(written.betweenSidesRestMs).toBe(60_000);
+    expect(written.firstSideTested).toBe('left');
+
+    const left = written.sides.find((s) => s.side === 'left');
+    const right = written.sides.find((s) => s.side === 'right');
+    // Ground truth is the device id, and each limb carries its own.
+    expect(left?.deviceId).toBe('AA:BB:CC:01');
+    expect(right?.deviceId).toBe('AA:BB:CC:02');
+    // Slot is recorded for diagnostics but is never the identity.
+    expect(left?.slot).toBe('left');
+    expect(right?.slot).toBe('right');
+    // Both sides values, per trial.
+    expect(left?.trials).toHaveLength(2);
+    expect(right?.trials).toHaveLength(2);
+    expect(left?.trials.map((t) => t.index)).toEqual([1, 2]);
+    expect(left?.trials.every((t) => t.plateauForceLbs > 0)).toBe(true);
+    // The stronger limb is stronger in the STORED numbers too, not just in the
+    // response — the write must not scramble which side is which.
+    const meanOf = (trials: { plateauForceLbs: number }[]) =>
+      trials.reduce((sum, t) => sum + t.plateauForceLbs, 0) / trials.length;
+    expect(meanOf(left?.trials ?? [])).toBeGreaterThan(meanOf(right?.trials ?? []));
+  });
+
+  it('stores observations only — no asymmetry verdict', async () => {
+    // The asymmetry %, stronger side and flagged/meaningful thresholds are
+    // recomputed from the stored trials on read. Persisting them would freeze
+    // a verdict that the thresholds can move out from under.
+    const body = (await runImbalance()) as { imbalance: { strongerSide: string } };
+    expect(body.imbalance.strongerSide).toBe('left');
+
+    const written = JSON.stringify(store.written[0]);
+    for (const leaked of ['asymmetry', 'strongerSide', 'flagged', 'meaningful', 'inferred']) {
+      expect(written).not.toContain(leaked);
+    }
+  });
+
+  it('records a device-less side as a gap, never a placeholder id', async () => {
+    // Mock adapter / dropped unit: no connected device id to stamp.
+    (rightClient as unknown as { connectedDeviceId: string | null }).connectedDeviceId = null;
+    await runImbalance();
+
+    const right = store.written[0].sides.find((s) => s.side === 'right');
+    expect(right).not.toHaveProperty('deviceId');
+    // The trials are still recorded — the measurement happened, only the
+    // attribution is missing.
+    expect(right?.trials).toHaveLength(2);
+  });
+
+  it('reports the measurement even when the store write fails', async () => {
+    // A bilateral assessment costs the user ten-plus minutes of maximal
+    // effort; a DB failure must not throw it away.
+    store.failWith = new Error('database is locked');
+    const body = (await runImbalance()) as {
+      ok: boolean;
+      measurementId: string | null;
+      imbalance: { strongerSide: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.imbalance.strongerSide).toBe('left');
+    // …and says so, rather than implying it was saved.
+    expect(body.measurementId).toBeNull();
   });
 });
