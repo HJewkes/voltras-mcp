@@ -188,4 +188,76 @@ describe('SlotBindingsStore', () => {
     const reopened = SlotBindingsStore.open(path);
     expect(reopened.get('V-1')?.physicalSide).toBe('left');
   });
+
+  // VMCP-04.10 — `slot.swap` flips both devices at once. Two separate
+  // `bind` calls would expose an intermediate file in which both devices
+  // claim the same side.
+  describe('reassign', () => {
+    it('applies every update in a single write', () => {
+      const store = SlotBindingsStore.open(path);
+      store.bind('V-A', 'left');
+      store.bind('V-B', 'right');
+      const writes = vi.spyOn(store as unknown as { write: () => void }, 'write');
+
+      store.reassign([
+        { deviceId: 'V-A', physicalSide: 'right' },
+        { deviceId: 'V-B', physicalSide: 'left' },
+      ]);
+
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect(
+        SlotBindingsStore.open(path)
+          .list()
+          .map((b) => [b.deviceId, b.physicalSide]),
+      ).toEqual([
+        ['V-A', 'right'],
+        ['V-B', 'left'],
+      ]);
+    });
+
+    it('removes the binding for a null physicalSide', () => {
+      const store = SlotBindingsStore.open(path);
+      store.bind('V-A', 'left');
+      store.bind('V-B', 'right');
+
+      store.reassign([{ deviceId: 'V-B', physicalSide: null }]);
+
+      expect(store.get('V-B')).toBeNull();
+      expect(SlotBindingsStore.open(path).get('V-B')).toBeNull();
+    });
+
+    it('is a no-op on an empty update list (no write at all)', () => {
+      const store = SlotBindingsStore.open(path);
+      const writes = vi.spyOn(store as unknown as { write: () => void }, 'write');
+      store.reassign([]);
+      expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('throws SLOT_BINDINGS_WRITE_FAILED and rolls the cache back when the write fails', () => {
+      const store = SlotBindingsStore.open(path);
+      store.bind('V-A', 'left');
+      store.bind('V-B', 'right');
+      const fileBefore = readFileSync(path, 'utf8');
+      vi.spyOn(store as unknown as { write: () => void }, 'write').mockImplementation(() => {
+        throw new Error('EACCES');
+      });
+
+      let caught: unknown;
+      try {
+        store.reassign([
+          { deviceId: 'V-A', physicalSide: 'right' },
+          { deviceId: 'V-B', physicalSide: null },
+        ]);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect((caught as { code?: string }).code).toBe('SLOT_BINDINGS_WRITE_FAILED');
+      // Cache and file both still describe the pre-call state — a caller
+      // that catches this can abort without a half-applied mapping.
+      expect(store.get('V-A')?.physicalSide).toBe('left');
+      expect(store.get('V-B')?.physicalSide).toBe('right');
+      expect(readFileSync(path, 'utf8')).toBe(fileBefore);
+    });
+  });
 });

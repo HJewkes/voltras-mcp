@@ -27,6 +27,7 @@ import { wireBridgeForSlot } from './event-bridge.js';
 import { ModeRevertGuard } from './mode-revert-guard.js';
 import { CoercionWatch } from './coercion-watch.js';
 import { PRIMARY_SLOT, MAX_SLOTS, type ServerState, type SlotState } from './server-state.js';
+import { isPhysicalSide, type SlotBindingUpdate } from './slot-bindings.js';
 
 /**
  * Allocate a brand-new slot. Each slot owns its own `LiveState` so the
@@ -201,6 +202,14 @@ export function seedConnectedState(slot: SlotState): void {
  * as a typed error — the message reports the connected-slot count so
  * callers who pre-allocated slot ids aren't surprised by a "found 3"-
  * style message that ignored their unconnected entries.
+ *
+ * The persisted `~/.voltras/slot-bindings.json` mapping is updated in the
+ * same operation (VMCP-04.10). A swap that moved only the in-memory slots
+ * left the on-disk deviceId → side mapping asserting the pre-swap sides, so
+ * every later `device.connect {slot: 'auto'}` re-created the wrong mapping
+ * and any left/right series crossing the swap was sign-flipped with nothing
+ * erroring. The persisted side is anchored to `deviceId`, never to the slot
+ * key — a slot id is a position at a moment, not an identity.
  */
 export function swapSlots(state: ServerState): void {
   const connected = [...state.slots.values()].filter((s) => s.client.isConnected);
@@ -211,6 +220,36 @@ export function swapSlots(state: ServerState): void {
     );
   }
   const [a, b] = connected;
+  // Persist BEFORE touching memory. The disk write is the only step here
+  // that can realistically fail, so doing it first means a failure aborts
+  // the swap with both halves still consistent (nothing moved) rather than
+  // leaving memory swapped and disk stale — the exact divergence this fix
+  // exists to remove. `reassign` is a single atomic tmp+rename, so the two
+  // devices never disagree on disk even momentarily.
+  const updates = planBindingUpdates(a, b);
+  const rollback = currentBindings(state, updates);
+  state.slotBindings.reassign(updates);
+  try {
+    applySwap(state, a, b);
+  } catch (err) {
+    // Memory swap failed after the write landed — put the persisted sides
+    // back so the two never diverge. Best-effort: if the restore write also
+    // fails we surface the original error, which is the actionable one.
+    try {
+      state.slotBindings.reassign(rollback);
+    } catch {
+      // Swallowed deliberately — see above.
+    }
+    throw err;
+  }
+}
+
+/**
+ * Exchange the slot-scoped bindings in place. Split out of `swapSlots` so
+ * the persistence step can wrap it in a rollback without the failure
+ * handling obscuring the mutation itself.
+ */
+function applySwap(state: ServerState, a: SlotState, b: SlotState): void {
   // Unwire BOTH bridges before mutating either slot — a half-swapped state
   // (one bridge unwired, one still firing against its old client) would let
   // a stray notification land mid-rebind and route to the wrong slot.
@@ -230,6 +269,52 @@ export function swapSlots(state: ServerState): void {
   b.coercionWatch = tmpWatch;
   a.unwireBridge = wireBridgeForSlot(state, a);
   b.unwireBridge = wireBridgeForSlot(state, b);
+}
+
+/**
+ * Work out the persisted-binding changes a swap of `a` ↔ `b` implies.
+ *
+ * The device currently in slot `a` ends up in slot `b`, so its persisted
+ * side becomes `b`'s slot key — and vice versa. Two deliberate omissions:
+ *
+ *   * A slot key that is not a physical side (`'primary'`) yields
+ *     `physicalSide: null`, which REMOVES the binding rather than inventing
+ *     one. Primary is a bookkeeping position with no left/right meaning, so
+ *     after the swap that device's side is genuinely unknown; a gap is
+ *     detectable downstream, a plausible guess is not. The side-ID ritual
+ *     re-establishes it.
+ *   * A client with no `connectedDeviceId` contributes no update at all.
+ *     Bindings key on device identity, and we have none to key on.
+ */
+function planBindingUpdates(a: SlotState, b: SlotState): SlotBindingUpdate[] {
+  const updates: SlotBindingUpdate[] = [];
+  addBindingUpdate(updates, a.client.connectedDeviceId, b.slotId);
+  addBindingUpdate(updates, b.client.connectedDeviceId, a.slotId);
+  return updates;
+}
+
+function addBindingUpdate(
+  updates: SlotBindingUpdate[],
+  deviceId: string | null | undefined,
+  destinationSlotId: string,
+): void {
+  if (typeof deviceId !== 'string' || deviceId.length === 0) return;
+  updates.push({
+    deviceId,
+    physicalSide: isPhysicalSide(destinationSlotId) ? destinationSlotId : null,
+  });
+}
+
+/**
+ * Snapshot the persisted side of every device a plan touches, shaped as an
+ * inverse plan. Applying it restores the pre-swap file exactly (a device
+ * that had no binding maps back to `null`, i.e. removed again).
+ */
+function currentBindings(state: ServerState, updates: SlotBindingUpdate[]): SlotBindingUpdate[] {
+  return updates.map(({ deviceId }) => ({
+    deviceId,
+    physicalSide: state.slotBindings.get(deviceId)?.physicalSide ?? null,
+  }));
 }
 
 /**
