@@ -184,6 +184,8 @@ function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): 
     // client to exercise the guard.
     isRowingActive: false,
     // </Bug-22>
+    // VMCP-04.08: the persisted set row carries the slot's connected device id.
+    connectedDeviceId: 'AA:BB:CC:DD:EE:01',
   };
   // Top-level publish mock collects every event; `forSlot(slotId)` returns
   // a publisher that re-routes through the same mock with `slot: slotId`
@@ -797,6 +799,39 @@ describe('set.end', () => {
     expect(stored.weightLbs).toBe(75);
     expect(stored.trainingMode).toBe('WeightTraining');
     expect(h.live.set).toBeUndefined();
+  });
+
+  // ── VMCP-04.08 — slot identity survives the persistence boundary ─────────
+  it('stamps the originating slot and device id onto the persisted set', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.slot).toBe('primary');
+    expect(stored.deviceId).toBe('AA:BB:CC:DD:EE:01');
+  });
+
+  it('records the slot but omits deviceId when the slot has no connected device', async () => {
+    // Mock adapter / mid-disconnect close: `connectedDeviceId` is null. The
+    // slot is still known, so the set stays attributable by position even
+    // when the physical unit id is not available.
+    (
+      h.state.slots.get('primary')!.client as unknown as { connectedDeviceId: string | null }
+    ).connectedDeviceId = null;
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.slot).toBe('primary');
+    expect(stored).not.toHaveProperty('deviceId');
   });
 
   it('persists the per-rep derived VBT block on every stored rep (VMCP-02.64)', async () => {

@@ -613,7 +613,14 @@ export async function finalizeSet(
       segmentationCorrections: state.config?.repCorrections === 'on',
     }),
   };
-  const stored = toStoredSet(correctedForStore, device);
+  // VMCP-04.08: stamp slot + device identity onto the persisted row. This is
+  // the single choke point every close path funnels through, so recording it
+  // here covers the tool close, the device-signal close, the inactivity
+  // force-close and the guided-load reap alike.
+  const stored = toStoredSet(correctedForStore, device, {
+    slotId,
+    deviceId: slot.client.connectedDeviceId,
+  });
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
   // close. The payload carries the full rep array plus a pre-computed VBT
@@ -759,7 +766,17 @@ async function getStoredSet(state: ServerState, setId: string): Promise<StoredSe
   return stored;
 }
 
-function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
+/**
+ * `identity` stamps which Voltra performed the set (VMCP-04.08). `slotId` is
+ * always known at the call site; `deviceId` is whatever the slot's client is
+ * connected to, which is `null` under the mock adapter or when the set is being
+ * closed after the device already dropped.
+ */
+function toStoredSet(
+  active: ActiveSet,
+  device: DeviceSnapshot,
+  identity: { slotId: string; deviceId: string | null },
+): StoredSet {
   const reps: StoredRep[] = active.reps.map((rep, index) => ({
     ...rep,
     id: randomUUID(),
@@ -779,6 +796,8 @@ function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
     trainingMode: device.trainingMode ?? 'Unknown',
     weightLbs: device.weightLbs ?? 0,
     ...(active.isWarmup === true ? { isWarmup: true } : {}),
+    slot: identity.slotId,
+    ...(typeof identity.deviceId === 'string' ? { deviceId: identity.deviceId } : {}),
     reps,
   };
 }

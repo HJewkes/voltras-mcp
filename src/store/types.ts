@@ -103,6 +103,30 @@ export interface StoredSet {
    * which keeps every pre-flag row and fixture behaving exactly as before.
    */
   isWarmup?: boolean;
+  /**
+   * Originating Voltra slot (`'primary'` for single-Voltra/bench, `'left'` /
+   * `'right'` for a bilateral pair). Mirrors the `meta.slot` stamp that VW-48
+   * put on every channel event, so which arm performed a set survives past the
+   * live session instead of being discarded at the persistence boundary.
+   *
+   * Optional because every row written before schema v5 has no slot recorded
+   * (the column backfills as NULL and reads back absent) — that history is
+   * genuinely unattributable and must not be guessed at. Every write through
+   * `finalizeSet` populates it.
+   */
+  slot?: string;
+  /**
+   * BLE device id of the unit that performed the set, captured from the slot's
+   * connected client. Slot ids are positional and can be reassigned between
+   * sessions (`slot.swap`); the device id is the stable physical identity, so
+   * persisting both lets later analysis re-derive sides from the
+   * `slot-bindings.json` deviceId ↔ physical-side map even if the slot
+   * assignment at record time was wrong.
+   *
+   * Absent on pre-v5 rows and whenever the slot had no connected device id
+   * (mock adapter, mid-disconnect close).
+   */
+  deviceId?: string;
   reps: StoredRep[];
 }
 
@@ -235,7 +259,14 @@ export interface SessionStore {
    */
   putSession(s: StoredSession): Promise<void>;
 
-  /** Persist a completed (or partial) set together with its rep array. */
+  /**
+   * Persist a completed (or partial) set together with its rep array.
+   *
+   * Same `INSERT OR REPLACE` prohibition as `putSession`: the set row is
+   * re-put on retry paths (force-end on disconnect followed by an explicit
+   * re-end), and a delete-then-insert would take the set's `reps` with it on
+   * any schema where that edge is declared. Upsert in place.
+   */
   putSet(s: StoredSet): Promise<void>;
 
   /** Look up a session by id; returns `undefined` when no row matches. */

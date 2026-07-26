@@ -34,7 +34,7 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
@@ -56,7 +56,9 @@ const SCHEMA_SQL = `
     partial_reason TEXT,
     training_mode TEXT NOT NULL,
     weight_lbs REAL NOT NULL,
-    is_warmup INTEGER NOT NULL DEFAULT 0
+    is_warmup INTEGER NOT NULL DEFAULT 0,
+    slot TEXT,
+    device_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
 
@@ -183,6 +185,30 @@ function migrateV3ToV4(db: DatabaseSync): void {
   db.exec(`ALTER TABLE sets ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0`);
 }
 
+/**
+ * v4→v5 (VMCP-04.08): persist per-slot identity on `sets`. Per-slot identity
+ * already flowed through the live path (`meta.slot` on channel events, the
+ * slot-stamped SSE payloads, per-slot snapshot data) but was dropped on write,
+ * so which arm performed a bilateral set was unrecoverable afterwards.
+ *
+ * Two nullable `ALTER TABLE ADD COLUMN`s, per-column probed for the same reason
+ * `migrateV3ToV4` probes: SQLite has no `ADD COLUMN IF NOT EXISTS`, and
+ * `applyMigrations` runs this body on a fresh DB whose `SCHEMA_SQL` already
+ * declares both columns.
+ *
+ * NULLABLE WITH NO DEFAULT IS DELIBERATE. Every pre-v5 row reads back with
+ * `slot`/`deviceId` absent, which is the truth: those sets were recorded before
+ * slot identity was captured and are genuinely unattributable. Backfilling them
+ * to `'primary'` would manufacture an attribution the data never had. Existing
+ * rows are otherwise untouched — `ADD COLUMN` rewrites no row data.
+ */
+function migrateV4ToV5(db: DatabaseSync): void {
+  const columns = db.prepare(`PRAGMA table_info(sets)`).all() as { name: string }[];
+  const names = new Set(columns.map((c) => c.name));
+  if (!names.has('slot')) db.exec(`ALTER TABLE sets ADD COLUMN slot TEXT`);
+  if (!names.has('device_id')) db.exec(`ALTER TABLE sets ADD COLUMN device_id TEXT`);
+}
+
 interface SessionRow {
   id: string;
   started_at: string;
@@ -202,6 +228,8 @@ interface SetRow {
   training_mode: string;
   weight_lbs: number;
   is_warmup: number;
+  slot: string | null;
+  device_id: string | null;
 }
 
 interface RepRow {
@@ -348,11 +376,26 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putSet(s: StoredSet): Promise<void> {
+    // `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`: the latter is a
+    // delete-then-insert, and `sets` is the parent of `reps`. The re-put paths
+    // (force-end on disconnect followed by an explicit re-end) hit the conflict
+    // branch on every retry — see the #79 regression on `sessions`.
     const upsertSet = this.db.prepare(
-      `INSERT OR REPLACE INTO sets
+      `INSERT INTO sets
          (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs, is_warmup)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_mode, weight_lbs, is_warmup, slot, device_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         session_id = excluded.session_id,
+         started_at = excluded.started_at,
+         ended_at = excluded.ended_at,
+         partial = excluded.partial,
+         partial_reason = excluded.partial_reason,
+         training_mode = excluded.training_mode,
+         weight_lbs = excluded.weight_lbs,
+         is_warmup = excluded.is_warmup,
+         slot = excluded.slot,
+         device_id = excluded.device_id`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -371,6 +414,8 @@ export class SqliteSessionStore implements SessionStore {
         s.trainingMode,
         s.weightLbs,
         s.isWarmup === true ? 1 : 0,
+        s.slot ?? null,
+        s.deviceId ?? null,
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -595,9 +640,18 @@ export class SqliteSessionStore implements SessionStore {
   async putProgramAssignment(a: StoredProgramAssignment): Promise<void> {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO program_assignments
+        // Upsert in place, not `INSERT OR REPLACE`. `program_assignments` has
+        // no children today, but a delete-then-insert on any row that sits in
+        // the FK graph is the #79 footgun waiting for the next child table;
+        // keep every parent-table upsert on the same safe form.
+        `INSERT INTO program_assignments
            (id, session_id, planned_exercise_id, workout_template_id, assigned_at)
-         VALUES (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           session_id = excluded.session_id,
+           planned_exercise_id = excluded.planned_exercise_id,
+           workout_template_id = excluded.workout_template_id,
+           assigned_at = excluded.assigned_at`,
       )
       .run(
         a.id,
@@ -677,9 +731,17 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 1 = pre-Phase-0.5.1 schema (migrated forward in `applyMigrations`).
   // 2 = Phase 0.5.1 schema; v3 added the planning tables (additive only).
   // 3 = v3 planning schema; v4 added `sets.is_warmup` (additive column).
+  // 4 = v4 schema; v5 added `sets.slot` / `sets.device_id` (additive columns).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
-  if (found !== 0 && found !== 1 && found !== 2 && found !== 3 && found !== SCHEMA_VERSION) {
+  if (
+    found !== 0 &&
+    found !== 1 &&
+    found !== 2 &&
+    found !== 3 &&
+    found !== 4 &&
+    found !== SCHEMA_VERSION
+  ) {
     throw createSchemaIncompatibleError(path, found);
   }
 }
@@ -701,6 +763,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 3) {
     migrateV3ToV4(db);
+  }
+  if (current <= 4) {
+    migrateV4ToV5(db);
   }
 }
 
@@ -787,6 +852,10 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   };
   if (row.partial_reason !== null) out.partialReason = row.partial_reason;
   if (row.is_warmup !== 0) out.isWarmup = true;
+  // Absent (not null / not `'primary'`) on pre-v5 rows: unknown slot is not
+  // the same claim as "the primary slot did it".
+  if (row.slot !== null) out.slot = row.slot;
+  if (row.device_id !== null) out.deviceId = row.device_id;
   return out;
 }
 
