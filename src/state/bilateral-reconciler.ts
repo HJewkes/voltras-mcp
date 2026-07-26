@@ -26,6 +26,8 @@
 // be re-checked on the bench against real two-arm start jitter — too small
 // yields false negatives (missed pairs), never false pairs.
 
+import { randomUUID } from 'node:crypto';
+
 /**
  * Maximum difference between the two sides' set-START timestamps for the sets
  * to be treated as the same paired bilateral set. The recorded session's
@@ -62,6 +64,26 @@ export interface BilateralDivergence {
   delta: number;
 }
 
+/**
+ * VW-… (schema v7 grouping): a matched opposite-slot pair, divergent or not.
+ *
+ * The two sides of a bilateral effort stay as two rows on purpose — merging
+ * them would force picking one of two firmware-canonical rep counts and erase
+ * the divergence signal. `groupId` is what makes the relationship durable
+ * instead: both rows carry the same id, so a reader can rejoin the sides
+ * without guessing at timestamps. It is minted on EVERY match, including the
+ * equal-count case that previously produced nothing at all.
+ *
+ * `divergent` gates the `bilateral_divergence` channel event only; grouping is
+ * purely additive and never changes when that event fires.
+ */
+export interface BilateralMatch extends BilateralDivergence {
+  /** Shared `bilateral_group_id` to stamp on both sides' rows. */
+  groupId: string;
+  /** True when the two sides' rep counts differ by a rep or more. */
+  divergent: boolean;
+}
+
 /** Signed rep-count difference between two sides. */
 export function repCountDelta(a: number, b: number): number {
   return a - b;
@@ -83,12 +105,12 @@ export class BilateralReconciler {
   constructor(private readonly windowMs: number = BILATERAL_PAIR_WINDOW_MS) {}
 
   /**
-   * Record a set close. Returns a `BilateralDivergence` when this close pairs
-   * with a pending opposite-slot close AND their rep counts differ; otherwise
-   * stashes/consumes the close and returns `undefined`. Closes with a
-   * non-finite start time are ignored (they can never pair).
+   * Record a set close. Returns a `BilateralMatch` when this close pairs with a
+   * pending opposite-slot close — divergent or not, so the caller can group
+   * both rows — otherwise stashes the close and returns `undefined`. Closes
+   * with a non-finite start time are ignored (they can never pair).
    */
-  record(close: BilateralSetClose): BilateralDivergence | undefined {
+  record(close: BilateralSetClose): BilateralMatch | undefined {
     if (!Number.isFinite(close.startedAtMs)) {
       return undefined;
     }
@@ -102,10 +124,13 @@ export class BilateralReconciler {
       return undefined;
     }
     const [partner] = this.pending.splice(idx, 1);
-    if (!isRepCountDivergent(close.repCount, partner.repCount)) {
-      return undefined;
-    }
-    return { a: close, b: partner, delta: repCountDelta(close.repCount, partner.repCount) };
+    return {
+      a: close,
+      b: partner,
+      delta: repCountDelta(close.repCount, partner.repCount),
+      groupId: randomUUID(),
+      divergent: isRepCountDivergent(close.repCount, partner.repCount),
+    };
   }
 
   /**

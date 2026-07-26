@@ -63,6 +63,7 @@ import { finalizeReps } from '../state/rep-finalize.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
+import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
@@ -656,13 +657,24 @@ export async function finalizeSet(
   // (`slot.bind`, `slot.swap`), so a read-time derivation would retroactively
   // change what a historical row means. Unresolvable ⇒ absent, never a
   // default; see `resolvePersistedSide`.
-  const stored = toStoredSet(correctedForStore, device, {
+  const unGrouped = toStoredSet(correctedForStore, device, {
     slotId,
     deviceId: slot.client.connectedDeviceId,
     side: resolvePersistedSide(state, slot.client.connectedDeviceId),
     capture: buildSetCapture(state, slotId, correctedForStore, device),
   });
+  // Schema v7 grouping: reconcile BEFORE the first write so this side's row
+  // carries its `bilateralGroupId` from the outset. The partner's row was
+  // written during its own close, so it needs a read-modify-write (below).
+  const match = state.bilateralReconciler?.record(toBilateralClose(slotId, unGrouped));
+  const stored: StoredSet =
+    match !== undefined
+      ? { ...unGrouped, bilateralGroupId: match.groupId, groupSource: 'live' }
+      : unGrouped;
   await state.store.putSet(stored);
+  if (match !== undefined) {
+    await stampPartnerGroup(state, match.b.setId, match.groupId);
+  }
   // Record this close so the NEXT set on this slot can measure its achieved
   // rest. In-memory on purpose: after a restart the previous close time is
   // genuinely unknown, and an absent rest beats one computed across a gap of
@@ -723,7 +735,9 @@ export async function finalizeSet(
   // per-side rep count against the paired bilateral set. Both are advisory
   // channel events only — they never mutate the persisted set.
   publishWeightImpliedMismatch(stored, slotId, slotChannels);
-  publishBilateralDivergence(state, slotId, stored);
+  if (match?.divergent === true) {
+    state.channels.publish(buildBilateralDivergencePayload(match));
+  }
   // VMCP-02.08 / VMCP-02.54: optionally kick off the passive rest_status
   // emission cycle. Starts AFTER the set_ended publish so a channel-consumer
   // receives both the set_ended and the initial (t=0) rest_status in
@@ -767,26 +781,47 @@ function publishWeightImpliedMismatch(
 }
 
 /**
- * VMCP-02.67: feed this set close to the bilateral reconciler and publish a
- * `bilateral_divergence` event when it pairs with a prior opposite-slot close
- * whose rep count differs. Cross-slot, so it publishes on the top-level
- * (non-slot-scoped) channel. Silently skipped when no reconciler is wired
- * (test states that pre-date the feature) — mirrors the coercion-watch
- * passthrough convention.
+ * VMCP-02.67: project a finalized row onto the reconciler's pairing input. The
+ * reconciler pairs on opposite `slotId` + start proximity; `slot` never reaches
+ * the durable grouping semantics, only this in-memory match decision.
  */
-function publishBilateralDivergence(state: ServerState, slotId: string, stored: StoredSet): void {
-  const divergence = state.bilateralReconciler?.record({
+function toBilateralClose(slotId: string, stored: StoredSet): BilateralSetClose {
+  return {
     slotId,
     setId: stored.id,
     sessionId: stored.sessionId,
     startedAtMs: Date.parse(stored.startedAt),
     repCount: stored.reps.length,
     ...(stored.weightLbs !== undefined ? { weightLbs: stored.weightLbs } : {}),
-  });
-  if (divergence === undefined) {
-    return;
+  };
+}
+
+/**
+ * Stamp the shared group id onto the partner side, whose row was already
+ * persisted during its own close. Safe to re-put: `putSet` upserts via
+ * `ON CONFLICT(id) DO UPDATE`, so the set's FK children survive — but it does
+ * replace the rep array by design, which is why the reps read back are written
+ * straight through unchanged.
+ *
+ * Never rethrows: persisting the user's work is the store's primary job, and a
+ * failed back-stamp must not fail the close that is happening now. A missing
+ * group id is recoverable; a lost set is not.
+ */
+async function stampPartnerGroup(
+  state: ServerState,
+  partnerSetId: string,
+  groupId: string,
+): Promise<void> {
+  try {
+    const partner = await state.store.getSet(partnerSetId);
+    if (partner === undefined) {
+      log.warn(`bilateral grouping: partner set ${partnerSetId} not found, group left one-sided`);
+      return;
+    }
+    await state.store.putSet({ ...partner, bilateralGroupId: groupId, groupSource: 'live' });
+  } catch (err) {
+    log.warn(`bilateral grouping: failed to stamp partner set ${partnerSetId}`, err);
   }
-  state.channels.publish(buildBilateralDivergencePayload(divergence));
 }
 
 async function liveMetrics(
