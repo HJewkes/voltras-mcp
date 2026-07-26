@@ -45,6 +45,12 @@
 //   GET /api/health      — { ok, version, uptimeMs } JSON.
 //   GET /api/history     — { sessions: StoredSession[] } JSON. `?limit=N`
 //                          query parameter, capped at 100.
+//   GET /api/exercise-trend, /api/capacity-band, /api/pr-history
+//                        — per-exercise history. `?exerciseId=` / `?exerciseName=`
+//                          pick the exercise; with neither, they default to the
+//                          most-recent exercise that has data, so they render on
+//                          an idle dashboard (VMCP-05.06). Each response echoes
+//                          the resolved `{ exerciseId, exerciseName }`.
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -61,9 +67,14 @@ import {
   buildCapacityBand,
   buildPrHistory,
   buildMuscleVolume,
+  canonicalizeExerciseRef,
   deriveMesoWeekViews,
+  matchesExercise,
+  selectDefaultExercise,
   type DeviceEntry,
   type SnapshotResponse,
+  type HistoryCandidate,
+  type HistoryExerciseRef,
   type HistorySession,
   type ExerciseTrendPoint,
   type CapacityBandPoint,
@@ -329,13 +340,11 @@ async function handleRequest(
     return;
   }
   if (pathname === '/api/exercise-trend') {
-    const points = await fetchExerciseTrend(state, url);
-    sendJson(res, 200, { points });
+    sendJson(res, 200, await fetchExerciseTrend(state, url));
     return;
   }
   if (pathname === '/api/capacity-band') {
-    const points = await fetchCapacityBand(state, url);
-    sendJson(res, 200, { points });
+    sendJson(res, 200, await fetchCapacityBand(state, url));
     return;
   }
   if (pathname === '/api/next-workout') {
@@ -364,8 +373,7 @@ async function handleRequest(
     return;
   }
   if (pathname === '/api/pr-history') {
-    const records = await fetchPrHistory(state, url);
-    sendJson(res, 200, { records });
+    sendJson(res, 200, await fetchPrHistory(state, url));
     return;
   }
   sendJson(res, 404, { error: 'not_found' });
@@ -516,58 +524,163 @@ async function fetchHistory(
   });
 }
 
-/** The active session's exercise id (first slot with a session), for the default trend. */
-function activeExerciseId(state: DashboardServerState): string | undefined {
+/** The active session's exercise (first slot with a session), if any. */
+function activeExerciseRef(state: DashboardServerState): HistoryExerciseRef | undefined {
   for (const [, slot] of state.slots) {
     const session = slot.live.snapshotSession();
-    if (session?.exerciseId !== undefined) return session.exerciseId;
+    if (session === undefined) continue;
+    const label = session.exerciseId
+      ? state.exercises?.getById(session.exerciseId)?.name
+      : undefined;
+    if (session.exerciseId !== undefined || label !== undefined) {
+      return { exerciseId: session.exerciseId, label };
+    }
   }
   return undefined;
 }
 
 /**
+ * How many recent sessions the history endpoints scan. The default-exercise
+ * search has to look at each session's sets to know whether it has scorable
+ * data, so the window is bounded rather than "all of history".
+ */
+export const HISTORY_SCAN_LIMIT = 200;
+
+/** A scanned session: its exercise handles, its sets, and whether it scored. */
+interface ScannedSession extends HistoryCandidate {
+  startedAt: string;
+  sets: readonly StoredSet[];
+}
+
+/** The display label for a stored session: catalog name, else its own handles. */
+function sessionExerciseLabel(
+  state: DashboardServerState,
+  session: StoredSession,
+): string | undefined {
+  const catalogName =
+    session.exerciseId === undefined
+      ? undefined
+      : state.exercises?.getById(session.exerciseId)?.name;
+  return catalogName ?? session.exerciseName ?? session.exerciseId;
+}
+
+/** Recent sessions (newest first) with their sets loaded, for exercise selection. */
+async function scanRecentSessions(state: DashboardServerState): Promise<ScannedSession[]> {
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:desc',
+    limit: HISTORY_SCAN_LIMIT,
+    offset: 0,
+  });
+  const scanned: ScannedSession[] = [];
+  for (const session of sessions) {
+    const sets = await state.store.getSetsForSession(session.id);
+    scanned.push({
+      exerciseId: session.exerciseId,
+      label: sessionExerciseLabel(state, session),
+      startedAt: session.startedAt,
+      sets,
+      hasData: sets.some((set) => set.reps.length > 0),
+    });
+  }
+  // Selection and the ascending output both depend on true reverse-chronological
+  // order, so don't take the store's word for it — sort here.
+  scanned.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return scanned;
+}
+
+/** The exercise explicitly asked for via `?exerciseId=` / `?exerciseName=`. */
+function requestedExercise(url: URL): HistoryExerciseRef | undefined {
+  const id = url.searchParams.get('exerciseId')?.trim();
+  const label = url.searchParams.get('exerciseName')?.trim();
+  if (!id && !label) return undefined;
+  return { exerciseId: id || undefined, label: label || undefined };
+}
+
+/** The gathered history for one exercise, plus which exercise that turned out to be. */
+interface ExerciseHistory {
+  exercise?: HistoryExerciseRef;
+  sessions: HistorySession[];
+}
+
+/**
  * Gather the chronological (ascending) history for the requested exercise — its
  * past sessions plus each session's stored sets — the shared input the strength
- * trend, capacity band, and PR read-models fold. Resolves the exercise from the
- * `?exerciseId=` query or falls back to the active session; empty when neither
- * resolves. This is the I/O half; the derivation lives in `read-models/`.
+ * trend, capacity band, and PR read-models fold. This is the I/O half; the
+ * derivation lives in `read-models/`.
+ *
+ * Exercise resolution (VMCP-05.06), in order:
+ *  1. an explicit `?exerciseId=` / `?exerciseName=`;
+ *  2. the active session's exercise, but only if it actually has stored data;
+ *  3. otherwise the most recent exercise that has data.
+ *
+ * Rule 3 is what makes the panels render with nothing running — they used to
+ * key on the active session alone and so came up empty on an idle dashboard.
+ * Sessions match on either handle (see `matchesExercise`), because most stored
+ * sessions carry only a free-text name and never got an `exerciseId`.
  */
 async function gatherExerciseHistory(
   state: DashboardServerState,
   url: URL,
-): Promise<HistorySession[]> {
-  const exerciseId = url.searchParams.get('exerciseId') ?? activeExerciseId(state);
-  if (exerciseId === undefined || exerciseId === '') return [];
-  const limit = parseLimit(url.searchParams.get('limit'));
-  const sessions = await state.store.listSessions({
-    sort: 'startedAt:asc',
-    limit,
-    offset: 0,
-    exerciseId,
-  });
+): Promise<ExerciseHistory> {
+  const scanned = await scanRecentSessions(state);
+  const requested = requestedExercise(url);
+  const active = activeExerciseRef(state);
+  const activeHasData =
+    active !== undefined && scanned.some((s) => s.hasData && matchesExercise(s, active));
+  const chosen =
+    requested ?? (activeHasData ? active : undefined) ?? selectDefaultExercise(scanned);
+  if (chosen === undefined) return { sessions: [] };
 
-  const history: HistorySession[] = [];
-  for (const session of sessions) {
-    const sets = await state.store.getSetsForSession(session.id);
-    history.push({ startedAt: session.startedAt, sets });
-  }
-  return history;
+  const exercise = canonicalizeExerciseRef(chosen, scanned);
+  const limit = parseLimit(url.searchParams.get('limit'));
+  const matching = scanned.filter((s) => matchesExercise(s, exercise)).slice(0, limit);
+  const sessions = matching
+    .reverse()
+    .map((s) => ({ startedAt: s.startedAt, sets: s.sets }) satisfies HistorySession);
+  return { exercise, sessions };
+}
+
+/** The `{ exerciseId, exerciseName }` echo every history endpoint returns alongside its data. */
+function exerciseEcho(history: ExerciseHistory): {
+  exerciseId: string | null;
+  exerciseName: string | null;
+} {
+  return {
+    exerciseId: history.exercise?.exerciseId ?? null,
+    exerciseName: history.exercise?.label ?? null,
+  };
 }
 
 /** Per-exercise estimated-1RM trend (titan StrengthTrendChart) from persisted history. */
 async function fetchExerciseTrend(
   state: DashboardServerState,
   url: URL,
-): Promise<ExerciseTrendPoint[]> {
-  return buildExerciseTrend(buildE1rmSeries(await gatherExerciseHistory(state, url)));
+): Promise<{
+  points: ExerciseTrendPoint[];
+  exerciseId: string | null;
+  exerciseName: string | null;
+}> {
+  const history = await gatherExerciseHistory(state, url);
+  return {
+    points: buildExerciseTrend(buildE1rmSeries(history.sessions)),
+    ...exerciseEcho(history),
+  };
 }
 
 /** Capacity band (Kalman corridor) over the exercise's per-session e1RM series. */
 async function fetchCapacityBand(
   state: DashboardServerState,
   url: URL,
-): Promise<CapacityBandPoint[]> {
-  return buildCapacityBand(buildE1rmSeries(await gatherExerciseHistory(state, url)));
+): Promise<{
+  points: CapacityBandPoint[];
+  exerciseId: string | null;
+  exerciseName: string | null;
+}> {
+  const history = await gatherExerciseHistory(state, url);
+  return {
+    points: buildCapacityBand(buildE1rmSeries(history.sessions)),
+    ...exerciseEcho(history),
+  };
 }
 
 /** Next planned workout for the idle dashboard, shaped for titan `WorkoutCard`. */
@@ -909,9 +1022,13 @@ async function fetchMuscleVolume(
   return buildMuscleVolume(entries);
 }
 
-/** All-time PR records for an exercise (defaults to the active one) from stored history. */
-async function fetchPrHistory(state: DashboardServerState, url: URL): Promise<PrRecordView[]> {
-  return buildPrHistory(await gatherExerciseHistory(state, url));
+/** All-time PR records for an exercise (see `gatherExerciseHistory` for which one). */
+async function fetchPrHistory(
+  state: DashboardServerState,
+  url: URL,
+): Promise<{ records: PrRecordView[]; exerciseId: string | null; exerciseName: string | null }> {
+  const history = await gatherExerciseHistory(state, url);
+  return { records: buildPrHistory(history.sessions), ...exerciseEcho(history) };
 }
 
 function parseLimit(raw: string | null): number {

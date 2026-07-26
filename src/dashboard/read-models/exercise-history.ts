@@ -32,6 +32,95 @@ export interface HistorySession {
   sets: readonly HistorySet[];
 }
 
+// ── exercise selection (which exercise the panels are about) ─────────────────
+
+/**
+ * Identity of the exercise a history request is about. Sessions are labelled
+ * inconsistently in practice — early ones carry only a free-text
+ * `exerciseName`, later ones only a catalog `exerciseId` — so an exercise is
+ * identified by *either* handle and matched on whichever the session has.
+ */
+export interface HistoryExerciseRef {
+  /** Catalog id, when the sessions carry one. */
+  exerciseId?: string | undefined;
+  /** Display label: the catalog name, else the session's free-text exercise name. */
+  label?: string | undefined;
+}
+
+/** A scanned session reduced to what exercise selection needs. */
+export interface HistoryCandidate extends HistoryExerciseRef {
+  /** True when the session has at least one set with at least one rep. */
+  hasData: boolean;
+}
+
+/**
+ * Label comparison key. Case- and punctuation-insensitive so the slug id
+ * `cable-chest-press` and the typed name `Cable Chest Press` — the same
+ * exercise, recorded either way across the history — collapse to one series.
+ */
+export function normalizeExerciseLabel(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Every comparison key a ref answers to — its id and its label, normalized. */
+function exerciseHandles(ref: HistoryExerciseRef): string[] {
+  const keys: string[] = [];
+  for (const handle of [ref.exerciseId, ref.label]) {
+    if (handle === undefined) continue;
+    const key = normalizeExerciseLabel(handle);
+    if (key !== '' && !keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * True when a session belongs to the requested exercise. Either handle on
+ * either side is enough: a request for the id `cable-chest-press` picks up the
+ * older sessions typed as "Cable Chest Press" and vice versa.
+ */
+export function matchesExercise(session: HistoryExerciseRef, want: HistoryExerciseRef): boolean {
+  const wanted = exerciseHandles(want);
+  return exerciseHandles(session).some((key) => wanted.includes(key));
+}
+
+/**
+ * The exercise the history panels default to: the most recent one that has
+ * scorable data. Deliberately NOT the active session's exercise — the
+ * dashboard is usually opened with nothing running, and keying on the active
+ * session made every history panel render blank (VMCP-05.06).
+ *
+ * `candidates` MUST be in reverse-chronological (descending) order.
+ */
+export function selectDefaultExercise(
+  candidates: readonly HistoryCandidate[],
+): HistoryExerciseRef | undefined {
+  for (const c of candidates) {
+    if (!c.hasData) continue;
+    if (c.exerciseId === undefined && c.label === undefined) continue;
+    return { exerciseId: c.exerciseId, label: c.label };
+  }
+  return undefined;
+}
+
+/**
+ * Fill in a partially-specified ref (e.g. `?exerciseId=` with no name) from the
+ * scanned sessions, so an id-only request still matches this exercise's
+ * name-only sessions and the response can report a display label.
+ */
+export function canonicalizeExerciseRef(
+  want: HistoryExerciseRef,
+  candidates: readonly HistoryCandidate[],
+): HistoryExerciseRef {
+  const ref: HistoryExerciseRef = { ...want };
+  for (const c of candidates) {
+    if (!matchesExercise(c, ref)) continue;
+    ref.exerciseId ??= c.exerciseId;
+    ref.label ??= c.label;
+    if (ref.exerciseId !== undefined && ref.label !== undefined) break;
+  }
+  return ref;
+}
+
 // ── e1RM series (shared by trend + capacity band) ────────────────────────────
 
 /** One past session's best (exact, unrounded) e1RM observation, chronological. */
@@ -179,6 +268,16 @@ export interface PrRecordView {
 }
 
 /**
+ * Peak concentric velocity, tolerant of a stored rep that never got a
+ * concentric phase. WA's accessor dereferences `rep.concentric` unguarded, so
+ * one malformed row would otherwise throw and blank the whole PR panel.
+ */
+function safePeakVelocity(rep: Rep): number | undefined {
+  if ((rep as Partial<Rep>).concentric === undefined) return undefined;
+  return getRepPeakVelocity(rep);
+}
+
+/**
  * All-time PR records for an exercise from stored history: best estimated 1RM, top
  * set weight, most reps in a set, and fastest rep — each with the date it was set.
  * Records for a category are omitted when nothing scored in it.
@@ -204,7 +303,7 @@ export function buildPrHistory(sessions: readonly HistorySession[]): PrRecordVie
         dates.reps = session.startedAt;
       }
       for (const rep of set.reps) {
-        const pv = getRepPeakVelocity(rep);
+        const pv = safePeakVelocity(rep);
         if (typeof pv === 'number' && Number.isFinite(pv) && pv > best.velMms) {
           best.velMms = pv;
           dates.velMms = session.startedAt;

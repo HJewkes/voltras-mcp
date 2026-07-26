@@ -12,6 +12,9 @@ import {
   buildCapacityBand,
   buildPrHistory,
   fmtPrDate,
+  canonicalizeExerciseRef,
+  matchesExercise,
+  selectDefaultExercise,
   MIN_CAPACITY_BAND_SESSIONS,
   type HistorySession,
 } from '../read-models/exercise-history';
@@ -134,5 +137,47 @@ describe('fmtPrDate', () => {
   });
   it('falls back to the raw string when unparseable', () => {
     expect(fmtPrDate('not-a-date')).toBe('not-a-date');
+  });
+});
+
+// VMCP-05.06 — which exercise a history request is about.
+describe('exercise selection', () => {
+  it('matches the slug id and the typed name as one exercise', () => {
+    const want = { label: 'Cable Chest Press' };
+    expect(matchesExercise({ exerciseId: 'cable-chest-press' }, want)).toBe(true);
+    expect(matchesExercise({ label: 'cable chest press' }, want)).toBe(true);
+    expect(matchesExercise({ label: 'Cable Bicep Curl' }, want)).toBe(false);
+  });
+
+  it('matches on exerciseId even when labels differ', () => {
+    expect(matchesExercise({ exerciseId: 'bench', label: 'Bench' }, { exerciseId: 'bench' })).toBe(
+      true,
+    );
+  });
+
+  it('never matches on an empty label', () => {
+    expect(matchesExercise({ label: '' }, { label: '   ' })).toBe(false);
+  });
+
+  it('defaults to the most recent exercise that has data', () => {
+    const chosen = selectDefaultExercise([
+      { label: 'Warmup only', hasData: false },
+      { label: 'Cable Chest Press', hasData: true },
+      { label: 'Cable Bicep Curl', hasData: true },
+    ]);
+    expect(chosen?.label).toBe('Cable Chest Press');
+  });
+
+  it('returns undefined when nothing in history has data', () => {
+    expect(selectDefaultExercise([{ label: 'Empty', hasData: false }])).toBeUndefined();
+    expect(selectDefaultExercise([])).toBeUndefined();
+  });
+
+  it('fills an id-only ref with the label its other sessions were typed under', () => {
+    const ref = canonicalizeExerciseRef({ exerciseId: 'cable-chest-press' }, [
+      { exerciseId: 'cable-chest-press', hasData: true },
+      { label: 'Cable Chest Press', hasData: true },
+    ]);
+    expect(ref).toEqual({ exerciseId: 'cable-chest-press', label: 'Cable Chest Press' });
   });
 });

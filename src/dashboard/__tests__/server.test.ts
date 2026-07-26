@@ -13,6 +13,7 @@ import {
   DEFAULT_DASHBOARD_PORT,
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
+  HISTORY_SCAN_LIMIT,
   startDashboardServer,
   isAddressInUse,
   dashboardPortInUseMessage,
@@ -385,11 +386,13 @@ describe('GET /api/history', () => {
     expect(body.points[0]?.isPR).toBe(true); // first session establishes the baseline PR
     expect(body.points[1]?.e1rm).toBeGreaterThan(body.points[0]?.e1rm ?? 0);
     expect(body.points[1]?.isPR).toBe(true); // improved on the baseline
+    // The exercise is resolved in-process over a bounded reverse-chronological
+    // scan (VMCP-05.06) — most stored sessions carry only a free-text name, so
+    // the store's `exerciseId` filter can't do the matching.
     expect(state.store.listSessions).toHaveBeenCalledWith({
-      sort: 'startedAt:asc',
-      limit: HISTORY_DEFAULT_LIMIT,
+      sort: 'startedAt:desc',
+      limit: HISTORY_SCAN_LIMIT,
       offset: 0,
-      exerciseId: 'bench',
     });
   });
 
@@ -1039,10 +1042,9 @@ describe('GET /api/capacity-band', () => {
     const last = body.points[body.points.length - 1] as BandPoint;
     expect(last.bandHigh - last.bandLow).toBeLessThan(first.bandHigh - first.bandLow);
     expect(state.store.listSessions).toHaveBeenCalledWith({
-      sort: 'startedAt:asc',
-      limit: HISTORY_DEFAULT_LIMIT,
+      sort: 'startedAt:desc',
+      limit: HISTORY_SCAN_LIMIT,
       offset: 0,
-      exerciseId: 'bench',
     });
   });
 
@@ -1076,9 +1078,165 @@ describe('GET /api/capacity-band', () => {
     const handle = await startWithFake(state);
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/capacity-band');
     expect(res.status).toBe(200);
-    const body = JSON.parse(res.body) as { points: BandPoint[] };
+    const body = JSON.parse(res.body) as {
+      points: BandPoint[];
+      exerciseId: string | null;
+      exerciseName: string | null;
+    };
     expect(body.points).toEqual([]);
-    expect(state.store.listSessions).not.toHaveBeenCalled();
+    expect(body.exerciseId).toBeNull();
+    expect(body.exerciseName).toBeNull();
+  });
+});
+
+// VMCP-05.06 — history endpoints must render with nothing running. Most stored
+// sessions carry only a free-text `exerciseName`, so selection matches on either
+// handle and defaults to the most-recent exercise that has data.
+describe('history exercise selection', () => {
+  function storedSet(sessionId: string, weightLbs: number, reps: number): StoredSet {
+    return {
+      id: `${sessionId}-set`,
+      sessionId,
+      startedAt: '',
+      endedAt: '',
+      partial: false,
+      trainingMode: 'weight',
+      weightLbs,
+      reps: Array.from({ length: reps }, () => ({}) as StoredSet['reps'][number]),
+    };
+  }
+
+  /** Sessions newest-first, as the real store returns them for the scan. */
+  const sessions: StoredSession[] = [
+    { id: 's5', startedAt: '2026-05-20T00:00:00.000Z', exerciseName: 'Warmup only' },
+    { id: 's4', startedAt: '2026-05-15T00:00:00.000Z', exerciseName: 'Cable Chest Press' },
+    { id: 's3', startedAt: '2026-05-10T00:00:00.000Z', exerciseId: 'cable-chest-press' },
+    { id: 's2', startedAt: '2026-05-05T00:00:00.000Z', exerciseId: 'cable-chest-press' },
+    { id: 's1', startedAt: '2026-05-01T00:00:00.000Z', exerciseName: 'Cable Bicep Curl' },
+  ];
+  const setsById: Record<string, StoredSet[]> = {
+    s5: [storedSet('s5', 45, 0)], // a set with no reps — not scorable
+    s4: [storedSet('s4', 115, 5)],
+    s3: [storedSet('s3', 110, 5)],
+    s2: [storedSet('s2', 100, 5)],
+    s1: [storedSet('s1', 30, 8)],
+  };
+
+  function stateWithHistory(): ReturnType<typeof makeFakeState> {
+    return makeFakeState(
+      { primary: {} },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+  }
+
+  async function getTrend(
+    path: string,
+    state = stateWithHistory(),
+  ): Promise<{ points: { date: string; e1rm: number }[]; exerciseName: string | null }> {
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, path);
+    expect(res.status).toBe(200);
+    return JSON.parse(res.body) as {
+      points: { date: string; e1rm: number }[];
+      exerciseName: string | null;
+    };
+  }
+
+  it('defaults to the most-recent exercise with data when no session is running', async () => {
+    const body = await getTrend('/api/exercise-trend');
+    // Skips s5 (a set, but no reps) and lands on Cable Chest Press.
+    expect(body.exerciseName).toBe('Cable Chest Press');
+    expect(body.points.map((p) => p.date)).toEqual([
+      '2026-05-05T00:00:00.000Z',
+      '2026-05-10T00:00:00.000Z',
+      '2026-05-15T00:00:00.000Z',
+    ]);
+  });
+
+  it('unifies the slug-id and typed-name spellings of one exercise into a single series', async () => {
+    const byId = await getTrend('/api/exercise-trend?exerciseId=cable-chest-press');
+    const byName = await getTrend('/api/exercise-trend?exerciseName=Cable%20Chest%20Press');
+    expect(byId.points).toHaveLength(3);
+    expect(byName.points).toEqual(byId.points);
+  });
+
+  it('selects a name-only exercise that has no exerciseId at all', async () => {
+    const body = await getTrend('/api/exercise-trend?exerciseName=Cable%20Bicep%20Curl');
+    expect(body.exerciseName).toBe('Cable Bicep Curl');
+    expect(body.points).toHaveLength(1);
+  });
+
+  it('returns an empty series for an exercise with no stored sessions', async () => {
+    const body = await getTrend('/api/exercise-trend?exerciseId=nonesuch');
+    expect(body.points).toEqual([]);
+  });
+
+  it('prefers the active session exercise, but only while it has stored data', async () => {
+    const withData = makeFakeState(
+      {
+        primary: { session: { sessionId: 'live', startedAt: '', exerciseId: 'cable-bicep-curl' } },
+      },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+    // The catalog joins the live id to the name its stored sessions were typed under.
+    const withCatalog = {
+      ...withData,
+      exercises: { getById: () => ({ name: 'Cable Bicep Curl', muscleGroups: [] }) },
+    };
+    expect((await getTrend('/api/exercise-trend', withCatalog)).exerciseName).toBe(
+      'Cable Bicep Curl',
+    );
+
+    const noData = makeFakeState(
+      { primary: { session: { sessionId: 'live', startedAt: '', exerciseId: 'brand-new-lift' } } },
+      () => Promise.resolve(sessions),
+      (id) => Promise.resolve(setsById[id] ?? []),
+    );
+    // Nothing stored for the live exercise → fall back rather than render blank.
+    expect((await getTrend('/api/exercise-trend', noData)).exerciseName).toBe('Cable Chest Press');
+  });
+
+  it('serves a single-point exercise without a band instead of failing', async () => {
+    const state = stateWithHistory();
+    const handle = await startWithFake(state);
+    const trend = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/exercise-trend?exerciseName=Cable%20Bicep%20Curl',
+    );
+    const band = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/capacity-band?exerciseName=Cable%20Bicep%20Curl',
+    );
+    const prs = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/api/pr-history?exerciseName=Cable%20Bicep%20Curl',
+    );
+    expect(trend.status).toBe(200);
+    expect((JSON.parse(trend.body) as { points: unknown[] }).points).toHaveLength(1);
+    expect(band.status).toBe(200);
+    expect((JSON.parse(band.body) as { points: unknown[] }).points).toEqual([]);
+    expect(prs.status).toBe(200);
+    expect((JSON.parse(prs.body) as { records: unknown[] }).records.length).toBeGreaterThanOrEqual(
+      1,
+    );
+  });
+
+  it('reports which exercise the PR records belong to', async () => {
+    const handle = await startWithFake(stateWithHistory());
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/pr-history');
+    const body = JSON.parse(res.body) as {
+      records: { type: string; value: number }[];
+      exerciseId: string | null;
+      exerciseName: string | null;
+    };
+    expect(body.exerciseName).toBe('Cable Chest Press');
+    expect(body.exerciseId).toBe('cable-chest-press');
+    expect(body.records.find((r) => r.type === 'weight')?.value).toBe(115);
   });
 });
 
