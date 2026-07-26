@@ -54,6 +54,7 @@ import {
 import { finalizeReps } from '../state/rep-finalize.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
+import type { PhysicalSide } from '../state/slot-bindings.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 
@@ -613,7 +614,22 @@ export async function finalizeSet(
       segmentationCorrections: state.config?.repCorrections === 'on',
     }),
   };
-  const stored = toStoredSet(correctedForStore, device);
+  // VMCP-04.08: stamp device / side / slot identity onto the persisted row.
+  // This is the single choke point every close path funnels through, so
+  // recording it here covers the tool close, the device-signal close, the
+  // inactivity force-close and the guided-load reap alike.
+  //
+  // `side` is resolved HERE, at write time, through the same
+  // `state.slotBindings` lookup every other consumer uses — not re-derived on
+  // read. Both the binding and the slot assignment are mutable after the fact
+  // (`slot.bind`, `slot.swap`), so a read-time derivation would retroactively
+  // change what a historical row means. Unresolvable ⇒ absent, never a
+  // default; see `resolvePersistedSide`.
+  const stored = toStoredSet(correctedForStore, device, {
+    slotId,
+    deviceId: slot.client.connectedDeviceId,
+    side: resolvePersistedSide(state, slot.client.connectedDeviceId),
+  });
   await state.store.putSet(stored);
   // Push a lifecycle event so a channel-enabled host wakes the model on set
   // close. The payload carries the full rep array plus a pre-computed VBT
@@ -759,7 +775,37 @@ async function getStoredSet(state: ServerState, setId: string): Promise<StoredSe
   return stored;
 }
 
-function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
+/**
+ * Resolve the physical limb to persist on a set (VMCP-04.08), from the
+ * `deviceId → physicalSide` binding as it stands at write time. Reuses
+ * `state.slotBindings` — the one binding-resolution path in the server — rather
+ * than introducing a second notion of sidedness.
+ *
+ * Returns `null` whenever the side is genuinely unknown: no connected device id
+ * (mock adapter, close after the device dropped) or a device that has never
+ * been bound to a side. Deliberately does NOT fall back to `'left'`, to the
+ * slot id, or to anything else plausible — a null reads downstream as "we don't
+ * know", which is recoverable, while a guessed side is indistinguishable from a
+ * measured one.
+ */
+function resolvePersistedSide(state: ServerState, deviceId: string | null): PhysicalSide | null {
+  if (deviceId === null) return null;
+  return state.slotBindings.get(deviceId)?.physicalSide ?? null;
+}
+
+/**
+ * `identity` stamps which Voltra performed the set (VMCP-04.08). `deviceId` is
+ * the ground truth (`null` under the mock adapter or when the set is closed
+ * after the device already dropped) and `side` is resolved from its binding;
+ * `slotId` is always known at the call site but is recorded for diagnostics
+ * only — it names a position at a moment in time, not a limb, and `slot.swap`
+ * can reassign it. Never join on it.
+ */
+function toStoredSet(
+  active: ActiveSet,
+  device: DeviceSnapshot,
+  identity: { slotId: string; deviceId: string | null; side: PhysicalSide | null },
+): StoredSet {
   const reps: StoredRep[] = active.reps.map((rep, index) => ({
     ...rep,
     id: randomUUID(),
@@ -779,6 +825,9 @@ function toStoredSet(active: ActiveSet, device: DeviceSnapshot): StoredSet {
     trainingMode: device.trainingMode ?? 'Unknown',
     weightLbs: device.weightLbs ?? 0,
     ...(active.isWarmup === true ? { isWarmup: true } : {}),
+    slot: identity.slotId,
+    ...(typeof identity.deviceId === 'string' ? { deviceId: identity.deviceId } : {}),
+    ...(identity.side !== null ? { side: identity.side } : {}),
     reps,
   };
 }

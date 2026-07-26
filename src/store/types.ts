@@ -23,6 +23,13 @@ import type { Rep } from '@voltras/workout-analytics';
 export type TrainingModeName = string;
 
 /**
+ * Physical limb a set was performed with. Mirrors `PhysicalSide` in
+ * `state/slot-bindings.ts`, declared locally so the persistence contracts stay
+ * free of runtime-layer imports (same reasoning as `TrainingModeName` above).
+ */
+export type StoredSide = 'left' | 'right';
+
+/**
  * Per-phase slice of the persisted derived VBT block. Native telemetry
  * (mm/s, ms) is converted to the payload scale (m/s) at the derivation
  * boundary, so these read identically to the `set_ended` channel event.
@@ -103,6 +110,52 @@ export interface StoredSet {
    * which keeps every pre-flag row and fixture behaving exactly as before.
    */
   isWarmup?: boolean;
+  /**
+   * GROUND TRUTH for per-unit identity. BLE device id of the unit that
+   * performed the set, captured from the slot's connected client. The device
+   * id is the stable physical identity and the only one of the three identity
+   * columns that is safe to join on.
+   *
+   * Absent on pre-v5 rows and whenever the slot had no connected device id
+   * (mock adapter, mid-disconnect close).
+   */
+  deviceId?: string;
+  /**
+   * Physical limb the set was performed with, RESOLVED AT WRITE TIME from the
+   * persisted `deviceId → physicalSide` binding. This is what per-side
+   * analytics reads — never `slot`.
+   *
+   * Resolved once, at write, and frozen: the binding is mutable (`slot.bind`
+   * can be re-run) and slot assignment is mutable (`slot.swap`), so a side
+   * derived on read would silently change the meaning of historical rows. The
+   * value recorded here is what the binding said when the reps happened.
+   *
+   * Absent — never defaulted — whenever the side could not be resolved: pre-v5
+   * rows, an unbound device, or a close with no connected device id. Historical
+   * rows are permanently side-unknown because `deviceId` was discarded at write
+   * time; inferring a side for them would manufacture data that looks real. A
+   * gap is detectable downstream, a plausible wrong value is not.
+   */
+  side?: StoredSide;
+  /**
+   * DIAGNOSTIC ONLY — never a join key, never the durable side identity.
+   *
+   * Originating Voltra slot (`'primary'` for single-Voltra/bench, `'left'` /
+   * `'right'` for a bilateral pair), mirroring the `meta.slot` stamp VW-48 put
+   * on every channel event. Useful for debugging which position a set came
+   * from at record time.
+   *
+   * A slot id names a POSITION AT A MOMENT IN TIME, not a device or a limb:
+   * `slot.swap` exchanges clients between slot keys, so the same slot id can
+   * refer to a different physical unit before and after a swap. Grouping an
+   * L/R series by `slot` therefore flips sign across a swap with nothing
+   * erroring. Join on `deviceId`; read sidedness from `side`.
+   *
+   * Optional because every row written before schema v5 has no slot recorded
+   * (the column reads back absent). Every write through `finalizeSet`
+   * populates it.
+   */
+  slot?: string;
   reps: StoredRep[];
 }
 
@@ -235,7 +288,14 @@ export interface SessionStore {
    */
   putSession(s: StoredSession): Promise<void>;
 
-  /** Persist a completed (or partial) set together with its rep array. */
+  /**
+   * Persist a completed (or partial) set together with its rep array.
+   *
+   * Same `INSERT OR REPLACE` prohibition as `putSession`: the set row is
+   * re-put on retry paths (force-end on disconnect followed by an explicit
+   * re-end), and a delete-then-insert would take the set's `reps` with it on
+   * any schema where that edge is declared. Upsert in place.
+   */
   putSet(s: StoredSet): Promise<void>;
 
   /** Look up a session by id; returns `undefined` when no row matches. */

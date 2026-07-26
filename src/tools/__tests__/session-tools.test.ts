@@ -244,6 +244,11 @@ function setup(): Harness {
     restTimers: { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn(), has: vi.fn(() => false) },
     setStartDeviceSnapshots,
     channels: { forSlot: () => slotPublisher },
+    // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+    // bindings store. Nothing here binds a device, so an empty store is
+    // enough and every set is written side-unknown; the real-store
+    // resolution is covered in set-tools.test.ts.
+    slotBindings: { get: () => null },
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
