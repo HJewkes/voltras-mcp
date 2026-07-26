@@ -20,6 +20,12 @@
  * Units: velocities → m/s, distances → m, converted from WA-native mm/s & mm at
  * this boundary (as the existing live-view mapping does). No force/impulse/power
  * dimension — WA-side per-sample `load` is 0 (the bridge never populates it).
+ *
+ * Dual-Voltra (VMCP-04.04): the fatigue card stays SINGLE and SHARED — it reads the
+ * athlete, not a limb. Two live devices are folded to one rep stream before any
+ * analytics run (see `foldLimitingReps`), and the only per-limb figure on the card
+ * is the L/R imbalance (`buildAsymmetry`). Limbs are matched by their device entry's
+ * resolved side via `../limb`, never by slot position.
  */
 import {
   estimateSetRpe,
@@ -39,10 +45,12 @@ import {
   type Snapshot,
   type SnapshotDeviceEntry,
 } from '../adapter';
+import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';
 import {
   type DivergingHeroModel,
   type DivergingHeroSide,
+  type LimbAsymmetry,
   type LiveFatigueModel,
   type PhaseSegment,
   type RepRomPoint,
@@ -163,17 +171,134 @@ function romProgression(reps: readonly Rep[]): RepRomPoint[] {
   return out;
 }
 
+// --- Dual-Voltra: ONE shared card, folded from both limbs ---------------------
+
+/** A device that is mid-set right now, with the reps it has logged for that set. */
+interface LiveLimb {
+  entry: SnapshotDeviceEntry;
+  reps: readonly Rep[];
+}
+
+/**
+ * The devices with a set in progress (VW-71 per-slot sets). Order is snapshot
+ * order; identity is the device entry itself — never a slot position.
+ */
+function liveLimbs(snapshot: Snapshot): LiveLimb[] {
+  const limbs: LiveLimb[] = [];
+  for (const entry of snapshot.devices) {
+    const activeSet = entry.sets?.active;
+    if (activeSet) limbs.push({ entry, reps: activeSet.reps ?? [] });
+  }
+  return limbs;
+}
+
+/** A rep's 1-based number, falling back to its position in its own limb's stream. */
+function repNumberOf(rep: Rep, index: number): number {
+  return rep.repNumber ?? index + 1;
+}
+
+/**
+ * Fold two-or-more limbs' per-rep observations into the ONE rep stream the card
+ * describes, by taking each rep number's LIMITING observation: of the reps the
+ * limbs logged as rep N, the one with the lowest mean concentric velocity.
+ *
+ * Why limiting rather than averaging or picking a lead arm: on a bilateral effort
+ * the athlete's set is governed by the side that is failing, and every quantity on
+ * this card (verdict, RPE, ROM standard, velocity loss, tempo) is a fatigue
+ * reading — averaging would let a fresh side mask a collapsing one, and picking one
+ * arm would throw away the half of the evidence that matters. The fold happens
+ * BEFORE any analytics call, so the card still runs the single-Voltra pipeline
+ * exactly once per quantity.
+ *
+ * Reps a limb never logged contribute nothing (no fabricated counterpart), so an
+ * unequal rep count simply means those rep numbers come from one limb. A rep with
+ * no finite mean velocity loses to one that has a reading; if none does, the first
+ * limb in snapshot order stands in.
+ */
+function foldLimitingReps(limbs: readonly LiveLimb[]): Rep[] {
+  const byRepNumber = new Map<number, Rep>();
+  for (const limb of limbs) {
+    limb.reps.forEach((rep, index) => {
+      const n = repNumberOf(rep, index);
+      const incumbent = byRepNumber.get(n);
+      if (incumbent === undefined || isMoreLimiting(rep, incumbent)) byRepNumber.set(n, rep);
+    });
+  }
+  return [...byRepNumber.entries()].sort(([a], [b]) => a - b).map(([, rep]) => rep);
+}
+
+/** True when `candidate` is the more fatigued (slower) of the two observations. */
+function isMoreLimiting(candidate: Rep, incumbent: Rep): boolean {
+  const a = repMeanMms(candidate);
+  const b = repMeanMms(incumbent);
+  if (a === null) return false;
+  if (b === null) return true;
+  return a < b;
+}
+
+/** Mean of a limb's per-rep mean concentric velocities, m/s. `null` when none is finite. */
+function meanRepVelocityMps(reps: readonly Rep[]): number | null {
+  const means: number[] = [];
+  for (const rep of reps) {
+    const mms = repMeanMms(rep);
+    if (mms !== null) means.push(mms);
+  }
+  if (means.length === 0) return null;
+  return toMps(means.reduce((sum, v) => sum + v, 0) / means.length);
+}
+
+/**
+ * The L/R imbalance callout, or `null` when it cannot be stated honestly.
+ *
+ * Null cases, all deliberate: fewer than two live limbs; the live limbs do not
+ * resolve to exactly one left and one right (an unbound slot has no side, and we do
+ * NOT guess which arm is which); or a side has no finite mean velocity yet. A gap
+ * beats a guess.
+ *
+ * At an exact tie `pct` is 0 and `strongerSide` carries no meaning — the card should
+ * read 0% as "balanced", not as a verdict about that side.
+ */
+function buildAsymmetry(limbs: readonly LiveLimb[]): LimbAsymmetry | null {
+  if (limbs.length < 2) return null;
+  const left = limbs.filter((limb) => limbSide(limb.entry) === 'left');
+  const right = limbs.filter((limb) => limbSide(limb.entry) === 'right');
+  if (left.length !== 1 || right.length !== 1) return null;
+
+  const leftMps = meanRepVelocityMps(left[0].reps);
+  const rightMps = meanRepVelocityMps(right[0].reps);
+  if (leftMps === null || rightMps === null) return null;
+  const reference = Math.max(leftMps, rightMps);
+  if (reference <= 0) return null;
+
+  const leftIsStronger = leftMps >= rightMps;
+  const stronger = leftIsStronger ? left[0] : right[0];
+  return {
+    pct: Number(((Math.abs(leftMps - rightMps) / reference) * 100).toFixed(1)),
+    strongerSide: leftIsStronger ? 'left' : 'right',
+    strongerLabel: limbLabel(stronger.entry),
+  };
+}
+
 /**
  * Project the store onto the live fatigue-card model. Returns `null` when there is
  * no active set to show. A present model with `verdict: null` is the warming-up /
  * pre-WA-bump state — the card shows a neutral "warming up".
+ *
+ * DUAL-VOLTRA: still ONE model. When two devices are mid-set, the rep stream every
+ * quantity is computed from is {@link foldLimitingReps}' per-rep limiting fold, so
+ * the verdict/RPE/lights describe the athlete as a whole; the single per-limb figure
+ * is {@link buildAsymmetry}'s L/R imbalance. With one device (or none reporting
+ * per-slot sets) the top-level active set is used and the output is byte-for-byte
+ * what it was before dual support.
  */
 export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueModel | null {
   const { snapshot, prescription } = sources;
   const active = snapshot?.sets.active;
   if (!snapshot || !active) return null;
 
-  const reps: readonly Rep[] = active.reps ?? [];
+  const limbs = liveLimbs(snapshot);
+  const isDual = limbs.length >= 2;
+  const reps: readonly Rep[] = isDual ? foldLimitingReps(limbs) : (active.reps ?? []);
   const rpe = estimateSetRpe({ reps: reps as Rep[] });
   const workingStandard = workingRomMetres(reps);
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
@@ -196,6 +321,8 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     ),
     tempoSeconds: getSetTempoSeconds({ reps: reps as Rep[] }),
     targetTempoSeconds: prescription?.tempo ?? null,
+    contributingLimbCount: limbs.length,
+    asymmetry: buildAsymmetry(limbs),
   };
 }
 

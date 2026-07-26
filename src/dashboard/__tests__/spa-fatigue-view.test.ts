@@ -398,3 +398,167 @@ describe('mapStoreToDivergingHeroModel', () => {
     expect(hero.targetReps).toBeNull();
   });
 });
+
+// --- mapStoreToFatigueModel, dual Voltra (VMCP-04.04) -------------------------
+
+describe('mapStoreToFatigueModel (dual Voltra)', () => {
+  /** A device entry mid-set. `slotId` is the fixture's stand-in for the resolved side. */
+  function limb(
+    slotId: string,
+    reps: Rep[],
+    deviceId = `V-${slotId}`,
+  ): Snapshot['devices'][number] {
+    return {
+      slotId,
+      device: { connected: true, weightLbs: 100, deviceId },
+      sets: { active: { reps }, completed: [] },
+    };
+  }
+
+  /**
+   * A dual snapshot. The top-level `sets.active` mirrors the FIRST limb, exactly as
+   * the server reports it (top-level = the primary slot's set only).
+   */
+  function dual(devices: Snapshot['devices']): Snapshot {
+    return {
+      session: { sessionId: 's1', exerciseName: 'Cable Row' },
+      devices,
+      sets: { active: devices[0]?.sets?.active ?? { reps: [] }, completed: [] },
+    };
+  }
+
+  it('leaves the single-Voltra path unchanged (one live limb = the top-level set)', () => {
+    const reps = buildReps([
+      { concVel: 500, rom: 100 },
+      { concVel: 450, rom: 100 },
+      { concVel: 400, rom: 90 },
+    ]);
+    const noDevices = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }))!;
+    const oneDevice = mapStoreToFatigueModel(sources({ snapshot: dual([limb('left', reps)]) }))!;
+
+    // Every athlete-level quantity is identical whether or not per-slot sets are present.
+    expect(oneDevice.rpe).toEqual(noDevices.rpe);
+    expect(oneDevice.verdict).toEqual(noDevices.verdict);
+    expect(oneDevice.romProgression).toEqual(noDevices.romProgression);
+    expect(oneDevice.romWorkingStandardM).toEqual(noDevices.romWorkingStandardM);
+    expect(oneDevice.velocityCurves).toEqual(noDevices.velocityCurves);
+    expect(oneDevice.tempoSeconds).toEqual(noDevices.tempoSeconds);
+    // A single limb has no imbalance to state, and the card can tell that from the count.
+    expect(noDevices.asymmetry).toBeNull();
+    expect(oneDevice.asymmetry).toBeNull();
+    expect(noDevices.contributingLimbCount).toBe(0);
+    expect(oneDevice.contributingLimbCount).toBe(1);
+  });
+
+  it('folds the two limbs into ONE set, taking the limiting (slower) observation per rep', () => {
+    // Rep 1: left is slower (500 < 600) → its 100 mm ROM survives.
+    // Rep 2: right is slower (300 < 400) → its 60 mm ROM survives.
+    const left = buildReps([
+      { concVel: 500, rom: 100 },
+      { concVel: 400, rom: 100 },
+    ]);
+    const right = buildReps([
+      { concVel: 600, rom: 60 },
+      { concVel: 300, rom: 60 },
+    ]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', left), limb('right', right)]) }),
+    )!;
+
+    expect(model.contributingLimbCount).toBe(2);
+    // ONE shared set of 2 reps — not 4 concatenated, and not one arm's stream.
+    expect(model.romProgression).toEqual([
+      { repNumber: 1, romM: 0.1 },
+      { repNumber: 2, romM: 0.06 },
+    ]);
+    expect(model.velocityCurves).toHaveLength(2);
+  });
+
+  it('never lets a fresh limb mask a collapsing one (the fold is not an average)', () => {
+    const collapsing = buildReps([
+      { concVel: 600, rom: 100 },
+      { concVel: 200, rom: 100 },
+      { concVel: 150, rom: 100 },
+    ]);
+    const fresh = buildReps([
+      { concVel: 600, rom: 100 },
+      { concVel: 595, rom: 100 },
+      { concVel: 590, rom: 100 },
+    ]);
+    const shared = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', collapsing), limb('right', fresh)]) }),
+    )!;
+    const collapsingOnly = mapStoreToFatigueModel(
+      sources({ snapshot: snapshotWithActive(collapsing) }),
+    )!;
+    // The shared card reads the failing side, not the comfortable one.
+    expect(shared.verdict).toEqual(collapsingOnly.verdict);
+  });
+
+  it('keeps rep numbers only one limb reached (no fabricated counterpart)', () => {
+    const left = buildReps([
+      { concVel: 500, rom: 100 },
+      { concVel: 480, rom: 100 },
+      { concVel: 460, rom: 100 },
+    ]);
+    const right = buildReps([{ concVel: 520, rom: 100 }]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', left), limb('right', right)]) }),
+    )!;
+    expect(model.romProgression.map((p) => p.repNumber)).toEqual([1, 2, 3]);
+  });
+
+  it('states the L/R imbalance magnitude and which side is stronger', () => {
+    const left = buildReps([
+      { concVel: 500, rom: 100 },
+      { concVel: 500, rom: 100 },
+    ]);
+    const right = buildReps([
+      { concVel: 600, rom: 100 },
+      { concVel: 600, rom: 100 },
+    ]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', left), limb('right', right)]) }),
+    )!;
+    // 0.5 vs 0.6 m/s → |Δ| / stronger = 16.7%, right side ahead.
+    expect(model.asymmetry).toEqual({
+      pct: 16.7,
+      strongerSide: 'right',
+      strongerLabel: 'Right',
+    });
+  });
+
+  it('reports a 0% imbalance for two matched limbs', () => {
+    const reps = () =>
+      buildReps([
+        { concVel: 500, rom: 100 },
+        { concVel: 500, rom: 100 },
+      ]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', reps()), limb('right', reps())]) }),
+    )!;
+    expect(model.asymmetry!.pct).toBe(0);
+  });
+
+  it('reports NO imbalance when the live limbs do not resolve to a left and a right', () => {
+    const reps = () => buildReps([{ concVel: 500, rom: 100 }]);
+    // Two live devices bound to non-limb slots — we do not guess which arm is which.
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('primary', reps()), limb('secondary', reps())]) }),
+    )!;
+    expect(model.contributingLimbCount).toBe(2);
+    expect(model.asymmetry).toBeNull();
+  });
+
+  it('reports NO imbalance while a side has not logged a rep yet', () => {
+    const model = mapStoreToFatigueModel(
+      sources({
+        snapshot: dual([limb('left', buildReps([{ concVel: 500, rom: 100 }])), limb('right', [])]),
+      }),
+    )!;
+    expect(model.contributingLimbCount).toBe(2);
+    expect(model.asymmetry).toBeNull();
+    // …but the side that IS lifting still drives the shared card.
+    expect(model.romProgression).toEqual([{ repNumber: 1, romM: 0.1 }]);
+  });
+});

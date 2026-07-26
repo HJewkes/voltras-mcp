@@ -97,11 +97,38 @@ export interface RepRomPoint {
 }
 
 /**
+ * The left/right performance imbalance callout on the (single, shared) dual-Voltra
+ * fatigue card — e.g. "L/R imbalance 8% ▸ Right".
+ *
+ * Proxy: at a common load, the side moving the bar faster is the stronger/fresher
+ * one, so the comparison is over each side's MEAN of its per-rep mean concentric
+ * velocities (WA `getRepMeanVelocity` via the adapter's `repMeanMms`, the same
+ * per-rep number the diverging hero plots — no second definition of "rep velocity").
+ * There is no force dimension available here (WA-side `load` is 0).
+ *
+ * DISPLAY ONLY: never persisted, and never a clinical/injury claim.
+ */
+export interface LimbAsymmetry {
+  /** Magnitude, percent of the stronger side: |L − R| / max(L, R) × 100, 0..100. */
+  pct: number;
+  /** The side with the higher mean concentric velocity. */
+  strongerSide: 'left' | 'right';
+  /** User-facing label for {@link strongerSide}, from the shared `limbLabel()` helper. */
+  strongerLabel: string;
+}
+
+/**
  * The always-on live fatigue card model for the current set.
  *
  * A `null` return from the mapper means "no set to show". A present model with a
  * `null` `verdict` means the set is warming up (cold start, < 2 reps) OR the WA
  * verdict function is not yet available — the card renders a neutral "warming up".
+ *
+ * DUAL-VOLTRA: there is exactly ONE of these cards even when two devices are live.
+ * Its verdict, RPE and three dimension lights describe the ATHLETE AS A WHOLE (see
+ * the mapper for how the two limbs' per-rep observations are folded into one set);
+ * the only per-limb thing on it is {@link asymmetry}. Per-limb detail belongs to the
+ * diverging hero and the ghost-spark, not here.
  */
 export interface LiveFatigueModel {
   /**
@@ -152,6 +179,20 @@ export interface LiveFatigueModel {
    * the prescription. `null` when the plan prescribes none.
    */
   targetTempoSeconds: [number, number, number, number] | null;
+  /**
+   * How many devices contributed reps to this card (0, 1, or 2+). The card uses it
+   * to tell "single Voltra — imbalance is not a thing here" (`< 2`) apart from "two
+   * Voltras live but the imbalance could not be computed" (`>= 2` with a `null`
+   * {@link asymmetry}), so the latter can render an explicit gap.
+   */
+  contributingLimbCount: number;
+  /**
+   * The L/R imbalance callout. `null` whenever it cannot be computed HONESTLY:
+   * a single Voltra, both live devices resolving to the same side or to no side at
+   * all (an unbound slot — we never guess which arm is which), or a side with no
+   * usable mean velocity. A gap beats a guess.
+   */
+  asymmetry: LimbAsymmetry | null;
 }
 
 /**
