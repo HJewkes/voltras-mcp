@@ -9,7 +9,8 @@
  *     staleness tick.
  *   - **historical** — the slow (~15 s) 8-endpoint fan-out (trend / plan / program / …).
  *   - **live** — the ~20 Hz `/api/stream` SSE overlay (driven by
- *     `createLiveStreamController`, written via `setLive`).
+ *     `createLiveStreamController`, written via `setLive`), demultiplexed per Voltra
+ *     slot into `liveBySlot` (VW-48 P2) with `live` kept as the derived single-slot view.
  *
  * The store is framework-agnostic (`zustand/vanilla`) so it is unit-testable headlessly
  * and the I/O orchestration lives in effects that call these actions — no fetch/interval
@@ -73,8 +74,30 @@ interface HistoricalSlice {
 /** A best-effort batch of slow-cadence historical results (any subset). */
 export type HistoricalPatch = Partial<HistoricalSlice>;
 
+/**
+ * The slot a single-Voltra (bench) stream reports; also what the derived {@link
+ * LiveSlice.live} accessor prefers.
+ */
+export const PRIMARY_SLOT = 'primary';
+
 interface LiveSlice {
+  /**
+   * Per-slot live overlays, keyed by the slot the SSE payload was stamped with
+   * (`'primary'` for a single Voltra, `'left'` / `'right'` bilaterally). A slot
+   * appears on its first frame and is removed when its overlay is cleared.
+   */
+  liveBySlot: Record<string, LiveModel>;
+  /**
+   * Derived single-slot view for slot-blind consumers: the `primary` overlay when
+   * present, else the first slot that spoke. Identical to the pre-demux `live` field
+   * for single-Voltra streams, which only ever carry `primary`.
+   */
   live: LiveModel | null;
+}
+
+/** @see LiveSlice.live */
+function deriveLive(bySlot: Record<string, LiveModel>): LiveModel | null {
+  return bySlot[PRIMARY_SLOT] ?? Object.values(bySlot)[0] ?? null;
 }
 
 interface DashboardActions {
@@ -86,8 +109,11 @@ interface DashboardActions {
   tick(now: number): void;
   /** Merge a batch of slow-cadence historical results (best-effort; partial is fine). */
   applyHistorical(patch: Partial<HistoricalSlice>): void;
-  /** Push the latest live SSE overlay model (or null when the stream is absent/cleared). */
-  setLive(live: LiveModel | null): void;
+  /**
+   * Push the latest live SSE overlay model for one slot (or null to clear that slot).
+   * `slot` defaults to {@link PRIMARY_SLOT}, so slot-blind callers are unchanged.
+   */
+  setLive(live: LiveModel | null, slot?: string): void;
 }
 
 export type DashboardState = SnapshotSlice & HistoricalSlice & LiveSlice & DashboardActions;
@@ -121,6 +147,7 @@ const initialHistorical: HistoricalSlice = {
 export const dashboardStore = createStore<DashboardState>((set) => ({
   ...initialSnapshot,
   ...initialHistorical,
+  liveBySlot: {},
   live: null,
 
   applySnapshot: (data, now) =>
@@ -159,5 +186,15 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
 
   applyHistorical: (patch) => set(patch),
 
-  setLive: (live) => set({ live }),
+  setLive: (live, slot = PRIMARY_SLOT) =>
+    set((state) => {
+      const liveBySlot = { ...state.liveBySlot };
+      if (live === null) {
+        if (!(slot in liveBySlot)) return {};
+        delete liveBySlot[slot];
+      } else {
+        liveBySlot[slot] = live;
+      }
+      return { liveBySlot, live: deriveLive(liveBySlot) };
+    }),
 }));

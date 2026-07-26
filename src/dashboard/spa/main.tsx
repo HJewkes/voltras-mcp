@@ -237,7 +237,7 @@ function useDashboardController(): void {
   useEffect(
     () =>
       createLiveStreamController(
-        (m) => dashboardStore.getState().setLive(m),
+        (m, slot) => dashboardStore.getState().setLive(m, slot),
         (snap) => dashboardStore.getState().applySnapshot(snap, Date.now()),
       ),
     [],
