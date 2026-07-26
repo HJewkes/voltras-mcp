@@ -57,8 +57,13 @@ const SCHEMA_SQL = `
     training_mode TEXT NOT NULL,
     weight_lbs REAL NOT NULL,
     is_warmup INTEGER NOT NULL DEFAULT 0,
+    -- Identity triple (v5). device_id = ground truth / the only join key;
+    -- side = what per-side analytics reads, resolved at write time;
+    -- slot = diagnostic only, a position at a moment, NEVER a join key.
+    -- See migrateV4ToV5 and StoredSet in types.ts.
     slot TEXT,
-    device_id TEXT
+    device_id TEXT,
+    side TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
 
@@ -186,27 +191,46 @@ function migrateV3ToV4(db: DatabaseSync): void {
 }
 
 /**
- * v4→v5 (VMCP-04.08): persist per-slot identity on `sets`. Per-slot identity
- * already flowed through the live path (`meta.slot` on channel events, the
- * slot-stamped SSE payloads, per-slot snapshot data) but was dropped on write,
- * so which arm performed a bilateral set was unrecoverable afterwards.
+ * v4→v5 (VMCP-04.08): persist per-unit identity on `sets`. It already flowed
+ * through the live path (`meta.slot` on channel events, the slot-stamped SSE
+ * payloads, per-slot snapshot data) but was dropped on write, so which arm
+ * performed a bilateral set was unrecoverable afterwards.
  *
- * Two nullable `ALTER TABLE ADD COLUMN`s, per-column probed for the same reason
- * `migrateV3ToV4` probes: SQLite has no `ADD COLUMN IF NOT EXISTS`, and
+ * THREE COLUMNS, THREE DISTINCT JOBS — this split is the whole point of the
+ * migration, so keep them distinct:
+ *
+ *   device_id  ground truth. Stable physical identity. The ONLY join key.
+ *   side       nullable, resolved from the `deviceId → physicalSide` binding
+ *              at WRITE time. What per-side analytics reads.
+ *   slot       DIAGNOSTIC ONLY. Never a join key, never the durable side.
+ *
+ * Why `slot` cannot be the durable identity: `slot.swap` exchanges clients
+ * between slot keys, so a slot id names a position at a moment in time, not a
+ * device or a limb. Were an L/R series keyed on `slot`, every historical row
+ * would silently change meaning the first time a user swaps slots and the
+ * series would flip sign with nothing erroring. Storing it is still useful for
+ * debugging which position a set came from; depending on it is not.
+ *
+ * Three nullable `ALTER TABLE ADD COLUMN`s, per-column probed for the same
+ * reason `migrateV3ToV4` probes: SQLite has no `ADD COLUMN IF NOT EXISTS`, and
  * `applyMigrations` runs this body on a fresh DB whose `SCHEMA_SQL` already
- * declares both columns.
+ * declares all three.
  *
- * NULLABLE WITH NO DEFAULT IS DELIBERATE. Every pre-v5 row reads back with
- * `slot`/`deviceId` absent, which is the truth: those sets were recorded before
- * slot identity was captured and are genuinely unattributable. Backfilling them
- * to `'primary'` would manufacture an attribution the data never had. Existing
- * rows are otherwise untouched — `ADD COLUMN` rewrites no row data.
+ * NULLABLE WITH NO DEFAULT AND NO BACKFILL IS DELIBERATE. Every pre-v5 row
+ * reads back with `slot`/`deviceId`/`side` absent, which is the truth: those
+ * sets were recorded before identity was captured and are genuinely
+ * unattributable. `device_id` was discarded at write time, so their side is
+ * permanently unknowable — there is nothing left to infer it from, and an
+ * inferred side would manufacture data that looks real. A gap is detectable
+ * downstream; a plausible wrong value is not. Existing rows are otherwise
+ * untouched — `ADD COLUMN` rewrites no row data.
  */
 function migrateV4ToV5(db: DatabaseSync): void {
   const columns = db.prepare(`PRAGMA table_info(sets)`).all() as { name: string }[];
   const names = new Set(columns.map((c) => c.name));
   if (!names.has('slot')) db.exec(`ALTER TABLE sets ADD COLUMN slot TEXT`);
   if (!names.has('device_id')) db.exec(`ALTER TABLE sets ADD COLUMN device_id TEXT`);
+  if (!names.has('side')) db.exec(`ALTER TABLE sets ADD COLUMN side TEXT`);
 }
 
 interface SessionRow {
@@ -230,6 +254,7 @@ interface SetRow {
   is_warmup: number;
   slot: string | null;
   device_id: string | null;
+  side: string | null;
 }
 
 interface RepRow {
@@ -383,8 +408,8 @@ export class SqliteSessionStore implements SessionStore {
     const upsertSet = this.db.prepare(
       `INSERT INTO sets
          (id, session_id, started_at, ended_at, partial, partial_reason,
-          training_mode, weight_lbs, is_warmup, slot, device_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          training_mode, weight_lbs, is_warmup, slot, device_id, side)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          started_at = excluded.started_at,
@@ -395,7 +420,8 @@ export class SqliteSessionStore implements SessionStore {
          weight_lbs = excluded.weight_lbs,
          is_warmup = excluded.is_warmup,
          slot = excluded.slot,
-         device_id = excluded.device_id`,
+         device_id = excluded.device_id,
+         side = excluded.side`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -416,6 +442,7 @@ export class SqliteSessionStore implements SessionStore {
         s.isWarmup === true ? 1 : 0,
         s.slot ?? null,
         s.deviceId ?? null,
+        s.side ?? null,
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -731,7 +758,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 1 = pre-Phase-0.5.1 schema (migrated forward in `applyMigrations`).
   // 2 = Phase 0.5.1 schema; v3 added the planning tables (additive only).
   // 3 = v3 planning schema; v4 added `sets.is_warmup` (additive column).
-  // 4 = v4 schema; v5 added `sets.slot` / `sets.device_id` (additive columns).
+  // 4 = v4 schema; v5 added `sets.slot` / `sets.device_id` / `sets.side`
+  //     (additive columns).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -856,6 +884,10 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // the same claim as "the primary slot did it".
   if (row.slot !== null) out.slot = row.slot;
   if (row.device_id !== null) out.deviceId = row.device_id;
+  // `side` is a free-text column at the SQLite level; narrow on read rather
+  // than casting, so a row carrying anything other than the two legal values
+  // reads back as side-unknown instead of as a bogus side.
+  if (row.side === 'left' || row.side === 'right') out.side = row.side;
   return out;
 }
 

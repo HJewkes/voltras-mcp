@@ -281,6 +281,11 @@ function setup(): Harness {
     setStartDeviceSnapshots: new Map(),
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
+    // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+    // bindings store. Nothing here binds a device, so an empty store is
+    // enough and every set is written side-unknown; the real-store
+    // resolution is covered in set-tools.test.ts.
+    slotBindings: { get: () => null },
   };
   const placeholders = makePlaceholders();
   const server = { tool: vi.fn() };

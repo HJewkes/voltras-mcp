@@ -7,6 +7,9 @@
 //   * NO_ACTIVE_SET on set.end without an active set (AC-17)
 //   * set.live_metrics returns the live snapshot or `{ active: false }`
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Rep } from '@voltras/workout-analytics';
 import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
 import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../../state/live-signal.js';
@@ -55,6 +58,18 @@ const { SetWatchdog } = await import('../../state/set-watchdog.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 const { BilateralReconciler } = await import('../../state/bilateral-reconciler.js');
+const { SlotBindingsStore } = await import('../../state/slot-bindings.js');
+
+// Every harness gets a real `SlotBindingsStore` over a throwaway file rather
+// than a hand-stubbed lookup, so the write-time side resolution under test
+// runs against the same code production uses. Dirs are collected here and
+// removed after each test.
+const bindingDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of bindingDirs) rmSync(dir, { recursive: true, force: true });
+  bindingDirs.length = 0;
+});
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -173,7 +188,14 @@ interface Harness {
   channels: { publish: ReturnType<typeof vi.fn> };
 }
 
-function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): Harness {
+function setup(
+  opts: {
+    repSource?: RepSource;
+    restTimer?: 'on' | 'off';
+    /** deviceId → physical side, seeded into the harness bindings store. */
+    bindings?: Record<string, 'left' | 'right'>;
+  } = {},
+): Harness {
   const live = new LiveState();
   const store = makeStore();
   const client = {
@@ -210,6 +232,12 @@ function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): 
   };
   const slots = new Map();
   slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard: new ModeRevertGuard() });
+  const bindingDir = mkdtempSync(join(tmpdir(), 'vmcp-set-tools-bindings-'));
+  bindingDirs.push(bindingDir);
+  const slotBindings = SlotBindingsStore.open(join(bindingDir, 'slot-bindings.json'));
+  for (const [deviceId, side] of Object.entries(opts.bindings ?? {})) {
+    slotBindings.bind(deviceId, side);
+  }
   const state = {
     // Default the harness to restTimer:'on' so the existing rest_status
     // coverage exercises the timer mechanics; production defaults to 'off'
@@ -224,6 +252,7 @@ function setup(opts: { repSource?: RepSource; restTimer?: 'on' | 'off' } = {}): 
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
     bilateralReconciler: new BilateralReconciler(),
+    slotBindings,
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;
@@ -832,6 +861,42 @@ describe('set.end', () => {
     const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
     expect(stored.slot).toBe('primary');
     expect(stored).not.toHaveProperty('deviceId');
+    // No device id ⇒ nothing to resolve a side from ⇒ no side. Not 'left'.
+    expect(stored).not.toHaveProperty('side');
+  });
+
+  it('resolves side from the device binding at write time', async () => {
+    const bound = setup({ bindings: { 'AA:BB:CC:DD:EE:01': 'right' } });
+    startSession(bound.live);
+    bound.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await bound.invoke('set.start', {});
+    bound.live.appendRep(makeRep(1));
+
+    await bound.invoke('set.end', {});
+
+    const stored = bound.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.side).toBe('right');
+    // Side comes from the binding, not from the slot key — the two disagree
+    // here on purpose, and `slot` is the one that must not be believed.
+    expect(stored.slot).toBe('primary');
+    expect(stored.deviceId).toBe('AA:BB:CC:DD:EE:01');
+  });
+
+  it('omits side when the connected device has no binding', async () => {
+    // A device that has never been through the side-ID ritual. The set is
+    // still fully attributable to a unit (`deviceId`), it just has no known
+    // limb — which is written as a gap rather than a plausible default.
+    const unbound = setup({ bindings: { 'ZZ:ZZ:ZZ:ZZ:ZZ:99': 'left' } });
+    startSession(unbound.live);
+    unbound.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await unbound.invoke('set.start', {});
+    unbound.live.appendRep(makeRep(1));
+
+    await unbound.invoke('set.end', {});
+
+    const stored = unbound.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.deviceId).toBe('AA:BB:CC:DD:EE:01');
+    expect(stored).not.toHaveProperty('side');
   });
 
   it('persists the per-rep derived VBT block on every stored rep (VMCP-02.64)', async () => {

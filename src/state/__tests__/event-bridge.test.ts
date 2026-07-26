@@ -401,6 +401,11 @@ function makeBareState(opts: {
     channels: opts.channels,
     server: opts.server,
     restTimers: new RestTimerRegistry(),
+    // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+    // bindings store. Nothing here binds a device, so an empty store is
+    // enough and every set is written side-unknown; the real-store
+    // resolution is covered in set-tools.test.ts.
+    slotBindings: { get: () => null },
     // Default to restTimer:'on' so the bridge-level rest_status coverage
     // exercises the timer; production defaults to 'off' (opt-in, VMCP-02.54).
     config: { restTimer: 'on' },
@@ -1068,6 +1073,11 @@ describe('wireEventBridge', () => {
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
+        // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+        // bindings store. Nothing here binds a device, so an empty store is
+        // enough and every set is written side-unknown; the real-store
+        // resolution is covered in set-tools.test.ts.
+        slotBindings: { get: () => null },
         liveSignals: new LiveSignalHub(),
         // restTimer:'on' so the device-close path arms the passive rest_status
         // cycle these tests assert; production defaults 'off' (VMCP-02.54).
@@ -1519,6 +1529,11 @@ describe('wireEventBridge', () => {
         setStartDeviceSnapshots: new Map(),
         setWatchdog: new SetWatchdog(),
         restTimers: new RestTimerRegistry(),
+        // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+        // bindings store. Nothing here binds a device, so an empty store is
+        // enough and every set is written side-unknown; the real-store
+        // resolution is covered in set-tools.test.ts.
+        slotBindings: { get: () => null },
         // restTimer:'on' so the device-close path arms the passive rest_status
         // cycle these tests assert; production defaults 'off' (VMCP-02.54).
         config: { restTimer: 'on' },
@@ -2850,6 +2865,11 @@ describe('wireEventBridge — guided-load auto-create', () => {
       setStartDeviceSnapshots: new Map(),
       setWatchdog: new SetWatchdog(),
       restTimers: new RestTimerRegistry(),
+      // VMCP-04.08: finalizeSet resolves the persisted `side` through the
+      // bindings store. Nothing here binds a device, so an empty store is
+      // enough and every set is written side-unknown; the real-store
+      // resolution is covered in set-tools.test.ts.
+      slotBindings: { get: () => null },
     };
     wireBridgeForSlot(
       state as unknown as Parameters<typeof wireBridgeForSlot>[0],

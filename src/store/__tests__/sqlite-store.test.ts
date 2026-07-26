@@ -201,6 +201,36 @@ describe('SqliteSessionStore', () => {
       expect(fetched).not.toHaveProperty('deviceId');
     });
 
+    it('round-trips side independently of slot, and omits it when unresolved', async () => {
+      // slot and side deliberately disagree: the set ran on the 'primary' slot
+      // key, performed by a device bound to the left limb. `side` is the
+      // durable answer; `slot` is a position at a moment in time.
+      await store.putSet(
+        makeSet({ id: 'set-sided', slot: 'primary', deviceId: 'AA:BB:CC:01', side: 'left' }),
+      );
+      const sided = await store.getSet('set-sided');
+      expect(sided?.side).toBe('left');
+      expect(sided?.slot).toBe('primary');
+      expect(sided?.deviceId).toBe('AA:BB:CC:01');
+
+      // Known unit, unknown limb — an unbound device. A gap, not a guess.
+      await store.putSet(makeSet({ id: 'set-sideless', slot: 'left', deviceId: 'AA:BB:CC:02' }));
+      const sideless = await store.getSet('set-sideless');
+      expect(sideless?.deviceId).toBe('AA:BB:CC:02');
+      expect(sideless).not.toHaveProperty('side');
+    });
+
+    it('reads an out-of-range side value back as side-unknown', async () => {
+      // `side` is a bare TEXT column, so nothing at the SQLite level stops a
+      // future writer (or a hand-edited DB) putting a slot id in it. Reading
+      // such a row back as absent keeps a bogus value from being mistaken for
+      // a measured limb.
+      await store.putSet(makeSet({ id: 'set-bogus', slot: 'primary' }));
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      raw.prepare(`UPDATE sets SET side = ? WHERE id = ?`).run('primary', 'set-bogus');
+      expect(await store.getSet('set-bogus')).not.toHaveProperty('side');
+    });
+
     it('getSetsForSession keeps each set attributed to its own slot', async () => {
       await store.putSet(
         makeSet({ id: 'l1', startedAt: '2025-01-01T00:00:30.000Z', slot: 'left' }),
@@ -535,7 +565,7 @@ function seedV4Database(dbPath: string): void {
   seed.close();
 }
 
-describe('v4 → v5 migration: slot identity on sets', () => {
+describe('v4 → v5 migration: device / side / slot identity on sets', () => {
   let workdir: string;
   let dbPath: string;
 
@@ -560,6 +590,82 @@ describe('v4 → v5 migration: slot identity on sets', () => {
       expect(names).toContain('device_id');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
       expect(version.user_version).toBe(5);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('adds the nullable side column alongside slot and device_id', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const columns = raw.prepare('PRAGMA table_info(sets)').all() as Array<{
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }>;
+      const side = columns.find((c) => c.name === 'side');
+      expect(side).toBeDefined();
+      expect(side?.type).toBe('TEXT');
+      // Nullable with no default: an unresolvable side must stay a gap.
+      expect(side?.notnull).toBe(0);
+      expect(side?.dflt_value).toBeNull();
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('leaves every pre-v5 row side-unknown — no inference backfill', async () => {
+    // `device_id` was discarded at write time on these rows, so there is
+    // nothing left to resolve a side from. Inferring one (e.g. from set
+    // ordering or alternation) would manufacture data that looks measured.
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const n = (
+        raw.prepare('SELECT COUNT(*) AS n FROM sets WHERE side IS NOT NULL').get() as { n: number }
+      ).n;
+      expect(n).toBe(0);
+      for (const id of ['old-set-1', 'old-set-2', 'old-set-3']) {
+        expect(await store.getSet(id)).not.toHaveProperty('side');
+      }
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('accepts side-bearing writes into the migrated DB', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      const base = {
+        sessionId: 'old-sess-1',
+        startedAt: '2025-07-03T10:00:00.000Z',
+        endedAt: '2025-07-03T10:01:00.000Z',
+        partial: false,
+        trainingMode: 'WeightTraining',
+        weightLbs: 95,
+        slot: 'primary',
+      };
+      await store.putSet({
+        ...base,
+        id: 'new-sided',
+        deviceId: 'AA:BB:CC:01',
+        side: 'right' as const,
+        reps: [makeRep('new-sided', 0)],
+      });
+      // Same slot key, different unit, no binding — side stays absent.
+      await store.putSet({
+        ...base,
+        id: 'new-sideless',
+        deviceId: 'AA:BB:CC:02',
+        reps: [makeRep('new-sideless', 0)],
+      });
+
+      expect((await store.getSet('new-sided'))?.side).toBe('right');
+      expect(await store.getSet('new-sideless')).not.toHaveProperty('side');
+      // The legacy rows are undisturbed by the new writes.
+      expect(await store.getSet('old-set-1')).not.toHaveProperty('side');
     } finally {
       await store.close();
     }
