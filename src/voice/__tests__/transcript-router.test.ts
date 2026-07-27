@@ -124,7 +124,8 @@ describe('routeTranscript — whisper timestamp markup (safety regression)', () 
   });
 
   it('strips markup from a multi-segment transcript', () => {
-    const raw = '\n[00:00:00.000 --> 00:00:01.100]   Hey coach,\n[00:00:01.100 --> 00:00:02.000]   what next\n';
+    const raw =
+      '\n[00:00:00.000 --> 00:00:01.100]   Hey coach,\n[00:00:01.100 --> 00:00:02.000]   what next\n';
     expect(routeTranscript(raw)).toEqual({ tier: 'wake', commandText: 'what next' });
   });
 
