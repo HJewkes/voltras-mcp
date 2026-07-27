@@ -171,6 +171,67 @@ describe('mapStoreToFatigueModel', () => {
     expect(curve.phaseSegments.map((s) => s.phase)).toEqual(['concentric', 'eccentric']);
   });
 
+  it('carries a HOLD through as its own phase — a held bottom is not idle dead time', () => {
+    // Regression: this boundary folded MovementPhase.HOLD into 'idle', so a prescribed
+    // bottom/top hold rendered identically to nothing having happened.
+    let set = createSet();
+    const held: WorkoutSample[] = [
+      {
+        sequence: 0,
+        timestamp: 1000,
+        phase: MovementPhase.CONCENTRIC,
+        position: 0,
+        velocity: 500,
+        force: 100,
+      },
+      {
+        sequence: 1,
+        timestamp: 1500,
+        phase: MovementPhase.CONCENTRIC,
+        position: 100,
+        velocity: 500,
+        force: 100,
+      },
+      {
+        sequence: 2,
+        timestamp: 1600,
+        phase: MovementPhase.HOLD,
+        position: 100,
+        velocity: 0,
+        force: 90,
+      },
+      {
+        sequence: 3,
+        timestamp: 2000,
+        phase: MovementPhase.HOLD,
+        position: 100,
+        velocity: 0,
+        force: 90,
+      },
+      {
+        sequence: 4,
+        timestamp: 2100,
+        phase: MovementPhase.ECCENTRIC,
+        position: 100,
+        velocity: 200,
+        force: 80,
+      },
+      {
+        sequence: 5,
+        timestamp: 2600,
+        phase: MovementPhase.ECCENTRIC,
+        position: 0,
+        velocity: 200,
+        force: 80,
+      },
+    ];
+    for (const s of held) set = addSampleToSet(set, s);
+    const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive([...set.reps]) }));
+    const phases = model!.velocityCurves[0].phaseSegments.map((s) => s.phase);
+    expect(phases).toContain('hold');
+    expect(phases).not.toContain('idle');
+  });
+
   it('builds the per-rep ROM progression in metres', () => {
     const reps = buildReps([
       { concVel: 500, rom: 100 },

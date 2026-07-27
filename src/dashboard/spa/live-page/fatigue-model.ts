@@ -30,8 +30,15 @@ export type DimensionTone = 'ok' | 'warn' | 'alarm';
 /** Aggregated verdict state (drives the label). Mirrors WA's `FatigueVerdictState`. */
 export type FatigueVerdictState = 'good' | 'slowing' | 'grinding' | 'form-breakdown';
 
-/** Movement phase of one per-sample point — colors the ghost-spark zero-axis. */
-export type SamplePhase = 'concentric' | 'eccentric' | 'idle';
+/**
+ * Movement phase of one per-sample point — colors the ghost-spark zero-axis.
+ *
+ * `hold` is a DELIBERATE pause under load (WA's `MovementPhase.HOLD`) — the bottom/top
+ * holds a tempo prescription asks for. `idle` is undirected dead time. Mirrors titan's
+ * `SamplePhase`; the band paints hold amber and idle grey, so folding them together
+ * (as this boundary used to) makes a held bottom indistinguishable from nothing happening.
+ */
+export type SamplePhase = 'concentric' | 'eccentric' | 'hold' | 'idle';
 
 /** One per-sample point of a rep's velocity-time curve. */
 export interface VelocitySample {
