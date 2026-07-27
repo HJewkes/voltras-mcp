@@ -100,8 +100,27 @@ export interface StoredSet {
   endedAt: string;
   partial: boolean;
   partialReason?: string;
-  trainingMode: TrainingModeName;
-  weightLbs: number;
+  /**
+   * Training mode the set was performed in.
+   *
+   * OPTIONAL AS OF SCHEMA v6. It was previously `NOT NULL` with an `'Unknown'`
+   * sentinel written whenever the device snapshot had no mode — a value that
+   * read as a measurement but was not one. Absent now means absent: no
+   * snapshot, a mid-disconnect close, or a pre-v6 row that carried the
+   * sentinel. Do NOT coalesce it back to `'Unknown'`; how a gap is rendered is
+   * a display decision and belongs at the display boundary.
+   */
+  trainingMode?: TrainingModeName;
+  /**
+   * Header weight for the set, in pounds.
+   *
+   * OPTIONAL AS OF SCHEMA v6, for the same reason as {@link trainingMode}: the
+   * old `NOT NULL` column defaulted to `0`, which is indistinguishable from a
+   * genuine unloaded set. Pre-v6 rows storing `0` were migrated to absent, so
+   * a gap on historical data means "sentinel or real zero, unknowable which"
+   * rather than a certain gap.
+   */
+  weightLbs?: number;
   /**
    * Marks a warm-up (ramp-up) set. Warm-ups flow through the same
    * `set.start`/`set.end` path as working sets; this first-class flag lets

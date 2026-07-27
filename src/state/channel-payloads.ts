@@ -275,7 +275,13 @@ function buildRepSummary(repNumber: number, concPeak: number, weightLbs?: number
 export interface PreviousSetSummary {
   set_id: string;
   rep_count: number;
-  weight_lbs: number;
+  /**
+   * Header weight of the prior set, in pounds. Null when the set carries no
+   * recorded weight: schema v6 stopped writing a `0` sentinel for a missing
+   * device snapshot, so absence is expressible now — and it is not the same
+   * claim as "the prior set was unloaded".
+   */
+  weight_lbs: number | null;
   /**
    * Mean concentric peak velocity across the prior set's reps, in m/s.
    * Null when none of the reps have any concentric samples (e.g., the
@@ -310,7 +316,7 @@ export function summarizePreviousSet(prev: StoredSet): PreviousSetSummary {
   return {
     set_id: prev.id,
     rep_count: prev.reps.length,
-    weight_lbs: prev.weightLbs,
+    weight_lbs: prev.weightLbs ?? null,
     mean_concentric_velocity: meanConcentricPeakVelocity(prev.reps),
   };
 }

@@ -43,7 +43,12 @@ export interface BilateralSetClose {
   /** Set start time in epoch ms (the pairing key). */
   startedAtMs: number;
   repCount: number;
-  weightLbs: number;
+  /**
+   * Header weight of the close, when one was recorded. Absent as of schema v6:
+   * pairing and divergence key on rep count, so a weightless set still pairs
+   * normally — only the weight echoed in the payload is missing.
+   */
+  weightLbs?: number;
 }
 
 /**

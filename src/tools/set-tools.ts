@@ -717,6 +717,11 @@ function publishWeightImpliedMismatch(
   slotId: string,
   channels: ChannelPublisher,
 ): void {
+  // No header weight, nothing to disagree with: the whole check compares the
+  // force-implied load against a logged one.
+  if (stored.weightLbs === undefined) {
+    return;
+  }
   const result = evaluateWeightImplied(stored.weightLbs, stored.reps);
   if (result === null || !result.flagged) {
     return;
@@ -739,7 +744,7 @@ function publishBilateralDivergence(state: ServerState, slotId: string, stored: 
     sessionId: stored.sessionId,
     startedAtMs: Date.parse(stored.startedAt),
     repCount: stored.reps.length,
-    weightLbs: stored.weightLbs,
+    ...(stored.weightLbs !== undefined ? { weightLbs: stored.weightLbs } : {}),
   });
   if (divergence === undefined) {
     return;
@@ -822,8 +827,12 @@ function toStoredSet(
     endedAt: active.endedAt ?? new Date().toISOString(),
     partial: active.status === 'partial',
     ...(active.partialReason !== undefined ? { partialReason: active.partialReason } : {}),
-    trainingMode: device.trainingMode ?? 'Unknown',
-    weightLbs: device.weightLbs ?? 0,
+    // v6: absent, never sentinel. `'Unknown'` and `0` both read downstream as
+    // measurements — a rendered "0 lb" could be a missing snapshot or a real
+    // unloaded set, and nothing could tell them apart. Omitting the field makes
+    // the gap detectable instead of plausible.
+    ...(device.trainingMode !== undefined ? { trainingMode: device.trainingMode } : {}),
+    ...(device.weightLbs !== undefined ? { weightLbs: device.weightLbs } : {}),
     ...(active.isWarmup === true ? { isWarmup: true } : {}),
     slot: identity.slotId,
     ...(typeof identity.deviceId === 'string' ? { deviceId: identity.deviceId } : {}),

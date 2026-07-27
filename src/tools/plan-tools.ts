@@ -644,8 +644,13 @@ async function resolveBasisSession(
 function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
   const working = sets.filter((set) => set.isWarmup !== true);
   if (working.length === 0) return working;
-  const topLoad = Math.max(...working.map((set) => set.weightLbs));
-  return working.filter((set) => set.weightLbs >= topLoad);
+  // Only weighted sets can be ranked by load. When none recorded a weight there
+  // is no basis to discriminate, so every working set is kept — which is what
+  // the pre-v6 sentinel produced anyway (all loads equal at 0).
+  const loads = working.map((set) => set.weightLbs).filter((w): w is number => w !== undefined);
+  if (loads.length === 0) return working;
+  const topLoad = Math.max(...loads);
+  return working.filter((set) => set.weightLbs !== undefined && set.weightLbs >= topLoad);
 }
 
 /**
