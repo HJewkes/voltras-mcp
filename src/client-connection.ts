@@ -294,7 +294,7 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
           state.lease.beginTransfer();
           frozenByUs = true;
         } catch {
-          frozenByUs = false;
+          // Another client is already mid-handover; leave its freeze alone.
         }
         if (frozenByUs) {
           try {
