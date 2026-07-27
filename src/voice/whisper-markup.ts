@@ -18,7 +18,8 @@
 // change in whisper's output format cannot silently re-open that hole.
 
 /** `[hh:mm:ss.mmm --> hh:mm:ss.mmm]` segment markup, anywhere in the text. */
-const TIMESTAMP_MARKUP = /\[\s*\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}\s*\]/g;
+const TIMESTAMP_MARKUP =
+  /\[\s*\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}\s*\]/g;
 
 // Non-speech annotations whisper emits in place of words: [BLANK_AUDIO] on a
 // silent segment, plus [SOUND]/[MUSIC]/[NOISE]/[_BEG_]. Screaming-caps inside
@@ -31,5 +32,9 @@ const NON_SPEECH_TAG = /\[[A-Z][A-Z0-9_]*\]/g;
  * utterance reads as one sentence.
  */
 export function stripWhisperMarkup(raw: string): string {
-  return raw.replace(TIMESTAMP_MARKUP, ' ').replace(NON_SPEECH_TAG, ' ').replace(/\s+/g, ' ').trim();
+  return raw
+    .replace(TIMESTAMP_MARKUP, ' ')
+    .replace(NON_SPEECH_TAG, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
