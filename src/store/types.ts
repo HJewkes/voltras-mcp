@@ -268,8 +268,13 @@ export interface StoredSet {
   damperLevel?: number;
   /** Eccentric overload percentage. */
   eccentricPct?: number;
-  /** Inverse-chains flag, as reported. */
-  inverseChains?: boolean;
+  /**
+   * User's inverse-chains setting in lbs, from the cmd=0x10 cascade echo.
+   * A MAGNITUDE, NOT A FLAG: the device takes `setInverseChains(lbs)` over
+   * 0-100. Mechanically the opposite of `chainsLbs` — inverse chains shed
+   * resistance through the concentric and add it through the eccentric.
+   */
+  inverseChainsLbs?: number;
   /** Assist-mode raw value. */
   assistMode?: string;
   /** Long tail of settings (isokinetic params, band max force) as JSON. */

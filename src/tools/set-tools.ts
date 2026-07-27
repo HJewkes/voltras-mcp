@@ -86,7 +86,7 @@ type SetCapture = Pick<
   | 'chainsLbs'
   | 'damperLevel'
   | 'eccentricPct'
-  | 'inverseChains'
+  | 'inverseChainsLbs'
   | 'assistMode'
   | 'settingsHash'
 >;

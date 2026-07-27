@@ -819,6 +819,7 @@ describe('set.end', () => {
       batteryPercent: 88,
       damperLevel: 4,
       chainSettingLbs: 20,
+      inverseChainSettingLbs: 15,
       eccentricPercentTenths: 1100,
     });
     await h.invoke('set.start', {});
@@ -831,8 +832,9 @@ describe('set.end', () => {
     expect(stored.batteryPct).toBe(88);
     expect(stored.damperLevel).toBe(4);
     expect(stored.chainsLbs).toBe(20);
+    expect(stored.inverseChainsLbs).toBe(15);
     expect(stored.eccentricPct).toBe(110);
-    expect(stored.settingsHash).toMatch(/^v1:/);
+    expect(stored.settingsHash).toMatch(/^v2:/);
     // The marker records the scale the samples are ALREADY in; it must not read
     // 'meters' until the bridge conversion lands.
     expect(stored.positionUnits).toBe('device_native');

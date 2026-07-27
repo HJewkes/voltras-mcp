@@ -207,7 +207,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(8);
+      expect(version.user_version).toBe(9);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -574,7 +574,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(8);
+        expect(version.user_version).toBe(9);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -595,6 +595,106 @@ describe('v7 → v8: firmware duration column rename', () => {
       const second = SqliteSessionStore.open(path);
       try {
         expect(columnNames(rawDb(second), 'sets')).toContain('firmware_summary_duration_ms');
+      } finally {
+        void second.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('v8 → v9: inverse chains is a weight, not a flag', () => {
+  let store: SqliteSessionStore;
+
+  beforeEach(() => {
+    store = SqliteSessionStore.open(':memory:');
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  it('exposes the lbs-named column and not the old flag name', () => {
+    const names = columnNames(rawDb(store), 'sets');
+    expect(names).toContain('inverse_chains_lbs');
+    expect(names).not.toContain('inverse_chains');
+  });
+
+  it('round-trips the lbs value rather than collapsing it to a flag', async () => {
+    // Under the v7 boolean model both of these stored 1 and read back `true`,
+    // making a 40 lb and a 5 lb inverse-chains set the same configuration.
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'ic-40', inverseChainsLbs: 40 }));
+    await store.putSet(makeSet({ id: 'ic-5', inverseChainsLbs: 5 }));
+    expect((await store.getSet('ic-40'))?.inverseChainsLbs).toBe(40);
+    expect((await store.getSet('ic-5'))?.inverseChainsLbs).toBe(5);
+  });
+
+  it('distinguishes zero inverse chains from absent inverse chains', async () => {
+    // Zero is an observation ("the user has none set"); absent is "nobody
+    // looked". Defaulting one to the other would invent data.
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'ic-zero', inverseChainsLbs: 0 }));
+    await store.putSet(makeSet({ id: 'ic-absent' }));
+    expect((await store.getSet('ic-zero'))?.inverseChainsLbs).toBe(0);
+    expect((await store.getSet('ic-absent'))?.inverseChainsLbs).toBeUndefined();
+  });
+
+  it('updates the column on a re-put', async () => {
+    // A column present in the INSERT list but missing from the ON CONFLICT DO
+    // UPDATE never updates on the force-end/re-end retry, and nothing errors.
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'ic-re', inverseChainsLbs: 10 }));
+    await store.putSet(makeSet({ id: 'ic-re', inverseChainsLbs: 25 }));
+    expect((await store.getSet('ic-re'))?.inverseChainsLbs).toBe(25);
+  });
+
+  it('renames the column on a real pre-v9 DB, through open(), without touching rows', () => {
+    // Through SqliteSessionStore.open so the PRODUCTION migrateV8ToV9 runs. The
+    // seed is a v6 DB, so the v6→v7 rebuild creates `inverse_chains` and v8→v9
+    // renames it — the same path a real user's file takes.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v9-'));
+    const path = join(dir, 'v8.sqlite');
+    try {
+      const seed = new DatabaseSync(path);
+      seed.exec(V6_SCHEMA_SQL);
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2025-06-01T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs, is_warmup)
+        VALUES ('pre-v9', 's1', 'a', 'b', 0, 'WeightTraining', 100, 0)`);
+      seed.exec('PRAGMA user_version = 6');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        const names = columnNames(raw, 'sets');
+        expect(names).toContain('inverse_chains_lbs');
+        expect(names).not.toContain('inverse_chains');
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(9);
+        const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
+        expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent — re-opening a migrated DB is a no-op', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v9-idem-'));
+    const path = join(dir, 'again.sqlite');
+    try {
+      const first = SqliteSessionStore.open(path);
+      void first.close();
+      const second = SqliteSessionStore.open(path);
+      try {
+        expect(columnNames(rawDb(second), 'sets')).toContain('inverse_chains_lbs');
       } finally {
         void second.close();
       }

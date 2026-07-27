@@ -73,7 +73,8 @@ vi.mock('@voltras/node-sdk', () => ({
 
 const { LiveState } = await import('../live-state.js');
 type LiveStateT = InstanceType<typeof LiveState>;
-const { wireBridgeForSlot, peakConcentricForceSoFar } = await import('../event-bridge.js');
+const { wireBridgeForSlot, peakConcentricForceSoFar, settingsToSnapshot } =
+  await import('../event-bridge.js');
 const { SetWatchdog } = await import('../set-watchdog.js');
 type SetWatchdogT = InstanceType<typeof SetWatchdog>;
 const { ModeRevertGuard } = await import('../mode-revert-guard.js');
@@ -4048,5 +4049,24 @@ describe('peakConcentricForceSoFar', () => {
 
   it('is 0 when no rep has closed yet', () => {
     expect(peakConcentricForceSoFar([], -1)).toBe(0);
+  });
+});
+
+describe('settingsToSnapshot: inverse chains', () => {
+  it('carries the cascade inverse-chains weight onto the snapshot', () => {
+    // Without this the snapshot had no inverse-chains field at all, so
+    // `readSettingsContext` could never capture one and a chains set and an
+    // inverse-chains set hashed identically.
+    const out = settingsToSnapshot({ chains: 30, inverseChains: 15 });
+    expect(out.chainSettingLbs).toBe(30);
+    expect(out.inverseChainSettingLbs).toBe(15);
+  });
+
+  it('carries a zero, which is an observation and not a missing reading', () => {
+    expect(settingsToSnapshot({ inverseChains: 0 }).inverseChainSettingLbs).toBe(0);
+  });
+
+  it('omits the field when the cascade did not report it', () => {
+    expect(settingsToSnapshot({ chains: 30 })).not.toHaveProperty('inverseChainSettingLbs');
   });
 });

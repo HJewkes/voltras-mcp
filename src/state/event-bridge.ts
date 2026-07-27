@@ -1641,6 +1641,9 @@ function synthStateDumpTransitions(
   if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
   if (knownDamperLevel !== undefined) all.damperLevel = knownDamperLevel;
   if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
+  if (device.inverseChainSettingLbs !== undefined) {
+    all.inverseChainSettingLbs = device.inverseChainSettingLbs;
+  }
 
   publishIfTransition('assistMode', dump.assistMode, prev.lastAssistMode, all, channels);
   publishIfTransition(
@@ -1687,6 +1690,9 @@ function publishCmd10SettingsUpdate(
   const all: SettingsUpdateAll = {};
   if (device.damperLevel !== undefined) all.damperLevel = device.damperLevel;
   if (device.chainSettingLbs !== undefined) all.chainSettingLbs = device.chainSettingLbs;
+  if (device.inverseChainSettingLbs !== undefined) {
+    all.inverseChainSettingLbs = device.inverseChainSettingLbs;
+  }
   if (device.weightLbs !== undefined) all.weightLbs = device.weightLbs;
   if (device.trainingMode !== undefined) all.trainingMode = device.trainingMode;
   if (device.batteryPercent !== undefined) all.batteryPercent = device.batteryPercent;
@@ -1835,6 +1841,9 @@ export function settingsToSnapshot(s: SdkSettingsUpdate): Partial<DeviceSnapshot
   }
   if (typeof s.chains === 'number') {
     out.chainSettingLbs = s.chains;
+  }
+  if (typeof s.inverseChains === 'number') {
+    out.inverseChainSettingLbs = s.inverseChains;
   }
   return out;
 }
