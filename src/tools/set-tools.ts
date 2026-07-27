@@ -639,7 +639,10 @@ export async function finalizeSet(
   // set and the `set_ended` payload (built from `stored` below) share the same
   // de-artifacted / idle-truncated / re-peaked reps. The movement-class-dependent
   // segmentation corrections (02.66/02.65) stay dark behind VMCP_REP_CORRECTIONS
-  // until the VW-16 bench parity run; 02.69a signed peaks always run.
+  // until the VW-16 bench parity run; the 02.69a peak recompute always runs.
+  // Note this runs on the STORE path only — the live `rep_finalized` event
+  // carries the raw analytics rep — so any correction here must preserve the
+  // conventions the live payload already publishes (VMCP-05.14).
   const correctedForStore: ActiveSet = {
     ...finalizedForStore,
     reps: finalizeReps(finalizedForStore.reps, {

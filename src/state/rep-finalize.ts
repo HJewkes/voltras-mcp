@@ -23,11 +23,30 @@
 //      diluting its mean velocity. Trim trailing non-movement samples back to
 //      the last real movement and rebuild the phase.
 //
-//   3. VMCP-02.69a (always on) — recompute each phase's peak velocity from its own samples,
-//      KEEPING SIGN. The analytics running-aggregate `peakVelocity` can go
-//      stale relative to the samples it holds (and is magnitude-only), so a
-//      first rep can persist a peak that contradicts its samples. Re-derive it
-//      as the signed velocity of the largest-magnitude sample.
+//   3. VMCP-02.69a (always on) — recompute each phase's peak velocity from its own
+//      samples. The analytics running-aggregate `peakVelocity` can go stale
+//      relative to the samples it holds, so a first rep can persist a peak that
+//      contradicts its samples. Re-derive it as the MAGNITUDE of the
+//      largest-magnitude sample.
+//
+//      Canonical sign convention (VMCP-05.14): phase peak velocity is UNSIGNED.
+//      `Phase.peakVelocity` is a magnitude by upstream contract —
+//      `addSampleToPhase` runs `Math.abs` on every incoming sample velocity
+//      precisely so a signed decoder value cannot corrupt the aggregate, and
+//      every derived helper is built on that assumption
+//      (`getPhaseVelocityDropPct` returns 0 outright when `peakVelocity <= 0`;
+//      `getPhaseVelocityEnvelope` reports `|velocity|`). Direction is already
+//      carried by which phase slot the value sits in — an eccentric peak is
+//      descending by definition — so a sign is redundant there and load-bearing
+//      nowhere.
+//
+//      This correction originally kept the sign, which made the same rep report
+//      `eccentric.peak_velocity` as +1.137 on the live `rep_finalized` event
+//      (raw analytics rep) and -1.137 on `set_ended` (post-finalize rep), and
+//      dragged that rep's `velocity_drop_pct` from 97.2 to 0 through the guard
+//      above. Both symptoms are this one root cause. Anything that genuinely
+//      needs direction reads the signed sample velocities, which stay on the
+//      phase untouched.
 //
 // Load channel (VMCP-02.69b): `Phase.peakLoad` / `Phase._totalLoad` stay at
 // their upstream-default 0. The bridge builds `WorkoutSample`s without the
@@ -54,7 +73,7 @@ export interface RepFinalizeOptions {
    * un-rack drop + VMCP-02.65 eccentric idle-tail truncation). Gated OFF by
    * default via `VMCP_REP_CORRECTIONS` — see {@link RepCorrectionsMode} — until
    * the VW-16 bench parity run validates them across movement classes. The
-   * VMCP-02.69a signed-peak recompute always runs regardless of this flag.
+   * VMCP-02.69a peak recompute always runs regardless of this flag.
    */
   segmentationCorrections?: boolean;
 }
@@ -68,15 +87,16 @@ export interface RepFinalizeOptions {
  *
  * When `segmentationCorrections` is set, the movement-class-dependent
  * corrections run first in dependency order (VMCP-02.66 filter → 02.65
- * truncate) so the samples the signed-peak pass sees are already de-artifacted
- * and trimmed. VMCP-02.69a (signed peaks) then runs unconditionally.
+ * truncate) so the samples the peak-recompute pass sees are already
+ * de-artifacted and trimmed. VMCP-02.69a (sample-derived peaks) then runs
+ * unconditionally.
  */
 export function finalizeReps(reps: readonly Rep[], opts: RepFinalizeOptions = {}): Rep[] {
   const segmented =
     opts.segmentationCorrections === true
       ? truncateFinalEccentricIdleTail(reps.filter(isNotUnrackArtifact))
       : reps;
-  return segmented.map(withSignedSamplePeaks);
+  return segmented.map(withSampleDerivedPeaks);
 }
 
 /**
@@ -128,35 +148,37 @@ function lastMovementSampleIndex(samples: readonly WorkoutSample[]): number {
 }
 
 /**
- * VMCP-02.69a. Overrides each phase's `peakVelocity` with the signed velocity
- * of its largest-magnitude sample, so the persisted peak reflects the samples
- * it actually holds and keeps its direction sign. Phases with no samples keep
- * their existing peak (nothing to recompute from).
+ * VMCP-02.69a. Overrides each phase's `peakVelocity` with the magnitude of its
+ * largest-magnitude sample, so the persisted peak reflects the samples it
+ * actually holds. Phases with no samples keep their existing peak (nothing to
+ * recompute from).
+ *
+ * Unsigned by the convention documented at the top of this file (VMCP-05.14):
+ * `Phase.peakVelocity` is a magnitude everywhere else in the pipeline, and a
+ * signed value here silently zeroed `getPhaseVelocityDropPct`.
  */
-function withSignedSamplePeaks(rep: Rep): Rep {
+function withSampleDerivedPeaks(rep: Rep): Rep {
   return {
     ...rep,
-    concentric: withSignedPeakVelocity(rep.concentric),
-    eccentric: withSignedPeakVelocity(rep.eccentric),
+    concentric: withPeakVelocityMagnitude(rep.concentric),
+    eccentric: withPeakVelocityMagnitude(rep.eccentric),
   };
 }
 
-function withSignedPeakVelocity(phase: Phase): Phase {
-  const peak = signedPeakVelocity(phase.samples);
+function withPeakVelocityMagnitude(phase: Phase): Phase {
+  const peak = peakVelocityMagnitude(phase.samples);
   if (peak === undefined) {
     return phase;
   }
   return { ...phase, peakVelocity: peak };
 }
 
-function signedPeakVelocity(samples: readonly WorkoutSample[]): number | undefined {
+function peakVelocityMagnitude(samples: readonly WorkoutSample[]): number | undefined {
   let best: number | undefined;
-  let bestMagnitude = -1;
   for (const sample of samples) {
     const magnitude = Math.abs(sample.velocity);
-    if (magnitude > bestMagnitude) {
-      bestMagnitude = magnitude;
-      best = sample.velocity;
+    if (best === undefined || magnitude > best) {
+      best = magnitude;
     }
   }
   return best;
