@@ -218,6 +218,23 @@ describe('VoiceListener — STT pre-warm', () => {
     expect(h.safety).toHaveLength(0);
   });
 
+  // Arming the mic must never depend on the warm-up: degraded latency is
+  // acceptable, a listener that will not arm is not.
+  it('does not wait for a slow pre-warm before arming', async () => {
+    const h = buildHarness({ prewarm: () => new Promise<void>(() => {}) }); // never settles
+    await h.listener.start(resolveStartArgs({}));
+    expect(h.listener.getState()).toBe('listening');
+  });
+
+  it('transcribes normally while a slow pre-warm is still in flight', async () => {
+    const h = buildHarness({ prewarm: () => new Promise<void>(() => {}) });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+  });
+
   it('starts normally when the pre-warm fails', async () => {
     const prewarm = vi.fn(async () => {
       throw new Error('whisper not installed');

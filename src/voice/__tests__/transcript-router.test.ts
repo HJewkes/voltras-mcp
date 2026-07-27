@@ -135,6 +135,23 @@ describe('routeTranscript — whisper timestamp markup (safety regression)', () 
     expect(routeTranscript(raw)).toEqual({ tier: 'safety', matchedPhrase: 'stop' });
   });
 
+  // The two markup patterns are stripped independently. This strip is the net
+  // that stands if a future refactor bypasses the adapter-side clean, so
+  // neither pattern may depend on the other being present to be removed.
+  it('drops a bare [BLANK_AUDIO] tag with no timestamp attached', () => {
+    expect(routeTranscript('[BLANK_AUDIO] wait stop the weight')).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
+  it('strips bare timestamp markup with no non-speech tag attached', () => {
+    expect(routeTranscript('[00:00:03.000 --> 00:00:04.000] wait stop the weight')).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
   it('routes a silence-only transcript to ignore', () => {
     expect(routeTranscript('\n[00:00:00.000 --> 00:00:09.400]   [BLANK_AUDIO]\n')).toEqual({
       tier: 'ignore',

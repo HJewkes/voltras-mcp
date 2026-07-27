@@ -334,9 +334,38 @@ describe('Tier-A safety fast-path — whisper timestamp markup', () => {
   });
 });
 
+// Arming the mic is when we want to pay the STT cold-start cost, so the warm-up
+// must stay strictly off the critical path: one that fails or never returns must
+// not stop `system.listen_start` from arming.
+describe('system.listen_start — STT pre-warm', () => {
+  const stalls = (): Promise<void> => new Promise<void>(() => {});
+  const fails = async (): Promise<void> => {
+    throw new Error('whisper not installed');
+  };
+
+  it('arms when the pre-warm never settles', async () => {
+    const h = buildHarness(null, { prewarm: stalls });
+    expect(payload(await h.start({}))).toMatchObject({ status: 'listening' });
+  });
+
+  it('arms when the pre-warm rejects', async () => {
+    const h = buildHarness(null, { prewarm: fails });
+    expect(payload(await h.start({}))).toMatchObject({ status: 'listening' });
+  });
+
+  it('still unloads on a safety phrase after a failed pre-warm', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx, { prewarm: fails });
+    await driveSafetyPhrase(h);
+    expect(safety.unloadCalls).toEqual(['primary']);
+  });
+});
+
 // The bench saw latency_ms: 0 / audio_duration_ms: 0 on every event because the
-// safety fallback published hardcoded zeros. The deaf-window safety measurement
-// cannot be performed without these.
+// safety fallback published hardcoded zeros — and because the markup defect
+// routed EVERY bench utterance down that one path, the zeros showed up on every
+// event we saw, making the instrumentation look globally broken when only the
+// safety branch was. The deaf-window safety measurement depends on these.
 describe('voice_input timing instrumentation', () => {
   function advancingClock(): () => number {
     let t = 1000;
