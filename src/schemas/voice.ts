@@ -5,6 +5,11 @@
 // transcript, so the wake phrase (default `hey coach`) is just a string list.
 // Both tools are idempotent — repeating `listen_start` returns the current
 // status without re-arming; `listen_stop` on a stopped listener succeeds quietly.
+//
+// `listen_start` resolves only once the mic is actually delivering audio (~530 ms
+// on macOS, bounded), so `listening` means "can hear you". If the bound elapses it
+// still arms, and the result carries `micReady: false` — treat that as very likely
+// deaf (no input device, or microphone permission denied).
 
 import { z } from 'zod';
 

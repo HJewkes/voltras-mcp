@@ -52,11 +52,19 @@ export interface VoiceToolState {
  */
 export interface VoiceListenerHolder {
   listener: VoiceListener | null;
+  /**
+   * In-flight `listen_start`. Arming now waits on the mic (~530 ms, up to
+   * MIC_READY_TIMEOUT_MS), so a concurrent listen_start/listen_stop has a real
+   * window to land in. Both join this instead of racing it — otherwise a second
+   * start opens a second sox recorder and leaks the loser, and a stop reports
+   * `stopped` while the arm completes behind it and leaves the mic hot.
+   */
+  starting: Promise<ToolResult> | null;
   __deps: VoiceListenerDeps | null;
 }
 
 export function makeVoiceHolder(deps: VoiceListenerDeps | null = null): VoiceListenerHolder {
-  return { listener: null, __deps: deps };
+  return { listener: null, starting: null, __deps: deps };
 }
 
 /**
@@ -231,13 +239,33 @@ async function startListener(
   safety: VoiceSafetyContext | null,
 ): Promise<ToolResult> {
   const startArgs = resolveStartArgs(input);
-  if (state.voice.listener !== null) {
+  if (state.voice.listener !== null && state.voice.starting === null) {
     return textResult({
       status: 'listening',
       wakePhrases: state.voice.listener.getStartArgs()?.wakePhrases ?? startArgs.wakePhrases,
       sttModel: state.voice.listener.getStartArgs()?.sttModel ?? startArgs.sttModel,
+      // A listener that armed deaf stays deaf; re-arming must keep saying so.
+      micReady: state.voice.listener.isMicLive(),
     });
   }
+  // Re-arming mid-arm joins the arm in progress rather than opening a second
+  // mic. `starting` is assigned before any await, so nothing can interleave
+  // between the check and the assignment.
+  if (state.voice.starting !== null) return state.voice.starting;
+  const pending = armListener(state, startArgs, safety);
+  state.voice.starting = pending;
+  try {
+    return await pending;
+  } finally {
+    state.voice.starting = null;
+  }
+}
+
+async function armListener(
+  state: VoiceToolState,
+  startArgs: ReturnType<typeof resolveStartArgs>,
+  safety: VoiceSafetyContext | null,
+): Promise<ToolResult> {
   const deps = state.voice.__deps !== null ? state.voice.__deps : buildProductionDeps();
   const channels = state.channels;
   const listener = new VoiceListener(deps, {
@@ -268,23 +296,39 @@ async function startListener(
       });
     },
   });
+  // Installed before start() resolves: arming takes ~530 ms now, and a
+  // listen_stop landing inside that window has to be able to reach this
+  // listener and release its mic-readiness wait.
+  state.voice.listener = listener;
   try {
     await listener.start(startArgs);
   } catch (err) {
+    state.voice.listener = null;
     return errorResult({
       code: 'LISTENER_START_FAILED',
       message: err instanceof Error ? err.message : String(err),
     });
   }
-  state.voice.listener = listener;
+  // A listen_stop that raced this arm already tore it down and wins; saying
+  // `listening` here would hand back a mic that is off.
+  if (listener.getState() === 'idle') return textResult({ status: 'stopped' });
   return textResult({
     status: 'listening',
     wakePhrases: startArgs.wakePhrases,
     sttModel: startArgs.sttModel,
+    micReady: listener.isMicLive(),
   });
 }
 
 async function stopListener(state: VoiceToolState): Promise<ToolResult> {
+  // Stop the still-arming listener first — that releases its mic-readiness
+  // wait instead of parking on the bound — then join the arm so it can never
+  // complete behind us and leave a hot mic.
+  const arming = state.voice.starting;
+  if (arming !== null) {
+    await state.voice.listener?.stop();
+    await arming;
+  }
   const listener = state.voice.listener;
   if (listener === null) {
     return textResult({ status: 'stopped' });
