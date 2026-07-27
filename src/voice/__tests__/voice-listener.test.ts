@@ -57,6 +57,9 @@ function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
     vadFactory: () => vad,
     whisper,
     now: () => 1000,
+    // The PassThrough delivers nothing until a test emits, so start() would sit
+    // on the real mic-readiness bound. Tests that exercise the bound override.
+    micReadyTimeoutMs: 0,
     ...overrides,
   };
   const listener = new VoiceListener(deps, {
@@ -244,6 +247,147 @@ describe('VoiceListener — STT pre-warm', () => {
     await settle();
     expect(h.listener.getState()).toBe('listening');
     expect(h.errors).toHaveLength(0);
+  });
+});
+
+// VMCP-05.17: sox/CoreAudio need ~0.5-0.7 s to open the input device. Arming
+// before then reported `listening` while physically deaf, so a safety word
+// spoken immediately was never captured at all — lost, not merely delayed.
+describe('VoiceListener — mic readiness', () => {
+  it('does not resolve start() until the mic delivers audio', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 10_000 });
+    let armed = false;
+    const starting = h.listener.start(resolveStartArgs({})).then(() => {
+      armed = true;
+    });
+    await settle();
+    expect(armed).toBe(false); // still deaf — must not claim to be listening
+
+    h.audio.emit('data', Buffer.alloc(FRAME_BYTES));
+    await starting;
+    expect(armed).toBe(true);
+    expect(h.listener.getState()).toBe('listening');
+  });
+
+  // Degraded is acceptable; refusing to arm is not.
+  it('arms anyway when the mic never delivers audio within the bound', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 20 });
+    await expect(h.listener.start(resolveStartArgs({}))).resolves.toBeUndefined();
+    expect(h.listener.getState()).toBe('listening');
+    expect(h.errors).toHaveLength(0);
+  });
+
+  it('arms when the mic stream errors instead of delivering audio', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 10_000 });
+    const starting = h.listener.start(resolveStartArgs({}));
+    await settle();
+    h.audio.emit('error', new Error('no input device'));
+    await expect(starting).resolves.toBeUndefined();
+    expect(h.listener.getState()).toBe('listening');
+    expect(h.errors.map((e) => e.code)).toContain('AUDIO_STREAM_ERROR');
+  });
+
+  it('transcribes the very first utterance once armed', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 10_000 });
+    const starting = h.listener.start(resolveStartArgs({}));
+    await settle();
+    h.audio.emit('data', Buffer.alloc(FRAME_BYTES));
+    await starting;
+
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    expect(h.safety[0].matchedPhrase).toBe('stop');
+  });
+
+  it('does not leave a stop() racing a still-arming start() parked on the bound', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 10_000 });
+    const starting = h.listener.start(resolveStartArgs({}));
+    await settle();
+    await h.listener.stop();
+    await expect(starting).resolves.toBeUndefined();
+    expect(h.listener.getState()).toBe('idle');
+  });
+
+  // The pre-warm is fired before the wait so it runs *during* the mic open —
+  // that dead time is exactly what it exists to fill. It must not gate arming.
+  it('still arms within the bound when the pre-warm never settles', async () => {
+    const h = buildHarness({
+      micReadyTimeoutMs: 10_000,
+      prewarm: () => new Promise<void>(() => {}),
+    });
+    const starting = h.listener.start(resolveStartArgs({}));
+    await settle();
+    h.audio.emit('data', Buffer.alloc(FRAME_BYTES));
+    await expect(starting).resolves.toBeUndefined();
+    expect(h.listener.getState()).toBe('listening');
+  });
+
+  // `listening` is the only thing the caller sees; the readiness wait is also
+  // released by stop() and by a stream error, so "the wait finished" must not
+  // be mistaken for "the mic works". isMicLive() is what callers surface.
+  it('reports the mic live only when audio actually arrived', async () => {
+    const live = buildHarness({ micReadyTimeoutMs: 10_000 });
+    const starting = live.listener.start(resolveStartArgs({}));
+    await settle();
+    live.audio.emit('data', Buffer.alloc(FRAME_BYTES));
+    await starting;
+    expect(live.listener.isMicLive()).toBe(true);
+
+    const dead = buildHarness({ micReadyTimeoutMs: 20 });
+    await dead.listener.start(resolveStartArgs({}));
+    expect(dead.listener.getState()).toBe('listening');
+    expect(dead.listener.isMicLive()).toBe(false);
+
+    const errored = buildHarness({ micReadyTimeoutMs: 10_000 });
+    const arming = errored.listener.start(resolveStartArgs({}));
+    await settle();
+    errored.audio.emit('error', new Error('no input device'));
+    await arming;
+    expect(errored.listener.isMicLive()).toBe(false);
+  });
+
+  // start() is documented idempotent. A re-arm landing mid-arm must inherit the
+  // same guarantee, not return `listening` while the mic is still opening.
+  it('makes a re-arm during arming wait for the mic too', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 10_000 });
+    let rearmed = false;
+    const first = h.listener.start(resolveStartArgs({}));
+    await settle();
+    const second = h.listener.start(resolveStartArgs({})).then(() => {
+      rearmed = true;
+    });
+    await settle();
+    expect(rearmed).toBe(false); // still deaf — must not claim to be listening
+
+    h.audio.emit('data', Buffer.alloc(FRAME_BYTES));
+    await Promise.all([first, second]);
+    expect(rearmed).toBe(true);
+    expect(h.listener.isMicLive()).toBe(true);
+  });
+
+  // The bound is spent once per arm. Re-arming a listener that already armed
+  // deaf must return immediately rather than stall for another whole bound.
+  it('does not pay the bound again when re-arming an already-deaf listener', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 500 });
+    await h.listener.start(resolveStartArgs({}));
+    expect(h.listener.isMicLive()).toBe(false);
+
+    const startedAt = Date.now();
+    await h.listener.start(resolveStartArgs({}));
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  // Repeated arm/stop cycles must not accumulate 'data'/'error' handlers.
+  it('does not accumulate stream listeners across arm/stop cycles', async () => {
+    const h = buildHarness({ micReadyTimeoutMs: 20 });
+    for (let i = 0; i < 12; i += 1) {
+      await h.listener.start(resolveStartArgs({}));
+      await h.listener.stop();
+    }
+    expect(h.audio.listenerCount('data')).toBeLessThanOrEqual(1);
+    expect(h.audio.listenerCount('error')).toBeLessThanOrEqual(1);
   });
 });
 

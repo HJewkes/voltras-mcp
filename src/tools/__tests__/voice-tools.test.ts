@@ -29,6 +29,8 @@ interface Harness {
   audio: PassThrough;
   probs: number[];
   whisperTranscripts: string[];
+  /** One entry per mic open, recording whether that source was ever stopped. */
+  micOpens: { stopped: boolean }[];
 }
 
 function buildHarness(
@@ -39,11 +41,23 @@ function buildHarness(
   const probs: number[] = [];
   const vad: Vad = { process: async () => probs.shift() ?? 0, reset: vi.fn() };
   const whisperTranscripts: string[] = [];
+  const micOpens: { stopped: boolean }[] = [];
   const deps: VoiceListenerDeps = {
-    audioFactory: (): AudioSource => ({ stream: audio, stop: vi.fn() }),
+    audioFactory: (): AudioSource => {
+      const open = { stopped: false };
+      micOpens.push(open);
+      return {
+        stream: audio,
+        stop: () => {
+          open.stopped = true;
+        },
+      };
+    },
     vadFactory: () => vad,
     whisper: async () => ({ transcript: whisperTranscripts.shift() ?? '' }),
     now: () => 1000,
+    // Fake mic never delivers until a test emits; keep start() off the real bound.
+    micReadyTimeoutMs: 0,
     ...depsOverride,
   };
   const events: ChannelEvent[] = [];
@@ -67,7 +81,15 @@ function buildHarness(
   if (slots.start === undefined || slots.stop === undefined) {
     throw new Error('callbacks not registered');
   }
-  return { start: slots.start, stop: slots.stop, events, audio, probs, whisperTranscripts };
+  return {
+    start: slots.start,
+    stop: slots.stop,
+    events,
+    audio,
+    probs,
+    whisperTranscripts,
+    micOpens,
+  };
 }
 
 function payload(result: ToolResult): Record<string, unknown> {
@@ -358,6 +380,74 @@ describe('system.listen_start — STT pre-warm', () => {
     const h = buildHarness(safety.ctx, { prewarm: fails });
     await driveSafetyPhrase(h);
     expect(safety.unloadCalls).toEqual(['primary']);
+  });
+});
+
+// VMCP-05.17: `listening` must mean "can hear you". A mic that never opens
+// still has to arm — bounded and logged — rather than hang listen_start.
+describe('system.listen_start — mic readiness', () => {
+  it('arms when the mic never delivers audio within the bound', async () => {
+    const h = buildHarness(null, { micReadyTimeoutMs: 20 });
+    expect(payload(await h.start({}))).toMatchObject({ status: 'listening' });
+  });
+
+  // Armed-but-deaf is otherwise only visible in a server log the caller never
+  // reads — it has to be in-band on the safety path.
+  it('reports micReady so an armed-but-deaf mic is visible to the caller', async () => {
+    const deaf = buildHarness(null, { micReadyTimeoutMs: 20 });
+    expect(payload(await deaf.start({}))).toMatchObject({
+      status: 'listening',
+      micReady: false,
+    });
+
+    const live = buildHarness(null, { micReadyTimeoutMs: 10_000 });
+    const starting = live.start({});
+    await settle();
+    live.audio.emit('data', Buffer.alloc(1024));
+    expect(payload(await starting)).toMatchObject({ status: 'listening', micReady: true });
+  });
+
+  it('arms once the mic goes live and still unloads on a safety phrase', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx, { micReadyTimeoutMs: 10_000 });
+    const starting = h.start({});
+    await new Promise((r) => setImmediate(r));
+    h.audio.emit('data', Buffer.alloc(1024));
+    expect(payload(await starting)).toMatchObject({ status: 'listening' });
+    await driveSafetyPhrase(h);
+    expect(safety.unloadCalls).toEqual(['primary']);
+  });
+
+  // Gating start() on the mic widened the arming window from ~25 ms to
+  // ~530 ms, so the tool now has a real concurrency surface: `listener` is
+  // only installed once start() resolves. Without an in-flight guard a second
+  // listen_start walks the null branch and opens a SECOND sox recorder, and
+  // the loser of the race is leaked — still wired, still routing safety
+  // phrases, never stopped.
+  it('does not open a second mic when listen_start is called while still arming', async () => {
+    const h = buildHarness(null, { micReadyTimeoutMs: 10_000 });
+    const first = h.start({});
+    await settle();
+    const second = h.start({});
+    await settle();
+    h.audio.emit('data', Buffer.alloc(1024));
+    expect(payload(await first)).toMatchObject({ status: 'listening' });
+    expect(payload(await second)).toMatchObject({ status: 'listening' });
+    expect(h.micOpens).toHaveLength(1);
+  });
+
+  // Safety-relevant: listen_stop must not report `stopped` while a mic that
+  // is still arming goes on to arm behind it.
+  it('stops the mic when listen_stop races a still-arming listen_start', async () => {
+    const h = buildHarness(null, { micReadyTimeoutMs: 50 });
+    const starting = h.start({});
+    await settle();
+    expect(payload(await h.stop({}))).toMatchObject({ status: 'stopped' });
+    // The racing arm must not hand back a mic the stop already turned off.
+    expect(payload(await starting)).toMatchObject({ status: 'stopped' });
+    await settle();
+    expect(h.micOpens).toHaveLength(1);
+    expect(h.micOpens[0].stopped).toBe(true);
   });
 });
 
