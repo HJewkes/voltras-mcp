@@ -246,6 +246,10 @@ function fakeBootstrapResult(): unknown {
   return {
     config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
     slots,
+    // VMCP-01.60: `runServer` registers its connection here. The real
+    // `bootstrapState` seeds an empty map, so this stub must too — otherwise
+    // the registration throws and the bootstrap-failure path swallows it.
+    clients: new Map(),
     manager: {
       scan: () => Promise.resolve([]),
       connect: () => Promise.resolve(),
@@ -302,6 +306,13 @@ describe('runServer startup race', () => {
     expect(payload.message).toMatch(/initializing/i);
 
     await serverPromise;
+
+    // runServer must register its connection against the shared state. This
+    // is the only place the production registration path (`registerClient` in
+    // runServer) is exercised — asserting it on a state object the test
+    // populated itself would prove nothing.
+    const state = await bootstrapMock.mock.results[0]?.value;
+    expect(state.clients.size).toBe(1);
   });
 
   it('closes the server before exiting on bootstrap failure (FIX #8)', async () => {
