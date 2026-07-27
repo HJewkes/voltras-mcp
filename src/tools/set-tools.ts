@@ -81,6 +81,7 @@ type SetCapture = Pick<
   | 'positionUnits'
   | 'sampleRateHz'
   | 'firmwareRepCount'
+  | 'firmwareSummaryDurationMs'
   | 'firmwareRepsJson'
   | 'chainsLbs'
   | 'damperLevel'
@@ -664,7 +665,7 @@ export async function finalizeSet(
     slotId,
     deviceId: slot.client.connectedDeviceId,
     side: resolvePersistedSide(state, slot.client.connectedDeviceId),
-    capture: buildSetCapture(state, slotId, correctedForStore, device),
+    capture: buildSetCapture(state, slotId, correctedForStore, device, deviceSetSummary),
   });
   // Schema v7 grouping: reconcile BEFORE the first write so this side's row
   // carries its `bilateralGroupId` from the outset. The partner's row was
@@ -936,6 +937,7 @@ function buildSetCapture(
   slotId: string,
   active: ActiveSet,
   device: DeviceSnapshot,
+  deviceSetSummary: { repDurationMs: number } | undefined,
 ): SetCapture {
   const settings = readSettingsContext(device);
   const settingsHash = hashSettingsContext(settings);
@@ -972,6 +974,14 @@ function buildSetCapture(
       : {}),
     ...(active.firmwareReps !== undefined && active.firmwareReps.length > 0
       ? { firmwareRepsJson: JSON.stringify(active.firmwareReps) }
+      : {}),
+    // Firmware ground truth off the set-summary frame. Stored under a
+    // provenance name because the SDK's "final rep duration" label is refuted
+    // by the captures — see StoredSet.firmwareSummaryDurationMs. Recorded now
+    // and interpreted later; discarding it would make the eventual
+    // interpretation impossible.
+    ...(deviceSetSummary !== undefined
+      ? { firmwareSummaryDurationMs: deviceSetSummary.repDurationMs }
       : {}),
     ...settings,
     ...(settingsHash !== undefined ? { settingsHash } : {}),

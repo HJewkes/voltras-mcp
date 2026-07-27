@@ -42,7 +42,7 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 /**
  * The implicit local user. v6 introduces a user dimension across the whole
@@ -172,7 +172,17 @@ const SCHEMA_SQL = `
     firmware_peak_force_lbs REAL,
     firmware_peak_power REAL,
     firmware_time_to_peak_ms INTEGER,
-    firmware_rep_duration_ms INTEGER,
+    -- The duration field on the set-summary frame. NAMED FOR ITS PROVENANCE,
+    -- not its meaning, because the meaning is not settled: the SDK types it as
+    -- "duration of the final rep", and the archived captures refute that — the
+    -- value scales with rep count (an 11-rep set reports ~11 s while its final
+    -- rep took ~1.4 s). It is a SET-level quantity, most consistent with
+    -- cumulative concentric time / time-under-tension, but the cross-mode fit
+    -- ranges 0.45–1.24× against BLE-timestamped spans, which is not tight
+    -- enough to name it TUT. Renamed from firmware_rep_duration_ms in v8
+    -- while still empty; do NOT read it as wall-clock set duration or as a
+    -- per-rep figure until one instrumented set pins the semantics.
+    firmware_summary_duration_ms INTEGER,
     firmware_reps_json TEXT,
 
     -- Capture provenance. Both of these are markers rather than fixes: they
@@ -813,6 +823,36 @@ function migrateV6ToV7(db: DatabaseSync): void {
 }
 
 /**
+ * v7→v8: rename `sets.firmware_rep_duration_ms` to `firmware_summary_duration_ms`.
+ *
+ * A NAMING FIX, done while the column is still empty and therefore free. v7
+ * created the column from the SDK's own label for the field — "duration of the
+ * final rep" — and nothing ever wrote to it. The archived captures then showed
+ * that label is wrong: the value scales with rep count (an 11-rep set reports
+ * ~11 s while its final rep took ~1.4 s), so it is a set-level aggregate, not a
+ * per-rep duration.
+ *
+ * Renamed rather than filled as-is because a column name is read far more often
+ * than its doc comment, and `firmware_rep_duration_ms` would have taught every
+ * future consumer a wrong meaning that only a capture analysis could unteach.
+ * The replacement name describes the field's PROVENANCE — the duration on the
+ * summary frame — rather than asserting semantics nobody has pinned down yet.
+ *
+ * Probed twice, because `applyMigrations` runs on fresh DBs whose `SCHEMA_SQL`
+ * already declares the new name, and on v6 DBs whose v6→v7 rebuild creates the
+ * old one. `ALTER TABLE ... RENAME COLUMN` needs SQLite 3.25+, which the
+ * generated columns already in use comfortably exceed.
+ */
+function migrateV7ToV8(db: DatabaseSync): void {
+  const names = columnNames(db, 'sets');
+  if (!names.has('firmware_rep_duration_ms')) return;
+  if (names.has('firmware_summary_duration_ms')) return;
+  db.exec(
+    `ALTER TABLE sets RENAME COLUMN firmware_rep_duration_ms TO firmware_summary_duration_ms`,
+  );
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1022,6 +1062,7 @@ interface SetRow {
   position_units: string | null;
   sample_rate_hz: number | null;
   firmware_rep_count: number | null;
+  firmware_summary_duration_ms: number | null;
   firmware_reps_json: string | null;
   bilateral_group_id: string | null;
   group_source: string | null;
@@ -1231,12 +1272,12 @@ export class SqliteSessionStore implements SessionStore {
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
           source, position_units, sample_rate_hz,
-          firmware_rep_count, firmware_reps_json,
+          firmware_rep_count, firmware_summary_duration_ms, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -1258,6 +1299,7 @@ export class SqliteSessionStore implements SessionStore {
          position_units = excluded.position_units,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
+         firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
          firmware_reps_json = excluded.firmware_reps_json,
          bilateral_group_id = excluded.bilateral_group_id,
          group_source = excluded.group_source,
@@ -1302,6 +1344,7 @@ export class SqliteSessionStore implements SessionStore {
         s.positionUnits ?? null,
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
+        s.firmwareSummaryDurationMs ?? null,
         s.firmwareRepsJson ?? null,
         s.bilateralGroupId ?? null,
         s.groupSource ?? null,
@@ -1955,6 +1998,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 4 &&
     found !== 5 &&
     found !== 6 &&
+    found !== 7 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -1987,6 +2031,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 6) {
     migrateV6ToV7(db);
+  }
+  if (current <= 7) {
+    migrateV7ToV8(db);
   }
 }
 
@@ -2102,6 +2149,9 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   }
   if (row.sample_rate_hz !== null) out.sampleRateHz = row.sample_rate_hz;
   if (row.firmware_rep_count !== null) out.firmwareRepCount = row.firmware_rep_count;
+  if (row.firmware_summary_duration_ms !== null) {
+    out.firmwareSummaryDurationMs = row.firmware_summary_duration_ms;
+  }
   if (row.firmware_reps_json !== null) out.firmwareRepsJson = row.firmware_reps_json;
   if (row.bilateral_group_id !== null) out.bilateralGroupId = row.bilateral_group_id;
   if (row.group_source === 'live' || row.group_source === 'inferred') {

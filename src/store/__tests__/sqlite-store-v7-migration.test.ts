@@ -207,7 +207,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(7);
+      expect(version.user_version).toBe(8);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -522,3 +522,90 @@ describe('v7 nullability and set_purpose round-trip', () => {
     ).toThrow(/CHECK constraint failed/);
   });
 });
+
+describe('v7 → v8: firmware duration column rename', () => {
+  let store: SqliteSessionStore;
+
+  beforeEach(() => {
+    store = SqliteSessionStore.open(':memory:');
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  it('exposes the provenance-named column and not the old per-rep name', () => {
+    // v7 named this from the SDK's "duration of the final rep" label, which the
+    // captures refute — the value scales with rep count, so it is a set-level
+    // aggregate. Renamed while still empty, which is why it cost nothing.
+    const names = columnNames(rawDb(store), 'sets');
+    expect(names).toContain('firmware_summary_duration_ms');
+    expect(names).not.toContain('firmware_rep_duration_ms');
+  });
+
+  it('round-trips the summary duration', async () => {
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'dur-1', firmwareSummaryDurationMs: 11_240 }));
+    expect((await store.getSet('dur-1'))?.firmwareSummaryDurationMs).toBe(11_240);
+  });
+
+  it('renames the column on a real v7 DB, through open(), without touching rows', () => {
+    // Exercised through SqliteSessionStore.open so the PRODUCTION migrateV7ToV8
+    // runs — a test that reimplements the migration would pass even if the real
+    // one were deleted.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v8-'));
+    const path = join(dir, 'v7.sqlite');
+    try {
+      const seed = new DatabaseSync(path);
+      seed.exec(V6_SCHEMA_SQL);
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2025-06-01T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs, is_warmup)
+        VALUES ('pre-v8', 's1', 'a', 'b', 0, 'WeightTraining', 100, 0)`);
+      seed.exec('PRAGMA user_version = 6');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        const names = columnNames(raw, 'sets');
+        expect(names).toContain('firmware_summary_duration_ms');
+        expect(names).not.toContain('firmware_rep_duration_ms');
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(8);
+        // The row survived the v6→v7 rebuild AND the v7→v8 rename.
+        const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
+        expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent — re-opening a migrated DB is a no-op', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v8-idem-'));
+    const path = join(dir, 'again.sqlite');
+    try {
+      const first = SqliteSessionStore.open(path);
+      void first.close();
+      const second = SqliteSessionStore.open(path);
+      try {
+        expect(columnNames(rawDb(second), 'sets')).toContain('firmware_summary_duration_ms');
+      } finally {
+        void second.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Column names including generated ones (`table_info` omits those). */
+function columnNames(db: DatabaseSync, table: string): Set<string> {
+  const cols = db.prepare(`PRAGMA table_xinfo(${table})`).all() as { name: string }[];
+  return new Set(cols.map((c) => c.name));
+}
