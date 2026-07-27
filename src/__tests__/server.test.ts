@@ -246,6 +246,10 @@ function fakeBootstrapResult(): unknown {
   return {
     config: { adapter: 'node', dbPath: ':memory:', logLevel: 'info' },
     slots,
+    // VMCP-01.60: `runServer` registers its connection here. The real
+    // `bootstrapState` seeds an empty map, so this stub must too — otherwise
+    // the registration throws and the bootstrap-failure path swallows it.
+    clients: new Map(),
     manager: {
       scan: () => Promise.resolve([]),
       connect: () => Promise.resolve(),

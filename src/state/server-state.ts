@@ -38,6 +38,7 @@ import { VoltraClient } from '@voltras/node-sdk';
 import type { VoltraManager } from '@voltras/node-sdk';
 import { setCatalog } from '@voltras/workout-analytics';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ClientId, ClientConnection } from '../client-connection.js';
 
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
@@ -186,6 +187,17 @@ export interface ServerState {
    * allocation is a later wave.
    */
   slots: Map<string, SlotState>;
+  /**
+   * Connected MCP clients, keyed by `clientId` (VMCP-01.60). Today `runServer`
+   * registers exactly one — the stdio client — but every tool registration
+   * already takes this state by reference, so the daemon (VMCP-01.62) can hold
+   * several here without the tool layer changing.
+   *
+   * This is the first caller-identity anywhere in `src/`: before it, state was
+   * scoped to `slotId` only, with no way to attribute a tool call to whoever
+   * made it. The write-lease (VMCP-01.61) is what consumes it.
+   */
+  clients: Map<ClientId, ClientConnection>;
   store: SessionStore;
   exercises: ExerciseService;
   /**
@@ -369,6 +381,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       config,
       manager,
       slots,
+      clients: new Map<ClientId, ClientConnection>(),
       store,
       exercises,
       channels,
