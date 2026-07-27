@@ -283,6 +283,18 @@ export class VoiceListener {
   /** Resolves the moment the mic delivers its first byte; see `awaitMicReady`. */
   private firstAudio: Promise<void> | null = null;
   private releaseFirstAudio: (() => void) | null = null;
+  /**
+   * True only once real PCM has arrived. `stop()` and a stream `error` also
+   * release the readiness wait, so the wait resolving is NOT evidence the mic
+   * works — this flag is.
+   */
+  private micLive = false;
+  /**
+   * Detaches the mic handlers wired by `wireAudio`. Stopping the recorder does
+   * not guarantee its stream goes quiet, and a stopped listener must neither
+   * keep accumulating frames nor keep a handler on a source it has released.
+   */
+  private unwireAudio: (() => void) | null = null;
 
   constructor(deps: VoiceListenerDeps, events: VoiceListenerEvents = {}) {
     this.deps = { now: () => Date.now(), ...deps };
@@ -291,6 +303,15 @@ export class VoiceListener {
 
   getState(): ListenerStateName {
     return this.state;
+  }
+
+  /**
+   * Whether the mic has actually delivered audio. False after `start()`
+   * resolves means we armed past the bound and are very likely deaf — the
+   * caller should surface that rather than let it live only in a log line.
+   */
+  isMicLive(): boolean {
+    return this.micLive;
   }
 
   getStartArgs(): StartArgs | null {
@@ -330,7 +351,9 @@ export class VoiceListener {
    * time it was designed to fill.
    */
   async start(args: StartArgs): Promise<void> {
-    if (this.state !== 'idle') return;
+    // Re-arming still honours the readiness contract: a caller told `listening`
+    // by the second call must be able to trust it just as much as the first.
+    if (this.state !== 'idle') return this.awaitMicReady();
     this.startArgs = args;
     const audio = this.deps.audioFactory();
     try {
@@ -361,13 +384,22 @@ export class VoiceListener {
     const bound = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), timeoutMs);
     });
-    const outcome = await Promise.race([pending.then((): 'ready' => 'ready'), bound]);
+    await Promise.race([pending, bound]);
     clearTimeout(timer);
-    if (outcome === 'timeout') {
+    // One-shot per arm: once the bound has been spent, a re-arm must not pay it
+    // again. Identity-checked so a stop()+start() during the wait — which
+    // installs a fresh promise — is not clobbered by this stale waiter.
+    if (this.firstAudio === pending) this.firstAudio = null;
+    // A stop() during the wait released it deliberately; there is nothing to
+    // report about a listener that is no longer meant to be up.
+    if (this.state !== 'listening') return;
+    // The wait is also released by a stream error, so the race resolving says
+    // nothing about whether the mic works — only `micLive` does.
+    if (!this.micLive) {
       // A real diagnostic signal: no input device, denied mic permission, or a
       // wedged recorder. Arming deaf and silent is the defect being fixed here.
       log.warn(
-        `VoiceListener: mic delivered no audio within ${timeoutMs} ms — arming anyway, ` +
+        `VoiceListener: mic delivered no audio (bound ${timeoutMs} ms) — arming anyway, ` +
           'speech may be missed (check input device and microphone permission).',
       );
       return;
@@ -392,9 +424,15 @@ export class VoiceListener {
   /** Tear everything down. Idempotent. Drops any pending/queued audio. */
   async stop(): Promise<void> {
     if (this.state === 'idle') return;
-    // A stop racing a still-arming start must not leave it parked on the bound.
-    this.markMicLive();
+    // A stop racing a still-arming start must not leave it parked on the bound,
+    // and must be visible to that waiter as "no longer meant to be up" — so the
+    // state transition happens before the wait is released, not at the end.
+    this.state = 'idle';
+    this.releaseMicWait();
     this.firstAudio = null;
+    this.micLive = false;
+    this.unwireAudio?.();
+    this.unwireAudio = null;
     this.audio?.stop();
     this.segmenter?.flush();
     this.vad?.reset();
@@ -405,28 +443,36 @@ export class VoiceListener {
     this.pendingFrames = [];
     this.transcriptionQueue = [];
     this.startArgs = null;
-    this.state = 'idle';
   }
 
   private wireAudio(): void {
     const audio = this.audio;
     if (audio === null) return;
+    this.micLive = false;
     this.firstAudio = new Promise<void>((resolve) => {
       this.releaseFirstAudio = resolve;
     });
-    audio.stream.on('data', (chunk: Buffer) => {
-      this.markMicLive();
+    const onData = (chunk: Buffer): void => {
+      this.micLive = true;
+      this.releaseMicWait();
       this.enqueueFrames(chunk);
-    });
-    audio.stream.on('error', (err) => {
+    };
+    const onError = (err: Error): void => {
       // Release the readiness wait too — this mic is never going to deliver.
-      this.markMicLive();
+      // Deliberately does not set `micLive`: nothing was ever heard.
+      this.releaseMicWait();
       this.emitError({ code: 'AUDIO_STREAM_ERROR', message: err.message });
-    });
+    };
+    audio.stream.on('data', onData);
+    audio.stream.on('error', onError);
+    this.unwireAudio = (): void => {
+      audio.stream.off('data', onData);
+      audio.stream.off('error', onError);
+    };
   }
 
   /** Release anyone blocked in `awaitMicReady`. Idempotent. */
-  private markMicLive(): void {
+  private releaseMicWait(): void {
     this.releaseFirstAudio?.();
     this.releaseFirstAudio = null;
   }
