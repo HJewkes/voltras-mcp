@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { McpChannelPublisher } from './state/channel-publisher.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from './tool-registry.js';
-import type { ServerState } from './state/server-state.js';
+import { isDeviceEngaged, type ServerState } from './state/server-state.js';
 
 import { registerDeviceTools, unloadSlot, isSafetyUnloadWarranted } from './tools/device-tools.js';
 import { registerSessionTools } from './tools/session-tools.js';
@@ -42,6 +42,10 @@ import { registerSlotTools } from './tools/slot-tools.js';
 import { registerProgressionTools } from './tools/progression-tools.js';
 import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerPlanTools } from './tools/plan-tools.js';
+import { registerLeaseTools } from './tools/lease-tools.js';
+import { applyLeaseGuard } from './lease-guard.js';
+import { surrenderDevice } from './tools/device-surrender.js';
+import { log } from './logger.js';
 import { registerDeviceResource } from './resources/device-resource.js';
 import { registerSessionResource } from './resources/session-resource.js';
 import { registerSetResource } from './resources/set-resource.js';
@@ -184,6 +188,7 @@ function registerRealTools(
   server: McpServer,
   state: ServerState,
   placeholders: Map<string, RegisteredTool>,
+  self: ClientId,
 ): void {
   if (state.config.adapter !== 'mock') {
     for (const name of MOCK_TOOL_NAMES) {
@@ -205,9 +210,14 @@ function registerRealTools(
   registerProgressionTools(server, state, placeholders);
   registerIsometricTools(server, state, placeholders);
   registerPlanTools(server, state, placeholders);
+  registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);
   }
+  // LAST: the guard wraps whatever handler is installed, so it must run after
+  // every registration above. Wrapping earlier would gate a placeholder's
+  // `STARTING` response instead of the real work.
+  applyLeaseGuard(placeholders, state, self);
 }
 
 /**
@@ -258,9 +268,26 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
     channels,
     activate(state: ServerState): void {
       stateBox.value = state;
-      registerRealTools(server, state, placeholders);
+      registerRealTools(server, state, placeholders, clientId);
     },
     async close(state: ServerState): Promise<void> {
+      // A departed client cannot drive the device, so its lease must not strand
+      // the hardware until the idle timeout. But releasing alone would hand the
+      // NEXT client a still-loaded cable, which is the same hazard a forced
+      // steal guards against — so surrender first when this client was driving.
+      //
+      // stdio pipes drop routinely here: VMCP-01.25 (F11) documents Claude Code
+      // abandoning the pipe on reconnect rather than closing it. So this is the
+      // ordinary path, not an exotic one, and surrendering also PERSISTS the
+      // in-flight set that would otherwise be lost.
+      if (state.lease.isHeldBy(clientId) && isDeviceEngaged(state)) {
+        try {
+          await surrenderDevice(state);
+        } catch (err) {
+          log.error('failed to surrender the device on client disconnect', err);
+        }
+      }
+      state.lease.releaseOnDisconnect(clientId);
       state.clients.delete(clientId);
       // Drop the state reference so a closed connection's resource callbacks
       // cannot resolve against live state after teardown.

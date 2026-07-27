@@ -12,6 +12,7 @@ const { registerServerTools } = await import('../server-tools.js');
 const { noopChannelPublisher, McpChannelPublisher } =
   await import('../../state/channel-publisher.js');
 const { ChannelDeliveryTracker } = await import('../../state/channel-delivery.js');
+const { WriteLease } = await import('../../state/write-lease.js');
 
 /** Minimal real (non-noop) publisher: any object other than the noop sentinel. */
 const realPublisher = new McpChannelPublisher({
@@ -53,6 +54,7 @@ describe('server.health', () => {
   it('returns the expected shape with config-derived fields', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
+      lease: new WriteLease(),
       config: {
         adapter: 'mock',
         dbPath: '/tmp/test.sqlite',
@@ -82,6 +84,7 @@ describe('server.health', () => {
   it('reports channelsWired when a real publisher is installed', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
+      lease: new WriteLease(),
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
     } as never;
@@ -105,6 +108,7 @@ describe('server.health', () => {
     channelDelivery.recordProbe('n1');
     channelDelivery.recordConfirmation('n1');
     const state = {
+      lease: new WriteLease(),
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       channelDelivery,
@@ -122,6 +126,7 @@ describe('server.health', () => {
     // still reports channelsWired: the flag reflects the publisher, not any
     // (nonexistent) client-side capability signal.
     const state = {
+      lease: new WriteLease(),
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       server: { server: { getClientCapabilities: () => ({ experimental: {} }) } },
@@ -135,6 +140,7 @@ describe('server.health', () => {
   it('reports channelsWired false when no real publisher is wired (nothing pushed)', async () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
+      lease: new WriteLease(),
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: noopChannelPublisher,
     } as never;
@@ -146,7 +152,10 @@ describe('server.health', () => {
 
   it('throws if the placeholder is missing', () => {
     const { placeholders } = makePlaceholders([]); // no server.health
-    const state = { config: { adapter: 'node', dbPath: '/x', logLevel: 'info' } } as never;
+    const state = {
+      lease: new WriteLease(),
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+    } as never;
     expect(() => registerServerTools({} as never, state, placeholders as never)).toThrow(
       /server\.health/,
     );

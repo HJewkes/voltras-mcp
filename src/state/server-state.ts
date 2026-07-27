@@ -39,6 +39,8 @@ import type { VoltraManager } from '@voltras/node-sdk';
 import { setCatalog } from '@voltras/workout-analytics';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ClientId, ClientConnection } from '../client-connection.js';
+import { WriteLease } from './write-lease.js';
+import { deriveLoadState } from './load-state.js';
 
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
@@ -177,6 +179,40 @@ export function getSlot(state: ServerState, slotId: string = PRIMARY_SLOT): Slot
  */
 export const MAX_SLOTS = 2;
 
+/**
+ * Whether any slot is currently driving the device — a set in progress, a
+ * set-start mid-flight, or a cable under load.
+ *
+ * This is what pins the write-lease against idle expiry, so it has to be wider
+ * than "a set is active". Three cases an active-set-only check would miss, each
+ * leaving a loaded cable unpinned:
+ *
+ *   1. `set.start` engages the motor via `startRecording()` and only installs
+ *      the active set AFTER that BLE round-trip (`set-tools.ts`). The
+ *      `setStartInFlight` latch marks exactly that window.
+ *   2. Guided load and rowing keep the cable continuously hot with no active
+ *      set at all — `deriveLoadState` is what reports those.
+ *   3. An isometric hold occupies the device for minutes without a set.
+ *
+ * Biased to over-report, deliberately: a false `true` costs a client an
+ * unnecessary wait for an idle lease, while a false `false` can hand the device
+ * to another session while someone is attached to a loaded cable.
+ */
+export function isDeviceEngaged(state: ServerState): boolean {
+  for (const slot of state.slots.values()) {
+    if (slot.setStartInFlight === true) return true;
+    if (slot.live.snapshotSet() !== undefined) return true;
+    if (!slot.client.isConnected) continue;
+    if (
+      deriveLoadState(slot.client.isConnected, slot.client.guidedLoadState, slot.client.isRowingActive) ===
+      'loaded'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface ServerState {
   config: Config;
   manager: VoltraManager;
@@ -198,6 +234,15 @@ export interface ServerState {
    * made it. The write-lease (VMCP-01.61) is what consumes it.
    */
   clients: Map<ClientId, ClientConnection>;
+  /**
+   * Device write-lease (VMCP-01.61). Exactly one client may drive the device;
+   * everyone else keeps every READ tool. Enforced per connection by
+   * `lease-guard.ts`, which wraps each WRITE-classified tool.
+   *
+   * With one client — today's only shape — the first WRITE call acquires and
+   * nothing ever contends, so this is invisible.
+   */
+  lease: WriteLease;
   store: SessionStore;
   exercises: ExerciseService;
   /**
@@ -377,11 +422,20 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       coercionWatch: new CoercionWatch(),
     });
     const slotBindings = SlotBindingsStore.open(config.slotBindingsPath);
-    return {
+    // The lease ASKS whether a set is in progress rather than being told at
+    // set.start / set.end (see write-lease.ts), which needs a reference to the
+    // state we are about to build — hence the box. Asking means a set that ends
+    // by device, not by `set.end`, unpins the lease with no extra wiring.
+    const stateRef: { value?: ServerState } = {};
+    const lease = new WriteLease({
+      isPinned: () => (stateRef.value === undefined ? false : isDeviceEngaged(stateRef.value)),
+    });
+    const state: ServerState = {
       config,
       manager,
       slots,
       clients: new Map<ClientId, ClientConnection>(),
+      lease,
       store,
       exercises,
       channels,
@@ -397,6 +451,8 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       bilateralReconciler: new BilateralReconciler(),
       liveSignals: new LiveSignalHub(),
     };
+    stateRef.value = state;
+    return state;
   } catch (err) {
     log.debug('bootstrapState: post-store init failed — closing store + disposing manager');
     await safeCloseStore(store);

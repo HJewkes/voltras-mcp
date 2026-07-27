@@ -36,6 +36,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { GuidedLoadState } from '@voltras/node-sdk';
 import { activeMode } from '../state/active-mode.js';
+import { deriveLoadState } from '../state/load-state.js';
 import { z } from 'zod';
 
 import {
@@ -1623,31 +1624,6 @@ function buildDeviceGetStateResponse(
   return out;
 }
 
-/**
- * Map the slot's transient client state to a single `'loaded' | 'unloaded'`
- * verdict. Sources, in priority order:
- *   1. Disconnected → `'unloaded'` (no cable engaged from our POV).
- *   2. Guided-load phase is `'engaging'` or `'active'` → `'loaded'`
- *      (the firmware direct-load state machine has the cable hot).
- *   3. `isRowingActive` → `'loaded'` (rowing two-stage engaged).
- *   4. Otherwise → `'unloaded'`.
- *
- * The function deliberately ignores `isRecording` — Workout.GO can be live
- * across rests and short user pauses where the cable is slack, and the
- * coach surface should treat those moments as unloaded. Callers that need
- * a finer-grained answer can inspect `is_recording` + `guided_load.phase`
- * + telemetry force directly.
- */
-function deriveLoadState(
-  isConnected: boolean,
-  guidedLoadState: GuidedLoadState,
-  isRowingActive: boolean,
-): 'loaded' | 'unloaded' {
-  if (!isConnected) return 'unloaded';
-  if (guidedLoadState.phase === 'engaging' || guidedLoadState.phase === 'active') return 'loaded';
-  if (isRowingActive) return 'loaded';
-  return 'unloaded';
-}
 
 /**
  * Reusable unload for a slot — single source of truth shared by the

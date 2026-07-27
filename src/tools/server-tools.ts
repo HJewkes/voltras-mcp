@@ -173,6 +173,24 @@ function resolveChannelStatus(state: ServerState): ChannelStatus {
 }
 
 /**
+ * Report the device write-lease (VMCP-01.61) so an operator can see who owns
+ * the device without calling a second tool. Deliberately does NOT say whether
+ * the CALLER holds it — `server.health` is registered without a client identity
+ * and reporting a guess would be worse than reporting nothing. Use
+ * `system.lease_status` for the caller-relative view.
+ */
+function resolveLeaseStatus(state: ServerState): {
+  leaseHeldBy: string | null;
+  leaseAcquiredAt: string | null;
+} {
+  const holder = state.lease.peek();
+  return {
+    leaseHeldBy: holder?.clientId ?? null,
+    leaseAcquiredAt: holder === null ? null : new Date(holder.acquiredAt).toISOString(),
+  };
+}
+
+/**
  * Hot-swap the `server.health` placeholder with the real handler. Mirrors
  * the install pattern used by the device/session/set tool registries.
  */
@@ -197,6 +215,7 @@ export function registerServerTools(
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
         ...resolveChannelStatus(state),
+        ...resolveLeaseStatus(state),
       }),
     ) as never,
   });
