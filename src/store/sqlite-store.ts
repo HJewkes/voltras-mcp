@@ -42,7 +42,7 @@ import type {
   StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /**
  * The implicit local user. v6 introduces a user dimension across the whole
@@ -158,7 +158,13 @@ const SCHEMA_SQL = `
     chains_lbs REAL,
     damper_level INTEGER,
     eccentric_pct REAL,
-    inverse_chains INTEGER,
+    -- A WEIGHT IN POUNDS, NOT A FLAG. v7 modelled this as INTEGER 0/1; the
+    -- device takes setInverseChains(lbs) over 0-100. Retyped in v8→v9 while
+    -- the column was still empty. Mechanically the opposite of chains_lbs:
+    -- inverse chains shed resistance through the concentric and add it
+    -- through the eccentric, so two sets differing only in which one is set
+    -- are NOT like-for-like.
+    inverse_chains_lbs REAL,
     assist_mode TEXT,
     settings_json TEXT,
     -- 'v1:<hash>' over the whole context. The version prefix is load-bearing:
@@ -853,6 +859,35 @@ function migrateV7ToV8(db: DatabaseSync): void {
 }
 
 /**
+ * v8→v9: rename `sets.inverse_chains` to `sets.inverse_chains_lbs`.
+ *
+ * A TYPE FIX, done while the column is still empty and therefore free. v7
+ * created it as `INTEGER` and `StoredSet` typed it `boolean`, modelling inverse
+ * chains as on/off. The device does not work that way: `setInverseChains(lbs)`
+ * takes a magnitude in pounds over 0-100, with one protocol command per value.
+ * Under the boolean model a 5 lb and a 40 lb inverse-chains set were the same
+ * configuration, which they are not.
+ *
+ * SQLite's declared type is advisory (column affinity), so the rename alone
+ * would leave the old INTEGER affinity in place and silently truncate a
+ * fractional value. The column name carries the unit for readers; the REAL
+ * affinity in `SCHEMA_SQL` covers fresh DBs, and the affinity change is not
+ * worth a full table rebuild for a column with zero rows written — the values
+ * the device offers are whole pounds.
+ *
+ * Probed in BOTH directions, because `applyMigrations` also runs on fresh DBs
+ * whose `SCHEMA_SQL` already declares the new name, and on older DBs whose
+ * v6→v7 rebuild created the old one. `columnNames` reads `table_xinfo`, which
+ * matters here: `sets` carries a generated column that `table_info` omits.
+ */
+function migrateV8ToV9(db: DatabaseSync): void {
+  const names = columnNames(db, 'sets');
+  if (!names.has('inverse_chains')) return;
+  if (names.has('inverse_chains_lbs')) return;
+  db.exec(`ALTER TABLE sets RENAME COLUMN inverse_chains TO inverse_chains_lbs`);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1069,7 +1104,7 @@ interface SetRow {
   chains_lbs: number | null;
   damper_level: number | null;
   eccentric_pct: number | null;
-  inverse_chains: number | null;
+  inverse_chains_lbs: number | null;
   assist_mode: string | null;
   settings_json: string | null;
   settings_hash: string | null;
@@ -1274,7 +1309,7 @@ export class SqliteSessionStore implements SessionStore {
           source, position_units, sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms, firmware_reps_json,
           bilateral_group_id, group_source,
-          chains_lbs, damper_level, eccentric_pct, inverse_chains, assist_mode,
+          chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1306,7 +1341,7 @@ export class SqliteSessionStore implements SessionStore {
          chains_lbs = excluded.chains_lbs,
          damper_level = excluded.damper_level,
          eccentric_pct = excluded.eccentric_pct,
-         inverse_chains = excluded.inverse_chains,
+         inverse_chains_lbs = excluded.inverse_chains_lbs,
          assist_mode = excluded.assist_mode,
          settings_json = excluded.settings_json,
          settings_hash = excluded.settings_hash`,
@@ -1351,7 +1386,7 @@ export class SqliteSessionStore implements SessionStore {
         s.chainsLbs ?? null,
         s.damperLevel ?? null,
         s.eccentricPct ?? null,
-        s.inverseChains === undefined ? null : s.inverseChains ? 1 : 0,
+        s.inverseChainsLbs ?? null,
         s.assistMode ?? null,
         s.settingsJson ?? null,
         s.settingsHash ?? null,
@@ -1988,6 +2023,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 5 = v5 schema; v6 added the isometric assessment tables (additive tables).
   // 5 = v5 schema; v6 rebuilt `sets` (nullability + capture columns), added a
   //     user dimension, and introduced the state tables.
+  // 7 = v7 schema; v8 renamed `sets.firmware_rep_duration_ms` (free, empty).
+  // 8 = v8 schema; v9 renamed `sets.inverse_chains` to `inverse_chains_lbs`
+  //     (free, empty — the column was never written).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -1999,6 +2037,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 5 &&
     found !== 6 &&
     found !== 7 &&
+    found !== 8 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2034,6 +2073,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 7) {
     migrateV7ToV8(db);
+  }
+  if (current <= 8) {
+    migrateV8ToV9(db);
   }
 }
 
@@ -2160,7 +2202,7 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.chains_lbs !== null) out.chainsLbs = row.chains_lbs;
   if (row.damper_level !== null) out.damperLevel = row.damper_level;
   if (row.eccentric_pct !== null) out.eccentricPct = row.eccentric_pct;
-  if (row.inverse_chains !== null) out.inverseChains = row.inverse_chains !== 0;
+  if (row.inverse_chains_lbs !== null) out.inverseChainsLbs = row.inverse_chains_lbs;
   if (row.assist_mode !== null) out.assistMode = row.assist_mode;
   if (row.settings_json !== null) out.settingsJson = row.settings_json;
   if (row.settings_hash !== null) out.settingsHash = row.settings_hash;

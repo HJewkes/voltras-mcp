@@ -64,6 +64,29 @@ describe('readSettingsContext', () => {
     expect(readSettingsContext(device).chainsLbs).toBe(60);
   });
 
+  it('reads inverse chains as a weight, alongside chains rather than instead of it', () => {
+    // The device carries both settings at once, and they are mechanically
+    // opposite — chains add resistance through the concentric, inverse chains
+    // shed it there and add it through the eccentric. One signed field could
+    // not represent a set that has both.
+    const device: DeviceSnapshot = {
+      connected: true,
+      chainSettingLbs: 30,
+      inverseChainSettingLbs: 15,
+    };
+    const ctx = readSettingsContext(device);
+    expect(ctx.chainsLbs).toBe(30);
+    expect(ctx.inverseChainsLbs).toBe(15);
+  });
+
+  it('omits inverse chains when the snapshot never reported it', () => {
+    // The pre-v9 bridge never read this field at all, so "absent" has to stay
+    // absent rather than becoming an implicit 0 the corpus would trust.
+    expect(readSettingsContext({ connected: true, chainSettingLbs: 30 })).not.toHaveProperty(
+      'inverseChainsLbs',
+    );
+  });
+
   it('scales eccentric from tenths of a percent', () => {
     const device: DeviceSnapshot = { connected: true, eccentricPercentTenths: 1250 };
     expect(readSettingsContext(device).eccentricPct).toBe(125);
@@ -88,7 +111,7 @@ describe('hashSettingsContext', () => {
     // Load-bearing: without it, hashes computed before a tenth settings
     // dimension is added compare equal to hashes computed after, and the
     // mismatch is undetectable.
-    expect(hashSettingsContext({ damperLevel: 3 })).toMatch(/^v1:[0-9a-f]{16}$/);
+    expect(hashSettingsContext({ damperLevel: 3 })).toMatch(/^v2:[0-9a-f]{16}$/);
   });
 
   it('distinguishes an absent setting from a zero one', () => {
@@ -100,6 +123,33 @@ describe('hashSettingsContext', () => {
 
   it('distinguishes two genuinely different configurations', () => {
     expect(hashSettingsContext({ chainsLbs: 20 })).not.toBe(hashSettingsContext({ chainsLbs: 25 }));
+  });
+
+  it('distinguishes chains from inverse chains at the same weight', () => {
+    // THE case this hash exists for. Chains ascend through the concentric,
+    // inverse chains descend through it — the same number in the two fields
+    // describes opposite mechanics. Before inverse chains were captured these
+    // two produced the SAME hash and would have been compared like-for-like.
+    const chains = hashSettingsContext({ chainsLbs: 20, damperLevel: 3, eccentricPct: 0 });
+    const inverse = hashSettingsContext({ inverseChainsLbs: 20, damperLevel: 3, eccentricPct: 0 });
+    expect(chains).toBeDefined();
+    expect(inverse).toBeDefined();
+    expect(chains).not.toBe(inverse);
+  });
+
+  it('distinguishes zero inverse chains from unrecorded inverse chains', () => {
+    // "The user had none set" is an observation; "nobody read the field" is a
+    // gap. Serializing the absent case as 0 would merge the two.
+    expect(hashSettingsContext({ chainsLbs: 20, inverseChainsLbs: 0 })).not.toBe(
+      hashSettingsContext({ chainsLbs: 20 }),
+    );
+  });
+
+  it('distinguishes two inverse-chains weights', () => {
+    // Under the old boolean model both of these were "inverse chains: true".
+    expect(hashSettingsContext({ inverseChainsLbs: 5 })).not.toBe(
+      hashSettingsContext({ inverseChainsLbs: 40 }),
+    );
   });
 
   it('returns undefined for a wholly unknown context', () => {

@@ -103,6 +103,19 @@ export interface DeviceSnapshot {
    */
   chainSettingLbs?: number;
   /**
+   * User's inverse-chains setting in pounds, sourced from the cmd=0x10
+   * cascade `inverseChains` field on `onSettingsUpdate`. Same provenance as
+   * {@link chainSettingLbs} and preferred for the same reason: it is the
+   * value the firmware accepted, not a lazily-recomputed state-dump figure.
+   *
+   * A WEIGHT, NOT A FLAG. Inverse chains REDUCE resistance through the
+   * concentric and ADD it through the eccentric — mechanically the opposite
+   * of {@link chainSettingLbs} — and the device takes a magnitude in lbs
+   * (`setInverseChains(lbs)`, 0-100). Two sets are not the same
+   * configuration merely because both have inverse chains "on".
+   */
+  inverseChainSettingLbs?: number;
+  /**
    * ISO timestamp set on disconnect and cleared on the first device push
    * after the next reconnect. Consumers can read this to know the rest of
    * the snapshot is the LAST KNOWN value from before the disconnect rather

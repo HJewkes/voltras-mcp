@@ -1279,6 +1279,14 @@ export interface SettingsUpdateAll {
    * is reliable.
    */
   chainSettingLbs?: number;
+  /**
+   * User's inverse-chains setting in pounds, from the same cmd=0x10 cascade
+   * as `chainSettingLbs`. A WEIGHT, NOT A FLAG: inverse chains subtract
+   * resistance through the concentric and add it through the eccentric, so a
+   * set at 20 lbs of inverse chains is a different configuration from one at
+   * 5 lbs, and both are the mechanical opposite of `chainSettingLbs`.
+   */
+  inverseChainSettingLbs?: number;
 }
 
 export type SettingsUpdateField =
@@ -1330,6 +1338,7 @@ export function buildSettingsUpdatePayload(
       weight_lbs_tenths: all.weightLbsTenths ?? null,
       eccentric_percent_tenths: all.eccentricPercentTenths ?? null,
       chain_setting_lbs: all.chainSettingLbs ?? null,
+      inverse_chain_setting_lbs: all.inverseChainSettingLbs ?? null,
     },
   });
   return { meta, content };

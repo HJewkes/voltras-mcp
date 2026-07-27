@@ -807,6 +807,35 @@ describe('set.end', () => {
     h = setup();
   });
 
+  it('gives a chains set and an inverse-chains set different settings hashes', async () => {
+    // THE point of capturing inverse chains. The two modes are mechanical
+    // opposites — chains add resistance through the concentric, inverse chains
+    // subtract it — so two sets that differ only in which one was engaged are
+    // not comparable. Before this was captured they hashed identically and
+    // every like-vs-like query silently pooled them.
+    //
+    // Asserted END-TO-END on the persisted rows rather than by calling
+    // hashSettingsContext directly: the unit tests cover the read and the hash
+    // separately, but only this proves the value actually survives the trip
+    // from device snapshot to stored set.
+    const captureWith = async (settings: Record<string, number>) => {
+      startSession(h.live);
+      h.live.applySettings({ connected: true, weightLbs: 75, ...settings });
+      await h.invoke('set.start', {});
+      h.live.appendRep(makeRep(1));
+      await h.invoke('set.end', {});
+      const calls = h.store.putSet.mock.calls;
+      return (calls[calls.length - 1]![0] as StoredSet).settingsHash;
+    };
+
+    const chainsHash = await captureWith({ chainSettingLbs: 20 });
+    const inverseHash = await captureWith({ inverseChainSettingLbs: 20 });
+
+    expect(chainsHash).toBeDefined();
+    expect(inverseHash).toBeDefined();
+    expect(chainsHash).not.toBe(inverseHash);
+  });
+
   it('stamps v7 capture provenance onto the persisted set', async () => {
     // Wave 1-S: the values observable at close that used to be dropped. Each is
     // unrecoverable afterwards, so what is asserted is that they actually reach
@@ -819,6 +848,7 @@ describe('set.end', () => {
       batteryPercent: 88,
       damperLevel: 4,
       chainSettingLbs: 20,
+      inverseChainSettingLbs: 15,
       eccentricPercentTenths: 1100,
     });
     await h.invoke('set.start', {});
@@ -831,8 +861,9 @@ describe('set.end', () => {
     expect(stored.batteryPct).toBe(88);
     expect(stored.damperLevel).toBe(4);
     expect(stored.chainsLbs).toBe(20);
+    expect(stored.inverseChainsLbs).toBe(15);
     expect(stored.eccentricPct).toBe(110);
-    expect(stored.settingsHash).toMatch(/^v1:/);
+    expect(stored.settingsHash).toMatch(/^v2:/);
     // The marker records the scale the samples are ALREADY in; it must not read
     // 'meters' until the bridge conversion lands.
     expect(stored.positionUnits).toBe('device_native');

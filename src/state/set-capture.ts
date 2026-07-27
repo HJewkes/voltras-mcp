@@ -25,8 +25,14 @@ import type { StoredSet } from '../store/types.js';
  * hashes computed before the change would compare equal to hashes computed
  * after it despite covering different fields. The prefix makes that mismatch
  * visible instead of silent. Bump it whenever the hashed field set changes.
+ *
+ * v1 → v2: `inverseChainsLbs` joined the hashed set. Every v1 hash was
+ * computed at a time when inverse chains were not read at all, so a v1 hash
+ * cannot distinguish "no inverse chains" from "inverse chains, unobserved" —
+ * and without the bump those v1 hashes would compare equal to v2 hashes that
+ * do carry the observation, asserting a shared configuration nobody checked.
  */
-const SETTINGS_HASH_VERSION = 'v1';
+const SETTINGS_HASH_VERSION = 'v2';
 
 /**
  * The settings context read off a device snapshot at close.
@@ -41,7 +47,14 @@ export interface SettingsContext {
   chainsLbs?: number;
   damperLevel?: number;
   eccentricPct?: number;
-  inverseChains?: boolean;
+  /**
+   * Inverse-chains setting in lbs. A MAGNITUDE, NOT A FLAG — the device takes
+   * `setInverseChains(lbs)` over 0-100 — and mechanically the OPPOSITE of
+   * `chainsLbs`: inverse chains shed resistance through the concentric and add
+   * it through the eccentric. Two sets that differ only in which of the two is
+   * set are not like-for-like, which is exactly what the hash must catch.
+   */
+  inverseChainsLbs?: number;
   assistMode?: string;
 }
 
@@ -53,12 +66,20 @@ export interface SettingsContext {
  * on-device), the latter is a state-dump field equal to `min(chains, weight)`,
  * which silently reads as the weight whenever chains exceed it.
  *
+ * `inverseChainSettingLbs` comes from the same cascade and is read for the
+ * same reason. It is captured SEPARATELY from `chainsLbs` rather than folded
+ * into one signed number, because the device carries both settings at once and
+ * a single field could not represent that.
+ *
  * `eccentricPercentTenths` is tenths of a percent, so it is scaled here — the
  * one place that conversion happens for the persisted row.
  */
 export function readSettingsContext(device: DeviceSnapshot): SettingsContext {
   const ctx: SettingsContext = {};
   if (device.chainSettingLbs !== undefined) ctx.chainsLbs = device.chainSettingLbs;
+  if (device.inverseChainSettingLbs !== undefined) {
+    ctx.inverseChainsLbs = device.inverseChainSettingLbs;
+  }
   if (device.damperLevel !== undefined) ctx.damperLevel = device.damperLevel;
   if (device.eccentricPercentTenths !== undefined) {
     ctx.eccentricPct = device.eccentricPercentTenths / 10;
