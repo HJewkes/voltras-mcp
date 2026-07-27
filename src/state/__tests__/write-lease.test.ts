@@ -19,6 +19,9 @@ function makeLease(options: { idleTimeoutMs?: number } = {}): {
     idleTimeoutMs: options.idleTimeoutMs ?? DEFAULT_LEASE_IDLE_MS,
     isPinned: () => pinned,
   });
+  pinControls.set(lease, (value: boolean) => {
+    pinned = value;
+  });
   return {
     lease,
     advance: (ms) => {
@@ -28,6 +31,12 @@ function makeLease(options: { idleTimeoutMs?: number } = {}): {
       pinned = value;
     },
   };
+}
+
+/** Flip the pin of a lease built by {@link makeLease}. */
+const pinControls = new WeakMap<WriteLease, (value: boolean) => void>();
+function setPinnedFor(lease: WriteLease, value: boolean): void {
+  pinControls.get(lease)!(value);
 }
 
 describe('acquiring', () => {
@@ -219,17 +228,22 @@ describe('status', () => {
     expect(denied.ok === false && denied.heldForMs).toBe(4_000);
   });
 
-  it('peek() does NOT expire an idle holder, status() does', () => {
-    // read-classified tools go through peek, whose contract is to touch no
-    // shared mutable state. If peek expired, an observer's polling would decide
-    // when the holder record vanishes.
+  it('peek() reports an aged-out holder as free without expiring it', () => {
+    // peek() is what read-classified tools use, so it must not MUTATE — an
+    // observer's polling should not decide when the holder record vanishes.
+    // But it must not report a holder the next write would expire either, or
+    // the model relays "client-a holds the device" about a dead lease.
     const { lease, advance } = makeLease({ idleTimeoutMs: 1_000 });
     lease.tryAcquire('a');
-    advance(2_000);
-
     expect(lease.peek()?.clientId).toBe('a');
-    expect(lease.status()).toBeNull();
+
+    advance(2_000);
     expect(lease.peek()).toBeNull();
+
+    // Still un-mutated: a fresh pin makes the same holder visible again,
+    // which would be impossible had peek() dropped it.
+    setPinnedFor(lease, true);
+    expect(lease.peek()?.clientId).toBe('a');
   });
 
   it('hands back a copy, not the live holder record', () => {

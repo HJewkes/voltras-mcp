@@ -40,17 +40,18 @@ function appendError(outcome: SlotSurrender, message: string): void {
  * Bounded: a wedged radio must not make surrender hang forever — proceeding
  * without the set installed is worse than nothing, but hanging is worse still.
  */
-async function waitForSetStartsToSettle(state: ServerState): Promise<void> {
+async function waitForSetStartsToSettle(state: ServerState): Promise<boolean> {
   const deadline = Date.now() + SET_START_SETTLE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     let pending = false;
     for (const slot of state.slots.values()) {
       if (slot.setStartInFlight === true) pending = true;
     }
-    if (!pending) return;
+    if (!pending) return true;
     await delay(SET_START_POLL_MS);
   }
   log.warn('surrender: a set.start was still in flight after the settle timeout');
+  return false;
 }
 
 /** What happened to one slot during a surrender. */
@@ -66,6 +67,13 @@ export interface SlotSurrender {
 
 export interface SurrenderResult {
   slots: SlotSurrender[];
+  /**
+   * False when a `set.start` was STILL in flight when we gave up waiting. The
+   * caller must not complete a transfer in that case: the continuation will
+   * install an active set on a device the victim no longer owns, which is the
+   * orphan this module exists to prevent.
+   */
+  setStartsSettled: boolean;
   /** True when at least one connected slot could not be unloaded. */
   anyUnloadFailed: boolean;
   /** True when NO connected slot could be unloaded — the dangerous case. */
@@ -87,7 +95,7 @@ export async function surrenderDevice(state: ServerState): Promise<SurrenderResu
   // that window would finalize nothing (there is no set yet), and the caller's
   // continuation would then install an active set on a device it no longer
   // owns — re-orphaning exactly what surrender exists to prevent.
-  await waitForSetStartsToSettle(state);
+  const setStartsSettled = await waitForSetStartsToSettle(state);
 
   const slots: SlotSurrender[] = [];
   let connectedCount = 0;
@@ -128,6 +136,7 @@ export async function surrenderDevice(state: ServerState): Promise<SurrenderResu
 
   return {
     slots,
+    setStartsSettled,
     anyUnloadFailed: unloadFailures > 0,
     allUnloadsFailed: connectedCount > 0 && unloadFailures === connectedCount,
   };

@@ -24,7 +24,7 @@
 
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
-import { toolAccess } from './tool-registry.js';
+import { toolAccess, type ToolName } from './tool-registry.js';
 import type { ServerState } from './state/server-state.js';
 import type { ClientId } from './client-connection.js';
 import type { LeaseDenied } from './state/write-lease.js';
@@ -37,13 +37,37 @@ import type { LeaseDenied } from './state/write-lease.js';
  * `write` in `TOOL_ACCESS`, because that table describes what a tool DOES, not
  * whether it is gated; conflating the two would make the table lie.
  */
-export const LEASE_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+export const LEASE_EXEMPT_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // `system.lease_status` is deliberately absent: it is classified `read`, so
   // the guard never considers it and an entry here would be unreachable.
   'system.lease_acquire',
   'system.lease_release',
+
+  // SAFETY — the load-REDUCING tools. Gating these meant a second session
+  // could not stop the machine: its only route was
+  // `system.lease_acquire {force:true}`, which this very module answers with
+  // LEASE_HELD_ENGAGED so a host can demand user confirmation first. That put
+  // an emergency unload behind an extra tool call and possibly a prompt.
+  //
+  // The Tier-A voice path does not cover this gap either: `system.listen_start`
+  // is itself a gated write, so the ungated stop-phrase path only exists for
+  // whoever already holds the lease.
+  //
+  // Both of these can only ever REMOVE load, so letting any client call them is
+  // strictly safer than the alternative. They stay classified `write` in
+  // TOOL_ACCESS, which describes what a tool DOES, not whether it is gated.
+  'device.unload',
+  'device.exit_guided_load',
+  // NOT `device.disconnect`, despite it being in the same family: dropping the
+  // BLE link does not drop the load, it removes the ability to command the
+  // motor. Ungating it would let one session strand another's loaded cable
+  // with no way to release it.
 ]);
 
+// The load-REDUCING tools (`device.unload`, `device.exit_guided_load`) are
+// exempt, so stopping the machine never waits on arbitration — see
+// LEASE_EXEMPT_TOOLS below.
+//
 // KNOWN LIMITATION (VMCP-01.65): the lease is checked at call ENTRY only, and
 // there is no cancellation. A long-running WRITE tool — `isometric.measure_max`
 // runs for minutes, `timer.wait` blocks, `device.start_guided_load` drives a
@@ -62,6 +86,13 @@ type ToolHandler = (args: unknown, extra?: unknown) => Promise<ToolResult> | Too
  * the exact way out — a bare "denied" would leave the model guessing.
  */
 function deniedMessage(name: string, denied: LeaseDenied): string {
+  if (denied.transferring === true) {
+    return (
+      `${name} is unavailable: the device is mid-handover between clients and ` +
+      `is being unloaded. Retry in a moment. device.unload and ` +
+      `device.exit_guided_load remain available if you need to stop the machine now.`
+    );
+  }
   const heldFor = Math.round(denied.heldForMs / 1000);
   const setNote = denied.pinned
     ? ' That session is actively driving the device right now.'
@@ -72,6 +103,17 @@ function deniedMessage(name: string, denied: LeaseDenied): string {
     `Read-only tools still work. To take control, call system.lease_acquire ` +
     `with force: true — if a set is in progress the device is unloaded first.`
   );
+}
+
+/**
+ * Distinguish the three refusal situations, because the right response differs:
+ * a transfer means "retry in a moment", an engaged holder means "someone is
+ * attached to the machine — confirm before taking it", and a plain hold means
+ * "the device is idle, taking it is cheap".
+ */
+function leaseErrorCode(denied: LeaseDenied): string {
+  if (denied.transferring === true) return 'LEASE_TRANSFERRING';
+  return denied.pinned ? 'LEASE_HELD_ENGAGED' : 'LEASE_HELD';
 }
 
 /** Wrap one handler so it acquires the lease before running. */
@@ -88,7 +130,7 @@ function leaseGuarded(
       // confirmation before stealing a device someone is attached to, rather
       // than treating it like an idle handover.
       return errorResult({
-        code: decision.pinned ? 'LEASE_HELD_ENGAGED' : 'LEASE_HELD',
+        code: leaseErrorCode(decision),
         message: deniedMessage(name, decision),
       });
     }
@@ -109,8 +151,11 @@ export function applyLeaseGuard(
   self: ClientId,
 ): void {
   for (const [name, tool] of placeholders) {
+    // A non-undefined access class proves `name` is a known tool, so the cast
+    // is sound. The set is keyed on `ToolName` so a typo'd entry in
+    // LEASE_EXEMPT_TOOLS is a tsc error rather than a silently gated tool.
     if (toolAccess(name) !== 'write') continue;
-    if (LEASE_EXEMPT_TOOLS.has(name)) continue;
+    if (LEASE_EXEMPT_TOOLS.has(name as ToolName)) continue;
     const inner = tool.handler as ToolHandler;
     tool.update({ callback: leaseGuarded(name, inner, state, self) as never });
   }

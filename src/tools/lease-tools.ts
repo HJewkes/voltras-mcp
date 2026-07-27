@@ -57,11 +57,46 @@ async function acquire(
       hint: 'Another client holds the device. Retry with force: true to take it.',
     };
   }
-  // Surrender BEFORE the transfer, never after: in between, the previous holder
-  // still believes it owns a loaded cable. Surrender rather than a bare unload
-  // because an orphaned active set would block the new holder's `set.start` and
-  // lose the victim's reps — see device-surrender.ts.
-  const surrender = await surrenderDevice(state);
+  // Freeze the lease FIRST. Surrender is seconds of async BLE work, and without
+  // the freeze the outgoing holder keeps passing the guard for that whole
+  // window — it could re-engage the motor after we unloaded, handing the new
+  // holder a lease over a device it believes is slack.
+  try {
+    state.lease.beginTransfer();
+  } catch {
+    return {
+      ...(leaseView(state, self) as object),
+      acquired: false,
+      forced: true,
+      hint: 'Another client is already taking over the device. Retry in a moment.',
+    };
+  }
+
+  let surrender;
+  try {
+    // Surrender rather than a bare unload: an orphaned active set would block
+    // the new holder's `set.start` and lose the victim's reps — see
+    // device-surrender.ts.
+    surrender = await surrenderDevice(state);
+  } catch (err) {
+    state.lease.abortTransfer();
+    throw err;
+  }
+
+  // A `set.start` never settled, so its continuation will install a set on a
+  // device the victim no longer owns. Refuse rather than create that orphan.
+  if (!surrender.setStartsSettled) {
+    state.lease.abortTransfer();
+    return {
+      ...(leaseView(state, self) as object),
+      acquired: false,
+      forced: true,
+      surrender: surrender.slots,
+      warning:
+        'A set was still being started on the other session when the handover ' +
+        'timed out, so the lease was NOT transferred. Retry shortly.',
+    };
+  }
 
   // Every connected slot refused to unload: the cable may still be live. Do NOT
   // assume it isn't. Refusing outright would be worse — if the old session is
@@ -69,6 +104,7 @@ async function acquire(
   // cable and nobody able to command it — so allow an explicit second
   // escalation instead of deciding for them.
   if (surrender.allUnloadsFailed && input.acceptLoadedDevice !== true) {
+    state.lease.abortTransfer();
     return {
       ...(leaseView(state, self) as object),
       acquired: false,
@@ -106,12 +142,24 @@ async function release(state: ServerState, self: ClientId): Promise<unknown> {
   if (!state.lease.isHeldBy(self)) {
     return { released: false, ...(leaseView(state, self) as object) };
   }
-  const surrender = isDeviceEngaged(state) ? await surrenderDevice(state) : null;
-  return {
-    released: state.lease.release(self),
-    ...(leaseView(state, self) as object),
-    ...(surrender === null ? {} : { surrender: surrender.slots }),
-  };
+  if (!isDeviceEngaged(state)) {
+    return { released: state.lease.release(self), ...(leaseView(state, self) as object) };
+  }
+  // Same freeze as a forced steal: while we are unloading, this client must not
+  // be able to re-engage the motor on its way out.
+  state.lease.beginTransfer();
+  try {
+    const surrender = await surrenderDevice(state);
+    state.lease.abortTransfer();
+    return {
+      released: state.lease.release(self),
+      ...(leaseView(state, self) as object),
+      surrender: surrender.slots,
+    };
+  } catch (err) {
+    state.lease.abortTransfer();
+    throw err;
+  }
 }
 
 /** Register `system.lease_status` / `lease_acquire` / `lease_release`. */

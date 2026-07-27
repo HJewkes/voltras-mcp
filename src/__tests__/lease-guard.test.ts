@@ -64,6 +64,38 @@ afterEach(() => {
   rmSync(dbDir, { recursive: true, force: true });
 });
 
+/**
+ * Put slot `primary` into a live-set state, CONNECTED, and give the lease to
+ * `connection`.
+ *
+ * The set is installed directly rather than by driving `set.start`, which
+ * needs a real device. But the slot must report connected, or `surrenderDevice`
+ * skips the unload arm entirely and the test silently covers half the code.
+ */
+async function startSetOn(connection: ClientConnection): Promise<void> {
+  state.lease.tryAcquire(connection.clientId);
+  const slot = state.slots.get('primary')!;
+  fakeClientState(slot, { connected: true, guidedLoadPhase: 'idle' });
+  await state.store.putSession({
+    id: 'session-1',
+    startedAt: new Date().toISOString(),
+    exerciseId: 'bench-press',
+  } as never);
+  slot.live.startSession({
+    sessionId: 'session-1',
+    startedAt: new Date().toISOString(),
+    exerciseId: 'bench-press',
+    setIds: [],
+  });
+  slot.live.startSet({
+    setId: 'set-1',
+    sessionId: 'session-1',
+    startedAt: new Date().toISOString(),
+    reps: [],
+    status: 'active',
+  });
+}
+
 describe('write tools', () => {
   it('acquires implicitly for the first caller', async () => {
     const result = await call(a, 'timer.start', { durationMs: 60000, label: 'rest' });
@@ -154,6 +186,18 @@ describe('the lease tools themselves', () => {
   });
 });
 
+/**
+ * Assert a call was not refused by the lease AT ALL.
+ *
+ * `.not.toBe('LEASE_HELD')` is not enough — it passes for LEASE_HELD_ENGAGED
+ * and LEASE_TRANSFERRING, so it stays green with the exemption removed. Match
+ * the whole family.
+ */
+function expectNotLeaseRefused(payload: Record<string, unknown>, what: string): void {
+  const code = String(payload.code ?? '');
+  expect(code.startsWith('LEASE_'), `${what} was refused by the lease: ${code}`).toBe(false);
+}
+
 /** Make this slot's unload fail, so the surrender cannot drop the load. */
 function breakUnload(slot: { client: unknown }): void {
   Object.defineProperty(slot.client, 'unloadDevice', {
@@ -182,39 +226,7 @@ function fakeClientState(
 }
 
 describe('surrendering the device on transfer', () => {
-  /**
-   * Put slot `primary` into a live-set state, CONNECTED, and give the lease to
-   * `connection`.
-   *
-   * The set is installed directly rather than by driving `set.start`, which
-   * needs a real device. But the slot must report connected, or `surrenderDevice`
-   * skips the unload arm entirely and the test silently covers half the code.
-   */
-  async function startSetOn(connection: ClientConnection): Promise<void> {
-    state.lease.tryAcquire(connection.clientId);
-    const slot = state.slots.get('primary')!;
-    fakeClientState(slot, { connected: true, guidedLoadPhase: 'idle' });
-    await state.store.putSession({
-      id: 'session-1',
-      startedAt: new Date().toISOString(),
-      exerciseId: 'bench-press',
-    } as never);
-    slot.live.startSession({
-      sessionId: 'session-1',
-      startedAt: new Date().toISOString(),
-      exerciseId: 'bench-press',
-      setIds: [],
-    });
-    slot.live.startSet({
-      setId: 'set-1',
-      sessionId: 'session-1',
-      startedAt: new Date().toISOString(),
-      reps: [],
-      status: 'active',
-    });
-  }
-
-  it('finalizes the victim set on a forced steal, not just the load', async () => {
+it('finalizes the victim set on a forced steal, not just the load', async () => {
     // A bare unload leaves slot.live.set active, which (a) makes the stealer's
     // set.start throw SET_ALREADY_ACTIVE, (b) pins the new lease forever, and
     // (c) strands the victim's reps unpersisted because set.end is now denied.
@@ -346,6 +358,72 @@ describe('surrendering the device on transfer', () => {
   });
 });
 
+describe('freezing the lease during a handover', () => {
+  it('denies the OUTGOING holder while the device is being surrendered', async () => {
+    // The window is seconds of BLE work. If the victim keeps write access it
+    // can re-engage the motor after the surrender unloaded, and the incoming
+    // client is handed a lease over a device it believes is slack.
+    await startSetOn(a);
+    state.lease.beginTransfer();
+
+    const denied = await call(a, 'device.set_weight', { weightLbs: 100 });
+
+    expect(denied.payload.code).toBe('LEASE_TRANSFERRING');
+    expect(String(denied.payload.message)).toContain('mid-handover');
+  });
+
+  it('still lets ANY client stop the machine while frozen', async () => {
+    await startSetOn(a);
+    state.lease.beginTransfer();
+
+    // The exempt, load-reducing tools must never wait on arbitration.
+    expectNotLeaseRefused((await call(b, 'device.unload', {})).payload, 'device.unload');
+    expectNotLeaseRefused(
+      (await call(b, 'device.exit_guided_load', {})).payload,
+      'device.exit_guided_load',
+    );
+  });
+
+  it('refuses a second concurrent takeover instead of double-stealing', async () => {
+    await startSetOn(a);
+    state.lease.beginTransfer();
+
+    const second = await call(b, 'system.lease_acquire', { force: true });
+
+    expect(second.payload.acquired).toBe(false);
+    expect(state.lease.isTransferring()).toBe(true);
+  });
+
+  it('restores the previous holder when a takeover is refused', async () => {
+    await startSetOn(a);
+    breakUnload(state.slots.get('primary')!);
+
+    await call(b, 'system.lease_acquire', { force: true });
+
+    expect(state.lease.isTransferring()).toBe(false);
+    expect(state.lease.isHeldBy('client-a')).toBe(true);
+    // And normal service resumes for the holder that kept it.
+    expect((await call(a, 'timer.start', { durationMs: 1000, label: 'x' })).isError).toBe(false);
+  });
+});
+
+describe('stopping the machine without the lease', () => {
+  it('lets a non-holder unload', async () => {
+    // A second session must be able to stop a machine someone is attached to
+    // without first winning an arbitration round.
+    await startSetOn(a);
+
+    expectNotLeaseRefused((await call(b, 'device.unload', {})).payload, 'device.unload');
+  });
+
+  it('still gates disconnect, which removes control rather than load', async () => {
+    // Dropping the BLE link does not drop the load — it strands it.
+    await startSetOn(a);
+
+    expect((await call(b, 'device.disconnect', {})).payload.code).toBe('LEASE_HELD_ENGAGED');
+  });
+});
+
 describe('the pin', () => {
   it('pins on a set-start still mid-flight', () => {
     // set.start engages the motor BEFORE installing the active set, so an
@@ -439,14 +517,16 @@ describe('guard coverage', () => {
     expect(wronglyGated, 'read tools gated behind the lease').toEqual([]);
   });
 
-  it('leaves the REAL input schema in place when wrapping', async () => {
-    // `toBeDefined()` would still pass if the wrap reinstated the permissive
-    // placeholder schema, so assert the schema actually validates: a bad
-    // timer.start must be rejected on its args, not waved through.
-    const bad = await call(a, 'timer.start', { durationMs: 'not-a-number' });
-    expect(bad.payload.code).toBe('INVALID_INPUT');
-
-    const good = await call(a, 'timer.start', { durationMs: 60000, label: 'rest' });
-    expect(good.isError).toBe(false);
+  it('leaves the REAL input schema in place when wrapping', () => {
+    // `call()` invokes tool.handler directly, bypassing the SDK's schema
+    // dispatch — so an INVALID_INPUT there comes from wrapHandler's own zod
+    // parse and would still appear with inputSchema wiped. Assert the schema
+    // itself, which is the property the SDK actually uses.
+    const wrapped = a.placeholders.get('timer.start')!;
+    const unwrapped = a.placeholders.get('device.get_state')!;
+    expect(wrapped.inputSchema).toBeDefined();
+    // A real schema, not the permissive placeholder: it must know its fields.
+    expect(Object.keys((wrapped.inputSchema as { shape: object }).shape)).toContain('durationMs');
+    expect(unwrapped.inputSchema).toBeDefined();
   });
 });

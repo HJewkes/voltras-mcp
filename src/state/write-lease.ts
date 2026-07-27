@@ -56,9 +56,19 @@ export interface LeaseDenied {
   pinned: boolean;
   /** How long the holder has held it, off the injected clock (testable). */
   heldForMs: number;
+  /** True when denied because a handover is mid-flight, not because of a holder. */
+  transferring?: boolean;
 }
 
 export type LeaseDecision = LeaseGranted | LeaseDenied;
+
+/** Raised when a transfer is begun while one is already in progress. */
+export class TransferInProgressError extends Error {
+  constructor() {
+    super('a lease transfer is already in progress');
+    this.name = 'TransferInProgressError';
+  }
+}
 
 export interface WriteLeaseOptions {
   /** Injected clock. Defaults to `Date.now`. */
@@ -76,6 +86,19 @@ export interface WriteLeaseOptions {
 
 export class WriteLease {
   private holder: LeaseHolder | null = null;
+  /**
+   * Set while a handover is surrendering the device.
+   *
+   * Surrender is seconds of async BLE work. Without this, the outgoing holder
+   * keeps passing `tryAcquire` for that whole window and can re-engage the
+   * motor AFTER the surrender unloaded — handing the incoming client a lease
+   * over a device it believes is slack, with a person attached to it. So the
+   * transfer window denies EVERYONE, including the current holder.
+   *
+   * The load-reducing tools are exempt from the guard entirely, so an emergency
+   * unload still works while frozen.
+   */
+  private transferring = false;
   private readonly now: () => number;
   private readonly idleTimeoutMs: number;
   private readonly isPinned: () => boolean;
@@ -105,7 +128,19 @@ export class WriteLease {
    * timeout, which the next `tryAcquire` expires anyway.
    */
   peek(): LeaseHolder | null {
-    return this.holder === null ? null : { ...this.holder };
+    if (this.holder === null) return null;
+    // Report what a write would actually see. Without this, `server.health`
+    // names a holder that the very next `tryAcquire` would expire, and the
+    // model relays "client-a holds the device" about a dead lease.
+    if (this.wouldExpire()) return null;
+    return { ...this.holder };
+  }
+
+  /** Whether the holder is past the idle window and unpinned — no mutation. */
+  private wouldExpire(): boolean {
+    if (this.holder === null) return false;
+    if (this.isPinned()) return false;
+    return this.now() - this.holder.lastActivityAt >= this.idleTimeoutMs;
   }
 
   /** Whether `clientId` currently holds the lease. */
@@ -123,6 +158,16 @@ export class WriteLease {
    * {@link steal}, which the caller must safety-unload before.
    */
   tryAcquire(clientId: ClientId): LeaseDecision {
+    if (this.transferring) {
+      // Deny everyone mid-handover, the outgoing holder included.
+      return {
+        ok: false,
+        holder: this.holder ?? { clientId: 'transferring', acquiredAt: 0, lastActivityAt: 0 },
+        pinned: this.isPinned(),
+        heldForMs: 0,
+        transferring: true,
+      };
+    }
     this.expireIfIdle();
     if (this.holder === null) {
       return { ok: true, holder: this.grant(clientId), stolen: false };
@@ -150,11 +195,37 @@ export class WriteLease {
    */
   steal(clientId: ClientId): LeaseGranted {
     const previous = this.holder;
+    this.transferring = false;
     return {
       ok: true,
       holder: this.grant(clientId),
       stolen: previous !== null && previous.clientId !== clientId,
     };
+  }
+
+  /**
+   * Freeze the lease for the duration of a handover, so nobody — not even the
+   * current holder — can drive the device while it is being surrendered.
+   *
+   * Must be paired with {@link steal} (completes the transfer) or
+   * {@link abortTransfer} (restores the previous holder). Throws rather than
+   * queueing when a transfer is already running: two concurrent forced
+   * acquires would otherwise both surrender and both steal, and the loser
+   * would be told it succeeded.
+   */
+  beginTransfer(): void {
+    if (this.transferring) throw new TransferInProgressError();
+    this.transferring = true;
+  }
+
+  /** Abandon a transfer, leaving the previous holder in place. */
+  abortTransfer(): void {
+    this.transferring = false;
+  }
+
+  /** Whether a handover is currently in flight. */
+  isTransferring(): boolean {
+    return this.transferring;
   }
 
   /**
@@ -192,9 +263,6 @@ export class WriteLease {
    * the model has not issued a tool call recently.
    */
   private expireIfIdle(): void {
-    if (this.holder === null) return;
-    if (this.isPinned()) return;
-    if (this.now() - this.holder.lastActivityAt < this.idleTimeoutMs) return;
-    this.holder = null;
+    if (this.wouldExpire()) this.holder = null;
   }
 }

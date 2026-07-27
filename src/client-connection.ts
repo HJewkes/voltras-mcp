@@ -22,7 +22,7 @@
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { spawn } from 'node:child_process';
-import { McpChannelPublisher } from './state/channel-publisher.js';
+import { McpChannelPublisher, noopChannelPublisher } from './state/channel-publisher.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from './tool-registry.js';
 import { isDeviceEngaged, type ServerState } from './state/server-state.js';
@@ -281,14 +281,33 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
       // ordinary path, not an exotic one, and surrendering also PERSISTS the
       // in-flight set that would otherwise be lost.
       if (state.lease.isHeldBy(clientId) && isDeviceEngaged(state)) {
+        // Freeze first, as the steal and release paths do: a departing client
+        // can still have an in-flight write tool that would re-engage the motor
+        // while we are unloading.
+        try {
+          state.lease.beginTransfer();
+        } catch {
+          // Someone else is already taking over and will surrender for us.
+        }
         try {
           await surrenderDevice(state);
         } catch (err) {
           log.error('failed to surrender the device on client disconnect', err);
+        } finally {
+          state.lease.abortTransfer();
         }
       }
       state.lease.releaseOnDisconnect(clientId);
       state.clients.delete(clientId);
+      // These two fields are process-wide but currently point at whichever
+      // connection wired them (see wireProcessState). If that was US, clear them
+      // rather than leave a dangling reference — otherwise the event bridge goes
+      // on publishing into a closed McpServer. Fanning them out per client is
+      // VMCP-01.63; this just stops close() making it worse.
+      if (state.server === server) {
+        delete state.server;
+        state.channels = noopChannelPublisher;
+      }
       // Drop the state reference so a closed connection's resource callbacks
       // cannot resolve against live state after teardown.
       delete stateBox.value;
