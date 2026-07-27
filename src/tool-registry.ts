@@ -61,6 +61,11 @@ export const CORE_TOOL_NAMES = [
   'system.speak',
   'system.listen_start',
   'system.listen_stop',
+  // Device write-lease (VMCP-01.61). Exempt from lease enforcement itself —
+  // see LEASE_EXEMPT_TOOLS in lease-guard.ts.
+  'system.lease_status',
+  'system.lease_acquire',
+  'system.lease_release',
   'slot.identify',
   'slot.bind',
   'slot.bindings_list',
@@ -106,9 +111,10 @@ export type ToolName = CoreToolName | MockToolName;
  *   `SlotState`, drives the radio, writes to SQLite or disk, claims the mic or
  *   speaker, or otherwise interferes across sessions.
  *
- * This table is inert in VMCP-01.60 — nothing consults it yet. It lands now
- * because classifying ~80 tools is the part that needs care, and doing it as a
- * standalone reviewable change beats burying it inside the lease mechanics.
+ * `lease-guard.ts` consumes this: every `write` tool is wrapped so the call
+ * acquires the device write-lease first, and every `read` tool is left alone.
+ * Because the table is exhaustive over `ToolName`, adding a tool without
+ * classifying it is a tsc error — enforcement cannot be forgotten.
  */
 export type ToolAccess = 'read' | 'write';
 
@@ -191,6 +197,13 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'system.speak': 'write',
   'system.listen_start': 'write',
   'system.listen_stop': 'write',
+
+  // `lease_status` only reads. `acquire`/`release` mutate the lease, so they
+  // are `write` — this table describes what a tool DOES, not whether it is
+  // gated, and all three are exempt from gating so the lease is obtainable.
+  'system.lease_status': 'read',
+  'system.lease_acquire': 'write',
+  'system.lease_release': 'write',
 
   'slot.identify': 'write',
   'slot.bind': 'write',

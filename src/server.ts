@@ -164,6 +164,56 @@ export async function runServer(): Promise<void> {
  * the exit ourselves. The `shuttingDown` guard makes double-signal /
  * signal-plus-stdin-close idempotent.
  */
+/**
+ * Bound on the shutdown sequence.
+ *
+ * Raised from 2s (VMCP-01.61): the connection close now surrenders the device —
+ * finalize the set (BLE `endSet` + a store write) then unload (another BLE
+ * write) — for up to two slots. Two seconds is under that budget, so the old
+ * bound would routinely cut the surrender off and lose the very set it exists
+ * to persist. Still bounded, because a wedged radio must not keep the process
+ * alive (VMCP-01.25 / F11).
+ */
+export const SHUTDOWN_HARD_TIMEOUT_MS = 6000;
+
+/**
+ * Run the shutdown sequence: tear the connection down, close the dashboard,
+ * then exit.
+ *
+ * The connection close is AWAITED, not fire-and-forget. It surrenders the
+ * device when this client was driving it (finalize the set so it is persisted,
+ * then drop the load — see `device-surrender.ts`), and that is real async BLE
+ * and store work. Voiding it would mean the process exits first and the
+ * surrender silently never happens, which is indistinguishable from working in
+ * any test that awaits `close()` directly.
+ *
+ * Both closes run concurrently under one bounded window: a wedged radio must
+ * not hold the process open, so {@link SHUTDOWN_HARD_TIMEOUT_MS} still forces a
+ * non-zero exit. That bound means a very slow surrender can be cut off with the
+ * cable still loaded — accepted, because the alternative is a server that will
+ * not die (VMCP-01.25 / F11).
+ *
+ * Exported for tests; `installShutdownHook` is the production caller.
+ */
+export function runShutdown(
+  handle: DashboardServerHandle | undefined,
+  closeConnection: () => Promise<void>,
+  exit: (code: number) => void,
+): void {
+  const hardTimeout = setTimeout(() => exit(1), SHUTDOWN_HARD_TIMEOUT_MS);
+  hardTimeout.unref();
+  const closes: Array<Promise<unknown>> = [
+    closeConnection().catch((err) => log.warn('connection close failed', err)),
+  ];
+  if (handle) {
+    closes.push(handle.close().catch((err) => log.warn('dashboard sidecar close failed', err)));
+  }
+  void Promise.all(closes).finally(() => {
+    clearTimeout(hardTimeout);
+    exit(0);
+  });
+}
+
 function installShutdownHook(
   handle: DashboardServerHandle | undefined,
   closeConnection: () => Promise<void>,
@@ -172,20 +222,7 @@ function installShutdownHook(
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
-    // Unregister and close the connection first, so nothing observes a
-    // half-torn-down process holding a live entry in `state.clients`.
-    void closeConnection().catch((err) => log.warn('connection close failed', err));
-    // Hard timeout in case dashboard close hangs — VMCP-01.25 (F11).
-    // The non-zero exit code distinguishes "we had to bail out" from
-    // the normal clean-exit path.
-    const hardTimeout = setTimeout(() => process.exit(1), 2000);
-    hardTimeout.unref();
-    const closePromise = handle
-      ? handle.close().catch((err) => log.warn('dashboard sidecar close failed', err))
-      : Promise.resolve();
-    closePromise.finally(() => {
-      process.exit(0);
-    });
+    runShutdown(handle, closeConnection, (code) => process.exit(code));
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
