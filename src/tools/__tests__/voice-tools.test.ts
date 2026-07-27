@@ -44,6 +44,8 @@ function buildHarness(
     vadFactory: () => vad,
     whisper: async () => ({ transcript: whisperTranscripts.shift() ?? '' }),
     now: () => 1000,
+    // Fake mic never delivers until a test emits; keep start() off the real bound.
+    micReadyTimeoutMs: 0,
     ...depsOverride,
   };
   const events: ChannelEvent[] = [];
@@ -356,6 +358,26 @@ describe('system.listen_start — STT pre-warm', () => {
   it('still unloads on a safety phrase after a failed pre-warm', async () => {
     const safety = fakeSafety();
     const h = buildHarness(safety.ctx, { prewarm: fails });
+    await driveSafetyPhrase(h);
+    expect(safety.unloadCalls).toEqual(['primary']);
+  });
+});
+
+// VMCP-05.17: `listening` must mean "can hear you". A mic that never opens
+// still has to arm — bounded and logged — rather than hang listen_start.
+describe('system.listen_start — mic readiness', () => {
+  it('arms when the mic never delivers audio within the bound', async () => {
+    const h = buildHarness(null, { micReadyTimeoutMs: 20 });
+    expect(payload(await h.start({}))).toMatchObject({ status: 'listening' });
+  });
+
+  it('arms once the mic goes live and still unloads on a safety phrase', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx, { micReadyTimeoutMs: 10_000 });
+    const starting = h.start({});
+    await new Promise((r) => setImmediate(r));
+    h.audio.emit('data', Buffer.alloc(1024));
+    expect(payload(await starting)).toMatchObject({ status: 'listening' });
     await driveSafetyPhrase(h);
     expect(safety.unloadCalls).toEqual(['primary']);
   });

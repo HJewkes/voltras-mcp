@@ -96,6 +96,23 @@ export type WhisperFn = (audio: Buffer, model: SttModelName) => Promise<{ transc
  */
 export type PrewarmFn = (model: SttModelName) => Promise<void>;
 
+/**
+ * How long `start()` waits for the mic to deliver its first PCM before arming
+ * anyway (VMCP-05.17).
+ *
+ * sox + CoreAudio need ~0.5-0.7 s to open the input device; measured on the
+ * bench Mac, the first byte lands 529-734 ms after `start()`. Until then the
+ * stream is silent and anything spoken is lost outright — not delayed, lost —
+ * so reporting `listening` before that point makes `listen_start` lie about the
+ * one thing it promises.
+ *
+ * 2 s is ~3x the observed worst case, enough headroom for a loaded machine
+ * without making a genuinely dead mic (no device, permission denied) hang the
+ * caller. The wait is bounded rather than infinite precisely so that case still
+ * arms — degraded and logged — instead of refusing to arm.
+ */
+export const MIC_READY_TIMEOUT_MS = 2000;
+
 /** Logical clock; tests inject a fake to keep timestamps deterministic. */
 export type NowFn = () => number;
 
@@ -105,6 +122,8 @@ export interface VoiceListenerDeps {
   whisper: WhisperFn;
   prewarm?: PrewarmFn;
   now?: NowFn;
+  /** Override the mic-readiness bound; tests inject a small value. */
+  micReadyTimeoutMs?: number;
 }
 
 export interface StartArgs {
@@ -261,6 +280,9 @@ export class VoiceListener {
   /** Closed utterances awaiting whisper; drained one at a time (FIFO). */
   private transcriptionQueue: PendingUtterance[] = [];
   private drainingTranscriptions = false;
+  /** Resolves the moment the mic delivers its first byte; see `awaitMicReady`. */
+  private firstAudio: Promise<void> | null = null;
+  private releaseFirstAudio: (() => void) | null = null;
 
   constructor(deps: VoiceListenerDeps, events: VoiceListenerEvents = {}) {
     this.deps = { now: () => Date.now(), ...deps };
@@ -298,7 +320,15 @@ export class VoiceListener {
     log.debug('VoiceListener: unmuted (TTS ducking lifted)');
   }
 
-  /** Bring the listener up. Idempotent — second call returns the same state. */
+  /**
+   * Bring the listener up. Idempotent — second call returns the same state.
+   *
+   * Resolves once the mic is actually delivering audio (bounded by
+   * MIC_READY_TIMEOUT_MS), so a caller that has been told `listening` can trust
+   * that a word spoken from that instant is heard. The pre-warm is still fired
+   * without awaiting — it runs during the mic open, which is exactly the dead
+   * time it was designed to fill.
+   */
   async start(args: StartArgs): Promise<void> {
     if (this.state !== 'idle') return;
     this.startArgs = args;
@@ -314,6 +344,35 @@ export class VoiceListener {
     this.state = 'listening';
     this.wireAudio();
     this.firePrewarm(args.sttModel);
+    await this.awaitMicReady();
+  }
+
+  /**
+   * Block until the mic produces its first byte, or the bound elapses. Never
+   * throws: a mic that never delivers audio still arms (degraded), because a
+   * listener that refuses to arm is strictly worse than one that may be deaf.
+   */
+  private async awaitMicReady(): Promise<void> {
+    const pending = this.firstAudio;
+    if (pending === null) return;
+    const timeoutMs = this.deps.micReadyTimeoutMs ?? MIC_READY_TIMEOUT_MS;
+    const startedAt = this.deps.now!();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+    const outcome = await Promise.race([pending.then((): 'ready' => 'ready'), bound]);
+    clearTimeout(timer);
+    if (outcome === 'timeout') {
+      // A real diagnostic signal: no input device, denied mic permission, or a
+      // wedged recorder. Arming deaf and silent is the defect being fixed here.
+      log.warn(
+        `VoiceListener: mic delivered no audio within ${timeoutMs} ms — arming anyway, ` +
+          'speech may be missed (check input device and microphone permission).',
+      );
+      return;
+    }
+    log.debug(`VoiceListener: mic live after ${this.deps.now!() - startedAt} ms`);
   }
 
   /**
@@ -333,6 +392,9 @@ export class VoiceListener {
   /** Tear everything down. Idempotent. Drops any pending/queued audio. */
   async stop(): Promise<void> {
     if (this.state === 'idle') return;
+    // A stop racing a still-arming start must not leave it parked on the bound.
+    this.markMicLive();
+    this.firstAudio = null;
     this.audio?.stop();
     this.segmenter?.flush();
     this.vad?.reset();
@@ -349,12 +411,24 @@ export class VoiceListener {
   private wireAudio(): void {
     const audio = this.audio;
     if (audio === null) return;
+    this.firstAudio = new Promise<void>((resolve) => {
+      this.releaseFirstAudio = resolve;
+    });
     audio.stream.on('data', (chunk: Buffer) => {
+      this.markMicLive();
       this.enqueueFrames(chunk);
     });
     audio.stream.on('error', (err) => {
+      // Release the readiness wait too — this mic is never going to deliver.
+      this.markMicLive();
       this.emitError({ code: 'AUDIO_STREAM_ERROR', message: err.message });
     });
+  }
+
+  /** Release anyone blocked in `awaitMicReady`. Idempotent. */
+  private markMicLive(): void {
+    this.releaseFirstAudio?.();
+    this.releaseFirstAudio = null;
   }
 
   /** Reframe arbitrary mic chunks into aligned 512-sample frames, then drain. */
