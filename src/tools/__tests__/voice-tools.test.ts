@@ -31,7 +31,10 @@ interface Harness {
   whisperTranscripts: string[];
 }
 
-function buildHarness(safety: VoiceSafetyContext | null = null): Harness {
+function buildHarness(
+  safety: VoiceSafetyContext | null = null,
+  depsOverride: Partial<VoiceListenerDeps> = {},
+): Harness {
   const audio = new PassThrough();
   const probs: number[] = [];
   const vad: Vad = { process: async () => probs.shift() ?? 0, reset: vi.fn() };
@@ -41,6 +44,7 @@ function buildHarness(safety: VoiceSafetyContext | null = null): Harness {
     vadFactory: () => vad,
     whisper: async () => ({ transcript: whisperTranscripts.shift() ?? '' }),
     now: () => 1000,
+    ...depsOverride,
   };
   const events: ChannelEvent[] = [];
   const publisher: ChannelPublisher = {
@@ -256,5 +260,120 @@ describe('Tier-A safety fast-path (VMCP-02.78)', () => {
 
     expect(safety.unloadCalls).toEqual([]);
     expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
+  });
+});
+
+// The hardware defect, end to end (VMCP-02.83): whisper's real output carries
+// timestamp markup, which spent the safety word budget and silently downgraded
+// a reflexive "wait stop the weight" to ambient speech — no unload. These drive
+// the whole tool path with the exact strings captured on the bench.
+describe('Tier-A safety fast-path — whisper timestamp markup', () => {
+  const TIMESTAMP = '[00:00:00.000 --> 00:00:00.840]';
+
+  async function drive(h: Harness, transcript: string): Promise<void> {
+    await h.start({});
+    h.whisperTranscripts.push(transcript);
+    feedSegment(h);
+    await settle();
+  }
+
+  it('unloads on a timestamped reflexive utterance', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx);
+    await drive(h, `${TIMESTAMP}   wait stop the weight`);
+    expect(safety.unloadCalls).toEqual(['primary']);
+  });
+
+  it('unloads on a timestamped bare stop', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx);
+    await drive(h, `${TIMESTAMP}   Stop.`);
+    expect(safety.unloadCalls).toEqual(['primary']);
+  });
+
+  it('reaches the same verdict with and without the markup', async () => {
+    for (const bare of ['Stop.', 'wait stop the weight']) {
+      const withMarkup = fakeSafety();
+      const without = fakeSafety();
+      await drive(buildHarness(withMarkup.ctx), `${TIMESTAMP}   ${bare}`);
+      await drive(buildHarness(without.ctx), bare);
+      expect(withMarkup.unloadCalls).toEqual(without.unloadCalls);
+    }
+  });
+
+  it('keeps the negation gate closed through the markup', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx);
+    await drive(h, `${TIMESTAMP}   don't stop`);
+    expect(safety.unloadCalls).toEqual([]);
+    expect(h.events.some((e) => e.meta.event_type === 'deterministic_stop_triggered')).toBe(false);
+  });
+
+  it('keeps the conversational gate closed through the markup', async () => {
+    const safety = fakeSafety();
+    const h = buildHarness(safety.ctx);
+    await drive(h, `${TIMESTAMP}   we can stop after this set`);
+    expect(safety.unloadCalls).toEqual([]);
+  });
+
+  it('keeps the idle gate closed through the markup (nothing loaded)', async () => {
+    const safety = fakeSafety({
+      evaluate: () => ({ warranted: false, reason: 'no_active_set', setId: null }),
+    });
+    const h = buildHarness(safety.ctx);
+    await drive(h, `${TIMESTAMP}   wait stop the weight`);
+    expect(safety.unloadCalls).toEqual([]);
+  });
+
+  it('publishes a markup-free transcript', async () => {
+    const h = buildHarness();
+    await drive(h, `${TIMESTAMP}   Stop.`);
+    const inputs = h.events.filter((e) => e.meta.event_type === 'voice_input');
+    expect(inputs).toHaveLength(1);
+    expect(JSON.parse(inputs[0].content).transcript).not.toContain('-->');
+  });
+});
+
+// The bench saw latency_ms: 0 / audio_duration_ms: 0 on every event because the
+// safety fallback published hardcoded zeros. The deaf-window safety measurement
+// cannot be performed without these.
+describe('voice_input timing instrumentation', () => {
+  function advancingClock(): () => number {
+    let t = 1000;
+    return () => (t += 50);
+  }
+
+  it('reports measured latency on the safety fallback path', async () => {
+    const safety = fakeSafety({
+      evaluate: () => ({ warranted: false, reason: 'no_active_set', setId: null }),
+    });
+    const h = buildHarness(safety.ctx, { now: advancingClock() });
+    await h.start({});
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+
+    const content = JSON.parse(
+      h.events.filter((e) => e.meta.event_type === 'voice_input')[0].content,
+    ) as { latency_ms: number; audio_duration_ms: number };
+    expect(content.latency_ms).toBeGreaterThan(0);
+    expect(content.audio_duration_ms).toBeGreaterThan(0);
+  });
+
+  it('reports measured latency on the wake path', async () => {
+    const h = buildHarness(null, { now: advancingClock() });
+    await h.start({});
+    h.whisperTranscripts.push('hey coach start a set');
+    feedSegment(h);
+    await settle();
+
+    const event = h.events.filter((e) => e.meta.event_type === 'voice_input')[0];
+    const content = JSON.parse(event.content) as {
+      latency_ms: number;
+      audio_duration_ms: number;
+    };
+    expect(content.latency_ms).toBeGreaterThan(0);
+    expect(content.audio_duration_ms).toBeGreaterThan(0);
+    expect(event.meta.latency_ms).not.toBe('0');
   });
 });

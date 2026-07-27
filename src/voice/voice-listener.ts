@@ -26,6 +26,7 @@ import type { SystemListenStartInputType } from '../schemas/voice.js';
 import { SpeechSegmenter } from './speech-segmenter.js';
 import { routeTranscript } from './transcript-router.js';
 import { createSileroVad, VAD_FRAME_SAMPLES, type Vad } from './vad.js';
+import { stripWhisperMarkup } from './whisper-markup.js';
 
 // VMCP-02.38: the package is `"type": "module"`, so the bare CommonJS `require`
 // global is undefined at runtime. Reconstruct a CJS-style `require` from the
@@ -61,6 +62,9 @@ export interface VoiceInputEvent {
 export interface SafetyPhraseEvent {
   matchedPhrase: string;
   transcript: string;
+  /** Utterance-close → transcript-resolved, same clock as VoiceInputEvent. */
+  latencyMs: number;
+  audioDurationMs: number;
 }
 
 export interface VoiceListenerEvents {
@@ -86,6 +90,12 @@ export type VadFactory = () => Vad;
 /** STT invocation contract. Production wraps `nodejs-whisper`. */
 export type WhisperFn = (audio: Buffer, model: SttModelName) => Promise<{ transcript: string }>;
 
+/**
+ * Optional STT warm-up, run once when the mic is armed. Arming is exactly when
+ * we want to pay a cold-start cost; mid-set is not. Omitted by test deps.
+ */
+export type PrewarmFn = (model: SttModelName) => Promise<void>;
+
 /** Logical clock; tests inject a fake to keep timestamps deterministic. */
 export type NowFn = () => number;
 
@@ -93,6 +103,7 @@ export interface VoiceListenerDeps {
   audioFactory: AudioSourceFactory;
   vadFactory: VadFactory;
   whisper: WhisperFn;
+  prewarm?: PrewarmFn;
   now?: NowFn;
 }
 
@@ -160,10 +171,34 @@ export function defaultWhisper(): WhisperFn {
         removeWavFileAfterTranscription: false,
         whisperOptions: { outputInText: true },
       });
-      return { transcript: transcript.trim() };
+      // whisper-cli prints timestamp markup in front of every segment and
+      // nodejs-whisper hands its stdout back verbatim. Strip it here so the
+      // WhisperFn contract is "the words the speaker said" — the safety word
+      // budget downstream must not be spent on markup. See whisper-markup.ts.
+      return { transcript: stripWhisperMarkup(transcript) };
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
+  };
+}
+
+/**
+ * Silent audio just long enough to be a valid whisper input. The transcript is
+ * discarded — the point is the side effects: whisper-cli paged in, the ~75 MB
+ * model file in the OS page cache, the GPU backend's shader library resolved.
+ */
+const PREWARM_AUDIO_MS = 200;
+
+/**
+ * Default pre-warm: push a short silent buffer through the same STT path a real
+ * utterance takes, so the first real utterance finds everything cached. Cheap
+ * (one extra short transcription) and off the critical path — the caller fires
+ * it without awaiting and a failure is never fatal.
+ */
+export function defaultPrewarm(whisper: WhisperFn): PrewarmFn {
+  const silence = Buffer.alloc((SAMPLE_RATE_HZ * SAMPLE_BYTES * PREWARM_AUDIO_MS) / 1000);
+  return async (model: SttModelName) => {
+    await whisper(silence, model);
   };
 }
 
@@ -278,6 +313,21 @@ export class VoiceListener {
     this.segmenter = new SpeechSegmenter({ maxSegmentMs: args.maxSegmentMs });
     this.state = 'listening';
     this.wireAudio();
+    this.firePrewarm(args.sttModel);
+  }
+
+  /**
+   * Warm the STT path while the user is still walking up to the machine. Never
+   * awaited and never fatal: listen_start must not hang or fail on it, and the
+   * discarded result never reaches the router.
+   */
+  private firePrewarm(model: SttModelName): void {
+    const prewarm = this.deps.prewarm;
+    if (prewarm === undefined) return;
+    void prewarm(model).then(
+      () => log.debug('VoiceListener: STT pre-warm complete'),
+      (err: unknown) => log.debug(`VoiceListener: STT pre-warm failed (non-fatal): ${String(err)}`),
+    );
   }
 
   /** Tear everything down. Idempotent. Drops any pending/queued audio. */
@@ -394,13 +444,23 @@ export class VoiceListener {
   }
 
   private route(
-    transcript: string,
+    raw: string,
     startArgs: StartArgs,
     timing: { latencyMs: number; audioDurationMs: number },
   ): void {
+    // Defence in depth: defaultWhisper already cleans its output, but an
+    // injected WhisperFn (or a future whisper format change) must not put
+    // markup in front of the router OR in the transcript we publish. Case is
+    // preserved — only markup is removed.
+    const transcript = stripWhisperMarkup(raw);
     const result = routeTranscript(transcript, { wakePhrases: startArgs.wakePhrases });
     if (result.tier === 'safety') {
-      this.events.onSafetyPhrase?.({ matchedPhrase: result.matchedPhrase!, transcript });
+      this.events.onSafetyPhrase?.({
+        matchedPhrase: result.matchedPhrase!,
+        transcript,
+        latencyMs: timing.latencyMs,
+        audioDurationMs: timing.audioDurationMs,
+      });
       return;
     }
     if (result.tier === 'wake') {

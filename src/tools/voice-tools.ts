@@ -25,6 +25,7 @@ import {
 import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
 import {
   defaultAudioFactory,
+  defaultPrewarm,
   defaultVadFactory,
   defaultWhisper,
   resolveStartArgs,
@@ -88,7 +89,13 @@ const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
 async function runSafetyFastPath(
   channels: ChannelPublisher,
   safety: VoiceSafetyContext | null,
-  ev: { matchedPhrase: string; transcript: string; sttModel: SttModelName },
+  ev: {
+    matchedPhrase: string;
+    transcript: string;
+    sttModel: SttModelName;
+    latencyMs: number;
+    audioDurationMs: number;
+  },
 ): Promise<void> {
   const verdict = safety === null ? null : evaluateSafely(safety);
   if (safety === null || verdict === null || !verdict.warranted) {
@@ -126,9 +133,16 @@ function evaluateSafely(
 
 function publishVoiceInput(
   channels: ChannelPublisher,
-  ev: { transcript: string; sttModel: SttModelName },
+  ev: {
+    transcript: string;
+    sttModel: SttModelName;
+    latencyMs: number;
+    audioDurationMs: number;
+  },
 ): void {
-  channels.publish(buildVoiceInputPayload(ev.transcript, 0, ev.sttModel, 0));
+  channels.publish(
+    buildVoiceInputPayload(ev.transcript, ev.latencyMs, ev.sttModel, ev.audioDurationMs),
+  );
 }
 
 function safetyUnloadFailedPayload(err: unknown): ChannelEvent {
@@ -230,11 +244,13 @@ async function startListener(
     onVoiceInput: ({ transcript, latencyMs, sttModel, audioDurationMs }) => {
       channels.publish(buildVoiceInputPayload(transcript, latencyMs, sttModel, audioDurationMs));
     },
-    onSafetyPhrase: ({ matchedPhrase, transcript }) => {
+    onSafetyPhrase: ({ matchedPhrase, transcript, latencyMs, audioDurationMs }) => {
       void runSafetyFastPath(channels, safety, {
         matchedPhrase,
         transcript,
         sttModel: startArgs.sttModel,
+        latencyMs,
+        audioDurationMs,
       });
     },
     onError: (err) => {
@@ -284,9 +300,11 @@ async function stopListener(state: VoiceToolState): Promise<ToolResult> {
  * missing install surfaces as `LISTENER_START_FAILED` at start() time.
  */
 function buildProductionDeps(): VoiceListenerDeps {
+  const whisper = defaultWhisper();
   return {
     audioFactory: defaultAudioFactory,
     vadFactory: defaultVadFactory,
-    whisper: defaultWhisper(),
+    whisper,
+    prewarm: defaultPrewarm(whisper),
   };
 }
