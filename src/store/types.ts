@@ -229,6 +229,23 @@ export interface StoredSet {
    * never `max()`'d with it. The device counts; we only enrich.
    */
   firmwareRepCount?: number;
+  /**
+   * The duration field carried on the device's set-summary frame, in ms.
+   *
+   * NAMED FOR ITS PROVENANCE, NOT ITS MEANING. The SDK types this field as
+   * "duration of the final rep"; archived captures refute that — the value
+   * scales with rep count (an 11-rep set reports ~11 s while its final rep took
+   * ~1.4 s), so it is a SET-level aggregate. It is most consistent with
+   * cumulative concentric time / time-under-tension, but the cross-mode fit
+   * spans 0.45–1.24× against BLE-timestamped spans, which is not tight enough
+   * to name it that.
+   *
+   * Do NOT read it as wall-clock set duration, and do NOT read it as a per-rep
+   * figure, until an instrumented set pins the semantics. Stored because it is
+   * firmware ground truth we would otherwise discard; interpreted only once we
+   * know what it is.
+   */
+  firmwareSummaryDurationMs?: number;
   /** Per-rep firmware boundaries as JSON, for cross-checking segmentation. */
   firmwareRepsJson?: string;
   /**
