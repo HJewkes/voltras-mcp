@@ -284,17 +284,26 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
         // Freeze first, as the steal and release paths do: a departing client
         // can still have an in-flight write tool that would re-engage the motor
         // while we are unloading.
+        //
+        // If another client is ALREADY mid-handover it is surrendering the
+        // device for us, so we neither surrender nor touch the freeze. Calling
+        // abortTransfer() unconditionally here would unfreeze THEIR transfer
+        // mid-surrender and reopen the window this exists to close.
+        let frozenByUs = false;
         try {
           state.lease.beginTransfer();
+          frozenByUs = true;
         } catch {
-          // Someone else is already taking over and will surrender for us.
+          frozenByUs = false;
         }
-        try {
-          await surrenderDevice(state);
-        } catch (err) {
-          log.error('failed to surrender the device on client disconnect', err);
-        } finally {
-          state.lease.abortTransfer();
+        if (frozenByUs) {
+          try {
+            await surrenderDevice(state);
+          } catch (err) {
+            log.error('failed to surrender the device on client disconnect', err);
+          } finally {
+            state.lease.abortTransfer();
+          }
         }
       }
       state.lease.releaseOnDisconnect(clientId);

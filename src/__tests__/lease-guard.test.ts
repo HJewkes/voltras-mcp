@@ -394,6 +394,23 @@ describe('freezing the lease during a handover', () => {
     expect(state.lease.isTransferring()).toBe(true);
   });
 
+  it('a disconnecting client does not unfreeze someone else\'s handover', async () => {
+    // close() must not call abortTransfer() when it did not begin the
+    // transfer: doing so unfreezes the other client's in-flight surrender and
+    // reopens the window the freeze exists to close.
+    // The real shape: A holds an engaged lease, B begins a forced takeover,
+    // and A's pipe drops mid-surrender. A's close() must leave B's freeze
+    // alone. Closing a NON-holder would prove nothing — close() skips the
+    // whole block unless this client holds the lease.
+    await startSetOn(a);
+    expect(state.lease.isHeldBy('client-a')).toBe(true);
+    state.lease.beginTransfer();
+
+    await a.close(state);
+
+    expect(state.lease.isTransferring()).toBe(true);
+  });
+
   it('restores the previous holder when a takeover is refused', async () => {
     await startSetOn(a);
     breakUnload(state.slots.get('primary')!);
