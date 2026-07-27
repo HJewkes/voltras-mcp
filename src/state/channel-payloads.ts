@@ -33,6 +33,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
+import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import type { TriggerSpec } from '../schemas/set.js';
@@ -762,8 +763,22 @@ export interface SetSoFar {
  * NOTE: `partial_reason` is intentionally absent — the set is in-progress
  * when a trigger fires (even one that auto-stops, since the trigger event
  * publishes BEFORE `finalizeSet` so the model sees the trigger first).
+ *
+ * VMCP-05.13: the in-flight rep is excluded. A trigger fires from the
+ * `rep_finalized` path, and the analytics set has ALREADY opened the next rep
+ * by then — a single partial concentric sample with ROM 0 and an all-zero
+ * velocity envelope. Summarising over it made that stub the set's `last_rep_v`
+ * and produced 60.4% velocity loss on a bench set that was still accelerating
+ * (1.62 → 2.27 m/s over 8 reps), where the same set's `set_ended` payload read
+ * 8.9%. `evaluateRepTriggers` already slices the in-flight rep off before
+ * computing the trigger's own baseline; this makes the embedded summary agree.
+ *
+ * Only a PROVABLY in-flight trailing rep is dropped (eccentric never started),
+ * via the same predicate the force-close path uses. A rep we cannot show to be
+ * unfinished is left in.
  */
 export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): SetSoFar {
+  const reps = isTrailingRepIncomplete(set.reps) ? set.reps.slice(0, -1) : set.reps;
   return {
     set: {
       set_id: set.setId,
@@ -774,8 +789,8 @@ export function summarizeSetForTrigger(set: ActiveSet, device: DeviceSnapshot): 
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
     },
-    reps: set.reps.map(serializeRepForPayload),
-    vbt_summary: computeVbtSummary(set.reps),
+    reps: reps.map(serializeRepForPayload),
+    vbt_summary: computeVbtSummary(reps),
   };
 }
 

@@ -102,7 +102,7 @@ describe('finalizeReps — VMCP-02.65 eccentric idle-tail truncate', () => {
   });
 });
 
-describe('finalizeReps — VMCP-02.69a signed peak recompute', () => {
+describe('finalizeReps — VMCP-02.69a peak recompute', () => {
   it('recomputes a stale concentric peak from its samples', () => {
     const conc = phaseFrom([sample(0, CONCENTRIC, 0.1, 300), sample(1, CONCENTRIC, 0.5, 747)]);
     // Simulate the bench bug: the running-aggregate peak went stale (11) and
@@ -115,16 +115,19 @@ describe('finalizeReps — VMCP-02.69a signed peak recompute', () => {
     expect(out[0].concentric.peakVelocity).toBe(747);
   });
 
-  it('keeps the sign when the largest-magnitude eccentric sample is negative', () => {
+  it('reports the magnitude when the largest eccentric sample is negative', () => {
     const conc = phaseFrom([sample(0, CONCENTRIC, 0.1, 400), sample(1, CONCENTRIC, 0.5, 600)]);
     // SDK reports eccentric velocity negative; the analytics aggregate abs()es
-    // it. Recompute must surface the signed value, not the magnitude.
+    // it. VMCP-05.14: the recompute matches that magnitude convention rather
+    // than reintroducing the sign — a signed peak here disagreed with the live
+    // `rep_finalized` event and zeroed `getPhaseVelocityDropPct`, whose first
+    // line returns 0 for any non-positive peak.
     const ecc = phaseFrom([sample(2, ECCENTRIC, 0.5, -300), sample(3, ECCENTRIC, 0.1, -800)]);
     expect(ecc.peakVelocity).toBeGreaterThan(0); // aggregate is magnitude-only
 
     const out = finalizeReps([rep(1, conc, ecc)]);
 
-    expect(out[0].eccentric.peakVelocity).toBe(-800);
+    expect(out[0].eccentric.peakVelocity).toBe(800);
   });
 });
 
