@@ -74,8 +74,12 @@ function mapSamplePhase(phase: Sample['phase']): SamplePhase {
       return 'concentric';
     case MovementPhase.ECCENTRIC:
       return 'eccentric';
+    case MovementPhase.HOLD:
+      // A DELIBERATE hold under load — the band names it. This boundary used to fold HOLD
+      // into `idle`, which threw away the only evidence that a prescribed bottom/top hold
+      // was actually performed: a held bottom and dead air rendered identically.
+      return 'hold';
     default:
-      // IDLE and HOLD both read as a neutral pause on the zero-axis.
       return 'idle';
   }
 }
