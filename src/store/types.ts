@@ -455,6 +455,65 @@ export interface SessionListFilter {
 }
 
 /**
+ * Filter parameters for `countSessions`. Mirrors {@link SessionListFilter}'s
+ * predicate half plus the user dimension; the pagination and ordering members
+ * (`sort` / `limit` / `offset`) are deliberately IGNORED by the count, because
+ * the count of a page is not a count.
+ */
+export type SessionCountFilter = SessionListFilter & { userId?: string };
+
+/**
+ * Why a set was performed. The four values the `sets.set_purpose` CHECK
+ * constraint admits; `'warmup'` is the one `StoredSet.isWarmup` reflects (the
+ * `is_warmup` column is GENERATED from this one, so the two cannot drift).
+ */
+export type SetPurpose = 'working' | 'warmup' | 'probe' | 'technique';
+
+/** Filter parameters for `countSets`. */
+export interface SetCountFilter {
+  userId?: string;
+  sessionId?: string;
+  /**
+   * Count bilateral GROUPS rather than rows. A two-armed lift is stored as two
+   * rows sharing a `bilateral_group_id` — deliberately, since merging them
+   * would force picking one of two firmware rep counts — so "how many sets did
+   * I do?" has two legitimate answers and the caller picks which one it means.
+   *
+   * A NULL `bilateral_group_id` is NOT a group: every ungrouped row counts as
+   * one on its own. Defaults to `false` (count rows).
+   */
+  collapseBilateral?: boolean;
+}
+
+/**
+ * Filter parameters for `getSetsForExercise`. `userId` and `exerciseId` are
+ * required because they are the key: a per-exercise history that spans users,
+ * or one that has to scan every exercise to find one, is not the query.
+ */
+export interface ExerciseSetsFilter {
+  userId: string;
+  exerciseId: string;
+  /** Inferred physical configuration (bench height, attachment, stance). */
+  setupId?: string;
+  /** Physical limb, as resolved at write time. Never `slot`. */
+  side?: StoredSide;
+  /** Versioned settings-context hash, `'v1:<hash>'`. */
+  settingsHash?: string;
+  /**
+   * Purposes to include. An EMPTY array matches nothing — an empty filter list
+   * that silently means "all" is how a caller ends up analysing warm-ups as
+   * working sets without ever seeing an error.
+   */
+  purpose?: SetPurpose[];
+  /** Inclusive lower bound on `startedAt`. */
+  from?: string;
+  /** Inclusive upper bound on `startedAt`. */
+  to?: string;
+  /** Absent means unbounded, matching `getSetsForSession`. */
+  limit?: number;
+}
+
+/**
  * Stored telemetry snapshot for a single device read. Reserved for future
  * persistence of device-state samples; not used in Wave 1 transport flows but
  * declared here so the WA-04 alignment is type-checked end to end.
@@ -580,8 +639,38 @@ export interface SessionStore {
   /** Filtered/paginated session listing. */
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
 
+  /**
+   * Number of sessions matching `filter`. Same predicates as `listSessions`
+   * plus `userId`, and it counts the whole match rather than a page — asking
+   * "how many sessions have I recorded" through `listSessions` means listing
+   * every row and counting them in JS, which is both wasteful and silently
+   * wrong the moment the default limit clips the result.
+   */
+  countSessions(filter?: SessionCountFilter): Promise<number>;
+
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
+
+  /**
+   * Number of sets matching `filter`, optionally collapsing bilateral pairs
+   * into one — see {@link SetCountFilter.collapseBilateral}.
+   */
+  countSets(filter: SetCountFilter): Promise<number>;
+
+  /**
+   * Every set a user performed for one exercise, oldest-first (ascending on
+   * `startedAt`, matching `getSetsForSession`), reps loaded.
+   *
+   * The per-exercise query had no key until schema v7 put `exercise_id` on the
+   * set row: before that, "show me my last ten bench sets" could only be
+   * answered by walking sessions and hoping each held one exercise. Every
+   * optional member narrows further and they COMPOSE (AND).
+   *
+   * Filters on `side`, never `slot`: a slot id names a position at a moment in
+   * time and `slot.swap` reassigns it, so a per-side series keyed on slot flips
+   * sign across a swap with nothing erroring.
+   */
+  getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
 
   // --- Idle reps (v7 schema) ---
 
@@ -654,11 +743,20 @@ export interface SessionStore {
 
   /** Upsert a block (mesocycle) within a program. */
   putTrainingBlock(b: StoredTrainingBlock): Promise<void>;
+  /**
+   * Look up a block by id. One of the three by-id getters that make the
+   * planning tree walkable UPWARD (set → planned exercise → template → week →
+   * block → program); without them the only way from a leaf back to its
+   * ancestors is to enumerate every program and scan.
+   */
+  getTrainingBlock(id: string): Promise<StoredTrainingBlock | undefined>;
   /** Return every block in a program, ordered by `orderIndex` ascending. */
   getTrainingBlocksForProgram(programId: string): Promise<StoredTrainingBlock[]>;
 
   /** Upsert a week within a block. */
   putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
+  /** Look up a week by id; `undefined` when no row matches. */
+  getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   /** Return every week in a block, ordered by `orderIndex` ascending. */
   getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]>;
 
@@ -671,6 +769,8 @@ export interface SessionStore {
 
   /** Upsert a planned exercise within a workout template. */
   putPlannedExercise(e: StoredPlannedExercise): Promise<void>;
+  /** Look up a planned exercise by id; `undefined` when no row matches. */
+  getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
 

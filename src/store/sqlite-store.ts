@@ -22,8 +22,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
 import type {
+  ExerciseSetsFilter,
+  SessionCountFilter,
   SessionListFilter,
   SessionStore,
+  SetCountFilter,
   StoredIdleRep,
   StoredIsometricMeasurement,
   StoredIsometricSideMeasurement,
@@ -1367,12 +1370,111 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToSession));
   }
 
+  async countSessions(filter: SessionCountFilter = {}): Promise<number> {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.from !== undefined) {
+      where.push('started_at >= ?');
+      params.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      where.push('started_at <= ?');
+      params.push(filter.to);
+    }
+    if (filter.exerciseId !== undefined) {
+      where.push('exercise_id = ?');
+      params.push(filter.exerciseId);
+    }
+    if (filter.userId !== undefined) {
+      where.push('user_id = ?');
+      params.push(filter.userId);
+    }
+    // `sort` / `limit` / `offset` are intentionally not applied: they describe
+    // a page, and the count of a page is not a count.
+    const sql =
+      `SELECT COUNT(*) AS n FROM sessions` + (where.length ? ` WHERE ${where.join(' AND ')}` : '');
+    const row = this.db.prepare(sql).get(...params) as { n: number } | undefined;
+    return Promise.resolve(row?.n ?? 0);
+  }
+
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
     const rows = this.db
       .prepare(`SELECT * FROM sets WHERE session_id = ? ORDER BY started_at ASC`)
       .all(sessionId) as unknown as SetRow[];
     const sets = rows.map((row) => rowToSet(row, this.loadRepsForSet(row.id)));
     return Promise.resolve(sets);
+  }
+
+  async countSets(filter: SetCountFilter): Promise<number> {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.userId !== undefined) {
+      where.push('user_id = ?');
+      params.push(filter.userId);
+    }
+    if (filter.sessionId !== undefined) {
+      where.push('session_id = ?');
+      params.push(filter.sessionId);
+    }
+    // Collapsed = groups, not rows. Written as two terms rather than one
+    // `COUNT(DISTINCT bilateral_group_id)` because SQL folds every NULL into a
+    // single DISTINCT bucket — or, in SQLite's case, drops them entirely — and
+    // either way an ungrouped set is not a group. The first term counts each
+    // NULL-group row on its own; the second counts each real group once.
+    const expr = filter.collapseBilateral
+      ? `COALESCE(SUM(CASE WHEN bilateral_group_id IS NULL THEN 1 ELSE 0 END), 0)
+           + COUNT(DISTINCT bilateral_group_id)`
+      : 'COUNT(*)';
+    const sql =
+      `SELECT ${expr} AS n FROM sets` + (where.length ? ` WHERE ${where.join(' AND ')}` : '');
+    const row = this.db.prepare(sql).get(...params) as { n: number } | undefined;
+    return Promise.resolve(row?.n ?? 0);
+  }
+
+  async getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]> {
+    // An empty purpose list matches nothing. Treating it as "all" is the
+    // classic footgun: the caller asked for a named subset, got the whole
+    // table, and nothing errored.
+    if (filter.purpose !== undefined && filter.purpose.length === 0) {
+      return Promise.resolve([]);
+    }
+    const where: string[] = ['user_id = ?', 'exercise_id = ?'];
+    const params: (string | number)[] = [filter.userId, filter.exerciseId];
+    if (filter.setupId !== undefined) {
+      where.push('setup_id = ?');
+      params.push(filter.setupId);
+    }
+    // `side`, never `slot` — see the ExerciseSetsFilter doc comment.
+    if (filter.side !== undefined) {
+      where.push('side = ?');
+      params.push(filter.side);
+    }
+    if (filter.settingsHash !== undefined) {
+      where.push('settings_hash = ?');
+      params.push(filter.settingsHash);
+    }
+    if (filter.purpose !== undefined) {
+      where.push(`set_purpose IN (${filter.purpose.map(() => '?').join(', ')})`);
+      params.push(...filter.purpose);
+    }
+    if (filter.from !== undefined) {
+      where.push('started_at >= ?');
+      params.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      where.push('started_at <= ?');
+      params.push(filter.to);
+    }
+    // Ascending, matching `getSetsForSession`: these rows are read as a
+    // progression over time, and two per-set readers disagreeing on direction
+    // is a bug that only shows up in the chart.
+    let sql = `SELECT * FROM sets WHERE ${where.join(' AND ')} ORDER BY started_at ASC`;
+    if (filter.limit !== undefined) {
+      sql += ' LIMIT ?';
+      params.push(filter.limit);
+    }
+    const rows = this.db.prepare(sql).all(...params) as unknown as SetRow[];
+    return Promise.resolve(rows.map((row) => rowToSet(row, this.loadRepsForSet(row.id))));
   }
 
   // --- Idle reps (v7 schema) ---
@@ -1606,6 +1708,13 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve();
   }
 
+  async getTrainingBlock(id: string): Promise<StoredTrainingBlock | undefined> {
+    const row = this.db.prepare(`SELECT * FROM training_blocks WHERE id = ?`).get(id) as
+      | TrainingBlockRow
+      | undefined;
+    return Promise.resolve(row ? rowToTrainingBlock(row) : undefined);
+  }
+
   async getTrainingBlocksForProgram(programId: string): Promise<StoredTrainingBlock[]> {
     const rows = this.db
       .prepare(`SELECT * FROM training_blocks WHERE program_id = ? ORDER BY order_index ASC`)
@@ -1626,6 +1735,13 @@ export class SqliteSessionStore implements SessionStore {
       )
       .run(w.id, w.blockId, w.orderIndex, w.name ?? null);
     return Promise.resolve();
+  }
+
+  async getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined> {
+    const row = this.db.prepare(`SELECT * FROM training_weeks WHERE id = ?`).get(id) as
+      | TrainingWeekRow
+      | undefined;
+    return Promise.resolve(row ? rowToTrainingWeek(row) : undefined);
   }
 
   async getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]> {
@@ -1700,6 +1816,13 @@ export class SqliteSessionStore implements SessionStore {
         e.notes ?? null,
       );
     return Promise.resolve();
+  }
+
+  async getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined> {
+    const row = this.db.prepare(`SELECT * FROM planned_exercises WHERE id = ?`).get(id) as
+      | PlannedExerciseRow
+      | undefined;
+    return Promise.resolve(row ? rowToPlannedExercise(row) : undefined);
   }
 
   async getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]> {
