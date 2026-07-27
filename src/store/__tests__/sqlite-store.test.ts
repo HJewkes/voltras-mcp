@@ -122,7 +122,11 @@ describe('SqliteSessionStore', () => {
       const set = makeSet();
       await store.putSet(set);
       const fetched = await store.getSet(set.id);
-      expect(fetched).toEqual(set);
+      // `source` comes back even though the write omitted it: the v7 column is
+      // NOT NULL DEFAULT 'local', so every row genuinely has a provenance. That
+      // is the point of the column — an unmarked row is what let mock-adapter
+      // sets pass as real hardware.
+      expect(fetched).toEqual({ ...set, source: 'local' });
     });
 
     it('returns undefined from getSet when id is missing', async () => {

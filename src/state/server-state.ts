@@ -226,6 +226,16 @@ export interface ServerState {
    */
   setStartDeviceSnapshots: Map<string, DeviceSnapshot>;
   /**
+   * Per-slot epoch-ms of the most recent set close, used to measure the
+   * ACHIEVED rest before the next set on that slot (v7 `rest_before_sec`).
+   *
+   * In-memory on purpose. After a restart the previous close time is genuinely
+   * unknown, and the next set records an absent rest rather than one computed
+   * across a gap of unknown length — a gap is detectable downstream, an
+   * invented interval is not.
+   */
+  lastSetEndedAtMs: Map<string, number>;
+  /**
    * Per-set idle-timeout watchdog backing the trigger DSL's
    * `idle_timeout_ms` spec. Armed at `set.start` when the watch config
    * registers any idle thresholds (smallest threshold wins, one watchdog
@@ -343,6 +353,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     const channelDelivery = new ChannelDeliveryTracker();
     const timers = new Map<string, PushTimer>();
     const setStartDeviceSnapshots = new Map<string, DeviceSnapshot>();
+    const lastSetEndedAtMs = new Map<string, number>();
     const setWatchdog = new SetWatchdog();
     const restTimers = new RestTimerRegistry();
     const slots = new Map<string, SlotState>();
@@ -364,6 +375,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       channelDelivery,
       timers,
       setStartDeviceSnapshots,
+      lastSetEndedAtMs,
       setWatchdog,
       restTimers,
       voice: makeVoiceHolder(),

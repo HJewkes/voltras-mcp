@@ -108,6 +108,7 @@ import type {
   SetSummaryEvent,
   SummaryEvent,
   TelemetryFrame,
+  VoltraClient,
 } from '@voltras/node-sdk';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
@@ -156,6 +157,8 @@ import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
+import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -295,6 +298,69 @@ export function peakConcentricForceSoFar(reps: readonly Rep[], throughIndex: num
   return reps
     .slice(0, throughIndex + 1)
     .reduce((max, rep) => Math.max(max, rep.concentric.peakForce), 0);
+}
+
+/**
+ * Persist one idle-arm rep at the instant it was detected (Wave 1-S).
+ *
+ * The live surfaces for idle reps — the `idle_rep` / `idle_rep_summary` channel
+ * events and `LiveState.idleReps` — are coaching signals, not a record: the
+ * ring is capped at 20 entries, lives in memory, and is reset by
+ * `session.start`. Flushing it later would lose everything past the cap and
+ * everything before a crash, so the row is written here, per rep, or not at all.
+ *
+ * FIRE-AND-FORGET BY CONSTRUCTION. `onFrame` is synchronous and runs at
+ * telemetry rate; awaiting a write here would stall live telemetry behind disk
+ * I/O. The promise is detached with an explicit `.catch`, and the whole body is
+ * wrapped so a store that throws synchronously cannot escape into the frame
+ * handler either. Idle-rep capture is additive: when the write fails, the
+ * channel events and the ring behave exactly as they did before this existed.
+ *
+ * Context is populated from what is genuinely knowable at this call site and
+ * omitted otherwise — no `0` weight, no invented session, no defaulted side.
+ */
+function persistIdleRep(
+  state: ServerState,
+  slotId: string,
+  client: VoltraClient,
+  live: LiveState,
+  rep: Rep,
+): void {
+  try {
+    const stored: StoredIdleRep = {
+      id: randomUUID(),
+      userId: LOCAL_USER_ID,
+      observedAt: new Date().toISOString(),
+      slot: slotId,
+      rep,
+    };
+    // An idle rep with no active session is a NORMAL case — the user walks up
+    // and pulls the handle. The column is nullable for exactly that; the rep is
+    // just as real, so it is persisted session-less rather than dropped.
+    const sessionId = live.session?.sessionId;
+    if (sessionId !== undefined) stored.sessionId = sessionId;
+    const deviceId = client.connectedDeviceId;
+    if (typeof deviceId === 'string') {
+      stored.deviceId = deviceId;
+      // Resolved at WRITE time from the same `deviceId → physicalSide` binding
+      // `resolvePersistedSide` (set-tools.ts) reads for sets. Unresolvable — an
+      // unbound device — leaves `side` absent; never defaulted.
+      const side = state.slotBindings?.get(deviceId)?.physicalSide;
+      if (side === 'left' || side === 'right') stored.side = side;
+    }
+    // Header weight only when the device actually reported one. A `0` here
+    // would read downstream as a measured unloaded pull.
+    const weightLbs = live.snapshotDevice().weightLbs;
+    if (typeof weightLbs === 'number') stored.weightLbs = weightLbs;
+    // `state.store?.` tolerates the bridge's partial test harnesses (which omit
+    // `store`), matching the `state.config?.repSource` read below; production
+    // state always carries one.
+    void state.store?.putIdleRep(stored).catch((err: unknown) => {
+      log.warn(`idle-rep persist failed on slot ${slotId}: ${String(err)}`);
+    });
+  } catch (err) {
+    log.warn(`idle-rep persist threw on slot ${slotId}: ${String(err)}`);
+  }
 }
 
 /**
@@ -553,6 +619,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             }
             idleRepBatch.count += 1;
           }
+          // Durable capture, AFTER the live emission above so persistence can
+          // never sit between a detected rep and the channel event it owes.
+          persistIdleRep(state, slotId, client, live, idleRep);
         }
         return;
       }

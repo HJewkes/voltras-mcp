@@ -175,7 +175,173 @@ export interface StoredSet {
    * populates it.
    */
   slot?: string;
+
+  // ── v7 capture (Wave 1) ────────────────────────────────────────────────
+  // Everything below was observable at set close and discarded. None of it is
+  // recoverable after the fact, which is why the columns exist before every
+  // writer does.
+
+  /** Owning user. `'local'` under the single-user model. */
+  userId?: string;
+  /**
+   * Exercise this set was performed for, stamped from the active session at
+   * close. Set-level rather than session-level because a session is routinely
+   * multi-exercise, and per-exercise analysis has no key without it.
+   */
+  exerciseId?: string;
+  /** Ordinal within the owning session, 1-based, in start-time order. */
+  setIndexInSession?: number;
+  /**
+   * ACHIEVED rest before this set, in seconds — measured from the previous
+   * set's close on the same slot. Not the prescribed rest, which is a plan
+   * value and lives on `planned_exercises`.
+   *
+   * Absent for the first set of a slot's run and across a server restart: the
+   * previous close time is in-memory, and a gap is the honest answer.
+   */
+  restBeforeSec?: number;
+  /** Battery percentage reported by the unit at close. */
+  batteryPct?: number;
+  /**
+   * Provenance of the row. `VOLTRA_ADAPTER=mock` writes into the same store as
+   * real hardware, so without this any corpus fit silently ingests synthetic
+   * sets. `'imported'` is reserved for a future import path.
+   */
+  source?: 'local' | 'imported' | 'mock';
+  /**
+   * Scale of `WorkoutSample.position` on this set's reps. A MARKER, not a
+   * conversion: it records which scale the samples are already in so existing
+   * rows stay interpretable when the bridge conversion lands, rather than
+   * being silently rescaled.
+   */
+  positionUnits?: 'device_native' | 'meters';
+  /**
+   * Telemetry sample rate for this set, in Hz, MEASURED from the sample
+   * timestamps rather than assumed. There is no configured rate to read: the
+   * rate is emergent from the device stream. Recording it now means a later
+   * rate change splits the corpus cleanly instead of blending two resolutions
+   * into one untellable mix.
+   */
+  sampleRateHz?: number;
+  /**
+   * Device rep count as the firmware reported it, VERBATIM. Canonical for
+   * counting — never reconciled against the derived rep array length, and
+   * never `max()`'d with it. The device counts; we only enrich.
+   */
+  firmwareRepCount?: number;
+  /** Per-rep firmware boundaries as JSON, for cross-checking segmentation. */
+  firmwareRepsJson?: string;
+  /**
+   * Groups the two sides of one bilateral effort. Present only when the live
+   * path actually paired them (`groupSource: 'live'`); never inferred, because
+   * a heuristic pairing lacks the opposite-slot guard the live path has and
+   * would create pairs the live path could not.
+   */
+  bilateralGroupId?: string;
+  /** How `bilateralGroupId` was established. Always `'live'` on new writes. */
+  groupSource?: 'live' | 'inferred';
+
+  // ── Device settings context (an observation of readable config) ────────
+  // Distinct from `setupId`, which is inferred physical configuration. A
+  // chains set and a constant-load set are indistinguishable without these.
+
+  /** User's chains setting in lbs, from the cmd=0x10 cascade echo. */
+  chainsLbs?: number;
+  /** Damper resistance level (0-9). */
+  damperLevel?: number;
+  /** Eccentric overload percentage. */
+  eccentricPct?: number;
+  /** Inverse-chains flag, as reported. */
+  inverseChains?: boolean;
+  /** Assist-mode raw value. */
+  assistMode?: string;
+  /** Long tail of settings (isokinetic params, band max force) as JSON. */
+  settingsJson?: string;
+  /**
+   * Versioned hash over the whole settings context, `'v1:<hash>'`. The version
+   * prefix is load-bearing: without it, adding a tenth settings dimension makes
+   * old hashes compare equal to new ones and the mismatch is undetectable.
+   */
+  settingsHash?: string;
+
   reps: StoredRep[];
+}
+
+/**
+ * A rep performed while NO set was armed — between sets, during a warm-up, or
+ * while testing a weight on the way to a working load. Real work the user did,
+ * which until schema v7 was detected, surfaced live, and then discarded, so
+ * recorded volume under-counted by an unknown amount.
+ *
+ * Written AT DETECTION, never flushed from the live ring buffer
+ * (`LiveState.idleReps`): that ring is capped at 20 entries, in-memory, and
+ * reset by `session.start`, so a deferred flush loses everything past the cap
+ * and everything before a crash. A rep not persisted at the moment it happened
+ * is unrecoverable.
+ *
+ * Every field but `id` and `observedAt` is optional because an idle rep is
+ * observed with whatever context happens to exist at that instant — which is
+ * routinely less than a set close has. Absent means absent throughout; nothing
+ * here is coalesced to a sentinel.
+ */
+export interface StoredIdleRep {
+  id: string;
+  /** Owning user. `'local'` under the single-user model. */
+  userId?: string;
+  /**
+   * Session the rep landed inside, when one was active.
+   *
+   * GENUINELY ABSENT in the normal case: a user can walk up and pull the handle
+   * with no session started at all, and that rep is exactly as real as one
+   * pulled mid-session. The column is nullable for that reason — never invent a
+   * session id to fill it, and never drop the row for want of one.
+   */
+  sessionId?: string;
+  /**
+   * BLE device id of the unit that recorded the rep — the stable physical
+   * identity and the only one of the three identity fields safe to join on.
+   * Absent when the slot had no connected device id (mock adapter, a rep
+   * detected mid-disconnect).
+   */
+  deviceId?: string;
+  /**
+   * DIAGNOSTIC ONLY — never a join key, never the durable side identity. A slot
+   * id names a POSITION AT A MOMENT IN TIME: `slot.swap` reassigns it, so the
+   * same id can mean a different physical unit before and after. Join on
+   * {@link deviceId}; read sidedness from {@link side}.
+   */
+  slot?: string;
+  /**
+   * Physical limb, RESOLVED AT WRITE TIME from the `deviceId → physicalSide`
+   * binding, exactly as `StoredSet.side` is. Frozen at write because the
+   * binding is mutable: a side derived on read would silently rewrite the
+   * meaning of historical rows.
+   *
+   * Absent — never defaulted — when the device is unbound or there is no
+   * connected device id. A gap is detectable downstream; a plausible wrong limb
+   * is not.
+   */
+  side?: StoredSide;
+  /** ISO-8601 wall-clock instant the rep boundary was detected. */
+  observedAt: string;
+  /**
+   * Header weight on the device when the rep happened, in pounds. Absent when
+   * the device snapshot carries no weight — NOT `0`, which is indistinguishable
+   * from a genuine unloaded pull and is the sentinel class schema v6/v7
+   * deliberately removed.
+   */
+  weightLbs?: number;
+  /**
+   * The full analytics `Rep`, stored as JSON in the `payload` column with the
+   * same non-finite coercion `putSet` applies to a set's reps. Keeping the
+   * whole rep rather than a velocity/ROM summary is the point: the live channel
+   * summary is a coaching surface, and a summarised row could never be
+   * re-analysed the way set reps can.
+   *
+   * Absent when the column is NULL or holds JSON that no longer parses — a
+   * corrupt payload reads back as no payload rather than as a bogus rep.
+   */
+  rep?: Rep;
 }
 
 /**
@@ -416,6 +582,38 @@ export interface SessionStore {
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
+
+  // --- Idle reps (v7 schema) ---
+
+  /**
+   * Persist one rep performed outside any armed set.
+   *
+   * Called from the per-frame detection path, which is synchronous and runs at
+   * telemetry rate: callers MUST NOT await this on the hot path, and a
+   * rejection must be caught and logged rather than allowed to disturb live
+   * telemetry. Idle-rep capture is additive — the channel events and the live
+   * ring buffer behave identically whether or not this write succeeds.
+   *
+   * Same `INSERT OR REPLACE` prohibition as `putSession` / `putSet`: `idle_reps`
+   * hangs off `users` (`ON DELETE CASCADE`) and `sessions` (`ON DELETE SET
+   * NULL`), and a delete-then-insert is the wrong primitive for a table whose
+   * whole purpose is not losing recorded work (#79). Upsert in place.
+   */
+  putIdleRep(rep: StoredIdleRep): Promise<void>;
+
+  /**
+   * List idle reps, oldest-first, filtered by session and/or `observedAt`
+   * window. A `sessionId` filter matches only reps recorded inside that
+   * session; reps observed with no session (a normal case — see
+   * {@link StoredIdleRep.sessionId}) are reachable only through an unfiltered
+   * or time-windowed query.
+   */
+  listIdleReps(filter: {
+    sessionId?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<StoredIdleRep[]>;
 
   // --- Isometric assessments (v6 schema) ---
 

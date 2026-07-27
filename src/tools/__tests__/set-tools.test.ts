@@ -249,6 +249,9 @@ function setup(
     exercises: {} as never,
     channels,
     setStartDeviceSnapshots: new Map(),
+    // v7: finalizeSet records each close here so the next set can measure its
+    // achieved rest. Empty stub — these harnesses assert other behaviour.
+    lastSetEndedAtMs: new Map(),
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
     bilateralReconciler: new BilateralReconciler(),
@@ -802,6 +805,88 @@ describe('set.end', () => {
   let h: Harness;
   beforeEach(() => {
     h = setup();
+  });
+
+  it('stamps v7 capture provenance onto the persisted set', async () => {
+    // Wave 1-S: the values observable at close that used to be dropped. Each is
+    // unrecoverable afterwards, so what is asserted is that they actually reach
+    // the row — not merely that they are computable.
+    startSession(h.live);
+    h.live.applySettings({
+      connected: true,
+      weightLbs: 75,
+      trainingMode: 'WeightTraining',
+      batteryPercent: 88,
+      damperLevel: 4,
+      chainSettingLbs: 20,
+      eccentricPercentTenths: 1100,
+    });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.userId).toBe('local');
+    expect(stored.batteryPct).toBe(88);
+    expect(stored.damperLevel).toBe(4);
+    expect(stored.chainsLbs).toBe(20);
+    expect(stored.eccentricPct).toBe(110);
+    expect(stored.settingsHash).toMatch(/^v1:/);
+    // The marker records the scale the samples are ALREADY in; it must not read
+    // 'meters' until the bridge conversion lands.
+    expect(stored.positionUnits).toBe('device_native');
+    // Provenance, so a corpus fit can exclude synthetic rows.
+    expect(stored.source).toBe('local');
+  });
+
+  it('records no rest before the first set of a slot', async () => {
+    // Achieved rest is the gap since this slot's previous close. The first set
+    // of a run has no previous close, and absent is the honest answer — a 0
+    // would read as "they went straight into it".
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    const first = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(first).not.toHaveProperty('restBeforeSec');
+    // ...and the close is recorded, so the NEXT set on this slot can measure one.
+    expect(h.state.lastSetEndedAtMs.get('primary')).toBeGreaterThan(0);
+  });
+
+  it('marks sets written under the mock adapter as synthetic', async () => {
+    // The highest-value provenance item: VOLTRA_ADAPTER=mock writes into the
+    // same store as real hardware, so without this any corpus fit silently
+    // ingests generated sets alongside measured ones.
+    (h.state as { config: { adapter: string } }).config = { adapter: 'mock' };
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    expect((h.store.putSet.mock.calls[0][0] as StoredSet).source).toBe('mock');
+  });
+
+  it('persists the firmware rep count verbatim, never reconciled with the array length', async () => {
+    // Firmware-canonical counting: the device counts reps and our side only
+    // enriches. A max(derived.length, reported) reconciliation is exactly the
+    // over-count bug this replaces, so a disagreement must persist AS a
+    // disagreement — that is the whole diagnostic value of storing both.
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 75, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.appendRep(makeRep(3));
+    (h.live.set as { firmwareTotalRepCount?: number }).firmwareTotalRepCount = 2;
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.firmwareRepCount).toBe(2);
+    expect(stored.reps.length).toBe(3);
   });
 
   it('persists with partial=false and reps from live state', async () => {
@@ -1760,5 +1845,158 @@ describe('set consumers — REP_SOURCE switch (VMCP-02.29 PR5)', () => {
       expect(meta.rep_count).toBe('2');
       expect(reps.map((r) => r.rep_number)).toEqual([900, 901]);
     });
+  });
+});
+
+// ── Schema v7 — bilateral group id stamped on both sides ──────────────────
+//
+// The two sides of a bilateral effort stay as two rows (merging would force
+// picking one of two firmware-canonical rep counts). `bilateral_group_id` is
+// what makes the relationship durable. The partner side was already persisted
+// during its own close, so grouping it requires a read-modify-write.
+describe('bilateral group id at finalize', () => {
+  const PARTNER_ID = 'set-R';
+  const PARTNER_START = '2025-01-01T00:00:00.500Z';
+
+  function partnerRow(repCount: number): StoredSet {
+    return {
+      id: PARTNER_ID,
+      sessionId: 'sess-R',
+      startedAt: PARTNER_START,
+      endedAt: '2025-01-01T00:00:30.000Z',
+      partial: false,
+      weightLbs: 30,
+      slot: 'secondary',
+      reps: Array.from({ length: repCount }, (_, i) => ({
+        ...makeRep(i + 1),
+        id: `rep-${i}`,
+        setId: PARTNER_ID,
+        index: i,
+      })),
+    } as unknown as StoredSet;
+  }
+
+  /** Back the harness store with a real map so re-puts are observable. */
+  function backWithMap(h: Harness, seed: StoredSet[]): Map<string, StoredSet> {
+    const rows = new Map(seed.map((s) => [s.id, s]));
+    h.store.getSet.mockImplementation(async (id: string) => rows.get(id));
+    h.store.putSet.mockImplementation(async (s: StoredSet) => {
+      rows.set(s.id, s);
+    });
+    return rows;
+  }
+
+  /**
+   * Close a set on `primary` whose start pairs with a seeded opposite-slot
+   * close of `partnerReps` reps.
+   */
+  async function closePairedSet(h: Harness, ownReps: number, partnerReps: number): Promise<void> {
+    (h.state.bilateralReconciler as InstanceType<typeof BilateralReconciler>).record({
+      slotId: 'secondary',
+      setId: PARTNER_ID,
+      sessionId: 'sess-R',
+      startedAtMs: Date.parse(PARTNER_START),
+      repCount: partnerReps,
+      weightLbs: 30,
+    });
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 30, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.set!.startedAt = '2025-01-01T00:00:00.000Z';
+    for (let i = 0; i < ownReps; i += 1) h.live.appendRep(makeRep(i + 1));
+    h.channels.publish.mockClear();
+    await h.invoke('set.end', {});
+  }
+
+  it('stamps the same group id and groupSource live on BOTH sides of a matched pair', async () => {
+    const h = setup();
+    const rows = backWithMap(h, [partnerRow(12)]);
+
+    await closePairedSet(h, 11, 12);
+
+    const closing = [...rows.values()].find((s) => s.id !== PARTNER_ID);
+    const partner = rows.get(PARTNER_ID);
+    expect(closing?.bilateralGroupId).toBeTruthy();
+    expect(closing?.groupSource).toBe('live');
+    expect(partner?.bilateralGroupId).toBe(closing?.bilateralGroupId);
+    expect(partner?.groupSource).toBe('live');
+  });
+
+  it('groups a matched pair whose rep counts are EQUAL (no divergence to report)', async () => {
+    const h = setup();
+    const rows = backWithMap(h, [partnerRow(10)]);
+
+    await closePairedSet(h, 10, 10);
+
+    const closing = [...rows.values()].find((s) => s.id !== PARTNER_ID);
+    expect(closing?.bilateralGroupId).toBeTruthy();
+    expect(rows.get(PARTNER_ID)?.bilateralGroupId).toBe(closing?.bilateralGroupId);
+    const divergences = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'bilateral_divergence',
+    );
+    expect(divergences).toHaveLength(0);
+  });
+
+  it('still publishes bilateral_divergence for a divergent pair, alongside the group id', async () => {
+    const h = setup();
+    const rows = backWithMap(h, [partnerRow(12)]);
+
+    await closePairedSet(h, 11, 12);
+
+    const divergences = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) =>
+        (c[0] as { meta: Record<string, string> }).meta.event_type === 'bilateral_divergence',
+    );
+    expect(divergences).toHaveLength(1);
+    const meta = (divergences[0][0] as { meta: Record<string, string> }).meta;
+    expect(meta.rep_count).toBe('11');
+    expect(meta.partner_rep_count).toBe('12');
+    expect(rows.get(PARTNER_ID)?.bilateralGroupId).toBeTruthy();
+  });
+
+  it('leaves an unpaired set with NO group id (a gap, never a group of one)', async () => {
+    const h = setup();
+    const rows = backWithMap(h, []);
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 50, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+
+    await h.invoke('set.end', {});
+
+    const [stored] = [...rows.values()];
+    expect(stored.bilateralGroupId).toBeUndefined();
+    expect(stored.groupSource).toBeUndefined();
+  });
+
+  it("preserves the partner's reps across the re-put", async () => {
+    const h = setup();
+    const rows = backWithMap(h, [partnerRow(12)]);
+
+    await closePairedSet(h, 11, 12);
+
+    const partner = rows.get(PARTNER_ID);
+    expect(partner?.reps).toHaveLength(12);
+    expect(partner?.reps.map((r) => r.index)).toEqual([...Array(12).keys()]);
+  });
+
+  it('persists the closing set even when the partner re-put throws', async () => {
+    const h = setup();
+    const rows = backWithMap(h, [partnerRow(12)]);
+    h.store.putSet.mockImplementation(async (s: StoredSet) => {
+      if (s.id === PARTNER_ID) throw new Error('partner row vanished');
+      rows.set(s.id, s);
+    });
+
+    await closePairedSet(h, 11, 12);
+
+    const closing = [...rows.values()].find((s) => s.id !== PARTNER_ID);
+    expect(closing).toBeDefined();
+    expect(closing?.bilateralGroupId).toBeTruthy();
+    const setEnded = h.channels.publish.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'set_ended',
+    );
+    expect(setEnded).toHaveLength(1);
   });
 });

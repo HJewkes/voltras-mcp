@@ -42,14 +42,29 @@ describe('BilateralReconciler.record — pairing', () => {
     expect(div!.a.repCount).toBe(11);
     expect(div!.b.repCount).toBe(12);
     expect(div!.delta).toBe(-1);
+    expect(div!.divergent).toBe(true);
+    expect(div!.groupId).toBeTruthy();
     expect(r.size()).toBe(0);
   });
 
-  it('consumes a matching pair silently when the counts are equal', () => {
+  it('matches an equal-count pair and still mints a group id', () => {
     const r = new BilateralReconciler();
     r.record(close('left', '2026-07-05T18:33:58.849Z', 10));
-    expect(r.record(close('right', '2026-07-05T18:33:59.291Z', 10))).toBeUndefined();
+    const match = r.record(close('right', '2026-07-05T18:33:59.291Z', 10));
+    expect(match).toBeDefined();
+    expect(match!.divergent).toBe(false);
+    expect(match!.delta).toBe(0);
+    expect(match!.groupId).toBeTruthy();
     expect(r.size()).toBe(0);
+  });
+
+  it('mints a distinct group id per matched pair', () => {
+    const r = new BilateralReconciler();
+    r.record(close('left', '2026-07-05T18:33:58.849Z', 10));
+    const first = r.record(close('right', '2026-07-05T18:33:59.291Z', 10));
+    r.record(close('left', '2026-07-05T18:36:51.227Z', 12));
+    const second = r.record(close('right', '2026-07-05T18:36:51.969Z', 11));
+    expect(first!.groupId).not.toBe(second!.groupId);
   });
 
   it('never pairs two closes from the SAME slot (single-device session)', () => {
@@ -97,7 +112,12 @@ const TIMELINE: BilateralSetClose[] = [
 describe('BilateralReconciler.record — recorded session timeline', () => {
   it('surfaces exactly the two Δ1 pairs and never mispairs a solo set', () => {
     const r = new BilateralReconciler();
-    const divergences = TIMELINE.map((c) => r.record(c)).filter((d) => d !== undefined);
+    const matches = TIMELINE.map((c) => r.record(c)).filter((m) => m !== undefined);
+    // Four paired sets, of which only two diverge; the solo sets pair with
+    // nothing, so they never group.
+    expect(matches).toHaveLength(4);
+    expect(new Set(matches.map((m) => m!.groupId)).size).toBe(4);
+    const divergences = matches.filter((m) => m!.divergent);
     expect(divergences).toHaveLength(2);
 
     const [thirty, fifty] = divergences;
