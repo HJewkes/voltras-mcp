@@ -48,6 +48,39 @@ describe('tool registry', () => {
     }
   });
 
+  it('holds the write classifications that are judgement calls', () => {
+    // The verdicts most at risk of being "simplified" later: three that are
+    // write by POLICY rather than by literal state mutation, plus the
+    // high-consequence mutators. Flipping any of these to 'read' would let a
+    // session with no write-lease drive a device someone is attached to.
+    const mustBeWrite = [
+      // POLICY — see the annotations in tool-registry.ts.
+      'device.scan',
+      'timer.wait',
+      'isometric.measure_max',
+      // Mutators whose cost of being wrong is highest.
+      'bilateral.cascade',
+      'slot.swap',
+      'set.start',
+      'set.end',
+      'session.start',
+      'session.end',
+      'system.speak',
+      'system.listen_start',
+      'system.listen_stop',
+      'slot.bind',
+      'slot.unbind',
+      'slot.identify',
+      'isometric.measure_imbalance',
+      'plan.program.create',
+      'plan.complete_workout',
+      'plan.attach_to_session',
+    ] as const;
+    for (const name of mustBeWrite) {
+      expect(toolAccess(name), `${name} must stay write`).toBe('write');
+    }
+  });
+
   it('keeps the observer surface readable without a lease', () => {
     // These are what a non-lease-holding session needs to be useful: watching
     // the live set, reading history, and checking server state. If one of these

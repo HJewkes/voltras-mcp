@@ -16,19 +16,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createClientConnection,
+  registerClient,
   mintClientId,
-  resetClientIdSequence,
+  __resetClientIdSequence,
+  type ClientConnection,
 } from '../client-connection.js';
 import { loadConfig } from '../config.js';
 import { bootstrapState, type ServerState } from '../state/server-state.js';
-import { CORE_TOOL_NAMES } from '../tool-registry.js';
+import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from '../tool-registry.js';
 
 let dbDir: string;
 let state: ServerState;
 const savedEnv = { ...process.env };
 
 beforeEach(async () => {
-  resetClientIdSequence();
+  __resetClientIdSequence();
   dbDir = mkdtempSync(join(tmpdir(), 'vmcp-conn-'));
   process.env.VOLTRA_ADAPTER = 'mock';
   process.env.VMCP_DB_PATH = join(dbDir, 'conn.sqlite');
@@ -40,6 +42,28 @@ afterEach(() => {
   process.env = { ...savedEnv };
   rmSync(dbDir, { recursive: true, force: true });
 });
+
+/**
+ * Names of every tool still bound to the shared `STARTING` placeholder.
+ *
+ * Detected by handler IDENTITY, not by calling: `registerStartingPlaceholders`
+ * installs one shared callback across every tool, so "still a placeholder"
+ * means "handler is still that exact function". Invoking each handler instead
+ * would be a worse test AND a destructive one — it arms the real mic via
+ * `system.listen_start`.
+ */
+function unactivatedTools(connection: ClientConnection): string[] {
+  const handlers = [...connection.placeholders.values()].map((tool) => tool.handler);
+  const placeholderHandler = handlers[0];
+  const names: string[] = [];
+  for (const [name, tool] of connection.placeholders) {
+    if (tool.handler === placeholderHandler) names.push(name);
+  }
+  // All-or-nothing: if the first tool was already swapped there is no shared
+  // reference left to compare against, and an empty result would be a false
+  // pass. Guard by requiring either every tool or none to match.
+  return names.length === connection.placeholders.size ? names : [];
+}
 
 describe('client identity', () => {
   it('mints a distinct id per client', () => {
@@ -64,36 +88,64 @@ describe('two connections over one shared state', () => {
     expect(a.channels).not.toBe(b.channels);
   });
 
-  it('registers the full tool surface on both, sharing one state', () => {
+  it('installs real handlers on BOTH connections, not just the first', () => {
+    // Asserting `placeholders.has(name)` would prove nothing: every name is
+    // registered at CONSTRUCTION time, so that assertion passes even if
+    // activate() is a no-op. Assert on behaviour instead — before activation
+    // every tool answers STARTING, after it none do.
     const a = createClientConnection();
     const b = createClientConnection();
+
+    expect(unactivatedTools(a)).toEqual([...CORE_TOOL_NAMES, ...MOCK_TOOL_NAMES]);
 
     a.activate(state);
     b.activate(state);
 
-    for (const name of CORE_TOOL_NAMES) {
-      expect(a.placeholders.has(name), `connection A missing ${name}`).toBe(true);
-      expect(b.placeholders.has(name), `connection B missing ${name}`).toBe(true);
-    }
+    expect(unactivatedTools(a), 'connection A still on placeholders').toEqual([]);
+    expect(unactivatedTools(b), 'connection B still on placeholders').toEqual([]);
     // Distinct RegisteredTool handles per connection — each server owns its
     // own registrations even though the state behind them is one object.
     expect(a.placeholders.get('set.start')).not.toBe(b.placeholders.get('set.start'));
   });
 
-  it('tracks both connections in state.clients', () => {
-    const a = createClientConnection();
-    const b = createClientConnection();
-    state.clients.set(a.clientId, a);
-    state.clients.set(b.clientId, b);
-
-    expect(state.clients.size).toBe(2);
-    expect(state.clients.get(a.clientId)).toBe(a);
-    expect(state.clients.get(b.clientId)).toBe(b);
-  });
-
   it('starts with no clients registered until one attaches', async () => {
     const fresh = await bootstrapState(loadConfig());
     expect(fresh.clients.size).toBe(0);
+  });
+});
+
+describe('registration', () => {
+  it('tracks each registered connection', () => {
+    const a = createClientConnection();
+    const b = createClientConnection();
+
+    registerClient(state, a);
+    registerClient(state, b);
+
+    expect(state.clients.size).toBe(2);
+    expect(state.clients.get(a.clientId)).toBe(a);
+  });
+
+  it('rejects a duplicate clientId instead of overwriting', () => {
+    // A silent overwrite would leave the displaced connection alive and
+    // serving tool calls while invisible to everything that reasons about
+    // state.clients — the write-lease included.
+    registerClient(state, createClientConnection('same'));
+
+    expect(() => registerClient(state, createClientConnection('same'))).toThrow(/duplicate/i);
+    expect(state.clients.size).toBe(1);
+  });
+
+  it('unregisters and closes on teardown', async () => {
+    const a = createClientConnection();
+    registerClient(state, a);
+
+    await a.close(state);
+
+    expect(state.clients.has(a.clientId)).toBe(false);
+    // And the id is reusable afterwards, so a reconnecting socket is not
+    // permanently poisoned by the duplicate guard.
+    expect(() => registerClient(state, createClientConnection(a.clientId))).not.toThrow();
   });
 });
 

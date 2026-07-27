@@ -63,8 +63,12 @@ export function mintClientId(): ClientId {
   return `client-${clientSeq}`;
 }
 
-/** Reset the id counter. Test-only — keeps ids stable across test cases. */
-export function resetClientIdSequence(): void {
+/**
+ * Reset the id counter. Test-only — keeps ids stable across test cases. The
+ * `__` prefix follows the repo's convention for test seams exported from
+ * production modules (cf. `__resetSessionRecorder`).
+ */
+export function __resetClientIdSequence(): void {
   clientSeq = 0;
 }
 
@@ -85,6 +89,33 @@ export interface ClientConnection {
    * bootstrap resolves.
    */
   activate(state: ServerState): void;
+  /**
+   * Tear this connection down: unregister it and close its `McpServer`.
+   *
+   * At N=1 behind `process.exit` this is nearly ceremonial, but the daemon
+   * (VMCP-01.62) drops a connection per closed socket, and each one owns an
+   * `McpServer`, an ~80-entry `RegisteredTool` map, three resource
+   * registrations and an `McpChannelPublisher` that keeps a dead transport
+   * reachable from shared state. Leaking those per socket is a real leak, so
+   * the seam exists from the start rather than being retrofitted.
+   */
+  close(state: ServerState): Promise<void>;
+}
+
+/**
+ * Register a connection against the shared state.
+ *
+ * Rejects a duplicate `clientId` rather than overwriting: a silent overwrite
+ * leaves the displaced connection alive and serving tool calls while untracked
+ * by everything that reasons about `state.clients` (the write-lease, for one).
+ * Reachable today only by mixing explicit ids with minted ones — the daemon
+ * keys by socket — but the failure is invisible, so it fails loud instead.
+ */
+export function registerClient(state: ServerState, connection: ClientConnection): void {
+  if (state.clients.has(connection.clientId)) {
+    throw new Error(`duplicate clientId: ${connection.clientId}`);
+  }
+  state.clients.set(connection.clientId, connection);
 }
 
 /**
@@ -228,6 +259,13 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
     activate(state: ServerState): void {
       stateBox.value = state;
       registerRealTools(server, state, placeholders);
+    },
+    async close(state: ServerState): Promise<void> {
+      state.clients.delete(clientId);
+      // Drop the state reference so a closed connection's resource callbacks
+      // cannot resolve against live state after teardown.
+      delete stateBox.value;
+      await server.close();
     },
   };
 }

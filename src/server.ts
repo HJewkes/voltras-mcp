@@ -29,7 +29,11 @@ import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
 import { maybeCueTee } from './voice/cue-emitter.js';
-import { createClientConnection, type ClientConnection } from './client-connection.js';
+import {
+  createClientConnection,
+  registerClient,
+  type ClientConnection,
+} from './client-connection.js';
 import {
   startDashboardServer,
   isAddressInUse,
@@ -98,7 +102,7 @@ export async function runServer(): Promise<void> {
   try {
     // Bootstrap may take measurable time (BLE init, SQLite open).
     const state = await bootstrapState(config);
-    state.clients.set(connection.clientId, connection);
+    registerClient(state, connection);
     wireProcessState(state, connection);
     // Hot-swap real handlers into this connection's placeholders. (Resources
     // were pre-registered before connect; their callbacks now resolve against
@@ -138,7 +142,7 @@ export async function runServer(): Promise<void> {
     // or failed to bind. See VMCP-01.25 (F11): Claude Code abandons the
     // stdio pipe on reconnect rather than closing it cleanly, so we can't
     // rely on stdio teardown to propagate exit.
-    installShutdownHook(dashboardHandle);
+    installShutdownHook(dashboardHandle, () => connection.close(state));
 
     // Single-line ready signal emitted once bootstrap is fully done and
     // the shutdown hook is armed. Used by the spawn-based lifecycle
@@ -160,11 +164,17 @@ export async function runServer(): Promise<void> {
  * the exit ourselves. The `shuttingDown` guard makes double-signal /
  * signal-plus-stdin-close idempotent.
  */
-function installShutdownHook(handle: DashboardServerHandle | undefined): void {
+function installShutdownHook(
+  handle: DashboardServerHandle | undefined,
+  closeConnection: () => Promise<void>,
+): void {
   let shuttingDown = false;
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Unregister and close the connection first, so nothing observes a
+    // half-torn-down process holding a live entry in `state.clients`.
+    void closeConnection().catch((err) => log.warn('connection close failed', err));
     // Hard timeout in case dashboard close hangs — VMCP-01.25 (F11).
     // The non-zero exit code distinguishes "we had to bail out" from
     // the normal clean-exit path.
