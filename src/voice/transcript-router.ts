@@ -4,7 +4,9 @@
 //   - 'safety'  emergency stop phrases (ungated by wake; wired to unload in .78)
 //   - 'wake'    the user addressed the coach -> forward the stripped command
 //   - 'ignore'  ambient speech -> drop
-// No deps, no I/O: classification is a function of the string alone.
+// No I/O: classification is a function of the string alone.
+
+import { stripWhisperMarkup } from './whisper-markup.js';
 
 export type TranscriptTier = 'safety' | 'wake' | 'ignore';
 
@@ -64,6 +66,13 @@ function normalize(text: string): string {
   return stripSurroundingPunct(collapsed);
 }
 
+// Defence in depth: the whisper adapter already strips this, but we do not
+// control whisper's output format across versions and a regression here would
+// silently spend the safety word budget on markup. See whisper-markup.ts.
+function clean(transcript: string): string {
+  return normalize(stripWhisperMarkup(transcript));
+}
+
 function wordCount(normalized: string): number {
   return normalized === '' ? 0 : normalized.split(' ').length;
 }
@@ -101,7 +110,7 @@ export function routeTranscript(
   transcript: string,
   opts?: { wakePhrases?: string[] },
 ): RouteResult {
-  const text = normalize(transcript);
+  const text = clean(transcript);
   if (text === '') return { tier: 'ignore' };
 
   const safety = findSafetyPhrase(text);

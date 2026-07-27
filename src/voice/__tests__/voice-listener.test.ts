@@ -36,7 +36,7 @@ interface Harness {
   errors: { code: string; message: string }[];
 }
 
-function buildHarness(): Harness {
+function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
   const audio = new PassThrough();
   const probs: number[] = [];
   const process = vi.fn(async () => probs.shift() ?? 0);
@@ -57,6 +57,7 @@ function buildHarness(): Harness {
     vadFactory: () => vad,
     whisper,
     now: () => 1000,
+    ...overrides,
   };
   const listener = new VoiceListener(deps, {
     onVoiceInput: (e) => voiceInput.push(e),
@@ -149,6 +150,100 @@ describe('VoiceListener — routing', () => {
     expect(h.voiceInput).toHaveLength(0);
     expect(h.safety).toHaveLength(0);
     expect(h.whisper).toHaveBeenCalledTimes(1); // it WAS transcribed, just not routed
+  });
+});
+
+// The bench saw `latency_ms: 0` / `audio_duration_ms: 0` on every event. The
+// listener measured both correctly; the safety branch dropped them on the floor
+// (VMCP-02.83). The planned deaf-window measurement depends on these numbers.
+describe('VoiceListener — timing instrumentation', () => {
+  // Clock that advances 50 ms per read, so a dropped measurement reads 0 and a
+  // real one does not.
+  function advancingClock(): () => number {
+    let t = 1000;
+    return () => (t += 50);
+  }
+
+  it('carries measured latency and audio duration on a safety event', async () => {
+    const h = buildHarness({ now: advancingClock() });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    expect(h.safety[0].latencyMs).toBeGreaterThan(0);
+    expect(h.safety[0].audioDurationMs).toBeGreaterThan(0);
+  });
+
+  it('carries measured latency and audio duration on a wake event', async () => {
+    const h = buildHarness({ now: advancingClock() });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('hey coach what is next');
+    feedSegment(h);
+    await settle();
+    expect(h.voiceInput).toHaveLength(1);
+    expect(h.voiceInput[0].latencyMs).toBeGreaterThan(0);
+    expect(h.voiceInput[0].audioDurationMs).toBeGreaterThan(0);
+  });
+
+  it('reports audio duration from the captured PCM length', async () => {
+    const h = buildHarness({ now: advancingClock() });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('stop');
+    feedSegment(h, 8, 16);
+    await settle();
+    // 24 frames × 512 samples at 16 kHz = 768 ms of audio; the segmenter keeps
+    // the voiced frames plus hangover, so the reported duration sits inside it.
+    expect(h.safety[0].audioDurationMs).toBeLessThanOrEqual(768);
+    expect(h.safety[0].audioDurationMs).toBeGreaterThanOrEqual(256);
+  });
+});
+
+describe('VoiceListener — STT pre-warm', () => {
+  it('fires the pre-warm once at start with the configured model', async () => {
+    const prewarm = vi.fn(async () => {});
+    const h = buildHarness({ prewarm });
+    await h.listener.start(resolveStartArgs({ sttModel: 'base.en' }));
+    await settle();
+    expect(prewarm).toHaveBeenCalledTimes(1);
+    expect(prewarm).toHaveBeenCalledWith('base.en');
+  });
+
+  it('does not route the pre-warm result as an utterance', async () => {
+    const prewarm = vi.fn(async () => {});
+    const h = buildHarness({ prewarm });
+    await h.listener.start(resolveStartArgs({}));
+    await settle();
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.safety).toHaveLength(0);
+  });
+
+  // Arming the mic must never depend on the warm-up: degraded latency is
+  // acceptable, a listener that will not arm is not.
+  it('does not wait for a slow pre-warm before arming', async () => {
+    const h = buildHarness({ prewarm: () => new Promise<void>(() => {}) }); // never settles
+    await h.listener.start(resolveStartArgs({}));
+    expect(h.listener.getState()).toBe('listening');
+  });
+
+  it('transcribes normally while a slow pre-warm is still in flight', async () => {
+    const h = buildHarness({ prewarm: () => new Promise<void>(() => {}) });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+  });
+
+  it('starts normally when the pre-warm fails', async () => {
+    const prewarm = vi.fn(async () => {
+      throw new Error('whisper not installed');
+    });
+    const h = buildHarness({ prewarm });
+    await expect(h.listener.start(resolveStartArgs({}))).resolves.toBeUndefined();
+    await settle();
+    expect(h.listener.getState()).toBe('listening');
+    expect(h.errors).toHaveLength(0);
   });
 });
 

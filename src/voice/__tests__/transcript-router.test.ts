@@ -95,6 +95,75 @@ describe('routeTranscript — ignore tier', () => {
   });
 });
 
+// Regression cover for the hardware defect (VMCP-02.83): whisper's raw stdout
+// carries `[hh:mm:ss.mmm --> hh:mm:ss.mmm]` markup, which normalize() turned
+// into three words and spent half the safety word budget on. A bare "stop"
+// still fired, so the hole only opened for the natural reflexive utterance.
+// Strings below are verbatim whisper-cli output captured on the bench.
+describe('routeTranscript — whisper timestamp markup (safety regression)', () => {
+  const TIMESTAMP = '[00:00:00.000 --> 00:00:00.840]';
+
+  it('routes the timestamped and bare forms identically', () => {
+    for (const bare of ['Stop.', 'wait stop the weight']) {
+      expect(routeTranscript(`${TIMESTAMP}   ${bare}`)).toEqual(routeTranscript(bare));
+    }
+  });
+
+  it('fires safety on a timestamped reflexive utterance', () => {
+    expect(routeTranscript(`${TIMESTAMP}   wait stop the weight`)).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
+  it('fires safety on a timestamped bare stop', () => {
+    expect(routeTranscript(`${TIMESTAMP}   Stop.`)).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
+  it('strips markup from a multi-segment transcript', () => {
+    const raw = '\n[00:00:00.000 --> 00:00:01.100]   Hey coach,\n[00:00:01.100 --> 00:00:02.000]   what next\n';
+    expect(routeTranscript(raw)).toEqual({ tier: 'wake', commandText: 'what next' });
+  });
+
+  it('drops [BLANK_AUDIO] so silent segments do not spend the safety budget', () => {
+    const raw =
+      '\n[00:00:00.000 --> 00:00:03.000]   [BLANK_AUDIO]\n' +
+      '[00:00:03.000 --> 00:00:04.000]   wait stop the weight\n';
+    expect(routeTranscript(raw)).toEqual({ tier: 'safety', matchedPhrase: 'stop' });
+  });
+
+  // The two markup patterns are stripped independently. This strip is the net
+  // that stands if a future refactor bypasses the adapter-side clean, so
+  // neither pattern may depend on the other being present to be removed.
+  it('drops a bare [BLANK_AUDIO] tag with no timestamp attached', () => {
+    expect(routeTranscript('[BLANK_AUDIO] wait stop the weight')).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
+  it('strips bare timestamp markup with no non-speech tag attached', () => {
+    expect(routeTranscript('[00:00:03.000 --> 00:00:04.000] wait stop the weight')).toEqual({
+      tier: 'safety',
+      matchedPhrase: 'stop',
+    });
+  });
+
+  it('routes a silence-only transcript to ignore', () => {
+    expect(routeTranscript('\n[00:00:00.000 --> 00:00:09.400]   [BLANK_AUDIO]\n')).toEqual({
+      tier: 'ignore',
+    });
+  });
+
+  it('keeps the negation gate closed through the markup', () => {
+    expect(routeTranscript(`${TIMESTAMP}   don't stop`).tier).not.toBe('safety');
+    expect(routeTranscript(`${TIMESTAMP}   we can stop after this set`).tier).not.toBe('safety');
+  });
+});
+
 describe('routeTranscript — precedence', () => {
   it('lets safety beat wake on a short utterance ("hey coach stop")', () => {
     expect(routeTranscript('hey coach stop')).toEqual({ tier: 'safety', matchedPhrase: 'stop' });
