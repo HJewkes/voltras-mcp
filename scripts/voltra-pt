@@ -13,8 +13,25 @@
 #   voltra-pt --print "list my sessions today"  # non-interactive query
 #
 # Set VOLTRA_PT_PROMPT to change the default without touching this script.
+#
+# Two launch modes:
+#
+#   plugin mode (default) — runs the server as the voltras-channel plugin from
+#     the voltras-local marketplace and passes `--channels`. This needs the
+#     plugin installed AND the plugin allowlisted in machine-wide managed
+#     settings; see docs/channel-plugin-packaging.md.
+#
+#   dev mode (VOLTRA_PT_DEV=1) — the original path: registers nothing, and
+#     passes --dangerously-load-development-channels for a `claude mcp add`ed
+#     `voltras` server. Use this if the managed-settings file isn't installed.
 
 set -euo pipefail
+
+PLUGIN_NAME="voltras-channel"
+MARKETPLACE_NAME="voltras-local"
+CHANNEL_ENTRY="plugin:${PLUGIN_NAME}@${MARKETPLACE_NAME}"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! command -v claude >/dev/null 2>&1; then
   echo "voltra-pt: 'claude' CLI not on PATH." >&2
@@ -22,8 +39,9 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 127
 fi
 
-if ! claude mcp list 2>&1 | grep -qE '^voltras:'; then
-  cat >&2 <<'EOF'
+if [ "${VOLTRA_PT_DEV:-0}" = "1" ]; then
+  if ! claude mcp list 2>&1 | grep -qE '^voltras:'; then
+    cat >&2 <<'EOF'
 voltra-pt: voltras MCP server is not registered with Claude Code.
 
 Register it first:
@@ -32,14 +50,48 @@ Register it first:
 
 Then re-run voltra-pt.
 EOF
-  exit 1
+    exit 1
+  fi
+  CHANNEL_FLAG=(--dangerously-load-development-channels "server:voltras")
+else
+  if ! claude plugin list 2>/dev/null | grep -q "${PLUGIN_NAME}@${MARKETPLACE_NAME}"; then
+    cat >&2 <<EOF
+voltra-pt: the ${PLUGIN_NAME} plugin is not installed.
+
+Install it from this repo:
+  claude plugin marketplace add ${REPO_ROOT}
+  claude plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}
+
+Or set VOLTRA_PT_DEV=1 to use the development-channel flag instead.
+EOF
+    exit 1
+  fi
+
+  # The plugin ships the MCP server too, so a separate `claude mcp add voltras`
+  # would spawn a second process against the same SQLite file and dashboard
+  # port. See "Running more than one instance" in the README.
+  if claude mcp list 2>&1 | grep -qE '^voltras:'; then
+    cat >&2 <<'EOF'
+voltra-pt: both the voltras-channel plugin and a standalone `voltras` MCP
+server are registered. They would run two server processes against the same
+database and dashboard port.
+
+Remove the standalone registration:
+  claude mcp remove voltras
+EOF
+    exit 1
+  fi
+
+  # Lets the plugin's launch shim find this checkout's dist/bin.js.
+  export VOLTRAS_MCP_HOME="$REPO_ROOT"
+  CHANNEL_FLAG=(--channels "$CHANNEL_ENTRY")
 fi
 
 DEFAULT_PROMPT="Start a PT session. I'm ready to lift."
 INITIAL_PROMPT="${VOLTRA_PT_PROMPT:-$DEFAULT_PROMPT}"
 
 if [ "$#" -gt 0 ]; then
-  exec claude --dangerously-load-development-channels server:voltras "$@"
+  exec claude "${CHANNEL_FLAG[@]}" "$@"
 else
-  exec claude --dangerously-load-development-channels server:voltras "$INITIAL_PROMPT"
+  exec claude "${CHANNEL_FLAG[@]}" "$INITIAL_PROMPT"
 fi

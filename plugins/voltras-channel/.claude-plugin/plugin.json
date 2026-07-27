@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "voltras-channel",
+  "displayName": "Voltra Channel",
+  "version": "0.4.0",
+  "description": "Voltra trainer control as an MCP server plus a push-event channel",
+  "author": {
+    "name": "voltras-mcp"
+  },
+  "license": "MIT",
+  "keywords": ["mcp", "voltra", "fitness", "ble", "channel"],
+  "mcpServers": {
+    "voltras": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/voltras-mcp-launch.sh"
+    }
+  },
+  "channels": [
+    {
+      "server": "voltras"
+    }
+  ]
+}

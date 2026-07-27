@@ -112,8 +112,29 @@ lift "let's do a back day"              # custom starting prompt
 lift --print "list my sessions today"   # non-interactive query
 ```
 
-The script refuses to launch unless `voltras` is already registered with `claude mcp`.
 Set `VOLTRA_PT_PROMPT` to change the default prompt without editing the script.
+
+By default the script runs the server as the **`voltras-channel` plugin** and passes
+`--channels plugin:voltras-channel@voltras-local`, which avoids the
+`--dangerously-load-development-channels` warning dialog. That needs a one-time install:
+
+```bash
+claude plugin marketplace add "$PWD"     # an absolute path; "." is rejected
+claude plugin install voltras-channel@voltras-local
+echo "$PWD" > ~/.voltras/mcp-home        # tells the plugin where this checkout is
+```
+
+plus a machine-wide managed-settings file that allowlists the plugin — see
+**[docs/channel-plugin-packaging.md](docs/channel-plugin-packaging.md)** for that file and
+the reasoning behind the packaging.
+
+The plugin ships the MCP server itself, so don't also register `voltras` with
+`claude mcp add`: two processes would collide on the database and the dashboard port. The
+script checks for this and refuses to launch.
+
+Set `VOLTRA_PT_DEV=1` to fall back to the old path — a `claude mcp add`ed `voltras` server
+plus `--dangerously-load-development-channels`. Use it if the managed-settings file isn't
+installed.
 
 ---
 

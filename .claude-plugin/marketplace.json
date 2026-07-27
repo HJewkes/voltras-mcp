@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "voltras-local",
+  "description": "Local marketplace for the voltras-mcp Voltra trainer integration",
+  "owner": {
+    "name": "voltras-mcp"
+  },
+  "plugins": [
+    {
+      "name": "voltras-channel",
+      "source": "./plugins/voltras-channel",
+      "description": "Voltra trainer control as an MCP server plus a push-event channel"
+    }
+  ]
+}
