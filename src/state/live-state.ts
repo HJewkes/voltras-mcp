@@ -1117,8 +1117,13 @@ export class LiveState {
  * eccentric→concentric transition, so a rep with concentric-only samples is
  * always the in-progress rep mid-cycle — never a completed rep. Returns
  * false on an empty rep array so the caller short-circuits to a no-op slice.
+ *
+ * Exported because the mid-set trigger summary (`summarizeSetForTrigger`)
+ * needs the same judgement: an in-flight rep must not be counted as the set's
+ * last rep (VMCP-05.13). One predicate, so the force-close path and the
+ * mid-set summary can never disagree about what "finished" means.
  */
-function isTrailingRepIncomplete(reps: readonly Rep[]): boolean {
+export function isTrailingRepIncomplete(reps: readonly Rep[]): boolean {
   if (reps.length === 0) {
     return false;
   }
