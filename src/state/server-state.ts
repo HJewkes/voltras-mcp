@@ -204,8 +204,11 @@ export function isDeviceEngaged(state: ServerState): boolean {
     if (slot.live.snapshotSet() !== undefined) return true;
     if (!slot.client.isConnected) continue;
     if (
-      deriveLoadState(slot.client.isConnected, slot.client.guidedLoadState, slot.client.isRowingActive) ===
-      'loaded'
+      deriveLoadState(
+        slot.client.isConnected,
+        slot.client.guidedLoadState,
+        slot.client.isRowingActive,
+      ) === 'loaded'
     ) {
       return true;
     }

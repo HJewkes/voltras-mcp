@@ -1624,7 +1624,6 @@ function buildDeviceGetStateResponse(
   return out;
 }
 
-
 /**
  * Reusable unload for a slot — single source of truth shared by the
  * `device.unload` tool AND the VMCP-02.78 voice safety fast-path (which must

@@ -35,7 +35,10 @@ async function call(
 ): Promise<{ isError: boolean; payload: Record<string, unknown> }> {
   const tool = connection.placeholders.get(name);
   if (tool === undefined) throw new Error(`no such tool: ${name}`);
-  const handler = tool.handler as (args: unknown, extra: unknown) => Promise<{
+  const handler = tool.handler as (
+    args: unknown,
+    extra: unknown,
+  ) => Promise<{
     isError?: boolean;
     content: Array<{ text: string }>;
   }>;
@@ -174,7 +177,9 @@ describe('the lease tools themselves', () => {
     expect(result.payload).toMatchObject({ acquired: true, forced: true, takenFrom: 'client-a' });
     expect(state.lease.isHeldBy('client-b')).toBe(true);
     // And the loser is genuinely locked out afterwards.
-    expect((await call(a, 'timer.start', { durationMs: 60000, label: 'rest' })).payload.code).toBe('LEASE_HELD');
+    expect((await call(a, 'timer.start', { durationMs: 60000, label: 'rest' })).payload.code).toBe(
+      'LEASE_HELD',
+    );
   });
 
   it('release, freeing the device for the other client', async () => {
@@ -182,7 +187,9 @@ describe('the lease tools themselves', () => {
 
     expect((await call(a, 'system.lease_release')).payload.released).toBe(true);
     expect(state.lease.status()).toBeNull();
-    expect((await call(b, 'timer.start', { durationMs: 60000, label: 'rest' })).isError).toBe(false);
+    expect((await call(b, 'timer.start', { durationMs: 60000, label: 'rest' })).isError).toBe(
+      false,
+    );
   });
 });
 
@@ -226,7 +233,7 @@ function fakeClientState(
 }
 
 describe('surrendering the device on transfer', () => {
-it('finalizes the victim set on a forced steal, not just the load', async () => {
+  it('finalizes the victim set on a forced steal, not just the load', async () => {
     // A bare unload leaves slot.live.set active, which (a) makes the stealer's
     // set.start throw SET_ALREADY_ACTIVE, (b) pins the new lease forever, and
     // (c) strands the victim's reps unpersisted because set.end is now denied.
@@ -394,7 +401,7 @@ describe('freezing the lease during a handover', () => {
     expect(state.lease.isTransferring()).toBe(true);
   });
 
-  it('a disconnecting client does not unfreeze someone else\'s handover', async () => {
+  it("a disconnecting client does not unfreeze someone else's handover", async () => {
     // close() must not call abortTransfer() when it did not begin the
     // transfer: doing so unfreezes the other client's in-flight surrender and
     // reopens the window the freeze exists to close.
@@ -497,7 +504,9 @@ describe('disconnect', () => {
 
     // Otherwise a crashed session strands the device until the idle timeout.
     expect(state.lease.status()).toBeNull();
-    expect((await call(b, 'timer.start', { durationMs: 60000, label: 'rest' })).isError).toBe(false);
+    expect((await call(b, 'timer.start', { durationMs: 60000, label: 'rest' })).isError).toBe(
+      false,
+    );
   });
 
   it('does not disturb a lease held by someone else', async () => {

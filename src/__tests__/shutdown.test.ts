@@ -12,8 +12,24 @@ import { describe, it, expect, vi } from 'vitest';
 
 // server.js pulls in the tool layer, which imports SDK enums at module scope.
 vi.mock('@voltras/node-sdk', () => ({
-  TrainingMode: { Idle: 0, WeightTraining: 1, ResistanceBand: 2, Rowing: 3, Damper: 4, Isokinetic: 7, Isometric: 8 },
-  TrainingModeNames: { 0: 'Idle', 1: 'WeightTraining', 2: 'ResistanceBand', 3: 'Rowing', 4: 'Damper', 7: 'Isokinetic', 8: 'Isometric' },
+  TrainingMode: {
+    Idle: 0,
+    WeightTraining: 1,
+    ResistanceBand: 2,
+    Rowing: 3,
+    Damper: 4,
+    Isokinetic: 7,
+    Isometric: 8,
+  },
+  TrainingModeNames: {
+    0: 'Idle',
+    1: 'WeightTraining',
+    2: 'ResistanceBand',
+    3: 'Rowing',
+    4: 'Damper',
+    7: 'Isokinetic',
+    8: 'Isometric',
+  },
   VoltraSDKError: class extends Error {},
   VoltraClient: class {},
   VoltraManager: { forNode: () => ({}), forMock: () => ({}) },
