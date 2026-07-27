@@ -90,8 +90,10 @@ fi
 DEFAULT_PROMPT="Start a PT session. I'm ready to lift."
 INITIAL_PROMPT="${VOLTRA_PT_PROMPT:-$DEFAULT_PROMPT}"
 
+# The channel flags take a variadic list (`<servers...>`), so they swallow any
+# positional that follows them — the prompt included. Keep them last.
 if [ "$#" -gt 0 ]; then
-  exec claude "${CHANNEL_FLAG[@]}" "$@"
+  exec claude "$@" "${CHANNEL_FLAG[@]}"
 else
-  exec claude "${CHANNEL_FLAG[@]}" "$INITIAL_PROMPT"
+  exec claude "$INITIAL_PROMPT" "${CHANNEL_FLAG[@]}"
 fi
