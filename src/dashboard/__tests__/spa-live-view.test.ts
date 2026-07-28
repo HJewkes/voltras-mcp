@@ -24,6 +24,7 @@ import {
   velocityLossPct,
   type CompletedSet,
   type DashboardModel,
+  type PlannedExerciseModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
@@ -494,6 +495,63 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
 });
 
 describe('derivePrescription — the page header lockup (VW-42)', () => {
+  /** The active planned exercise, as `panels/live-view.ts` maps it from the prescription. */
+  function planned(over: Partial<PlannedExerciseModel> = {}): PlannedExerciseModel {
+    return {
+      name: 'Cable Chest Press',
+      plannedSets: 4,
+      targetReps: 8,
+      repsLabel: '8',
+      weightLbs: 140,
+      active: true,
+      ...over,
+    };
+  }
+
+  it('reads the rep target from the PLAN when the device registered no set watch', () => {
+    // The regression: a fully planned 4 × 8 rendered NOTHING, because `targetReps` is
+    // device-sourced (`resolveRepTarget` reads `set.watch.notifyOn`) and an unarmed set
+    // leaves it null while the coach's rep target sits unused in the prescription.
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 4, targetReps: null, plannedExercises: [planned()] }),
+    );
+    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs' });
+  });
+
+  it('keeps a prescribed rep RANGE as a range', () => {
+    // Collapsing 8–10 to its floor would state a prescription the coach did not write.
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        targetReps: null,
+        plannedExercises: [planned({ repsLabel: '8–10' })],
+      }),
+    );
+    expect(cells?.reps).toBe('8–10');
+  });
+
+  it('prefers the plan over the device set watch when the two disagree', () => {
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 4, targetReps: 5, plannedExercises: [planned()] }),
+    );
+    expect(cells?.reps).toBe('8');
+  });
+
+  it('ignores a planned exercise that is not the active one', () => {
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        targetReps: null,
+        plannedExercises: [planned({ active: false })],
+      }),
+    );
+    expect(cells).toBeNull();
+  });
+
+  it('falls back to the device set watch for an unplanned but armed session', () => {
+    expect(derivePrescription(sessionModel({ plannedSets: 3, targetReps: 6 }))?.reps).toBe(6);
+  });
+
   it('reads sets × reps @ load when the plan states all three', () => {
     expect(
       derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: 140 })),

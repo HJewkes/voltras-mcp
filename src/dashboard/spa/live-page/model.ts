@@ -316,10 +316,30 @@ function summaryLoad(
 /** One prescription lockup's cells, in the shape titan's `SetsRepsLoad` takes. */
 export interface PrescriptionCells {
   sets: number;
-  reps: number;
+  /** A single count, or a prescribed range like `"8–10"`. */
+  reps: number | string;
   /** The formatted load, or `NO_VALUE` ("—") for an unset/discovery load — never a faked 0. */
   load: number | string;
   unit: MassUnit;
+}
+
+/**
+ * The active PLANNED exercise's prescribed rep target, or null with no plan attached.
+ *
+ * `session.targetReps` cannot serve this on its own: it is sourced from the DEVICE's
+ * `rep_count_reached` set watch (`adapter.ts` `resolveRepTarget`), so a fully planned
+ * session whose set was armed without that watch reports null and the header's whole
+ * lockup disappears — the coach's `4 × 8` is sitting unused in the prescription. Read from
+ * the plan instead, via the list `panels/live-view.ts` already maps `repsLow`/`repsHigh`
+ * into. `repsLabel` (not `targetReps`) so a prescribed RANGE stays a range — `8–10` is
+ * what the coach wrote, and collapsing it to its floor would overstate the prescription.
+ */
+function plannedRepTarget(session: SessionModel): number | string | null {
+  const active = session.plannedExercises.find((e) => e.active);
+  // `targetReps` is `repsLow ?? null`, so a null one means `repsLabel` is the em-dash
+  // placeholder rather than a real range — nothing prescribed, nothing to show.
+  if (active === undefined || active.targetReps === null) return null;
+  return active.repsLabel;
 }
 
 /**
@@ -327,20 +347,26 @@ export interface PrescriptionCells {
  * cannot state one.
  *
  * The COUNTS are the spine of the line: `4 × 8` is the claim, and neither half can be
- * faked, so a missing set or rep target hides the whole lockup (VW-41/42 wire them) rather
- * than printing the meaningless `0 × —`. The LOAD can honestly be unknown — a discovery
- * set, or the weight-seed gap under mock — and `SetsRepsLoad` takes a string load for
- * exactly that, so it reads `4 × 8 @ — lbs` rather than dropping a prescription the coach
- * really did write. Same placeholder as the rail's `summaryLoad`.
+ * faked, so a missing set or rep target hides the whole lockup rather than printing a
+ * meaningless `0 × —`. The rep target prefers the PLAN ({@link plannedRepTarget}) over the
+ * device's set watch: this line states what was PRESCRIBED, and the plan is the only
+ * source that can express a range. The device watch stays as the fallback for an unplanned
+ * session that was nonetheless armed with a rep goal (VW-41/42 wire the rest).
+ *
+ * The LOAD can honestly be unknown — a discovery set, or the weight-seed gap under mock —
+ * and `SetsRepsLoad` takes a string load for exactly that, so it reads `4 × 8 @ — lbs`
+ * rather than dropping a prescription the coach really did write. Same placeholder as the
+ * rail's `summaryLoad`.
  */
 export function derivePrescription(
   session: SessionModel,
   displayUnit: MassUnit = 'lbs',
 ): PrescriptionCells | null {
-  const { plannedSets, targetReps, weightLbs } = session;
-  if (plannedSets === null || targetReps === null) return null;
+  const { plannedSets, weightLbs } = session;
+  const reps = plannedRepTarget(session) ?? session.targetReps;
+  if (plannedSets === null || reps === null) return null;
   const { weight, unit } = summaryLoad(weightLbs, displayUnit);
-  return { sets: plannedSets, reps: targetReps, load: weight, unit };
+  return { sets: plannedSets, reps, load: weight, unit };
 }
 
 /**
