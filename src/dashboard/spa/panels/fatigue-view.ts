@@ -1,15 +1,20 @@
 /**
- * Store → fatigue-card / diverging-hero adapter (PROVISIONAL SPIKE — titan DoD).
+ * Store → fatigue-card / diverging-hero adapter.
  *
  * Projects the store slices onto the {@link LiveFatigueModel} / {@link
  * DivergingHeroModel} data contract (`../live-page/fatigue-model`). Pure
  * projection — no I/O, no component imports — the sibling of
  * `live-view.ts:mapStoreToDashboardModel`.
  *
- * Why this is still labeled PROVISIONAL: the titan components it feeds are being
- * hardened in parallel and are not merged, so their final prop types cannot be
- * imported — this validates the real data-path against a proposed contract, it
- * does not finalize it, and no component renders it yet.
+ * NO LONGER PROVISIONAL (VMCP-05.02): the titan components this feeds shipped in
+ * `@titan-design/react-ui@0.12.0`, and both stages now render it — the single stage
+ * through `LiveFatiguePanel`, the diverging dual stage through the hero + `asymmetry`.
+ *
+ * ⚠ The local contract in `fatigue-model.ts` MIRRORS titan's exported `LiveFatigueModel`
+ * rather than importing it, so the two drift SILENTLY on any OPTIONAL field — nothing
+ * type-checks a prop that is allowed to be absent. `plannedReps` did exactly that: it
+ * shipped in titan and this mapper never set it, costing the ROM chart its "N of M done"
+ * read with no error anywhere. When touching either side, diff both.
  *
  * The data path is now REAL end to end: the full WA `Rep[]` (with per-sample
  * streams) crosses `/api/snapshot`, and every model field — the multi-dimension
@@ -334,6 +339,10 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     // — which the card renders as a neutral "warming up".
     verdict: reps.length < 2 ? null : getSetFatigueVerdict({ reps: reps as Rep[] }),
     romProgression: romProgression(reps),
+    // Bottom of the prescribed rep band — the same source the rail/header call
+    // `targetReps` (`live-view.ts`). Left `undefined` (not 0, not the rep count) when
+    // the session carries no plan, so the ROM chart draws no phantom to-do slots.
+    plannedReps: prescription?.repsLow,
     romWorkingStandardM: workingStandard,
     romShortThresholdM:
       workingStandard == null ? null : Number((workingStandard * 0.75).toFixed(3)),

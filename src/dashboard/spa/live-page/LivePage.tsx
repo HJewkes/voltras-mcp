@@ -1,7 +1,8 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { useCallback, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import {
+  LiveFatiguePanel,
   SessionRail,
   Surface,
   alpha,
@@ -20,7 +21,7 @@ import {
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
-import type { DivergingHeroModel, LimbAsymmetry } from './fatigue-model';
+import type { DivergingHeroModel, LimbAsymmetry, LiveFatigueModel } from './fatigue-model';
 import { type MassUnit } from './mass';
 
 // Semantic reads for the corner UnitToggle's own chrome — its translucent (alpha) overlay
@@ -127,6 +128,58 @@ const PANEL_MIN_WIDTH = 390;
 /** Rail title fallback — a generic label, never an invented session name (VW-43). */
 const UNTITLED_SESSION = 'Session';
 
+/**
+ * Vertical chrome the panel adds around its body: `LiveFatiguePanel` pads its content
+ * region by 24 top and bottom, and `bodyHeight` sizes the content INSIDE that padding.
+ * Subtracting it keeps the panel exactly one stage tall instead of overflowing by 48px.
+ */
+const FATIGUE_PANEL_CHROME = 48;
+/** titan's own `bodyHeight` default — used until the stage has been measured once. */
+const FATIGUE_PANEL_FALLBACK_BODY = 508;
+
+/**
+ * The single-Voltra live stage (VMCP-05.02): titan's `LiveFatiguePanel` — the velocity
+ * hero and the athlete-level fatigue card (RPE + verdict lights + ROM progression +
+ * ghost-spark) as one aura-flooded organism.
+ *
+ * No `header` prop: the exercise identity and targets are the PAGE-level
+ * {@link ExerciseHeader} above this, and the panel's own lite header would duplicate it.
+ *
+ * The panel sizes its body in fixed px rather than flexing, so the stage height is
+ * measured and fed down — otherwise it renders at titan's 508 default and either
+ * underfills a wall display or overflows a short one.
+ */
+function SingleFatigueStage({
+  model,
+  fatigue,
+}: {
+  model: LiveDashboardModel;
+  fatigue: LiveFatigueModel;
+}) {
+  const [stageH, setStageH] = useState(0);
+  const bodyHeight =
+    stageH > 0 ? Math.max(0, stageH - FATIGUE_PANEL_CHROME) : FATIGUE_PANEL_FALLBACK_BODY;
+  const { live, session } = model;
+  return (
+    <View
+      style={{ flex: 1 }}
+      onLayout={(e: LayoutChangeEvent) => setStageH(e.nativeEvent.layout.height)}
+    >
+      <LiveFatiguePanel
+        model={fatigue}
+        // The hero's own source — per-rep MEAN concentric velocity, not on the fatigue
+        // model. `liveRepIndex` marks the rep in progress as the last one streamed.
+        velocity={{
+          velocities: live.repVelocities,
+          targetReps: session.targetReps ?? undefined,
+          liveRepIndex: live.repVelocities.length - 1,
+        }}
+        bodyHeight={bodyHeight}
+      />
+    </View>
+  );
+}
+
 export interface LivePageProps {
   /** Which stage to show in the main region. */
   variant?: LivePageVariant;
@@ -143,6 +196,12 @@ export interface LivePageProps {
    * computed honestly, in which case the stage simply declines to draw it.
    */
   asymmetry?: LimbAsymmetry | null;
+  /**
+   * The athlete-level fatigue read-model, off `mapStoreToFatigueModel`. Drives the single
+   * stage's {@link LiveFatiguePanel}. `null` when no set is active — the stage switch has
+   * already fallen through to rest/empty by then, so the panel never sees it.
+   */
+  fatigue?: LiveFatigueModel | null;
 }
 
 /**
@@ -163,7 +222,7 @@ export interface LivePageProps {
  *
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
-export function LivePage({ variant = 'live', model, hero, asymmetry }: LivePageProps) {
+export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: LivePageProps) {
   const [displayUnit, setDisplayUnit] = useDisplayUnit();
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
@@ -211,11 +270,17 @@ export function LivePage({ variant = 'live', model, hero, asymmetry }: LivePageP
               hero={hero}
               asymmetry={asymmetry ?? null}
             />
+          ) : model.live !== null && fatigue ? (
+            // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.
+            // It needs no display unit: the body is velocity/RPE/ROM only, and the page
+            // header + rest stage are the mass consumers.
+            <SingleFatigueStage model={model as LiveDashboardModel} fatigue={fatigue} />
           ) : model.live !== null ? (
-            // `slot` names the active voltra — the shell has two connected, so the live view
-            // flags which one it is reading from (the multi-device single-view case). The live
-            // stage body carries no weight/force readout (velocity/tempo only), so it needs no
-            // display unit — the page header + rest stage are the mass consumers.
+            // Live but NO fatigue model: the two read different sources — `live` is the SSE
+            // overlay, the fatigue mapper needs `snapshot.sets.active` — so an SSE frame that
+            // leads the snapshot poll opens a brief window where the set is streaming and the
+            // card has nothing to show. Fall back to the velocity-only stage for that window
+            // rather than blanking the wall mid-set.
             <LiveView model={model as LiveDashboardModel} slot="L" />
           ) : stageIsEmpty(model) ? (
             // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank

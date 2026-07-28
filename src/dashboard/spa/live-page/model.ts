@@ -11,9 +11,10 @@
  * fabricated number. This extends the precedent titan #111 set for `tempo?`. See
  * `panels/live-view.ts` for the ticket per gap.
  *
- * The dual (bilateral) stage is now store-fed per slot (VW-71) — one
- * {@link DashboardModel} per limb, projected by `panels/live-view.ts`'s
- * `mapStoreToDualModel`. The fixture-fabricating `deriveDualModel` it replaced is gone.
+ * The dual (bilateral) stage is store-fed per slot (VW-71), but NOT through this model:
+ * it sources from `panels/fatigue-view.ts`'s `mapStoreToDivergingHeroModel`. The full
+ * per-slot `DashboardModel` projection that preceded it is gone, along with the stacked
+ * two-`LiveView` stage it fed and the fixture-fabricating `deriveDualModel` before that.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 import { type MassUnit, convertMass, formatMass } from './mass';
@@ -189,18 +190,6 @@ export interface DashboardModel {
  * decision (no stream ⇒ rest), made once, instead of every layer guarding.
  */
 export type LiveDashboardModel = DashboardModel & { live: LiveModel };
-
-/**
- * The dual (bilateral) stage's per-limb read-models (VW-71): one {@link DashboardModel}
- * per Voltra slot. A side is `null` when no device is bound to that slot (or the slot
- * reports no telemetry) — the dual stage then shows an awaiting state for it rather than
- * fabricating the missing limb. Each present side picks its own live/rest/empty stage,
- * exactly as the single view does, from that slot's own snapshot.
- */
-export interface DualDashboardModel {
-  left: DashboardModel | null;
-  right: DashboardModel | null;
-}
 
 /**
  * True when the live stage has nothing honest to show: no set streaming, none logged, and no

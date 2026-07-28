@@ -171,6 +171,24 @@ describe('mapStoreToFatigueModel', () => {
     expect(curve.phaseSegments.map((s) => s.phase)).toEqual(['concentric', 'eccentric']);
   });
 
+  it('carries plannedReps from the prescription, and leaves it undefined without a plan', () => {
+    const reps = buildReps([{ concVel: 500, rom: 100 }]);
+    const snapshot = snapshotWithActive(reps);
+
+    // The ROM chart draws `plannedReps − done` dashed to-do slots. It is an OPTIONAL prop
+    // on titan's model, so a mapper that never sets it type-checks clean and silently
+    // renders every set as complete — hence an explicit test on both branches.
+    const planned = mapStoreToFatigueModel(
+      sources({ snapshot, prescription: { sets: 3, repsLow: 8, repsHigh: 12 } }),
+    );
+    expect(planned!.plannedReps).toBe(8);
+
+    // No plan attached ⇒ no target exists. The gap must read as a gap: never 0, and never
+    // backfilled from the reps logged so far.
+    const unplanned = mapStoreToFatigueModel(sources({ snapshot }));
+    expect(unplanned!.plannedReps).toBeUndefined();
+  });
+
   it('builds the per-rep ROM progression in metres', () => {
     const reps = buildReps([
       { concVel: 500, rom: 100 },
