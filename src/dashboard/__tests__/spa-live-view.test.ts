@@ -22,6 +22,7 @@ import {
   deriveRailMetrics,
   peakVelocity,
   velocityLossPct,
+  velocityRatios,
   type CompletedSet,
   type DashboardModel,
   type PlannedExerciseModel,
@@ -747,5 +748,17 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       }),
     );
     expect(deriveActiveSetStates(model)[0]).toMatchObject({ velocities: [0, 0] });
+  });
+});
+
+describe('velocityRatios', () => {
+  it('is exported so every strip surface bands the same domain', () => {
+    // Three surfaces draw a set strip (header, rail row, rest recap) and each used to
+    // build its own velocities array; two of them shipped raw m/s.
+    expect(velocityRatios([0.5, 0.25])).toEqual([1, 0.5]);
+  });
+
+  it('leaves an empty set empty rather than producing NaN', () => {
+    expect(velocityRatios([])).toEqual([]);
   });
 });

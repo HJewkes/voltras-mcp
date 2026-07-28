@@ -375,7 +375,7 @@ function plannedRepCount(session: SessionModel): number | null {
  * reads 0). There is no honest ratio then, so the values pass through unscaled rather than
  * being divided by a fabricated denominator.
  */
-function velocityRatios(velocities: number[]): number[] {
+export function velocityRatios(velocities: number[]): number[] {
   const best = Math.max(...velocities, 0);
   if (best <= 0) return velocities;
   return velocities.map((v) => v / best);

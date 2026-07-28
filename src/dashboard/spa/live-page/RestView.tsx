@@ -15,6 +15,7 @@ import {
 import {
   activeCompletedSets,
   velocityLossPct,
+  velocityRatios,
   verdictFromLoss,
   type CompletedSet,
   type DashboardModel,
@@ -72,7 +73,8 @@ function recapRows(model: DashboardModel, displayUnit: MassUnit): SetRowProps[] 
       unit: load.unit,
       reps: set.repCount,
       weight: load.value,
-      velocities: set.reps,
+      // Ratio-of-best, not raw m/s — SetRow's strip bands the same domain SetStrip does.
+      velocities: velocityRatios(set.reps),
       // rpe intentionally omitted — the store has none and the specimen's value was invented.
     };
   });
