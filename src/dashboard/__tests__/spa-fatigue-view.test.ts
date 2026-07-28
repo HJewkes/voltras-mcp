@@ -304,6 +304,46 @@ describe('mapStoreToFatigueModel', () => {
   });
 });
 
+// --- regression: reps that carry no per-sample stream -------------------------
+
+describe('mapStoreToFatigueModel — reps without a per-sample stream', () => {
+  /**
+   * REGRESSION (VMCP-04.05). WA types `samples` as a required array, but this data
+   * arrives as JSON over `/api/snapshot` and is typed by ASSERTION, not validation.
+   * A summary-only rep therefore threw `concentric.samples is not iterable` — and it
+   * went unnoticed because this mapper had no app caller until the diverging dual
+   * stage wired it in, while every test above built reps WITH samples.
+   *
+   * The fixtures here deliberately omit `samples` entirely rather than passing `[]`:
+   * `[]` is what a correct producer sends, and asserting on it would not have caught
+   * the bug.
+   */
+  const summaryRep = (peakMms: number, repNumber: number): Rep =>
+    ({
+      repNumber,
+      concentric: { peakVelocity: peakMms, _totalVelocity: peakMms, _movementSampleCount: 1 },
+      eccentric: {},
+    }) as unknown as Rep;
+
+  it('does not throw, and reports no curve samples', () => {
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: snapshotWithActive([summaryRep(700, 1), summaryRep(650, 2)]) }),
+    );
+    expect(model).not.toBeNull();
+    expect(model!.velocityCurves).toHaveLength(2);
+    expect(model!.velocityCurves[0].samples).toEqual([]);
+  });
+
+  it('reports a ZERO grind signature rather than inventing one', () => {
+    // No samples means no shape to read. Zero is the honest answer; anything else
+    // would be a fabricated verdict off data that never arrived.
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: snapshotWithActive([summaryRep(700, 1)]) }),
+    );
+    expect(model!.velocityCurves[0].grindSignature).toBe(0);
+  });
+});
+
 // --- mapStoreToDivergingHeroModel --------------------------------------------
 
 describe('mapStoreToDivergingHeroModel', () => {

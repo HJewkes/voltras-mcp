@@ -403,6 +403,17 @@ function mapSlotToDashboardModel(sources: LiveViewSources, side: LimbSide): Dash
  * with L/R bindings). Never fabricates the missing limb — an unbound slot is an honest
  * awaiting side.
  */
+/**
+ * ⚠ NO APP CALLER as of VMCP-04.05. The stacked two-`LiveView` dual stage this fed
+ * was replaced by the diverging hero, which sources from
+ * `mapStoreToDivergingHeroModel` instead.
+ *
+ * Retained deliberately rather than deleted: this is the only projection that gives
+ * a FULL per-slot `DashboardModel` (per-limb weight, rest, completed sets), where the
+ * diverging model carries velocities and labels only. The next step on this page —
+ * wiring the real `LiveFatiguePanel` — is the likely consumer. If that lands without
+ * needing it, delete this and its tests rather than leaving them as scenery.
+ */
 export function mapStoreToDualModel(sources: LiveViewSources): DualDashboardModel {
   return {
     left: mapSlotToDashboardModel(sources, 'left'),

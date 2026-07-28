@@ -16,7 +16,8 @@ import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { LivePage, type LivePageVariant } from '../live-page/LivePage';
 import { ColdBootView } from '../live-page/ColdBootView';
-import { mapStoreToDashboardModel, mapStoreToDualModel } from './live-view';
+import { mapStoreToDashboardModel } from './live-view';
+import { mapStoreToDivergingHeroModel, mapStoreToFatigueModel } from './fatigue-view';
 
 /** Reads the live-page flag off the URL. Absent ⇒ the page is not mounted at all. */
 export function readLivePageVariant(search: string): LivePageVariant | null {
@@ -41,10 +42,13 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
 
   const sources = { snapshot, accumulator, live, prescription, nowMs, pollStatus: status };
   const model = mapStoreToDashboardModel(sources);
-  // Per-limb models for the dual (bilateral) stage (VW-71) — derived from the same store
-  // slices, per bound slot. Only built when the dual variant is mounted; each side is null
-  // for an unbound slot so the stage shows an awaiting side, never a fabricated one.
-  const dual = variant === 'live-dual' ? mapStoreToDualModel(sources) : undefined;
+  // The diverging dual hero (VMCP-04.05) + the L/R callout, from the same store slices.
+  // Only built when the dual variant is mounted. A null SIDE is an unbound slot, so the
+  // stage draws an awaiting wing rather than a fabricated one; a null ASYMMETRY means it
+  // could not be computed honestly and the callout simply is not drawn.
+  const isDual = variant === 'live-dual';
+  const hero = isDual ? mapStoreToDivergingHeroModel(sources) : undefined;
+  const asymmetry = isDual ? (mapStoreToFatigueModel(sources)?.asymmetry ?? null) : null;
 
   // REAL shell chrome inputs, sourced from the store — never fixtures. On cold boot (no
   // snapshot yet) the mappers have nothing to read, so the chrome falls back to an idle,
@@ -73,7 +77,7 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
         {model === null ? (
           <ColdBootView />
         ) : (
-          <LivePage variant={variant} model={model} dual={dual} />
+          <LivePage variant={variant} model={model} hero={hero} asymmetry={asymmetry} />
         )}
       </DashboardShell>
     </div>
