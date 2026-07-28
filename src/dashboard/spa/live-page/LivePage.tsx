@@ -9,7 +9,7 @@ import {
   getSemanticColors,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
-import { ExerciseHeader, LiveView } from './LiveView';
+import { ExerciseHeader } from './LiveView';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
@@ -252,12 +252,18 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
             visible, independent of single/dual. */}
         <ExerciseHeader model={model} displayUnit={displayUnit} />
         <View style={{ flex: 1 }}>
-          {variant === 'live-dual' && model.live !== null && hero && hasBoundSide(hero) ? (
+          {variant === 'live-dual' &&
+          model.live !== null &&
+          fatigue &&
+          hero &&
+          hasBoundSide(hero) ? (
             // Dual + a set streaming + at least one BOUND slot ⇒ the diverging hero
-            // (VMCP-04.05). Two guards worth keeping straight:
+            // (VMCP-04.05). Three guards worth keeping straight:
             //   - a LIVE set, because rest and idle are SESSION-level rather than
             //     per-limb, so both variants fall through to the same stages below
-            //     instead of each growing a bilateral copy of them;
+            //     instead of each growing a bilateral copy of them. `fatigue` is what
+            //     actually carries "a set is OPEN" — see the note on the single stage
+            //     below for why `model.live` alone does not;
             //   - a bound side, because an ordinary single-Voltra session runs on the
             //     `primary` slot and leaves BOTH sides null — drawing the diverging
             //     stage there gives an empty axis and an "awaiting both" note while the
@@ -271,20 +277,23 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
             // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.
             // It needs no display unit: the body is velocity/RPE/ROM only, and the page
             // header + rest stage are the mass consumers.
+            //
+            // `fatigue` is the ACTIVE-SET signal here, not decoration. It is derived from
+            // `snapshot.sets.active`, which ends when the set ends. `model.live` does NOT:
+            // on `set ended` the SSE controller deliberately keeps the terminal rep's
+            // readout and only drops the motion anchor (`live-stream.ts`, VW-57), so the
+            // overlay stays non-null for the WHOLE rest period. Gating a "is a set
+            // streaming" decision on it alone reads "streamed recently" as "streaming now".
             <SingleFatigueStage model={model as LiveDashboardModel} fatigue={fatigue} />
-          ) : model.live !== null ? (
-            // Live but NO fatigue model: the two read different sources — `live` is the SSE
-            // overlay, the fatigue mapper needs `snapshot.sets.active` — so an SSE frame that
-            // leads the snapshot poll opens a brief window where the set is streaming and the
-            // card has nothing to show. Fall back to the velocity-only stage for that window
-            // rather than blanking the wall mid-set.
-            <LiveView model={model as LiveDashboardModel} slot="L" />
           ) : stageIsEmpty(model) ? (
             // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank
             // RestView (the barren no-session / pre-first-set view).
             <EmptyLiveView model={model} />
           ) : (
-            // No set streaming ⇒ the rest stage: recap of the set just finished + countdown.
+            // No OPEN set ⇒ the rest stage: recap of the set just finished + countdown.
+            // Reachable again as of this change: while the stage was gated on the stale
+            // `model.live` overlay, this branch was effectively dead between sets and the
+            // wall showed a frozen velocity stage for the whole rest period instead.
             <RestView model={model} displayUnit={displayUnit} />
           )}
         </View>
