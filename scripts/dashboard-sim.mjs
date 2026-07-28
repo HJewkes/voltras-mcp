@@ -112,12 +112,20 @@ const makeRep = (peakMms, romMm = 620) => {
   const meanMms = Math.round(peakMms * 0.82);
   // A half-sine velocity profile over the phase — enough shape for the ghost-spark to
   // draw a curve rather than a flat line, and for the grind signature to be non-trivial.
-  const stream = (phase, durationMs, peak, n = 12) =>
+  //
+  // `startMs` is NOT optional in practice: `buildVelocityCurve` concatenates the
+  // concentric and eccentric streams and rebases every sample off the FIRST one's
+  // timestamp, so two phases that both start at 0 overlay each other — the ghost-spark
+  // draws the lowering back across the lift as a closed loop, and the ECC phase bar
+  // spans the whole rep. A real device timestamps one monotonic timeline per rep.
+  const stream = (phase, startMs, durationMs, peak, n = 12) =>
     Array.from({ length: n }, (_, i) => ({
-      timestamp: Math.round((durationMs * i) / (n - 1)),
+      timestamp: startMs + Math.round((durationMs * i) / (n - 1)),
       velocity: Math.round(peak * Math.sin((Math.PI * (i + 0.5)) / n)),
       phase,
     }));
+  const CONC_MS = 900;
+  const PAUSE_MS = 150; // brief turnaround at the top, so the phases do not abut
   return {
     repNumber: ++repSeq,
     concentric: {
@@ -130,14 +138,15 @@ const makeRep = (peakMms, romMm = 620) => {
       // same silent-empty failure the mean-velocity fields above exist to prevent.
       startPosition: 0,
       endPosition: romMm,
-      samples: stream(1 /* CONCENTRIC */, 900, peakMms),
+      samples: stream(1 /* CONCENTRIC */, 0, CONC_MS, peakMms),
     },
     // The ghost-spark draws concentric AND eccentric; an empty eccentric halves every
-    // curve. The lowering is slower than the lift, as a real tempo is.
+    // curve. The lowering is slower than the lift, as a real tempo is, and it starts
+    // where the concentric ended — see the `startMs` note above.
     eccentric: {
       startPosition: romMm,
       endPosition: 0,
-      samples: stream(3 /* ECCENTRIC */, 1400, Math.round(peakMms * 0.7)),
+      samples: stream(3 /* ECCENTRIC */, CONC_MS + PAUSE_MS, 1400, Math.round(peakMms * 0.7)),
     },
   };
 };
