@@ -21,6 +21,7 @@ import {
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
+import { FATIGUE_PANEL_CHROME, FATIGUE_PANEL_FALLBACK_BODY } from './panel-geometry';
 import type { DivergingHeroModel, LimbAsymmetry, LiveFatigueModel } from './fatigue-model';
 import { type MassUnit } from './mass';
 
@@ -128,14 +129,9 @@ const PANEL_MIN_WIDTH = 390;
 /** Rail title fallback — a generic label, never an invented session name (VW-43). */
 const UNTITLED_SESSION = 'Session';
 
-/**
- * Vertical chrome the panel adds around its body: `LiveFatiguePanel` pads its content
- * region by 24 top and bottom, and `bodyHeight` sizes the content INSIDE that padding.
- * Subtracting it keeps the panel exactly one stage tall instead of overflowing by 48px.
- */
-const FATIGUE_PANEL_CHROME = 48;
-/** titan's own `bodyHeight` default — used until the stage has been measured once. */
-const FATIGUE_PANEL_FALLBACK_BODY = 508;
+// The panel's own geometry (chrome, body default, column widths) now lives in
+// `panel-geometry.ts` — the IDLE stage prefigures this exact skeleton and the two must not
+// drift apart. Imported above.
 
 /**
  * The single-Voltra live stage (VMCP-05.02): titan's `LiveFatiguePanel` — the velocity
