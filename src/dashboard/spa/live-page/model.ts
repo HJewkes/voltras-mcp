@@ -313,18 +313,47 @@ function summaryLoad(
   return { weight: load.value, unit: load.unit };
 }
 
+/** One prescription lockup's cells, in the shape titan's `SetsRepsLoad` takes. */
+export interface PrescriptionCells {
+  sets: number;
+  reps: number;
+  /** The formatted load, or `NO_VALUE` ("—") for an unset/discovery load — never a faked 0. */
+  load: number | string;
+  unit: MassUnit;
+}
+
 /**
- * The rail row for the ACTIVE exercise: its OWN completed sets (filtered from the
- * session-wide log so a prior exercise's sets don't bleed into its count — VW-50), the
- * set in progress, and any remaining planned sets.
+ * The `sets × reps @ load` prescription for the active exercise, or null when the store
+ * cannot state one.
  *
- * `weight` shows the live value, or `—` when no weight is set yet (never a faked 0).
- * On real hardware it is the live cascade value.
+ * The COUNTS are the spine of the line: `4 × 8` is the claim, and neither half can be
+ * faked, so a missing set or rep target hides the whole lockup (VW-41/42 wire them) rather
+ * than printing the meaningless `0 × —`. The LOAD can honestly be unknown — a discovery
+ * set, or the weight-seed gap under mock — and `SetsRepsLoad` takes a string load for
+ * exactly that, so it reads `4 × 8 @ — lbs` rather than dropping a prescription the coach
+ * really did write. Same placeholder as the rail's `summaryLoad`.
  */
-function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRailExercise {
+export function derivePrescription(
+  session: SessionModel,
+  displayUnit: MassUnit = 'lbs',
+): PrescriptionCells | null {
+  const { plannedSets, targetReps, weightLbs } = session;
+  if (plannedSets === null || targetReps === null) return null;
+  const { weight, unit } = summaryLoad(weightLbs, displayUnit);
+  return { sets: plannedSets, reps: targetReps, load: weight, unit };
+}
+
+/**
+ * The ACTIVE exercise's per-set strip columns: its OWN completed sets (filtered from the
+ * session-wide log so a prior exercise's sets don't bleed in — VW-50), the set in progress,
+ * and any remaining planned sets.
+ *
+ * Exported because TWO surfaces draw this strip — the rail's active row and the page-level
+ * exercise header — and a second derivation would let them disagree about the same set.
+ */
+export function deriveActiveSetStates(model: DashboardModel): SessionRailExercise['setStates'] {
   const { session, live } = model;
-  const done = activeCompletedSets(session);
-  const setStates: SessionRailExercise['setStates'] = done.map((set) => ({
+  const setStates: SessionRailExercise['setStates'] = activeCompletedSets(session).map((set) => ({
     status: 'done',
     velocities: set.reps,
   }));
@@ -347,6 +376,19 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
       setStates.push({ status: 'todo', planned: targetReps });
     }
   }
+  return setStates;
+}
+
+/**
+ * The rail row for the ACTIVE exercise: {@link deriveActiveSetStates}' strip plus the
+ * row's own name / prescribed-set / progress-summary cells.
+ *
+ * `weight` shows the live value, or `—` when no weight is set yet (never a faked 0).
+ * On real hardware it is the live cascade value.
+ */
+function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRailExercise {
+  const { session, live } = model;
+  const done = activeCompletedSets(session);
 
   return {
     name: session.exerciseName,
@@ -365,7 +407,7 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
-    setStates,
+    setStates: deriveActiveSetStates(model),
   };
 }
 

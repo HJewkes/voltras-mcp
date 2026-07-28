@@ -16,6 +16,8 @@ import {
 } from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
+  deriveActiveSetStates,
+  derivePrescription,
   deriveRailExercises,
   deriveRailMetrics,
   peakVelocity,
@@ -488,5 +490,54 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
     const accumulator = { ...initialAccumulatorState(), setLog: [storeSet(1)] };
     const model = mapStoreToDashboardModel(sources({ accumulator }))!;
     expect(model.session.completedSets).toHaveLength(1);
+  });
+});
+
+describe('derivePrescription — the page header lockup (VW-42)', () => {
+  it('reads sets × reps @ load when the plan states all three', () => {
+    expect(
+      derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: 140 })),
+    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs' });
+  });
+
+  it('keeps the prescription and marks an unset load with the em-dash', () => {
+    // A discovery set (no prescribed weight) still has a real 4 × 8 claim to show;
+    // dropping the whole lockup for a missing load would hide what the coach wrote.
+    expect(
+      derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: null })),
+    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs' });
+  });
+
+  it('returns null when no rep target is prescribed', () => {
+    // The regression: `plannedSets: 1` with no rep target used to render `1 × —`,
+    // which states a prescription the store never had.
+    expect(derivePrescription(sessionModel({ plannedSets: 1, targetReps: null }))).toBeNull();
+  });
+
+  it('returns null when no set count is prescribed', () => {
+    expect(derivePrescription(sessionModel({ plannedSets: null, targetReps: 8 }))).toBeNull();
+  });
+
+  it('converts the load to the display unit', () => {
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 3, targetReps: 10, weightLbs: 100 }),
+      'kg',
+    );
+    expect(cells?.unit).toBe('kg');
+    expect(cells?.load).not.toBe(100);
+  });
+});
+
+describe('deriveActiveSetStates — shared by the rail row and the page header', () => {
+  it('returns the same strip the rail row renders', () => {
+    const model = mapStoreToDashboardModel(
+      sources({ live: liveWithRep(0.58), prescription: { sets: 3, repsLow: 8 } }),
+    );
+    const [exercise] = deriveRailExercises(model!);
+    expect(deriveActiveSetStates(model!)).toEqual(exercise.setStates);
+  });
+
+  it('is empty with no sets done and none in progress, so the header hides its strip', () => {
+    expect(deriveActiveSetStates(railModel(sessionModel()))).toEqual([]);
   });
 });

@@ -248,8 +248,9 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
       {/* Panel floors at ~phone width so the live view stops collapsing; rail-aware
           breakpoints below this are a later pass. */}
       <View style={{ flex: 1, minWidth: PANEL_MIN_WIDTH }}>
-        {/* workout title + targets — page-level, always visible, independent of single/dual. */}
-        <ExerciseHeader session={model.session} displayUnit={displayUnit} />
+        {/* workout title + targets + the active exercise's set strip — page-level, always
+            visible, independent of single/dual. */}
+        <ExerciseHeader model={model} displayUnit={displayUnit} />
         <View style={{ flex: 1 }}>
           {variant === 'live-dual' && model.live !== null && hero && hasBoundSide(hero) ? (
             // Dual + a set streaming + at least one BOUND slot ⇒ the diverging hero
