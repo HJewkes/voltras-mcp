@@ -62,6 +62,25 @@ import {
 /** One WA per-sample record, typed via indexed access to avoid a runtime import. */
 type Sample = Rep['concentric']['samples'][number];
 
+/**
+ * A phase's sample stream, or an empty one when the wire did not carry it.
+ *
+ * WA types `samples` as a required array, but this data arrives as JSON over
+ * `/api/snapshot` and is typed by ASSERTION, not validation — so the type is a claim
+ * about the producer, not a guarantee about the bytes. A rep summary without its
+ * per-sample stream is legitimate (a summary-only rep, an older firmware, a driver
+ * that reports counts but not curves), and it used to throw
+ * `concentric.samples is not iterable` the moment anything read it.
+ *
+ * That went unnoticed because `mapStoreToFatigueModel` had no app caller until the
+ * diverging dual stage (VMCP-04.05) wired it in — the tests all built reps WITH
+ * samples. Degrading to an empty stream is the honest reading: no curve and no grind
+ * signature, rather than a crash or a fabricated one.
+ */
+function samplesOf(phase: { samples?: readonly Sample[] } | undefined): readonly Sample[] {
+  return phase?.samples ?? [];
+}
+
 /** Native mm → m. */
 function toMetres(mm: number): number {
   return Number((mm / MMS_PER_MPS).toFixed(3));
@@ -118,7 +137,9 @@ function tempoDeviationFor(rep: Rep, targetConcSec: number | null): number | nul
  * the middle) reads ~0 while a mid-rep stall reads high. Ratio → unit-invariant.
  */
 function grindSignatureFor(rep: Rep): number {
-  const vels = rep.concentric.samples.map((s) => Math.abs(s.velocity)).filter(Number.isFinite);
+  const vels = samplesOf(rep.concentric)
+    .map((s) => Math.abs(s.velocity))
+    .filter(Number.isFinite);
   if (vels.length < 3) return 0;
   const peak = Math.max(...vels);
   if (peak <= 0) return 0;
@@ -135,7 +156,7 @@ function buildVelocityCurve(
   repNumber: number,
   targetConcSec: number | null,
 ): RepVelocityCurve {
-  const ordered: Sample[] = [...rep.concentric.samples, ...rep.eccentric.samples];
+  const ordered: Sample[] = [...samplesOf(rep.concentric), ...samplesOf(rep.eccentric)];
   const base = ordered.length > 0 ? ordered[0].timestamp : 0;
   const samples: VelocitySample[] = ordered.map((s) => ({
     tMs: s.timestamp - base,

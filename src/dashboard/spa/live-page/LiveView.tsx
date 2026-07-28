@@ -17,6 +17,7 @@ import {
 } from '@titan-design/react-ui';
 import { type DashboardModel, type LiveDashboardModel, verdictFromLoss } from './model';
 import { type MassUnit, formatMass } from './mass';
+import { exertionMessage } from './live-copy';
 
 // Verdict STATUS tones (success/warning/error) for the alert cue — semantic status colours,
 // not on-surface text roles, so they come from the token map rather than `useOnSurfaceColor`.
@@ -40,6 +41,8 @@ const t = getSemanticColors('dark');
 const CARD_EDGE = { boxShadow: `inset 0 0 0 1px ${t['hairline-default']}` } as const;
 /** One row height for the tempo + alert cards, so they line up regardless of tempo font size. */
 const CONTROL_HEIGHT = 34;
+/** Gap between the tempo card and the alert — also subtracted from the alert's budget. */
+const CONTROLS_GAP = 16;
 /** The tempo card ground — mirrors TempoDisplay's own charcoal so a shorter inner pill reads seamless. */
 const TEMPO_GROUND = '#1C1C1C';
 
@@ -331,6 +334,111 @@ export function ExerciseHeader({
   );
 }
 
+// --- Shared controls row ------------------------------------------------------
+
+/**
+ * The tempo card + exertion alert that sit above a velocity hero, with all the
+ * shed-detail sizing that makes them survive a narrow panel.
+ *
+ * Extracted when the diverging dual stage (VMCP-04.05) became a second consumer.
+ * The single {@link LiveView} and the dual stage show the SAME row: tempo is
+ * prescribed per set, and the exertion verdict describes the athlete, not a limb
+ * (see `LiveFatigueModel` — "there is exactly ONE of these cards even when two
+ * devices are live"). Duplicating the sizing logic would have been two things to
+ * keep in step for no gain.
+ *
+ * `containerWidth` is passed IN rather than measured here on purpose: the caller
+ * already measures its content box, and re-measuring inside the row would shift
+ * the breakpoints by the caller's padding — a silent visual change to the shipped
+ * single view. The caller owns the reference width; this owns what to do with it.
+ */
+export function LiveControlsRow({
+  tempo,
+  verdict,
+  message,
+  containerWidth,
+  livePhase,
+  phaseElapsedMs,
+}: {
+  tempo: DashboardModel['session']['tempo'];
+  verdict: Verdict;
+  message: string;
+  containerWidth: number;
+  /** The model's raw movement phase — mapped to TempoDisplay's key HERE, so no caller
+   *  has to know the mapping (and none can quietly pass `null` and lose the live fill). */
+  livePhase: NonNullable<DashboardModel['live']>['phase'];
+  phaseElapsedMs: number;
+}) {
+  const activePhase = mapLivePhase(livePhase);
+  const [rowW, setRowW] = useState(0);
+  const [tempoW, setTempoW] = useState(0);
+
+  // The alert sheds detail first (message → verdict → icon); the tempo holds its full size
+  // until the alert can't shrink any further, then it takes over shrinking.
+  const alertMode: AlertMode =
+    containerWidth === 0 || containerWidth >= ALERT_COMPACT
+      ? 'full'
+      : containerWidth >= ALERT_ICON
+        ? 'compact'
+        : 'icon';
+  const tempoFont =
+    containerWidth === 0 || containerWidth >= ALERT_ICON
+      ? TEMPO_BASE_FONT
+      : Math.round(clampLerp(containerWidth, TEMPO_SHRINK_FLOOR, ALERT_ICON, 14, TEMPO_BASE_FONT));
+
+  // Tempo is optional: a set may have no prescribed tempo — then the card is hidden
+  // entirely and the alert takes the whole row.
+  const hasTempo = tempo != null;
+  // Width the alert may take — measured off the ROW (inside the panel padding) so a long
+  // message ellipsises at the side margin rather than running to the panel edge.
+  const alertAvail =
+    rowW > 0
+      ? hasTempo
+        ? tempoW > 0
+          ? Math.max(0, rowW - tempoW - CONTROLS_GAP)
+          : undefined
+        : rowW
+      : undefined;
+
+  return (
+    <View
+      onLayout={(e: LayoutChangeEvent) => setRowW(e.nativeEvent.layout.width)}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: CONTROLS_GAP,
+        justifyContent: hasTempo ? 'space-between' : 'flex-end',
+      }}
+    >
+      {/* tempo card — locked to the alert's height; the inner TempoDisplay shrinks its font
+          but stays centred on the shared charcoal ground so it reads seamless. */}
+      {tempo != null && (
+        <View
+          onLayout={(e: LayoutChangeEvent) => setTempoW(e.nativeEvent.layout.width)}
+          style={{
+            height: CONTROL_HEIGHT,
+            justifyContent: 'center',
+            alignItems: 'flex-start',
+            backgroundColor: TEMPO_GROUND,
+            borderRadius: 9,
+            overflow: 'hidden',
+            ...CARD_EDGE,
+          }}
+        >
+          <TempoDisplay
+            tempo={tempo}
+            fontSize={tempoFont}
+            live={activePhase ? { activePhase, phaseElapsedMs } : undefined}
+            showLabel={false}
+            showInfo={false}
+          />
+        </View>
+      )}
+      <AlertCue status={verdict} message={message} mode={alertMode} availWidth={alertAvail} />
+    </View>
+  );
+}
+
 // --- Live stage ---------------------------------------------------------------
 
 /** Below this content width the alert drops its inline message to a hover tip. */
@@ -367,44 +475,12 @@ export function LiveView({
 
   const [contentW, setContentW] = useState(0);
   const onContentLayout = (e: LayoutChangeEvent) => setContentW(e.nativeEvent.layout.width);
-  const [rowW, setRowW] = useState(0);
-  const onRowLayout = (e: LayoutChangeEvent) => setRowW(e.nativeEvent.layout.width);
-  const [tempoW, setTempoW] = useState(0);
-  const onTempoLayout = (e: LayoutChangeEvent) => setTempoW(e.nativeEvent.layout.width);
-  // The alert sheds detail first (message → verdict → icon); the tempo holds its full size
-  // until the alert can't shrink any further, then it takes over shrinking.
-  const alertMode: AlertMode =
-    contentW === 0 || contentW >= ALERT_COMPACT
-      ? 'full'
-      : contentW >= ALERT_ICON
-        ? 'compact'
-        : 'icon';
-  const tempoFont =
-    contentW === 0 || contentW >= ALERT_ICON
-      ? TEMPO_BASE_FONT
-      : Math.round(clampLerp(contentW, TEMPO_SHRINK_FLOOR, ALERT_ICON, 14, TEMPO_BASE_FONT));
-  // Tempo is optional: a set may have no prescribed tempo — then the card is hidden entirely
-  // and the alert takes the whole row.
-  const hasTempo = session.tempo != null;
-  // Width the alert may take — measured off the ROW (inside the panel padding) so a long
-  // message ellipsises at the side margin rather than running to the panel edge. With no tempo
-  // card the alert gets the full row; otherwise it's the row minus the (measured) tempo + gap.
-  const CONTROLS_GAP = 16;
-  const alertAvail =
-    rowW > 0
-      ? hasTempo
-        ? tempoW > 0
-          ? Math.max(0, rowW - tempoW - CONTROLS_GAP)
-          : undefined
-        : rowW
-      : undefined;
 
   const [heroH, setHeroH] = useState(0);
   const onHeroLayout = (e: LayoutChangeEvent) => setHeroH(e.nativeEvent.layout.height);
   const heroHeight = heroH > 0 ? heroH : dual ? 200 : 320;
 
-  const activePhase = mapLivePhase(live.phase);
-  const message = `VL${live.velocityLossPct} · approaching threshold — 1–2 productive reps left`;
+  const message = exertionMessage(live.velocityLossPct);
 
   return (
     // head verdict → full-surface aura flood; fills its section edge-to-edge — squared off
@@ -416,45 +492,16 @@ export function LiveView({
           onLayout={onContentLayout}
           style={{ flex: 1, padding: dual ? 18 : 24, gap: dual ? 8 : 10 }}
         >
-          {/* controls row: tempo upper-left (when prescribed), alert upper-right. With no tempo
-              the alert simply pins right (flex-end); otherwise they split (space-between). */}
-          <View
-            onLayout={onRowLayout}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: CONTROLS_GAP,
-              justifyContent: hasTempo ? 'space-between' : 'flex-end',
-            }}
-          >
-            {/* tempo card — locked to the alert's height (this view only); the inner TempoDisplay
-                shrinks its font but stays centred on the shared charcoal ground so it reads seamless. */}
-            {session.tempo != null && (
-              <View
-                onLayout={onTempoLayout}
-                style={{
-                  height: CONTROL_HEIGHT,
-                  justifyContent: 'center',
-                  alignItems: 'flex-start',
-                  backgroundColor: TEMPO_GROUND,
-                  borderRadius: 9,
-                  overflow: 'hidden',
-                  ...CARD_EDGE,
-                }}
-              >
-                <TempoDisplay
-                  tempo={session.tempo}
-                  fontSize={tempoFont}
-                  live={
-                    activePhase ? { activePhase, phaseElapsedMs: live.phaseElapsedMs } : undefined
-                  }
-                  showLabel={false}
-                  showInfo={false}
-                />
-              </View>
-            )}
-            <AlertCue status={verdict} message={message} mode={alertMode} availWidth={alertAvail} />
-          </View>
+          {/* controls row: tempo upper-left (when prescribed), alert upper-right. Shared with
+              the diverging dual stage — see {@link LiveControlsRow}. */}
+          <LiveControlsRow
+            tempo={session.tempo}
+            verdict={verdict}
+            message={message}
+            containerWidth={contentW}
+            livePhase={live.phase}
+            phaseElapsedMs={live.phaseElapsedMs}
+          />
 
           {/* the velocity hero fills the rest. */}
           <View style={{ flex: 1 }} onLayout={onHeroLayout}>

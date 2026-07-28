@@ -241,7 +241,17 @@ export interface DivergingHeroSide {
 export interface DivergingHeroModel {
   left: DivergingHeroSide | null;
   right: DivergingHeroSide | null;
-  /** Shared velocity scale max (m/s), feeds the component `scale`. `null` when neither side has data. */
+  /**
+   * Shared velocity scale max (m/s) — the higher of the two sides' bests. `null` when
+   * neither side has data.
+   *
+   * ⚠ It does NOT feed the component `scale`, despite what this comment claimed until
+   * VMCP-04.05 actually built the stage. The shipped `DualVelocityStrip` prop is
+   * `'peak' | 'fixed'`, not a number, and `scale="peak"` already derives the pair's
+   * shared ceiling internally — the same quantity. The stage uses the component's own
+   * derivation so there is ONE definition of that ceiling rather than two that can
+   * drift apart. This field stays the datum the diverging bars are described against.
+   */
   scaleMaxMps: number | null;
   /**
    * Planned rep target for the dashed stubs (feeds the component `targetReps`).
