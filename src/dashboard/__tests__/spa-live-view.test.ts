@@ -548,6 +548,31 @@ describe('derivePrescription — the page header lockup (VW-42)', () => {
     expect(cells).toBeNull();
   });
 
+  it('prefers the PRESCRIBED load over the live cascade weight', () => {
+    // The live pin weight is the ACTUAL load and already shows in the rail summary; this
+    // line is the target. Under mock the cascade never reports, so plan-first is also the
+    // difference between showing `@ 140 lbs` and showing `@ — lbs`.
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        weightLbs: 135,
+        plannedExercises: [planned({ weightLbs: 140 })],
+      }),
+    );
+    expect(cells?.load).toBe(140);
+  });
+
+  it('falls back to the live cascade weight when the plan prescribes no load', () => {
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        weightLbs: 135,
+        plannedExercises: [planned({ weightLbs: null })],
+      }),
+    );
+    expect(cells?.load).toBe(135);
+  });
+
   it('falls back to the device set watch for an unplanned but armed session', () => {
     expect(derivePrescription(sessionModel({ plannedSets: 3, targetReps: 6 }))?.reps).toBe(6);
   });

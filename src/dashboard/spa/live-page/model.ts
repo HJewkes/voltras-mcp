@@ -392,17 +392,23 @@ function velocityRatios(velocities: number[]): number[] {
  * source that can express a range. The device watch stays as the fallback for an unplanned
  * session that was nonetheless armed with a rep goal (VW-41/42 wire the rest).
  *
- * The LOAD can honestly be unknown — a discovery set, or the weight-seed gap under mock —
- * and `SetsRepsLoad` takes a string load for exactly that, so it reads `4 × 8 @ — lbs`
- * rather than dropping a prescription the coach really did write. Same placeholder as the
- * rail's `summaryLoad`.
+ * The LOAD is prescribed-first for the same reason, falling back to the live cascade
+ * weight. A planned exercise's target load is the number this line is claiming; the live
+ * pin weight is the ACTUAL load and already has a home in the rail's progress summary, so
+ * preferring the plan here stops the two cells saying the same thing and keeps the target
+ * on screen when the cascade has not reported (it never does under the mock adapter).
+ *
+ * The load can still honestly be unknown, and `SetsRepsLoad` takes a string for exactly
+ * that, so it reads `4 × 8 @ — lbs` rather than dropping a prescription the coach really
+ * did write. Same placeholder as the rail's `summaryLoad`.
  */
 export function derivePrescription(
   session: SessionModel,
   displayUnit: MassUnit = 'lbs',
 ): PrescriptionCells | null {
-  const { plannedSets, weightLbs } = session;
+  const { plannedSets } = session;
   const reps = plannedRepTarget(session) ?? session.targetReps;
+  const weightLbs = session.plannedExercises.find((e) => e.active)?.weightLbs ?? session.weightLbs;
   if (plannedSets === null || reps === null) return null;
   const { weight, unit } = summaryLoad(weightLbs, displayUnit);
   return { sets: plannedSets, reps, load: weight, unit };
