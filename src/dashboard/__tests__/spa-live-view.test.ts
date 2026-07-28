@@ -599,3 +599,128 @@ describe('deriveActiveSetStates — shared by the rail row and the page header',
     expect(deriveActiveSetStates(railModel(sessionModel()))).toEqual([]);
   });
 });
+
+describe('set-strip columns read the PLAN rep target, not just the device watch', () => {
+  /** A live model on a planned exercise: `plannedSets` sets of `targetReps`, one set live. */
+  function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
+    return {
+      live: {
+        connected: true,
+        phase: 'con',
+        phaseElapsedMs: 0,
+        velocity: 0.5,
+        position: 0,
+        force: 0,
+        repVelocities: [0.6, 0.5],
+        velocityLossPct: null,
+        lastRep: null,
+        peakForce: null,
+      },
+      restElapsedMs: null,
+      session: sessionModel({
+        plannedSets: 3,
+        targetReps: null,
+        plannedExercises: [
+          {
+            name: 'Cable Chest Press',
+            plannedSets: 3,
+            targetReps: 8,
+            repsLabel: '8',
+            weightLbs: 140,
+            active: true,
+          },
+        ],
+        ...over,
+      }),
+    };
+  }
+
+  it('sizes the active column and emits todo sets from the plan with no device watch', () => {
+    // The regression: `targetReps` is device-only, so a fully planned session produced one
+    // full-width active bar and NO upcoming columns while the header claimed 3 × 8.
+    const states = deriveActiveSetStates(plannedLive());
+    expect(states.map((s) => s.status)).toEqual(['active', 'todo', 'todo']);
+    expect(states[0]).toMatchObject({ planned: 8 });
+    expect(states[1]).toMatchObject({ planned: 8 });
+  });
+
+  it('still emits no todo columns when neither the plan nor the device states a rep target', () => {
+    const states = deriveActiveSetStates(plannedLive({ plannedExercises: [] }));
+    expect(states.map((s) => s.status)).toEqual(['active']);
+    // No rep target anywhere ⇒ the column is the reps actually landed, never a guess.
+    expect(states[0]).toMatchObject({ planned: 2 });
+  });
+});
+
+describe('set-strip velocities are normalized to the ratio domain titan bands on', () => {
+  it("scales each rep against the set's own best, so the best rep reads 1", () => {
+    // Raw m/s (0.4–0.8 on a real set) all fell under velocityZoneColor's 0.75 cut, so
+    // every set painted orange-red regardless of how it went.
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 3,
+            reps: [0.8, 0.6, 0.4],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    const [set] = deriveActiveSetStates(model);
+    const velocities = 'velocities' in set ? set.velocities : [];
+    expect(velocities[0]).toBe(1);
+    expect(velocities[1]).toBeCloseTo(0.75, 10);
+    expect(velocities[2]).toBeCloseTo(0.5, 10);
+  });
+
+  it('normalizes each set independently, not against the session', () => {
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [1, 0.5],
+            peakForceLbs: null,
+          },
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [0.4, 0.2],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    const [first, second] = deriveActiveSetStates(model);
+    // The slower set opens green too: the strip reads WITHIN-set decay, not absolute speed.
+    expect(first).toMatchObject({ velocities: [1, 0.5] });
+    expect(second).toMatchObject({ velocities: [1, 0.5] });
+  });
+
+  it('passes velocities through unscaled when no usable velocity landed', () => {
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [0, 0],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    expect(deriveActiveSetStates(model)[0]).toMatchObject({ velocities: [0, 0] });
+  });
+});

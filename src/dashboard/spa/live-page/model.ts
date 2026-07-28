@@ -343,6 +343,45 @@ function plannedRepTarget(session: SessionModel): number | string | null {
 }
 
 /**
+ * The rep COUNT to size a strip column by — the same plan-first sourcing as
+ * {@link plannedRepTarget}, but numeric.
+ *
+ * A prescribed RANGE collapses to its committed floor (`repsLow`): those are the reps the
+ * set is definitely expected to carry. The reps between the floor and the range's top are
+ * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
+ * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
+ */
+function plannedRepCount(session: SessionModel): number | null {
+  const active = session.plannedExercises.find((e) => e.active);
+  return active?.targetReps ?? session.targetReps;
+}
+
+/**
+ * Per-rep mean velocities → the ratio-of-best domain `velocityZoneColor` actually bands on.
+ *
+ * titan documents `SetStripSet.velocities` as a rep's "mean velocity ratio" and bands it at
+ * `<0.5 / <0.75 / <1.0` with 1.0 the fastest. We were handing it raw m/s — a working set
+ * runs ~0.4–0.8 m/s — so every rep of every real set landed in the slow/moderate bands and
+ * the strip came out uniformly orange-red however the set actually went. The colour carried
+ * no information.
+ *
+ * Normalized against the SET'S OWN best rep, the same basis {@link velocityLossPct} and the
+ * fatigue verdict use ("the drop from the set's fastest rep to its last"). The strip
+ * therefore reads as within-set decay: the best rep is green by construction and the bands
+ * show how far each rep fell off it. It deliberately does NOT compare across sets — a grind
+ * set and a snappy set both open green.
+ *
+ * A non-positive best means no usable velocity landed (a rep carrying no movement samples
+ * reads 0). There is no honest ratio then, so the values pass through unscaled rather than
+ * being divided by a fabricated denominator.
+ */
+function velocityRatios(velocities: number[]): number[] {
+  const best = Math.max(...velocities, 0);
+  if (best <= 0) return velocities;
+  return velocities.map((v) => v / best);
+}
+
+/**
  * The `sets × reps @ load` prescription for the active exercise, or null when the store
  * cannot state one.
  *
@@ -381,21 +420,21 @@ export function deriveActiveSetStates(model: DashboardModel): SessionRailExercis
   const { session, live } = model;
   const setStates: SessionRailExercise['setStates'] = activeCompletedSets(session).map((set) => ({
     status: 'done',
-    velocities: set.reps,
+    velocities: velocityRatios(set.reps),
   }));
   if (live) {
     // `planned` sizes the strip's columns. With no rep target, the honest column count
     // is the reps actually landed — i.e. no pending placeholders rather than invented ones.
     setStates.push({
       status: 'active',
-      velocities: live.repVelocities,
-      planned: session.targetReps ?? live.repVelocities.length,
+      velocities: velocityRatios(live.repVelocities),
+      planned: plannedRepCount(session) ?? live.repVelocities.length,
     });
   }
   // Any planned sets beyond those done + the one in progress. Skipped entirely without a
   // rep target: a `todo` set must state how many reps it expects, and we would be guessing.
   const accountedFor = setStates.length;
-  const targetReps = session.targetReps;
+  const targetReps = plannedRepCount(session);
   const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
   if (targetReps !== null) {
     for (let i = 0; i < remaining; i++) {
@@ -457,7 +496,7 @@ function buildDoneRow(
       ...summaryLoad(planned.weightLbs, displayUnit),
     },
     indicator: 'velocity-loss',
-    setStates: logged.map((set) => ({ status: 'done', velocities: set.reps })),
+    setStates: logged.map((set) => ({ status: 'done', velocities: velocityRatios(set.reps) })),
   };
 }
 
