@@ -13,7 +13,6 @@ import {
   getSemanticColors,
   useOnSurfaceColor,
   alpha,
-  neumorphicShadows,
   type IconProps,
 } from '@titan-design/react-ui';
 import { type DashboardModel, type LiveDashboardModel, verdictFromLoss } from './model';
@@ -25,8 +24,20 @@ import { type MassUnit, formatMass } from './mass';
 // the text below resolves via the on-surface context seeded by the LivePage Surface root.
 const t = getSemanticColors('dark');
 
-/** Raised-card elevation shared by the alert + tempo cards. */
-const CARD_SHADOW = neumorphicShadows.charcoal.raised.medium;
+/**
+ * Raised-card separation, as a HAIRLINE rather than a shadow.
+ *
+ * titan 0.12.0 deleted `neumorphicShadows`, and the reason matters here: the
+ * treatment needs a mid-tone ground (~75-90% L) for its dark half to fall onto.
+ * These cards sit near 10% L, so that half was already collapsing and the cards
+ * were carrying a one-sided smudge rather than the elevation they asked for.
+ *
+ * An INSET ring rather than a border, deliberately — a real `borderWidth` would
+ * add a pixel to a card whose height is pinned to CONTROL_HEIGHT so it lines up
+ * with its neighbour, and would push the inner content on a surface that is
+ * already `overflow: 'hidden'`.
+ */
+const CARD_EDGE = { boxShadow: `inset 0 0 0 1px ${t['hairline-default']}` } as const;
 /** One row height for the tempo + alert cards, so they line up regardless of tempo font size. */
 const CONTROL_HEIGHT = 34;
 /** The tempo card ground — mirrors TempoDisplay's own charcoal so a shorter inner pill reads seamless. */
@@ -107,7 +118,9 @@ function alertSurface(tone: string) {
     borderWidth: 1,
     borderColor: alpha(tone, 0.45),
     backgroundColor: alpha(tone, 0.14),
-    ...CARD_SHADOW,
+    // No CARD_EDGE here: this surface already carries its own TINTED border, and
+    // the tint is the point — it names the verdict. A neutral hairline on top
+    // would only mute it.
   };
 }
 
@@ -426,7 +439,7 @@ export function LiveView({
                   backgroundColor: TEMPO_GROUND,
                   borderRadius: 9,
                   overflow: 'hidden',
-                  ...CARD_SHADOW,
+                  ...CARD_EDGE,
                 }}
               >
                 <TempoDisplay

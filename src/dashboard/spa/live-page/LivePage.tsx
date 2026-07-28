@@ -67,7 +67,10 @@ function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassU
         borderRadius: 8,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: t['border-default'],
+        // `border-default` was deleted in titan 0.12.0 — solid dark borders are
+        // gone and separation is the alpha hairline family's job now. Same role,
+        // and self-normalizing, so it holds up on whatever plane this floats over.
+        borderColor: t['hairline-default'],
         backgroundColor: alpha(t['surface-overlay'], 0.85),
       }}
     >

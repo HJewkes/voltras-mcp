@@ -32,7 +32,7 @@
   gap: 12px;
   padding: 14px 20px;
   background: var(--color-surface-elevated);
-  border-bottom: 1px solid var(--color-border-default);
+  border-bottom: 1px solid var(--color-hairline-default);
   flex-shrink: 0;
 }
 
@@ -72,7 +72,7 @@
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-default);
+  border: 1px solid var(--color-hairline-default);
   font-size: 11px;
   font-weight: 600;
   color: var(--color-text-secondary);
@@ -292,7 +292,7 @@
   flex-direction: column;
 }
 .meso-overview-weeks > * + * {
-  border-top: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
+  border-top: 1px solid var(--color-hairline-subtle);
 }
 
 /* "PR history" affordance below the trend chart — opens the PrHistoryModal. */
@@ -327,7 +327,7 @@
   font-weight: 600;
   padding: 4px 12px;
   border-radius: 999px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-hairline-strong);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
