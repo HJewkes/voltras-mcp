@@ -236,7 +236,7 @@ const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active
  * close signal — wrong on noble + fast-tempo WT (the device fires
  * `onInProgress` continuously during workout mode, so the post-grace event
  * arrives well before the user finishes reps). See
- * `coordination/integration-plans/mcp-rep-count-fix-2026-05-09.md` and
+ * `sources/integration-plans/mcp-rep-count-fix-2026-05-09.md` and
  * `voltra-private/captures/sessions/validation-phase-6-set-boundaries-2026-05-06T20-12-57.events.json`.
  */
 const SET_INACTIVITY_TIMEOUT_MS = 90_000;
@@ -1710,7 +1710,7 @@ function publishCmd10SettingsUpdate(
  * `weightLbsTenths` are the firmware's lazily-computed effective force at
  * the cable — observed against requested user values they false-positive on
  * mode-bounce transients and stale across writes. The diagnostic at
- * `coordination/HANDOFF-2026-05-21-coercion-watch-field-source.md` carries
+ * `sources/archive/handoffs/HANDOFF-2026-05-21-coercion-watch-field-source.md` carries
  * the byte-level evidence.
  *
  * Fields observed here (all cmd=0x10-sourced, whole-pound units):

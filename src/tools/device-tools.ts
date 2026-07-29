@@ -552,7 +552,7 @@ export function registerDeviceTools(
       // clears the adapter reference; capturing here lets us still force-close
       // the adapter even if the manager path errors mid-teardown. Slot-routing
       // bug fix — see
-      // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md` and
+      // `sources/audits/ble-slot-routing-2026-05-08.md` and
       // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
       const adapterRef = slot.client.getAdapter();
       // Best-effort: return the device to Idle before tearing down the BLE

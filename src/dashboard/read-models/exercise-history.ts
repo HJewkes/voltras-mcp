@@ -221,7 +221,7 @@ export interface CapacityBandPoint {
  * Capacity band = WA `StateSpaceStrengthModel` (a local-linear-trend Kalman
  * filter) folded over the exercise's per-session e1RM series. Each observation
  * yields `{ estimate, variance }`; the corridor is `estimate ± k·√variance`, so
- * it tightens as confidence grows. See `coordination/architecture/
+ * it tightens as confidence grows. See `sources/architecture/
  * capacity-band-model-2026-07-04.md`. Returns none below the minimum-session gate.
  */
 export function buildCapacityBand(series: readonly ExerciseE1rmObservation[]): CapacityBandPoint[] {

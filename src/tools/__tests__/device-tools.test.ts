@@ -585,7 +585,7 @@ describe('registerDeviceTools', () => {
     });
 
     // Slot-routing fix (2026-05-08): defensive teardown — see
-    // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+    // `sources/audits/ble-slot-routing-2026-05-08.md`.
     // After `device.disconnect`, the slot's client must be disposed so a
     // stray write through this client throws ('Client has been disposed')
     // rather than potentially routing through a leaked adapter handle.

@@ -3783,7 +3783,7 @@ describe('setting_coerced channel event (F2+F3)', () => {
   });
 
   // ── VMCP-02.40 wrong-field-source regression guards ─────────────────────
-  // The diagnostic at coordination/HANDOFF-2026-05-21-coercion-watch-field-source.md
+  // The diagnostic at sources/archive/handoffs/HANDOFF-2026-05-21-coercion-watch-field-source.md
   // captured the byte-level evidence: state-dump's `chainTargetForceTenths`
   // and `weightLbsTenths` are firmware-internal lazy values, not real-time
   // reflections of the user's setting. The cmd=0x10 cascade echo is the

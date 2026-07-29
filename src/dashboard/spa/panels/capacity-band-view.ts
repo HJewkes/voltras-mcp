@@ -4,7 +4,7 @@
  *
  * Thin app-side glue of the model↔render split: the exact strength estimate + its
  * ±k·σ corridor come from WA's `StateSpaceStrengthModel` (folded server-side, see
- * `coordination/architecture/capacity-band-model-2026-07-04.md`); titan renders the
+ * `sources/architecture/capacity-band-model-2026-07-04.md`); titan renders the
  * shaded band + session dots. Passes EXACT values into the prop shapes — no
  * pre-rounding. Titan imports are TYPES only (erased at build), so this runs in the
  * node test environment.

@@ -204,7 +204,7 @@ describe('removeSlot', () => {
   });
 
   // Slot-routing fix (2026-05-08) — defensive dispose. See
-  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  // `sources/audits/ble-slot-routing-2026-05-08.md`.
   it('disposes the slot client to prevent stray writes through stale handles', () => {
     const state = makeStateWithPrimary();
     const client = new VoltraClient() as InstanceType<typeof VoltraClient> & { disposed: boolean };
@@ -265,7 +265,7 @@ describe('resetPrimarySlot', () => {
   });
 
   // Slot-routing fix (2026-05-08) — defensive dispose. See
-  // `coordination/bug-investigations/ble-slot-routing-2026-05-08.md`.
+  // `sources/audits/ble-slot-routing-2026-05-08.md`.
   it('disposes the outgoing client before swapping in the fresh one', () => {
     const state = makeStateWithPrimary();
     const priorClient = getSlot(state).client as InstanceType<typeof VoltraClient> & {

@@ -2,7 +2,7 @@
 //
 // `active_mode` used to be derived from `DeviceSnapshot.trainingModeRaw` (the
 // cmd=0x07 state-dump byte). The 2026-07-07 bench reverse-engineering
-// (coordination/contract-audits/mode-system-rootcause-2026-07-07.md) proved
+// (sources/audits/mode-system-rootcause-2026-07-07.md) proved
 // that byte is NOT the applied training mode — it is an *engagement* field
 // (0/1/2/3 = home / WeightTraining-active / band-active / damper-active). It
 // cannot represent Damper as a mode (reads 1 at idle), emits transient 0 on
