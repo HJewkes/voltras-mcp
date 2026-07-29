@@ -47,5 +47,5 @@ npm test             # vitest run
 npm run build        # tsc -> dist/
 ```
 
-Design: `coordination/architecture/state-layer-convergence-2026-07-12.md` (§3a/§3b/§3d) and
+Design: `sources/architecture/state-layer-convergence-2026-07-12.md` (§3a/§3b/§3d) and
 `session-core-roundtrip-spec.md` in the voltras-workspace.

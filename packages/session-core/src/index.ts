@@ -6,7 +6,7 @@
  * platform codecs with round-trip tests. No platform code, no store bodies yet — those
  * land in VMCP-03.02 (dashboard store) and the Phase-2 platform adapters.
  *
- * Design: coordination/architecture/state-layer-convergence-2026-07-12.md
+ * Design: sources/architecture/state-layer-convergence-2026-07-12.md
  */
 
 // Re-export the WA domain atoms so consumers import them from one place.

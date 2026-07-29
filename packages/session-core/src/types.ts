@@ -6,7 +6,7 @@
  * re-exported from `@voltras/workout-analytics` so consumers import them from one
  * place.
  *
- * Design: coordination/architecture/state-layer-convergence-2026-07-12.md (§3a/§3d).
+ * Design: sources/architecture/state-layer-convergence-2026-07-12.md (§3a/§3d).
  */
 
 import type { LoadSettings } from '@voltras/workout-analytics';

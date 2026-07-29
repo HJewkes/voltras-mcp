@@ -4,7 +4,7 @@
 // and `decideTestOrder` with hand-crafted force-sample inputs. No SDK,
 // no timers, no network — every assertion is a deterministic data
 // transformation. Protocol expectations come straight from
-// coordination/research/isometric-protocol-2026-05-09.md.
+// sources/research/isometric-protocol-2026-05-09.md.
 
 import { describe, expect, it } from 'vitest';
 
