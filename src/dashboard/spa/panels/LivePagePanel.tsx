@@ -1,9 +1,16 @@
 /**
  * Feature-flagged mount for the ported north-star live page (VW-38).
  *
- * Opt in with `?live=1` (add `&variant=live-dual` for the dual PREVIEW). Off by default:
- * the page is a work-in-progress port whose data gaps (VW-41..52) are still open, so it
- * must not replace the shipped dashboard until it is at least as truthful.
+ * Opt in with `?live=1`. Off by default: the page is a work-in-progress port whose data
+ * gaps (VW-41..52) are still open, so it must not replace the shipped dashboard until it
+ * is at least as truthful.
+ *
+ * SINGLE vs DUAL comes from STATE (VMCP-04.07), not from a hand-typed URL:
+ * {@link selectLiveVariant} reads which limb slots are bound off the snapshot, so a second
+ * Voltra joining mid-session swaps the page to the diverging stage and a drop swaps it
+ * back, with no reload. It is recomputed on every snapshot rather than latched at mount —
+ * a latched variant would be wrong at exactly those two moments. `?variant=` survives as a
+ * manual override for testing (see `readVariantOverride`).
  *
  * Self-subscribes to the store's `live` slice for the same reason `LiveReadout` does —
  * the SSE overlay writes at ~20 Hz, and reading it through the shell's `useDashboardModel`
@@ -18,15 +25,16 @@ import { LivePage, type LivePageVariant } from '../live-page/LivePage';
 import { ColdBootView } from '../live-page/ColdBootView';
 import { mapStoreToDashboardModel } from './live-view';
 import { mapStoreToDivergingHeroModel, mapStoreToFatigueModel } from './fatigue-view';
+import { selectLiveVariant } from '../live-page/stage-variant';
 
-/** Reads the live-page flag off the URL. Absent ⇒ the page is not mounted at all. */
-export function readLivePageVariant(search: string): LivePageVariant | null {
-  const params = new URLSearchParams(search);
-  if (params.get('live') !== '1') return null;
-  return params.get('variant') === 'live-dual' ? 'live-dual' : 'live';
-}
-
-export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.JSX.Element | null {
+/**
+ * @param variantOverride the URL's manual stage pin, or `null` to select from state.
+ */
+export function LivePagePanel({
+  variantOverride = null,
+}: {
+  variantOverride?: LivePageVariant | null;
+}): React.JSX.Element | null {
   const snapshot = useStore(dashboardStore, (s) => s.snapshot);
   const accumulator = useStore(dashboardStore, (s) => s.accumulator);
   const prescription = useStore(dashboardStore, (s) => s.prescription);
@@ -39,6 +47,12 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   // between sets. During a live set the `live` slice already re-renders this at ~20 Hz,
   // so the extra subscription only adds ticks while resting, which is when they matter.
   const nowMs = useStore(dashboardStore, (s) => s.nowMs);
+
+  // Which stage this frame shows. Derived from the SAME snapshot every model below reads,
+  // so a variant swap and the data that justifies it land in one render — the dual stage
+  // is never asked to draw a slot that has already gone, and the single stage it falls
+  // back to renders the surviving slot's set rather than a blank frame.
+  const variant = selectLiveVariant(snapshot, variantOverride);
 
   const sources = { snapshot, accumulator, live, prescription, nowMs, pollStatus: status };
   const model = mapStoreToDashboardModel(sources);
