@@ -358,8 +358,17 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
 
 // --- Diverging dual-Voltra velocity hero -------------------------------------
 
-/** One limb's diverging-hero side from its slot device entry. `null` when unbound. */
-function buildHeroSide(entry: SnapshotDeviceEntry | undefined): DivergingHeroSide | null {
+/**
+ * One limb's diverging-hero side from its slot device entry. `null` when unbound.
+ *
+ * `targetConcSec` is the prescribed concentric duration (seconds) the per-rep tempo
+ * deviation is measured against — the same reference the shared card uses, so a rep
+ * does not read as on-tempo on one surface and off-tempo on the other.
+ */
+function buildHeroSide(
+  entry: SnapshotDeviceEntry | undefined,
+  targetConcSec: number | null,
+): DivergingHeroSide | null {
   if (entry === undefined) return null;
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
   const velocities: number[] = [];
@@ -371,6 +380,10 @@ function buildHeroSide(entry: SnapshotDeviceEntry | undefined): DivergingHeroSid
   const velocityLossPct = reps.length < 2 ? null : getSetVelocityLossPct({ reps: reps as Rep[] });
   return {
     repVelocitiesMps: velocities,
+    // This slot's OWN curves — never the shared card's folded stream (see the field note).
+    velocityCurves: reps.map((rep, i) =>
+      buildVelocityCurve(rep, rep.repNumber ?? i + 1, targetConcSec),
+    ),
     // PROVISIONAL: the bound device serial (e.g. "V-097082") — the only per-slot
     // identity the snapshot carries client-side. `null` when the slot has no device
     // identity yet.
@@ -411,10 +424,13 @@ export function mapStoreToDivergingHeroModel(sources: LiveViewSources): Divergin
     return { left: null, right: null, scaleMaxMps: null, targetReps, liveRepIndex: null };
   }
 
+  // Index 2 of the canonical [ecc, pauseBottom, con, pauseTop] tuple — the ordering is a
+  // known footgun, so it is read positionally here exactly as the shared card reads it.
+  const targetConcSec = prescription?.tempo?.[2] ?? null;
   const leftEntry = slotEntry(snapshot, 'left');
   const rightEntry = slotEntry(snapshot, 'right');
-  const left = buildHeroSide(leftEntry);
-  const right = buildHeroSide(rightEntry);
+  const left = buildHeroSide(leftEntry, targetConcSec);
+  const right = buildHeroSide(rightEntry, targetConcSec);
   const peaks = [left?.bestVelocityMps, right?.bestVelocityMps].filter(
     (v): v is number => typeof v === 'number',
   );

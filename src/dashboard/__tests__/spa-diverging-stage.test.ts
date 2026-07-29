@@ -8,11 +8,47 @@
  * shown as a GAP, never mirrored from the bound side and never silently dropped.
  */
 import { describe, it, expect } from 'vitest';
-import { toStream, missingSides, hasBoundSide } from '../spa/live-page/diverging-stage-model';
-import type { DivergingHeroModel, DivergingHeroSide } from '../spa/live-page/fatigue-model';
+import {
+  toStream,
+  toGhostCurves,
+  missingSides,
+  hasBoundSide,
+  hasGhostCurves,
+} from '../spa/live-page/diverging-stage-model';
+import type {
+  DivergingHeroModel,
+  DivergingHeroSide,
+  RepVelocityCurve,
+} from '../spa/live-page/fatigue-model';
+
+/** A curve with real per-sample shape — what a streaming device produces. */
+const curve = (repNumber: number, velocityMps = 0.5): RepVelocityCurve => ({
+  repNumber,
+  samples: [
+    { tMs: 0, velocityMps, phase: 'concentric' },
+    { tMs: 400, velocityMps: velocityMps * 0.8, phase: 'concentric' },
+    { tMs: 900, velocityMps: velocityMps * 0.4, phase: 'eccentric' },
+  ],
+  phaseSegments: [
+    { phase: 'concentric', startMs: 0, endMs: 400 },
+    { phase: 'eccentric', startMs: 900, endMs: 900 },
+  ],
+  tempoDeviation: 0.1,
+  grindSignature: 0.2,
+});
+
+/** A curve for a SUMMARY-only rep: the rep landed, the sample stream never arrived. */
+const sampleLessCurve = (repNumber: number): RepVelocityCurve => ({
+  repNumber,
+  samples: [],
+  phaseSegments: [],
+  tempoDeviation: null,
+  grindSignature: 0,
+});
 
 const side = (over: Partial<DivergingHeroSide> = {}): DivergingHeroSide => ({
   repVelocitiesMps: [0.52, 0.48],
+  velocityCurves: [curve(1, 0.52), curve(2, 0.48)],
   label: 'Left Arm',
   bestVelocityMps: 0.52,
   velocityLossPct: 8,
@@ -51,6 +87,49 @@ describe('toStream — model side → DualVelocityStrip stream', () => {
       velocities: [],
       label: 'Left Arm',
     });
+  });
+});
+
+describe('toGhostCurves — model side → DualGhostSpark wing (VMCP-04.06)', () => {
+  it('passes the side its own curves through untouched', () => {
+    expect(toGhostCurves(side()).map((c) => c.repNumber)).toEqual([1, 2]);
+  });
+
+  it('gives an UNBOUND side no curves rather than mirroring the bound one', () => {
+    // Same gap rule as `toStream`: one wing means one arm is reporting. A mirrored
+    // copy would draw a limb that is not on the machine.
+    expect(toGhostCurves(null)).toEqual([]);
+  });
+});
+
+describe('hasGhostCurves — is there per-sample shape worth spending stage height on', () => {
+  it('is true when either side has a curve with samples', () => {
+    expect(hasGhostCurves(hero())).toBe(true);
+    expect(hasGhostCurves(hero({ right: null }))).toBe(true);
+    expect(hasGhostCurves(hero({ left: null }))).toBe(true);
+  });
+
+  it('is FALSE when the reps arrived as summaries with no sample stream', () => {
+    // A legitimate wire state (older firmware, a driver that reports counts but not
+    // curves). Those curves plot as nothing, so the stage must not hand a fifth of its
+    // height to a bare axis while the athlete is mid-set.
+    const summary = { velocityCurves: [sampleLessCurve(1), sampleLessCurve(2)] };
+    expect(hasGhostCurves(hero({ left: side(summary), right: side(summary) }))).toBe(false);
+  });
+
+  it('draws as soon as ONE rep carries shape, even alongside sample-less ones', () => {
+    // Mixed streams are the realistic mid-set case — a rep can summarize while the next
+    // streams. Waiting for all of them would leave the chart off for the whole set.
+    expect(
+      hasGhostCurves(
+        hero({ left: side({ velocityCurves: [sampleLessCurve(1), curve(2)] }), right: null }),
+      ),
+    ).toBe(true);
+  });
+
+  it('is false before the first rep lands on either side', () => {
+    expect(hasGhostCurves(hero({ left: side({ velocityCurves: [] }), right: null }))).toBe(false);
+    expect(hasGhostCurves(hero({ left: null, right: null }))).toBe(false);
   });
 });
 

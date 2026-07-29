@@ -455,6 +455,135 @@ describe('mapStoreToDivergingHeroModel', () => {
     expect(hero.liveRepIndex).toBeNull();
     expect(hero.targetReps).toBeNull();
   });
+
+  // --- Per-slot ghost-spark curves (VMCP-04.06) ------------------------------
+
+  describe('per-slot velocity curves (DualGhostSpark wings)', () => {
+    /** First-sample velocity (m/s) of each of a side's curves — a curve's identity here. */
+    const opening = (curves: { samples: { velocityMps: number }[] }[]) =>
+      curves.map((c) => c.samples[0]?.velocityMps);
+
+    /**
+     * The whole point of a per-slot mapper. The SHARED fatigue card folds the two limbs
+     * per rep number and keeps the SLOWER observation, so its curve for rep 1 can come
+     * from one arm and its curve for rep 2 from the other. Drawing that as a limb's own
+     * shape would splice two arms into one line.
+     */
+    it("builds each wing from its OWN reps, not the shared card's limiting fold", () => {
+      // Left is slower on rep 1 (500 < 600); right is slower on rep 2 (300 < 400).
+      const left = buildDetailedReps([
+        { concVels: [500, 500, 500], rom: 100, concMs: 600 },
+        { concVels: [400, 400, 400], rom: 100, concMs: 600 },
+      ]);
+      const right = buildDetailedReps([
+        { concVels: [600, 600, 600], rom: 100, concMs: 600 },
+        { concVels: [300, 300, 300], rom: 100, concMs: 600 },
+      ]);
+      const snapshot: Snapshot = {
+        session: { sessionId: 's1' },
+        devices: [slot('left', left, 'V-LEFT01'), slot('right', right, 'V-RIGHT1')],
+        // Top-level mirrors the primary slot, exactly as the server reports it.
+        sets: { active: { reps: left }, completed: [] },
+      };
+
+      const hero = mapStoreToDivergingHeroModel(sources({ snapshot }));
+      expect(opening(hero.left!.velocityCurves)).toEqual([0.5, 0.4]);
+      expect(opening(hero.right!.velocityCurves)).toEqual([0.6, 0.3]);
+
+      // And the shared card genuinely does splice them — so the two are NOT interchangeable.
+      const shared = mapStoreToFatigueModel(sources({ snapshot }))!;
+      expect(opening(shared.velocityCurves)).toEqual([0.5, 0.3]);
+    });
+
+    it('carries the full per-sample shape, not just an endpoint', () => {
+      // A mid-concentric stall is the read this chart exists for: it is invisible in the
+      // per-rep mean the strip above plots, and only shows up in the sample stream.
+      const stalling = buildDetailedReps([{ concVels: [600, 120, 500], rom: 100, concMs: 600 }]);
+      const hero = mapStoreToDivergingHeroModel(
+        sources({
+          snapshot: {
+            session: { sessionId: 's1' },
+            devices: [slot('left', stalling, 'V-LEFT01')],
+            sets: { active: { reps: stalling }, completed: [] },
+          },
+        }),
+      );
+      const curve = hero.left!.velocityCurves[0];
+      expect(curve.samples.map((s) => s.velocityMps)).toEqual(
+        expect.arrayContaining([0.6, 0.12, 0.5]),
+      );
+      // The stall reads as a grind; a smooth rep at the same mean would not.
+      expect(curve.grindSignature).toBeGreaterThan(0.5);
+      expect(curve.phaseSegments.map((s) => s.phase)).toEqual(['concentric', 'eccentric']);
+    });
+
+    it('measures tempo deviation against the PRESCRIBED concentric, and is null without one', () => {
+      // Index 2 of [ecc, pauseBottom, con, pauseTop] — the tuple ordering is a known
+      // footgun, and a wrong index would silently tint every rep off a pause duration.
+      const reps = buildDetailedReps([{ concVels: [500, 500], rom: 100, concMs: 2000 }]);
+      const snapshot: Snapshot = {
+        session: { sessionId: 's1' },
+        devices: [slot('left', reps, 'V-LEFT01')],
+        sets: { active: { reps }, completed: [] },
+      };
+
+      const onTempo = mapStoreToDivergingHeroModel(
+        sources({ snapshot, prescription: { sets: 3, tempo: [3, 0, 2, 0] } }),
+      );
+      expect(onTempo.left!.velocityCurves[0].tempoDeviation).toBe(0);
+
+      // Same rep against a 1s prescribed concentric: 2s actual is a full 1.0 deviation.
+      const offTempo = mapStoreToDivergingHeroModel(
+        sources({ snapshot, prescription: { sets: 3, tempo: [3, 0, 1, 0] } }),
+      );
+      expect(offTempo.left!.velocityCurves[0].tempoDeviation).toBe(1);
+
+      // No prescription ⇒ nothing to deviate FROM. Null, never 0 (which reads "on tempo").
+      const unplanned = mapStoreToDivergingHeroModel(sources({ snapshot }));
+      expect(unplanned.left!.velocityCurves[0].tempoDeviation).toBeNull();
+    });
+
+    /**
+     * REGRESSION (VMCP-04.06). `/api/snapshot` is typed by ASSERTION, not validation:
+     * WA declares `concentric.samples` required, but a summary-only rep really does
+     * arrive without it and previously threw `samples is not iterable`. The fixture
+     * omits the key entirely rather than passing `[]` — `[]` is what a correct producer
+     * sends, so asserting on it would not have caught the bug.
+     */
+    it('survives a slot whose reps carry no per-sample stream', () => {
+      const summaryOnly = mapStoreToDivergingHeroModel(
+        sources({
+          snapshot: {
+            session: { sessionId: 's1' },
+            devices: [slot('left', [meanRep(700, 1), meanRep(650, 2)], 'V-LEFT01')],
+            sets: { active: null, completed: [] },
+          },
+        }),
+      );
+      // One curve per rep, each honestly empty — no crash and no fabricated shape.
+      expect(summaryOnly.left!.velocityCurves).toHaveLength(2);
+      expect(summaryOnly.left!.velocityCurves[0].samples).toEqual([]);
+      expect(summaryOnly.left!.velocityCurves[0].phaseSegments).toEqual([]);
+      expect(summaryOnly.left!.velocityCurves[0].grindSignature).toBe(0);
+      // The per-rep trend still works — the missing stream costs the shape, nothing else.
+      expect(summaryOnly.left!.repVelocitiesMps).toEqual([0.7, 0.65]);
+    });
+
+    it('gives an unbound slot no wing at all', () => {
+      const hero = mapStoreToDivergingHeroModel(
+        sources({
+          snapshot: {
+            session: { sessionId: 's1' },
+            devices: [slot('left', buildReps([{ concVel: 500, rom: 100 }]), 'V-LEFT01')],
+            sets: { active: null, completed: [] },
+          },
+        }),
+      );
+      expect(hero.left!.velocityCurves).toHaveLength(1);
+      // Not an empty wing on a fabricated side — no side at all.
+      expect(hero.right).toBeNull();
+    });
+  });
 });
 
 // --- mapStoreToFatigueModel, dual Voltra (VMCP-04.04) -------------------------
