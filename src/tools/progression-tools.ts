@@ -23,6 +23,7 @@ import type { z } from 'zod';
 import { type ServerState } from '../state/server-state.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
+import { scopeSetsToExerciseId } from '../store/set-scope.js';
 import type { StoredSet } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
@@ -88,10 +89,14 @@ async function getProgressionForExercise(
   });
 
   // N+1: one getSetsForSession call per session. Acceptable for v1.
+  // Each session's sets are then narrowed to the requested exercise by the
+  // SETS' own ids: the session matched on its exercise, but `summariseSession`
+  // sums whatever it is handed, so an unscoped list would let a heavier
+  // movement recorded in the same session win `topWeightLbs`.
   const setsBySessionId = new Map<string, StoredSet[]>();
   for (const session of sessions) {
     const sets = await state.store.getSetsForSession(session.id);
-    setsBySessionId.set(session.id, sets);
+    setsBySessionId.set(session.id, scopeSetsToExerciseId(sets, input.exerciseId));
   }
 
   return aggregateProgression(

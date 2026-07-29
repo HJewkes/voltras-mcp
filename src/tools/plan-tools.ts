@@ -37,6 +37,7 @@ import {
 } from '../schemas/plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
+import { scopeSetsToExerciseId } from '../store/set-scope.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -593,7 +594,13 @@ async function suggestProgression(
     };
   }
 
-  const sets = await state.store.getSetsForSession(basisSessionId);
+  // Scoped to the exercise being progressed, by each SET's own id. Unscoped,
+  // `selectWorkingSets` would rank this exercise's loads against every other
+  // movement in the basis session and keep only the session's heaviest — a
+  // 135 lb bench alongside a 315 lb squat would be discarded as warm-ups and
+  // the delta computed from the squat.
+  const sessionSets = await state.store.getSetsForSession(basisSessionId);
+  const sets = scopeSetsToExerciseId(sessionSets, input.exerciseId);
   const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
   return { plannedExercise: planned, suggestion };
 }
@@ -630,16 +637,19 @@ async function resolveBasisSession(
  *   1. The explicit `StoredSet.isWarmup` flag (set at `set.start`). A flagged
  *      warmup is never a working set — even a heavy primer at working weight,
  *      which the load heuristic below would wrongly keep.
- *   2. Session-relative top load, for the (still common) unflagged warmups: a
- *      warmup is a sub-working-weight ramp-up, so treat the sets at the
- *      session's heaviest load as the working sets — the ones the rep band is
- *      actually prescribed against.
+ *   2. Top load, for the (still common) unflagged warmups: a warmup is a
+ *      sub-working-weight ramp-up, so treat the sets at the heaviest load as
+ *      the working sets — the ones the rep band is actually prescribed against.
+ *
+ * `sets` MUST already be scoped to one exercise. The top-load rank is relative
+ * to whatever it is given, so a mixed list resolves to the heaviest movement in
+ * the session and discards every set of the lighter one as a warm-up.
  *
  * Judging progression on the full set list lets light, low-rep warmups inflate
  * the "missed" tally into a bogus deload (VMCP-progression-warmups), and a
- * single high-velocity-loss warmup can suppress a legit +5. Session-relative
- * top load (not `targetWeightLbs`) tracks the load actually lifted, even after
- * the plan's original target has been outgrown.
+ * single high-velocity-loss warmup can suppress a legit +5. Observed top load
+ * (not `targetWeightLbs`) tracks the load actually lifted, even after the
+ * plan's original target has been outgrown.
  */
 function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
   const working = sets.filter((set) => set.isWarmup !== true);

@@ -59,6 +59,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { z } from 'zod';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
+import { scopeSetsToExerciseId } from '../store/set-scope.js';
 import type { StoredSet } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
@@ -89,6 +90,24 @@ function weightsOf(sets: readonly StoredSet[]): number[] {
   // estimate — the same result the pre-v6 sentinel produced — while the stored
   // row keeps the gap.
   return sets.map((s) => s.weightLbs ?? 0);
+}
+
+/**
+ * A session's sets narrowed to ONE exercise — the session's own — by each set's
+ * own `exerciseId`.
+ *
+ * The session-level pipelines below compare sets against each other: velocity
+ * decay across the session, a single e1RM, a first-rep readiness velocity. Each
+ * of those comparisons is only meaningful within one movement, and none of the
+ * inputs carries an exercise to scope by, so the session's exercise is the one
+ * available key. `session.volume` deliberately does NOT use this: tonnage
+ * across a whole session is a defensible session-level number, and narrowing it
+ * is a product decision nobody has made (VMCP-01.72).
+ */
+async function setsForSessionExercise(state: ServerState, sessionId: string): Promise<StoredSet[]> {
+  const sets = await state.store.getSetsForSession(sessionId);
+  const session = await state.store.getSession(sessionId);
+  return scopeSetsToExerciseId(sets, session?.exerciseId);
 }
 
 /**
@@ -128,13 +147,15 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     }
 
     case 'session.volume': {
+      // Whole-session tonnage, ON PURPOSE — NOT narrowed to one exercise the
+      // way the pipelines below are. See `setsForSessionExercise`.
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
       return computeVolume(sets.map(toAnalyticsSet), weightsOf(sets));
     }
 
     case 'session.fatigue': {
-      const sets = await state.store.getSetsForSession(input.sessionId);
+      const sets = await setsForSessionExercise(state, input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
       const analyticsSets = sets.map(toAnalyticsSet);
       const crossSet = computeSessionFatigue(analyticsSets, weightsOf(sets));
@@ -156,7 +177,7 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     }
 
     case 'session.strength': {
-      const sets = await state.store.getSetsForSession(input.sessionId);
+      const sets = await setsForSessionExercise(state, input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
       return computeStrengthEstimate(sets.map(toAnalyticsSet), weightsOf(sets));
     }
@@ -187,16 +208,17 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     }
 
     case 'session.readiness': {
-      const target = await state.store.getSetsForSession(input.sessionId);
+      const target = await setsForSessionExercise(state, input.sessionId);
       if (target.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
-      const baseline = await state.store.getSetsForSession(input.baselineSessionId);
+      const baseline = await setsForSessionExercise(state, input.baselineSessionId);
       if (baseline.length === 0) {
         throw notFound(`baseline session '${input.baselineSessionId}' has no sets`);
       }
-      // Per the analytics signature: actualVelocity = current session's first
-      // set's first-rep concentric velocity; baselineVelocity = same metric
-      // from the baseline session. This pins both values to a directly
-      // comparable measurement (first rep is canonical for "fresh" velocity).
+      // Per the analytics signature: actualVelocity = the first-rep concentric
+      // velocity of the current session's first set OF ITS EXERCISE;
+      // baselineVelocity = the same metric from the baseline session. This pins
+      // both values to a directly comparable measurement (the first rep is
+      // canonical for "fresh" velocity).
       const actualVel = getSetFirstRepVelocity(toAnalyticsSet(target[0]!));
       const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baseline[0]!));
       return computeReadiness(actualVel, baselineVel);
