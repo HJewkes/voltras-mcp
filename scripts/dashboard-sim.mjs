@@ -21,7 +21,10 @@
 //   LOOP=1 node scripts/dashboard-sim.mjs       # repeat the workout forever
 //   DUAL=1 node scripts/dashboard-sim.mjs       # two slots (left/right) for the
 //                                               # diverging bilateral stage; open
-//                                               # /app?live=1&variant=live-dual
+//                                               # /app?live=1
+//   TRANSITIONS=1 node scripts/dashboard-sim.mjs # binds a second Voltra mid-set, then
+//                                               # drops it — exercises the state-driven
+//                                               # single↔dual swap (VMCP-04.07)
 //
 // Then open http://127.0.0.1:<port>/app. The set-log table accumulates
 // client-side across polls, so open the page BEFORE (or during) the workout —
@@ -54,34 +57,42 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // had never been rendered at all. The right arm is scripted to fatigue FASTER so the
 // L/R asymmetry callout has something honest to report.
 const DUAL = process.env.DUAL === '1';
+// TRANSITIONS=1 scripts the two moments the page's stage selection exists for (VMCP-04.07):
+// a second Voltra BINDING mid-set (single → dual) and one DROPPING mid-set (dual → single).
+// Neither is expressible with a fixed slot set, which is why `state.slots` below is mutated
+// at runtime rather than built once — the snapshot builder re-reads it on every request, so
+// a bind/release lands on the very next poll exactly as a real one would.
+const TRANSITIONS = process.env.TRANSITIONS === '1';
 /** Slot ids in the shape the snapshot builder keys `devices[].slotId` by. */
-const SLOT_IDS = DUAL ? ['left', 'right'] : ['primary'];
+const SLOT_IDS = DUAL || TRANSITIONS ? ['left', 'right'] : ['primary'];
+/** Slots bound at boot. The transition script starts one-armed and binds the second later. */
+const INITIAL_SLOT_IDS = TRANSITIONS ? ['left'] : SLOT_IDS;
 /** Extra per-rep velocity decay on the right arm, as a fraction of the left's. */
 const RIGHT_FATIGUE_BIAS = 1.7;
 
-let device = { connected: false };
 let session; // ActiveSession | undefined
+/** Device snapshot PER SLOT, so one limb can drop while the other keeps lifting. */
+const devices = new Map(SLOT_IDS.map((id) => [id, { connected: false }]));
 /** Active set PER SLOT — the single-slot case just has one entry. */
 const sets = new Map(SLOT_IDS.map((id) => [id, undefined]));
 
 const liveSignals = new LiveSignalHub();
 
+/** The live-state facade one slot presents to the snapshot builder. */
+const slotFacade = (id) => ({
+  live: {
+    snapshotDevice: () => devices.get(id),
+    // Only the FIRST bound slot reports the session — the snapshot builder takes the first
+    // one it finds, and a second copy would just be discarded. Computed rather than pinned
+    // to `SLOT_IDS[0]` so releasing that slot hands the session to the survivor.
+    snapshotSession: () => (id === [...state.slots.keys()][0] ? session : undefined),
+    snapshotSet: () => sets.get(id),
+  },
+});
+
 const state = {
   liveSignals,
-  slots: new Map(
-    SLOT_IDS.map((id) => [
-      id,
-      {
-        live: {
-          snapshotDevice: () => device,
-          // Only the first slot reports the session — the snapshot builder takes the
-          // first one it finds, and a second copy would just be discarded.
-          snapshotSession: () => (id === SLOT_IDS[0] ? session : undefined),
-          snapshotSet: () => sets.get(id),
-        },
-      },
-    ]),
-  ),
+  slots: new Map(INITIAL_SLOT_IDS.map((id) => [id, slotFacade(id)])),
   // Minimal store: no history, no plan preview. Panels degrade gracefully.
   store: {
     listSessions: async () => [],
@@ -220,12 +231,60 @@ function decayFor(slotId) {
   return slotId === 'right' ? 0.06 * RIGHT_FATIGUE_BIAS : 0.06;
 }
 
-async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs }) {
+/** The slots the snapshot is currently reporting — re-read every rep, since it changes. */
+const boundSlots = () => [...state.slots.keys()];
+
+/**
+ * Bind a Voltra to `slotId` mid-workout, joining any set already in progress.
+ *
+ * A slot that binds mid-set starts its own set from rep zero rather than inheriting the
+ * other limb's reps — that is what a second Voltra actually reports, and it is what makes
+ * the diverging stage's two wings honestly unequal at the moment of the swap.
+ */
+function bindSlot(slotId, { weightLbs, setId }) {
+  devices.set(slotId, {
+    connected: true,
+    weightLbs,
+    trainingMode: 'WeightTraining',
+    batteryPercent: 84,
+  });
+  if (setId !== undefined) {
+    sets.set(slotId, {
+      setId: `${setId}-${slotId}`,
+      sessionId: session.sessionId,
+      startedAt: nowIso(),
+      reps: [],
+      status: 'active',
+    });
+  }
+  state.slots.set(slotId, slotFacade(slotId));
+  if (setId !== undefined) emitSet(slotId, 'started', `${setId}-${slotId}`);
+  console.log(`[sim]   *** ${slotId} BOUND — expect the page to swap to the DUAL stage`);
+}
+
+/**
+ * A limb's Voltra drops mid-set. The slot stays bound (a BLE drop is not a release), so
+ * this is the harder of the two drop shapes for the page: the entry is still in
+ * `devices[]` carrying its last-known reps, and only `connected: false` says it is gone.
+ */
+function dropSlot(slotId) {
+  devices.set(slotId, { ...devices.get(slotId), connected: false, disconnectedAt: nowIso() });
+  console.log(`[sim]   *** ${slotId} DROPPED — expect the page to fall back to the SINGLE stage`);
+}
+
+async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs, bindAt, dropAt }) {
   console.log(`[sim] set ${setNumber} — ${weightLbs} lb, ${repCount} reps${DUAL ? ' (dual)' : ''}`);
-  device = { connected: true, weightLbs, trainingMode: 'WeightTraining', batteryPercent: 88 };
+  for (const id of boundSlots()) {
+    devices.set(id, {
+      connected: true,
+      weightLbs,
+      trainingMode: 'WeightTraining',
+      batteryPercent: 88,
+    });
+  }
   const setId = `sim-set-${setNumber}-${Date.now()}`;
   repSeq = 0;
-  for (const id of SLOT_IDS) {
+  for (const id of boundSlots()) {
     sets.set(id, {
       setId: `${setId}-${id}`,
       sessionId: session.sessionId,
@@ -241,7 +300,13 @@ async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs }) {
   // keeps the two wings index-locked the way the component expects.
   for (let i = 0; i < repCount; i++) {
     await sleep(1500);
-    for (const id of SLOT_IDS) {
+    // Slot lifecycle mid-set (TRANSITIONS=1), applied BEFORE this rep so the swap and the
+    // telemetry that justifies it land together.
+    if (bindAt === i) bindSlot('right', { weightLbs, setId });
+    if (dropAt === i) dropSlot('right');
+    for (const id of boundSlots()) {
+      // A dropped limb reports nothing further; its last-known reps stay on the snapshot.
+      if (devices.get(id).connected === false) continue;
       const peak = Math.round(startPeak - i * (startPeak * decayFor(id)));
       // ROM shortens as the set fatigues (the "reps getting shorter" read the ROM chart
       // exists to show), floored so it degrades rather than collapsing to nothing.
@@ -255,13 +320,13 @@ async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs }) {
 
   // Close the set: mark ended, record it on the session, then drop to null so
   // the SPA's non-null→null transition logs the completed set into the table.
-  for (const id of SLOT_IDS) {
+  for (const id of boundSlots()) {
     sets.set(id, { ...sets.get(id), status: 'ended', endedAt: nowIso() });
     emitSet(id, 'ended', `${setId}-${id}`);
   }
   session.setIds = [...session.setIds, setId];
   await sleep(800);
-  for (const id of SLOT_IDS) sets.set(id, undefined);
+  for (const id of boundSlots()) sets.set(id, undefined);
 
   console.log(`[sim]   rest ${(restMs / 1000).toFixed(0)}s`);
   await sleep(restMs);
@@ -270,7 +335,14 @@ async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs }) {
 async function runWorkout() {
   await sleep(1500);
   console.log('[sim] device connecting…');
-  device = { connected: true, weightLbs: 0, trainingMode: 'WeightTraining', batteryPercent: 90 };
+  for (const id of boundSlots()) {
+    devices.set(id, {
+      connected: true,
+      weightLbs: 0,
+      trainingMode: 'WeightTraining',
+      batteryPercent: 90,
+    });
+  }
   await sleep(1200);
 
   session = {
@@ -283,11 +355,21 @@ async function runWorkout() {
   };
   console.log(`[sim] session started ${session.sessionId}`);
 
-  const sets = [
-    { setNumber: 1, weightLbs: 135, repCount: 5, startPeak: 820, restMs: 6000 },
-    { setNumber: 2, weightLbs: 145, repCount: 5, startPeak: 760, restMs: 6000 },
-    { setNumber: 3, weightLbs: 155, repCount: 4, startPeak: 690, restMs: 6000 },
-  ];
+  // TRANSITIONS=1 runs longer sets so each steady state is on screen either side of the
+  // swap: set 2 binds the second Voltra at rep 4 (single → dual), set 3 drops it at rep 4
+  // (dual → single). Both happen MID-SET, which is the case that matters — an athlete is
+  // lifting through them, so a blank frame would be a blank frame during a working set.
+  const sets = TRANSITIONS
+    ? [
+        { setNumber: 1, weightLbs: 135, repCount: 5, startPeak: 820, restMs: 6000 },
+        { setNumber: 2, weightLbs: 145, repCount: 9, startPeak: 760, restMs: 6000, bindAt: 4 },
+        { setNumber: 3, weightLbs: 155, repCount: 9, startPeak: 690, restMs: 6000, dropAt: 4 },
+      ]
+    : [
+        { setNumber: 1, weightLbs: 135, repCount: 5, startPeak: 820, restMs: 6000 },
+        { setNumber: 2, weightLbs: 145, repCount: 5, startPeak: 760, restMs: 6000 },
+        { setNumber: 3, weightLbs: 155, repCount: 4, startPeak: 690, restMs: 6000 },
+      ];
   for (const s of sets) await runSet(s);
   console.log('[sim] workout complete.');
 }
@@ -295,6 +377,7 @@ async function runWorkout() {
 const handle = await startDashboardServer({ port: PORT, state });
 console.log(`[sim] dashboard sidecar listening on http://127.0.0.1:${handle.port}`);
 console.log(`[sim] open http://127.0.0.1:${handle.port}/app`);
+console.log(`[sim] live page: http://127.0.0.1:${handle.port}/app?live=1 (stage picks itself)`);
 
 const shutdown = async () => {
   await handle.close();
@@ -307,8 +390,12 @@ do {
   if (LOOP) {
     // Reset to idle so each looped run starts from a clean connect.
     session = undefined;
-    for (const id of SLOT_IDS) sets.set(id, undefined);
-    device = { connected: false };
+    for (const id of SLOT_IDS) {
+      sets.set(id, undefined);
+      devices.set(id, { connected: false });
+    }
+    // Re-arm the slot script: the transition run must start one-armed again.
+    state.slots = new Map(INITIAL_SLOT_IDS.map((id) => [id, slotFacade(id)]));
     await sleep(4000);
   }
   await runWorkout().catch((err) => console.error('[sim] workout error', err));

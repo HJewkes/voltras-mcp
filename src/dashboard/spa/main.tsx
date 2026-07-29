@@ -62,7 +62,8 @@ import { dashboardStore, type HistoricalPatch, type Status } from './store';
 import { createLiveStreamController } from './live-stream';
 import { CONNECTION_TONE_TOKEN } from './colors';
 import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
-import { LivePagePanel, readLivePageVariant } from './panels/LivePagePanel';
+import { LivePagePanel } from './panels/LivePagePanel';
+import { isLivePageEnabled, readVariantOverride } from './live-page/stage-variant';
 import { RestTimerPanel } from './panels/RestTimerPanel';
 import { SessionProgressPanel } from './panels/SessionProgressPanel';
 // Lazy: BodyMapPanel is the ONLY module (via its own `../bodymap` import) that
@@ -248,7 +249,12 @@ function App(): React.JSX.Element {
   useDashboardController();
   // `?live=1` swaps the whole viewport for the ported north-star live page. Read once —
   // the flag cannot change without a reload, and re-reading would not make it reactive.
-  const [livePageVariant] = React.useState(() => readLivePageVariant(window.location.search));
+  // The optional `?variant=` pin is read the same way; WHICH stage shows is otherwise a
+  // live decision the panel makes from the snapshot on every frame (VMCP-04.07).
+  const [livePage] = React.useState(() => ({
+    enabled: isLivePageEnabled(window.location.search),
+    override: readVariantOverride(window.location.search),
+  }));
   const {
     snapshot,
     accumulator,
@@ -266,8 +272,8 @@ function App(): React.JSX.Element {
   } = useDashboardModel();
 
   // After every hook above, so hook order stays stable regardless of the flag.
-  if (livePageVariant !== null) {
-    return <LivePagePanel variant={livePageVariant} />;
+  if (livePage.enabled) {
+    return <LivePagePanel variantOverride={livePage.override} />;
   }
 
   const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
