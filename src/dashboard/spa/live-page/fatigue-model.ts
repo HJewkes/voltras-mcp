@@ -220,6 +220,21 @@ export interface DivergingHeroSide {
   /** Per-rep MEAN concentric velocity, m/s, ordered by rep. Feeds the component `velocities`. */
   repVelocitiesMps: number[];
   /**
+   * THIS LIMB's per-rep velocity-time curves, oldest first (last = current rep) — the
+   * side's wing of titan's `DualGhostSpark` (VMCP-04.06).
+   *
+   * Deliberately per-slot and NOT the shared card's {@link LiveFatigueModel.velocityCurves}:
+   * that one is built from `foldLimitingReps`, a per-rep-number fold that keeps only the
+   * slower observation, so its curve for rep N may come from the left arm and its curve for
+   * rep N+1 from the right. That is the correct athlete-level read and exactly the WRONG
+   * thing to draw as one limb's shape. These come straight off the slot's own reps.
+   *
+   * Empty for a rep stream that carries no per-sample data (a summary-only rep), which is
+   * a real wire state — see the mapper's `samplesOf`. Empty is the honest reading; the
+   * stage declines to draw the spark at all rather than plotting a flat fabricated line.
+   */
+  velocityCurves: RepVelocityCurve[];
+  /**
    * The bound limb/device label for this side (feeds the component `label`) — the
    * device identity on this slot. `null` when the slot carries no device identity.
    *
