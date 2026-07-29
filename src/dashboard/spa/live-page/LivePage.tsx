@@ -1,14 +1,15 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { useCallback, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import {
+  LiveFatiguePanel,
   SessionRail,
   Surface,
   alpha,
   getSemanticColors,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
-import { ExerciseHeader, LiveView } from './LiveView';
+import { ExerciseHeader } from './LiveView';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
@@ -20,7 +21,8 @@ import {
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
-import type { DivergingHeroModel, LimbAsymmetry } from './fatigue-model';
+import { FATIGUE_PANEL_CHROME, FATIGUE_PANEL_FALLBACK_BODY } from './panel-geometry';
+import type { DivergingHeroModel, LimbAsymmetry, LiveFatigueModel } from './fatigue-model';
 import { type MassUnit } from './mass';
 
 // Semantic reads for the corner UnitToggle's own chrome — its translucent (alpha) overlay
@@ -127,6 +129,53 @@ const PANEL_MIN_WIDTH = 390;
 /** Rail title fallback — a generic label, never an invented session name (VW-43). */
 const UNTITLED_SESSION = 'Session';
 
+// The panel's own geometry (chrome, body default, column widths) now lives in
+// `panel-geometry.ts` — the IDLE stage prefigures this exact skeleton and the two must not
+// drift apart. Imported above.
+
+/**
+ * The single-Voltra live stage (VMCP-05.02): titan's `LiveFatiguePanel` — the velocity
+ * hero and the athlete-level fatigue card (RPE + verdict lights + ROM progression +
+ * ghost-spark) as one aura-flooded organism.
+ *
+ * No `header` prop: the exercise identity and targets are the PAGE-level
+ * {@link ExerciseHeader} above this, and the panel's own lite header would duplicate it.
+ *
+ * The panel sizes its body in fixed px rather than flexing, so the stage height is
+ * measured and fed down — otherwise it renders at titan's 508 default and either
+ * underfills a wall display or overflows a short one.
+ */
+function SingleFatigueStage({
+  model,
+  fatigue,
+}: {
+  model: LiveDashboardModel;
+  fatigue: LiveFatigueModel;
+}) {
+  const [stageH, setStageH] = useState(0);
+  const bodyHeight =
+    stageH > 0 ? Math.max(0, stageH - FATIGUE_PANEL_CHROME) : FATIGUE_PANEL_FALLBACK_BODY;
+  const { live, session } = model;
+  return (
+    <View
+      style={{ flex: 1 }}
+      onLayout={(e: LayoutChangeEvent) => setStageH(e.nativeEvent.layout.height)}
+    >
+      <LiveFatiguePanel
+        model={fatigue}
+        // The hero's own source — per-rep MEAN concentric velocity, not on the fatigue
+        // model. `liveRepIndex` marks the rep in progress as the last one streamed.
+        velocity={{
+          velocities: live.repVelocities,
+          targetReps: session.targetReps ?? undefined,
+          liveRepIndex: live.repVelocities.length - 1,
+        }}
+        bodyHeight={bodyHeight}
+      />
+    </View>
+  );
+}
+
 export interface LivePageProps {
   /** Which stage to show in the main region. */
   variant?: LivePageVariant;
@@ -143,6 +192,12 @@ export interface LivePageProps {
    * computed honestly, in which case the stage simply declines to draw it.
    */
   asymmetry?: LimbAsymmetry | null;
+  /**
+   * The athlete-level fatigue read-model, off `mapStoreToFatigueModel`. Drives the single
+   * stage's {@link LiveFatiguePanel}. `null` when no set is active — the stage switch has
+   * already fallen through to rest/empty by then, so the panel never sees it.
+   */
+  fatigue?: LiveFatigueModel | null;
 }
 
 /**
@@ -163,7 +218,7 @@ export interface LivePageProps {
  *
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
-export function LivePage({ variant = 'live', model, hero, asymmetry }: LivePageProps) {
+export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: LivePageProps) {
   const [displayUnit, setDisplayUnit] = useDisplayUnit();
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
@@ -193,15 +248,22 @@ export function LivePage({ variant = 'live', model, hero, asymmetry }: LivePageP
       {/* Panel floors at ~phone width so the live view stops collapsing; rail-aware
           breakpoints below this are a later pass. */}
       <View style={{ flex: 1, minWidth: PANEL_MIN_WIDTH }}>
-        {/* workout title + targets — page-level, always visible, independent of single/dual. */}
-        <ExerciseHeader session={model.session} displayUnit={displayUnit} />
+        {/* workout title + targets + the active exercise's set strip — page-level, always
+            visible, independent of single/dual. */}
+        <ExerciseHeader model={model} displayUnit={displayUnit} />
         <View style={{ flex: 1 }}>
-          {variant === 'live-dual' && model.live !== null && hero && hasBoundSide(hero) ? (
+          {variant === 'live-dual' &&
+          model.live !== null &&
+          fatigue &&
+          hero &&
+          hasBoundSide(hero) ? (
             // Dual + a set streaming + at least one BOUND slot ⇒ the diverging hero
-            // (VMCP-04.05). Two guards worth keeping straight:
+            // (VMCP-04.05). Three guards worth keeping straight:
             //   - a LIVE set, because rest and idle are SESSION-level rather than
             //     per-limb, so both variants fall through to the same stages below
-            //     instead of each growing a bilateral copy of them;
+            //     instead of each growing a bilateral copy of them. `fatigue` is what
+            //     actually carries "a set is OPEN" — see the note on the single stage
+            //     below for why `model.live` alone does not;
             //   - a bound side, because an ordinary single-Voltra session runs on the
             //     `primary` slot and leaves BOTH sides null — drawing the diverging
             //     stage there gives an empty axis and an "awaiting both" note while the
@@ -211,18 +273,27 @@ export function LivePage({ variant = 'live', model, hero, asymmetry }: LivePageP
               hero={hero}
               asymmetry={asymmetry ?? null}
             />
-          ) : model.live !== null ? (
-            // `slot` names the active voltra — the shell has two connected, so the live view
-            // flags which one it is reading from (the multi-device single-view case). The live
-            // stage body carries no weight/force readout (velocity/tempo only), so it needs no
-            // display unit — the page header + rest stage are the mass consumers.
-            <LiveView model={model as LiveDashboardModel} slot="L" />
+          ) : model.live !== null && fatigue ? (
+            // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.
+            // It needs no display unit: the body is velocity/RPE/ROM only, and the page
+            // header + rest stage are the mass consumers.
+            //
+            // `fatigue` is the ACTIVE-SET signal here, not decoration. It is derived from
+            // `snapshot.sets.active`, which ends when the set ends. `model.live` does NOT:
+            // on `set ended` the SSE controller deliberately keeps the terminal rep's
+            // readout and only drops the motion anchor (`live-stream.ts`, VW-57), so the
+            // overlay stays non-null for the WHOLE rest period. Gating a "is a set
+            // streaming" decision on it alone reads "streamed recently" as "streaming now".
+            <SingleFatigueStage model={model as LiveDashboardModel} fatigue={fatigue} />
           ) : stageIsEmpty(model) ? (
             // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank
             // RestView (the barren no-session / pre-first-set view).
             <EmptyLiveView model={model} />
           ) : (
-            // No set streaming ⇒ the rest stage: recap of the set just finished + countdown.
+            // No OPEN set ⇒ the rest stage: recap of the set just finished + countdown.
+            // Reachable again as of this change: while the stage was gated on the stale
+            // `model.live` overlay, this branch was effectively dead between sets and the
+            // wall showed a frozen velocity stage for the whole rest period instead.
             <RestView model={model} displayUnit={displayUnit} />
           )}
         </View>

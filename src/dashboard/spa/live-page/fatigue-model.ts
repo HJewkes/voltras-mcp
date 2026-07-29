@@ -156,6 +156,16 @@ export interface LiveFatigueModel {
   /** ROM progression: per-rep ROM points (metres), ordered by rep. */
   romProgression: RepRomPoint[];
   /**
+   * Planned rep count from the prescription — the ROM chart draws the remainder as
+   * dashed to-do placeholders (the "N of M done" read). `undefined` when no plan is
+   * attached: there is genuinely no target then, and the gap must read as a gap.
+   *
+   * NEVER default this to the rep count so far, or every set renders as complete.
+   * It is OPTIONAL on titan's matching prop, so omitting it is silent — the chart
+   * simply loses the to-do read with no type error anywhere.
+   */
+  plannedReps?: number;
+  /**
    * The working-range standard the ROM chart draws its reference line at (metres),
    * from WA `getSetWorkingROM` (trimmed peak: drop rep 1 + the in-progress rep).
    * `null` until a standard is established (needs ≥ 3 reps).

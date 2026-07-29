@@ -11,9 +11,10 @@
  * fabricated number. This extends the precedent titan #111 set for `tempo?`. See
  * `panels/live-view.ts` for the ticket per gap.
  *
- * The dual (bilateral) stage is now store-fed per slot (VW-71) — one
- * {@link DashboardModel} per limb, projected by `panels/live-view.ts`'s
- * `mapStoreToDualModel`. The fixture-fabricating `deriveDualModel` it replaced is gone.
+ * The dual (bilateral) stage is store-fed per slot (VW-71), but NOT through this model:
+ * it sources from `panels/fatigue-view.ts`'s `mapStoreToDivergingHeroModel`. The full
+ * per-slot `DashboardModel` projection that preceded it is gone, along with the stacked
+ * two-`LiveView` stage it fed and the fixture-fabricating `deriveDualModel` before that.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 import { type MassUnit, convertMass, formatMass } from './mass';
@@ -191,18 +192,6 @@ export interface DashboardModel {
 export type LiveDashboardModel = DashboardModel & { live: LiveModel };
 
 /**
- * The dual (bilateral) stage's per-limb read-models (VW-71): one {@link DashboardModel}
- * per Voltra slot. A side is `null` when no device is bound to that slot (or the slot
- * reports no telemetry) — the dual stage then shows an awaiting state for it rather than
- * fabricating the missing limb. Each present side picks its own live/rest/empty stage,
- * exactly as the single view does, from that slot's own snapshot.
- */
-export interface DualDashboardModel {
-  left: DashboardModel | null;
-  right: DashboardModel | null;
-}
-
-/**
  * True when the live stage has nothing honest to show: no set streaming, none logged, and no
  * rest clock running — exactly the inputs under which {@link RestView} would render blank
  * (VW-68). Covers the no-session idle, the session-started-but-first-set-not-begun, and the
@@ -324,10 +313,146 @@ function summaryLoad(
   return { weight: load.value, unit: load.unit };
 }
 
+/** One prescription lockup's cells, in the shape titan's `SetsRepsLoad` takes. */
+export interface PrescriptionCells {
+  sets: number;
+  /** A single count, or a prescribed range like `"8–10"`. */
+  reps: number | string;
+  /** The formatted load, or `NO_VALUE` ("—") for an unset/discovery load — never a faked 0. */
+  load: number | string;
+  unit: MassUnit;
+}
+
 /**
- * The rail row for the ACTIVE exercise: its OWN completed sets (filtered from the
- * session-wide log so a prior exercise's sets don't bleed into its count — VW-50), the
- * set in progress, and any remaining planned sets.
+ * The active PLANNED exercise's prescribed rep target, or null with no plan attached.
+ *
+ * `session.targetReps` cannot serve this on its own: it is sourced from the DEVICE's
+ * `rep_count_reached` set watch (`adapter.ts` `resolveRepTarget`), so a fully planned
+ * session whose set was armed without that watch reports null and the header's whole
+ * lockup disappears — the coach's `4 × 8` is sitting unused in the prescription. Read from
+ * the plan instead, via the list `panels/live-view.ts` already maps `repsLow`/`repsHigh`
+ * into. `repsLabel` (not `targetReps`) so a prescribed RANGE stays a range — `8–10` is
+ * what the coach wrote, and collapsing it to its floor would overstate the prescription.
+ */
+function plannedRepTarget(session: SessionModel): number | string | null {
+  const active = session.plannedExercises.find((e) => e.active);
+  // `targetReps` is `repsLow ?? null`, so a null one means `repsLabel` is the em-dash
+  // placeholder rather than a real range — nothing prescribed, nothing to show.
+  if (active === undefined || active.targetReps === null) return null;
+  return active.repsLabel;
+}
+
+/**
+ * The rep COUNT to size a strip column by — the same plan-first sourcing as
+ * {@link plannedRepTarget}, but numeric.
+ *
+ * A prescribed RANGE collapses to its committed floor (`repsLow`): those are the reps the
+ * set is definitely expected to carry. The reps between the floor and the range's top are
+ * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
+ * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
+ */
+function plannedRepCount(session: SessionModel): number | null {
+  const active = session.plannedExercises.find((e) => e.active);
+  return active?.targetReps ?? session.targetReps;
+}
+
+/**
+ * Per-rep mean velocities → the ratio-of-best domain `velocityZoneColor` actually bands on.
+ *
+ * titan documents `SetStripSet.velocities` as a rep's "mean velocity ratio" and bands it at
+ * `<0.5 / <0.75 / <1.0` with 1.0 the fastest. We were handing it raw m/s — a working set
+ * runs ~0.4–0.8 m/s — so every rep of every real set landed in the slow/moderate bands and
+ * the strip came out uniformly orange-red however the set actually went. The colour carried
+ * no information.
+ *
+ * Normalized against the SET'S OWN best rep, the same basis {@link velocityLossPct} and the
+ * fatigue verdict use ("the drop from the set's fastest rep to its last"). The strip
+ * therefore reads as within-set decay: the best rep is green by construction and the bands
+ * show how far each rep fell off it. It deliberately does NOT compare across sets — a grind
+ * set and a snappy set both open green.
+ *
+ * A non-positive best means no usable velocity landed (a rep carrying no movement samples
+ * reads 0). There is no honest ratio then, so the values pass through unscaled rather than
+ * being divided by a fabricated denominator.
+ */
+export function velocityRatios(velocities: number[]): number[] {
+  const best = Math.max(...velocities, 0);
+  if (best <= 0) return velocities;
+  return velocities.map((v) => v / best);
+}
+
+/**
+ * The `sets × reps @ load` prescription for the active exercise, or null when the store
+ * cannot state one.
+ *
+ * The COUNTS are the spine of the line: `4 × 8` is the claim, and neither half can be
+ * faked, so a missing set or rep target hides the whole lockup rather than printing a
+ * meaningless `0 × —`. The rep target prefers the PLAN ({@link plannedRepTarget}) over the
+ * device's set watch: this line states what was PRESCRIBED, and the plan is the only
+ * source that can express a range. The device watch stays as the fallback for an unplanned
+ * session that was nonetheless armed with a rep goal (VW-41/42 wire the rest).
+ *
+ * The LOAD is prescribed-first for the same reason, falling back to the live cascade
+ * weight. A planned exercise's target load is the number this line is claiming; the live
+ * pin weight is the ACTUAL load and already has a home in the rail's progress summary, so
+ * preferring the plan here stops the two cells saying the same thing and keeps the target
+ * on screen when the cascade has not reported (it never does under the mock adapter).
+ *
+ * The load can still honestly be unknown, and `SetsRepsLoad` takes a string for exactly
+ * that, so it reads `4 × 8 @ — lbs` rather than dropping a prescription the coach really
+ * did write. Same placeholder as the rail's `summaryLoad`.
+ */
+export function derivePrescription(
+  session: SessionModel,
+  displayUnit: MassUnit = 'lbs',
+): PrescriptionCells | null {
+  const { plannedSets } = session;
+  const reps = plannedRepTarget(session) ?? session.targetReps;
+  const weightLbs = session.plannedExercises.find((e) => e.active)?.weightLbs ?? session.weightLbs;
+  if (plannedSets === null || reps === null) return null;
+  const { weight, unit } = summaryLoad(weightLbs, displayUnit);
+  return { sets: plannedSets, reps, load: weight, unit };
+}
+
+/**
+ * The ACTIVE exercise's per-set strip columns: its OWN completed sets (filtered from the
+ * session-wide log so a prior exercise's sets don't bleed in — VW-50), the set in progress,
+ * and any remaining planned sets.
+ *
+ * Exported because TWO surfaces draw this strip — the rail's active row and the page-level
+ * exercise header — and a second derivation would let them disagree about the same set.
+ */
+export function deriveActiveSetStates(model: DashboardModel): SessionRailExercise['setStates'] {
+  const { session, live } = model;
+  const setStates: SessionRailExercise['setStates'] = activeCompletedSets(session).map((set) => ({
+    status: 'done',
+    velocities: velocityRatios(set.reps),
+  }));
+  if (live) {
+    // `planned` sizes the strip's columns. With no rep target, the honest column count
+    // is the reps actually landed — i.e. no pending placeholders rather than invented ones.
+    setStates.push({
+      status: 'active',
+      velocities: velocityRatios(live.repVelocities),
+      planned: plannedRepCount(session) ?? live.repVelocities.length,
+    });
+  }
+  // Any planned sets beyond those done + the one in progress. Skipped entirely without a
+  // rep target: a `todo` set must state how many reps it expects, and we would be guessing.
+  const accountedFor = setStates.length;
+  const targetReps = plannedRepCount(session);
+  const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
+  if (targetReps !== null) {
+    for (let i = 0; i < remaining; i++) {
+      setStates.push({ status: 'todo', planned: targetReps });
+    }
+  }
+  return setStates;
+}
+
+/**
+ * The rail row for the ACTIVE exercise: {@link deriveActiveSetStates}' strip plus the
+ * row's own name / prescribed-set / progress-summary cells.
  *
  * `weight` shows the live value, or `—` when no weight is set yet (never a faked 0).
  * On real hardware it is the live cascade value.
@@ -335,29 +460,6 @@ function summaryLoad(
 function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRailExercise {
   const { session, live } = model;
   const done = activeCompletedSets(session);
-  const setStates: SessionRailExercise['setStates'] = done.map((set) => ({
-    status: 'done',
-    velocities: set.reps,
-  }));
-  if (live) {
-    // `planned` sizes the strip's columns. With no rep target, the honest column count
-    // is the reps actually landed — i.e. no pending placeholders rather than invented ones.
-    setStates.push({
-      status: 'active',
-      velocities: live.repVelocities,
-      planned: session.targetReps ?? live.repVelocities.length,
-    });
-  }
-  // Any planned sets beyond those done + the one in progress. Skipped entirely without a
-  // rep target: a `todo` set must state how many reps it expects, and we would be guessing.
-  const accountedFor = setStates.length;
-  const targetReps = session.targetReps;
-  const remaining = session.plannedSets !== null ? session.plannedSets - accountedFor : 0;
-  if (targetReps !== null) {
-    for (let i = 0; i < remaining; i++) {
-      setStates.push({ status: 'todo', planned: targetReps });
-    }
-  }
 
   return {
     name: session.exerciseName,
@@ -376,7 +478,7 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     },
     ...(session.tempo ? { tempo: session.tempo } : {}),
     indicator: 'velocity-loss',
-    setStates,
+    setStates: deriveActiveSetStates(model),
   };
 }
 
@@ -400,7 +502,7 @@ function buildDoneRow(
       ...summaryLoad(planned.weightLbs, displayUnit),
     },
     indicator: 'velocity-loss',
-    setStates: logged.map((set) => ({ status: 'done', velocities: set.reps })),
+    setStates: logged.map((set) => ({ status: 'done', velocities: velocityRatios(set.reps) })),
   };
 }
 

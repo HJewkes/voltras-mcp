@@ -16,20 +16,19 @@ import {
 } from '../spa/adapter.js';
 import { type LiveModel as StoreLiveModel } from '../spa/live-stream.js';
 import {
+  deriveActiveSetStates,
+  derivePrescription,
   deriveRailExercises,
   deriveRailMetrics,
   peakVelocity,
-  stageIsEmpty,
   velocityLossPct,
+  velocityRatios,
   type CompletedSet,
   type DashboardModel,
+  type PlannedExerciseModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
-import {
-  mapStoreToDashboardModel,
-  mapStoreToDualModel,
-  type LiveViewSources,
-} from '../spa/panels/live-view.js';
+import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
 
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
@@ -496,111 +495,270 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
   });
 });
 
-describe('mapStoreToDualModel — per-slot bilateral telemetry (VW-71)', () => {
-  /** A WA rep whose MEAN concentric velocity is `meanMms` mm/s, with optional peak fields. */
-  function rep(
-    meanMms: number,
-    opts: { peakMms?: number; peakForce?: number; repNumber?: number } = {},
-  ): Rep {
+describe('derivePrescription — the page header lockup (VW-42)', () => {
+  /** The active planned exercise, as `panels/live-view.ts` maps it from the prescription. */
+  function planned(over: Partial<PlannedExerciseModel> = {}): PlannedExerciseModel {
     return {
-      repNumber: opts.repNumber ?? 1,
-      concentric: {
-        peakVelocity: opts.peakMms ?? meanMms,
-        _totalVelocity: meanMms,
-        _movementSampleCount: 1,
-        ...(opts.peakForce !== undefined ? { peakForce: opts.peakForce } : {}),
+      name: 'Cable Chest Press',
+      plannedSets: 4,
+      targetReps: 8,
+      repsLabel: '8',
+      weightLbs: 140,
+      active: true,
+      ...over,
+    };
+  }
+
+  it('reads the rep target from the PLAN when the device registered no set watch', () => {
+    // The regression: a fully planned 4 × 8 rendered NOTHING, because `targetReps` is
+    // device-sourced (`resolveRepTarget` reads `set.watch.notifyOn`) and an unarmed set
+    // leaves it null while the coach's rep target sits unused in the prescription.
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 4, targetReps: null, plannedExercises: [planned()] }),
+    );
+    expect(cells).toEqual({ sets: 4, reps: '8', load: 140, unit: 'lbs' });
+  });
+
+  it('keeps a prescribed rep RANGE as a range', () => {
+    // Collapsing 8–10 to its floor would state a prescription the coach did not write.
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        targetReps: null,
+        plannedExercises: [planned({ repsLabel: '8–10' })],
+      }),
+    );
+    expect(cells?.reps).toBe('8–10');
+  });
+
+  it('prefers the plan over the device set watch when the two disagree', () => {
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 4, targetReps: 5, plannedExercises: [planned()] }),
+    );
+    expect(cells?.reps).toBe('8');
+  });
+
+  it('ignores a planned exercise that is not the active one', () => {
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        targetReps: null,
+        plannedExercises: [planned({ active: false })],
+      }),
+    );
+    expect(cells).toBeNull();
+  });
+
+  it('prefers the PRESCRIBED load over the live cascade weight', () => {
+    // The live pin weight is the ACTUAL load and already shows in the rail summary; this
+    // line is the target. Under mock the cascade never reports, so plan-first is also the
+    // difference between showing `@ 140 lbs` and showing `@ — lbs`.
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        weightLbs: 135,
+        plannedExercises: [planned({ weightLbs: 140 })],
+      }),
+    );
+    expect(cells?.load).toBe(140);
+  });
+
+  it('falls back to the live cascade weight when the plan prescribes no load', () => {
+    const cells = derivePrescription(
+      sessionModel({
+        plannedSets: 4,
+        weightLbs: 135,
+        plannedExercises: [planned({ weightLbs: null })],
+      }),
+    );
+    expect(cells?.load).toBe(135);
+  });
+
+  it('falls back to the device set watch for an unplanned but armed session', () => {
+    expect(derivePrescription(sessionModel({ plannedSets: 3, targetReps: 6 }))?.reps).toBe(6);
+  });
+
+  it('reads sets × reps @ load when the plan states all three', () => {
+    expect(
+      derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: 140 })),
+    ).toEqual({ sets: 4, reps: 8, load: 140, unit: 'lbs' });
+  });
+
+  it('keeps the prescription and marks an unset load with the em-dash', () => {
+    // A discovery set (no prescribed weight) still has a real 4 × 8 claim to show;
+    // dropping the whole lockup for a missing load would hide what the coach wrote.
+    expect(
+      derivePrescription(sessionModel({ plannedSets: 4, targetReps: 8, weightLbs: null })),
+    ).toEqual({ sets: 4, reps: 8, load: '—', unit: 'lbs' });
+  });
+
+  it('returns null when no rep target is prescribed', () => {
+    // The regression: `plannedSets: 1` with no rep target used to render `1 × —`,
+    // which states a prescription the store never had.
+    expect(derivePrescription(sessionModel({ plannedSets: 1, targetReps: null }))).toBeNull();
+  });
+
+  it('returns null when no set count is prescribed', () => {
+    expect(derivePrescription(sessionModel({ plannedSets: null, targetReps: 8 }))).toBeNull();
+  });
+
+  it('converts the load to the display unit', () => {
+    const cells = derivePrescription(
+      sessionModel({ plannedSets: 3, targetReps: 10, weightLbs: 100 }),
+      'kg',
+    );
+    expect(cells?.unit).toBe('kg');
+    expect(cells?.load).not.toBe(100);
+  });
+});
+
+describe('deriveActiveSetStates — shared by the rail row and the page header', () => {
+  it('returns the same strip the rail row renders', () => {
+    const model = mapStoreToDashboardModel(
+      sources({ live: liveWithRep(0.58), prescription: { sets: 3, repsLow: 8 } }),
+    );
+    const [exercise] = deriveRailExercises(model!);
+    expect(deriveActiveSetStates(model!)).toEqual(exercise.setStates);
+  });
+
+  it('is empty with no sets done and none in progress, so the header hides its strip', () => {
+    expect(deriveActiveSetStates(railModel(sessionModel()))).toEqual([]);
+  });
+});
+
+describe('set-strip columns read the PLAN rep target, not just the device watch', () => {
+  /** A live model on a planned exercise: `plannedSets` sets of `targetReps`, one set live. */
+  function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
+    return {
+      live: {
+        connected: true,
+        phase: 'con',
+        phaseElapsedMs: 0,
+        velocity: 0.5,
+        position: 0,
+        force: 0,
+        repVelocities: [0.6, 0.5],
+        velocityLossPct: null,
+        lastRep: null,
+        peakForce: null,
       },
-      eccentric: {},
-    } as unknown as Rep;
-  }
-
-  type DeviceEntry = Snapshot['devices'][number];
-
-  /** A slot device entry with its own active set (per-slot telemetry). */
-  function activeSlot(slotId: string, weightLbs: number, reps: Rep[]): DeviceEntry {
-    return {
-      slotId,
-      device: { connected: true, weightLbs },
-      sets: { active: { reps }, completed: [] },
-    };
-  }
-
-  /** A snapshot carrying the given per-slot device entries, in a live session. */
-  function dualSnapshot(devices: DeviceEntry[]): Snapshot {
-    return {
-      session: { sessionId: 's1', exerciseName: 'Cable Chest Press' },
-      devices,
-      sets: { active: null },
-    };
-  }
-
-  function dualSources(devices: DeviceEntry[]): LiveViewSources {
-    return { ...sources(), snapshot: dualSnapshot(devices) };
-  }
-
-  it('projects each bound slot from its OWN active set — the two sides differ', () => {
-    const dual = mapStoreToDualModel(
-      dualSources([
-        activeSlot('left', 140, [rep(520), rep(400)]),
-        activeSlot('right', 135, [rep(500), rep(450)]),
-      ]),
-    );
-    // Left reads its own reps / weight, right its own — never one mirrored onto the other.
-    expect(dual.left?.live?.repVelocities).toEqual([0.52, 0.4]);
-    expect(dual.left?.session.weightLbs).toBe(140);
-    expect(dual.right?.live?.repVelocities).toEqual([0.5, 0.45]);
-    expect(dual.right?.session.weightLbs).toBe(135);
-    // Each side's velocity loss is computed from its own reps: left drops harder than right.
-    expect(dual.left?.live?.velocityLossPct).toBeGreaterThan(dual.right!.live!.velocityLossPct!);
-  });
-
-  it('folds each slot’s own peak concentric force from its set reps', () => {
-    const dual = mapStoreToDualModel(
-      dualSources([
-        activeSlot('left', 140, [rep(520, { peakForce: 300 }), rep(400, { peakForce: 280 })]),
-      ]),
-    );
-    expect(dual.left?.live?.peakForce).toBe(300);
-  });
-
-  it('leaves the sub-rep overlay idle — instantaneous velocity/phase are slot-blind (VW-48)', () => {
-    const dual = mapStoreToDualModel(dualSources([activeSlot('left', 140, [rep(520)])]));
-    // No honest per-slot instantaneous source yet: the live tempo bar stays idle rather than
-    // borrowing the process-global SSE overlay onto one limb.
-    expect(dual.left?.live?.phase).toBe('idle');
-    expect(dual.left?.live?.velocity).toBe(0);
-  });
-
-  it('shows the OTHER side as awaiting (null) when only one slot is bound', () => {
-    const dual = mapStoreToDualModel(dualSources([activeSlot('left', 140, [rep(520)])]));
-    expect(dual.left).not.toBeNull();
-    expect(dual.right).toBeNull();
-  });
-
-  it('yields two null sides when no L/R slots are bound (single-device primary)', () => {
-    const dual = mapStoreToDualModel(
-      dualSources([{ slotId: 'primary', device: { connected: true, weightLbs: 50 } }]),
-    );
-    expect(dual.left).toBeNull();
-    expect(dual.right).toBeNull();
-  });
-
-  it('a slot between sets recaps its OWN completed sets (rest side, not empty)', () => {
-    const restingLeft: DeviceEntry = {
-      slotId: 'left',
-      device: { connected: true, weightLbs: 140 },
-      sets: {
-        active: null,
-        completed: [
-          { set: { reps: [rep(500), rep(460)] }, device: { connected: true, weightLbs: 140 } },
+      restElapsedMs: null,
+      session: sessionModel({
+        plannedSets: 3,
+        targetReps: null,
+        plannedExercises: [
+          {
+            name: 'Cable Chest Press',
+            plannedSets: 3,
+            targetReps: 8,
+            repsLabel: '8',
+            weightLbs: 140,
+            active: true,
+          },
         ],
-      },
+        ...over,
+      }),
     };
-    const dual = mapStoreToDualModel(dualSources([restingLeft]));
-    // No active set ⇒ no live overlay, but the slot's completed set makes it a REST side,
-    // not an empty one — the recap comes from this slot's own log.
-    expect(dual.left?.live).toBeNull();
-    expect(dual.left?.session.completedSets).toHaveLength(1);
-    expect(stageIsEmpty(dual.left!)).toBe(false);
+  }
+
+  it('sizes the active column and emits todo sets from the plan with no device watch', () => {
+    // The regression: `targetReps` is device-only, so a fully planned session produced one
+    // full-width active bar and NO upcoming columns while the header claimed 3 × 8.
+    const states = deriveActiveSetStates(plannedLive());
+    expect(states.map((s) => s.status)).toEqual(['active', 'todo', 'todo']);
+    expect(states[0]).toMatchObject({ planned: 8 });
+    expect(states[1]).toMatchObject({ planned: 8 });
+  });
+
+  it('still emits no todo columns when neither the plan nor the device states a rep target', () => {
+    const states = deriveActiveSetStates(plannedLive({ plannedExercises: [] }));
+    expect(states.map((s) => s.status)).toEqual(['active']);
+    // No rep target anywhere ⇒ the column is the reps actually landed, never a guess.
+    expect(states[0]).toMatchObject({ planned: 2 });
+  });
+});
+
+describe('set-strip velocities are normalized to the ratio domain titan bands on', () => {
+  it("scales each rep against the set's own best, so the best rep reads 1", () => {
+    // Raw m/s (0.4–0.8 on a real set) all fell under velocityZoneColor's 0.75 cut, so
+    // every set painted orange-red regardless of how it went.
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 3,
+            reps: [0.8, 0.6, 0.4],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    const [set] = deriveActiveSetStates(model);
+    const velocities = 'velocities' in set ? set.velocities : [];
+    expect(velocities[0]).toBe(1);
+    expect(velocities[1]).toBeCloseTo(0.75, 10);
+    expect(velocities[2]).toBeCloseTo(0.5, 10);
+  });
+
+  it('normalizes each set independently, not against the session', () => {
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [1, 0.5],
+            peakForceLbs: null,
+          },
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [0.4, 0.2],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    const [first, second] = deriveActiveSetStates(model);
+    // The slower set opens green too: the strip reads WITHIN-set decay, not absolute speed.
+    expect(first).toMatchObject({ velocities: [1, 0.5] });
+    expect(second).toMatchObject({ velocities: [1, 0.5] });
+  });
+
+  it('passes velocities through unscaled when no usable velocity landed', () => {
+    const model = railModel(
+      sessionModel({
+        completedSets: [
+          {
+            exerciseName: 'Cable Chest Press',
+            weightLbs: 140,
+            mode: 'weight',
+            repCount: 2,
+            reps: [0, 0],
+            peakForceLbs: null,
+          },
+        ],
+      }),
+    );
+    expect(deriveActiveSetStates(model)[0]).toMatchObject({ velocities: [0, 0] });
+  });
+});
+
+describe('velocityRatios', () => {
+  it('is exported so every strip surface bands the same domain', () => {
+    // Three surfaces draw a set strip (header, rail row, rest recap) and each used to
+    // build its own velocities array; two of them shipped raw m/s.
+    expect(velocityRatios([0.5, 0.25])).toEqual([1, 0.5]);
+  });
+
+  it('leaves an empty set empty rather than producing NaN', () => {
+    expect(velocityRatios([])).toEqual([]);
   });
 });

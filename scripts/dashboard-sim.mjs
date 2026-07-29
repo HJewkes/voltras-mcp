@@ -108,16 +108,46 @@ let repSeq = 0;
  * diverging stage first came up blank. The mean is set a little under the peak,
  * the way a real rep's average sits below its peak.
  */
-const makeRep = (peakMms) => {
+const makeRep = (peakMms, romMm = 620) => {
   const meanMms = Math.round(peakMms * 0.82);
+  // A half-sine velocity profile over the phase — enough shape for the ghost-spark to
+  // draw a curve rather than a flat line, and for the grind signature to be non-trivial.
+  //
+  // `startMs` is NOT optional in practice: `buildVelocityCurve` concatenates the
+  // concentric and eccentric streams and rebases every sample off the FIRST one's
+  // timestamp, so two phases that both start at 0 overlay each other — the ghost-spark
+  // draws the lowering back across the lift as a closed loop, and the ECC phase bar
+  // spans the whole rep. A real device timestamps one monotonic timeline per rep.
+  const stream = (phase, startMs, durationMs, peak, n = 12) =>
+    Array.from({ length: n }, (_, i) => ({
+      timestamp: startMs + Math.round((durationMs * i) / (n - 1)),
+      velocity: Math.round(peak * Math.sin((Math.PI * (i + 0.5)) / n)),
+      phase,
+    }));
+  const CONC_MS = 900;
+  const PAUSE_MS = 150; // brief turnaround at the top, so the phases do not abut
   return {
     repNumber: ++repSeq,
     concentric: {
       peakVelocity: peakMms, // mm/s; SPA renders m/s
       _totalVelocity: meanMms,
       _movementSampleCount: 1,
+      // ROM = |endPosition − startPosition| (WA `getPhaseRangeOfMotion`). Without these
+      // the RomProgressionChart has no points and the fatigue card's middle section
+      // renders BLANK while the velocity hero beside it looks perfectly healthy — the
+      // same silent-empty failure the mean-velocity fields above exist to prevent.
+      startPosition: 0,
+      endPosition: romMm,
+      samples: stream(1 /* CONCENTRIC */, 0, CONC_MS, peakMms),
     },
-    eccentric: {},
+    // The ghost-spark draws concentric AND eccentric; an empty eccentric halves every
+    // curve. The lowering is slower than the lift, as a real tempo is, and it starts
+    // where the concentric ended — see the `startMs` note above.
+    eccentric: {
+      startPosition: romMm,
+      endPosition: 0,
+      samples: stream(3 /* ECCENTRIC */, CONC_MS + PAUSE_MS, 1400, Math.round(peakMms * 0.7)),
+    },
   };
 };
 
@@ -213,8 +243,11 @@ async function runSet({ setNumber, weightLbs, repCount, startPeak, restMs }) {
     await sleep(1500);
     for (const id of SLOT_IDS) {
       const peak = Math.round(startPeak - i * (startPeak * decayFor(id)));
+      // ROM shortens as the set fatigues (the "reps getting shorter" read the ROM chart
+      // exists to show), floored so it degrades rather than collapsing to nothing.
+      const romMm = Math.max(400, Math.round(620 - i * 22));
       const cur = sets.get(id);
-      sets.set(id, { ...cur, reps: [...cur.reps, makeRep(peak)] });
+      sets.set(id, { ...cur, reps: [...cur.reps, makeRep(peak, romMm)] });
       emitRep(id, i + 1, peak);
       console.log(`[sim]   ${id} rep ${i + 1}/${repCount} @ ${(peak / 1000).toFixed(2)} m/s`);
     }

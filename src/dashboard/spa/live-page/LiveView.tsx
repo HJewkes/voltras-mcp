@@ -6,6 +6,7 @@ import {
   VelocityStrip,
   TempoDisplay,
   SetsRepsLoad,
+  SetStrip,
   ActivityIcon,
   AlertTriangleIcon,
   CircleSlashIcon,
@@ -15,8 +16,14 @@ import {
   alpha,
   type IconProps,
 } from '@titan-design/react-ui';
-import { type DashboardModel, type LiveDashboardModel, verdictFromLoss } from './model';
-import { type MassUnit, formatMass } from './mass';
+import {
+  type DashboardModel,
+  type LiveDashboardModel,
+  deriveActiveSetStates,
+  derivePrescription,
+  verdictFromLoss,
+} from './model';
+import { type MassUnit } from './mass';
 import { exertionMessage } from './live-copy';
 
 // Verdict STATUS tones (success/warning/error) for the alert cue — semantic status colours,
@@ -243,33 +250,31 @@ const HEADER_WIDE = 760;
 const SET_HEADING_RATIO = 11 / 14;
 const HEADER_NAME_SIZE = 30;
 
-/**
- * The prescription line's values, or null when the store cannot supply them.
- *
- * All three must be real: `SetsRepsLoad` takes plain numbers and renders them as a
- * confident `4 × 8 @ 140 lb` prescription, so a missing piece cannot be shown as blank —
- * it would read as a prescribed zero. Partial data therefore hides the whole line
- * (VW-41/42 wire the missing pieces; the weight-seed gap leaves load null under mock).
- */
-function resolveTargets(
-  session: DashboardModel['session'],
-): { sets: number; reps: number; load: number } | null {
-  const { plannedSets, targetReps, weightLbs } = session;
-  if (plannedSets === null || targetReps === null || weightLbs === null) return null;
-  return { sets: plannedSets, reps: targetReps, load: weightLbs };
-}
-
+/** Page-header strip height — the rail's 8px bar, thickened for the wall read. */
+const HEADER_STRIP_HEIGHT = 10;
+/** Tempo digit size in the header — the rail's compact chip, raised for the wall read. */
+const HEADER_TEMPO_FONT = 13;
 /**
  * The workout title + targets — the exercise being performed, independent of how many
  * voltras drive it, so it lives at the TOP OF THE PAGE (above the live stage) and stays
- * visible across single/dual. The targets shrink with width and only wrap under the name
- * (at the set-heading size ratio) once too tight to shrink further. NOT a published component.
+ * visible across single/dual. NOT a published component.
+ *
+ * Two rows, per the north-star lockup: the name left with the `sets × reps @ load`
+ * prescription pinned right at wall scale, then the per-set {@link SetStrip} running the
+ * remaining width under the name with the prescribed tempo tucked right under the lockup.
+ * The prescription shrinks with width and only wraps under the name (at the set-heading
+ * size ratio) once too tight to shrink further.
+ *
+ * The strip is the ACTIVE exercise only — the rail keeps its own per-exercise rows, and
+ * both read {@link deriveActiveSetStates} so they cannot disagree. Each element hides
+ * independently when its data is absent: no prescription ⇒ no lockup, no sets ⇒ no strip,
+ * no prescribed tempo ⇒ no tempo (a coach may genuinely leave it unset).
  */
 export function ExerciseHeader({
-  session,
+  model,
   displayUnit = 'lbs',
 }: {
-  session: DashboardModel['session'];
+  model: DashboardModel;
   /** Client DISPLAY unit for the load readout (VW-63). Store weight stays lbs. */
   displayUnit?: MassUnit;
 }) {
@@ -278,8 +283,9 @@ export function ExerciseHeader({
   // primary text from the Surface context — see the note at the heading below.
   const nameColor = useOnSurfaceColor('primary');
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
-  const targets = resolveTargets(session);
-  const load = targets ? formatMass(targets.load, displayUnit) : null;
+  const { session } = model;
+  const targets = derivePrescription(session, displayUnit);
+  const setStates = deriveActiveSetStates(model);
   const wrap = w > 0 && w < HEADER_WRAP;
   const targetSize = wrap
     ? Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO) // set-heading ratio on the second line
@@ -294,41 +300,65 @@ export function ExerciseHeader({
       onLayout={onLayout}
       className="border-border"
       style={{
-        flexDirection: wrap ? 'column' : 'row',
-        alignItems: wrap ? 'flex-start' : 'baseline',
-        justifyContent: 'space-between',
-        gap: wrap ? 4 : 22,
         paddingHorizontal: 24,
         paddingTop: 20,
         paddingBottom: 16,
         borderBottomWidth: 1,
+        gap: 10,
       }}
     >
-      <Text
+      <View
         style={{
-          // On-surface primary text from the Surface context (LivePage's Surface root), not the
-          // `text-text-primary` className — the className→CSS-var path renders black on the
-          // standalone wall SPA (the var only exists inside titan's themed provider). The hook
-          // returns literal hex, so the stage heading stays legible.
-          color: nameColor,
-          fontSize: HEADER_NAME_SIZE,
-          fontFamily: '"Space Grotesk", sans-serif',
-          fontWeight: '700',
+          flexDirection: wrap ? 'column' : 'row',
+          alignItems: wrap ? 'flex-start' : 'baseline',
+          justifyContent: 'space-between',
+          gap: wrap ? 4 : 22,
         }}
       >
-        {session.exerciseName}
-      </Text>
-      {/* targets: pinned right when inline, tucked under the name (smaller) when wrapped.
-          Hidden outright when the prescription is unknown — SetsRepsLoad needs real
-          sets/reps/load, and a `0 × — @ 0` line is worse than no line. */}
-      {targets && load && (
-        <SetsRepsLoad
-          sets={targets.sets}
-          reps={targets.reps}
-          load={load.value}
-          unit={load.unit}
-          fontSize={targetSize}
-        />
+        <Text
+          style={{
+            // On-surface primary text from the Surface context (LivePage's Surface root), not the
+            // `text-text-primary` className — the className→CSS-var path renders black on the
+            // standalone wall SPA (the var only exists inside titan's themed provider). The hook
+            // returns literal hex, so the stage heading stays legible.
+            color: nameColor,
+            fontSize: HEADER_NAME_SIZE,
+            fontFamily: '"Space Grotesk", sans-serif',
+            fontWeight: '700',
+          }}
+        >
+          {session.exerciseName}
+        </Text>
+        {/* targets: pinned right when inline, tucked under the name (smaller) when wrapped. */}
+        {targets && (
+          <SetsRepsLoad
+            sets={targets.sets}
+            reps={targets.reps}
+            load={targets.load}
+            unit={targets.unit}
+            fontSize={targetSize}
+          />
+        )}
+      </View>
+      {/* Strip + tempo. The whole row goes when it would carry neither, so the header
+          collapses back to its one-line form rather than leaving a hairline of padding. */}
+      {(setStates.length > 0 || session.tempo) && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <View style={{ flex: 1 }}>
+            {setStates.length > 0 && <SetStrip sets={setStates} height={HEADER_STRIP_HEIGHT} />}
+          </View>
+          {/* The rail row's compact tempo chip verbatim (label + info off), sized up for
+              the wall — the prescribed tempo, NOT the live phase-fill on the stage. */}
+          {session.tempo && (
+            <TempoDisplay
+              tempo={session.tempo}
+              size="sm"
+              fontSize={HEADER_TEMPO_FONT}
+              showLabel={false}
+              showInfo={false}
+            />
+          )}
+        </View>
       )}
     </View>
   );

@@ -48,7 +48,12 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
   // could not be computed honestly and the callout simply is not drawn.
   const isDual = variant === 'live-dual';
   const hero = isDual ? mapStoreToDivergingHeroModel(sources) : undefined;
-  const asymmetry = isDual ? (mapStoreToFatigueModel(sources)?.asymmetry ?? null) : null;
+  // ONE fatigue model per page, both variants — `LiveFatigueModel` specifies exactly one
+  // athlete-level card even with two devices live (the limbs are folded inside the mapper).
+  // The single stage renders it in full via `LiveFatiguePanel`; the diverging stage takes
+  // only its `asymmetry`, which is the sole genuinely per-limb figure on it.
+  const fatigue = mapStoreToFatigueModel(sources);
+  const asymmetry = isDual ? (fatigue?.asymmetry ?? null) : null;
 
   // REAL shell chrome inputs, sourced from the store — never fixtures. On cold boot (no
   // snapshot yet) the mappers have nothing to read, so the chrome falls back to an idle,
@@ -77,7 +82,13 @@ export function LivePagePanel({ variant }: { variant: LivePageVariant }): React.
         {model === null ? (
           <ColdBootView />
         ) : (
-          <LivePage variant={variant} model={model} hero={hero} asymmetry={asymmetry} />
+          <LivePage
+            variant={variant}
+            model={model}
+            hero={hero}
+            asymmetry={asymmetry}
+            fatigue={fatigue}
+          />
         )}
       </DashboardShell>
     </div>
