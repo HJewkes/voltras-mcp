@@ -50,9 +50,11 @@ export interface ProgressionResponse {
  * Aggregate sessions and their sets into a progression response.
  *
  * `sessions` must already be filtered to the desired lookback window and
- * `exerciseId`. `setsBySessionId` maps each session id to its sets (may be
- * empty for sessions with no recorded sets). Both collections are treated as
- * immutable; no mutation occurs.
+ * `exerciseId`. `setsBySessionId` maps each session id to THAT EXERCISE'S sets
+ * within it (may be empty for sessions with no recorded sets) — `summariseSession`
+ * sums every set it is handed, so passing a session's full set list would
+ * attribute another movement's load and volume to this exercise. Both
+ * collections are treated as immutable; no mutation occurs.
  *
  * Sessions with no sets are included with all-zero metrics — this handles
  * edge cases like sessions that ended before a set was started.

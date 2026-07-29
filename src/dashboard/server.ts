@@ -91,6 +91,7 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../state/live-state.js';
+import { scopeSetsToExercise, scopeSetsToExerciseId } from '../store/set-scope.js';
 import type {
   StoredSession,
   StoredSet,
@@ -634,9 +635,18 @@ async function gatherExerciseHistory(
   const exercise = canonicalizeExerciseRef(chosen, scanned);
   const limit = parseLimit(url.searchParams.get('limit'));
   const matching = scanned.filter((s) => matchesExercise(s, exercise)).slice(0, limit);
-  const sessions = matching
-    .reverse()
-    .map((s) => ({ startedAt: s.startedAt, sets: s.sets }) satisfies HistorySession);
+  // The session matched on its exercise; its SETS are then narrowed by their
+  // own ids. Everything downstream — the e1RM series, the Kalman corridor, PR
+  // detection — treats these as one exercise's sets, so an unnarrowed list is
+  // how a squat set registers as a bench PR. Matched by handle, not by id
+  // equality, because the older sessions are labelled only by name.
+  const sessions = matching.reverse().map(
+    (s) =>
+      ({
+        startedAt: s.startedAt,
+        sets: scopeSetsToExercise(s.sets, (id) => matchesExercise({ exerciseId: id }, exercise)),
+      }) satisfies HistorySession,
+  );
   return { exercise, sessions };
 }
 
@@ -1012,7 +1022,11 @@ async function fetchMuscleVolume(
     if (session.exerciseId === undefined) continue;
     const meta = catalog.getById(session.exerciseId);
     if (meta === undefined) continue;
-    const setCount = (await state.store.getSetsForSession(session.id)).length;
+    // This session's sets OF THIS EXERCISE, by each set's own id. The whole
+    // session's count would credit one exercise's muscles with sets that
+    // trained something else, and that number is what MEV/MAV/MRV is read off.
+    const sessionSets = await state.store.getSetsForSession(session.id);
+    const setCount = scopeSetsToExerciseId(sessionSets, session.exerciseId).length;
     entries.push({
       setCount,
       primaryMuscles: meta.muscleGroups,

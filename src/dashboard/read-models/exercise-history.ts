@@ -34,6 +34,13 @@ export interface HistorySet {
 export interface HistorySession {
   /** ISO timestamp of the session. */
   startedAt: string;
+  /**
+   * The session's sets OF THIS EXERCISE — already narrowed by the caller, the
+   * only side that knows which exercise the request was about. Every derivation
+   * below (best e1RM, the Kalman corridor, PR detection) reduces this list as
+   * though it were a single movement, so a foreign set in here is a PR credited
+   * to the wrong lift.
+   */
   sets: readonly HistorySet[];
 }
 
