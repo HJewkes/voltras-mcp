@@ -15,7 +15,8 @@
 //
 // Error-channel convention: handlers throw a `ToolError` (an `Error` subclass
 // with a `code` field) for guard failures (`SESSION_ALREADY_ACTIVE`,
-// `NO_ACTIVE_SESSION`, `EXERCISE_NOT_FOUND`, `NOT_FOUND`). `wrapHandler`
+// `NO_ACTIVE_SESSION`, `EXERCISE_NOT_FOUND`, `NOT_FOUND`,
+// `AMBIGUOUS_EXERCISE_SWITCH`). `wrapHandler`
 // routes these through `mapSdkError`, which preserves the `code` as-is — the
 // same wire shape `errorResult` would produce. This keeps the handlers
 // expression-oriented without a manual try/catch around every call.
@@ -29,11 +30,12 @@ import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 
-import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
+import { type ServerState, type SlotState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
   SessionEndInput,
   SessionGetInput,
   SessionListInput,
+  SessionSetExerciseInput,
   SessionStartInput,
 } from '../schemas/session.js';
 import type { StoredSession, StoredSet } from '../store/types.js';
@@ -46,6 +48,7 @@ import {
 } from '../state/session-list-aggregator.js';
 import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
+import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
 
 /**
  * Error type used by tool handlers to signal a known, mapped error code.
@@ -87,6 +90,12 @@ export function registerSessionTools(
     'session.end',
     SessionEndInput,
     wrapHandler(SessionEndInput, (input) => endSession(state, input.slot)),
+  );
+  install(
+    placeholders,
+    'session.set_exercise',
+    SessionSetExerciseInput,
+    wrapHandler(SessionSetExerciseInput, (input) => setSessionExercise(state, input)),
   );
   install(
     placeholders,
@@ -187,6 +196,151 @@ async function startSession(
   }
 
   return { sessionId };
+}
+
+/**
+ * Comparison key for exercise-name matching: case- and
+ * punctuation-insensitive, so "Cable Chest Press" and "cable-chest-press"
+ * collapse to the same key. Mirrors
+ * `dashboard/read-models/exercise-history.ts`'s `normalizeExerciseLabel` —
+ * duplicated locally rather than imported so the tool layer doesn't reach
+ * into dashboard read-models for a five-line pure function.
+ */
+function normalizeExerciseName(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Resolve a free-text exercise name to a catalog id, but ONLY on an exact
+ * (normalized) match — `state.exercises.search()` is relevance-ranked and
+ * may return several candidates for an ambiguous query, and silently
+ * picking its first result would attribute the switch to a possibly-wrong
+ * exercise. Returns `undefined` when there is no exact match (zero results,
+ * or more than one exercise normalizing to the same key).
+ */
+function resolveExactExerciseName(state: ServerState, name: string): string | undefined {
+  const target = normalizeExerciseName(name);
+  const matches = state.exercises
+    .search(name)
+    .filter((e) => normalizeExerciseName(e.name) === target);
+  return matches.length === 1 ? matches[0]!.id : undefined;
+}
+
+/**
+ * True when the slot's current session already has at least one SET
+ * attributed to a real catalog exercise — the currently-open set (if any)
+ * plus every completed set retained for this session
+ * (`snapshotCompletedSets` is already session-scoped). Used to decide
+ * whether a name-only `session.set_exercise` call can be trusted: a session
+ * that has recorded nothing but unattributed/name-only sets so far is
+ * exactly the "session is still single-exercise" case the H2 leniency
+ * exists to protect, so a further name-only switch is safe. One that
+ * already has a real exerciseId on record is not — see S3 in the
+ * VMCP-01.72b review.
+ */
+function sessionHasAttributedSet(slot: SlotState): boolean {
+  if (slot.live.set?.exerciseId !== undefined) return true;
+  return slot.live.snapshotCompletedSets().some((record) => record.set.exerciseId !== undefined);
+}
+
+/**
+ * Repoint the active session's current exercise (VMCP-01.72b) so one
+ * workout can hold several exercises without ending and restarting the
+ * session. Sets already open when this is called are unaffected — they
+ * snapshotted the pointer at `set.start` (see `startSet` /
+ * `ActiveSet.exerciseId`); only sets started AFTER this call inherit the
+ * new pointer. Deliberately allowed mid-set for exactly that reason: it's
+ * what makes switching exercises between sets, without ending the session,
+ * the feature's point.
+ *
+ * Deferred persistence: no direct `store.putSession` call here. The stored
+ * session row's `exerciseId`/`exerciseName` are already advisory-only
+ * ("the session-level column stays as a hint" — sqlite-store.ts) and get
+ * refreshed from `active.exerciseId`/`exerciseName` the next time the
+ * session row is written (`session.end`). A crash between this call and
+ * `session.end` loses the in-memory pointer, same as any other live-only
+ * LiveState mutation.
+ */
+async function setSessionExercise(
+  state: ServerState,
+  input: z.infer<typeof SessionSetExerciseInput>,
+): Promise<{ sessionId: string; exerciseId?: string; exerciseName?: string }> {
+  const slot = getSlot(state, input.slot);
+  const active = slot.live.session;
+  if (active === undefined) {
+    throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
+  }
+
+  // R21: id wins over name. Drop name whenever id is present.
+  const useId = input.exerciseId !== undefined;
+  if (useId) {
+    const found = state.exercises.getById(input.exerciseId!);
+    if (found === undefined) {
+      throw new ToolError(
+        'EXERCISE_NOT_FOUND',
+        `No exercise with id "${input.exerciseId!}" exists in the catalog.`,
+      );
+    }
+  }
+  let exerciseId = useId ? input.exerciseId : undefined;
+  let exerciseName = useId ? undefined : input.exerciseName;
+
+  // VMCP-01.72b (S3): a name-only switch leaves the pointer with NO
+  // exerciseId, and `scopeSessionSetsToExercise`'s multi-exercise detection
+  // (`isSingleExerciseSession`) only inspects sets that HAVE one — it can't
+  // see a second exercise recorded purely by name, so it wrongly stays
+  // "single" and re-applies the unattributed-set leniency across exercises
+  // that are, in fact, different. Two ways this call can proceed safely:
+  //
+  //   1. The name matches the catalog exactly (case/punctuation-insensitive)
+  //      — silently promote it to that id, same as if the caller had passed
+  //      the id directly. Closes the common case for free.
+  //   2. It doesn't match the catalog, but this session has recorded NO
+  //      attributed set yet — a session that has only ever held one (as-yet
+  //      unidentified) exercise is exactly the case the unattributed
+  //      leniency exists to protect, so this is safe.
+  //
+  // Anything else — an unresolvable name switched into a session that
+  // already holds a real, catalog-identified exercise — is rejected. The
+  // guard can't be honored without an id, so refusing beats silently
+  // mis-attributing.
+  if (!useId && exerciseName !== undefined) {
+    const resolvedId = resolveExactExerciseName(state, exerciseName);
+    if (resolvedId !== undefined) {
+      exerciseId = resolvedId;
+      exerciseName = undefined;
+    } else if (sessionHasAttributedSet(slot)) {
+      throw new ToolError(
+        'AMBIGUOUS_EXERCISE_SWITCH',
+        `"${exerciseName}" does not match a catalog exercise, and this session already holds ` +
+          'sets attributed to a different exercise. A free-text name cannot be safely ' +
+          'disambiguated from the ones already recorded — call session.set_exercise with ' +
+          `exerciseId instead, or add "${exerciseName}" to the exercise catalog.`,
+      );
+    }
+  }
+
+  const previous = {
+    ...(active.exerciseId !== undefined ? { exerciseId: active.exerciseId } : {}),
+    ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
+  };
+  slot.live.setSessionExercise(exerciseId, exerciseName);
+
+  const payload = buildSessionExerciseChangedPayload(
+    active.sessionId,
+    {
+      ...(exerciseId !== undefined ? { exerciseId } : {}),
+      ...(exerciseName !== undefined ? { exerciseName } : {}),
+    },
+    previous,
+  );
+  state.channels.forSlot(input.slot ?? PRIMARY_SLOT).publish(payload);
+
+  return {
+    sessionId: active.sessionId,
+    ...(exerciseId !== undefined ? { exerciseId } : {}),
+    ...(exerciseName !== undefined ? { exerciseName } : {}),
+  };
 }
 
 /**

@@ -59,7 +59,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { z } from 'zod';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
-import { scopeSetsToExerciseId } from '../store/set-scope.js';
+import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import type { StoredSet } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
@@ -107,7 +107,7 @@ function weightsOf(sets: readonly StoredSet[]): number[] {
 async function setsForSessionExercise(state: ServerState, sessionId: string): Promise<StoredSet[]> {
   const sets = await state.store.getSetsForSession(sessionId);
   const session = await state.store.getSession(sessionId);
-  return scopeSetsToExerciseId(sets, session?.exerciseId);
+  return scopeSessionSetsToExerciseId(sets, session?.exerciseId);
 }
 
 /**

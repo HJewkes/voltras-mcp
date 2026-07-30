@@ -21,35 +21,34 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
-import type {
-  ExerciseSetsFilter,
-  SessionCountFilter,
-  SessionListFilter,
-  SessionStore,
-  SetCountFilter,
-  StoredIdleRep,
-  StoredIsometricMeasurement,
-  StoredIsometricSideMeasurement,
-  StoredIsometricTrial,
-  StoredPlannedExercise,
-  StoredProgramAssignment,
-  StoredRep,
-  StoredSession,
-  StoredSet,
-  StoredTrainingBlock,
-  StoredTrainingProgram,
-  StoredTrainingWeek,
-  StoredWorkoutTemplate,
+import {
+  LOCAL_USER_ID,
+  type ExerciseSetsFilter,
+  type SessionCountFilter,
+  type SessionListFilter,
+  type SessionStore,
+  type SetCountFilter,
+  type StoredIdleRep,
+  type StoredIsometricMeasurement,
+  type StoredIsometricSideMeasurement,
+  type StoredIsometricTrial,
+  type StoredPlannedExercise,
+  type StoredProgramAssignment,
+  type StoredRep,
+  type StoredSession,
+  type StoredSet,
+  type StoredTrainingBlock,
+  type StoredTrainingProgram,
+  type StoredTrainingWeek,
+  type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
-/**
- * The implicit local user. v6 introduces a user dimension across the whole
- * schema; a single-user history is modelled as one row rather than as a
- * special case, so multi-user does not require retrofitting every query later.
- */
-export const LOCAL_USER_ID = 'local';
+// `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
+// can import the constant from the persistence CONTRACT rather than this
+// implementation file; re-exported here for existing call sites.
+export { LOCAL_USER_ID };
 
 /**
  * Page size `listIdleReps` falls back to when the caller names none. Idle reps
@@ -888,6 +887,27 @@ function migrateV8ToV9(db: DatabaseSync): void {
 }
 
 /**
+ * VMCP-01.72b (S4): `listSessions({ exerciseId })` gained a subquery over
+ * `sets` (`WHERE id IN (SELECT DISTINCT session_id FROM sets WHERE
+ * exercise_id = ?)`) so a session is found by what its SETS actually
+ * recorded, not just the session row's own (last-write-wins) column. That
+ * subquery has no `user_id` predicate, so it can't seek the existing
+ * `idx_sets_user_exercise(user_id, exercise_id, started_at)` — its leading
+ * column is unconstrained — and falls back to a full scan of `sets` on
+ * every `session.list?exerciseId=` call. This index leads with
+ * `exercise_id` (what the subquery actually filters on) and covers
+ * `session_id` (what it selects), so the whole subquery is answered from
+ * the index without touching the table.
+ *
+ * Purely additive — no data change, safe to add at any schema version —
+ * but versioned rather than folded into `createV7SetsIndexes` because that
+ * function's contract is specifically "indexes naming v6-only columns".
+ */
+function migrateV9ToV10(db: DatabaseSync): void {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sets_exercise_session ON sets(exercise_id, session_id)`);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1434,8 +1454,19 @@ export class SqliteSessionStore implements SessionStore {
       params.push(filter.to);
     }
     if (filter.exerciseId !== undefined) {
-      where.push('exercise_id = ?');
-      params.push(filter.exerciseId);
+      // VMCP-01.72b (H1): the session row's own `exercise_id` column is
+      // last-write-wins once `session.set_exercise` lets one session hold
+      // several exercises — a session that trained squat then bench persists
+      // with exercise_id = 'bench-press', so a query for 'back-squat' would
+      // silently drop it even though it has real squat sets. Also match via
+      // the SETS the session actually recorded, which are set-level and
+      // authoritative post-cutover; the session-column check stays so
+      // pre-cutover / name-only sessions with no per-set exerciseId keep
+      // matching exactly as before.
+      where.push(
+        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+      );
+      params.push(filter.exerciseId, filter.exerciseId);
     }
     const direction = filter.sort === 'startedAt:asc' ? 'ASC' : 'DESC';
     const limit = filter.limit ?? 50;
@@ -1460,8 +1491,14 @@ export class SqliteSessionStore implements SessionStore {
       params.push(filter.to);
     }
     if (filter.exerciseId !== undefined) {
-      where.push('exercise_id = ?');
-      params.push(filter.exerciseId);
+      // VMCP-01.72b (S6): same set-level OR-subquery as `listSessions` — see
+      // the comment there. This method's own doc contract ("same predicates
+      // as listSessions") is a promise a session-column-only WHERE here
+      // would silently break: `list` would find a session `count` doesn't.
+      where.push(
+        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+      );
+      params.push(filter.exerciseId, filter.exerciseId);
     }
     if (filter.userId !== undefined) {
       where.push('user_id = ?');
@@ -1553,6 +1590,22 @@ export class SqliteSessionStore implements SessionStore {
     }
     const rows = this.db.prepare(sql).all(...params) as unknown as SetRow[];
     return Promise.resolve(rows.map((row) => rowToSet(row, this.loadRepsForSet(row.id))));
+  }
+
+  async getMostRecentSessionIdForExercise(filter: {
+    userId: string;
+    exerciseId: string;
+  }): Promise<string | null> {
+    // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
+    // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
+    // No rep hydration — the caller only wants the session id.
+    const row = this.db
+      .prepare(
+        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? ` +
+          `ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(filter.userId, filter.exerciseId) as { session_id: string } | undefined;
+    return Promise.resolve(row?.session_id ?? null);
   }
 
   // --- Idle reps (v7 schema) ---
@@ -2026,6 +2079,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 7 = v7 schema; v8 renamed `sets.firmware_rep_duration_ms` (free, empty).
   // 8 = v8 schema; v9 renamed `sets.inverse_chains` to `inverse_chains_lbs`
   //     (free, empty — the column was never written).
+  // 9 = v9 schema; v10 adds `idx_sets_exercise_session` (VMCP-01.72b S4) so
+  //     `listSessions`'s per-set exercise-id subquery can seek instead of
+  //     scanning all of `sets` — additive index only, no data change.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2038,6 +2094,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 6 &&
     found !== 7 &&
     found !== 8 &&
+    found !== 9 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2076,6 +2133,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 8) {
     migrateV8ToV9(db);
+  }
+  if (current <= 9) {
+    migrateV9ToV10(db);
   }
 }
 

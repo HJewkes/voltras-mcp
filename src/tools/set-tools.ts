@@ -37,8 +37,7 @@ import {
   SetStartInput,
   type WatchConfig,
 } from '../schemas/set.js';
-import type { StoredRep, StoredSet } from '../store/types.js';
-import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../store/types.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
 import {
@@ -291,6 +290,10 @@ async function startSet(
       status: 'active',
       ...(isWarmup === true ? { isWarmup: true } : {}),
       ...(watch !== undefined ? { watch } : {}),
+      // VMCP-01.72b: snapshot the session's CURRENT exercise pointer now, not
+      // at close. A `session.set_exercise` call after this point (mid-set)
+      // must not retroactively relabel this set.
+      ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
     });
   } finally {
     slot.setStartInFlight = false;
@@ -942,11 +945,12 @@ function buildSetCapture(
   const settings = readSettingsContext(device);
   const settingsHash = hashSettingsContext(settings);
   const sampleRateHz = measureSampleRateHz(active.reps);
-  // The exercise is stamped from the session that OWNS this set, guarded on
-  // the session id: a set closing after its session was torn down must not
-  // inherit a later session's exercise.
-  const session = getSlot(state, slotId).live.snapshotSession();
-  const exerciseId = session?.sessionId === active.sessionId ? session.exerciseId : undefined;
+  // VMCP-01.72b: the exercise is stamped from the SET's own snapshot, taken
+  // at set.start (see startSet / ActiveSet.exerciseId), not re-read from the
+  // live session here. A session's exercise pointer can now move mid-session
+  // via `session.set_exercise`; re-reading it at close would let that call
+  // retroactively rewrite an already-in-flight set's attribution.
+  const exerciseId = active.exerciseId;
 
   // Achieved rest: the gap since this slot's previous close. Absent for the
   // first set of a run and across a restart.

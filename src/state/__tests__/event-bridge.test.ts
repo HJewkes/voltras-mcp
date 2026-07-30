@@ -3064,6 +3064,35 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(sess?.exerciseId).toBeUndefined();
   });
 
+  // ── VMCP-01.72b (B1 regression): the auto-created SET must carry its own
+  // exercise snapshot, not just the session ──
+  //
+  // buildSetCapture (set-tools.ts) no longer re-reads the live session's
+  // exerciseId at close — it reads the SET's own snapshot, taken at start.
+  // ensureGuidedLoadSessionAndSet mints its ActiveSet through the same
+  // `live.startSet` mutator `set.start` uses, so it must copy the session's
+  // exerciseId/exerciseName onto the set the same way, or every guided-load
+  // set persists unattributed (exercise_id NULL) — and, combined with
+  // progression.get_for_exercise now discovering sessions via each set's own
+  // exerciseId, the whole guided-load session becomes invisible to it.
+  it('VMCP-01.72b: the auto-created SET (not just the session) carries the stashed exerciseId', () => {
+    const slot = state.slots.get('primary') as unknown as {
+      pendingGuidedLoadExerciseName?: string;
+      pendingGuidedLoadExerciseId?: string;
+    };
+    slot.pendingGuidedLoadExerciseName = 'Barbell Squat';
+    slot.pendingGuidedLoadExerciseId = 'ex-squat-001';
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    // No parallel exerciseName assertion: ActiveSet carries only
+    // exerciseId — see the N10 comment in live-state.ts. `StoredSet` never
+    // persisted a set-level name, so a set-level exerciseName write would
+    // be dead weight.
+    const set = live.snapshotSet();
+    expect(set?.exerciseId).toBe('ex-squat-001');
+  });
+
   it('VMCP-02.13: a reused explicit session keeps its own name (stash ignored)', () => {
     live.startSession({
       sessionId: 'explicit-sess',

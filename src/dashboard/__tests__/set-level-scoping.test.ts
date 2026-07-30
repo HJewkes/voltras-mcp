@@ -142,12 +142,16 @@ async function getJson(path: string): Promise<Record<string, unknown>> {
 }
 
 describe('GET /api/muscle-volume — set-level scoping', () => {
-  it('credits the exercise with its own sets, not the whole session', async () => {
+  it('credits EACH exercise with its own sets, not just the session-row exercise (VMCP-01.72b H1)', async () => {
     const body = (await getJson('/api/muscle-volume')) as { muscles: Record<string, number> };
-    // Two bench sets, primary chest at full weight and triceps as secondary.
-    // Unscoped, the session's 3 sets are all credited to the bench's muscles.
+    // Two bench sets (chest primary, triceps secondary) + one squat set
+    // (quads primary, glutes secondary), all in one session whose ROW says
+    // 'bench-press' (last-write-wins). Attribution reads each SET's own
+    // exerciseId, so both exercises' muscles are credited — dropping the
+    // squat set here would understate quads/glutes volume for any session
+    // that trained more than one exercise.
     expect(body.muscles.chest).toBe(2);
-    expect(body.muscles.quads).toBeUndefined();
+    expect(body.muscles.quads).toBe(1);
   });
 });
 
@@ -172,5 +176,83 @@ describe('GET /api/exercise-trend — set-level scoping', () => {
     expect(body.points).toHaveLength(1);
     // 135×8 estimates ~171 lb; the 325 lb triple would put it past 300.
     expect(body.points[0]!.e1rm).toBeLessThan(200);
+  });
+
+  // VMCP-01.72b (S8, H1): the session ROW says 'bench-press' (last-write-wins),
+  // but the session's own SETS include a real squat. `sessionMatchesExerciseRef`
+  // must find this session for a squat-scoped request via its sets, not just
+  // the session-level column — dropping this coverage would mean the fix has
+  // no dashboard-side proof it works, only the tool-layer (progression-tools)
+  // positive control.
+  it('finds the session by its SETS for an exercise the session ROW does not name (H1)', async () => {
+    const body = (await getJson('/api/exercise-trend?exerciseId=back-squat')) as {
+      exerciseId: string | null;
+      points: { e1rm: number }[];
+    };
+    expect(body.exerciseId).toBe('back-squat');
+    expect(body.points).toHaveLength(1);
+    // 325×3 estimates well past 300; the 135 lb bench sets would cap it under 200.
+    expect(body.points[0]!.e1rm).toBeGreaterThan(300);
+  });
+});
+
+// VMCP-01.72b (S8, H2): an unattributed set in this now-multi-exercise
+// session must not be credited to EITHER exercise — the leniency
+// `scopeSessionSetsToExercise` withdraws once a session's own sets disagree.
+// `gatherExerciseHistory`'s call to `scopeSessionSetsToExercise` had zero
+// dedicated coverage; `set-level-scoping.test.ts`'s only prior H2 proof was
+// in the tool layer (`progression-tools.test.ts`), not the dashboard.
+describe('GET /api/exercise-trend — unattributed set in a multi-exercise session (H2)', () => {
+  it('does not credit an unattributed set to either exercise once the session holds two', async () => {
+    const handle = await startDashboardServer({
+      port: 0,
+      state: {
+        slots: new Map(),
+        store: {
+          listSessions: () => Promise.resolve([MIXED_SESSION]),
+          getSetsForSession: () =>
+            Promise.resolve([
+              ...MIXED_SETS,
+              // No exerciseId of its own — e.g. a bridge-torn-down close.
+              makeSet('unattributed-1', undefined, 500, 5),
+            ]),
+        },
+        exercises: {
+          getById: (id: string) => {
+            const meta = CATALOG[id];
+            if (meta === undefined) return undefined;
+            return {
+              name: meta.name,
+              muscleGroups: meta.muscleGroups,
+              secondaryMuscleGroups: meta.secondary,
+            };
+          },
+        },
+      } as unknown as DashboardServerState,
+    });
+    handles.push(handle);
+
+    const getPath = (path: string) =>
+      new Promise<{ points: { e1rm: number }[] }>((resolve, reject) => {
+        const req = httpRequest(
+          { host: '127.0.0.1', port: handle.port, path, method: 'GET' },
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (c: string) => (body += c));
+            res.on('end', () => resolve(JSON.parse(body) as { points: { e1rm: number }[] }));
+            res.on('error', reject);
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+
+    // A 500 lb set would blow past either exercise's real e1RM if it were
+    // credited — bench stays ~171, squat stays ~350ish, both well under 500.
+    const bench = await getPath('/api/exercise-trend?exerciseId=bench-press');
+    const squat = await getPath('/api/exercise-trend?exerciseId=back-squat');
+    expect(bench.points.every((p) => p.e1rm < 400)).toBe(true);
+    expect(squat.points.every((p) => p.e1rm < 400)).toBe(true);
   });
 });

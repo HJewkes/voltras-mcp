@@ -148,7 +148,13 @@ function makeStore(): SessionStore & {
   };
 }
 
-const TOOL_NAMES = ['session.start', 'session.end', 'session.list', 'session.get'];
+const TOOL_NAMES = [
+  'session.start',
+  'session.end',
+  'session.set_exercise',
+  'session.list',
+  'session.get',
+];
 
 interface Harness {
   invoke: (

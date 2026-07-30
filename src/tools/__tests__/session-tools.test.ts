@@ -156,6 +156,17 @@ const BENCH: Exercise = {
   qualityScore: 100,
 };
 
+const SQUAT: Exercise = {
+  id: 'back-squat',
+  name: 'Back Squat',
+  muscleGroups: ['quads'],
+  movementPattern: 'squat',
+  exerciseType: 'compound',
+  equipment: [{ name: 'barbell', category: 'free-weight' }],
+  cableEquivalent: false,
+  qualityScore: 100,
+};
+
 function makeRep(n: number): Rep {
   const phase = {
     samples: [],
@@ -175,7 +186,13 @@ function makeRep(n: number): Rep {
   return { repNumber: n, concentric: phase, eccentric: phase };
 }
 
-const TOOL_NAMES = ['session.start', 'session.end', 'session.list', 'session.get'];
+const TOOL_NAMES = [
+  'session.start',
+  'session.end',
+  'session.set_exercise',
+  'session.list',
+  'session.get',
+];
 
 interface PublishedEvent {
   content: string;
@@ -204,7 +221,7 @@ interface Harness {
 function setup(): Harness {
   const live = new LiveState();
   const store = makeStore();
-  const exercises = makeExercises({ 'bench-press': BENCH });
+  const exercises = makeExercises({ 'bench-press': BENCH, 'back-squat': SQUAT });
   // VMCP-02.50: session.end now routes an open set through the shared
   // `finalizeSet`, which touches the slot client, the idle watchdog, the
   // start-snapshot map, the channel publisher, and the rest-timer registry.
@@ -598,6 +615,181 @@ describe('session.end', () => {
     // The session itself still closes normally.
     expect(h.live.session).toBeUndefined();
     expect(h.store.putSession).toHaveBeenCalled();
+  });
+});
+
+// ── session.set_exercise (VMCP-01.72b) ──────────────────────────────────────
+
+describe('session.set_exercise', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('returns NO_ACTIVE_SESSION when no session is active', async () => {
+    const r = await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('NO_ACTIVE_SESSION');
+  });
+
+  it('returns EXERCISE_NOT_FOUND when the id is unknown, leaving the pointer unchanged', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseId: 'does-not-exist' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('EXERCISE_NOT_FOUND');
+    expect(h.live.session?.exerciseId).toBe('bench-press');
+  });
+
+  it('returns INVALID_INPUT when neither field is given', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', {});
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('repoints the session to a new exerciseId', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as {
+      sessionId: string;
+      exerciseId?: string;
+      exerciseName?: string;
+    };
+    expect(body.exerciseId).toBe('back-squat');
+    expect(body.exerciseName).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBe('back-squat');
+    expect(h.live.session?.exerciseName).toBeUndefined();
+  });
+
+  it('drops exerciseName when both id and name are provided (R21, id wins)', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', {
+      exerciseId: 'back-squat',
+      exerciseName: 'Ignored Name',
+    });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBe('back-squat');
+    expect(h.live.session?.exerciseName).toBeUndefined();
+  });
+
+  it('accepts a free-text exerciseName and clears a prior exerciseId', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Cable Row' });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBeUndefined();
+    expect(h.live.session?.exerciseName).toBe('Cable Row');
+  });
+
+  // ── S3: close the exerciseName bypass of the H2 (unattributed leniency) guard ──
+
+  it('S3: a free-text exerciseName that exactly matches the catalog resolves to that id', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    // Catalog has 'back-squat' named 'Back Squat' — an exact (normalized)
+    // name match should silently resolve to the id, same as passing it
+    // directly, rather than leaving the pointer unattributed.
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Back Squat' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { exerciseId?: string; exerciseName?: string };
+    expect(body.exerciseId).toBe('back-squat');
+    expect(body.exerciseName).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBe('back-squat');
+    expect(h.live.session?.exerciseName).toBeUndefined();
+  });
+
+  it('S3: an unresolvable name-only switch is REJECTED once the session already holds an attributed set', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    // Simulate a real, catalog-attributed set having closed in this
+    // session — the scenario `scopeSessionSetsToExercise`'s multi-exercise
+    // detection depends on being able to see.
+    h.live.startSet({
+      setId: 'set-bench-1',
+      sessionId: h.live.session!.sessionId,
+      startedAt: new Date().toISOString(),
+      reps: [],
+      status: 'active',
+      exerciseId: 'bench-press',
+    });
+    h.live.endSet();
+
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Good Morning' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('AMBIGUOUS_EXERCISE_SWITCH');
+    // The pointer is unchanged on a rejected switch.
+    expect(h.live.session?.exerciseId).toBe('bench-press');
+  });
+
+  it('S3: an unresolvable name-only switch is ALLOWED when the session has recorded no attributed set yet', async () => {
+    // Session started with a catalog id but never actually recorded a set
+    // under it — as far as the session's OWN sets show, it is still
+    // single-exercise (vacuously), so the leniency this switch relies on
+    // has nothing to disagree with yet.
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Good Morning' });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBeUndefined();
+    expect(h.live.session?.exerciseName).toBe('Good Morning');
+  });
+
+  it('does not write to the store directly (deferred persistence)', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    h.store.putSession.mockClear();
+    const r = await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+    expect(r.isError).toBeUndefined();
+    expect(h.store.putSession).not.toHaveBeenCalled();
+  });
+
+  it('the next session.end persists the LAST exercise set via session.set_exercise', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+    h.store.putSession.mockClear();
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    expect(h.store.putSession).toHaveBeenCalledTimes(1);
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.exerciseId).toBe('back-squat');
+  });
+
+  it('emits a session_exercise_changed channel event', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+    expect(r.isError).toBeUndefined();
+    const changed = h.published.find((e) => e.meta.event_type === 'session_exercise_changed');
+    expect(changed).toBeDefined();
+    expect(changed!.meta.exercise_id).toBe('back-squat');
+    const content = JSON.parse(changed!.content) as { previous_exercise_id: string | null };
+    expect(content.previous_exercise_id).toBe('bench-press');
+  });
+
+  it('session.set_exercise does not mutate an already-installed ActiveSet.exerciseId in LiveState', async () => {
+    // Narrow unit check on `setSessionExercise` alone: it must not touch
+    // `live.set`. This does NOT prove the end-to-end persisted-attribution
+    // claim (that requires going through the real `set.start` snapshot
+    // write and `set.end`'s `finalizeSet` → `buildSetCapture` persist path,
+    // neither of which is wired in this harness) — see the mutation-tested
+    // end-to-end coverage in `session-set-exercise-e2e.test.ts`.
+    const startResult = await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const { sessionId } = parseResult(startResult) as { sessionId: string };
+    // Mirror set.start's own exercise-snapshot logic (VMCP-01.72b,
+    // set-tools.ts) without going through that tool's registration, which
+    // isn't wired in this harness.
+    h.live.startSet({
+      setId: 'set-X',
+      sessionId,
+      startedAt: new Date().toISOString(),
+      reps: [],
+      status: 'active',
+      ...(h.live.session?.exerciseId !== undefined
+        ? { exerciseId: h.live.session.exerciseId }
+        : {}),
+    });
+
+    await h.invoke('session.set_exercise', { exerciseId: 'back-squat' });
+
+    // The already-open set kept its start-time snapshot...
+    expect(h.live.set?.exerciseId).toBe('bench-press');
+    // ...while the session's pointer for the NEXT set has moved.
+    expect(h.live.session?.exerciseId).toBe('back-squat');
   });
 });
 

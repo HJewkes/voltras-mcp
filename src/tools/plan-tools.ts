@@ -37,15 +37,16 @@ import {
 } from '../schemas/plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
-import { scopeSetsToExerciseId } from '../store/set-scope.js';
-import type {
-  StoredPlannedExercise,
-  StoredProgramAssignment,
-  StoredSet,
-  StoredTrainingBlock,
-  StoredTrainingProgram,
-  StoredTrainingWeek,
-  StoredWorkoutTemplate,
+import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
+import {
+  LOCAL_USER_ID,
+  type StoredPlannedExercise,
+  type StoredProgramAssignment,
+  type StoredSet,
+  type StoredTrainingBlock,
+  type StoredTrainingProgram,
+  type StoredTrainingWeek,
+  type StoredWorkoutTemplate,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
@@ -600,7 +601,7 @@ async function suggestProgression(
   // 135 lb bench alongside a 315 lb squat would be discarded as warm-ups and
   // the delta computed from the squat.
   const sessionSets = await state.store.getSetsForSession(basisSessionId);
-  const sets = scopeSetsToExerciseId(sessionSets, input.exerciseId);
+  const sets = scopeSessionSetsToExerciseId(sessionSets, input.exerciseId);
   const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
   return { plannedExercise: planned, suggestion };
 }
@@ -622,12 +623,22 @@ async function resolveBasisSession(
     }
     return input.completedSessionId;
   }
-  const recent = await state.store.listSessions({
+  // VMCP-01.72b (H1): pick the basis session by each SET's own exerciseId,
+  // not `listSessions({ exerciseId })`'s session-row column — that column is
+  // last-write-wins once a session can hold several exercises, so it would
+  // silently miss a session that trained this exercise earlier and something
+  // else more recently.
+  //
+  // VMCP-01.72b (S5): `getSetsForExercise` hydrates every rep of every
+  // matching set — pulling a user's ENTIRE history for the exercise just to
+  // read the last element's `sessionId` was the wrong shape (and unbounded).
+  // `getMostRecentSessionIdForExercise` answers the actual question — "what
+  // session was this exercise last trained in?" — with a single indexed
+  // `ORDER BY started_at DESC LIMIT 1`, no reps loaded.
+  return state.store.getMostRecentSessionIdForExercise({
+    userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
-    sort: 'startedAt:desc',
-    limit: 1,
   });
-  return recent[0]?.id ?? null;
 }
 
 /**
