@@ -71,6 +71,8 @@ export interface Exercise {
 interface ExerciseCatalog {
   searchExercises: (query: string) => Exercise[];
   getExerciseById: (id: string) => Exercise | undefined;
+  getAllExercises: () => Exercise[];
+  getExercisesByMuscleGroup: (muscleGroup: string) => Exercise[];
 }
 
 const catalog = analytics as unknown as ExerciseCatalog;
@@ -98,5 +100,23 @@ export class ExerciseService {
    */
   getById(id: string): Exercise | undefined {
     return catalog.getExerciseById(id);
+  }
+
+  /**
+   * The whole catalog, as loaded at boot (`setCatalog(SEED_CABLE_EXERCISES)`).
+   * Added for the dashboard's plan-builder catalog browser (VW-120), which needs
+   * a "show me everything" view that `search` — requiring a query — can't answer.
+   * Verbatim and unordered, exactly as the catalog holds it.
+   */
+  list(): Exercise[] {
+    return catalog.getAllExercises();
+  }
+
+  /**
+   * Catalog entries whose PRIMARY muscle groups include `muscleGroup`. Delegates
+   * to the upstream filter; the package owns what counts as a match.
+   */
+  byMuscleGroup(muscleGroup: string): Exercise[] {
+    return catalog.getExercisesByMuscleGroup(muscleGroup);
   }
 }

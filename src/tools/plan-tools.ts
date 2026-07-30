@@ -679,8 +679,13 @@ function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
  * single-step delta. Bands without `targetRepsLow` (i.e. plain "do X sets"
  * prescriptions) collapse to a hold — there's no objective basis to bump.
  * Only working sets (session top load) are scored; warmups are excluded.
+ *
+ * Exported (VW-120) so the dashboard's session-completion screen computes its
+ * per-exercise recommendation from THIS function rather than a second copy of
+ * the heuristic. The signature is deliberately store-free — planned row + that
+ * exercise's sets + the basis session id — so any caller can supply them.
  */
-function computeProgressionDelta(
+export function computeProgressionDelta(
   planned: StoredPlannedExercise,
   sets: StoredSet[],
   basisSessionId: string,

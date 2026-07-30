@@ -15,3 +15,26 @@ export {
   type ExerciseMeta,
   type SnapshotInput,
 } from './snapshot.js';
+
+export type { DashboardCatalogEntry } from './catalog-entry.js';
+
+export type {
+  SessionSummaryExercise,
+  SessionSummaryProgression,
+  SessionSummarySet,
+  SessionSummaryView,
+} from './session-summary-view.js';
+
+export {
+  buildPlanTreeView,
+  nextOrderIndex,
+  type ExerciseNameLookup,
+  type PlanBlockView,
+  type PlanExerciseView,
+  type PlanProgramSummary,
+  type PlanProgramView,
+  type PlanTemplateView,
+  type PlanTreeRows,
+  type PlanTreeView,
+  type PlanWeekView,
+} from './plan-tree.js';
