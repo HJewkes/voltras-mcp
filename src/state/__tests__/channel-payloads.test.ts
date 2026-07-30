@@ -36,9 +36,12 @@ import type { StoredSet } from '../../store/types.js';
 
 // Note on units: `peakVelocity` and `totalVelocity` here are in WA's native
 // scale (mm/s) — the channel-payload builders divide by 1000 on the way out
-// so the serialized values land as m/s. Similarly `startPos`/`endPos` are
-// in mm so `rom_m` lands as metres. Tests below pass values like `850`
-// (= 0.85 m/s) and `600` (= 0.6 m ROM) accordingly.
+// so the serialized values land as m/s. `startPos`/`endPos`, per WA 2.0.0,
+// are cable extension in **metres** (converted at the producer's bridge
+// before WA ever sees a sample) — `getPhaseRangeOfMotion` returns that value
+// verbatim now, with no post-hoc mm→m conversion in the payload builders.
+// Tests below pass values like `850` (= 0.85 m/s) and `0.6` (= 0.6 m ROM)
+// accordingly.
 function makePhase(
   overrides: Partial<{
     samples: number;
@@ -87,8 +90,9 @@ function makePhase(
   };
 }
 
-// `concPeak` and `eccPeak` are in mm/s (WA's native unit). Positions are in
-// mm — 600 here = 0.6 m ROM after the payload-boundary conversion.
+// `concPeak` and `eccPeak` are in mm/s (WA's native unit, unaffected by the
+// 2.0.0 position change). Positions are in metres (WA 2.0.0) — 0.6 here is a
+// 0.6 m ROM, read straight through with no payload-boundary conversion.
 function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
   return {
     repNumber,
@@ -100,7 +104,7 @@ function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
       startTime: 1000,
       endTime: 1400,
       startPos: 0,
-      endPos: 600,
+      endPos: 0.6,
     }),
     eccentric: makePhase({
       samples: 4,
@@ -109,7 +113,7 @@ function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
       movementSampleCount: 4,
       startTime: 1400,
       endTime: 1900,
-      startPos: 600,
+      startPos: 0.6,
       endPos: 0,
     }),
   };
@@ -242,7 +246,7 @@ describe('buildRepFinalizedPayload', () => {
         startTime: 1000,
         endTime: 1400,
         startPos: 0,
-        endPos: 600,
+        endPos: 0.6,
       }),
       eccentric: makePhase({
         samples: 4,
@@ -255,7 +259,7 @@ describe('buildRepFinalizedPayload', () => {
         peakForce: 80,
         startTime: 1500,
         endTime: 1900,
-        startPos: 600,
+        startPos: 0.6,
         endPos: 0,
       }),
     };
@@ -278,12 +282,14 @@ describe('buildRepFinalizedPayload', () => {
     expect(parsed.rep.hold_top_ms).toBe(100);
   });
 
-  // The bridge converts frame force tenths→lb when it builds the WorkoutSample,
-  // so `WorkoutSample.force` is already pounds here. impulse needs no unit
-  // correction; mean-power only corrects the mm→m position term (÷1000).
+  // The bridge converts frame force tenths→lb and frame position mm→m when it
+  // builds the WorkoutSample, so `WorkoutSample.force`/`.position` are already
+  // pounds/metres here. Neither impulse nor mean-power needs any further unit
+  // correction in the payload builder (WA 2.0.0).
   it('emits impulse_lb_s + mean_power_lb_mps in fitness units (lb·s / lb·m/s)', () => {
     // Concentric: 3 samples, force held at 50 lb (post-bridge units), position
-    // 0 → 100 → 200 mm across 1000 → 1200 ms (0.2 s of movement, no hold).
+    // 0 → 0.1 → 0.2 m (post-bridge units) across 1000 → 1200 ms (0.2 s of
+    // movement, no hold).
     //   impulse = ∫F dt = 50 lb × 0.2 s = 10.0 lb·s
     //   work    = ∫F dx = 50 lb × 0.2 m = 10.0 lb·m
     //   power   = work / 0.2 s          = 50.0 lb·m/s
@@ -291,8 +297,8 @@ describe('buildRepFinalizedPayload', () => {
       ...makePhase({ samples: 0, startTime: 1000, endTime: 1200, movementSampleCount: 3 }),
       samples: [
         { sequence: 0, timestamp: 1000, phase: 1, position: 0, velocity: 0, force: 50 },
-        { sequence: 1, timestamp: 1100, phase: 1, position: 100, velocity: 0, force: 50 },
-        { sequence: 2, timestamp: 1200, phase: 1, position: 200, velocity: 0, force: 50 },
+        { sequence: 1, timestamp: 1100, phase: 1, position: 0.1, velocity: 0, force: 50 },
+        { sequence: 2, timestamp: 1200, phase: 1, position: 0.2, velocity: 0, force: 50 },
       ] as Rep['concentric']['samples'],
     };
     const rep: Rep = {

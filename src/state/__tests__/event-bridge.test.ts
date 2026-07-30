@@ -42,7 +42,7 @@ import {
 import type { Rep } from '@voltras/workout-analytics';
 // live-signal is a leaf module (no SDK/node imports — see its header), so a
 // static import is safe ahead of the SDK mock below.
-import { LiveSignalHub, mmsToMps, type LiveSignalEvent } from '../live-signal.js';
+import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../live-signal.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -594,11 +594,15 @@ describe('wireEventBridge', () => {
       velocity: number;
       force: number;
     }
+    // WA 2.0.0: the bridge converts `frame.position` (device-native mm) to
+    // metres via `mmToM` before building each `WorkoutSample` — the golden
+    // computation must apply the same conversion or it silently diverges
+    // 1000x from the real enrichment path it's meant to verify.
     const toSample = (f: FrameInput): Parameters<typeof addSampleToSet>[1] => ({
       sequence: f.sequence,
       timestamp: f.timestamp,
       phase: f.phase as Parameters<typeof addSampleToSet>[1]['phase'],
-      position: f.position,
+      position: mmToM(f.position),
       velocity: f.velocity,
       force: f.force,
     });
@@ -4097,5 +4101,109 @@ describe('settingsToSnapshot: inverse chains', () => {
 
   it('omits the field when the cascade did not report it', () => {
     expect(settingsToSnapshot({ chains: 30 })).not.toHaveProperty('inverseChainSettingLbs');
+  });
+});
+
+// VMCP-05.19: WA 2.0.0 redefines `WorkoutSample.position` as cable extension
+// in metres, converted at the producer's bridge — WA itself performs no
+// conversion. These regression tests pin that the bridge converts
+// `frame.position` (device-native mm) to metres BEFORE it ever reaches WA
+// (not after, on WA's ROM output), and that the dashboard SSE wire — which
+// documents `position` as the raw 0-600 device-native reading — still gets
+// the unconverted value.
+describe('position mm→m conversion at the WA ingestion boundary (VMCP-05.19)', () => {
+  let live: LiveStateT;
+  let client: FakeClient;
+  let server: FakeServer;
+  let channels: FakeChannels;
+  let liveSignals: LiveSignalHub;
+  let events: LiveSignalEvent[];
+
+  beforeEach(() => {
+    live = new LiveState();
+    client = makeFakeClient();
+    server = makeFakeServer();
+    channels = makeFakeChannels();
+    liveSignals = new LiveSignalHub();
+    events = [];
+    liveSignals.subscribe((e) => events.push(e));
+    const bareState = makeBareState({ client, live, server, channels });
+    (bareState as unknown as { liveSignals: LiveSignalHub }).liveSignals = liveSignals;
+    wireBridgeForSlot(
+      bareState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      bareState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+  });
+
+  it('feeds WA a metres-scale sample.position while the SSE tap keeps the raw device-native reading', () => {
+    startSet(live);
+    // Concentric sweep: raw device-native cable extension 0 -> 600 (mm),
+    // i.e. the ~0.6 m the chains-full-extension constant assumes.
+    client.fire.frame({
+      sequence: 1,
+      timestamp: 1,
+      phase: 1,
+      position: 0,
+      velocity: 400,
+      force: 50,
+    });
+    client.fire.frame({
+      sequence: 2,
+      timestamp: 2,
+      phase: 1,
+      position: 600,
+      velocity: 400,
+      force: 50,
+    });
+    // Eccentric sweep back down.
+    client.fire.frame({
+      sequence: 3,
+      timestamp: 3,
+      phase: 3,
+      position: 600,
+      velocity: -100,
+      force: 30,
+    });
+    client.fire.frame({
+      sequence: 4,
+      timestamp: 4,
+      phase: 3,
+      position: 0,
+      velocity: -100,
+      force: 30,
+    });
+    // A second CONCENTRIC sample closes rep 1 (the ECC -> CONC boundary).
+    client.fire.frame({
+      sequence: 5,
+      timestamp: 5,
+      phase: 1,
+      position: 0,
+      velocity: 400,
+      force: 50,
+    });
+
+    const phaseEvents = events.filter(
+      (e): e is Extract<LiveSignalEvent, { type: 'phase' }> => e.type === 'phase',
+    );
+    expect(phaseEvents.length).toBeGreaterThan(0);
+    // Wire contract: the dashboard SSE tap documents `position` as the raw
+    // 0-600 device-native reading — it must NOT receive WA's metres-converted
+    // value (which would read 0.6, not 600).
+    expect(phaseEvents[0].data.position).toBe(0);
+
+    expect(channels.publish).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(channels.publish.mock.calls[0][0].content) as {
+      rep: { rom_m: number };
+    };
+    // A rep sweeping raw position 0 -> 600 and back — the concentric ROM is
+    // |0.6 - 0| = 0.6 m, not the 1000x-inflated 600 a stale post-hoc
+    // conversion (or a missing bridge conversion) would produce.
+    expect(parsed.rep.rom_m).toBeCloseTo(0.6, 3);
+  });
+
+  it('mmToM matches the bridge conversion applied to frame.position (sanity on the shared helper)', () => {
+    // Guards against the two call sites (bridge conversion, this test's
+    // expectation) silently drifting apart from the shared `mmToM` helper.
+    expect(mmToM(600)).toBeCloseTo(0.6, 3);
   });
 });

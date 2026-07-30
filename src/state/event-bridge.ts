@@ -562,7 +562,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         sequence: frame.sequence,
         timestamp: frame.timestamp,
         phase: phase as unknown as WorkoutSample['phase'],
-        position: frame.position,
+        // Single mm→m conversion point (WA 2.0.0). WA's `WorkoutSample.position`
+        // contract is cable extension in metres, converted at the producer's
+        // bridge — WA itself performs no conversion and validates nothing at
+        // runtime. `frame.position` is the device-native 0-600 (mm) cable
+        // extension; converting here means every downstream position-derived
+        // output (ROM, work, power) is already in metres/lbs·m with no
+        // per-emit-site re-correction.
+        position: mmToM(frame.position),
         velocity: frame.velocity,
         // Single tenths→lb conversion point. WA's `WorkoutSample.force`
         // contract is pounds; the device reports tenths. Converting here means
@@ -578,13 +585,16 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // idle-arm movement — so the live phase/velocity readout always tracks
       // the cable. Velocity is converted mm/s → m/s here; force is read from
       // the WorkoutSample above, already converted tenths → lbs; position is
-      // the normalized 0-600 cable extension. No protocol bytes
-      // cross this tap. Shared derivation with VMCP-02.58's Tier-1 cue matcher.
+      // the normalized 0-600 cable extension — the RAW device-native reading
+      // (`frame.position`), NOT `sample.position`, which is now WA's
+      // metres-converted value (2.0.0) and would break this wire contract. No
+      // protocol bytes cross this tap. Shared derivation with VMCP-02.58's
+      // Tier-1 cue matcher.
       if (liveSignals !== undefined) {
         liveSignals.frame({
           t: sample.timestamp,
           phase: mapPhase(phase),
-          position: sample.position,
+          position: frame.position,
           velocity: mmsToMps(sample.velocity),
           force: sample.force,
           repInProgress: live.set !== undefined ? live.set.reps.length : null,
@@ -691,7 +701,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
             liveSignals.rep({
               repIndex: finalizedIndex + 1,
               vCon: mmsToMps(getPhaseMeanVelocity(finalizedRep.concentric)),
-              rom: mmToM(getRepRangeOfMotion(finalizedRep)),
+              // WA 2.0.0: `getRepRangeOfMotion` already returns metres, because
+              // `sample.position` is fed in as metres at the bridge above — no
+              // post-hoc mm→m conversion needed any more.
+              rom: getRepRangeOfMotion(finalizedRep),
               peakVelocity: mmsToMps(finalizedRep.concentric.peakVelocity),
               peakForceSoFar: peakConcentricForceSoFar(set.reps, finalizedIndex),
             });

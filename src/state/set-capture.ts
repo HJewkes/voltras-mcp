@@ -155,13 +155,12 @@ export function measureSampleRateHz(reps: readonly Rep[]): number | undefined {
 /**
  * Scale of `WorkoutSample.position` on newly-written sets.
  *
- * `'device_native'`, NOT `'meters'`, and that is the entire point of shipping
- * the marker before the conversion. The bridge still passes position through
- * unconverted, so stamping `'meters'` now would make the marker assert
- * something false about the rows it labels — worse than having no marker,
- * because a wrong marker is trusted.
- *
- * Flip this to `'meters'` in the same change that converts at the bridge, and
- * never before.
+ * `'meters'` as of WA 2.0.0 (VMCP-05.19): `event-bridge.ts` now converts
+ * `frame.position` (device-native mm) to metres via `mmToM` before building
+ * each `WorkoutSample`, matching WA's redefined position contract ("cable
+ * extension in metres, converted at the producer's bridge"). Rows written
+ * before this change are `'device_native'` and must not be compared against
+ * rows written after it without rescaling — that's the entire point of
+ * stamping the marker.
  */
-export const CURRENT_POSITION_UNITS: NonNullable<StoredSet['positionUnits']> = 'device_native';
+export const CURRENT_POSITION_UNITS: NonNullable<StoredSet['positionUnits']> = 'meters';

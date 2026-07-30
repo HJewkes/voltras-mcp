@@ -433,18 +433,21 @@ export function selectSetReps(set: ActiveSet, source: RepSource | undefined): Ac
  *
  * UNITS: stored on this struct in the raw scale workout-analytics returns —
  * `vCon` is the mean concentric velocity in **mm/s** (from
- * `getPhaseMeanVelocity`), and `rom` is the concentric range-of-motion in
- * **mm** (from `getPhaseRangeOfMotion`). The `idle_rep` channel payload and
- * the session resource convert both to m/s and metres respectively at the
- * serialization boundary (F18 / VMCP-01.32). Both are null when the
- * concentric phase had no movement samples (rare; typically means the rep
- * boundary fired mid-phase-transition before enough frames arrived).
+ * `getPhaseMeanVelocity`; unaffected by the WA 2.0.0 position change), and
+ * `rom` is the concentric range-of-motion in **metres** (from
+ * `getPhaseRangeOfMotion`, which returns metres as of WA 2.0.0 now that
+ * `WorkoutSample.position` is fed in as metres at the bridge). The `idle_rep`
+ * channel payload and the session resource convert `vCon` to m/s at the
+ * serialization boundary (F18 / VMCP-01.32); `rom` passes through unchanged.
+ * Both are null when the concentric phase had no movement samples (rare;
+ * typically means the rep boundary fired mid-phase-transition before enough
+ * frames arrived).
  */
 export interface IdleRep {
   ts: number;
   /** Mean concentric velocity in mm/s. Converted to m/s at the channel/resource boundary. */
   vCon: number | null;
-  /** Concentric range-of-motion in mm. Converted to metres at the channel/resource boundary. */
+  /** Concentric range-of-motion in metres (WA 2.0.0). No further conversion needed downstream. */
   rom: number | null;
   slot: string;
 }
