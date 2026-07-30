@@ -630,6 +630,35 @@ export interface StoredProgramAssignment {
 }
 
 /**
+ * A user's self-reported training background (I4 / VW-96 Wave 3). Storage
+ * only — every field here is captured verbatim from what the user declared,
+ * with zero derivation or tier-classification. That logic (the tier signal)
+ * is a separate, already-scoped effort (VW-92) that reads this row; it does
+ * not write it.
+ */
+export interface StoredTrainingProfile {
+  userId: string;
+  /** 'beginner' | 'intermediate' | 'advanced', as declared by the user. */
+  declaredTier?: string;
+  declaredAt?: string;
+  yearsTraining?: number;
+  /** The rp-s10 consistency probe. */
+  historyConsistent?: boolean;
+  /** The rp-s4/s6 plateau probe. */
+  everPlateaued?: boolean;
+  reportedSetsPerMuscle?: number;
+  goal?: string;
+  goalSetAt?: string;
+  daysAvailable?: number;
+  daysReliable?: number;
+  onboardedAt?: string;
+  /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
+   * actually gave and which were assumed on their behalf. */
+  provenance?: Record<string, 'user' | 'llm' | 'default'>;
+  updatedAt: string;
+}
+
+/**
  * Persistence boundary for VMCP. The SQLite implementation in
  * `src/store/sqlite-store.ts` opens a `node:sqlite` database; consumers depend
  * only on this interface.
@@ -835,6 +864,13 @@ export interface SessionStore {
    * already been completed in a program walk.
    */
   getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
+
+  // --- Training profile (I4 / VW-96 Wave 3) ---
+
+  /** Upsert a user's self-reported training background. */
+  putTrainingProfile(p: StoredTrainingProfile): Promise<void>;
+  /** Look up a user's training background; `undefined` when no row exists. */
+  getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;
