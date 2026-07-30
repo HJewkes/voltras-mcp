@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Rep } from '@voltras/workout-analytics';
 import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
-import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../../state/live-signal.js';
+import { LiveSignalHub, mmsToMps, type LiveSignalEvent } from '../../state/live-signal.js';
 import type { LiveState as LiveStateType, FirmwareRep } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { RepSource } from '../../config.js';
@@ -778,7 +778,10 @@ describe('set.end terminal-rep SSE echo (VW-57)', () => {
       slot: 'primary',
       repIndex: 3,
       vCon: mmsToMps(getPhaseMeanVelocity(reps[2].concentric)),
-      rom: mmToM(getRepRangeOfMotion(reps[2])),
+      // WA 2.0.0: getRepRangeOfMotion already returns metres — no post-hoc
+      // mmToM conversion any more (these fixture reps carry metres-scale
+      // positions, matching what the bridge now feeds WA).
+      rom: getRepRangeOfMotion(reps[2]),
       peakVelocity: mmsToMps(800),
       peakForceSoFar: 95, // set-wide concentric max (rep 2), not the last rep's 60
     });
@@ -864,9 +867,9 @@ describe('set.end', () => {
     expect(stored.inverseChainsLbs).toBe(15);
     expect(stored.eccentricPct).toBe(110);
     expect(stored.settingsHash).toMatch(/^v2:/);
-    // The marker records the scale the samples are ALREADY in; it must not read
-    // 'meters' until the bridge conversion lands.
-    expect(stored.positionUnits).toBe('device_native');
+    // The marker records the scale the samples are ALREADY in; the bridge now
+    // converts position to metres before it ever reaches WA (VMCP-05.19).
+    expect(stored.positionUnits).toBe('meters');
     // Provenance, so a corpus fit can exclude synthetic rows.
     expect(stored.source).toBe('local');
   });

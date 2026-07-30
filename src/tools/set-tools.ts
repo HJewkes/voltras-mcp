@@ -46,7 +46,7 @@ import {
   measureSampleRateHz,
   readSettingsContext,
 } from '../state/set-capture.js';
-import { mmsToMps, mmToM } from '../state/live-signal.js';
+import { mmsToMps } from '../state/live-signal.js';
 import {
   buildIdleTimeoutPayload,
   buildSetAbortedByModeRevertPayload,
@@ -725,7 +725,10 @@ export async function finalizeSet(
         slot: slotId,
         repIndex: correctedForStore.reps.length,
         vCon: mmsToMps(getPhaseMeanVelocity(terminalRep.concentric)),
-        rom: mmToM(getRepRangeOfMotion(terminalRep)),
+        // WA 2.0.0: `getRepRangeOfMotion` already returns metres — the bridge
+        // now feeds `WorkoutSample.position` in metres, so no post-hoc mm→m
+        // conversion is needed here any more.
+        rom: getRepRangeOfMotion(terminalRep),
         peakVelocity: mmsToMps(terminalRep.concentric.peakVelocity),
         peakForceSoFar: peakConcentricForce,
       },

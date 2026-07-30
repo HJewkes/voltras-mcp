@@ -53,16 +53,6 @@ function mmsToMps(mms: number): number {
 }
 
 /**
- * Convert a range-of-motion value from workout-analytics's native scale
- * (millimetres) into metres for the `rom_m` payload field. Three decimals
- * preserve millimetre granularity. Same boundary-conversion rule as
- * `mmsToMps`.
- */
-function mmToM(mm: number): number {
-  return Number((mm / 1000).toFixed(3));
-}
-
-/**
  * Phase movement duration in milliseconds. Workout-analytics's
  * `getPhaseMovementDuration` returns seconds; we want milliseconds in the
  * channel payload so the model doesn't have to divide.
@@ -84,15 +74,15 @@ function phaseMovementDurationMs(phase: Rep['concentric']): number {
  * payload as a single value (concentric ROM is the canonical "lift
  * distance") so the model gets a single ROM number per rep.
  *
- * Workout-analytics returns ROM in millimetres (despite some upstream m/s
- * docstrings claiming metres — verified on hardware 2026-05-11). We convert
- * here so the payload field name (`rom_m`) matches the value.
+ * WA 2.0.0: `getPhaseRangeOfMotion` already returns metres, because
+ * `WorkoutSample.position` is now fed in as metres at the bridge
+ * (`event-bridge.ts`) — no post-hoc mm→m conversion needed here any more.
  */
 function repRangeOfMotion(rep: Rep): number | null {
   if (rep.concentric.samples.length === 0) {
     return null;
   }
-  return mmToM(getPhaseRangeOfMotion(rep.concentric));
+  return getPhaseRangeOfMotion(rep.concentric);
 }
 
 /**
@@ -116,16 +106,16 @@ function repConcentricImpulseLbS(rep: Rep): number | null {
  * Mean concentric power for a rep in pound-metres per second (lb·m/s).
  *
  * `getRepMeanConcentricPower` is work / concentric-time, where work is
- * `Σ force × |Δposition|`. Force now arrives in pounds (converted once at the
- * bridge) but position is still in millimetres, so the helper output is
- * inflated 1000x relative to lb·m/s; we correct with `/ 1000` — only the
- * mm→m term remains. Null when the concentric phase has no samples.
+ * `Σ force × |Δposition|`. Force arrives in pounds (converted once at the
+ * bridge) and, as of WA 2.0.0, position arrives in metres (same bridge
+ * conversion), so the helper's output is already lb·m/s with no unit
+ * correction needed here. Null when the concentric phase has no samples.
  */
 function repMeanConcentricPowerLbMps(rep: Rep): number | null {
   if (rep.concentric.samples.length === 0) {
     return null;
   }
-  return Number((getRepMeanConcentricPower(rep) / 1000).toFixed(3));
+  return Number(getRepMeanConcentricPower(rep).toFixed(3));
 }
 
 /**
@@ -1774,12 +1764,13 @@ export function buildIdleRepPayload(
   entry: IdleRep,
   idleRepCount: number,
 ): { meta: Record<string, string>; content: string } {
-  // LiveState stores `vCon` in mm/s and `rom` in mm (the raw scale WA
-  // returns from `getPhaseMeanVelocity` / `getPhaseRangeOfMotion`). The
-  // channel payload documents both as m/s and metres respectively, so
-  // convert at the emit boundary (F18 / VMCP-01.32).
+  // LiveState stores `vCon` in mm/s (the raw scale WA returns from
+  // `getPhaseMeanVelocity`) — convert at the emit boundary (F18 / VMCP-01.32).
+  // `rom` is already metres as of WA 2.0.0 (`getPhaseRangeOfMotion` returns
+  // metres now that `WorkoutSample.position` is fed in as metres at the
+  // bridge), so it needs no conversion here any more.
   const vConMps = entry.vCon !== null ? mmsToMps(entry.vCon) : null;
-  const romM = entry.rom !== null ? mmToM(entry.rom) : null;
+  const romM = entry.rom;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'idle_rep',

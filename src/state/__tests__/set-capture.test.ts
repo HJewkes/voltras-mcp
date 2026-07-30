@@ -190,13 +190,12 @@ describe('measureSampleRateHz', () => {
 });
 
 describe('CURRENT_POSITION_UNITS', () => {
-  it('is device_native until the bridge conversion actually lands', () => {
-    // The marker ships BEFORE the conversion on purpose, and this assertion is
-    // the guard on that ordering. The bridge still passes position through
-    // unconverted, so stamping 'meters' now would make the marker assert
-    // something false about the rows it labels — and a wrong marker is worse
-    // than none, because it gets trusted. Flip this in the same change that
-    // converts at the bridge, never earlier.
-    expect(CURRENT_POSITION_UNITS).toBe('device_native');
+  it('is meters now that the bridge converts position before WA ingestion (VMCP-05.19)', () => {
+    // WA 2.0.0 redefines `WorkoutSample.position` as cable extension in
+    // metres, converted at the producer's bridge. `event-bridge.ts` now
+    // converts `frame.position` via `mmToM` before building each
+    // `WorkoutSample`, so newly-written rows are genuinely on the metres
+    // scale and the marker may truthfully say so.
+    expect(CURRENT_POSITION_UNITS).toBe('meters');
   });
 });

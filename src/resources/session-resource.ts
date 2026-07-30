@@ -32,17 +32,21 @@ function sessionUriForSlot(slotId: string): string {
 }
 
 /**
- * Convert one `IdleRep` from LiveState's raw mm-scale storage into the
- * m/s + metres serialized shape used by both the session resource and the
- * `idle_rep` channel payload (F18 / VMCP-01.32). Keeping the conversion
- * here (rather than in LiveState.recordIdleRep) preserves the raw scale
- * for any internal consumer that still wants it.
+ * Convert one `IdleRep` from LiveState's raw storage into the m/s + metres
+ * serialized shape used by both the session resource and the `idle_rep`
+ * channel payload (F18 / VMCP-01.32). `vCon` is still mm/s (WA's velocity
+ * contract is unaffected by the 2.0.0 position change) and is converted here.
+ * `rom` is already metres as of WA 2.0.0 — `WorkoutSample.position` is fed in
+ * as metres at the bridge, so `getPhaseRangeOfMotion` returns metres directly
+ * and needs no conversion. Keeping the velocity conversion here (rather than
+ * in LiveState.recordIdleRep) preserves the raw mm/s scale for any internal
+ * consumer that still wants it.
  */
 function serializeIdleRep(entry: IdleRep): IdleRep {
   return {
     ts: entry.ts,
     vCon: entry.vCon !== null ? Number((entry.vCon / 1000).toFixed(3)) : null,
-    rom: entry.rom !== null ? Number((entry.rom / 1000).toFixed(3)) : null,
+    rom: entry.rom,
     slot: entry.slot,
   };
 }
