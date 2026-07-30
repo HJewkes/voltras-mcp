@@ -21,6 +21,10 @@
  * surfaces don't need the design system, which just produced a second, worse
  * visual language two routes from the first.
  *
+ * Planes come from the grey ramp via `PanelCard` (`Surface level="raised"`),
+ * NOT titan's `Card` — see `PanelCard.tsx` for the measurement that forced
+ * that. Spacing comes from `design.ts`'s 4px scale, never a typed-in pixel.
+ *
  * The one rule inherited from the live page: LAYOUT goes through `style`, never
  * `className`. titan components are react-native-web Views, which silently drop
  * Tailwind layout utilities (`flex-1`, `flex-row`) while honouring colour ones.
@@ -39,10 +43,6 @@ import { useStore } from 'zustand';
 import {
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Caption,
   Divider,
   EmptyState,
@@ -74,13 +74,15 @@ import {
   type FlatTemplate,
 } from './planner-model';
 import { useIsNarrowViewport } from '../use-viewport';
-import { createMutationLatch } from './mutation-latch';
+import { ButtonLabel, PANEL_GAP, PanelCard } from './PanelCard';
+import { CONTROL_HEIGHT, QUIET_ACTION_BORDER, SPACE, TARGET_FIELD_WIDTH } from './design';
+import { createMutationLatch, MIN_LATCH_HOLD_MS } from './mutation-latch';
 import { parseTargetFields, type TargetPatch } from './target-fields';
 import type { DashboardCatalogEntry } from '../../read-models/catalog-entry';
 import type { PlanExerciseView } from '../../read-models/plan-tree';
 
 /** Page gutter. One constant so every panel on both planner routes aligns. */
-export const PAGE_PADDING = 20;
+export const PAGE_PADDING = SPACE.lg;
 
 /** Muscle-group filter chips. Sourced from the loaded catalog, never hard-coded. */
 function muscleOptions(catalog: readonly DashboardCatalogEntry[]): string[] {
@@ -109,6 +111,7 @@ export function PlanBuilderPage(): React.JSX.Element {
   latchRef.current ??= createMutationLatch({
     onBusyChange: setBusy,
     onError: (err) => dashboardStore.getState().applyPlanner({ plannerError: err.message }),
+    minHoldMs: MIN_LATCH_HOLD_MS,
   });
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -214,8 +217,11 @@ export function PlanBuilderPage(): React.JSX.Element {
     </>
   );
 
+  // `base`, not `background`: the shell's own plane is `base` (#252321), so a
+  // `background` page (#1C1916) put the content in a pit DARKER than its own
+  // frame — which is why the cards had to be so bright to read at all.
   return (
-    <Surface level="background" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: 16 }}>
+    <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
       <ProgramBar
         programs={planTree?.programs ?? []}
         programId={planTree?.program?.id ?? null}
@@ -231,13 +237,19 @@ export function PlanBuilderPage(): React.JSX.Element {
         style={{
           display: 'flex',
           flexDirection: narrow ? 'column' : 'row',
-          gap: 16,
+          gap: PANEL_GAP,
           alignItems: narrow ? 'stretch' : 'flex-start',
         }}
       >
         <div style={{ flex: '1 1 0', minWidth: 0 }}>{catalogPanel}</div>
         <div
-          style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}
+          style={{
+            flex: '1 1 0',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: PANEL_GAP,
+          }}
         >
           {workoutColumn}
         </div>
@@ -249,13 +261,11 @@ export function PlanBuilderPage(): React.JSX.Element {
 /** A failed mutation/poll, in the design system's error colour. Shared by both pages. */
 export function ErrorNote(props: { message: string }): React.JSX.Element {
   return (
-    <Card variant="outline" borderColor="var(--color-status-error)">
-      <CardContent>
-        <Typography variant="body2" color="error">
-          {props.message}
-        </Typography>
-      </CardContent>
-    </Card>
+    <PanelCard borderColor="var(--color-status-error)">
+      <Typography variant="body2" color="error">
+        {props.message}
+      </Typography>
+    </PanelCard>
   );
 }
 
@@ -268,50 +278,46 @@ function ProgramBar(props: {
 }): React.JSX.Element {
   const [name, setName] = useState('');
   return (
-    <Card variant="elevated">
-      <CardHeader>
-        <CardTitle>Program</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ minWidth: 220 }}>
-            <Select
-              variant="filled"
-              aria-label="Program"
-              placeholder={props.programs.length === 0 ? 'No programs yet' : 'Select a program'}
-              value={props.programId}
-              options={props.programs.map((p) => ({
-                value: p.id,
-                label: p.archived ? `${p.name} (archived)` : p.name,
-              }))}
-              onChange={(value) => {
-                if (value !== null) props.onSelect(value);
-              }}
-            />
-          </div>
-          <div style={{ minWidth: 200 }}>
-            <Input
-              variant="filled"
-              size="sm"
-              aria-label="New program name"
-              placeholder="New program name"
-              value={name}
-              onChangeText={setName}
-            />
-          </div>
-          <Button
-            size="sm"
-            isDisabled={name.trim() === '' || props.busy}
-            onPress={() => {
-              props.onCreate(name.trim());
-              setName('');
+    <PanelCard title="Program">
+      <div style={{ display: 'flex', gap: SPACE.xs, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ minWidth: 220 }}>
+          <Select
+            variant="filled"
+            aria-label="Program"
+            placeholder={props.programs.length === 0 ? 'No programs yet' : 'Select a program'}
+            value={props.programId}
+            options={props.programs.map((p) => ({
+              value: p.id,
+              label: p.archived ? `${p.name} (archived)` : p.name,
+            }))}
+            onChange={(value) => {
+              if (value !== null) props.onSelect(value);
             }}
-          >
-            Create program
-          </Button>
+          />
         </div>
-      </CardContent>
-    </Card>
+        <div style={{ minWidth: 200 }}>
+          <Input
+            variant="filled"
+            size="sm"
+            aria-label="New program name"
+            placeholder="New program name"
+            value={name}
+            onChangeText={setName}
+          />
+        </div>
+        <Button
+          size="sm"
+          style={{ height: CONTROL_HEIGHT }}
+          isDisabled={name.trim() === '' || props.busy}
+          onPress={() => {
+            props.onCreate(name.trim());
+            setName('');
+          }}
+        >
+          <ButtonLabel tone="on-solid">Create program</ButtonLabel>
+        </Button>
+      </div>
+    </PanelCard>
   );
 }
 
@@ -326,56 +332,51 @@ function CatalogPanel(props: {
   onAdd: (exerciseId: string) => void;
 }): React.JSX.Element {
   return (
-    <Card variant="elevated">
-      <CardHeader>
-        <CardTitle>Exercise catalog</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-            <Input
-              variant="filled"
-              size="sm"
-              aria-label="Search exercises"
-              placeholder="Search exercises"
-              value={props.query}
-              onChangeText={props.onQuery}
-            />
-          </div>
-          <div style={{ width: 180 }}>
-            <Select
-              variant="filled"
-              aria-label="Filter by muscle group"
-              placeholder="All muscles"
-              value={props.muscle === '' ? null : props.muscle}
-              options={props.muscles.map((m) => ({ value: m, label: m }))}
-              onChange={(value) => props.onMuscle(value ?? '')}
-            />
-          </div>
-        </div>
-        <Caption color="tertiary">
-          {props.catalog.length} exercise{props.catalog.length === 1 ? '' : 's'}
-          {props.canAdd ? '' : ' · select a workout to add'}
-        </Caption>
-        {props.catalog.length === 0 ? (
-          <EmptyState
-            title="No exercises match"
-            description="Clear the search or pick a different muscle group."
+    <PanelCard title="Exercise catalog">
+      <div style={{ display: 'flex', gap: SPACE.xs, marginBottom: SPACE.sm, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+          <Input
+            variant="filled"
+            size="sm"
+            aria-label="Search exercises"
+            placeholder="Search exercises"
+            value={props.query}
+            onChangeText={props.onQuery}
           />
-        ) : (
-          <div style={{ maxHeight: 520, overflowY: 'auto', marginTop: 8 }}>
-            {props.catalog.map((entry) => (
-              <CatalogRow
-                key={entry.id}
-                entry={entry}
-                canAdd={props.canAdd}
-                onAdd={() => props.onAdd(entry.id)}
-              />
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+        <div style={{ width: 180 }}>
+          <Select
+            variant="filled"
+            aria-label="Filter by muscle group"
+            placeholder="All muscles"
+            value={props.muscle === '' ? null : props.muscle}
+            options={props.muscles.map((m) => ({ value: m, label: m }))}
+            onChange={(value) => props.onMuscle(value ?? '')}
+          />
+        </div>
+      </div>
+      <Caption color="tertiary">
+        {props.catalog.length} exercise{props.catalog.length === 1 ? '' : 's'}
+        {props.canAdd ? '' : ' · select a workout to add'}
+      </Caption>
+      {props.catalog.length === 0 ? (
+        <EmptyState
+          title="No exercises match"
+          description="Clear the search or pick a different muscle group."
+        />
+      ) : (
+        <div style={{ maxHeight: 520, overflowY: 'auto', marginTop: SPACE.xs }}>
+          {props.catalog.map((entry) => (
+            <CatalogRow
+              key={entry.id}
+              entry={entry}
+              canAdd={props.canAdd}
+              onAdd={() => props.onAdd(entry.id)}
+            />
+          ))}
+        </div>
+      )}
+    </PanelCard>
   );
 }
 
@@ -390,10 +391,10 @@ function CatalogRow(props: {
       <div
         style={{
           display: 'flex',
-          gap: 12,
+          gap: SPACE.sm,
           alignItems: 'center',
-          paddingTop: 8,
-          paddingBottom: 8,
+          paddingTop: SPACE.xs,
+          paddingBottom: SPACE.xs,
         }}
       >
         <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -402,7 +403,14 @@ function CatalogRow(props: {
               chips are already the same taxonomy a body region would select on,
               so filtering by region means feeding `onMuscle` a different value,
               not restructuring this row. */}
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: SPACE.xxs,
+              flexWrap: 'wrap',
+              marginTop: SPACE.xxs,
+            }}
+          >
             {entry.muscleGroups.map((m) => (
               <MuscleGroupChip key={m} name={m} />
             ))}
@@ -413,17 +421,20 @@ function CatalogRow(props: {
             )}
           </div>
         </div>
-        {/* The name goes IN the accessible name: 30 buttons that all announce
-            "Add" give a screen-reader user tabbing through no way to tell which
-            lift they are about to add (D3). */}
+        {/* A quiet repeated action: `ghost` + a neutral hairline, NOT the
+            brand-orange `outline` this shipped with — 30 orange pills down the
+            catalog gave every row the weight of a primary action. The name goes
+            IN the accessible name, because 30 buttons that all announce "Add"
+            give a screen-reader user no way to tell them apart (D3). */}
         <Button
           size="sm"
-          variant="outline"
+          variant="ghost"
+          style={{ height: CONTROL_HEIGHT, ...QUIET_ACTION_BORDER }}
           aria-label={`Add ${entry.name}`}
           isDisabled={!props.canAdd}
           onPress={props.onAdd}
         >
-          Add
+          <ButtonLabel>Add</ButtonLabel>
         </Button>
       </div>
       <Divider />
@@ -442,91 +453,92 @@ function WorkoutList(props: {
 }): React.JSX.Element {
   const [name, setName] = useState('');
   return (
-    <Card variant="elevated">
-      <CardHeader>
-        <CardTitle>Workouts</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {props.templates.length === 0 ? (
-          <EmptyState
-            icon={LayersIcon}
-            title="No workouts yet"
-            description="Create a program, then add a workout to plan into."
-          />
-        ) : (
-          props.templates.map(({ template, blockName, weekName }) => (
-            <div
-              key={template.id}
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                paddingTop: 6,
-                paddingBottom: 6,
-              }}
-            >
-              <Button
-                size="sm"
-                variant={template.id === props.selectedId ? 'solid' : 'outline'}
-                aria-label={`Edit workout ${template.name}`}
-                onPress={() => props.onSelect(template.id)}
-              >
-                {template.name}
-              </Button>
-              <div style={{ flex: '1 1 120px', minWidth: 0 }}>
-                <Caption color="tertiary">
-                  {blockName} · {weekName} · {template.exercises.length} exercises
-                </Caption>
-              </div>
-              {template.id === props.activeId && (
-                <Badge color="success" variant="subtle" dot>
-                  training now
-                </Badge>
-              )}
-              {template.completed && (
-                <Badge color="default" variant="subtle">
-                  completed
-                </Badge>
-              )}
-            </div>
-          ))
-        )}
-        {props.onCreate !== null && (
+    <PanelCard title="Workouts">
+      {props.templates.length === 0 ? (
+        <EmptyState
+          icon={LayersIcon}
+          title="No workouts yet"
+          description="Create a program, then add a workout to plan into."
+        />
+      ) : (
+        props.templates.map(({ template, blockName, weekName }) => (
           <div
+            key={template.id}
             style={{
               display: 'flex',
-              gap: 8,
-              marginTop: 12,
+              gap: SPACE.xs,
               alignItems: 'center',
               flexWrap: 'wrap',
+              paddingTop: SPACE.xxs,
+              paddingBottom: SPACE.xxs,
             }}
           >
-            <div style={{ flex: '1 1 140px', minWidth: 0 }}>
-              <Input
-                variant="filled"
-                size="sm"
-                aria-label="New workout name"
-                placeholder="New workout name"
-                value={name}
-                onChangeText={setName}
-              />
-            </div>
             <Button
               size="sm"
-              variant="outline"
-              isDisabled={name.trim() === '' || props.busy}
-              onPress={() => {
-                props.onCreate?.(name.trim());
-                setName('');
-              }}
+              variant={template.id === props.selectedId ? 'solid' : 'ghost'}
+              style={{ height: CONTROL_HEIGHT }}
+              aria-label={`Edit workout ${template.name}`}
+              onPress={() => props.onSelect(template.id)}
             >
-              Add workout
+              <ButtonLabel tone={template.id === props.selectedId ? 'on-solid' : 'on-surface'}>
+                {template.name}
+              </ButtonLabel>
             </Button>
+            <div style={{ flex: '1 1 120px', minWidth: 0 }}>
+              <Caption color="tertiary">
+                {blockName} · {weekName} · {template.exercises.length} exercises
+              </Caption>
+            </div>
+            {template.id === props.activeId && (
+              <Badge color="success" variant="subtle" dot>
+                training now
+              </Badge>
+            )}
+            {template.completed && (
+              <Badge color="default" variant="subtle">
+                completed
+              </Badge>
+            )}
           </div>
-        )}
-      </CardContent>
-    </Card>
+        ))
+      )}
+      {props.onCreate !== null && (
+        <div
+          style={{
+            display: 'flex',
+            gap: SPACE.xs,
+            marginTop: SPACE.sm,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+            <Input
+              variant="filled"
+              size="sm"
+              aria-label="New workout name"
+              placeholder="New workout name"
+              value={name}
+              onChangeText={setName}
+            />
+          </div>
+          {/* `outline`: unlike the catalog's repeated "Add", this is the one
+              action of its row, so it is allowed to carry the brand. */}
+          <Button
+            size="sm"
+            variant="outline"
+            style={{ height: CONTROL_HEIGHT }}
+            isDisabled={name.trim() === '' || props.busy}
+            onPress={() => {
+              props.onCreate?.(name.trim());
+              setName('');
+            }}
+          >
+            <ButtonLabel>Add workout</ButtonLabel>
+          </Button>
+        </div>
+      )}
+    </PanelCard>
   );
 }
 
@@ -547,31 +559,26 @@ function WorkoutEditor(props: {
     props.onReorder(next);
   };
   return (
-    <Card variant="elevated">
-      <CardHeader>
-        <CardTitle>{template.name} — planned exercises</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {template.exercises.length === 0 ? (
-          <EmptyState
-            title="Nothing planned yet"
-            description="Add lifts from the catalog, or let the agent fill it in over MCP."
+    <PanelCard title={`${template.name} — planned exercises`}>
+      {template.exercises.length === 0 ? (
+        <EmptyState
+          title="Nothing planned yet"
+          description="Add lifts from the catalog, or let the agent fill it in over MCP."
+        />
+      ) : (
+        template.exercises.map((exercise, index) => (
+          <PlannedExerciseRow
+            key={exercise.id}
+            exercise={exercise}
+            busy={props.busy}
+            onUp={index === 0 ? null : () => move(index, -1)}
+            onDown={index === ids.length - 1 ? null : () => move(index, 1)}
+            onSave={(patch) => props.onAddTargets(exercise.id, patch)}
+            onRemove={() => props.onRemove(exercise.id)}
           />
-        ) : (
-          template.exercises.map((exercise, index) => (
-            <PlannedExerciseRow
-              key={exercise.id}
-              exercise={exercise}
-              busy={props.busy}
-              onUp={index === 0 ? null : () => move(index, -1)}
-              onDown={index === ids.length - 1 ? null : () => move(index, 1)}
-              onSave={(patch) => props.onAddTargets(exercise.id, patch)}
-              onRemove={() => props.onRemove(exercise.id)}
-            />
-          ))
-        )}
-      </CardContent>
-    </Card>
+        ))
+      )}
+    </PanelCard>
   );
 }
 
@@ -580,13 +587,15 @@ function TargetInput(props: {
   /** Accessible name. Placeholder-as-label is a WCAG failure — it vanishes on input (D2). */
   label: string;
   placeholder: string;
-  width: number;
   value: string;
   invalid: boolean;
   onChange: (next: string) => void;
 }): React.JSX.Element {
   return (
-    <div style={{ width: props.width }}>
+    // One width for all four: `sets` / `lo` / `hi` / `lb` are peers holding
+    // 1-3 digits each, and the old 58/50/50/64 was four different answers to
+    // the same question.
+    <div style={{ width: TARGET_FIELD_WIDTH }}>
       <Input
         variant="filled"
         size="sm"
@@ -665,12 +674,15 @@ function PlannedExerciseRow(props: {
       {/* Two lines, not one: the exercise NAME is the row's identity and earns the
           full width, while the four target fields are a secondary edit affordance.
           Squeezing both onto one line wrapped every name to three lines. */}
-      <div style={{ paddingTop: 10, paddingBottom: 10 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ paddingTop: SPACE.sm, paddingBottom: SPACE.sm }}>
+        <div style={{ display: 'flex', gap: SPACE.xs, alignItems: 'center' }}>
           {/* Column flow, explicitly: react-native-web renders Text as an inline
               box, so a stacked name + caption run together on one line without it. */}
           <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="body2">
+            {/* `body1`, not `body2`: this is the row's identity and the largest
+                thing in it, so it should not share a size with the catalog's
+                secondary listing text. */}
+            <Typography variant="body1">
               {exercise.orderIndex + 1}. {exercise.name}
             </Typography>
             <Caption color="tertiary">{prescriptionLine(exercise)}</Caption>
@@ -686,7 +698,7 @@ function PlannedExerciseRow(props: {
             isDisabled={props.onUp === null || props.busy}
             onPress={() => props.onUp?.()}
           >
-            ↑
+            <ButtonLabel>↑</ButtonLabel>
           </Button>
           <Button
             size="sm"
@@ -696,7 +708,7 @@ function PlannedExerciseRow(props: {
             isDisabled={props.onDown === null || props.busy}
             onPress={() => props.onDown?.()}
           >
-            ↓
+            <ButtonLabel>↓</ButtonLabel>
           </Button>
           {confirmingRemove ? (
             <>
@@ -704,6 +716,7 @@ function PlannedExerciseRow(props: {
                 size="sm"
                 variant="solid"
                 color="error"
+                style={{ height: CONTROL_HEIGHT }}
                 aria-label={`Confirm removing ${exercise.name} from this workout`}
                 isDisabled={props.busy}
                 onPress={() => {
@@ -713,15 +726,16 @@ function PlannedExerciseRow(props: {
                   })();
                 }}
               >
-                Remove?
+                <ButtonLabel tone="on-solid">Remove?</ButtonLabel>
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
+                style={{ height: CONTROL_HEIGHT }}
                 aria-label={`Keep ${exercise.name} in this workout`}
                 onPress={() => setConfirmingRemove(false)}
               >
-                Cancel
+                <ButtonLabel>Cancel</ButtonLabel>
               </Button>
             </>
           ) : (
@@ -733,17 +747,22 @@ function PlannedExerciseRow(props: {
               isDisabled={props.busy}
               onPress={() => setConfirmingRemove(true)}
             >
-              ✕
+              <ButtonLabel>✕</ButtonLabel>
             </Button>
           )}
         </div>
         <div
-          style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}
+          style={{
+            display: 'flex',
+            gap: SPACE.xs,
+            alignItems: 'center',
+            marginTop: SPACE.xs,
+            flexWrap: 'wrap',
+          }}
         >
           <TargetInput
             label={`Sets for ${exercise.name}`}
             placeholder="sets"
-            width={58}
             value={sets}
             invalid={fieldError !== null}
             onChange={setSets}
@@ -751,7 +770,6 @@ function PlannedExerciseRow(props: {
           <TargetInput
             label={`Rep range low for ${exercise.name}`}
             placeholder="lo"
-            width={50}
             value={repsLow}
             invalid={fieldError !== null}
             onChange={setRepsLow}
@@ -759,7 +777,6 @@ function PlannedExerciseRow(props: {
           <TargetInput
             label={`Rep range high for ${exercise.name}`}
             placeholder="hi"
-            width={50}
             value={repsHigh}
             invalid={fieldError !== null}
             onChange={setRepsHigh}
@@ -767,19 +784,21 @@ function PlannedExerciseRow(props: {
           <TargetInput
             label={`Weight in pounds for ${exercise.name}`}
             placeholder="lb"
-            width={64}
             value={weight}
             invalid={fieldError !== null}
             onChange={setWeight}
           />
+          {/* The one action that commits this row's four fields — it earns the
+              brand outline the repeated catalog "Add" gave up. */}
           <Button
             size="sm"
             variant="outline"
+            style={{ height: CONTROL_HEIGHT }}
             aria-label={`Save targets for ${exercise.name}`}
             isDisabled={props.busy}
             onPress={save}
           >
-            Save targets
+            <ButtonLabel>Save targets</ButtonLabel>
           </Button>
           {saved && (
             <Typography variant="body2" color="success">
@@ -788,7 +807,7 @@ function PlannedExerciseRow(props: {
           )}
         </div>
         {fieldError !== null && (
-          <div style={{ marginTop: 6 }}>
+          <div style={{ marginTop: SPACE.xxs }}>
             <Typography variant="body2" color="error">
               {fieldError}
             </Typography>

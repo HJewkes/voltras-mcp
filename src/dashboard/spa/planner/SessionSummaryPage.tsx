@@ -31,14 +31,14 @@
  * titan components throughout (the first cut was plain DOM + inline styles).
  * LAYOUT via `style`, never `className` — react-native-web silently drops
  * Tailwind layout utilities. Same rule the live page follows.
+ *
+ * Card planes come from `PanelCard` (`Surface level="raised"`) and spacing from
+ * `design.ts`, shared with the builder page so the two operator routes are one
+ * surface system rather than two — see `PanelCard.tsx` for the measurement.
  */
 import React, { useEffect } from 'react';
 import { useStore } from 'zustand';
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Caption,
   Divider,
   EmptyState,
@@ -69,6 +69,8 @@ import {
   setsAgainstPlan,
 } from './planner-model';
 import { ErrorNote, PAGE_PADDING } from './PlanBuilderPage';
+import { PANEL_GAP, PanelCard } from './PanelCard';
+import { SPACE } from './design';
 import type { SessionSummaryExercise } from '../../read-models/session-summary-view';
 
 /** Plot width for the per-exercise trend chart. `StrengthTrendChart` requires px. */
@@ -102,7 +104,7 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
 
   if (error !== null) {
     return (
-      <Surface level="background" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
+      <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
         <ErrorNote message={error} />
       </Surface>
     );
@@ -110,8 +112,8 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
   if (summary === null) {
     return (
       <Surface
-        level="background"
-        style={{ minHeight: '100%', padding: PAGE_PADDING, alignItems: 'center' }}
+        level="base"
+        style={{ minHeight: '100%', padding: PAGE_PADDING, alignItems: 'center', gap: SPACE.sm }}
       >
         <Spinner />
         <Caption color="tertiary">Loading session summary…</Caption>
@@ -132,24 +134,19 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
   ];
 
   return (
-    <Surface level="background" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: 16 }}>
-      <Card variant="elevated">
-        <CardHeader>
-          <CardTitle>
-            {summary.session.endedAt === null ? 'Session in progress' : 'Session complete'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Caption color="tertiary">
-            {new Date(summary.session.startedAt).toLocaleString()}
-            {summary.session.endedAt !== null &&
-              ` → ${new Date(summary.session.endedAt).toLocaleTimeString()}`}
-          </Caption>
-          <div style={{ marginTop: 10 }}>
-            <MetricTiles metrics={headline} gap={2} />
-          </div>
-        </CardContent>
-      </Card>
+    <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
+      <PanelCard
+        title={summary.session.endedAt === null ? 'Session in progress' : 'Session complete'}
+      >
+        <Caption color="tertiary">
+          {new Date(summary.session.startedAt).toLocaleString()}
+          {summary.session.endedAt !== null &&
+            ` → ${new Date(summary.session.endedAt).toLocaleTimeString()}`}
+        </Caption>
+        <div style={{ marginTop: SPACE.sm }}>
+          <MetricTiles metrics={headline} gap={2} />
+        </div>
+      </PanelCard>
       {summary.exercises.length === 0 ? (
         <EmptyState
           title="No sets recorded"
@@ -177,21 +174,16 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
   ];
 
   return (
-    <Card variant="elevated">
-      <CardHeader>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ flex: '1 1 0', minWidth: 0 }}>
-            <CardTitle>{exercise.name}</CardTitle>
-          </div>
-          {/* PR here means best OF THIS SESSION — the page only ever receives one
-              session, so it cannot honestly claim an all-time PR (gap note). */}
-          {series.some((p) => p.isPR === true) && <PrBadge type="e1rm" compact />}
-        </div>
-      </CardHeader>
-      <CardContent>
+    <PanelCard
+      title={exercise.name}
+      // PR here means best OF THIS SESSION — the page only ever receives one
+      // session, so it cannot honestly claim an all-time PR (gap note).
+      titleRight={series.some((p) => p.isPR === true) ? <PrBadge type="e1rm" compact /> : undefined}
+    >
+      <>
         {/* Verdict first — the same hero word + three dimension lights the live
             page shows mid-set, so the completion screen closes that loop. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: SPACE.lg, flexWrap: 'wrap' }}>
           <VerdictHero rpe={exercise.fatigue?.rpe ?? null} verdict={exercise.verdict} />
           <FatigueLights dimensions={exercise.verdict?.dimensions ?? null} />
           {exercise.fatigue !== null && (
@@ -204,13 +196,13 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
         {exercise.verdictSetIndex !== null && (
           <Caption color="tertiary">Verdict reads set #{exercise.verdictSetIndex}</Caption>
         )}
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: SPACE.md }}>
           <MetricTiles metrics={tiles} gap={2} />
         </div>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: SPACE.md }}>
           <E1RMTrend series={series} changePct={changePct} />
         </div>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: SPACE.md }}>
           <Overline color="tertiary">Worst within-set velocity loss</Overline>
           <FatigueMeter value={exercise.maxVelocityLossPct ?? 0} />
           <Caption color="tertiary">
@@ -226,8 +218,8 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
         <ProgressionBlock exercise={exercise} />
         <Divider />
         <SetTable exercise={exercise} />
-      </CardContent>
-    </Card>
+      </>
+    </PanelCard>
   );
 }
 
@@ -279,7 +271,7 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
   const { progression, progressionNote } = props.exercise;
   if (progression === null) {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: SPACE.sm }}>
         <Overline color="tertiary">Next session</Overline>
         <Caption color="tertiary">{progressionNote ?? 'No progression recommendation.'}</Caption>
       </div>
@@ -292,7 +284,7 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
         ? TONE_COLOR.alarm
         : TONE_COLOR.warn;
   return (
-    <div style={{ marginTop: 12 }}>
+    <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Next session</Overline>
       <MetricTiles
         gap={2}
@@ -308,17 +300,17 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
 
 function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
   return (
-    <div style={{ marginTop: 12 }}>
+    <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Sets</Overline>
       {props.exercise.sets.map((set) => (
         <div
           key={set.id}
           style={{
             display: 'flex',
-            gap: 12,
+            gap: SPACE.sm,
             alignItems: 'center',
-            paddingTop: 6,
-            paddingBottom: 6,
+            paddingTop: SPACE.xs,
+            paddingBottom: SPACE.xs,
           }}
         >
           <div style={{ width: 36 }}>

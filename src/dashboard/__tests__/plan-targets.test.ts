@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { validateTargetField, validateTargets, TARGET_RULES } from '../plan-targets.js';
 import { parseTargetFields } from '../spa/planner/target-fields.js';
-import { createMutationLatch } from '../spa/planner/mutation-latch.js';
+import { createMutationLatch, MIN_LATCH_HOLD_MS } from '../spa/planner/mutation-latch.js';
 
 describe('validateTargetField', () => {
   it('refuses a negative weight — the exact value that reached a prescription', () => {
@@ -149,6 +149,37 @@ describe('createMutationLatch', () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'boom' }));
     expect(failing.busy).toBe(false);
     expect(await failing.run(async () => undefined)).toBe(true);
+  });
+
+  it('stays shut for the hold floor even when the write finished instantly', async () => {
+    // Measured in a browser: against a local sidecar the POST + reconcile
+    // returned in under 10 ms, so two clicks 10 ms apart BOTH ran — the
+    // duplicate-row bug, reproduced with a correct in-flight guard in place.
+    // Whether a double-click duplicates a row must not depend on server speed.
+    const latch = createMutationLatch({ minHoldMs: 40 });
+    const write = vi.fn(async () => undefined);
+    const first = latch.run(write);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(latch.busy).toBe(true);
+    expect(await latch.run(write)).toBe(false);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(await first).toBe(true);
+    expect(latch.busy).toBe(false);
+    expect(await latch.run(write)).toBe(true);
+  });
+
+  it('does not add the hold floor on top of a write that already outran it', async () => {
+    const latch = createMutationLatch({ minHoldMs: 30 });
+    const startedAt = Date.now();
+    await latch.run(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    expect(Date.now() - startedAt).toBeLessThan(90);
+  });
+
+  it('ships a hold floor sized for a double-click, not for the network', () => {
+    expect(MIN_LATCH_HOLD_MS).toBeGreaterThanOrEqual(250);
+    expect(MIN_LATCH_HOLD_MS).toBeLessThan(500);
   });
 
   it('reports busy transitions so a component can disable its controls', async () => {
