@@ -45,6 +45,26 @@
 //   GET /api/session-plan — the active session's prescription (sets/reps/load/
 //                          tempo/rest + the planned-exercise rail), or `{ plan:
 //                          null }` when the session carries no plan.
+//
+//   ── Plan builder (VW-120) ───────────────────────────────────────────────
+//   GET  /api/exercises   — `{ exercises }` catalog browse. `?q=` free-text,
+//                          `?muscle=` primary-muscle filter, `?limit=`.
+//   GET  /api/plan-tree   — `{ programs, program, activeTemplateId,
+//                          activeExerciseId }`. `?programId=` selects; default is
+//                          the most recent non-archived program. Poll this to see
+//                          an agent's `plan.*` writes appear live.
+//   POST /api/plan/programs                      — create a program + its first
+//                          block/week/workout (see `plan-api.ts` for why).
+//   POST /api/plan/programs/:id/workouts         — add a workout template.
+//   POST /api/plan/templates/:id/exercises       — append a planned exercise.
+//   POST /api/plan/templates/:id/reorder         — rewrite exercise order.
+//   PATCH /api/plan/exercises/:id                — edit one exercise's targets.
+//
+//   ── Session completion (VW-120) ─────────────────────────────────────────
+//   GET /api/session-summary/:sessionId — per-exercise VBT rollup + progression
+//                          recommendation for a finished session. `:sessionId`
+//                          may be `latest`.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -54,6 +74,22 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveTargetTempo } from './tempo-defaults.js';
 import { buildSnapshotView, type DeviceEntry, type SnapshotResponse } from './read-models/index.js';
+import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
+import {
+  createPlannedExercise,
+  createProgramWithScaffold,
+  createWorkout,
+  fetchPlanTree,
+  PlanApiError,
+  reorderPlannedExercises,
+  updatePlannedExercise,
+  type DashboardPlanStore,
+} from './plan-api.js';
+import {
+  buildSessionSummary,
+  resolveSummarySessionId,
+  type DashboardSessionStore,
+} from './session-summary.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -104,6 +140,13 @@ export interface DashboardServerState {
       };
     }
   >;
+  /**
+   * The store slice the dashboard reads. `listSessions` is the only hard
+   * requirement; the planning + session-read methods are optional so the server
+   * test fakes (and any store build without planning) degrade to a disabled
+   * route rather than failing. The real sqlite store supplies all of them, so
+   * `hasPlanStore` / `hasSessionStore` pass in production.
+   */
   store: {
     listSessions(filter: {
       sort: 'startedAt:desc' | 'startedAt:asc';
@@ -111,13 +154,11 @@ export interface DashboardServerState {
       offset: number;
       exerciseId?: string;
     }): Promise<StoredSession[]>;
-    // Optional so the server test fakes (and any store build without planning)
-    // degrade to no prescription rather than failing; the real sqlite store
-    // supplies both.
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     /** Plan assignments attached to a session — feeds the active-exercise prescription. */
     getAssignmentsForSession?(sessionId: string): Promise<StoredProgramAssignment[]>;
-  };
+  } & Partial<DashboardPlanStore> &
+    Partial<DashboardSessionStore>;
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
    * its display name and its target muscle groups for the dashboard BodyMap
@@ -135,6 +176,14 @@ export interface DashboardServerState {
           movementPattern?: string;
         }
       | undefined;
+    /**
+     * Catalog browse/search for the plan builder (VW-120). Optional for the same
+     * reason `exercises` itself is — a fake without them yields an empty catalog
+     * list, never a 500.
+     */
+    list?(): DashboardCatalogEntry[];
+    search?(query: string): DashboardCatalogEntry[];
+    byMuscleGroup?(muscleGroup: string): DashboardCatalogEntry[];
   };
   /**
    * Fan-out hub for the derived live signal, feeding the `GET /api/stream` SSE
@@ -144,6 +193,9 @@ export interface DashboardServerState {
    */
   liveSignals?: LiveSignalHub;
 }
+
+/** Default `?limit=` for `/api/exercises`; the seed catalog is ~30 entries. */
+export const CATALOG_DEFAULT_LIMIT = 200;
 
 export interface DashboardServerHandle {
   /** The port the server actually bound to (resolved from `port: 0`). */
@@ -251,7 +303,8 @@ async function handleRequest(
   state: DashboardServerState,
   startedAt: number,
 ): Promise<void> {
-  if (req.method !== 'GET') {
+  const method = req.method ?? 'GET';
+  if (method !== 'GET' && method !== 'POST' && method !== 'PATCH') {
     sendJson(res, 405, { error: 'method_not_allowed' });
     return;
   }
@@ -261,6 +314,13 @@ async function handleRequest(
   // IncomingMessage.url is a path-only string.
   const url = new URL(rawUrl, 'http://localhost');
   const pathname = url.pathname;
+
+  // Mutating plan routes are handled first: they are the only non-GET surface,
+  // so everything below can assume a read.
+  if (method === 'POST' || method === 'PATCH') {
+    await handlePlanMutation(req, res, state, method, pathname);
+    return;
+  }
 
   // React SPA (VMCP-01.44), served read-only under `/app` from the vite-built
   // bundle in `dist/spa` — the sole dashboard surface.
@@ -298,7 +358,258 @@ async function handleRequest(
     sendJson(res, 200, { plan });
     return;
   }
+  if (pathname === '/api/exercises') {
+    sendJson(res, 200, { exercises: fetchCatalog(state, url) });
+    return;
+  }
+  if (pathname === '/api/plan-tree') {
+    await servePlanTree(res, state, url);
+    return;
+  }
+  const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
+  if (summaryMatch !== null) {
+    await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
+    return;
+  }
   sendJson(res, 404, { error: 'not_found' });
+}
+
+// ── Plan builder + session completion (VW-120) ────────────────────────────
+
+/**
+ * True when the wired store carries the whole planning surface. The dashboard
+ * state types every planning method as optional (test fakes supply none), so
+ * this is the one place that narrows it; routes 501 when it fails rather than
+ * throwing on a missing method halfway through a tree walk.
+ */
+function hasPlanStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & DashboardPlanStore {
+  return (
+    typeof store.listTrainingPrograms === 'function' &&
+    typeof store.putPlannedExercise === 'function' &&
+    typeof store.getPlannedExercise === 'function' &&
+    typeof store.getWorkoutTemplate === 'function' &&
+    typeof store.getAssignmentsForTemplate === 'function' &&
+    typeof store.getAssignmentsForSession === 'function' &&
+    typeof store.getPlannedExercisesForTemplate === 'function' &&
+    typeof store.getTrainingBlocksForProgram === 'function' &&
+    typeof store.getTrainingWeeksForBlock === 'function' &&
+    typeof store.getWorkoutTemplatesForWeek === 'function' &&
+    typeof store.putTrainingProgram === 'function' &&
+    typeof store.putTrainingBlock === 'function' &&
+    typeof store.putTrainingWeek === 'function' &&
+    typeof store.putWorkoutTemplate === 'function' &&
+    typeof store.getTrainingProgram === 'function'
+  );
+}
+
+/** @see hasPlanStore — same narrowing, for the session-read methods. */
+function hasSessionStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & DashboardSessionStore {
+  return typeof store.getSession === 'function' && typeof store.getSetsForSession === 'function';
+}
+
+/** Catalog name lookup handed to the plan read-models. */
+function catalogNameLookup(state: DashboardServerState): (id: string) => string | undefined {
+  return (id) => state.exercises?.getById(id)?.name;
+}
+
+/** The live session's id + exercise, used to flag "training now" in the plan tree. */
+function activeSessionContext(state: DashboardServerState): {
+  sessionId?: string | undefined;
+  exerciseId?: string | undefined;
+} {
+  for (const [, slot] of state.slots) {
+    const session = slot.live.snapshotSession();
+    if (session !== undefined) {
+      return { sessionId: session.sessionId, exerciseId: session.exerciseId };
+    }
+  }
+  return {};
+}
+
+/**
+ * `GET /api/exercises` — catalog browse for the plan builder. `?q=` runs the
+ * catalog's own free-text search, `?muscle=` its primary-muscle filter, and
+ * neither returns everything. Filters compose: `?q=press&muscle=chest` searches
+ * then narrows. Returns `[]` (never 500) when no catalog is wired.
+ */
+function fetchCatalog(state: DashboardServerState, url: URL): DashboardCatalogEntry[] {
+  const catalog = state.exercises;
+  if (catalog === undefined) return [];
+  const query = url.searchParams.get('q')?.trim() ?? '';
+  const muscle = url.searchParams.get('muscle')?.trim() ?? '';
+
+  let entries: DashboardCatalogEntry[];
+  if (query !== '' && catalog.search !== undefined) {
+    entries = catalog.search(query);
+  } else if (muscle !== '' && catalog.byMuscleGroup !== undefined) {
+    entries = catalog.byMuscleGroup(muscle);
+  } else {
+    entries = catalog.list?.() ?? [];
+  }
+  if (muscle !== '' && query !== '') {
+    entries = entries.filter((e) => e.muscleGroups.includes(muscle));
+  }
+  const limit = parsePositiveInt(url.searchParams.get('limit'), CATALOG_DEFAULT_LIMIT);
+  return [...entries].sort((a, b) => a.name.localeCompare(b.name)).slice(0, limit);
+}
+
+async function servePlanTree(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  if (!hasPlanStore(state.store)) {
+    sendJson(res, 501, { error: 'plan_store_unavailable' });
+    return;
+  }
+  const programId = url.searchParams.get('programId') ?? undefined;
+  const tree = await fetchPlanTree(state.store, catalogNameLookup(state), {
+    programId,
+    active: activeSessionContext(state),
+  });
+  sendJson(res, 200, tree);
+}
+
+async function serveSessionSummary(
+  res: ServerResponse,
+  state: DashboardServerState,
+  requestedId: string,
+): Promise<void> {
+  if (!hasPlanStore(state.store) || !hasSessionStore(state.store)) {
+    sendJson(res, 501, { error: 'plan_store_unavailable' });
+    return;
+  }
+  const sessionId = await resolveSummarySessionId(state.store, requestedId);
+  if (sessionId === undefined) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  const summary = await buildSessionSummary(
+    { store: state.store, nameOf: catalogNameLookup(state) },
+    sessionId,
+  );
+  if (summary === undefined) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  sendJson(res, 200, summary);
+}
+
+/** Hard cap on a request body, so a runaway client can't buy unbounded memory. */
+const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * Route the plan-builder writes. Every branch resolves to a `plan-api.ts` call;
+ * `PlanApiError.code` maps onto the HTTP status (`invalid_input` → 400,
+ * `not_found` → 404) so the handlers never hand-roll a response shape.
+ */
+async function handlePlanMutation(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: DashboardServerState,
+  method: 'POST' | 'PATCH',
+  pathname: string,
+): Promise<void> {
+  const route = matchPlanRoute(method, pathname);
+  if (route === null) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  if (!hasPlanStore(state.store)) {
+    sendJson(res, 501, { error: 'plan_store_unavailable' });
+    return;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid_input', message: (err as Error).message });
+    return;
+  }
+  const { store } = state;
+  try {
+    switch (route.kind) {
+      case 'createProgram':
+        sendJson(res, 201, await createProgramWithScaffold(store, body));
+        return;
+      case 'createWorkout':
+        sendJson(res, 201, await createWorkout(store, route.id, body));
+        return;
+      case 'createExercise':
+        sendJson(res, 201, await createPlannedExercise(store, route.id, body));
+        return;
+      case 'reorderExercises':
+        sendJson(res, 200, await reorderPlannedExercises(store, route.id, body));
+        return;
+      case 'updateExercise':
+        sendJson(res, 200, await updatePlannedExercise(store, route.id, body));
+        return;
+    }
+  } catch (err) {
+    if (err instanceof PlanApiError) {
+      sendJson(res, err.code === 'not_found' ? 404 : 400, {
+        error: err.code,
+        message: err.message,
+      });
+      return;
+    }
+    throw err;
+  }
+}
+
+type PlanRoute =
+  | { kind: 'createProgram' }
+  | {
+      kind: 'createWorkout' | 'createExercise' | 'reorderExercises' | 'updateExercise';
+      id: string;
+    };
+
+/** Path → route match for the five plan-write endpoints. Null means no match. */
+function matchPlanRoute(method: 'POST' | 'PATCH', pathname: string): PlanRoute | null {
+  if (method === 'PATCH') {
+    const edit = /^\/api\/plan\/exercises\/([^/]+)$/.exec(pathname);
+    return edit === null ? null : { kind: 'updateExercise', id: decodeURIComponent(edit[1]) };
+  }
+  if (pathname === '/api/plan/programs') return { kind: 'createProgram' };
+  const workout = /^\/api\/plan\/programs\/([^/]+)\/workouts$/.exec(pathname);
+  if (workout !== null) return { kind: 'createWorkout', id: decodeURIComponent(workout[1]) };
+  const exercise = /^\/api\/plan\/templates\/([^/]+)\/exercises$/.exec(pathname);
+  if (exercise !== null) return { kind: 'createExercise', id: decodeURIComponent(exercise[1]) };
+  const reorder = /^\/api\/plan\/templates\/([^/]+)\/reorder$/.exec(pathname);
+  if (reorder !== null) return { kind: 'reorderExercises', id: decodeURIComponent(reorder[1]) };
+  return null;
+}
+
+/**
+ * Read and parse a JSON request body. An empty body is `{}` — every write route
+ * validates its own required fields, so "missing name" reads the same whether
+ * the client sent nothing or sent `{}`.
+ */
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    size += buf.length;
+    if (size > MAX_BODY_BYTES) throw new Error('request body too large');
+    chunks.push(buf);
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (raw === '') return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('request body is not valid JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('request body must be a JSON object');
+  }
+  return parsed as Record<string, unknown>;
 }
 
 /** SSE keepalive cadence (~1 Hz). Doubles as the client's stream-staleness clock. */
@@ -574,6 +885,14 @@ function parseLimit(raw: string | null): number {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return HISTORY_DEFAULT_LIMIT;
   if (parsed > HISTORY_MAX_LIMIT) return HISTORY_MAX_LIMIT;
+  return parsed;
+}
+
+/** `?limit=`-style query parse with no hard cap — absent/invalid falls back to `fallback`. */
+function parsePositiveInt(raw: string | null, fallback: number): number {
+  if (raw === null || raw === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
 }
 

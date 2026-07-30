@@ -8,6 +8,10 @@
  *     completed-set fold (`reduceSnapshot`, now the `applySnapshot` action) + the 1 s
  *     staleness tick.
  *   - **historical** — the slow (~15 s) `/api/session-plan` prescription refetch.
+ *   - **planner** (VW-120) — the plan-builder tree + exercise catalog and the
+ *     session-completion summary, written by `applyPlanner` from the planner
+ *     pages' own polls. Plan writes have no SSE channel, so this slice is
+ *     poll-only; see `planner/planner-client.ts`.
  *   - **live** — the ~20 Hz `/api/stream` SSE overlay (driven by
  *     `createLiveStreamController`, written via `setLive`), demultiplexed per Voltra
  *     slot into `liveBySlot` (VW-48 P2) with `live` kept as the derived single-slot view.
@@ -33,6 +37,9 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
+import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
+import type { PlanTreeView } from '../read-models/plan-tree';
+import type { SessionSummaryView } from '../read-models/session-summary-view';
 
 export type Status = 'ok' | 'stale' | 'error';
 
@@ -66,6 +73,26 @@ export type HistoricalPatch = Partial<HistoricalSlice>;
  * LiveSlice.live} accessor prefers.
  */
 export const PRIMARY_SLOT = 'primary';
+
+/**
+ * Plan-builder + session-completion state (VW-120). A fourth slice on the same
+ * store rather than a second state library: these pages poll the same way the
+ * live page does, so they get the same "effects call one action, components read
+ * granular slices" shape. `plannerError` holds the last fetch/mutation failure
+ * so the page can surface it without swallowing the previously loaded tree.
+ */
+interface PlannerSlice {
+  /** The selected program's tree, refreshed on the plan page's poll. */
+  planTree: PlanTreeView | null;
+  /** Exercise catalog for the browse/search panel. */
+  catalog: DashboardCatalogEntry[];
+  /** The loaded session-completion summary. */
+  sessionSummary: SessionSummaryView | null;
+  plannerError: string | null;
+}
+
+/** A best-effort batch of planner results (any subset), mirroring {@link HistoricalPatch}. */
+export type PlannerPatch = Partial<PlannerSlice>;
 
 interface LiveSlice {
   /**
@@ -101,9 +128,15 @@ interface DashboardActions {
    * `slot` defaults to {@link PRIMARY_SLOT}, so slot-blind callers are unchanged.
    */
   setLive(live: LiveModel | null, slot?: string): void;
+  /** Merge a batch of planner results (best-effort; partial is fine). */
+  applyPlanner(patch: PlannerPatch): void;
 }
 
-export type DashboardState = SnapshotSlice & HistoricalSlice & LiveSlice & DashboardActions;
+export type DashboardState = SnapshotSlice &
+  HistoricalSlice &
+  LiveSlice &
+  PlannerSlice &
+  DashboardActions;
 
 const initialSnapshot: SnapshotSlice = {
   snapshot: null,
@@ -118,9 +151,17 @@ const initialHistorical: HistoricalSlice = {
   prescription: null,
 };
 
+const initialPlanner: PlannerSlice = {
+  planTree: null,
+  catalog: [],
+  sessionSummary: null,
+  plannerError: null,
+};
+
 export const dashboardStore = createStore<DashboardState>((set) => ({
   ...initialSnapshot,
   ...initialHistorical,
+  ...initialPlanner,
   liveBySlot: {},
   live: null,
 
@@ -158,6 +199,8 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
     }),
 
   applyHistorical: (patch) => set(patch),
+
+  applyPlanner: (patch) => set(patch),
 
   setLive: (live, slot = PRIMARY_SLOT) =>
     set((state) => {

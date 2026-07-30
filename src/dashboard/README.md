@@ -1,12 +1,36 @@
 # voltras-mcp dashboard
 
-A read-only, loopback-only HTTP sidecar (`src/dashboard/server.ts`) that
-exposes voltras-mcp's live session/device state to a local browser, and the
-one front end that renders it: `GET /app`, the titan-design React SPA (Vite +
-`react-native-web`, built ahead of time into `dist/spa`). It always renders
-`LivePagePanel` — the north-star live page; there is no other mode or route.
-See the module header of `server.ts` for the full route table and the
-loopback-only security rationale.
+A loopback-only HTTP sidecar (`src/dashboard/server.ts`) that exposes
+voltras-mcp's live session/device state to a local browser, and the front end
+that renders it: `GET /app`, the titan-design React SPA (Vite +
+`react-native-web`, built ahead of time into `dist/spa`). See the module header
+of `server.ts` for the full route table and the loopback-only security
+rationale.
+
+## Pages
+
+The SPA hash-routes (`spa/routing.ts`) — hash, not history, because the sidecar
+serves one static `index.html` with no SPA fallback:
+
+| URL                | Page                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `/app` or `/app#/` | `LivePagePanel` — the north-star live page. The wall display; deliberately chrome-free.                      |
+| `/app#/plan`       | Plan builder (VW-120): browse the exercise catalog, see the workout being planned, edit it by hand.          |
+| `/app#/summary`    | Session-completion screen (VW-120) for the most recent session. `#/summary/<sessionId>` pins a specific one. |
+
+The plan builder re-polls `/api/plan-tree` every 2 s, so lifts an agent adds over
+MCP (`plan.exercise.create`) show up without a reload. It is NOT on the SSE
+stream: that channel carries derived live telemetry signals (phase / rep / set)
+and a plan write emits none — see `spa/planner/planner-client.ts`.
+
+Writes go through a small REST surface (`POST /api/plan/programs`,
+`POST /api/plan/templates/:id/exercises`, `PATCH /api/plan/exercises/:id`, …)
+that `dashboard/plan-api.ts` implements as a second thin adapter over the SAME
+`SessionStore` methods the `plan.*` MCP tools call — not a reimplementation. The
+one piece of real logic on the completion screen, the progression heuristic, is
+imported directly (`computeProgressionDelta` from `tools/plan-tools.ts`), so the
+dashboard and `plan.suggest_progression` can never disagree. There is
+deliberately no delete route: `SessionStore` has no planning delete.
 
 ## Why a React Native component library on the web
 
@@ -21,13 +45,15 @@ render as ordinary DOM on the web, no native runtime involved.
 
 ```
 spa/
-├── main.tsx              # entry point: I/O (poll/tick/SSE), renders <LivePagePanel>
-├── adapter.ts             # snapshot JSON -> shared view-model helpers (pure functions)
-├── store.ts                 # zustand store: snapshot/historical/live slices
-├── live-stream.ts             # /api/stream SSE subscription
-├── live-page/                  # the live page itself (LivePage, LiveView, RestView, ...)
-├── panels/                       # LivePagePanel + its view-model mappers (fatigue-view.ts, live-view.ts)
-├── vite.config.ts                  # build config (react-native-web alias + Tailwind wiring)
+├── main.tsx              # entry point: I/O (poll/tick/SSE) + the hash-route switch
+├── routing.ts             # parseRoute/routeHash — the page table (pure)
+├── adapter.ts               # snapshot JSON -> shared view-model helpers (pure functions)
+├── store.ts                   # zustand store: snapshot/historical/live/planner slices
+├── live-stream.ts               # /api/stream SSE subscription
+├── live-page/                     # the live page itself (LivePage, LiveView, RestView, ...)
+├── panels/                          # LivePagePanel + its view-model mappers (fatigue-view.ts, live-view.ts)
+├── planner/                           # plan builder + session-completion pages, their client and mappers
+├── vite.config.ts                       # build config (react-native-web alias + Tailwind wiring)
 ├── tailwind.config.cjs               # scans titan's dist for the classes it emits
 ├── postcss.config.cjs                  # Tailwind + autoprefixer pipeline
 └── index.html                            # Vite HTML entry, mounts #root

@@ -48,6 +48,10 @@ import { dashboardStore, type HistoricalPatch } from './store';
 import { createLiveStreamController } from './live-stream';
 import { LivePagePanel } from './panels/LivePagePanel';
 import { readVariantOverride } from './live-page/stage-variant';
+import { parseRoute, routeHash, type Route } from './routing';
+import { PlanBuilderPage } from './planner/PlanBuilderPage';
+import { SessionSummaryPage } from './planner/SessionSummaryPage';
+import { styles } from './planner/planner-styles';
 import type { PrescriptionView } from './adapter';
 
 // Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
@@ -132,13 +136,60 @@ function useDashboardController(): void {
   );
 }
 
+/** Subscribe to hash changes. The route is the single source of which page shows. */
+function useHashRoute(): Route {
+  const [route, setRoute] = React.useState(() => parseRoute(window.location.hash));
+  useEffect(() => {
+    const onChange = (): void => setRoute(parseRoute(window.location.hash));
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+  return route;
+}
+
+/**
+ * Cross-page nav for the planner surfaces (VW-120). Deliberately absent on the
+ * live route: that page is the wall display and must stay chrome-free.
+ */
+function PlannerNav(props: { route: Route }): React.JSX.Element {
+  const links: { label: string; route: Route }[] = [
+    { label: 'Live', route: { name: 'live' } },
+    { label: 'Plan', route: { name: 'plan' } },
+    { label: 'Last session', route: { name: 'summary', sessionId: 'latest' } },
+  ];
+  return (
+    <nav style={styles.nav}>
+      {links.map((link) => (
+        <a
+          key={link.label}
+          href={routeHash(link.route)}
+          style={link.route.name === props.route.name ? styles.navLinkActive : styles.navLink}
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 function App(): React.JSX.Element {
   useDashboardController();
   // The `?variant=` pin lets a tester force single/dual; WHICH stage shows is
   // otherwise a live decision `LivePagePanel` makes from the snapshot on every
   // frame (VMCP-04.07). Read once — it cannot change without a reload.
   const [variantOverride] = React.useState(() => readVariantOverride(window.location.search));
-  return <LivePagePanel variantOverride={variantOverride} />;
+  const route = useHashRoute();
+  if (route.name === 'live') return <LivePagePanel variantOverride={variantOverride} />;
+  return (
+    <div style={styles.page}>
+      <PlannerNav route={route} />
+      {route.name === 'plan' ? (
+        <PlanBuilderPage />
+      ) : (
+        <SessionSummaryPage sessionId={route.sessionId} />
+      )}
+    </div>
+  );
 }
 
 const container = document.getElementById('root');
