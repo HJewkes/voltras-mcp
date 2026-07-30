@@ -665,10 +665,10 @@ describe('routing', () => {
     expect(JSON.parse(res.body)).toEqual({ error: 'not_found' });
   });
 
-  // VW-120 opened POST/PATCH for the plan-write routes, so the method gate now
-  // rejects only the methods the dashboard genuinely does not serve. A POST to a
-  // path with no write route falls through to the same 404 as any unknown path
-  // (covered in `plan-routes.test.ts`).
+  // VW-120 opened POST/PATCH and VW-121 added DELETE for the plan-write routes,
+  // so the method gate now rejects only the methods the dashboard genuinely does
+  // not serve. A POST/DELETE to a path with no write route falls through to the
+  // same 404 as any unknown path (covered in `plan-routes.test.ts`).
   it('returns 405 for methods the dashboard does not serve', async () => {
     const handle = await startWithFake(makeFakeState());
     const result = await new Promise<FetchResult>((resolve, reject) => {
@@ -677,7 +677,7 @@ describe('routing', () => {
           host: DEFAULT_DASHBOARD_HOST,
           port: handle.port,
           path: '/',
-          method: 'DELETE',
+          method: 'PUT',
         },
         (res) => {
           const chunks: Buffer[] = [];

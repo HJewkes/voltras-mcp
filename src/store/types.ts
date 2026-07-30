@@ -930,6 +930,16 @@ export interface SessionStore {
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+  /**
+   * Remove one planned exercise. Resolves `true` when a row was removed and
+   * `false` when no row matched, so a caller can 404 rather than report a
+   * delete that deleted nothing.
+   *
+   * `program_assignments.planned_exercise_id` is `ON DELETE SET NULL`, so the
+   * record of what was actually trained survives the plan row being pulled —
+   * unplanning a lift never rewrites a past session (VW-121).
+   */
+  deletePlannedExercise(id: string): Promise<boolean>;
 
   /** Upsert a session-to-plan link. */
   putProgramAssignment(a: StoredProgramAssignment): Promise<void>;

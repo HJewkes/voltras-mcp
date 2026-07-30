@@ -179,6 +179,7 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
     maxVelocityLossPct: 18.4,
     verdict: null,
     fatigue: null,
+    verdictSetIndex: null,
     sets: [],
     progression: progression(),
     progressionNote: null,
@@ -217,9 +218,21 @@ describe('progression readouts', () => {
 
   it('reports sets against the plan when there is one', () => {
     expect(setsAgainstPlan(summaryExercise())).toBe('3 / 3 sets');
+    expect(setsAgainstPlan(summaryExercise({ workingSetCount: 2 }))).toBe('2 / 3 sets');
     expect(setsAgainstPlan(summaryExercise({ progression: null, workingSetCount: 1 }))).toBe(
       '1 working set',
     );
+  });
+
+  it('does not render an overshoot as a fraction greater than one', () => {
+    // VW-121 / F5: an extra set produced literally `3 / 2 sets` — "three out of
+    // two", which is not a sentence. The same two numbers, said truthfully.
+    const over = summaryExercise({
+      workingSetCount: 3,
+      progression: progression({ targetSets: 2 }),
+    });
+    expect(setsAgainstPlan(over)).toBe('3 sets · target 2');
+    expect(setsAgainstPlan(over)).not.toContain('/');
   });
 });
 

@@ -71,9 +71,25 @@ function toAnalyticsSet(stored: StoredSet): AnalyticsSet {
 }
 
 /**
- * Resolve the session the summary is for. `'latest'` picks the most recently
- * started session — the demo's "I just finished, show me the screen" path, so
- * the client never has to know a session id. Returns undefined when nothing matches.
+ * How far back `'latest'` looks for a FINISHED session. `listSessions` can only
+ * sort by `startedAt`, so the ended-session scan is a bounded window over the
+ * most recent starts rather than a query — 20 covers "started several exercises,
+ * finished a few" by a wide margin without turning a page load into a table scan.
+ */
+const LATEST_SCAN_LIMIT = 20;
+
+/**
+ * Resolve the session the summary is for. Returns undefined when nothing matches.
+ *
+ * `'latest'` means the most recently **ENDED** session, not the most recently
+ * started one (VW-121). The flow this screen exists for is multi-exercise:
+ * finish exercise A, immediately start exercise B, glance at the wall. Sorting
+ * by `startedAt` served exercise B's in-progress, zero-set session every single
+ * time — the feature's primary use case, wrong by construction.
+ *
+ * The fallback when NOTHING has ended yet is the most recently started session:
+ * mid-first-exercise, an in-progress card is the only truthful answer, and the
+ * page already renders "Session in progress" for it.
  */
 export async function resolveSummarySessionId(
   store: DashboardSessionStore,
@@ -82,8 +98,15 @@ export async function resolveSummarySessionId(
   if (requested !== 'latest') {
     return (await store.getSession(requested)) === undefined ? undefined : requested;
   }
-  const [latest] = await store.listSessions({ sort: 'startedAt:desc', limit: 1, offset: 0 });
-  return latest?.id;
+  const recent = await store.listSessions({
+    sort: 'startedAt:desc',
+    limit: LATEST_SCAN_LIMIT,
+    offset: 0,
+  });
+  const ended = recent
+    .filter((s): s is StoredSession & { endedAt: string } => s.endedAt !== undefined)
+    .sort((a, b) => b.endedAt.localeCompare(a.endedAt));
+  return ended[0]?.id ?? recent[0]?.id;
 }
 
 /**
@@ -157,13 +180,11 @@ async function buildExerciseSummary(
 ): Promise<SessionSummaryExercise> {
   const { exerciseId, sets, sessionId, programId } = args;
   const setViews = sets.map(toSetView);
-  const working = sets.filter((s) => s.isWarmup !== true);
-  const lastWorking = working[working.length - 1];
   const weights = sets.map((s) => s.weightLbs).filter((w): w is number => w !== undefined);
   const bestVelocities = setViews
     .map((s) => s.bestRepVelocity)
     .filter((v): v is number => v !== null);
-  const losses = setViews.map((s) => s.velocityLossPct).filter((v): v is number => v !== null);
+  const scored = scoreVerdictSet(sets, setViews);
 
   const { progression, progressionNote } = await resolveProgression(deps.store, {
     exerciseId,
@@ -176,7 +197,7 @@ async function buildExerciseSummary(
     exerciseId,
     name: exerciseId === null ? UNATTRIBUTED_LABEL : (deps.nameOf(exerciseId) ?? exerciseId),
     setCount: sets.length,
-    workingSetCount: working.length,
+    workingSetCount: scored.working.length,
     totalReps: sets.reduce((sum, s) => sum + s.reps.length, 0),
     // Null, not 0, when NO set recorded a load: tonnage is unknowable then, and
     // `0 lb` on the card reads like a measured value (the exact sentinel schema
@@ -188,12 +209,64 @@ async function buildExerciseSummary(
         : sets.reduce((sum, s) => sum + (s.weightLbs ?? 0) * s.reps.length, 0),
     topWeightLbs: weights.length > 0 ? Math.max(...weights) : null,
     bestRepVelocity: bestVelocities.length > 0 ? Math.max(...bestVelocities) : null,
-    maxVelocityLossPct: losses.length > 0 ? Math.max(...losses) : null,
-    verdict: lastWorking === undefined ? null : getSetFatigueVerdict(toAnalyticsSet(lastWorking)),
-    fatigue: lastWorking === undefined ? null : getSetFatigueSummary(toAnalyticsSet(lastWorking)),
+    maxVelocityLossPct: scored.maxVelocityLossPct,
+    verdict: scored.set === undefined ? null : getSetFatigueVerdict(toAnalyticsSet(scored.set)),
+    fatigue: scored.set === undefined ? null : getSetFatigueSummary(toAnalyticsSet(scored.set)),
+    verdictSetIndex: scored.setIndex,
     sets: setViews,
     progression,
     progressionNote,
+  };
+}
+
+/**
+ * Pick the ONE set the card's headline verdict, RPE, dimension lights, and
+ * velocity-loss gauge all read from.
+ *
+ * ── Why this exists (VW-121 / F4) ─────────────────────────────────────────
+ * VW-120 computed the verdict from the LAST working set and the gauge from the
+ * WORST loss across ALL sets (warm-ups included). Two different sets, two
+ * different populations, rendered two inches apart: a card could show "Good" in
+ * green with RPE 4.5 while the gauge below it sat at 31.3% — past VL30, the
+ * "stop training" mark. Both numbers were individually correct and the pairing
+ * was a lie.
+ *
+ * The fix is one basis, not softer wording: the WORST working set by within-set
+ * velocity loss — the same measure and the same set population the gauge shows.
+ * Warm-ups are excluded from both (a light warm-up's loss is not a training
+ * signal), falling back to all sets only when nothing is a working set.
+ * Ties go to the LATER set, so a session that degrades and repeats its worst
+ * loss still reads as "this is where you ended up".
+ *
+ * When no set carries velocity telemetry there is no worst set to pick, so the
+ * basis falls back to the last working set — the old behaviour, which is the
+ * right one precisely when there is no gauge value to contradict.
+ */
+function scoreVerdictSet(
+  sets: readonly StoredSet[],
+  views: readonly SessionSummarySet[],
+): {
+  set: StoredSet | undefined;
+  setIndex: number | null;
+  working: StoredSet[];
+  maxVelocityLossPct: number | null;
+} {
+  const paired = sets.map((set, index) => ({ set, view: views[index] }));
+  const working = paired.filter((p) => p.set.isWarmup !== true);
+  const scoped = working.length > 0 ? working : paired;
+  let worst: (typeof scoped)[number] | undefined;
+  for (const candidate of scoped) {
+    const loss = candidate.view?.velocityLossPct;
+    if (loss === undefined || loss === null) continue;
+    const best = worst?.view?.velocityLossPct;
+    if (best === undefined || best === null || loss >= best) worst = candidate;
+  }
+  const chosen = worst ?? scoped[scoped.length - 1];
+  return {
+    set: chosen?.set,
+    setIndex: chosen?.view?.index ?? null,
+    working: working.map((p) => p.set),
+    maxVelocityLossPct: worst?.view?.velocityLossPct ?? null,
   };
 }
 

@@ -52,12 +52,18 @@ export interface SessionSummaryExercise {
   volumeLbs: number | null;
   topWeightLbs: number | null;
   bestRepVelocity: number | null;
-  /** Worst within-set velocity loss across the exercise's sets, %. */
+  /**
+   * Worst within-set velocity loss across the exercise's WORKING sets, %.
+   * The verdict/fatigue below read the same set this number comes from — see
+   * `scoreVerdictSet` in `session-summary.ts` for why one basis, not two.
+   */
   maxVelocityLossPct: number | null;
-  /** Fatigue verdict of the exercise's LAST working set — how the exercise ended. */
+  /** Fatigue verdict of the exercise's WORST working set (by velocity loss). */
   verdict: FatigueVerdict | null;
-  /** Fatigue summary (RIR/RPE/consistency) of that same last working set. */
+  /** Fatigue summary (RIR/RPE/consistency) of that same worst set. */
   fatigue: FatigueSummary | null;
+  /** 1-based session ordinal of the set `verdict`/`fatigue`/`maxVelocityLossPct` read. */
+  verdictSetIndex: number | null;
   sets: SessionSummarySet[];
   /** Null when the exercise isn't prescribed in the current program. */
   progression: SessionSummaryProgression | null;

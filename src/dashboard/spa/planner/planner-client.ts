@@ -107,3 +107,10 @@ export function updatePlannedExercise(
     body: JSON.stringify(patch),
   });
 }
+
+/** Unplan one exercise (VW-121). The server closes the gap in the template's order. */
+export function deletePlannedExercise(plannedExerciseId: string): Promise<unknown> {
+  return json(`/api/plan/exercises/${encodeURIComponent(plannedExerciseId)}`, {
+    method: 'DELETE',
+  });
+}

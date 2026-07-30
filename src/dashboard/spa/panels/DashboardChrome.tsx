@@ -21,7 +21,7 @@
  * than passed down, so a route that knows nothing about BLE still renders a
  * truthful TopBar.
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import { DashboardShell, defaultNavItems, type SessionState } from '@titan-design/react-ui';
 
@@ -52,6 +52,34 @@ export function navKeyForRoute(route: Route): string {
 }
 
 /**
+ * Reflect the active route onto the nav rail's `aria-selected` (VW-121 / D4).
+ *
+ * ── Why this is a DOM shim and not a prop ─────────────────────────────────
+ * titan's `NavItem` already declares `accessibilityState={{ selected: active }}`
+ * — but react-native-web 0.19 DROPPED `accessibilityState`, mapping only
+ * `aria-selected` / `accessibilitySelected` (see its `createDOMProps`). So every
+ * rail item renders `role="tab"` with no selected state and a screen-reader user
+ * cannot tell which route they are on. `SideNav` exposes no per-item aria
+ * override, so there is nothing to pass down.
+ *
+ * The tabs are matched by their `aria-label` (titan sets it from the item label),
+ * NOT by index, so a future reordering of `NAV_ITEMS` can't silently mark the
+ * wrong tab. Delete this the moment titan's NavItem emits `aria-selected` itself.
+ */
+function useNavSelectedShim(activeKey: string): React.RefObject<HTMLDivElement> {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = ref.current;
+    if (root === null) return;
+    for (const item of NAV_ITEMS) {
+      const tab = root.querySelector(`[role="tab"][aria-label="${item.label}"]`);
+      tab?.setAttribute('aria-selected', String(item.key === activeKey));
+    }
+  }, [activeKey]);
+  return ref;
+}
+
+/**
  * Shell chrome around a route's content.
  *
  * `scroll` distinguishes the two deployments this shell now serves: the wall is
@@ -74,9 +102,13 @@ export function DashboardChrome(props: {
   // `liveKey` is for — the Live item picks up a quiet green cue instead of the
   // athlete's set going unannounced off-view.
   const liveKey = sessionState === 'live' && activeKey !== 'live' ? 'live' : null;
+  const shellRef = useNavSelectedShim(activeKey);
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}>
+    <div
+      ref={shellRef}
+      style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}
+    >
       <DashboardShell
         activeKey={activeKey}
         navItems={NAV_ITEMS}

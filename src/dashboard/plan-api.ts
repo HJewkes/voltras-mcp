@@ -16,12 +16,15 @@
 // logic (the progression heuristic) is NOT duplicated: `session-summary.ts`
 // imports `computeProgressionDelta` from `plan-tools.ts` directly.
 //
-// ── Deliberate gaps ───────────────────────────────────────────────────────
+// ── Delete + validation (VW-121) ──────────────────────────────────────────
 //
-// There is no delete route. `SessionStore` has no `deletePlannedExercise` (or
-// any planning delete), and adding one is a store-layer change this task is
-// scoped out of. Editing and reordering both go through the existing
-// `putPlannedExercise` upsert.
+// VW-120 shipped without either, which cost exactly what you'd expect: a
+// double-click on "Add" appended duplicate rows that no UI could remove, and
+// `-999` saved as a real target weight. Both are closed here — `SessionStore`
+// gained `deletePlannedExercise`, and every numeric target now goes through the
+// shared bounds in `plan-targets.ts` (the SAME module the SPA validates with, so
+// the two checks cannot drift). Editing and reordering still go through the
+// existing `putPlannedExercise` upsert.
 //
 // Confidentiality: plan metadata and fitness units only — no protocol data (NF-07).
 
@@ -34,6 +37,7 @@ import {
   type PlanTreeRows,
   type PlanTreeView,
 } from './read-models/index.js';
+import { validateTargets, type TargetField, type TargetValues } from './plan-targets.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -62,6 +66,7 @@ export interface DashboardPlanStore {
   putPlannedExercise(e: StoredPlannedExercise): Promise<void>;
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+  deletePlannedExercise(id: string): Promise<boolean>;
   getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
   getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
 }
@@ -287,13 +292,16 @@ export async function createPlannedExercise(
   }
   const exerciseId = requireString(body.exerciseId, 'exerciseId');
   const siblings = await store.getPlannedExercisesForTemplate(templateId);
+  const patch = targetPatch(body);
+  const targetSets = optionalNumber(body.targetSets, 'targetSets') ?? 3;
+  assertTargetsInRange({ ...patch, targetSets });
   const plannedExercise: StoredPlannedExercise = {
     id: randomUUID(),
     workoutTemplateId: templateId,
     exerciseId,
     orderIndex: nextOrderIndex(siblings),
-    targetSets: optionalNumber(body.targetSets, 'targetSets') ?? 3,
-    ...targetPatch(body),
+    targetSets,
+    ...patch,
   };
   await store.putPlannedExercise(plannedExercise);
   return { plannedExercise };
@@ -327,8 +335,44 @@ export async function updatePlannedExercise(
   if (targetSets !== undefined) updated.targetSets = targetSets;
   const orderIndex = optionalNumber(body.orderIndex, 'orderIndex');
   if (orderIndex !== undefined) updated.orderIndex = orderIndex;
+  // Validated against the MERGED row, not the patch: a PATCH that raises only
+  // `targetRepsLow` above the row's existing `targetRepsHigh` is exactly the
+  // inverted band a per-field check waves through.
+  assertTargetsInRange(targetValuesOf(updated));
   await store.putPlannedExercise(updated);
   return { plannedExercise: updated };
+}
+
+/**
+ * Remove one planned exercise and close the gap it leaves in the template's
+ * order, so the builder's `1. 2. 3.` numbering never skips. The renumber is the
+ * same operation `reorderPlannedExercises` performs, over the survivors.
+ */
+export async function deletePlannedExercise(
+  store: DashboardPlanStore,
+  plannedExerciseId: string,
+): Promise<{ deleted: true; templateId: string }> {
+  const existing = await store.getPlannedExercise(plannedExerciseId);
+  if (existing === undefined) {
+    throw new PlanApiError(
+      'not_found',
+      `No planned exercise with id "${plannedExerciseId}" exists.`,
+    );
+  }
+  const templateId = existing.workoutTemplateId;
+  if (!(await store.deletePlannedExercise(plannedExerciseId))) {
+    throw new PlanApiError(
+      'not_found',
+      `No planned exercise with id "${plannedExerciseId}" exists.`,
+    );
+  }
+  const survivors = [...(await store.getPlannedExercisesForTemplate(templateId))].sort(
+    (a, b) => a.orderIndex - b.orderIndex,
+  );
+  for (const [index, row] of survivors.entries()) {
+    if (row.orderIndex !== index) await store.putPlannedExercise({ ...row, orderIndex: index });
+  }
+  return { deleted: true, templateId };
 }
 
 /**
@@ -411,4 +455,32 @@ function optionalNumber(value: unknown, field: string): number | undefined {
     throw new PlanApiError('invalid_input', `\`${field}\` must be a finite number.`);
   }
   return parsed;
+}
+
+/** The numeric target fields of a row, as `validateTargets` wants them. */
+function targetValuesOf(row: StoredPlannedExercise): TargetValues {
+  const fields: TargetField[] = [
+    'targetSets',
+    'targetRepsLow',
+    'targetRepsHigh',
+    'targetWeightLbs',
+    'targetRpe',
+    'restSec',
+  ];
+  const values: TargetValues = {};
+  for (const field of fields) {
+    const value = row[field];
+    if (value !== undefined) values[field] = value;
+  }
+  return values;
+}
+
+/**
+ * The server-side half of the target gate. The SPA runs the same
+ * `validateTargets` for immediate feedback; this one runs because a client
+ * cannot be trusted — `curl` reaches this route too.
+ */
+function assertTargetsInRange(values: TargetValues): void {
+  const message = validateTargets(values);
+  if (message !== null) throw new PlanApiError('invalid_input', message);
 }
