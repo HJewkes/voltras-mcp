@@ -100,6 +100,10 @@ export const CORE_TOOL_NAMES = [
   // Tier-signal MVP (VW-92) — crude ceiling only, no gate wiring. See
   // src/tools/tier-signal.ts.
   'profile.get_tier_signal',
+  // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
+  // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
+  'baselines.get',
+  'baselines.recalc',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -251,6 +255,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'profile.set_training_background': 'write',
   'profile.get_training_background': 'read',
   'profile.get_tier_signal': 'read',
+
+  'baselines.get': 'read',
+  'baselines.recalc': 'write',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

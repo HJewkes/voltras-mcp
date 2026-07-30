@@ -682,6 +682,7 @@ export async function finalizeSet(
   if (match !== undefined) {
     await stampPartnerGroup(state, match.b.setId, match.groupId);
   }
+  await recalcBaselineForSet(state, stored);
   // Record this close so the NEXT set on this slot can measure its achieved
   // rest. In-memory on purpose: after a restart the previous close time is
   // genuinely unknown, and an absent rest beats one computed across a gap of
@@ -831,6 +832,37 @@ async function stampPartnerGroup(
     await state.store.putSet({ ...partner, bilateralGroupId: groupId, groupSource: 'live' });
   } catch (err) {
     log.warn(`bilateral grouping: failed to stamp partner set ${partnerSetId}`, err);
+  }
+}
+
+/**
+ * Refresh the `exercise_baselines` state row the set just contributed to
+ * (VW-116). Hooked here, at `finalizeSet`, because it is the single choke
+ * point every close path funnels through — the tool close, the device-signal
+ * close, the inactivity force-close and the guided-load reap alike.
+ *
+ * Recalculates exactly ONE key: the set's own side when a side was resolved,
+ * and the side-agnostic key otherwise. Never both — a per-side baseline and a
+ * pooled one are different measurement streams, and collecting the pooled view
+ * as a third stream alongside the two per-side ones is precisely what
+ * `BaselineKey`'s contract warns against (merged variance is within-side PLUS
+ * between-side, so asymmetry inflates it).
+ *
+ * BEST EFFORT. Baseline state is derived and fully re-derivable from the reps
+ * that were just persisted (`baselines.recalc` re-runs it on demand), so a
+ * failure here must never fail a set close — the durable record is already
+ * written by the time this runs.
+ */
+async function recalcBaselineForSet(state: ServerState, stored: StoredSet): Promise<void> {
+  if (stored.exerciseId === undefined || stored.userId === undefined) return;
+  try {
+    await state.store.recalcBaseline({
+      userId: stored.userId,
+      exerciseId: stored.exerciseId,
+      ...(stored.side !== undefined ? { side: stored.side } : {}),
+    });
+  } catch (err) {
+    log.warn(`baseline recalc failed for exercise ${stored.exerciseId}`, err);
   }
 }
 
