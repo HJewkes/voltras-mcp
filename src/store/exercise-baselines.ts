@@ -83,8 +83,31 @@ export const BASELINE_THRESHOLDS = {
    * Days without a qualifying observation before a baseline degrades to STALE.
    * A stale baseline is not wrong, it is unvouched-for: consumers treat it as
    * SHAPE_ONLY and it re-enters its former tier on fresh observations.
+   *
+   * A TIME-ONLY STAND-IN, deliberately. The protocol's real invalidators
+   * (§4.5) are baseline SHIFTS — a sustained >10–15 % move in median
+   * concentric ROM or in the tempo baseline, which is how an attachment
+   * change, a seat-height change or a deliberate technique change becomes
+   * detectable. That detector is a separate build (it needs the computed ROM
+   * and tempo baselines, which by design are not stored here) and is out of
+   * scope for this PR. Until it exists, the only invalidator in force is the
+   * one row of §4.5's table that is readable "from the calendar": a layoff
+   * beyond ~3–4 weeks, after which the anchor drifts with detraining.
+   *
+   * 28 days is the top of that ~3–4-week band. The asymmetry picks the
+   * direction: demoting a still-valid baseline only costs features (the
+   * consumer falls back to relative signals), while leaving a drifted one
+   * CALIBRATED biases RIR estimates OPTIMISTIC — telling a user they have
+   * reps left when they do not, the one failure direction §4.5 calls
+   * dangerous. So err toward tripping early, and take the band's ceiling
+   * rather than a doubled figure with no source.
+   *
+   * Note this measures a layoff FROM THIS KEY, not from training generally:
+   * an exercise rotated out of a program for a month has an anchor as
+   * untrustworthy as one belonging to a user who did not train at all, since
+   * both the anchor and the shape are movement-specific.
    */
-  staleAfterDays: 60,
+  staleAfterDays: 28,
 } as const;
 
 /** One failure anchor, as far as the state machine cares. */

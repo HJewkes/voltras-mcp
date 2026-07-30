@@ -183,7 +183,31 @@ describe('deriveBaselineState — the ratchet', () => {
     );
     expect(out.state).toBe('STALE');
     expect(out.invalidatedAt).toBe(NOW.toISOString());
-    expect(out.invalidationReason).toContain('60d');
+    expect(out.invalidationReason).toContain(`${String(BASELINE_THRESHOLDS.staleAfterDays)}d`);
+  });
+
+  it('trips STALE on a layoff past the window, not just inside it', () => {
+    // Pins the window itself. It is a time-only stand-in for §4.5's real
+    // ROM/tempo-shift invalidator, set at the top of the doc's ~3-4 week
+    // layoff band — a number twice that size would leave a detrained anchor
+    // driving cues, which biases RIR optimistic.
+    const daysBeforeNow = (n: number): string =>
+      new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
+    const withLayoff = (days: number): string =>
+      deriveBaselineState(
+        observations({
+          lastObservedAt: daysBeforeNow(days),
+          anchors: anchors([0.2, 0.21, 0.205], ['s1', 's1', 's2']),
+        }),
+        NOW,
+      ).state;
+    // Asserted against the DOC's band, not against the constant itself: a
+    // boundary test phrased purely in terms of `staleAfterDays` moves with any
+    // value it is given and so cannot fail on a wrong one.
+    expect(BASELINE_THRESHOLDS.staleAfterDays).toBeGreaterThanOrEqual(21);
+    expect(BASELINE_THRESHOLDS.staleAfterDays).toBeLessThanOrEqual(28);
+    expect(withLayoff(BASELINE_THRESHOLDS.staleAfterDays - 1)).toBe('CALIBRATED');
+    expect(withLayoff(BASELINE_THRESHOLDS.staleAfterDays + 1)).toBe('STALE');
   });
 
   it('re-enters CALIBRATED once a fresh observation lands', () => {
