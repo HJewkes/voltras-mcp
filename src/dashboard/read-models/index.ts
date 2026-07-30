@@ -15,39 +15,3 @@ export {
   type ExerciseMeta,
   type SnapshotInput,
 } from './snapshot.js';
-
-export {
-  buildE1rmSeries,
-  buildExerciseTrend,
-  buildCapacityBand,
-  buildPrHistory,
-  fmtPrDate,
-  canonicalizeExerciseRef,
-  matchesExercise,
-  normalizeExerciseLabel,
-  selectDefaultExercise,
-  CAPACITY_BAND_K_SIGMA,
-  MIN_CAPACITY_BAND_SESSIONS,
-  type HistoryCandidate,
-  type HistoryExerciseRef,
-  type HistorySession,
-  type HistorySet,
-  type ExerciseE1rmObservation,
-  type ExerciseTrendPoint,
-  type CapacityBandPoint,
-  type PrRecordView,
-} from './exercise-history.js';
-
-export {
-  buildMuscleVolume,
-  SECONDARY_SET_WEIGHT,
-  type MuscleVolumeEntry,
-} from './muscle-volume.js';
-
-export {
-  deriveMesoWeekViews,
-  type MesoWorkoutView,
-  type MesoWeekView,
-  type MesoOverviewView,
-  type RawMesoWeek,
-} from './meso-overview.js';

@@ -8,13 +8,9 @@ import { describe, expect, it } from 'vitest';
 import type { Rep } from '@voltras/workout-analytics';
 
 import {
-  buildBattery,
   buildConnectionStatus,
   buildCurrentSet,
-  buildHeroSets,
-  buildSessionProgress,
   buildSessionState,
-  buildSetLogRows,
   buildTopBarDevices,
   fmtElapsed,
   fmtMode,
@@ -252,23 +248,6 @@ describe('buildConnectionStatus — device-derived header state', () => {
   });
 });
 
-describe('buildBattery', () => {
-  it('formats a present battery percent', () => {
-    const b = buildBattery(snapshot({ sessionId: 's1', device: { batteryPercent: 82 } }));
-    expect(b).toEqual({ present: true, pct: 82, label: '82%', low: false });
-  });
-
-  it('flips to low state below the threshold', () => {
-    const b = buildBattery(snapshot({ sessionId: 's1', device: { batteryPercent: 15 } }));
-    expect(b).toMatchObject({ present: true, label: '15%', low: true });
-  });
-
-  it('is absent when no battery reading is present', () => {
-    const b = buildBattery(snapshot({ sessionId: 's1', device: { connected: true } }));
-    expect(b).toEqual({ present: false, pct: null, label: '—', low: false });
-  });
-});
-
 describe('reduceSnapshot — completed-set accumulation', () => {
   it('logs a set only when active transitions non-null → null', () => {
     let state = initialAccumulatorState();
@@ -466,74 +445,6 @@ describe('reduceSnapshot — peak concentric force fold (VW-61)', () => {
   it('is null when no rep logged concentric force (never faked)', () => {
     const state = closeSetWith([rep(1, 900), rep(2, 800)]);
     expect(state.setLog[0].peakForceLbs).toBeNull();
-  });
-});
-
-describe('buildSessionProgress + buildSetLogRows', () => {
-  it('totals reps and volume over completed sets only', () => {
-    const setLog = [
-      { weightLbs: 100, mode: 'weight', repCount: 5, bestPeakVelocityMms: 900 },
-      { weightLbs: 120, mode: 'weight', repCount: 4, bestPeakVelocityMms: 850 },
-    ];
-    const view = buildSessionProgress(snapshot({ sessionId: 's1', exerciseName: 'Row' }), setLog);
-    expect(view).toMatchObject({
-      active: true,
-      exercise: 'Row',
-      sets: 2,
-      totalReps: 9,
-      totalVolume: 100 * 5 + 120 * 4, // 980
-    });
-  });
-
-  it('reports inactive with no session', () => {
-    expect(buildSessionProgress(snapshot({ sessionId: null }), []).active).toBe(false);
-  });
-
-  it('formats set-log rows', () => {
-    const rows = buildSetLogRows([
-      { weightLbs: 135, mode: 'isokinetic', repCount: 3, bestPeakVelocityMms: 741 },
-    ]);
-    expect(rows[0]).toEqual({
-      index: 1,
-      weight: '135.0 lbs',
-      mode: 'isokinetic',
-      reps: 3,
-      peakVelocity: '0.74 m/s',
-    });
-  });
-});
-
-describe('buildHeroSets — canonical WorkoutSetView timeline', () => {
-  it('emits completed sets carrying their retained reps, then the active set', () => {
-    const device: SnapshotDevice = { weightLbs: 100, trainingMode: 'weight' };
-    let state = initialAccumulatorState();
-    // One set opens then closes → logged.
-    state = reduceSnapshot(
-      state,
-      snapshot({ sessionId: 's1', device, activeSet: { reps: [rep(1, 900), rep(2, 800)] } }),
-      0,
-    );
-    state = reduceSnapshot(state, snapshot({ sessionId: 's1', device }), 500);
-
-    // A new active set is now open with a rep target.
-    const rows = buildHeroSets(
-      snapshot({
-        sessionId: 's1',
-        device,
-        activeSet: {
-          reps: [rep(1, 850)],
-          watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] },
-        },
-      }),
-      state.setLog,
-    );
-
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ setNumber: 1, kind: 'completed', weightLbs: 100 });
-    expect(rows[0].reps).toEqual([rep(1, 900), rep(2, 800)]); // full reps carried
-    expect(rows[1]).toMatchObject({ setNumber: 2, kind: 'active', targetReps: 8 });
-    // PREV column source: the active row points back at the completed set.
-    expect(rows[1].previous).toEqual({ reps: 2, weightLbs: 100 });
   });
 });
 

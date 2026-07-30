@@ -71,11 +71,6 @@ export function selectLiveVariant(
   return boundLimbSides(snapshot).length === LIMB_SIDES.length ? 'live-dual' : 'live';
 }
 
-/** Whether the live page is mounted at all (`?live=1`). Absent ⇒ the legacy dashboard. */
-export function isLivePageEnabled(search: string): boolean {
-  return new URLSearchParams(search).get('live') === '1';
-}
-
 /**
  * The manual stage override off the URL, or `null` for state-driven selection.
  *
