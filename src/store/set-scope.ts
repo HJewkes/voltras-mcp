@@ -50,3 +50,71 @@ export function scopeSetsToExerciseId<T extends ExerciseScopedSet>(
   if (exerciseId === undefined) return [...sets];
   return scopeSetsToExercise(sets, (id) => id === exerciseId);
 }
+
+// --- VMCP-01.72b: session-aware scoping -----------------------------------
+//
+// `session.set_exercise` lets one session hold more than one exercise. The
+// "keep an unattributed set" leniency above is safe only while a session is
+// (as far as its own sets show) single-exercise: an unattributed set that
+// passes `belongs` for every exercise a MULTI-exercise session held would
+// double-count that set's volume/reps/PR candidacy once per exercise.
+//
+// The functions below take the session's FULL set list (unfiltered by
+// exercise) so they can decide, from the sets themselves, whether the
+// leniency still applies — no schema change, no write-time bookkeeping.
+
+/**
+ * True when every set in `sets` that HAS an `exerciseId` agrees on it — i.e.
+ * the session is, as far as its own sets show, single-exercise. A session
+ * with zero attributed sets (all-unattributed, e.g. pre-v7 rows) counts as
+ * single-exercise: there is nothing to disagree with, and treating it as
+ * multi would blank out exactly the legacy history the leniency exists to
+ * protect.
+ */
+function isSingleExerciseSession(sets: readonly ExerciseScopedSet[]): boolean {
+  let seen: string | undefined;
+  for (const set of sets) {
+    if (set.exerciseId === undefined) continue;
+    if (seen === undefined) {
+      seen = set.exerciseId;
+      continue;
+    }
+    if (set.exerciseId !== seen) return false;
+  }
+  return true;
+}
+
+/**
+ * `scopeSetsToExercise`, but the "keep an unattributed set" leniency is
+ * withdrawn once the session is known (from its OWN sets) to hold more than
+ * one exercise. Single-exercise sessions — every historical session, and any
+ * session that has never called `session.set_exercise` — behave identically
+ * to `scopeSetsToExercise`, which is the byte-identical parity guarantee the
+ * regression suite checks against existing data.
+ *
+ * `allSessionSets` MUST be the session's full, unfiltered set list (not
+ * already narrowed to one exercise) — the single-vs-multi judgement needs to
+ * see every set to be correct.
+ */
+export function scopeSessionSetsToExercise<T extends ExerciseScopedSet>(
+  allSessionSets: readonly T[],
+  belongs: (exerciseId: string) => boolean,
+): T[] {
+  if (isSingleExerciseSession(allSessionSets)) {
+    return scopeSetsToExercise(allSessionSets, belongs);
+  }
+  // Multi-exercise session: an unattributed set can no longer be safely
+  // attributed to every exercise queried against this session. Drop it from
+  // every exercise-scoped read rather than guess which one it belongs to.
+  return allSessionSets.filter((set) => set.exerciseId !== undefined && belongs(set.exerciseId));
+}
+
+/** `scopeSessionSetsToExercise` for the common exact-id-match case. Same
+ *  full-set-list requirement as `scopeSessionSetsToExercise`. */
+export function scopeSessionSetsToExerciseId<T extends ExerciseScopedSet>(
+  allSessionSets: readonly T[],
+  exerciseId: string | undefined,
+): T[] {
+  if (exerciseId === undefined) return [...allSessionSets];
+  return scopeSessionSetsToExercise(allSessionSets, (id) => id === exerciseId);
+}

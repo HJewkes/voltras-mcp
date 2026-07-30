@@ -39,6 +39,7 @@ export const CORE_TOOL_NAMES = [
   'slot.swap',
   'session.start',
   'session.end',
+  'session.set_exercise',
   'session.list',
   'session.get',
   'set.start',
@@ -162,6 +163,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'session.start': 'write',
   'session.end': 'write',
+  'session.set_exercise': 'write',
   'session.list': 'read',
   'session.get': 'read',
 

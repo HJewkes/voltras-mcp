@@ -225,6 +225,7 @@ const ALL_TOOL_NAMES = [
   // session
   'session.start',
   'session.end',
+  'session.set_exercise',
   'session.list',
   'session.get',
   // set

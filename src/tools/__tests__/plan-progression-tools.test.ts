@@ -112,6 +112,7 @@ function makeStore(): SessionStore & {
   getSession: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
+  getSetsForExercise: ReturnType<typeof vi.fn>;
   putTrainingProgram: ReturnType<typeof vi.fn>;
   getTrainingProgram: ReturnType<typeof vi.fn>;
   listTrainingPrograms: ReturnType<typeof vi.fn>;
@@ -131,6 +132,9 @@ function makeStore(): SessionStore & {
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
+    // VMCP-01.72b (H1): resolveBasisSession now finds the basis session via
+    // each SET's own exerciseId, not `listSessions({ exerciseId })`.
+    getSetsForExercise: vi.fn(async () => []),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
     listTrainingPrograms: vi.fn(async () => []),
@@ -632,7 +636,7 @@ describe('plan.suggest_progression', () => {
   it('returns delta:0 / basedOnSessionId:null when no prior session exists', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([]);
+    h.store.getSetsForExercise.mockResolvedValueOnce([]);
     const r = await h.invoke('plan.suggest_progression', {
       programId: 'prog-a',
       exerciseId: 'bench-press',
@@ -651,8 +655,8 @@ describe('plan.suggest_progression', () => {
   it('suggests +5 lb when the majority of sets hit targetRepsHigh', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     // 3 sets, all 12 reps (== targetRepsHigh).
     h.store.getSetsForSession.mockResolvedValueOnce([
@@ -676,8 +680,8 @@ describe('plan.suggest_progression', () => {
   it('VMCP-02.25: holds (not +5) when a set hit its reps but at high velocity loss', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     // 1 set, 12 reps (== targetRepsHigh, so rep-count alone says +5), but peak
     // concentric velocity decays 1000 -> 500 mm/s = 50% loss (functional
@@ -698,8 +702,8 @@ describe('plan.suggest_progression', () => {
   it('VMCP-02.25: still suggests +5 when reps are hit with only mild velocity loss', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     // 3 sets of 12, peak velocity decays only 1000 -> 920 (~8% loss, under the
     // 25% ceiling) — the rep-band increment stands.
@@ -721,8 +725,8 @@ describe('plan.suggest_progression', () => {
   it('suggests 0 lb (hold) when sets land in the rep band', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     // 3 sets, all 10 reps (between 8 and 12).
     h.store.getSetsForSession.mockResolvedValueOnce([
@@ -745,8 +749,8 @@ describe('plan.suggest_progression', () => {
   it('suggests -5 lb when the majority of sets miss targetRepsLow', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     // 3 sets, all 5 reps (below 8).
     h.store.getSetsForSession.mockResolvedValueOnce([
@@ -776,8 +780,8 @@ describe('plan.suggest_progression', () => {
     // working sets topping the band.
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     h.store.getSetsForSession.mockResolvedValueOnce([
       setWithReps('w1', 3, undefined, 45),
@@ -805,8 +809,8 @@ describe('plan.suggest_progression', () => {
     // reps (below the low band of 8). A real deload must survive the filter.
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     h.store.getSetsForSession.mockResolvedValueOnce([
       setWithReps('w1', 3, undefined, 45),
@@ -838,8 +842,8 @@ describe('plan.suggest_progression', () => {
     // must drop the three warmups, leaving two band-topping working sets.
     const h = setup();
     primeProgramWithBenchPlan(h);
-    h.store.listSessions.mockResolvedValueOnce([
-      { id: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' },
+    h.store.getSetsForExercise.mockResolvedValueOnce([
+      { sessionId: 'sess-prior', startedAt: '2025-02-09T00:00:00.000Z' } as StoredSet,
     ]);
     const warmup = (setId: string): StoredSet => ({
       ...setWithReps(setId, 3, undefined, 135),

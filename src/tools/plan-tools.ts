@@ -37,7 +37,8 @@ import {
 } from '../schemas/plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
-import { scopeSetsToExerciseId } from '../store/set-scope.js';
+import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
+import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -600,7 +601,7 @@ async function suggestProgression(
   // 135 lb bench alongside a 315 lb squat would be discarded as warm-ups and
   // the delta computed from the squat.
   const sessionSets = await state.store.getSetsForSession(basisSessionId);
-  const sets = scopeSetsToExerciseId(sessionSets, input.exerciseId);
+  const sets = scopeSessionSetsToExerciseId(sessionSets, input.exerciseId);
   const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
   return { plannedExercise: planned, suggestion };
 }
@@ -622,12 +623,18 @@ async function resolveBasisSession(
     }
     return input.completedSessionId;
   }
-  const recent = await state.store.listSessions({
+  // VMCP-01.72b (H1): pick the basis session by each SET's own exerciseId,
+  // not `listSessions({ exerciseId })`'s session-row column — that column is
+  // last-write-wins once a session can hold several exercises, so it would
+  // silently miss a session that trained this exercise earlier and something
+  // else more recently. `getSetsForExercise` only supports ORDER BY
+  // started_at ASC, so take the last (most recent) element rather than
+  // adding a descending-sort option for this one caller.
+  const exerciseSets = await state.store.getSetsForExercise({
+    userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
-    sort: 'startedAt:desc',
-    limit: 1,
   });
-  return recent[0]?.id ?? null;
+  return exerciseSets.at(-1)?.sessionId ?? null;
 }
 
 /**

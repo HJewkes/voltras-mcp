@@ -10,7 +10,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { scopeSetsToExercise, scopeSetsToExerciseId } from '../set-scope.js';
+import {
+  scopeSessionSetsToExercise,
+  scopeSessionSetsToExerciseId,
+  scopeSetsToExercise,
+  scopeSetsToExerciseId,
+} from '../set-scope.js';
 
 interface Row {
   id: string;
@@ -68,5 +73,81 @@ describe('scopeSetsToExercise', () => {
       (id) => normalize(id) === normalize('Cable Chest Press'),
     );
     expect(kept.map((r) => r.id)).toEqual(['a', 'c']);
+  });
+});
+
+// VMCP-01.72b: `session.set_exercise` lets one session hold >1 exercise, so
+// the "keep an unattributed set" leniency above must be withdrawn once a
+// session's OWN sets show it holds more than one — else an unattributed set
+// gets credited to every exercise queried against that session.
+describe('scopeSessionSetsToExerciseId', () => {
+  it('behaves identically to scopeSetsToExerciseId for a single-exercise session (parity)', () => {
+    // A single-exercise session: every attributed row agrees, plus one
+    // unattributed row the leniency should still keep. `ROWS` itself holds
+    // TWO exercises (bench-press + back-squat), so it is the multi-exercise
+    // case covered separately below — not the parity fixture.
+    const singleExercise: Row[] = [
+      { id: 'bench-1', exerciseId: 'bench-press' },
+      { id: 'unattributed-1' },
+      { id: 'bench-2', exerciseId: 'bench-press' },
+    ];
+    expect(scopeSessionSetsToExerciseId(singleExercise, 'bench-press')).toEqual(
+      scopeSetsToExerciseId(singleExercise, 'bench-press'),
+    );
+  });
+
+  it('treats an all-unattributed session as single-exercise (keeps every row, legacy parity)', () => {
+    const legacy: Row[] = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    expect(scopeSessionSetsToExerciseId(legacy, 'bench-press').map((r) => r.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('drops the unattributed row once the session holds more than one exercise', () => {
+    const mixed: Row[] = [
+      { id: 'bench-1', exerciseId: 'bench-press' },
+      { id: 'squat-1', exerciseId: 'back-squat' },
+      { id: 'unattributed-1' },
+    ];
+    expect(scopeSessionSetsToExerciseId(mixed, 'bench-press').map((r) => r.id)).toEqual([
+      'bench-1',
+    ]);
+    expect(scopeSessionSetsToExerciseId(mixed, 'back-squat').map((r) => r.id)).toEqual(['squat-1']);
+  });
+
+  it('scopes nothing when the caller has no exercise to scope to', () => {
+    expect(scopeSessionSetsToExerciseId(ROWS, undefined).map((r) => r.id)).toEqual(
+      ROWS.map((r) => r.id),
+    );
+  });
+
+  it('does not mutate its input', () => {
+    const before = [...ROWS];
+    scopeSessionSetsToExerciseId(ROWS, 'bench-press');
+    expect(ROWS).toEqual(before);
+  });
+});
+
+describe('scopeSessionSetsToExercise', () => {
+  it('delegates the match to the caller like scopeSetsToExercise, single-exercise parity', () => {
+    const rows: Row[] = [{ id: 'a', exerciseId: 'cable-chest-press' }, { id: 'b' }];
+    const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const kept = scopeSessionSetsToExercise(
+      rows,
+      (id) => normalize(id) === normalize('Cable Chest Press'),
+    );
+    expect(kept.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('withdraws the unattributed leniency for a multi-exercise session', () => {
+    const rows: Row[] = [
+      { id: 'a', exerciseId: 'cable-chest-press' },
+      { id: 'b', exerciseId: 'back-squat' },
+      { id: 'c' },
+    ];
+    const kept = scopeSessionSetsToExercise(rows, (id) => id === 'cable-chest-press');
+    expect(kept.map((r) => r.id)).toEqual(['a']);
   });
 });

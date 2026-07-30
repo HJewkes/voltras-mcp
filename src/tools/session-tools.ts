@@ -34,6 +34,7 @@ import {
   SessionEndInput,
   SessionGetInput,
   SessionListInput,
+  SessionSetExerciseInput,
   SessionStartInput,
 } from '../schemas/session.js';
 import type { StoredSession, StoredSet } from '../store/types.js';
@@ -46,6 +47,7 @@ import {
 } from '../state/session-list-aggregator.js';
 import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
+import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
 
 /**
  * Error type used by tool handlers to signal a known, mapped error code.
@@ -87,6 +89,12 @@ export function registerSessionTools(
     'session.end',
     SessionEndInput,
     wrapHandler(SessionEndInput, (input) => endSession(state, input.slot)),
+  );
+  install(
+    placeholders,
+    'session.set_exercise',
+    SessionSetExerciseInput,
+    wrapHandler(SessionSetExerciseInput, (input) => setSessionExercise(state, input)),
   );
   install(
     placeholders,
@@ -187,6 +195,71 @@ async function startSession(
   }
 
   return { sessionId };
+}
+
+/**
+ * Repoint the active session's current exercise (VMCP-01.72b) so one
+ * workout can hold several exercises without ending and restarting the
+ * session. Sets already open when this is called are unaffected — they
+ * snapshotted the pointer at `set.start` (see `startSet` /
+ * `ActiveSet.exerciseId`); only sets started AFTER this call inherit the
+ * new pointer. Deliberately allowed mid-set for exactly that reason: it's
+ * what makes switching exercises between sets, without ending the session,
+ * the feature's point.
+ *
+ * Deferred persistence: no direct `store.putSession` call here. The stored
+ * session row's `exerciseId`/`exerciseName` are already advisory-only
+ * ("the session-level column stays as a hint" — sqlite-store.ts) and get
+ * refreshed from `active.exerciseId`/`exerciseName` the next time the
+ * session row is written (`session.end`). A crash between this call and
+ * `session.end` loses the in-memory pointer, same as any other live-only
+ * LiveState mutation.
+ */
+async function setSessionExercise(
+  state: ServerState,
+  input: z.infer<typeof SessionSetExerciseInput>,
+): Promise<{ sessionId: string; exerciseId?: string; exerciseName?: string }> {
+  const slot = getSlot(state, input.slot);
+  const active = slot.live.session;
+  if (active === undefined) {
+    throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
+  }
+
+  // R21: id wins over name. Drop name whenever id is present.
+  const useId = input.exerciseId !== undefined;
+  if (useId) {
+    const found = state.exercises.getById(input.exerciseId!);
+    if (found === undefined) {
+      throw new ToolError(
+        'EXERCISE_NOT_FOUND',
+        `No exercise with id "${input.exerciseId!}" exists in the catalog.`,
+      );
+    }
+  }
+  const exerciseId = useId ? input.exerciseId : undefined;
+  const exerciseName = useId ? undefined : input.exerciseName;
+
+  const previous = {
+    ...(active.exerciseId !== undefined ? { exerciseId: active.exerciseId } : {}),
+    ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
+  };
+  slot.live.setSessionExercise(exerciseId, exerciseName);
+
+  const payload = buildSessionExerciseChangedPayload(
+    active.sessionId,
+    {
+      ...(exerciseId !== undefined ? { exerciseId } : {}),
+      ...(exerciseName !== undefined ? { exerciseName } : {}),
+    },
+    previous,
+  );
+  state.channels.forSlot(input.slot ?? PRIMARY_SLOT).publish(payload);
+
+  return {
+    sessionId: active.sessionId,
+    ...(exerciseId !== undefined ? { exerciseId } : {}),
+    ...(exerciseName !== undefined ? { exerciseName } : {}),
+  };
 }
 
 /**

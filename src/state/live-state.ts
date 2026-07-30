@@ -247,6 +247,19 @@ export interface ActiveSet {
    */
   isWarmup?: boolean;
   /**
+   * Exercise attribution SNAPSHOTTED from the session's current exercise
+   * pointer at `set.start` time (VMCP-01.72b). A session's exercise can now
+   * change mid-session via `session.set_exercise`; a set stamps whatever the
+   * pointer was when the set STARTED and keeps it regardless of later
+   * `session.set_exercise` calls, matching the existing weight-snapshot
+   * precedent (set-tools.ts) — re-reading the live session at close would let
+   * a `session.set_exercise` call retroactively rewrite an in-flight set's
+   * attribution, which is wrong for analytics the same way a mid-set
+   * `device.set_weight` would be.
+   */
+  exerciseId?: string;
+  exerciseName?: string;
+  /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
    * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.
@@ -574,6 +587,38 @@ export class LiveState {
       return;
     }
     this.session = { ...s, setIds: [...s.setIds] };
+  }
+
+  /**
+   * Repoint the active session's current exercise (VMCP-01.72b). No-op when
+   * no session is active — the tool layer enforces `NO_ACTIVE_SESSION`
+   * before this is reached. Exactly one of `exerciseId`/`exerciseName` is
+   * expected non-undefined (the tool layer applies the same id-wins-over-
+   * name rule as `session.start`); the other is explicitly cleared so a
+   * later exercise switch can't leave a stale name paired with a new id.
+   *
+   * Deliberately allowed while a set is open: `startSet` snapshots the
+   * pointer at set-start time (see {@link ActiveSet.exerciseId}), so an
+   * already-open set is unaffected — only sets started AFTER this call
+   * inherit the new pointer. This is what makes switching exercises between
+   * sets (without ending the session) the feature's actual point.
+   */
+  setSessionExercise(exerciseId: string | undefined, exerciseName: string | undefined): void {
+    if (this.session === undefined) {
+      return;
+    }
+    const next = { ...this.session };
+    if (exerciseId !== undefined) {
+      next.exerciseId = exerciseId;
+    } else {
+      delete next.exerciseId;
+    }
+    if (exerciseName !== undefined) {
+      next.exerciseName = exerciseName;
+    } else {
+      delete next.exerciseName;
+    }
+    this.session = next;
   }
 
   /**

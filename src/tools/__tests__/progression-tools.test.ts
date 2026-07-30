@@ -107,18 +107,39 @@ function makeRep(repNumber: number): Rep {
   return { repNumber, concentric: phase, eccentric: phase };
 }
 
-function makeSet(id: string, sessionId: string, weightLbs: number, repCount: number): StoredSet {
+/**
+ * Post-VMCP-01.72b, `progression.get_for_exercise` discovers sessions via
+ * each SET's own `exerciseId` (`getSetsForExercise`), matching what the real
+ * `buildSetCapture` write path stamps at `set.end` whenever the owning
+ * session has an `exerciseId`. Fixtures therefore stamp `exerciseId` (and a
+ * realistic `startedAt`, since the discovery query windows on the SET's own
+ * timestamp) rather than leaving it to the session-level column the way
+ * pre-cutover fixtures could get away with.
+ */
+function makeSet(
+  id: string,
+  sessionId: string,
+  weightLbs: number,
+  repCount: number,
+  opts: { exerciseId?: string; startedAt?: string } = {},
+): StoredSet {
   const reps = Array.from({ length: repCount }, (_, i) =>
     Object.assign(makeRep(i + 1), { id: `${id}-r${i + 1}`, setId: id, index: i }),
   );
+  // `'exerciseId' in opts` (not `opts.exerciseId ?? default`) so a caller can
+  // explicitly pass `{ exerciseId: undefined }` to build an UNATTRIBUTED set
+  // (H2 fixtures) without the nullish-coalescing default clobbering it back
+  // to 'cable-chest-press'.
+  const exerciseId = 'exerciseId' in opts ? opts.exerciseId : 'cable-chest-press';
   return {
     id,
     sessionId,
-    startedAt: '2025-01-01T00:00:00.000Z',
+    startedAt: opts.startedAt ?? new Date().toISOString(),
     endedAt: '2025-01-01T00:05:00.000Z',
     partial: false,
     trainingMode: 'WeightTraining',
     weightLbs,
+    ...(exerciseId !== undefined ? { exerciseId } : {}),
     reps,
   };
 }
@@ -137,11 +158,13 @@ function makeStore(
 ): SessionStore & {
   listSessions: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
+  getSetsForExercise: ReturnType<typeof vi.fn>;
 } {
+  const sessionsById = new Map(sessions.map((s) => [s.id, s]));
   return {
     putSession: vi.fn(async () => {}),
     putSet: vi.fn(async () => {}),
-    getSession: vi.fn(async () => undefined),
+    getSession: vi.fn(async (id: string) => sessionsById.get(id)),
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async (filter: SessionListFilter) => {
       let result = sessions.filter(
@@ -159,6 +182,21 @@ function makeStore(
       return result;
     }),
     getSetsForSession: vi.fn(async (sessionId: string) => setMap[sessionId] ?? []),
+    // Mirrors `sqlite-store.ts`'s real query: exact exerciseId match, `from`/`to`
+    // window on the SET's own `startedAt`, ascending order.
+    getSetsForExercise: vi.fn(
+      async (filter: { exerciseId: string; from?: string; to?: string }) => {
+        const all = Object.values(setMap).flat();
+        return all
+          .filter(
+            (s) =>
+              s.exerciseId === filter.exerciseId &&
+              (filter.from === undefined || s.startedAt >= filter.from) &&
+              (filter.to === undefined || s.startedAt <= filter.to),
+          )
+          .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+      },
+    ),
     close: vi.fn(async () => {}),
   };
 }
@@ -258,7 +296,10 @@ describe('progression.get_for_exercise — no matching sessions', () => {
 // ── exerciseId filter forwarded to store ─────────────────────────────────────
 
 describe('progression.get_for_exercise — exerciseId forwarded', () => {
-  it('passes exerciseId to listSessions filter', async () => {
+  it('passes exerciseId to getSetsForExercise filter', async () => {
+    // VMCP-01.72b (H1): sessions are now discovered by each SET's own
+    // exerciseId via getSetsForExercise, not by listSessions' session-row
+    // column — see progression-tools.ts.
     const sessions = [
       makeSession('s1', recentDate(14), 'cable-chest-press'),
       makeSession('s2', recentDate(7), 'squat'),
@@ -267,8 +308,8 @@ describe('progression.get_for_exercise — exerciseId forwarded', () => {
 
     await h.invoke({ exerciseId: 'cable-chest-press' });
 
-    expect(h.store.listSessions).toHaveBeenCalledTimes(1);
-    const filter = h.store.listSessions.mock.calls[0][0] as SessionListFilter;
+    expect(h.store.getSetsForExercise).toHaveBeenCalledTimes(1);
+    const filter = h.store.getSetsForExercise.mock.calls[0][0] as { exerciseId: string };
     expect(filter.exerciseId).toBe('cable-chest-press');
   });
 });
@@ -283,28 +324,47 @@ function recentDate(daysAgo: number): string {
 }
 
 describe('progression.get_for_exercise — limit', () => {
-  it('forwards limit to the store and returns at most limit sessions', async () => {
+  it('returns at most limit sessions, keeping the most recent', async () => {
     const sessions = Array.from({ length: 10 }, (_, i) =>
-      makeSession(`s${i + 1}`, recentDate(7 + i)),
+      makeSession(`s${i + 1}`, recentDate(9 - i)),
     );
-    const setMap = Object.fromEntries(sessions.map((s) => [s.id, []]));
+    const setMap = Object.fromEntries(
+      sessions.map((s, i) => [
+        s.id,
+        [makeSet(`set-${s.id}`, s.id, 100, 5, { startedAt: recentDate(9 - i) })],
+      ]),
+    );
     const h = setup(sessions, setMap);
 
     const r = await h.invoke({ exerciseId: 'cable-chest-press', limit: 3 });
     expect(r.isError).toBeUndefined();
 
-    const filter = h.store.listSessions.mock.calls[0][0] as SessionListFilter;
-    expect(filter.limit).toBe(3);
-
-    const body = parseResult(r) as { sessions: unknown[] };
+    const body = parseResult(r) as { sessions: Array<{ sessionId: string }> };
     expect(body.sessions).toHaveLength(3);
+    // Most recent 3 kept: s8, s9, s10 (ascending — the query is a distinct-
+    // session list, most-recent-`limit` sliced from the ascending end).
+    expect(body.sessions.map((s) => s.sessionId)).toEqual(['s8', 's9', 's10']);
   });
 
-  it('defaults to limit=20 when not specified', async () => {
-    const h = setup([], {});
-    await h.invoke({ exerciseId: 'cable-chest-press' });
-    const filter = h.store.listSessions.mock.calls[0][0] as SessionListFilter;
-    expect(filter.limit).toBe(20);
+  it('defaults to limit=20, keeping the most recent sessions', async () => {
+    const sessions = Array.from({ length: 25 }, (_, i) =>
+      makeSession(`s${i + 1}`, recentDate(24 - i)),
+    );
+    const setMap = Object.fromEntries(
+      sessions.map((s, i) => [
+        s.id,
+        [makeSet(`set-${s.id}`, s.id, 100, 5, { startedAt: recentDate(24 - i) })],
+      ]),
+    );
+    const h = setup(sessions, setMap);
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    expect(r.isError).toBeUndefined();
+
+    const body = parseResult(r) as { sessions: Array<{ sessionId: string }> };
+    expect(body.sessions).toHaveLength(20);
+    expect(body.sessions[0].sessionId).toBe('s6');
+    expect(body.sessions[19].sessionId).toBe('s25');
   });
 });
 
@@ -317,7 +377,10 @@ describe('progression.get_for_exercise — lookbackWeeks default', () => {
     await h.invoke({ exerciseId: 'cable-chest-press' });
     const after = new Date();
 
-    const filter = h.store.listSessions.mock.calls[0][0] as SessionListFilter;
+    const filter = h.store.getSetsForExercise.mock.calls[0][0] as {
+      from?: string;
+      to?: string;
+    };
     const windowStart = new Date(filter.from!);
     const windowEnd = new Date(filter.to!);
 
@@ -382,15 +445,52 @@ describe('progression.get_for_exercise — happy path', () => {
     expect(trend.estimatedTotalVolumeDeltaPct).toBeCloseTo(25, 5);
   });
 
-  it('calls getSetsForSession once per session', async () => {
+  it('calls getSetsForSession once per session that trained the exercise', async () => {
     const s1 = makeSession('s1', recentDate(14));
     const s2 = makeSession('s2', recentDate(7));
-    const h = setup([s1, s2], { s1: [], s2: [] });
+    const h = setup([s1, s2], {
+      s1: [makeSet('a1', 's1', 80, 1)],
+      s2: [makeSet('a2', 's2', 100, 1)],
+    });
 
     await h.invoke({ exerciseId: 'cable-chest-press' });
 
     expect(h.store.getSetsForSession).toHaveBeenCalledTimes(2);
     expect(h.store.getSetsForSession).toHaveBeenCalledWith('s1');
     expect(h.store.getSetsForSession).toHaveBeenCalledWith('s2');
+  });
+});
+
+// ── Multi-exercise session (VMCP-01.72b positive control) ────────────────────
+
+describe('progression.get_for_exercise — multi-exercise session (H1/H2)', () => {
+  it('finds a session by its SETS even when the session-row exerciseId disagrees (H1), and does not double-count an unattributed set (H2)', async () => {
+    // Simulates session.set_exercise('squat') having been called after some
+    // bench sets: the session ROW is last-write-wins and now reads 'squat',
+    // but the session's own sets still carry their individual attribution.
+    const s1 = makeSession('s1', recentDate(3), 'squat');
+    const bench = makeSet('bench-1', 's1', 135, 5, { exerciseId: 'cable-chest-press' });
+    const squat = makeSet('squat-1', 's1', 225, 5, { exerciseId: 'squat' });
+    // Recorded before session.set_exercise existed, or a bridge-torn-down
+    // close — no exerciseId of its own.
+    const unattributed = makeSet('u-1', 's1', 45, 5, { exerciseId: undefined });
+    const h = setup([s1], { s1: [bench, squat, unattributed] });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    expect(r.isError).toBeUndefined();
+
+    const body = parseResult(r) as {
+      sessionCount: number;
+      sessions: Array<{ sessionId: string; setCount: number; topWeightLbs: number }>;
+    };
+    // H1: the session is found at all, despite session.exerciseId === 'squat'.
+    expect(body.sessionCount).toBe(1);
+    expect(body.sessions[0].sessionId).toBe('s1');
+    // H2: only the bench set counts — the squat set is excluded (correct),
+    // and the unattributed set is ALSO excluded (the leniency that keeps it
+    // for single-exercise sessions is withdrawn once the session is known,
+    // from its own sets, to hold more than one exercise).
+    expect(body.sessions[0].setCount).toBe(1);
+    expect(body.sessions[0].topWeightLbs).toBe(135);
   });
 });

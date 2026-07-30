@@ -23,8 +23,9 @@ import type { z } from 'zod';
 import { type ServerState } from '../state/server-state.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
-import { scopeSetsToExerciseId } from '../store/set-scope.js';
-import type { StoredSet } from '../store/types.js';
+import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
+import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+import type { StoredSession, StoredSet } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
 const DEFAULT_LOOKBACK_WEEKS = 8;
@@ -79,24 +80,40 @@ async function getProgressionForExercise(
   windowStart.setUTCDate(windowStart.getUTCDate() - lookbackWeeks * 7);
   const windowStartedAt = windowStart.toISOString();
 
-  const sessions = await state.store.listSessions({
+  // VMCP-01.72b (H1): pick candidate SESSIONS by each SET's own exerciseId,
+  // not by the session row's single `exercise_id` column. That column is
+  // last-write-wins once `session.set_exercise` lets one session hold
+  // several exercises — a session that trained squat then bench would
+  // persist with `exercise_id: 'bench-press'`, and a `listSessions({
+  // exerciseId: 'back-squat' })` filter would silently miss it entirely
+  // (not "wrong sets" — "session never considered"). `getSetsForExercise`
+  // reads the set-level column, which is authoritative.
+  const exerciseSets = await state.store.getSetsForExercise({
+    userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
     from: windowStartedAt,
     to: windowEndedAt,
-    sort: 'startedAt:asc',
-    limit,
-    offset: 0,
   });
+  // Ascending (matches getSetsForExercise's ORDER BY started_at ASC); dedupe
+  // to distinct sessions, then keep the most-recent `limit` — this is also
+  // the exercise-instance count: one entry per session that trained this
+  // exercise, decoupled from what else that session held.
+  const sessionIdsInOrder = [...new Set(exerciseSets.map((s) => s.sessionId))];
+  const limitedSessionIds = sessionIdsInOrder.slice(-limit);
+
+  const sessions = (
+    await Promise.all(limitedSessionIds.map((id) => state.store.getSession(id)))
+  ).filter((s): s is StoredSession => s !== undefined);
 
   // N+1: one getSetsForSession call per session. Acceptable for v1.
-  // Each session's sets are then narrowed to the requested exercise by the
-  // SETS' own ids: the session matched on its exercise, but `summariseSession`
-  // sums whatever it is handed, so an unscoped list would let a heavier
-  // movement recorded in the same session win `topWeightLbs`.
+  // Each session's FULL set list is fetched (not just this exercise's sets)
+  // because `scopeSessionSetsToExerciseId` needs the whole list to judge
+  // whether the session is single- or multi-exercise before it can decide
+  // whether an unattributed set is safe to keep.
   const setsBySessionId = new Map<string, StoredSet[]>();
-  for (const session of sessions) {
-    const sets = await state.store.getSetsForSession(session.id);
-    setsBySessionId.set(session.id, scopeSetsToExerciseId(sets, input.exerciseId));
+  for (const id of limitedSessionIds) {
+    const allSetsInSession = await state.store.getSetsForSession(id);
+    setsBySessionId.set(id, scopeSessionSetsToExerciseId(allSetsInSession, input.exerciseId));
   }
 
   return aggregateProgression(

@@ -91,7 +91,7 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../state/live-state.js';
-import { scopeSetsToExercise, scopeSetsToExerciseId } from '../store/set-scope.js';
+import { scopeSessionSetsToExercise, scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import type {
   StoredSession,
   StoredSet,
@@ -619,6 +619,22 @@ interface ExerciseHistory {
  * Sessions match on either handle (see `matchesExercise`), because most stored
  * sessions carry only a free-text name and never got an `exerciseId`.
  */
+/**
+ * True when a scanned session belongs to the requested exercise. Extends
+ * `matchesExercise`'s session-level handle comparison with a per-SET check
+ * (VMCP-01.72b, H1): the session-level `exerciseId` is last-write-wins once a
+ * session can hold several exercises via `session.set_exercise`, so a session
+ * that trained squat then bench would match ONLY "bench" on the session-level
+ * column even though it also has real squat sets. The set-level check catches
+ * that; the session-level check stays for legacy sessions whose sets never got
+ * an `exerciseId` and only the session (or a name-only set) carries the label.
+ */
+function sessionMatchesExerciseRef(s: ScannedSession, ref: HistoryExerciseRef): boolean {
+  if (matchesExercise(s, ref)) return true;
+  if (ref.exerciseId === undefined) return false;
+  return s.sets.some((set) => set.exerciseId === ref.exerciseId);
+}
+
 async function gatherExerciseHistory(
   state: DashboardServerState,
   url: URL,
@@ -627,16 +643,18 @@ async function gatherExerciseHistory(
   const requested = requestedExercise(url);
   const active = activeExerciseRef(state);
   const activeHasData =
-    active !== undefined && scanned.some((s) => s.hasData && matchesExercise(s, active));
+    active !== undefined && scanned.some((s) => s.hasData && sessionMatchesExerciseRef(s, active));
   const chosen =
     requested ?? (activeHasData ? active : undefined) ?? selectDefaultExercise(scanned);
   if (chosen === undefined) return { sessions: [] };
 
   const exercise = canonicalizeExerciseRef(chosen, scanned);
   const limit = parseLimit(url.searchParams.get('limit'));
-  const matching = scanned.filter((s) => matchesExercise(s, exercise)).slice(0, limit);
+  const matching = scanned.filter((s) => sessionMatchesExerciseRef(s, exercise)).slice(0, limit);
   // The session matched on its exercise; its SETS are then narrowed by their
-  // own ids. Everything downstream — the e1RM series, the Kalman corridor, PR
+  // own ids, session-aware (VMCP-01.72b H2) so an unattributed set in a
+  // MULTI-exercise session isn't credited to every exercise queried against
+  // it. Everything downstream — the e1RM series, the Kalman corridor, PR
   // detection — treats these as one exercise's sets, so an unnarrowed list is
   // how a squat set registers as a bench PR. Matched by handle, not by id
   // equality, because the older sessions are labelled only by name.
@@ -644,7 +662,9 @@ async function gatherExerciseHistory(
     (s) =>
       ({
         startedAt: s.startedAt,
-        sets: scopeSetsToExercise(s.sets, (id) => matchesExercise({ exerciseId: id }, exercise)),
+        sets: scopeSessionSetsToExercise(s.sets, (id) =>
+          matchesExercise({ exerciseId: id }, exercise),
+        ),
       }) satisfies HistorySession,
   );
   return { exercise, sessions };
@@ -1019,19 +1039,37 @@ async function fetchMuscleVolume(
     if (Number.isFinite(Date.parse(session.startedAt)) && Date.parse(session.startedAt) < cutoff) {
       continue;
     }
-    if (session.exerciseId === undefined) continue;
-    const meta = catalog.getById(session.exerciseId);
-    if (meta === undefined) continue;
-    // This session's sets OF THIS EXERCISE, by each set's own id. The whole
-    // session's count would credit one exercise's muscles with sets that
-    // trained something else, and that number is what MEV/MAV/MRV is read off.
     const sessionSets = await state.store.getSetsForSession(session.id);
-    const setCount = scopeSetsToExerciseId(sessionSets, session.exerciseId).length;
-    entries.push({
-      setCount,
-      primaryMuscles: meta.muscleGroups,
-      secondaryMuscles: meta.secondaryMuscleGroups ?? [],
-    });
+    // VMCP-01.72b (H1): attribute per distinct exercise actually present in
+    // this session's OWN sets, not the session-row's single (last-write-wins)
+    // exerciseId. A multi-exercise session now contributes volume to EVERY
+    // exercise it trained, not just the last one.
+    const attributedIds = new Set(
+      sessionSets.map((set) => set.exerciseId).filter((id): id is string => id !== undefined),
+    );
+    // Fallback for a session whose sets carry NO exerciseId of their own
+    // (pre-cutover legacy rows, or a bridge close that never stamped one):
+    // such a session is, by definition, single-exercise, so the session-row
+    // pointer is still a safe attribution — matches the leniency
+    // `scopeSessionSetsToExercise` applies for the same reason.
+    const exerciseIds =
+      attributedIds.size > 0
+        ? attributedIds
+        : session.exerciseId !== undefined
+          ? new Set([session.exerciseId])
+          : new Set<string>();
+    for (const exerciseId of exerciseIds) {
+      const meta = catalog.getById(exerciseId);
+      if (meta === undefined) continue;
+      // Session-aware (H2): an unattributed set in a MULTI-exercise session
+      // isn't credited to every exercise trained in it.
+      const setCount = scopeSessionSetsToExerciseId(sessionSets, exerciseId).length;
+      entries.push({
+        setCount,
+        primaryMuscles: meta.muscleGroups,
+        secondaryMuscles: meta.secondaryMuscleGroups ?? [],
+      });
+    }
   }
   return buildMuscleVolume(entries);
 }

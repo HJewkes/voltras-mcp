@@ -1434,8 +1434,19 @@ export class SqliteSessionStore implements SessionStore {
       params.push(filter.to);
     }
     if (filter.exerciseId !== undefined) {
-      where.push('exercise_id = ?');
-      params.push(filter.exerciseId);
+      // VMCP-01.72b (H1): the session row's own `exercise_id` column is
+      // last-write-wins once `session.set_exercise` lets one session hold
+      // several exercises — a session that trained squat then bench persists
+      // with exercise_id = 'bench-press', so a query for 'back-squat' would
+      // silently drop it even though it has real squat sets. Also match via
+      // the SETS the session actually recorded, which are set-level and
+      // authoritative post-cutover; the session-column check stays so
+      // pre-cutover / name-only sessions with no per-set exerciseId keep
+      // matching exactly as before.
+      where.push(
+        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+      );
+      params.push(filter.exerciseId, filter.exerciseId);
     }
     const direction = filter.sort === 'startedAt:asc' ? 'ASC' : 'DESC';
     const limit = filter.limit ?? 50;

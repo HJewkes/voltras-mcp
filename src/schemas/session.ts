@@ -71,3 +71,20 @@ export const SessionGetInput = z.object({ id: IdSchema });
 export const SessionEndInput = z.object({
   slot: SlotIdSchema,
 });
+
+/**
+ * Input for `session.set_exercise` (VMCP-01.72b) — repoints the active
+ * session's current exercise so one workout can hold several exercises
+ * without ending and restarting the session. Same `exerciseId`/`exerciseName`
+ * XOR shape as `SessionStartInput`, and the same R21 handling ("id wins over
+ * name" if both present).
+ */
+export const SessionSetExerciseInput = z
+  .object({
+    exerciseId: z.string().optional(),
+    exerciseName: z.string().optional(),
+    slot: SlotIdSchema,
+  })
+  .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
+    message: 'Either exerciseId or exerciseName is required.',
+  });

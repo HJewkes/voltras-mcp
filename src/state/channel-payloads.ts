@@ -371,6 +371,42 @@ export function buildSetStartedPayload(
   return { meta, content };
 }
 
+/**
+ * Build the meta + content for a `session_exercise_changed` channel event
+ * (VMCP-01.72b). Fires from `session.set_exercise` so a channel-subscribed
+ * host learns of a mid-session exercise switch without polling `session.get`
+ * — mirrors `set_started`'s push-not-poll convention. `previousExerciseId`/
+ * `previousExerciseName` are the session's pointer values immediately before
+ * this call (both `null` for the session's first exercise, since
+ * `session.start` doesn't emit this event).
+ */
+export function buildSessionExerciseChangedPayload(
+  sessionId: string,
+  next: { exerciseId?: string; exerciseName?: string },
+  previous: { exerciseId?: string; exerciseName?: string },
+): { meta: Record<string, string>; content: string } {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'session_exercise_changed',
+    session_id: sessionId,
+  };
+  if (next.exerciseId !== undefined) meta.exercise_id = next.exerciseId;
+  if (next.exerciseName !== undefined) meta.exercise_name = next.exerciseName;
+  const summary =
+    next.exerciseId !== undefined
+      ? `Session exercise changed to ${next.exerciseId}`
+      : `Session exercise changed to "${next.exerciseName ?? ''}"`;
+  const content = JSON.stringify({
+    summary,
+    session_id: sessionId,
+    exercise_id: next.exerciseId ?? null,
+    exercise_name: next.exerciseName ?? null,
+    previous_exercise_id: previous.exerciseId ?? null,
+    previous_exercise_name: previous.exerciseName ?? null,
+  });
+  return { meta, content };
+}
+
 function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string {
   const parts: string[] = ['Set started:'];
   if (device.weightLbs !== undefined && device.weightLbs > 0) {

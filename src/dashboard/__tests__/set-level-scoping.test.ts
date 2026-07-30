@@ -142,12 +142,16 @@ async function getJson(path: string): Promise<Record<string, unknown>> {
 }
 
 describe('GET /api/muscle-volume — set-level scoping', () => {
-  it('credits the exercise with its own sets, not the whole session', async () => {
+  it('credits EACH exercise with its own sets, not just the session-row exercise (VMCP-01.72b H1)', async () => {
     const body = (await getJson('/api/muscle-volume')) as { muscles: Record<string, number> };
-    // Two bench sets, primary chest at full weight and triceps as secondary.
-    // Unscoped, the session's 3 sets are all credited to the bench's muscles.
+    // Two bench sets (chest primary, triceps secondary) + one squat set
+    // (quads primary, glutes secondary), all in one session whose ROW says
+    // 'bench-press' (last-write-wins). Attribution reads each SET's own
+    // exerciseId, so both exercises' muscles are credited — dropping the
+    // squat set here would understate quads/glutes volume for any session
+    // that trained more than one exercise.
     expect(body.muscles.chest).toBe(2);
-    expect(body.muscles.quads).toBeUndefined();
+    expect(body.muscles.quads).toBe(1);
   });
 });
 
