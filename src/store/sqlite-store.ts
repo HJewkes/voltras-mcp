@@ -38,6 +38,7 @@ import {
   type StoredSession,
   type StoredSet,
   type StoredTrainingBlock,
+  type StoredTrainingProfile,
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
@@ -1183,6 +1184,23 @@ interface TrainingProgramRow {
   archived_at: string | null;
 }
 
+interface TrainingProfileRow {
+  user_id: string;
+  declared_tier: string | null;
+  declared_at: string | null;
+  years_training: number | null;
+  history_consistent: number | null;
+  ever_plateaued: number | null;
+  reported_sets_per_muscle: number | null;
+  goal: string | null;
+  goal_set_at: string | null;
+  days_available: number | null;
+  days_reliable: number | null;
+  onboarded_at: string | null;
+  provenance_json: string | null;
+  updated_at: string;
+}
+
 interface TrainingBlockRow {
   id: string;
   program_id: string;
@@ -2007,6 +2025,60 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToProgramAssignment));
   }
 
+  async putTrainingProfile(p: StoredTrainingProfile): Promise<void> {
+    // `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE` — `training_profile`
+    // is keyed on `user_id`, and while it currently has no children, the
+    // project convention (see `putSet`/`putSession`) is upsert-in-place for
+    // every table so a future FK child never inherits a delete-then-insert
+    // hazard by accident.
+    this.db
+      .prepare(
+        `INSERT INTO training_profile
+           (user_id, declared_tier, declared_at, years_training, history_consistent,
+            ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
+            days_available, days_reliable, onboarded_at, provenance_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           declared_tier = excluded.declared_tier,
+           declared_at = excluded.declared_at,
+           years_training = excluded.years_training,
+           history_consistent = excluded.history_consistent,
+           ever_plateaued = excluded.ever_plateaued,
+           reported_sets_per_muscle = excluded.reported_sets_per_muscle,
+           goal = excluded.goal,
+           goal_set_at = excluded.goal_set_at,
+           days_available = excluded.days_available,
+           days_reliable = excluded.days_reliable,
+           onboarded_at = excluded.onboarded_at,
+           provenance_json = excluded.provenance_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        p.userId,
+        p.declaredTier ?? null,
+        p.declaredAt ?? null,
+        p.yearsTraining ?? null,
+        p.historyConsistent === undefined ? null : p.historyConsistent ? 1 : 0,
+        p.everPlateaued === undefined ? null : p.everPlateaued ? 1 : 0,
+        p.reportedSetsPerMuscle ?? null,
+        p.goal ?? null,
+        p.goalSetAt ?? null,
+        p.daysAvailable ?? null,
+        p.daysReliable ?? null,
+        p.onboardedAt ?? null,
+        p.provenance === undefined ? null : JSON.stringify(p.provenance),
+        p.updatedAt,
+      );
+    return Promise.resolve();
+  }
+
+  async getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined> {
+    const row = this.db.prepare(`SELECT * FROM training_profile WHERE user_id = ?`).get(userId) as
+      | TrainingProfileRow
+      | undefined;
+    return Promise.resolve(row ? rowToTrainingProfile(row) : undefined);
+  }
+
   async close(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.closed = true;
@@ -2372,6 +2444,30 @@ function rowToTrainingProgram(row: TrainingProgramRow): StoredTrainingProgram {
   };
   if (row.description !== null) out.description = row.description;
   if (row.archived_at !== null) out.archivedAt = row.archived_at;
+  return out;
+}
+
+function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
+  const out: StoredTrainingProfile = {
+    userId: row.user_id,
+    updatedAt: row.updated_at,
+  };
+  if (row.declared_tier !== null) out.declaredTier = row.declared_tier;
+  if (row.declared_at !== null) out.declaredAt = row.declared_at;
+  if (row.years_training !== null) out.yearsTraining = row.years_training;
+  if (row.history_consistent !== null) out.historyConsistent = row.history_consistent !== 0;
+  if (row.ever_plateaued !== null) out.everPlateaued = row.ever_plateaued !== 0;
+  if (row.reported_sets_per_muscle !== null) {
+    out.reportedSetsPerMuscle = row.reported_sets_per_muscle;
+  }
+  if (row.goal !== null) out.goal = row.goal;
+  if (row.goal_set_at !== null) out.goalSetAt = row.goal_set_at;
+  if (row.days_available !== null) out.daysAvailable = row.days_available;
+  if (row.days_reliable !== null) out.daysReliable = row.days_reliable;
+  if (row.onboarded_at !== null) out.onboardedAt = row.onboarded_at;
+  if (row.provenance_json !== null) {
+    out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
+  }
   return out;
 }
 

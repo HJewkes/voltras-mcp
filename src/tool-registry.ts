@@ -93,6 +93,10 @@ export const CORE_TOOL_NAMES = [
   'plan.complete_workout',
   'plan.attach_to_session',
   'plan.suggest_progression',
+  // Self-reported training background (VW-96 Wave 3). Storage only — no
+  // tier derivation here. See src/tools/profile-tools.ts.
+  'profile.set_training_background',
+  'profile.get_training_background',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -240,6 +244,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'plan.complete_workout': 'write',
   'plan.attach_to_session': 'write',
   'plan.suggest_progression': 'read',
+
+  'profile.set_training_background': 'write',
+  'profile.get_training_background': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',
