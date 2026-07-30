@@ -104,11 +104,20 @@ export function nextTargetWeightLbs(exercise: SessionSummaryExercise): number | 
   return base + exercise.progression.delta;
 }
 
-/** `2 of 3 sets` style completion readout against the plan, or just the count. */
+/**
+ * `2 / 3 sets` completion readout against the plan, or just the count.
+ *
+ * Overshoot does NOT render as a fraction (VW-121 / F5): an extra set produced
+ * literally `3 / 2 sets`, which parses as "three out of two" — a fraction above
+ * 1 that means nothing to a reader. Past target it becomes `3 sets · target 2`:
+ * the same two numbers, said in a way that is true.
+ */
 export function setsAgainstPlan(exercise: SessionSummaryExercise): string {
   const done = exercise.workingSetCount;
   if (exercise.progression === null) return `${done} working ${done === 1 ? 'set' : 'sets'}`;
-  return `${done} / ${exercise.progression.targetSets} sets`;
+  const target = exercise.progression.targetSets;
+  if (done > target) return `${done} sets · target ${target}`;
+  return `${done} / ${target} sets`;
 }
 
 /** One decimal place, or `'—'` for an absent measurement. Never invents a zero. */

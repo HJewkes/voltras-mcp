@@ -59,6 +59,8 @@
 //   POST /api/plan/templates/:id/exercises       — append a planned exercise.
 //   POST /api/plan/templates/:id/reorder         — rewrite exercise order.
 //   PATCH /api/plan/exercises/:id                — edit one exercise's targets.
+//   DELETE /api/plan/exercises/:id               — unplan one exercise and close
+//                          the gap it leaves in the template's order (VW-121).
 //
 //   ── Session completion (VW-120) ─────────────────────────────────────────
 //   GET /api/session-summary/:sessionId — per-exercise VBT rollup + progression
@@ -79,6 +81,7 @@ import {
   createPlannedExercise,
   createProgramWithScaffold,
   createWorkout,
+  deletePlannedExercise,
   fetchPlanTree,
   PlanApiError,
   reorderPlannedExercises,
@@ -304,7 +307,7 @@ async function handleRequest(
   startedAt: number,
 ): Promise<void> {
   const method = req.method ?? 'GET';
-  if (method !== 'GET' && method !== 'POST' && method !== 'PATCH') {
+  if (method !== 'GET' && method !== 'POST' && method !== 'PATCH' && method !== 'DELETE') {
     sendJson(res, 405, { error: 'method_not_allowed' });
     return;
   }
@@ -317,7 +320,7 @@ async function handleRequest(
 
   // Mutating plan routes are handled first: they are the only non-GET surface,
   // so everything below can assume a read.
-  if (method === 'POST' || method === 'PATCH') {
+  if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
     await handlePlanMutation(req, res, state, method, pathname);
     return;
   }
@@ -393,6 +396,7 @@ function hasPlanStore(
     typeof store.getAssignmentsForTemplate === 'function' &&
     typeof store.getAssignmentsForSession === 'function' &&
     typeof store.getPlannedExercisesForTemplate === 'function' &&
+    typeof store.deletePlannedExercise === 'function' &&
     typeof store.getTrainingBlocksForProgram === 'function' &&
     typeof store.getTrainingWeeksForBlock === 'function' &&
     typeof store.getWorkoutTemplatesForWeek === 'function' &&
@@ -511,7 +515,7 @@ async function handlePlanMutation(
   req: IncomingMessage,
   res: ServerResponse,
   state: DashboardServerState,
-  method: 'POST' | 'PATCH',
+  method: PlanMutationMethod,
   pathname: string,
 ): Promise<void> {
   const route = matchPlanRoute(method, pathname);
@@ -548,6 +552,9 @@ async function handlePlanMutation(
       case 'updateExercise':
         sendJson(res, 200, await updatePlannedExercise(store, route.id, body));
         return;
+      case 'deleteExercise':
+        sendJson(res, 200, await deletePlannedExercise(store, route.id));
+        return;
     }
   } catch (err) {
     if (err instanceof PlanApiError) {
@@ -561,18 +568,33 @@ async function handlePlanMutation(
   }
 }
 
+/** The HTTP verbs the plan-write surface answers. */
+export type PlanMutationMethod = 'POST' | 'PATCH' | 'DELETE';
+
 type PlanRoute =
   | { kind: 'createProgram' }
   | {
-      kind: 'createWorkout' | 'createExercise' | 'reorderExercises' | 'updateExercise';
+      kind:
+        | 'createWorkout'
+        | 'createExercise'
+        | 'reorderExercises'
+        | 'updateExercise'
+        | 'deleteExercise';
       id: string;
     };
 
-/** Path → route match for the five plan-write endpoints. Null means no match. */
-function matchPlanRoute(method: 'POST' | 'PATCH', pathname: string): PlanRoute | null {
+/** Path → route match for the six plan-write endpoints. Null means no match. */
+function matchPlanRoute(method: PlanMutationMethod, pathname: string): PlanRoute | null {
+  const exerciseId = /^\/api\/plan\/exercises\/([^/]+)$/.exec(pathname);
   if (method === 'PATCH') {
-    const edit = /^\/api\/plan\/exercises\/([^/]+)$/.exec(pathname);
-    return edit === null ? null : { kind: 'updateExercise', id: decodeURIComponent(edit[1]) };
+    return exerciseId === null
+      ? null
+      : { kind: 'updateExercise', id: decodeURIComponent(exerciseId[1]) };
+  }
+  if (method === 'DELETE') {
+    return exerciseId === null
+      ? null
+      : { kind: 'deleteExercise', id: decodeURIComponent(exerciseId[1]) };
   }
   if (pathname === '/api/plan/programs') return { kind: 'createProgram' };
   const workout = /^\/api\/plan\/programs\/([^/]+)\/workouts$/.exec(pathname);

@@ -89,6 +89,7 @@ class FakePlanStore {
     this.plannedExercises.get(id);
   getPlannedExercisesForTemplate = async (templateId: string): Promise<StoredPlannedExercise[]> =>
     ordered([...this.plannedExercises.values()].filter((e) => e.workoutTemplateId === templateId));
+  deletePlannedExercise = async (id: string): Promise<boolean> => this.plannedExercises.delete(id);
 
   putProgramAssignment = async (a: StoredProgramAssignment): Promise<void> => {
     this.assignments.set(a.id, a);
@@ -351,6 +352,100 @@ describe('plan write routes', () => {
     expect(row?.targetSets).toBe(3);
   });
 
+  // ── VW-121 regression: the delete route and the target gate ──────────────
+
+  it('deletes a planned exercise and closes the gap in the template order', async () => {
+    // The review double-clicked "Add" into four duplicate rows and found no way
+    // to remove any of them: `SessionStore` had no planning delete at all.
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+    const templateId = firstTemplate(
+      (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody,
+    ).id;
+    const ids: string[] = [];
+    for (const exerciseId of ['cable-row', 'cable-chest-press', 'cable-row']) {
+      const created = (await call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+        exerciseId,
+      })) as { body: { plannedExercise: StoredPlannedExercise } };
+      ids.push(created.body.plannedExercise.id);
+    }
+
+    const res = await call(port, 'DELETE', `/api/plan/exercises/${ids[1]}`);
+    expect(res.status).toBe(200);
+    expect(store.plannedExercises.has(ids[1])).toBe(false);
+
+    // Survivors renumber 0..n-1, or the builder's "1. 2. 3." numbering skips.
+    const survivors = await store.getPlannedExercisesForTemplate(templateId);
+    expect(survivors.map((e) => e.id)).toEqual([ids[0], ids[2]]);
+    expect(survivors.map((e) => e.orderIndex)).toEqual([0, 1]);
+  });
+
+  it('404s a delete of a planned exercise that does not exist', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    expect((await call(port, 'DELETE', '/api/plan/exercises/ghost')).status).toBe(404);
+  });
+
+  it('rejects an out-of-range target on create and on edit, and stores nothing', async () => {
+    // `-999 lb` reached a real prescription and survived a reload, because both
+    // sides only checked `Number.isFinite`. The server is the half that matters:
+    // a client can be bypassed with one curl.
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+    const templateId = firstTemplate(
+      (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody,
+    ).id;
+
+    const badCreate = await call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+      exerciseId: 'cable-row',
+      targetWeightLbs: -999,
+    });
+    expect(badCreate.status).toBe(400);
+    expect(store.plannedExercises.size).toBe(0);
+
+    const created = (await call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+      exerciseId: 'cable-row',
+      targetSets: 3,
+      targetWeightLbs: 135,
+    })) as { body: { plannedExercise: StoredPlannedExercise } };
+    const id = created.body.plannedExercise.id;
+
+    for (const patch of [{ targetWeightLbs: -999 }, { targetSets: -1 }, { targetSets: 0 }]) {
+      expect((await call(port, 'PATCH', `/api/plan/exercises/${id}`, patch)).status).toBe(400);
+    }
+    // The row is untouched by every rejected write.
+    expect(store.plannedExercises.get(id)?.targetWeightLbs).toBe(135);
+    expect(store.plannedExercises.get(id)?.targetSets).toBe(3);
+  });
+
+  it('rejects a rep band inverted against the values already stored', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+    const templateId = firstTemplate(
+      (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody,
+    ).id;
+    const created = (await call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+      exerciseId: 'cable-row',
+      targetRepsLow: 8,
+      targetRepsHigh: 12,
+    })) as { body: { plannedExercise: StoredPlannedExercise } };
+    const id = created.body.plannedExercise.id;
+
+    // Only `hi` moves; `lo = 8` comes from the stored row, so a patch-only check
+    // sees one in-range number and lets an impossible band through.
+    expect(
+      (await call(port, 'PATCH', `/api/plan/exercises/${id}`, { targetRepsHigh: 4 })).status,
+    ).toBe(400);
+    expect(store.plannedExercises.get(id)?.targetRepsHigh).toBe(12);
+    // A band that stays coherent still saves.
+    expect(
+      (await call(port, 'PATCH', `/api/plan/exercises/${id}`, { targetRepsHigh: 15 })).status,
+    ).toBe(200);
+  });
+
   it('reorders a template’s exercises', async () => {
     const store = new FakePlanStore();
     const port = await start(makeState(store));
@@ -412,7 +507,10 @@ describe('plan write routes', () => {
 
   it('still rejects unsupported methods', async () => {
     const port = await start(makeState(new FakePlanStore()));
-    expect((await call(port, 'DELETE', '/api/plan/programs')).status).toBe(405);
+    // PUT, not DELETE: VW-121 opened DELETE for `/api/plan/exercises/:id`, so
+    // DELETE now falls through to a 404 on a path with no delete route.
+    expect((await call(port, 'PUT', '/api/plan/programs')).status).toBe(405);
+    expect((await call(port, 'DELETE', '/api/plan/programs')).status).toBe(404);
   });
 
   it('404s an unknown write path', async () => {

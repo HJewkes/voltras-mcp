@@ -2058,6 +2058,18 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToPlannedExercise));
   }
 
+  /**
+   * The one planning DELETE (VW-121). A plain `DELETE` and not a soft-delete
+   * flag: a planned row carries no history of its own — what was actually
+   * trained lives in `sets` / `program_assignments`, and the assignment's
+   * `planned_exercise_id` FK is `ON DELETE SET NULL`, so a past session keeps
+   * its `workout_template_id` link even after the lift leaves the template.
+   */
+  async deletePlannedExercise(id: string): Promise<boolean> {
+    const result = this.db.prepare(`DELETE FROM planned_exercises WHERE id = ?`).run(id);
+    return Promise.resolve(result.changes > 0);
+  }
+
   async putProgramAssignment(a: StoredProgramAssignment): Promise<void> {
     this.db
       .prepare(

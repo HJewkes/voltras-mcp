@@ -198,6 +198,12 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
             <Caption color="tertiary">RIR {formatNumber(exercise.fatigue.rir)}</Caption>
           )}
         </div>
+        {/* Say WHICH set the headline read. The verdict and the gauge below now
+            share one basis (VW-121 / F4) — naming it is what lets a reader check
+            that, instead of taking two numbers on faith. */}
+        {exercise.verdictSetIndex !== null && (
+          <Caption color="tertiary">Verdict reads set #{exercise.verdictSetIndex}</Caption>
+        )}
         <div style={{ marginTop: 16 }}>
           <MetricTiles metrics={tiles} gap={2} />
         </div>
@@ -210,7 +216,10 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
           <Caption color="tertiary">
             {exercise.maxVelocityLossPct === null
               ? 'No velocity telemetry for this exercise.'
-              : `${formatNumber(exercise.maxVelocityLossPct)}% peak-to-last within a set.`}
+              : `${formatNumber(exercise.maxVelocityLossPct)}% peak-to-last within a set` +
+                (exercise.verdictSetIndex === null
+                  ? '.'
+                  : ` — set #${exercise.verdictSetIndex}, the set the verdict above reads.`)}
           </Caption>
         </div>
         <Divider />
