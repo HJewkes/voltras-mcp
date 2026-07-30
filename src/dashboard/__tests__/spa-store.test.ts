@@ -57,17 +57,9 @@ beforeEach(() => {
     snapshot: null,
     accumulator: initialAccumulatorState(),
     status: 'ok',
-    lastUpdate: '—',
     nowMs: 0,
     lastSuccessMs: 0,
-    trend: [],
-    nextWorkout: null,
     prescription: null,
-    program: null,
-    muscleVolume: {},
-    prRecords: [],
-    capacityBand: [],
-    meso: null,
     live: null,
   });
 });
@@ -81,7 +73,6 @@ describe('dashboardStore — snapshot slice', () => {
     expect(s.status).toBe('ok');
     expect(s.nowMs).toBe(1000);
     expect(s.lastSuccessMs).toBe(1000);
-    expect(s.lastUpdate).not.toBe('—');
   });
 
   it('applySnapshot folds the completed-set accumulator (reduceSnapshot as an action)', () => {
@@ -139,13 +130,9 @@ describe('dashboardStore — staleness tick', () => {
 });
 
 describe('dashboardStore — historical slice', () => {
-  it('applyHistorical merges a partial batch, leaving unlisted fields intact', () => {
-    dashboardStore.getState().applyHistorical({ muscleVolume: { chest: 12 } });
-    expect(dashboardStore.getState().muscleVolume).toEqual({ chest: 12 });
-    expect(dashboardStore.getState().trend).toEqual([]);
-
-    dashboardStore.getState().applyHistorical({ prRecords: [] });
-    expect(dashboardStore.getState().muscleVolume).toEqual({ chest: 12 }); // untouched
+  it('applyHistorical merges the prescription patch', () => {
+    dashboardStore.getState().applyHistorical({ prescription: { sets: 3 } });
+    expect(dashboardStore.getState().prescription).toEqual({ sets: 3 });
   });
 });
 
@@ -207,7 +194,7 @@ describe('dashboardStore — rev-guarded snapshot application (VMCP-03.04)', () 
 describe('dashboardStore — live slice isolation', () => {
   it('setLive updates only the live slice; shell-read references stay stable', () => {
     dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);
-    dashboardStore.getState().applyHistorical({ muscleVolume: { chest: 12 } });
+    dashboardStore.getState().applyHistorical({ prescription: { sets: 3 } });
     const before = dashboardStore.getState();
 
     dashboardStore.getState().setLive(liveModel(0.5));
@@ -218,6 +205,6 @@ describe('dashboardStore — live slice isolation', () => {
     // or the whole dashboard would re-render at 20 Hz.
     expect(after.snapshot).toBe(before.snapshot);
     expect(after.accumulator).toBe(before.accumulator);
-    expect(after.muscleVolume).toBe(before.muscleVolume);
+    expect(after.prescription).toBe(before.prescription);
   });
 });

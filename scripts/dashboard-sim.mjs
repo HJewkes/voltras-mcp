@@ -20,8 +20,7 @@
 //   PORT=7801 node scripts/dashboard-sim.mjs
 //   LOOP=1 node scripts/dashboard-sim.mjs       # repeat the workout forever
 //   DUAL=1 node scripts/dashboard-sim.mjs       # two slots (left/right) for the
-//                                               # diverging bilateral stage; open
-//                                               # /app?live=1
+//                                               # diverging bilateral stage
 //   TRANSITIONS=1 node scripts/dashboard-sim.mjs # binds a second Voltra mid-set, then
 //                                               # drops it — exercises the state-driven
 //                                               # single↔dual swap (VMCP-04.07)
@@ -376,8 +375,7 @@ async function runWorkout() {
 
 const handle = await startDashboardServer({ port: PORT, state });
 console.log(`[sim] dashboard sidecar listening on http://127.0.0.1:${handle.port}`);
-console.log(`[sim] open http://127.0.0.1:${handle.port}/app`);
-console.log(`[sim] live page: http://127.0.0.1:${handle.port}/app?live=1 (stage picks itself)`);
+console.log(`[sim] open http://127.0.0.1:${handle.port}/app (stage picks itself)`);
 
 const shutdown = async () => {
   await handle.close();

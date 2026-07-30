@@ -25,7 +25,6 @@ import {
 import { hasBoundSide } from '../spa/live-page/diverging-stage-model.js';
 import {
   boundLimbSides,
-  isLivePageEnabled,
   isSlotBound,
   readVariantOverride,
   selectLiveVariant,
@@ -227,16 +226,5 @@ describe('the URL override', () => {
     // A typo must fall through to state, not silently pin the single stage.
     expect(readVariantOverride('?live=1&variant=dual')).toBeNull();
     expect(readVariantOverride('?live=1&variant=')).toBeNull();
-  });
-});
-
-describe('isLivePageEnabled', () => {
-  it('mounts the live page only for the explicit flag', () => {
-    expect(isLivePageEnabled('?live=1')).toBe(true);
-    expect(isLivePageEnabled('?live=1&variant=live-dual')).toBe(true);
-    expect(isLivePageEnabled('')).toBe(false);
-    expect(isLivePageEnabled('?live=0')).toBe(false);
-    // The variant pin alone must not mount the page — the flag is the gate.
-    expect(isLivePageEnabled('?variant=live-dual')).toBe(false);
   });
 });

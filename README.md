@@ -165,7 +165,7 @@ node scripts/dashboard-mock-drive.mjs   # port 7724 — boots the real MCP serve
                                         # mode and drives it through real tool calls
 ```
 
-Open `http://127.0.0.1:<port>/app?live=1` — and open it _before_ or _during_ the run: the
+Open `http://127.0.0.1:<port>/app` — and open it _before_ or _during_ the run: the
 set-log accumulates client-side from live transitions, so a browser that connects after the
 last set has nothing to show. `dashboard-sim` takes `PORT=` and `LOOP=1` (repeat forever);
 `dashboard-mock-drive` takes `VMCP_DASHBOARD_PORT=`. Read each script's header comment for
@@ -178,16 +178,13 @@ the rest.
 The server starts a **read-only, loopback-only HTTP sidecar** alongside the MCP transport.
 It binds `127.0.0.1` only and exposes no mutating routes.
 
-| URL                                  | What it is                                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------------------- |
-| `http://127.0.0.1:7723/app?live=1`   | **The one you want.** The live workout view — current set, reps, tempo, rest timer. |
-| `http://127.0.0.1:7723/app`          | Same React SPA, but the older multi-panel grid view.                                |
-| `http://127.0.0.1:7723/`             | A legacy zero-build vanilla-HTML dashboard. Predates the SPA; kept working.         |
-| `http://127.0.0.1:7723/api/snapshot` | The JSON both front ends poll. Useful for debugging.                                |
+| URL                                  | What it is                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `http://127.0.0.1:7723/app`          | **The dashboard.** The live workout view — current set, reps, tempo, rest timer. The sole surface; no flag needed. |
+| `http://127.0.0.1:7723/api/snapshot` | The JSON it polls. Useful for debugging.                                                                           |
 
-**The `?live=1` query parameter is load-bearing.** Without it `/app` silently renders the
-older panel-grid view — no error, no hint that a different view exists. Add
-`&variant=live-dual` for the two-device (bilateral) layout.
+Add `?variant=live-dual` (or `?variant=live`) to pin the two-device (bilateral) or
+single-device layout for testing; without it, the page picks the stage from live state.
 
 The port defaults to **7723** and is set by `VMCP_DASHBOARD_PORT`; `off` (or `0`) disables
 the sidecar entirely. If `dist/spa` was never built, `/app` serves a small "SPA not built"
@@ -312,8 +309,6 @@ Settings → Privacy & Security → Bluetooth. Then confirm the native BLE modul
 built — it's an optional dependency, so a failed build is silent at install time.
 
 **Tool calls return `STARTING`.** Bootstrap hasn't finished. Retry after a second.
-
-**`/app` shows the panel grid, not the live view.** You're missing `?live=1`.
 
 **`/app` shows "SPA not built".** Run `npm run build:dashboard`.
 

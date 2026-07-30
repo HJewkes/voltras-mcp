@@ -1,34 +1,15 @@
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import {
-  reactNativeSvgWebResolver,
-  reactNativeBodyHighlighterEsm,
-  svgWebAliases,
-  webResolveExtensions,
-} from './vite-rn-svg-plugins';
+import { webResolveExtensions } from './vite-rn-svg-plugins';
 
 /**
- * Vite config for the dashboard SPA (VMCP-01.44 / Phase 3 VMCP-01.47).
+ * Vite config for the dashboard SPA (VMCP-01.44).
  *
  * `@titan-design/react-ui` is a React Native component library that runs on web
  * via react-native-web. Consuming its PUBLISHED `dist` (not its source) keeps the
- * resolution surface small, but its barrel reaches bare specifiers a browser
- * bundler can't resolve as-is:
- *
- *   1. `react-native`                  -> aliased to `react-native-web`
- *   2. `react-native-svg`              -> aliased to its ESM ("module") build,
- *      with its `.web.js` platform siblings selected by
- *      `reactNativeSvgWebResolver()` (Node resolvers ignore `.web.js` and would
- *      load the native Flow sources).
- *   3. `react-native-body-highlighter` -> esbuild-bundled to self-contained ESM
- *      by `reactNativeBodyHighlighterEsm()` (untranspiled-JSX CJS dist with no
- *      static ESM default; rn-svg web build inlined, react/react-native external).
- *
- * Phase 3 un-stubs BodyMap: (2) + (3) replace the former no-op body-highlighter
- * stub so the real muscle SVG renders. See `vite-rn-svg-plugins.ts` (an npm port
- * of titan-design's proven build-storybook resolution). The SPA is only produced
- * via `vite build`, so the production (Rollup) plugins suffice.
+ * resolution surface small, but its barrel reaches one bare specifier a browser
+ * bundler can't resolve as-is: `react-native` -> aliased to `react-native-web`.
  *
  * The published `dist` bakes its own `$$css` JSX runtime, so plain
  * `@vitejs/plugin-react` is sufficient (no nativewind jsxImportSource) — except
@@ -81,17 +62,12 @@ export default defineConfig({
   // shim it to `globalThis` (the standard react-native-web-on-Vite fix). esbuild
   // only rewrites bare `global` identifier reads, not `.global` property access.
   define: { global: 'globalThis' },
-  plugins: [
-    stripCssInteropDoctorJsx(),
-    reactNativeSvgWebResolver(),
-    reactNativeBodyHighlighterEsm(),
-    react(),
-  ],
+  plugins: [stripCssInteropDoctorJsx(), react()],
   css: {
     postcss: __dirname,
   },
   resolve: {
-    alias: [...svgWebAliases, { find: /^react-native$/, replacement: 'react-native-web' }],
+    alias: [{ find: /^react-native$/, replacement: 'react-native-web' }],
     extensions: webResolveExtensions,
   },
   build: {

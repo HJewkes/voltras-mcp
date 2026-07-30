@@ -7,7 +7,7 @@
  *   - **snapshot** — the authoritative 500 ms `/api/snapshot` poll + the client-side
  *     completed-set fold (`reduceSnapshot`, now the `applySnapshot` action) + the 1 s
  *     staleness tick.
- *   - **historical** — the slow (~15 s) 8-endpoint fan-out (trend / plan / program / …).
+ *   - **historical** — the slow (~15 s) `/api/session-plan` prescription refetch.
  *   - **live** — the ~20 Hz `/api/stream` SSE overlay (driven by
  *     `createLiveStreamController`, written via `setLive`), demultiplexed per Voltra
  *     slot into `liveBySlot` (VW-48 P2) with `live` kept as the derived single-slot view.
@@ -33,11 +33,6 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
-import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
-import type { ExerciseTrendPoint, PrRecordView } from './panels/StrengthTrendPanel';
-import type { ProgramStatusView } from './panels/MesoStatusPanel';
-import type { CapacityBandPoint } from './panels/capacity-band-view';
-import type { MesoOverviewView } from './panels/meso-overview-view';
 
 export type Status = 'ok' | 'stale' | 'error';
 
@@ -52,7 +47,6 @@ interface SnapshotSlice {
   snapshot: Snapshot | null;
   accumulator: AccumulatorState;
   status: Status;
-  lastUpdate: string;
   nowMs: number;
   /** Wall-clock of the last successful poll; drives the staleness watchdog. */
   lastSuccessMs: number;
@@ -61,14 +55,7 @@ interface SnapshotSlice {
 }
 
 interface HistoricalSlice {
-  trend: ExerciseTrendPoint[];
-  nextWorkout: NextWorkoutView | null;
   prescription: PrescriptionView | null;
-  program: ProgramStatusView | null;
-  muscleVolume: Record<string, number>;
-  prRecords: PrRecordView[];
-  capacityBand: CapacityBandPoint[];
-  meso: MesoOverviewView | null;
 }
 
 /** A best-effort batch of slow-cadence historical results (any subset). */
@@ -118,30 +105,17 @@ interface DashboardActions {
 
 export type DashboardState = SnapshotSlice & HistoricalSlice & LiveSlice & DashboardActions;
 
-function formatClock(d: Date): string {
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 const initialSnapshot: SnapshotSlice = {
   snapshot: null,
   accumulator: initialAccumulatorState(),
   status: 'ok',
-  lastUpdate: '—',
   nowMs: 0,
   lastSuccessMs: 0,
   lastRev: null,
 };
 
 const initialHistorical: HistoricalSlice = {
-  trend: [],
-  nextWorkout: null,
   prescription: null,
-  program: null,
-  muscleVolume: {},
-  prRecords: [],
-  capacityBand: [],
-  meso: null,
 };
 
 export const dashboardStore = createStore<DashboardState>((set) => ({
@@ -164,7 +138,6 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
         // count-up reads `now - restStartMs === 0` at the transition (no brief negative).
         accumulator: reduceSnapshot(state.accumulator, data, now),
         status: 'ok',
-        lastUpdate: formatClock(new Date(now)),
         nowMs: now,
         lastSuccessMs: now,
         lastRev: data.rev ?? state.lastRev,

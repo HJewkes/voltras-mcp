@@ -1,10 +1,11 @@
 /**
- * Phase 1 SPA entry (VMCP-01.45).
+ * Dashboard SPA entry.
  *
- * The full 4-panel dashboard rendered from `@titan-design/react-ui` components
- * (React Native primitives on web via react-native-web), at visual + functional
- * parity with the legacy vanilla-HTML dashboard (`dashboard-html.ts`). Polls the
- * sidecar's `/api/snapshot` every 500 ms; a separate 1 s tick drives the rest
+ * Renders `LivePagePanel` (the north-star live page) from `@titan-design/react-ui`
+ * components (React Native primitives on web via react-native-web) — the sole
+ * dashboard surface. Polls the sidecar's `/api/snapshot` every 2 s as a
+ * reconciliation backstop; the `/api/stream` SSE overlay carries the ~20 Hz live
+ * data and instant structural pushes. A separate 1 s tick drives the rest
  * count-up and the staleness watchdog, independent of the poll loop.
  *
  * The completed-set accumulation (set-log + session-progress totals) is folded
@@ -20,15 +21,10 @@
  * dist, and resolve to the CSS variables in `theme/global.css` — whose `:root`
  * is dark by default (no theme-mode class/provider needed). Without this
  * pipeline the class strings have no backing CSS and text renders colorless.
- *
- * Color source of truth: titan's semantic `--color-*` tokens are the ONLY color
- * source in this dashboard — see `colors.ts` for the policy and the one place
- * that maps a semantic state (connection tone) onto a titan status token.
  */
 import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useStore } from 'zustand';
-import { useShallow } from 'zustand/react/shallow';
 // Brand faces (VW-68). titan components request `Space Grotesk` (headings), `Nunito Sans` (UI),
 // and `Inter` (body) — by family name, via `--font-family-*` and inline styles — but nothing
 // registered those @font-faces, so every one fell back to the system grotesque (a heavy,
@@ -46,52 +42,12 @@ import '@fontsource/inter/latin-500.css';
 import '@fontsource/inter/latin-600.css';
 import '@fontsource/inter/latin-700.css';
 import '@titan-design/react-ui/theme/global.css';
-import './dashboard.css';
 
-import {
-  buildBattery,
-  buildConnectionStatus,
-  buildCurrentSet,
-  buildHeroSets,
-  buildSessionProgress,
-  fmtDisconnectClock,
-  type AccumulatorState,
-  type Snapshot,
-} from './adapter';
-import { dashboardStore, type HistoricalPatch, type Status } from './store';
+import { type Snapshot } from './adapter';
+import { dashboardStore, type HistoricalPatch } from './store';
 import { createLiveStreamController } from './live-stream';
-import { CONNECTION_TONE_TOKEN } from './colors';
-import { ExerciseHeroPanel } from './panels/ExerciseHeroPanel';
 import { LivePagePanel } from './panels/LivePagePanel';
-import { isLivePageEnabled, readVariantOverride } from './live-page/stage-variant';
-import { RestTimerPanel } from './panels/RestTimerPanel';
-import { SessionProgressPanel } from './panels/SessionProgressPanel';
-// Lazy: BodyMapPanel is the ONLY module (via its own `../bodymap` import) that
-// reaches titan's `/bodymap` subpath and, through it, react-native-body-highlighter
-// (heavy SVG muscle data). Loading it via React.lazy — and deriving the heatmap
-// data inside the panel rather than eagerly here — keeps body-highlighter out of
-// the initial dashboard bundle, in its own async chunk (Track A, VMCP-01.57).
-const BodyMapPanel = React.lazy(() =>
-  import('./panels/BodyMapPanel').then((m) => ({ default: m.BodyMapPanel })),
-);
-// Lazy for the same reason as BodyMapPanel: `buildVolumeStatusChips` (via
-// `../bodymap`) pulls titan's `/bodymap` subpath + body-highlighter. Both lazy
-// panels share the resulting async chunk, keeping the main bundle clean.
-const VolumeStatusPanel = React.lazy(() =>
-  import('./panels/VolumeStatusPanel').then((m) => ({ default: m.VolumeStatusPanel })),
-);
-import {
-  StrengthTrendPanel,
-  type ExerciseTrendPoint,
-  type PrRecordView,
-} from './panels/StrengthTrendPanel';
-import { MesoStatusPanel, type ProgramStatusView } from './panels/MesoStatusPanel';
-import { MesoOverviewPanel } from './panels/MesoOverviewPanel';
-import { type MesoOverviewView } from './panels/meso-overview-view';
-import { CapacityBandPanel } from './panels/CapacityBandPanel';
-import { type CapacityBandPoint } from './panels/capacity-band-view';
-import { PanelCard } from './panels/PanelCard';
-import type { NextWorkoutView } from './panels/ExerciseHeroPanel';
+import { readVariantOverride } from './live-page/stage-variant';
 import type { PrescriptionView } from './adapter';
 
 // Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
@@ -103,52 +59,11 @@ const TICK_INTERVAL_MS = 1000;
 /** Strength trend is historical, not live — poll it slowly, and on exercise change. */
 const TREND_INTERVAL_MS = 15_000;
 
-interface Model {
-  snapshot: Snapshot | null;
-  accumulator: AccumulatorState;
-  status: Status;
-  lastUpdate: string;
-  nowMs: number;
-  trend: ExerciseTrendPoint[];
-  nextWorkout: NextWorkoutView | null;
-  prescription: PrescriptionView | null;
-  program: ProgramStatusView | null;
-  muscleVolume: Record<string, number>;
-  prRecords: PrRecordView[];
-  capacityBand: CapacityBandPoint[];
-  meso: MesoOverviewView | null;
-}
-
 /**
- * Read the render model from the store — every field EXCEPT the live slice, so the
- * ~20 Hz live SSE writes (rendered only by `LiveReadout`) never re-render the shell.
- * `useShallow` re-renders only when one of these fields actually changes.
- */
-function useDashboardModel(): Model {
-  return useStore(
-    dashboardStore,
-    useShallow((s) => ({
-      snapshot: s.snapshot,
-      accumulator: s.accumulator,
-      status: s.status,
-      lastUpdate: s.lastUpdate,
-      nowMs: s.nowMs,
-      trend: s.trend,
-      nextWorkout: s.nextWorkout,
-      prescription: s.prescription,
-      program: s.program,
-      muscleVolume: s.muscleVolume,
-      prRecords: s.prRecords,
-      capacityBand: s.capacityBand,
-      meso: s.meso,
-    })),
-  );
-}
-
-/**
- * Owns the store's I/O: the 500 ms `/api/snapshot` poll + 1 s staleness tick, the
- * ~15 s historical fan-out (refetched when the active exercise changes), and the live
- * SSE subscription. Each just calls a store action — no component state lives here.
+ * Owns the store's I/O: the 2 s `/api/snapshot` poll + 1 s staleness tick, the
+ * ~15 s prescription refetch (refetched when the active exercise changes), and the
+ * live SSE subscription. Each just calls a store action — no component state lives
+ * here. `LivePagePanel` reads the resulting store slices directly.
  */
 function useDashboardController(): void {
   // Server resolves the active exercise when no id is given; refetch history on change.
@@ -185,40 +100,12 @@ function useDashboardController(): void {
     let cancelled = false;
     const fetchSlow = async (): Promise<void> => {
       try {
-        const [trendRes, nextRes, planRes, programRes, volumeRes, prRes, bandRes, mesoRes] =
-          await Promise.all([
-            fetch('/api/exercise-trend', { cache: 'no-store' }),
-            fetch('/api/next-workout', { cache: 'no-store' }),
-            fetch('/api/session-plan', { cache: 'no-store' }),
-            fetch('/api/program-status', { cache: 'no-store' }),
-            fetch('/api/muscle-volume', { cache: 'no-store' }),
-            fetch('/api/pr-history', { cache: 'no-store' }),
-            fetch('/api/capacity-band', { cache: 'no-store' }),
-            fetch('/api/meso-overview', { cache: 'no-store' }),
-          ]);
+        const planRes = await fetch('/api/session-plan', { cache: 'no-store' });
         if (cancelled) return;
         const patch: HistoricalPatch = {};
-        if (trendRes.ok)
-          patch.trend = ((await trendRes.json()) as { points?: ExerciseTrendPoint[] }).points ?? [];
-        if (nextRes.ok)
-          patch.nextWorkout =
-            ((await nextRes.json()) as { workout?: NextWorkoutView | null }).workout ?? null;
         if (planRes.ok)
           patch.prescription =
             ((await planRes.json()) as { plan?: PrescriptionView | null }).plan ?? null;
-        if (programRes.ok)
-          patch.program =
-            ((await programRes.json()) as { program?: ProgramStatusView | null }).program ?? null;
-        if (volumeRes.ok)
-          patch.muscleVolume =
-            ((await volumeRes.json()) as { muscles?: Record<string, number> | null }).muscles ?? {};
-        if (prRes.ok)
-          patch.prRecords = ((await prRes.json()) as { records?: PrRecordView[] }).records ?? [];
-        if (bandRes.ok)
-          patch.capacityBand =
-            ((await bandRes.json()) as { points?: CapacityBandPoint[] }).points ?? [];
-        if (mesoRes.ok)
-          patch.meso = ((await mesoRes.json()) as { meso?: MesoOverviewView | null }).meso ?? null;
         dashboardStore.getState().applyHistorical(patch);
       } catch {
         // best-effort; keep the last-known values on a transient failure
@@ -247,162 +134,11 @@ function useDashboardController(): void {
 
 function App(): React.JSX.Element {
   useDashboardController();
-  // `?live=1` swaps the whole viewport for the ported north-star live page. Read once —
-  // the flag cannot change without a reload, and re-reading would not make it reactive.
-  // The optional `?variant=` pin is read the same way; WHICH stage shows is otherwise a
-  // live decision the panel makes from the snapshot on every frame (VMCP-04.07).
-  const [livePage] = React.useState(() => ({
-    enabled: isLivePageEnabled(window.location.search),
-    override: readVariantOverride(window.location.search),
-  }));
-  const {
-    snapshot,
-    accumulator,
-    status,
-    lastUpdate,
-    nowMs,
-    trend,
-    nextWorkout,
-    prescription,
-    program,
-    muscleVolume,
-    prRecords,
-    capacityBand,
-    meso,
-  } = useDashboardModel();
-
-  // After every hook above, so hook order stays stable regardless of the flag.
-  if (livePage.enabled) {
-    return <LivePagePanel variantOverride={livePage.override} />;
-  }
-
-  const empty: Snapshot = { session: null, devices: [], sets: { active: null } };
-  const snap = snapshot ?? empty;
-
-  const currentSet = buildCurrentSet(snap);
-  const heroSets = buildHeroSets(snap, accumulator.setLog);
-  const progress = buildSessionProgress(snap, accumulator.setLog);
-  const connection = buildConnectionStatus(snap, status);
-  const battery = buildBattery(snap);
-  // Null (no set has ended yet) → "—". Otherwise the client-tracked count-up,
-  // clamped so a clock skew never renders a negative M:SS.
-  const restElapsedMs =
-    accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
-
-  const toneColor = CONNECTION_TONE_TOKEN[connection.tone];
-
-  // Live-mode rail ordering (VMCP-01.60): during an active session the
-  // glanceable live panels (rest timer + muscle heatmap) float directly under
-  // the session summary so they're readable mid-set; the planning/history
-  // panels demote below. Idle/review keeps the planning-forward order.
-  const liveCluster = (
-    <>
-      <RestTimerPanel elapsedMs={restElapsedMs} />
-      <React.Suspense
-        fallback={
-          <PanelCard title="Muscle heatmap">
-            <p className="panel-empty">Loading muscle map…</p>
-          </PanelCard>
-        }
-      >
-        <BodyMapPanel
-          activeExercise={snap.activeExercise}
-          sessionSetCount={accumulator.setLog.length}
-          weeklySetsByMuscle={muscleVolume}
-        />
-      </React.Suspense>
-    </>
-  );
-  const planningCluster = (
-    <>
-      <MesoStatusPanel program={program} />
-      <MesoOverviewPanel meso={meso} />
-      <StrengthTrendPanel points={trend} prRecords={prRecords} exerciseName={progress.exercise} />
-      <CapacityBandPanel points={capacityBand} />
-      <React.Suspense
-        fallback={
-          <PanelCard title="Weekly volume status">
-            <p className="panel-empty">Loading volume status…</p>
-          </PanelCard>
-        }
-      >
-        <VolumeStatusPanel weeklySetsByMuscle={muscleVolume} />
-      </React.Suspense>
-    </>
-  );
-
-  return (
-    <div className="dashboard">
-      <header className="app-header">
-        <h1 className="app-title">Voltras MCP</h1>
-        {/* Connection is derived from the device snapshot, not just the poll.
-            aria-live announces state changes; the text label makes the state
-            legible without relying on color alone. */}
-        <span className="status-chip" role="status" aria-live="polite">
-          <span className="status-dot" style={{ color: toneColor }} aria-hidden="true">
-            ●
-          </span>
-          <span className="status-label" style={{ color: toneColor }}>
-            {connection.label}
-          </span>
-        </span>
-        {battery.present && (
-          <span
-            className={`battery-chip${battery.low ? ' battery-low' : ''}`}
-            aria-label={`battery ${battery.label}${battery.low ? ', low' : ''}`}
-          >
-            <span className="battery-icon" aria-hidden="true">
-              {battery.low ? '🪫' : '🔋'}
-            </span>
-            <span className="battery-value">{battery.label}</span>
-          </span>
-        )}
-        <span className="last-update">{lastUpdate}</span>
-      </header>
-
-      {connection.showBanner && (
-        <div className="disconnect-banner" role="alert">
-          <span className="disconnect-banner-title">Device disconnected</span>
-          <span className="disconnect-banner-detail">
-            {connection.disconnectedAt
-              ? `Lost connection at ${fmtDisconnectClock(connection.disconnectedAt)} — readings below are the last known values.`
-              : 'No live connection to the device — readings below may be stale.'}
-          </span>
-        </div>
-      )}
-
-      {/* Layout cohesion (Phase 6, VMCP-01.50): the current exercise is the HERO —
-          its live metrics, velocity strip, and sets nested in one card — with the
-          BodyMap / Session / Rest panels as a supporting rail, rather than five
-          co-equal grid tiles. Mirrors the mobile app's exercise-centric flow. */}
-      <main className="app-layout">
-        <ExerciseHeroPanel
-          exercise={progress.exercise}
-          hasSession={progress.active}
-          mode={currentSet.mode}
-          currentSet={currentSet}
-          heroSets={heroSets}
-          historyBestE1rm={trend.length > 0 ? Math.max(...trend.map((p) => p.e1rm)) : null}
-          nextWorkout={nextWorkout}
-          prescription={prescription}
-        />
-        <aside className="support-rail" aria-label="Session overview">
-          <SessionProgressPanel view={progress} />
-          {progress.active ? (
-            <>
-              {liveCluster}
-              {planningCluster}
-            </>
-          ) : (
-            <>
-              {planningCluster}
-              {liveCluster}
-            </>
-          )}
-        </aside>
-      </main>
-    </div>
-  );
+  // The `?variant=` pin lets a tester force single/dual; WHICH stage shows is
+  // otherwise a live decision `LivePagePanel` makes from the snapshot on every
+  // frame (VMCP-04.07). Read once — it cannot change without a reload.
+  const [variantOverride] = React.useState(() => readVariantOverride(window.location.search));
+  return <LivePagePanel variantOverride={variantOverride} />;
 }
 
 const container = document.getElementById('root');

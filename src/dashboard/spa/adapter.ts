@@ -140,8 +140,6 @@ export interface PrescriptionView {
 
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
 const TENTHS_PER_LB = 10;
-/** Battery percent below which the indicator flips to its warning state. */
-export const LOW_BATTERY_PCT = 20;
 
 /** Client-side view of a single device entry in the snapshot. */
 export interface SnapshotDevice {
@@ -512,33 +510,6 @@ export function buildSessionState(snapshot: Snapshot): SessionState {
   return snapshot.sets.active ? 'live' : 'rest';
 }
 
-export interface BatteryView {
-  present: boolean;
-  pct: number | null;
-  /** `"82%"` or the em-dash placeholder. */
-  label: string;
-  /** True when below {@link LOW_BATTERY_PCT} — drives the warning color. */
-  low: boolean;
-}
-
-/** Battery indicator view from `device.batteryPercent`. */
-export function buildBattery(snapshot: Snapshot): BatteryView {
-  const pct = firstDevice(snapshot)?.batteryPercent;
-  if (pct == null || !Number.isFinite(pct)) {
-    return { present: false, pct: null, label: '—', low: false };
-  }
-  return { present: true, pct, label: `${Math.round(pct)}%`, low: pct < LOW_BATTERY_PCT };
-}
-
-/** Format an ISO timestamp as a local `HH:MM:SS` clock, or `"—"`. */
-export function fmtDisconnectClock(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 // ── Completed-set accumulator (mirrors legacy updateSetLog/updateRestState) ───
 
 export interface CompletedSet {
@@ -692,105 +663,4 @@ export function reduceSnapshot(
     setLog,
     restStartMs,
   };
-}
-
-// ── Session-progress view model ──────────────────────────────────────────────
-
-export interface SessionProgressView {
-  active: boolean;
-  exercise: string;
-  sets: number;
-  totalReps: number;
-  totalVolume: number;
-}
-
-/**
- * Session totals from the completed-set log. Only closed sets count — in-flight
- * reps stay excluded so the numbers are stable until a set closes (legacy
- * parity). Volume is a plain load×reps sum; WA `computeVolume` needs full VBT
- * `Set` models the snapshot accumulator doesn't carry.
- */
-export function buildSessionProgress(
-  snapshot: Snapshot,
-  setLog: CompletedSet[],
-): SessionProgressView {
-  const session = snapshot.session;
-  if (!session) {
-    return { active: false, exercise: '—', sets: 0, totalReps: 0, totalVolume: 0 };
-  }
-  let totalReps = 0;
-  let totalVolume = 0;
-  for (const entry of setLog) {
-    totalReps += entry.repCount;
-    totalVolume += (entry.weightLbs ?? 0) * entry.repCount;
-  }
-  return {
-    active: true,
-    exercise: session.exerciseName || '—',
-    sets: setLog.length,
-    totalReps,
-    totalVolume,
-  };
-}
-
-/** Set-log table row (formatted) for the SetLogPanel. */
-export interface SetLogRow {
-  index: number;
-  weight: string;
-  mode: string;
-  reps: number;
-  peakVelocity: string;
-}
-
-export function buildSetLogRows(setLog: CompletedSet[]): SetLogRow[] {
-  return setLog.map((entry, i) => ({
-    index: i + 1,
-    weight: fmtWeight(entry.weightLbs),
-    mode: fmtMode(entry.mode),
-    reps: entry.repCount,
-    peakVelocity: fmtVelocity(entry.bestPeakVelocityMms),
-  }));
-}
-
-// ── Hero set timeline (canonical WorkoutSetView) ─────────────────────────────
-
-function priorPerformance(setLog: CompletedSet[], i: number): WorkoutSetView['previous'] {
-  const prev = i > 0 ? setLog[i - 1] : null;
-  return prev && prev.weightLbs != null ? { reps: prev.repCount, weightLbs: prev.weightLbs } : null;
-}
-
-/**
- * Completed sets + the active set as canonical {@link WorkoutSetView}s, ascending
- * (mirrors the mobile app's SetLog). Each carries the raw WA `Rep[]`; the shared
- * view-model mappers derive titan `SetRow` props (RPE, per-rep velocity, PREV)
- * from it — the same code path the mobile app will reuse once it consumes the
- * shared layer, so the two surfaces converge on one component set.
- */
-export function buildHeroSets(snapshot: Snapshot, setLog: CompletedSet[]): WorkoutSetView[] {
-  const rows: WorkoutSetView[] = setLog.map((s, i) => ({
-    setNumber: i + 1,
-    kind: 'completed' as const,
-    reps: s.reps,
-    weightLbs: s.weightLbs,
-    targetReps: null,
-    targetWeightLbs: null,
-    previous: priorPerformance(setLog, i),
-  }));
-
-  const active = snapshot.sets.active;
-  if (active) {
-    const device = firstDevice(snapshot);
-    const reps = Array.isArray(active.reps) ? active.reps : [];
-    const weightLbs = resolveWeightLbs(device, active);
-    rows.push({
-      setNumber: setLog.length + 1,
-      kind: 'active',
-      reps,
-      weightLbs,
-      targetReps: resolveRepTarget(active),
-      targetWeightLbs: weightLbs,
-      previous: priorPerformance(setLog, setLog.length),
-    });
-  }
-  return rows;
 }
