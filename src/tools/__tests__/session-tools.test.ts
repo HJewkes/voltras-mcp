@@ -681,6 +681,56 @@ describe('session.set_exercise', () => {
     expect(h.live.session?.exerciseName).toBe('Cable Row');
   });
 
+  // ── S3: close the exerciseName bypass of the H2 (unattributed leniency) guard ──
+
+  it('S3: a free-text exerciseName that exactly matches the catalog resolves to that id', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    // Catalog has 'back-squat' named 'Back Squat' — an exact (normalized)
+    // name match should silently resolve to the id, same as passing it
+    // directly, rather than leaving the pointer unattributed.
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Back Squat' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { exerciseId?: string; exerciseName?: string };
+    expect(body.exerciseId).toBe('back-squat');
+    expect(body.exerciseName).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBe('back-squat');
+    expect(h.live.session?.exerciseName).toBeUndefined();
+  });
+
+  it('S3: an unresolvable name-only switch is REJECTED once the session already holds an attributed set', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    // Simulate a real, catalog-attributed set having closed in this
+    // session — the scenario `scopeSessionSetsToExercise`'s multi-exercise
+    // detection depends on being able to see.
+    h.live.startSet({
+      setId: 'set-bench-1',
+      sessionId: h.live.session!.sessionId,
+      startedAt: new Date().toISOString(),
+      reps: [],
+      status: 'active',
+      exerciseId: 'bench-press',
+    });
+    h.live.endSet();
+
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Good Morning' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('AMBIGUOUS_EXERCISE_SWITCH');
+    // The pointer is unchanged on a rejected switch.
+    expect(h.live.session?.exerciseId).toBe('bench-press');
+  });
+
+  it('S3: an unresolvable name-only switch is ALLOWED when the session has recorded no attributed set yet', async () => {
+    // Session started with a catalog id but never actually recorded a set
+    // under it — as far as the session's OWN sets show, it is still
+    // single-exercise (vacuously), so the leniency this switch relies on
+    // has nothing to disagree with yet.
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const r = await h.invoke('session.set_exercise', { exerciseName: 'Good Morning' });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session?.exerciseId).toBeUndefined();
+    expect(h.live.session?.exerciseName).toBe('Good Morning');
+  });
+
   it('does not write to the store directly (deferred persistence)', async () => {
     await h.invoke('session.start', { exerciseId: 'bench-press' });
     h.store.putSession.mockClear();
@@ -711,7 +761,13 @@ describe('session.set_exercise', () => {
     expect(content.previous_exercise_id).toBe('bench-press');
   });
 
-  it('snapshots exercise attribution at set.start — an already-open set is unaffected by a later switch', async () => {
+  it('session.set_exercise does not mutate an already-installed ActiveSet.exerciseId in LiveState', async () => {
+    // Narrow unit check on `setSessionExercise` alone: it must not touch
+    // `live.set`. This does NOT prove the end-to-end persisted-attribution
+    // claim (that requires going through the real `set.start` snapshot
+    // write and `set.end`'s `finalizeSet` → `buildSetCapture` persist path,
+    // neither of which is wired in this harness) — see the mutation-tested
+    // end-to-end coverage in `session-set-exercise-e2e.test.ts`.
     const startResult = await h.invoke('session.start', { exerciseId: 'bench-press' });
     const { sessionId } = parseResult(startResult) as { sessionId: string };
     // Mirror set.start's own exercise-snapshot logic (VMCP-01.72b,

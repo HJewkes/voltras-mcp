@@ -37,8 +37,7 @@ import {
   SetStartInput,
   type WatchConfig,
 } from '../schemas/set.js';
-import type { StoredRep, StoredSet } from '../store/types.js';
-import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../store/types.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
 import {
@@ -295,7 +294,6 @@ async function startSet(
       // at close. A `session.set_exercise` call after this point (mid-set)
       // must not retroactively relabel this set.
       ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
-      ...(session.exerciseName !== undefined ? { exerciseName: session.exerciseName } : {}),
     });
   } finally {
     slot.setStartInFlight = false;

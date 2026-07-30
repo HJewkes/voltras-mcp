@@ -256,9 +256,13 @@ export interface ActiveSet {
    * a `session.set_exercise` call retroactively rewrite an in-flight set's
    * attribution, which is wrong for analytics the same way a mid-set
    * `device.set_weight` would be.
+   *
+   * No parallel `exerciseName` field: `StoredSet` only ever persisted
+   * `exerciseId` (see `types.ts`), so a set-level name would be write-only —
+   * nothing reads it. The session-level `ActiveSession.exerciseName` is the
+   * real advisory display name.
    */
   exerciseId?: string;
-  exerciseName?: string;
   /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires

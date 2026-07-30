@@ -207,7 +207,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(9);
+      expect(version.user_version).toBe(10);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -574,7 +574,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(9);
+        expect(version.user_version).toBe(10);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -675,7 +675,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(9);
+        expect(version.user_version).toBe(10);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -709,3 +709,84 @@ function columnNames(db: DatabaseSync, table: string): Set<string> {
   const cols = db.prepare(`PRAGMA table_xinfo(${table})`).all() as { name: string }[];
   return new Set(cols.map((c) => c.name));
 }
+
+describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
+  it('creates the index on a real pre-v10 DB, through open()', () => {
+    // Through SqliteSessionStore.open so the PRODUCTION migrateV9ToV10 runs.
+    // The seed is a v6 DB, so the v6→v7 rebuild creates `sets` and the whole
+    // ladder runs forward to v10 — the same path a real user's file takes.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v10-'));
+    const path = join(dir, 'v9.sqlite');
+    try {
+      const seed = new DatabaseSync(path);
+      seed.exec(V6_SCHEMA_SQL);
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2025-06-01T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs, is_warmup)
+        VALUES ('pre-v10', 's1', 'a', 'b', 0, 'WeightTraining', 100, 0)`);
+      seed.exec('PRAGMA user_version = 6');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        const indexes = raw.prepare(`PRAGMA index_list(sets)`).all() as { name: string }[];
+        expect(indexes.map((i) => i.name)).toContain('idx_sets_exercise_session');
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(10);
+        const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
+        expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent — re-opening a migrated DB is a no-op', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v10-idem-'));
+    const path = join(dir, 'again.sqlite');
+    try {
+      const first = SqliteSessionStore.open(path);
+      void first.close();
+      const second = SqliteSessionStore.open(path);
+      try {
+        const indexes = rawDb(second).prepare(`PRAGMA index_list(sets)`).all() as {
+          name: string;
+        }[];
+        expect(indexes.map((i) => i.name)).toContain('idx_sets_exercise_session');
+      } finally {
+        void second.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lets listSessions({ exerciseId }) SEEK the index instead of scanning all of sets', () => {
+    // Pins the actual point of the index (VMCP-01.72b S4): without it,
+    // `listSessions`'s per-set exercise-id subquery has no `user_id`
+    // predicate to seek `idx_sets_user_exercise` with, and falls back to a
+    // full scan of `sets` on every `session.list?exerciseId=` call.
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      const raw = rawDb(store);
+      const plan = raw
+        .prepare(
+          `EXPLAIN QUERY PLAN SELECT * FROM sessions WHERE (exercise_id = ? OR id IN ` +
+            `(SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?)) ` +
+            `ORDER BY started_at DESC LIMIT ? OFFSET ?`,
+        )
+        .all('bench-press', 'bench-press', 20, 0) as { detail: string }[];
+      const setsStep = plan.find((row) => row.detail.includes('sets'));
+      expect(setsStep?.detail).toContain('SEARCH');
+      expect(setsStep?.detail).toContain('idx_sets_exercise_session');
+      expect(setsStep?.detail).not.toContain('SCAN sets');
+    } finally {
+      void store.close();
+    }
+  });
+});

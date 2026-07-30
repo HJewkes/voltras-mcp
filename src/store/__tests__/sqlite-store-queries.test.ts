@@ -121,6 +121,21 @@ describe('SqliteSessionStore.countSessions', () => {
   it('ignores pagination — the count of a page is not a count', async () => {
     expect(await store.countSessions({ limit: 1, offset: 2 })).toBe(3);
   });
+
+  // VMCP-01.72b (S6): the doc contract promises "same predicates as
+  // listSessions" — a session whose ROW column disagrees with its own SETS
+  // must be counted the same way `listSessions` would find it.
+  it('counts a session by its SETS own exerciseId, matching listSessions (S6)', async () => {
+    // s3's row says 'bench-press', but its actual set was squat — simulates
+    // session.set_exercise having moved the row pointer on without s3 ever
+    // recording a bench set of its own.
+    await store.putSet(makeSet({ id: 'sq-1', sessionId: 's3', exerciseId: 'squat' }));
+
+    const listed = await store.listSessions({ exerciseId: 'squat', sort: 'startedAt:desc' });
+    const counted = await store.countSessions({ exerciseId: 'squat' });
+    expect(listed.map((s) => s.id)).toContain('s3');
+    expect(counted).toBe(listed.length);
+  });
 });
 
 describe('SqliteSessionStore planning-tree by-id getters', () => {
@@ -403,5 +418,83 @@ describe('SqliteSessionStore.getSetsForExercise', () => {
     const [set] = await store.getSetsForExercise({ ...KEY, limit: 1 });
     expect(set).not.toHaveProperty('weightLbs');
     expect(set).not.toHaveProperty('trainingMode');
+  });
+});
+
+describe('SqliteSessionStore.getMostRecentSessionIdForExercise (VMCP-01.72b S5)', () => {
+  let store: SqliteSessionStore;
+
+  beforeEach(async () => {
+    store = SqliteSessionStore.open(':memory:');
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({ id: 'sess-2', startedAt: '2025-02-01T00:00:00.000Z' });
+    await store.putSet(
+      makeSet({ id: 'bench-1', sessionId: 'sess-1', startedAt: '2025-01-01T00:10:00.000Z' }),
+    );
+    await store.putSet(
+      makeSet({
+        id: 'bench-2',
+        sessionId: 'sess-2',
+        startedAt: '2025-02-01T00:10:00.000Z',
+      }),
+    );
+    await store.putSet(
+      makeSet({
+        id: 'squat-1',
+        sessionId: 'sess-2',
+        exerciseId: 'squat',
+        startedAt: '2025-02-01T00:20:00.000Z',
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  it('returns the session id of the MOST RECENT set, not the first', async () => {
+    const id = await store.getMostRecentSessionIdForExercise({
+      userId: LOCAL_USER_ID,
+      exerciseId: 'bench-press',
+    });
+    expect(id).toBe('sess-2');
+  });
+
+  it('scopes to the exercise', async () => {
+    const id = await store.getMostRecentSessionIdForExercise({
+      userId: LOCAL_USER_ID,
+      exerciseId: 'squat',
+    });
+    expect(id).toBe('sess-2');
+  });
+
+  it('scopes to the user', async () => {
+    const id = await store.getMostRecentSessionIdForExercise({
+      userId: 'nobody',
+      exerciseId: 'bench-press',
+    });
+    expect(id).toBeNull();
+  });
+
+  it('returns null when nothing matches', async () => {
+    const id = await store.getMostRecentSessionIdForExercise({
+      userId: LOCAL_USER_ID,
+      exerciseId: 'deadlift',
+    });
+    expect(id).toBeNull();
+  });
+
+  it('seeks the exercise index and never touches reps — the point of this method over getSetsForExercise', async () => {
+    const raw = rawDb(store);
+    const plan = raw
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? ` +
+          `ORDER BY started_at DESC LIMIT 1`,
+      )
+      .all(LOCAL_USER_ID, 'bench-press') as { detail: string }[];
+    expect(plan.some((row) => row.detail.includes('reps'))).toBe(false);
+    const setsStep = plan.find((row) => row.detail.includes('sets'));
+    expect(setsStep?.detail).toContain('SEARCH');
+    expect(setsStep?.detail).not.toContain('SCAN sets');
   });
 });

@@ -604,22 +604,6 @@ interface ExerciseHistory {
 }
 
 /**
- * Gather the chronological (ascending) history for the requested exercise — its
- * past sessions plus each session's stored sets — the shared input the strength
- * trend, capacity band, and PR read-models fold. This is the I/O half; the
- * derivation lives in `read-models/`.
- *
- * Exercise resolution (VMCP-05.06), in order:
- *  1. an explicit `?exerciseId=` / `?exerciseName=`;
- *  2. the active session's exercise, but only if it actually has stored data;
- *  3. otherwise the most recent exercise that has data.
- *
- * Rule 3 is what makes the panels render with nothing running — they used to
- * key on the active session alone and so came up empty on an idle dashboard.
- * Sessions match on either handle (see `matchesExercise`), because most stored
- * sessions carry only a free-text name and never got an `exerciseId`.
- */
-/**
  * True when a scanned session belongs to the requested exercise. Extends
  * `matchesExercise`'s session-level handle comparison with a per-SET check
  * (VMCP-01.72b, H1): the session-level `exerciseId` is last-write-wins once a
@@ -635,6 +619,23 @@ function sessionMatchesExerciseRef(s: ScannedSession, ref: HistoryExerciseRef): 
   return s.sets.some((set) => set.exerciseId === ref.exerciseId);
 }
 
+/**
+ * Gather the chronological (ascending) history for the requested exercise — its
+ * past sessions plus each session's stored sets — the shared input the strength
+ * trend, capacity band, and PR read-models fold. This is the I/O half; the
+ * derivation lives in `read-models/`.
+ *
+ * Exercise resolution (VMCP-05.06), in order:
+ *  1. an explicit `?exerciseId=` / `?exerciseName=`;
+ *  2. the active session's exercise, but only if it actually has stored data;
+ *  3. otherwise the most recent exercise that has data.
+ *
+ * Rule 3 is what makes the panels render with nothing running — they used to
+ * key on the active session alone and so came up empty on an idle dashboard.
+ * Sessions match on either handle (see `sessionMatchesExerciseRef`), because
+ * most stored sessions carry only a free-text name and never got an
+ * `exerciseId`.
+ */
 async function gatherExerciseHistory(
   state: DashboardServerState,
   url: URL,

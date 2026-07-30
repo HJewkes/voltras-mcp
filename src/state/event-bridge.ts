@@ -1563,6 +1563,14 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       reps: [],
       status: 'active',
       autoCreatedBy: 'guided_load',
+      // VMCP-01.72b: snapshot the session's exercise pointer the same way
+      // set-tools.ts's startSet does. buildSetCapture now reads the SET's
+      // own snapshot rather than re-reading the live session at close, so
+      // skipping this here left every guided-load set unattributed
+      // (exercise_id NULL) — and, combined with the H1 fix that discovers
+      // sessions by their sets' exerciseId, made guided-load sessions
+      // invisible to progression.get_for_exercise entirely.
+      ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
     });
     // F4 (VMCP-01.19): the start-snapshot is captured here but the
     // device's `weightLbs` hasn't yet propagated from the guided-load

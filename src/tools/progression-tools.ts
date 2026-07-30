@@ -7,10 +7,17 @@
 // be 182 KB per session at scale).
 //
 // Implementation notes:
-//   - N+1 query pattern: one `listSessions` call + one `getSetsForSession`
-//     per returned session. Acceptable at this scale (called once per
-//     session-start, default cap of 20 sessions). A future join-query path
-//     in `SessionStore` can replace this without changing the aggregator.
+//   - Session discovery (VMCP-01.72b, H1): one `getSetsForExercise` call
+//     finds every matching SET in the window, deduped to distinct session
+//     ids and sliced to the most-recent `limit` (see the BEHAVIOR CHANGE
+//     comment at the slice site — this is newest-N, not oldest-N). Then N+1:
+//     one `getSession` + one `getSetsForSession` per session id. Acceptable
+//     at this scale (called once per session-start, default cap of 20
+//     sessions). A `getSession` that returns `undefined` silently drops that
+//     session from the result rather than erroring — the id came from a real
+//     set a moment earlier, so this should not happen in practice, but a
+//     caller relying on `sessionCount` matching `limitedSessionIds.length`
+//     should know it isn't guaranteed.
 //   - Lookback window is computed in UTC from the current wall clock at
 //     handler invocation time.
 //   - `exerciseId` is NOT validated against the exercise catalog — we treat
@@ -24,8 +31,7 @@ import { type ServerState } from '../state/server-state.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
-import { LOCAL_USER_ID } from '../store/sqlite-store.js';
-import type { StoredSession, StoredSet } from '../store/types.js';
+import { LOCAL_USER_ID, type StoredSession, type StoredSet } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
 const DEFAULT_LOOKBACK_WEEKS = 8;
@@ -98,6 +104,20 @@ async function getProgressionForExercise(
   // to distinct sessions, then keep the most-recent `limit` — this is also
   // the exercise-instance count: one entry per session that trained this
   // exercise, decoupled from what else that session held.
+  //
+  // BEHAVIOR CHANGE (VMCP-01.72b S7, undocumented until now): pre-H1, `main`
+  // fetched `listSessions({ sort: 'startedAt:asc', limit })`, i.e. SQL
+  // `ORDER BY started_at ASC LIMIT N` — the OLDEST N sessions in the window
+  // when there were more than `limit` matches. `.slice(-limit)` on an
+  // ascending array keeps the NEWEST N instead. This is very likely the
+  // right fix on its own — "what did I hit last time?" wants the most
+  // recent training, not the earliest sessions in an 8-week window — but it
+  // changes `topWeightLbsFirst`/`Last` and every trend delta for anyone with
+  // more than `limit` sessions of one exercise in the window. Flagging here
+  // because the H1 rewrite (session discovery by set, not by session row)
+  // made this an unavoidable side effect, not a deliberate independent
+  // decision — a future change to the discovery mechanism must not silently
+  // flip it back.
   const sessionIdsInOrder = [...new Set(exerciseSets.map((s) => s.sessionId))];
   const limitedSessionIds = sessionIdsInOrder.slice(-limit);
 

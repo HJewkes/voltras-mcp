@@ -23,6 +23,18 @@ import type { Rep } from '@voltras/workout-analytics';
 export type TrainingModeName = string;
 
 /**
+ * The implicit local user (VMCP-01.72b, N12). Declared here rather than in
+ * `sqlite-store.ts` so the tool layer can depend on the persistence
+ * CONTRACT for this constant instead of reaching into the store's SQLite
+ * implementation for it — `sqlite-store.ts` re-exports it for backward
+ * compatibility with existing call sites. v6 introduces a user dimension
+ * across the whole schema; a single-user history is modelled as one row
+ * rather than as a special case, so multi-user does not require
+ * retrofitting every query later.
+ */
+export const LOCAL_USER_ID = 'local';
+
+/**
  * Physical limb a set was performed with. Mirrors `PhysicalSide` in
  * `state/slot-bindings.ts`, declared locally so the persistence contracts stay
  * free of runtime-layer imports (same reasoning as `TrainingModeName` above).
@@ -693,6 +705,23 @@ export interface SessionStore {
    * sign across a swap with nothing erroring.
    */
   getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
+
+  /**
+   * The session id of the MOST RECENT set a user performed for one
+   * exercise, or `null` if none exists (VMCP-01.72b S5). A narrow,
+   * SQL-level `ORDER BY started_at DESC LIMIT 1` — deliberately its own
+   * method rather than a `sort`/`limit` option on `getSetsForExercise`
+   * (which stays ascending-only, matching `getSetsForSession`), and
+   * deliberately NOT built on `getSetsForExercise` at all: that method
+   * hydrates every rep of every matching set, which is the wrong shape for
+   * "I only need the session id of the last one" — `resolveBasisSession`
+   * used to pull a user's ENTIRE set history for an exercise, reps
+   * included, just to read `.at(-1)?.sessionId`.
+   */
+  getMostRecentSessionIdForExercise(filter: {
+    userId: string;
+    exerciseId: string;
+  }): Promise<string | null>;
 
   // --- Idle reps (v7 schema) ---
 

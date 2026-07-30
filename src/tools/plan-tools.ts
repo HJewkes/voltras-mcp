@@ -38,15 +38,15 @@ import {
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
-import { LOCAL_USER_ID } from '../store/sqlite-store.js';
-import type {
-  StoredPlannedExercise,
-  StoredProgramAssignment,
-  StoredSet,
-  StoredTrainingBlock,
-  StoredTrainingProgram,
-  StoredTrainingWeek,
-  StoredWorkoutTemplate,
+import {
+  LOCAL_USER_ID,
+  type StoredPlannedExercise,
+  type StoredProgramAssignment,
+  type StoredSet,
+  type StoredTrainingBlock,
+  type StoredTrainingProgram,
+  type StoredTrainingWeek,
+  type StoredWorkoutTemplate,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
@@ -627,14 +627,18 @@ async function resolveBasisSession(
   // not `listSessions({ exerciseId })`'s session-row column — that column is
   // last-write-wins once a session can hold several exercises, so it would
   // silently miss a session that trained this exercise earlier and something
-  // else more recently. `getSetsForExercise` only supports ORDER BY
-  // started_at ASC, so take the last (most recent) element rather than
-  // adding a descending-sort option for this one caller.
-  const exerciseSets = await state.store.getSetsForExercise({
+  // else more recently.
+  //
+  // VMCP-01.72b (S5): `getSetsForExercise` hydrates every rep of every
+  // matching set — pulling a user's ENTIRE history for the exercise just to
+  // read the last element's `sessionId` was the wrong shape (and unbounded).
+  // `getMostRecentSessionIdForExercise` answers the actual question — "what
+  // session was this exercise last trained in?" — with a single indexed
+  // `ORDER BY started_at DESC LIMIT 1`, no reps loaded.
+  return state.store.getMostRecentSessionIdForExercise({
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
   });
-  return exerciseSets.at(-1)?.sessionId ?? null;
 }
 
 /**
