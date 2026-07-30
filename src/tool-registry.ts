@@ -97,6 +97,10 @@ export const CORE_TOOL_NAMES = [
   // tier derivation here. See src/tools/profile-tools.ts.
   'profile.set_training_background',
   'profile.get_training_background',
+  // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
+  // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
+  'baselines.get',
+  'baselines.recalc',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -247,6 +251,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'profile.set_training_background': 'write',
   'profile.get_training_background': 'read',
+
+  'baselines.get': 'read',
+  'baselines.recalc': 'write',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

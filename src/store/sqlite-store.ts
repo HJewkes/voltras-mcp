@@ -19,10 +19,19 @@
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
 import { DatabaseSync } from 'node:sqlite';
-import type { Rep } from '@voltras/workout-analytics';
+import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
 import {
+  baselineRowId,
+  deriveBaselineState,
+  summarizeSets,
+  toBaselineRow,
+  type AnchorObservation,
+  type BaselineObservations,
+} from './exercise-baselines.js';
+import {
   LOCAL_USER_ID,
+  type BaselineState,
   type ExerciseSetsFilter,
   type SessionCountFilter,
   type SessionListFilter,
@@ -33,10 +42,12 @@ import {
   type StoredIsometricSideMeasurement,
   type StoredIsometricTrial,
   type StoredPlannedExercise,
+  type StoredExerciseBaseline,
   type StoredProgramAssignment,
   type StoredRep,
   type StoredSession,
   type StoredSet,
+  type StoredSide,
   type StoredTrainingBlock,
   type StoredTrainingProfile,
   type StoredTrainingProgram,
@@ -1201,6 +1212,31 @@ interface TrainingProfileRow {
   updated_at: string;
 }
 
+interface ExerciseBaselineRow {
+  id: string;
+  user_id: string;
+  exercise_id: string;
+  setup_id: string | null;
+  side: StoredSide | null;
+  state: BaselineState;
+  confidence: number | null;
+  observed_sessions: number;
+  anchor_count: number;
+  anchor_spread: number | null;
+  first_observed_at: string | null;
+  updated_at: string;
+  invalidated_at: string | null;
+  invalidation_reason: string | null;
+  algorithm_version: string;
+}
+
+/** `failure_anchors` joined to its set row for the session bucket. */
+interface FailureAnchorJoinRow {
+  session_id: string | null;
+  observed_at: string;
+  terminal_velocity_mps: number | null;
+}
+
 interface TrainingBlockRow {
   id: string;
   program_id: string;
@@ -2079,6 +2115,130 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(row ? rowToTrainingProfile(row) : undefined);
   }
 
+  // --- Exercise baselines (I5 / B56, VW-116) ---
+
+  async getBaseline(key: BaselineKey): Promise<StoredExerciseBaseline | undefined> {
+    assertDefaultSetup(key);
+    const row = this.db
+      .prepare(`SELECT * FROM exercise_baselines WHERE id = ?`)
+      .get(baselineRowId(key)) as ExerciseBaselineRow | undefined;
+    return Promise.resolve(row ? rowToExerciseBaseline(row) : undefined);
+  }
+
+  async recalcBaseline(key: BaselineKey): Promise<StoredExerciseBaseline> {
+    assertDefaultSetup(key);
+    // Working sets only. A warm-up ramp and a technique set are performed at
+    // deliberately different intent and cadence; counting them as shape
+    // evidence is how a baseline ends up describing an exercise nobody did.
+    const sets = await this.getSetsForExercise({
+      userId: key.userId,
+      exerciseId: key.exerciseId,
+      ...(key.side !== undefined ? { side: key.side } : {}),
+      purpose: ['working'],
+    });
+    const observations: BaselineObservations = {
+      ...summarizeSets(sets),
+      anchors: this.selectAnchors(key),
+    };
+    const now = new Date();
+    const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString());
+    this.upsertBaseline(row);
+    return row;
+  }
+
+  /**
+   * Failure anchors for one key. Only anchors whose harvest filter ACCEPTED
+   * them (`filter_verdict = 'failure'`) count: the table deliberately stores
+   * rejected candidates too, so a changed filter can re-derive past verdicts,
+   * and counting a rejected candidate as evidence would defeat that.
+   *
+   * `sessionBucket` is the anchor's session where resolvable and a per-day
+   * bucket otherwise (an anchor whose set row was deleted still happened on
+   * some day). It exists so several anchors from ONE bout cannot satisfy the
+   * distinct-sessions gate — correlated anchors look more consistent than they
+   * are.
+   */
+  private selectAnchors(key: BaselineKey): AnchorObservation[] {
+    const where = ['fa.user_id = ?', 'fa.exercise_id = ?', 'fa.setup_id IS NULL'];
+    const params: string[] = [key.userId, key.exerciseId];
+    if (key.side !== undefined) {
+      where.push('fa.side = ?');
+      params.push(key.side);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT s.session_id AS session_id, fa.observed_at AS observed_at,
+                fa.terminal_velocity_mps AS terminal_velocity_mps
+           FROM failure_anchors fa
+           LEFT JOIN sets s ON s.id = fa.set_id
+          WHERE ${where.join(' AND ')} AND fa.filter_verdict = 'failure'
+          ORDER BY fa.observed_at ASC`,
+      )
+      .all(...params) as unknown as FailureAnchorJoinRow[];
+    return rows.map((row) => {
+      const out: AnchorObservation = {
+        sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
+      };
+      if (row.terminal_velocity_mps !== null) {
+        out.terminalVelocityMps = row.terminal_velocity_mps;
+      }
+      return out;
+    });
+  }
+
+  /**
+   * `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`: `exercise_baselines`
+   * sits on the `users` cascade, and a delete-then-insert is the wrong
+   * primitive for the reason `putSet` spells out (#79).
+   *
+   * The conflict target is `id`, NOT the `UNIQUE (user_id, exercise_id,
+   * setup_id, side)` constraint — deliberately. SQLite treats NULLs in a
+   * UNIQUE index as distinct from each other, so with `setup_id` always NULL
+   * (no setup writer exists yet) that constraint never fires and a conflict
+   * clause aimed at it would insert a duplicate row on every recalc instead of
+   * updating. `id` is `baselineKeyId(key)` — a total function of the same four
+   * dimensions, NULLs included — so it is the identity that actually holds.
+   * EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+   */
+  private upsertBaseline(b: StoredExerciseBaseline): void {
+    this.db
+      .prepare(
+        `INSERT INTO exercise_baselines
+           (id, user_id, exercise_id, setup_id, side, state, confidence,
+            observed_sessions, anchor_count, anchor_spread, first_observed_at,
+            updated_at, invalidated_at, invalidation_reason, algorithm_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           state = excluded.state,
+           confidence = excluded.confidence,
+           observed_sessions = excluded.observed_sessions,
+           anchor_count = excluded.anchor_count,
+           anchor_spread = excluded.anchor_spread,
+           first_observed_at = excluded.first_observed_at,
+           updated_at = excluded.updated_at,
+           invalidated_at = excluded.invalidated_at,
+           invalidation_reason = excluded.invalidation_reason,
+           algorithm_version = excluded.algorithm_version`,
+      )
+      .run(
+        b.id,
+        b.userId,
+        b.exerciseId,
+        b.setupId ?? null,
+        b.side ?? null,
+        b.state,
+        b.confidence ?? null,
+        b.observedSessions,
+        b.anchorCount,
+        b.anchorSpread ?? null,
+        b.firstObservedAt ?? null,
+        b.updatedAt,
+        b.invalidatedAt ?? null,
+        b.invalidationReason ?? null,
+        b.algorithmVersion,
+      );
+  }
+
   async close(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.closed = true;
@@ -2469,6 +2629,41 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }
   return out;
+}
+
+function rowToExerciseBaseline(row: ExerciseBaselineRow): StoredExerciseBaseline {
+  const out: StoredExerciseBaseline = {
+    id: row.id,
+    userId: row.user_id,
+    exerciseId: row.exercise_id,
+    state: row.state,
+    observedSessions: row.observed_sessions,
+    anchorCount: row.anchor_count,
+    updatedAt: row.updated_at,
+    algorithmVersion: row.algorithm_version,
+  };
+  if (row.setup_id !== null) out.setupId = row.setup_id;
+  if (row.side !== null) out.side = row.side;
+  if (row.confidence !== null) out.confidence = row.confidence;
+  if (row.anchor_spread !== null) out.anchorSpread = row.anchor_spread;
+  if (row.first_observed_at !== null) out.firstObservedAt = row.first_observed_at;
+  if (row.invalidated_at !== null) out.invalidatedAt = row.invalidated_at;
+  if (row.invalidation_reason !== null) out.invalidationReason = row.invalidation_reason;
+  return out;
+}
+
+/**
+ * Reject a key that names a setup. The setup dimension is inferred by ROM
+ * clustering and that writer does not exist yet, so there is nothing to point
+ * at: a caller passing a `setupId` today is working from a wrong mental model
+ * and would silently get a row that means something else.
+ */
+function assertDefaultSetup(key: BaselineKey): void {
+  if (key.setupId !== undefined) {
+    throw new Error(
+      'exercise baselines are per-default-setup only: setup inference (exercise_setups) has no writer yet',
+    );
+  }
 }
 
 function rowToTrainingBlock(row: TrainingBlockRow): StoredTrainingBlock {

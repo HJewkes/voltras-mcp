@@ -17,7 +17,7 @@
 // NOTE: `TrainingModeName` is defined here as a string alias rather than
 // imported from `src/schemas/common.ts` because schemas land in a parallel
 // task; the alias will be unified once both branches merge.
-import type { Rep } from '@voltras/workout-analytics';
+import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
@@ -659,6 +659,55 @@ export interface StoredTrainingProfile {
 }
 
 /**
+ * Confidence tier of a per-(user, exercise, setup, side) baseline. See
+ * `store/exercise-baselines.ts` for the thresholds each transition needs.
+ *
+ * The tier describes HOW MUCH and HOW CONSISTENT the observation history is —
+ * never the baseline's numbers, which are recomputed from stored reps on every
+ * read.
+ */
+export type BaselineState = 'COLD' | 'SHAPE_ONLY' | 'PROVISIONAL' | 'CALIBRATED' | 'STALE';
+
+/**
+ * A persisted `exercise_baselines` row (I5 / B56).
+ *
+ * STATE ONLY. There is deliberately no `romBaselineM` / `tempoBaselineMs` /
+ * `referenceVelocityMps` here: those are computed fresh from stored reps,
+ * because a value persisted from a formula that later changes becomes a silent
+ * lie (data-layer-migration-plan.md §2 C2). What this row carries is history
+ * about our own confidence, which no amount of rep data reproduces.
+ *
+ * `setupId` is absent on every row written today — the setup dimension is
+ * inferred by ROM clustering and that writer does not exist yet, so a baseline
+ * with no setup means "the one default setup for this exercise".
+ */
+export interface StoredExerciseBaseline {
+  /** `baselineKeyId(key)` from `@voltras/workout-analytics` — never a hand-rolled id. */
+  id: string;
+  userId: string;
+  exerciseId: string;
+  /** Inferred physical configuration. Always absent until setup clustering ships. */
+  setupId?: string;
+  /** Absent means the side-agnostic view, not "unknown side". */
+  side?: StoredSide;
+  state: BaselineState;
+  /** Coarse 0–1 ordering scalar. Not a probability; do not do arithmetic with it. */
+  confidence?: number;
+  /** DISTINCT sessions contributing qualifying sets, not the set count. */
+  observedSessions: number;
+  /** Failure anchors backing this baseline. */
+  anchorCount: number;
+  /** Coefficient of variation of anchor terminal velocity; absent below two anchors. */
+  anchorSpread?: number;
+  firstObservedAt?: string;
+  updatedAt: string;
+  invalidatedAt?: string;
+  invalidationReason?: string;
+  /** Which rule set produced `state`. A row is only interpretable against it. */
+  algorithmVersion: string;
+}
+
+/**
  * Persistence boundary for VMCP. The SQLite implementation in
  * `src/store/sqlite-store.ts` opens a `node:sqlite` database; consumers depend
  * only on this interface.
@@ -871,6 +920,28 @@ export interface SessionStore {
   putTrainingProfile(p: StoredTrainingProfile): Promise<void>;
   /** Look up a user's training background; `undefined` when no row exists. */
   getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined>;
+
+  // --- Exercise baselines (I5 / B56, VW-116) ---
+
+  /**
+   * Read the persisted baseline STATE for one key; `undefined` when the key
+   * has never been recalculated. Never returns baseline values — those are
+   * derived from stored reps by the analytics layer, on demand.
+   *
+   * `key.setupId` must be absent: the setup dimension has no writer yet, so
+   * the only baseline that exists is the pooled, default-setup one.
+   */
+  getBaseline(key: BaselineKey): Promise<StoredExerciseBaseline | undefined>;
+
+  /**
+   * Recompute the baseline state for one key from stored reps and failure
+   * anchors, then upsert it (`ON CONFLICT DO UPDATE`, never `INSERT OR
+   * REPLACE` — see `putSession`).
+   *
+   * Idempotent and cheap enough to run on every set close: it reads, derives,
+   * and writes one row. The returned row is the freshly-written one.
+   */
+  recalcBaseline(key: BaselineKey): Promise<StoredExerciseBaseline>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;
