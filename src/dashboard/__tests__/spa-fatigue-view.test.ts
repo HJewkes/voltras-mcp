@@ -748,4 +748,36 @@ describe('mapStoreToFatigueModel (dual Voltra)', () => {
     // …but the side that IS lifting still drives the shared card.
     expect(model.romProgression).toEqual([{ repNumber: 1, romM: 0.1 }]);
   });
+
+  it('VMCP-04.15 regression: stays live when the PRIMARY slot closes first but a secondary slot is still mid-set', () => {
+    // The primary (first) slot's set has already ended — top-level `sets.active`
+    // is null, exactly as the server reports for a bilateral rig where one arm
+    // finishes ahead of the other. The secondary slot is still lifting.
+    const stillLifting = buildReps([
+      { concVel: 500, rom: 100 },
+      { concVel: 480, rom: 100 },
+    ]);
+    const snapshot: Snapshot = {
+      session: { sessionId: 's1', exerciseName: 'Cable Row' },
+      devices: [
+        {
+          slotId: 'left',
+          device: { connected: true, weightLbs: 100, deviceId: 'V-left' },
+          sets: { active: null, completed: [] },
+        },
+        limb('right', stillLifting),
+      ],
+      // Mirrors the server: top-level `sets` tracks only the primary slot, which
+      // has already closed its set.
+      sets: { active: null, completed: [] },
+    };
+    const model = mapStoreToFatigueModel(sources({ snapshot }));
+
+    expect(model).not.toBeNull();
+    expect(model!.contributingLimbCount).toBe(1);
+    expect(model!.romProgression).toEqual([
+      { repNumber: 1, romM: 0.1 },
+      { repNumber: 2, romM: 0.1 },
+    ]);
+  });
 });
