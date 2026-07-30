@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import { LATEST_SESSION, parseRoute, routeHash } from '../spa/routing.js';
 import {
+  e1rmChangePct,
+  e1rmSeries,
   flattenTemplates,
   formatNumber,
   nextTargetWeightLbs,
@@ -11,6 +13,8 @@ import {
   progressionLabel,
   repRange,
   resolveSelectedTemplateId,
+  sessionRollup,
+  setLine,
   setsAgainstPlan,
   type FlatTemplate,
 } from '../spa/planner/planner-model.js';
@@ -18,6 +22,7 @@ import type { PlanExerciseView, PlanTreeView } from '../read-models/plan-tree.js
 import type {
   SessionSummaryExercise,
   SessionSummaryProgression,
+  SessionSummarySet,
 } from '../read-models/session-summary-view.js';
 
 function exerciseView(overrides: Partial<PlanExerciseView> = {}): PlanExerciseView {
@@ -228,5 +233,123 @@ describe('formatNumber', () => {
     expect(formatNumber(null)).toBe('—');
     expect(formatNumber(undefined)).toBe('—');
     expect(formatNumber(Number.NaN)).toBe('—');
+  });
+});
+
+function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummarySet {
+  return {
+    id: 'set-1',
+    index: 1,
+    startedAt: '2026-07-30T10:00:00.000Z',
+    endedAt: '2026-07-30T10:00:40.000Z',
+    weightLbs: 135,
+    repCount: 10,
+    isWarmup: false,
+    velocityLossPct: 12,
+    bestRepVelocity: 0.8,
+    ...overrides,
+  };
+}
+
+describe('e1rmSeries', () => {
+  it('estimates a point per working set, labelled by set ordinal', () => {
+    const series = e1rmSeries(
+      summaryExercise({
+        sets: [
+          summarySet({ id: 's1', index: 1, weightLbs: 135, repCount: 10 }),
+          summarySet({ id: 's2', index: 2, weightLbs: 135, repCount: 8 }),
+        ],
+      }),
+    );
+    expect(series.map((p) => p.sessionLabel)).toEqual(['Set 1', 'Set 2']);
+    // Epley: 135 * (1 + 10/30) = 180; 135 * (1 + 8/30) = 171.
+    expect(series.map((p) => p.e1rm)).toEqual([180, 171]);
+    expect(series[0]?.date).toBe('2026-07-30T10:00:00.000Z');
+  });
+
+  it('marks the session best, and only when there is something to compare it to', () => {
+    const two = e1rmSeries(
+      summaryExercise({
+        sets: [
+          summarySet({ id: 's1', index: 1, repCount: 8 }),
+          summarySet({ id: 's2', index: 2, repCount: 10 }),
+        ],
+      }),
+    );
+    expect(two.map((p) => p.isPR === true)).toEqual([false, true]);
+    const one = e1rmSeries(summaryExercise({ sets: [summarySet()] }));
+    expect(one[0]?.isPR).toBeUndefined();
+  });
+
+  it('drops warm-ups and sets with no load, rather than plotting a fabricated zero', () => {
+    const series = e1rmSeries(
+      summaryExercise({
+        sets: [
+          summarySet({ id: 'w', index: 1, isWarmup: true }),
+          summarySet({ id: 'n', index: 2, weightLbs: null }),
+          summarySet({ id: 'z', index: 3, repCount: 0 }),
+          summarySet({ id: 'ok', index: 4 }),
+        ],
+      }),
+    );
+    expect(series.map((p) => p.sessionLabel)).toEqual(['Set 4']);
+  });
+});
+
+describe('e1rmChangePct', () => {
+  it('reports first-to-last percentage change', () => {
+    expect(
+      e1rmChangePct([
+        { date: 'a', e1rm: 200 },
+        { date: 'b', e1rm: 180 },
+      ]),
+    ).toBe(-10);
+  });
+
+  it('has no direction with fewer than two points', () => {
+    expect(e1rmChangePct([{ date: 'a', e1rm: 200 }])).toBeNull();
+    expect(e1rmChangePct([])).toBeNull();
+  });
+});
+
+describe('sessionRollup', () => {
+  const view = (exercises: SessionSummaryExercise[], endedAt: string | null) => ({
+    session: {
+      id: 'sess-1',
+      startedAt: '2026-07-30T10:00:00.000Z',
+      endedAt,
+      exerciseId: null,
+      exerciseName: null,
+    },
+    exercises,
+  });
+
+  it('sums sets, reps and volume across every exercise', () => {
+    const rollup = sessionRollup(
+      view(
+        [summaryExercise(), summaryExercise({ exerciseId: 'bench', setCount: 2, totalReps: 16 })],
+        '2026-07-30T10:45:00.000Z',
+      ),
+    );
+    expect(rollup).toMatchObject({
+      exerciseCount: 2,
+      setCount: 5,
+      totalReps: 46,
+      volumeLbs: 8100,
+      durationMin: 45,
+    });
+  });
+
+  it('keeps volume null when no exercise recorded a load, and duration null in progress', () => {
+    const rollup = sessionRollup(view([summaryExercise({ volumeLbs: null })], null));
+    expect(rollup.volumeLbs).toBeNull();
+    expect(rollup.durationMin).toBeNull();
+  });
+});
+
+describe('setLine', () => {
+  it('renders reps × load, and a gap for an unrecorded load', () => {
+    expect(setLine(summarySet())).toBe('10 × 135 lb');
+    expect(setLine(summarySet({ weightLbs: null }))).toBe('10 × —');
   });
 });

@@ -18,9 +18,8 @@
  */
 import React from 'react';
 import { useStore } from 'zustand';
-import { DashboardShell, defaultNavItems, type SessionState } from '@titan-design/react-ui';
 import { dashboardStore } from '../store';
-import { buildSessionState, buildTopBarDevices } from '../adapter';
+import { DashboardChrome } from './DashboardChrome';
 import { LivePage, type LivePageVariant } from '../live-page/LivePage';
 import { ColdBootView } from '../live-page/ColdBootView';
 import { mapStoreToDashboardModel } from './live-view';
@@ -69,42 +68,27 @@ export function LivePagePanel({
   const fatigue = mapStoreToFatigueModel(sources);
   const asymmetry = isDual ? (fatigue?.asymmetry ?? null) : null;
 
-  // REAL shell chrome inputs, sourced from the store — never fixtures. On cold boot (no
-  // snapshot yet) the mappers have nothing to read, so the chrome falls back to an idle,
+  // The shell chrome (SideNav + TopBar, both store-fed) is shared with the planner
+  // routes — see `DashboardChrome`. The wall gets `scroll` off: a wall dashboard is
+  // exactly one screen, never a scrolling document. On cold boot (no snapshot yet)
+  // the mappers have nothing to read, so the chrome falls back to an idle,
   // device-less shell around the ColdBootView (VW-68) rather than a blank viewport.
-  const devices = snapshot ? buildTopBarDevices(snapshot, status) : [];
-  const sessionState: SessionState = snapshot ? buildSessionState(snapshot) : 'idle';
-
-  // The page is one react-native-web flex column rooted at `flex: 1`, but it mounts into
-  // a bare `#root` div with no height — so every `flex: 1` below would resolve against
-  // `auto` and collapse to content height. Pin the viewport here: a wall dashboard is
-  // exactly one screen, never a scrolling document.
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', overflow: 'hidden' }}>
-      {/* SideNav (single-view; nav is a no-op for now) + TopBar chrome around the live page.
-          activeKey pins the Live category; devices + state are the real store-fed inputs. */}
-      <DashboardShell
-        activeKey="live"
-        navItems={defaultNavItems}
-        state={sessionState}
-        devices={devices}
-        subtitle="wall dashboard"
-      >
-        {/* Cold boot: no snapshot has landed yet (VW-68) — an honest "connecting" state inside
-            the chrome rather than a blank stage. Once the first poll/SSE frame arrives the live
-            page mounts. */}
-        {model === null ? (
-          <ColdBootView />
-        ) : (
-          <LivePage
-            variant={variant}
-            model={model}
-            hero={hero}
-            asymmetry={asymmetry}
-            fatigue={fatigue}
-          />
-        )}
-      </DashboardShell>
-    </div>
+    <DashboardChrome route={{ name: 'live' }}>
+      {/* Cold boot: no snapshot has landed yet (VW-68) — an honest "connecting" state inside
+          the chrome rather than a blank stage. Once the first poll/SSE frame arrives the live
+          page mounts. */}
+      {model === null ? (
+        <ColdBootView />
+      ) : (
+        <LivePage
+          variant={variant}
+          model={model}
+          hero={hero}
+          asymmetry={asymmetry}
+          fatigue={fatigue}
+        />
+      )}
+    </DashboardChrome>
   );
 }

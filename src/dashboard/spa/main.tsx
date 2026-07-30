@@ -48,10 +48,10 @@ import { dashboardStore, type HistoricalPatch } from './store';
 import { createLiveStreamController } from './live-stream';
 import { LivePagePanel } from './panels/LivePagePanel';
 import { readVariantOverride } from './live-page/stage-variant';
-import { parseRoute, routeHash, type Route } from './routing';
+import { parseRoute, type Route } from './routing';
+import { DashboardChrome } from './panels/DashboardChrome';
 import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
-import { styles } from './planner/planner-styles';
 import type { PrescriptionView } from './adapter';
 
 // Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
@@ -147,29 +147,16 @@ function useHashRoute(): Route {
   return route;
 }
 
-/**
- * Cross-page nav for the planner surfaces (VW-120). Deliberately absent on the
- * live route: that page is the wall display and must stay chrome-free.
- */
-function PlannerNav(props: { route: Route }): React.JSX.Element {
-  const links: { label: string; route: Route }[] = [
-    { label: 'Live', route: { name: 'live' } },
-    { label: 'Plan', route: { name: 'plan' } },
-    { label: 'Last session', route: { name: 'summary', sessionId: 'latest' } },
-  ];
-  return (
-    <nav style={styles.nav}>
-      {links.map((link) => (
-        <a
-          key={link.label}
-          href={routeHash(link.route)}
-          style={link.route.name === props.route.name ? styles.navLinkActive : styles.navLink}
-        >
-          {link.label}
-        </a>
-      ))}
-    </nav>
-  );
+/** The page a route renders inside the shared chrome. */
+function RoutePage(props: { route: Route }): React.JSX.Element | null {
+  switch (props.route.name) {
+    case 'plan':
+      return <PlanBuilderPage />;
+    case 'summary':
+      return <SessionSummaryPage sessionId={props.route.sessionId} />;
+    case 'live':
+      return null;
+  }
 }
 
 function App(): React.JSX.Element {
@@ -179,16 +166,14 @@ function App(): React.JSX.Element {
   // frame (VMCP-04.07). Read once — it cannot change without a reload.
   const [variantOverride] = React.useState(() => readVariantOverride(window.location.search));
   const route = useHashRoute();
+  // The live page owns its own chrome (it needs the non-scrolling wall layout and
+  // renders a ColdBootView inside the shell); the planner routes share the same
+  // `DashboardChrome` with scrolling turned on.
   if (route.name === 'live') return <LivePagePanel variantOverride={variantOverride} />;
   return (
-    <div style={styles.page}>
-      <PlannerNav route={route} />
-      {route.name === 'plan' ? (
-        <PlanBuilderPage />
-      ) : (
-        <SessionSummaryPage sessionId={route.sessionId} />
-      )}
-    </div>
+    <DashboardChrome route={route} scroll>
+      <RoutePage route={route} />
+    </DashboardChrome>
   );
 }
 
