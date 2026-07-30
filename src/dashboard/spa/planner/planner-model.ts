@@ -7,10 +7,14 @@
  * suite only globs `*.test.ts`, so a mapper that lived inside a component could
  * not be covered at all).
  */
+import { estimateE1RMFromReps } from '@voltras/workout-analytics';
+
 import type { PlanExerciseView, PlanTemplateView, PlanTreeView } from '../../read-models/plan-tree';
 import type {
   SessionSummaryExercise,
   SessionSummaryProgression,
+  SessionSummarySet,
+  SessionSummaryView,
 } from '../../read-models/session-summary-view';
 
 /** A workout template plus the block/week trail that locates it in the program. */
@@ -112,4 +116,122 @@ export function formatNumber(value: number | null | undefined, unit = ''): strin
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const rounded = Math.round(value * 10) / 10;
   return unit === '' ? `${rounded}` : `${rounded} ${unit}`;
+}
+
+// ── Session-completion derivations ───────────────────────────────────────────
+
+/**
+ * One point on an exercise's within-session estimated-1RM curve, in the exact
+ * shape titan's `StrengthTrendChart` consumes.
+ *
+ * `date` is the SET's ISO timestamp, not a calendar day: the chart's x-axis is
+ * ordinal (it lays points out evenly and labels them from `sessionLabel`), so
+ * feeding it a set-level timestamp draws the intra-session curve without lying
+ * about the axis. `sessionLabel` carries the human label the chart actually
+ * prints (`Set 3`).
+ */
+export interface E1RMPoint {
+  date: string;
+  e1rm: number;
+  isPR?: boolean;
+  sessionLabel?: string;
+}
+
+/**
+ * The exercise's working sets as an estimated-1RM curve.
+ *
+ * e1RM is the honest way to put sets of DIFFERENT loads and rep counts on one
+ * axis — a raw load line reads as "got weaker" whenever a back-off set follows a
+ * top set, and a raw rep line ignores load entirely. It is computed by
+ * `@voltras/workout-analytics`'s `estimateE1RMFromReps`, the same estimator the
+ * rest of the system uses, rather than a second Epley formula transcribed here.
+ *
+ * Warm-ups are excluded (they are not evidence about strength) and so is any set
+ * with no recorded load or no reps — an e1RM from a missing weight is a fabricated
+ * number, so those sets simply have no point rather than a zero one.
+ *
+ * `isPR` marks the session's best point, which is what the chart's ★ means here:
+ * best OF THIS SESSION. It deliberately does NOT claim an all-time PR — this page
+ * only ever receives one session, so it cannot know (see `sources/design/`).
+ */
+export function e1rmSeries(exercise: SessionSummaryExercise): E1RMPoint[] {
+  const points: E1RMPoint[] = [];
+  for (const set of exercise.sets) {
+    if (set.isWarmup) continue;
+    if (set.weightLbs === null || set.weightLbs <= 0 || set.repCount <= 0) continue;
+    points.push({
+      date: set.startedAt,
+      e1rm: Math.round(estimateE1RMFromReps(set.weightLbs, set.repCount).e1RM * 10) / 10,
+      sessionLabel: `Set ${set.index}`,
+    });
+  }
+  const best = points.reduce<number>((max, p) => Math.max(max, p.e1rm), 0);
+  return points.map((p) => (p.e1rm === best && points.length > 1 ? { ...p, isPR: true } : p));
+}
+
+/**
+ * Percentage change in estimated 1RM from the exercise's first working set to its
+ * last — the one-line "how did this exercise decay" readout under the chart.
+ *
+ * Deliberately NOT `analyzeTrend`/`detectPlateau` from workout-analytics: those
+ * fit a slope PER DAY over a multi-session window, and every point here lands
+ * inside the same ~45-minute session, so the per-day slope they'd report is an
+ * artefact of the tiny time denominator rather than a fact about the athlete.
+ * They become the right call the moment this page can see history (see the
+ * component-gap note).
+ *
+ * Null with fewer than two points — a single set has no direction.
+ */
+export function e1rmChangePct(points: readonly E1RMPoint[]): number | null {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first === undefined || last === undefined || points.length < 2 || first.e1rm === 0) {
+    return null;
+  }
+  return ((last.e1rm - first.e1rm) / first.e1rm) * 100;
+}
+
+/** Session-wide totals for the summary header. */
+export interface SessionRollup {
+  exerciseCount: number;
+  setCount: number;
+  totalReps: number;
+  /** Σ per-exercise volume. Null when NO exercise recorded a load — a gap, not a 0. */
+  volumeLbs: number | null;
+  /** Wall-clock minutes from first set to session end, or null while in progress. */
+  durationMin: number | null;
+}
+
+/** Fold the per-exercise cards into the header's session-level totals. */
+export function sessionRollup(summary: SessionSummaryView): SessionRollup {
+  let volume: number | null = null;
+  let setCount = 0;
+  let totalReps = 0;
+  for (const exercise of summary.exercises) {
+    setCount += exercise.setCount;
+    totalReps += exercise.totalReps;
+    if (exercise.volumeLbs !== null) volume = (volume ?? 0) + exercise.volumeLbs;
+  }
+  return {
+    exerciseCount: summary.exercises.length,
+    setCount,
+    totalReps,
+    volumeLbs: volume,
+    durationMin: sessionDurationMin(summary),
+  };
+}
+
+/** Whole minutes the session ran, or null while it is still open. */
+function sessionDurationMin(summary: SessionSummaryView): number | null {
+  const { startedAt, endedAt } = summary.session;
+  if (endedAt === null) return null;
+  const ms = Date.parse(endedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return Math.round(ms / 60_000);
+}
+
+/** `4 × 8 @ 135 lb`-style one-liner for a completed set. */
+export function setLine(set: SessionSummarySet): string {
+  const load = set.weightLbs === null ? '—' : `${set.weightLbs} lb`;
+  return `${set.repCount} × ${load}`;
 }
