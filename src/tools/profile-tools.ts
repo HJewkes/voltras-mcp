@@ -20,12 +20,14 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 
 import {
+  ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
   ProfileSetTrainingBackgroundInput,
 } from '../schemas/profile.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID, type StoredTrainingProfile } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
@@ -51,6 +53,12 @@ export function registerProfileTools(
     'profile.get_training_background',
     ProfileGetTrainingBackgroundInput,
     wrapHandler(ProfileGetTrainingBackgroundInput, () => getTrainingBackground(state)),
+  );
+  install(
+    placeholders,
+    'profile.get_tier_signal',
+    ProfileGetTierSignalInput,
+    wrapHandler(ProfileGetTierSignalInput, () => getTierSignalTool(state)),
   );
 }
 
@@ -136,4 +144,13 @@ async function getTrainingBackground(
 ): Promise<{ profile: StoredTrainingProfile | null }> {
   const profile = await state.store.getTrainingProfile(LOCAL_USER_ID);
   return { profile: profile ?? null };
+}
+
+/**
+ * `profile.get_tier_signal` (VW-92 MVP) — the crude ceiling only, see
+ * `tier-signal.ts`. Read-only; derives nothing new here and writes nothing.
+ */
+async function getTierSignalTool(state: ServerState): Promise<{ tierSignal: TierSignal }> {
+  const tierSignal = await getTierSignal(state, LOCAL_USER_ID);
+  return { tierSignal };
 }
