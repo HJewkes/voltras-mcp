@@ -34,6 +34,7 @@ import {
   type BaselineState,
   type ExerciseSetsFilter,
   type SessionCountFilter,
+  type SessionDateSpan,
   type SessionListFilter,
   type SessionStore,
   type SetCountFilter,
@@ -1558,12 +1559,50 @@ export class SqliteSessionStore implements SessionStore {
       where.push('user_id = ?');
       params.push(filter.userId);
     }
+    if (filter.endedOnly === true) {
+      where.push('ended_at IS NOT NULL');
+    }
     // `sort` / `limit` / `offset` are intentionally not applied: they describe
     // a page, and the count of a page is not a count.
     const sql =
       `SELECT COUNT(*) AS n FROM sessions` + (where.length ? ` WHERE ${where.join(' AND ')}` : '');
     const row = this.db.prepare(sql).get(...params) as { n: number } | undefined;
     return Promise.resolve(row?.n ?? 0);
+  }
+
+  async getSessionDateSpan(filter: SessionCountFilter = {}): Promise<SessionDateSpan> {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.from !== undefined) {
+      where.push('started_at >= ?');
+      params.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      where.push('started_at <= ?');
+      params.push(filter.to);
+    }
+    if (filter.exerciseId !== undefined) {
+      // Same set-level OR-subquery as `listSessions`/`countSessions` — see
+      // the comment on `listSessions`.
+      where.push(
+        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+      );
+      params.push(filter.exerciseId, filter.exerciseId);
+    }
+    if (filter.userId !== undefined) {
+      where.push('user_id = ?');
+      params.push(filter.userId);
+    }
+    if (filter.endedOnly === true) {
+      where.push('ended_at IS NOT NULL');
+    }
+    const sql =
+      `SELECT MIN(started_at) AS first, MAX(started_at) AS last FROM sessions` +
+      (where.length ? ` WHERE ${where.join(' AND ')}` : '');
+    const row = this.db.prepare(sql).get(...params) as
+      | { first: string | null; last: string | null }
+      | undefined;
+    return Promise.resolve({ first: row?.first ?? null, last: row?.last ?? null });
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
