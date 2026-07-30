@@ -20,7 +20,11 @@ interface FakeRegisteredTool {
   remove(): void;
 }
 
-const TOOL_NAMES = ['profile.set_training_background', 'profile.get_training_background'];
+const TOOL_NAMES = [
+  'profile.set_training_background',
+  'profile.get_training_background',
+  'profile.get_tier_signal',
+];
 
 function makeFakePlaceholders(): {
   placeholders: Map<string, FakeRegisteredTool>;
@@ -89,6 +93,21 @@ describe('profile.get_training_background', () => {
     const r = await h.invoke('profile.get_training_background', {});
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual({ profile: null });
+  });
+});
+
+describe('profile.get_tier_signal', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('is wired through to getTierSignal() and defaults to beginner/provisional', async () => {
+    const r = await h.invoke('profile.get_tier_signal', {});
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { tierSignal: { tier: string; confidence: string } };
+    expect(body.tierSignal.tier).toBe('beginner');
+    expect(body.tierSignal.confidence).toBe('provisional');
   });
 });
 

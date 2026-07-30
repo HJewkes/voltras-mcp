@@ -26,3 +26,8 @@ export const ProfileSetTrainingBackgroundInput = z
   .strict();
 
 export const ProfileGetTrainingBackgroundInput = z.object({}).strict();
+
+// `profile.get_tier_signal` (VW-92 MVP). No input today; this repo is
+// effectively single-user in practice (see `tier-signal.ts`), so there is
+// nothing for a caller to disambiguate yet.
+export const ProfileGetTierSignalInput = z.object({}).strict();

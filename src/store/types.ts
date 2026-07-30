@@ -494,7 +494,27 @@ export interface SessionListFilter {
  * (`sort` / `limit` / `offset`) are deliberately IGNORED by the count, because
  * the count of a page is not a count.
  */
-export type SessionCountFilter = SessionListFilter & { userId?: string };
+export type SessionCountFilter = SessionListFilter & {
+  userId?: string;
+  /**
+   * Restrict to sessions that have actually finished (`ended_at IS NOT
+   * NULL`). Added for the tier-signal MVP (VW-92), whose `sessionsLogged`
+   * count is explicitly defined over completed sessions only — an
+   * in-progress session should not count toward graduation evidence.
+   */
+  endedOnly?: boolean;
+};
+
+/**
+ * The earliest and latest `started_at` among sessions matching `filter`
+ * (same predicates as {@link SessionCountFilter}, pagination fields ignored
+ * for the same reason `countSessions` ignores them). Both `null` when no
+ * session matches.
+ */
+export interface SessionDateSpan {
+  first: string | null;
+  last: string | null;
+}
 
 /**
  * Why a set was performed. The four values the `sets.set_purpose` CHECK
@@ -710,6 +730,14 @@ export interface SessionStore {
    * wrong the moment the default limit clips the result.
    */
   countSessions(filter?: SessionCountFilter): Promise<number>;
+
+  /**
+   * Earliest and latest `started_at` among sessions matching `filter`. Added
+   * for the tier-signal MVP (VW-92), which needs the calendar span a user's
+   * logged sessions cover without pulling every row into memory just to take
+   * `Math.min`/`Math.max` in JS.
+   */
+  getSessionDateSpan(filter?: SessionCountFilter): Promise<SessionDateSpan>;
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
