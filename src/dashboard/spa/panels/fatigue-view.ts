@@ -316,15 +316,30 @@ function buildAsymmetry(limbs: readonly LiveLimb[]): LimbAsymmetry | null {
  * is {@link buildAsymmetry}'s L/R imbalance. With one device (or none reporting
  * per-slot sets) the top-level active set is used and the output is byte-for-byte
  * what it was before dual support.
+ *
+ * The "is anything open" gate is {@link liveLimbs}, NOT the top-level
+ * `snapshot.sets.active` alone — that field is the PRIMARY (first) slot's set only
+ * (see `read-models/snapshot.ts`), so on a bilateral rig it goes null the moment the
+ * first arm finishes while the second is still mid-set. Gating on it alone made this
+ * whole model — and the diverging stage it feeds — flip to null (and the page to
+ * REST) while a real set was still open, which is exactly backwards.
  */
 export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueModel | null {
   const { snapshot, prescription } = sources;
-  const active = snapshot?.sets.active;
-  if (!snapshot || !active) return null;
+  if (!snapshot) return null;
 
   const limbs = liveLimbs(snapshot);
+  const active = snapshot.sets.active;
+  if (limbs.length === 0 && !active) return null;
+
   const isDual = limbs.length >= 2;
-  const reps: readonly Rep[] = isDual ? foldLimitingReps(limbs) : (active.reps ?? []);
+  // Non-dual: prefer the matching per-slot limb's reps (covers the bilateral case
+  // where the PRIMARY slot's set already closed but a secondary slot is still
+  // open); fall back to the top-level active set for pre-VW-71 callers/fakes that
+  // carry no per-slot `sets` at all.
+  const reps: readonly Rep[] = isDual
+    ? foldLimitingReps(limbs)
+    : (limbs[0]?.reps ?? active?.reps ?? []);
   const rpe = estimateSetRpe({ reps: reps as Rep[] });
   const workingStandard = workingRomMetres(reps);
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
