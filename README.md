@@ -255,27 +255,30 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-76 tools in mock mode; 74 with the real adapter (`mock.*` is registered only when
+86 tools in mock mode; 84 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
-| Namespace       | Count | What it covers                                                                                                                                                                 |
-| --------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `device.*`      | 24    | Scan, connect, disconnect, read state, and every resistance setting — weight, mode, eccentric overload, chains, damper, band ceiling, assist, isokinetic, rowing, guided load. |
-| `plan.*`        | 17    | Training-plan hierarchy: programs → blocks → weeks → templates → exercises, plus `next_workout`, `complete_workout`, `suggest_progression`, and `attach_to_session`.           |
-| `debug.*`       | 6     | Diagnostic ring buffers, rep-stream parity comparison, flight-recorder status, and the channel-delivery round-trip probe.                                                      |
-| `slot.*`        | 5     | Bind, identify, swap, list, and unbind the device ↔ physical-side (left/right) mapping used for bilateral work.                                                                |
-| `session.*`     | 4     | `start`, `end`, `list`, `get`.                                                                                                                                                 |
-| `set.*`         | 4     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `get`.                                                                                             |
-| `timer.*`       | 3     | `start` (non-blocking, push-completed — preferred for rest), `wait` (blocking, singleton), `cancel`.                                                                           |
-| `system.*`      | 3     | `speak` (macOS `say`) plus start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine.                         |
-| `exercise.*`    | 2     | Search and fetch from the exercise catalog.                                                                                                                                    |
-| `isometric.*`   | 2     | Max-force and bilateral-imbalance assessment protocols.                                                                                                                        |
-| `mock.*`        | 2     | Configure the mock device / inject adapter errors. Registered only in mock mode.                                                                                               |
-| `bilateral.*`   | 1     | Apply mode + weight + eccentric + chains across multiple bound slots in one call.                                                                                              |
-| `metrics.*`     | 1     | `compute` — runs an analytics pipeline over a session, a set, or a set-id array. Dispatches to `@voltras/workout-analytics`; no analytics logic is reimplemented here.         |
-| `progression.*` | 1     | Progression history for one exercise.                                                                                                                                          |
-| `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                            |
+| Namespace       | Count | What it covers                                                                                                                                                                   |
+| --------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device.*`      | 24    | Scan, connect, disconnect, read state, and every resistance setting — weight, mode, eccentric overload, chains, damper, band ceiling, assist, isokinetic, rowing, guided load.   |
+| `plan.*`        | 17    | Training-plan hierarchy: programs → blocks → weeks → templates → exercises, plus `next_workout`, `complete_workout`, `suggest_progression`, and `attach_to_session`.             |
+| `debug.*`       | 6     | Diagnostic ring buffers, rep-stream parity comparison, flight-recorder status, and the channel-delivery round-trip probe.                                                        |
+| `slot.*`        | 5     | Bind, identify, swap, list, and unbind the device ↔ physical-side (left/right) mapping used for bilateral work.                                                                  |
+| `session.*`     | 5     | `start`, `end`, `set_exercise`, `list`, `get`.                                                                                                                                   |
+| `set.*`         | 4     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `get`.                                                                                               |
+| `timer.*`       | 3     | `start` (non-blocking, push-completed — preferred for rest), `wait` (blocking, singleton), `cancel`.                                                                             |
+| `system.*`      | 6     | `speak` (macOS `say`), start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine — plus the device write-lease. |
+| `profile.*`     | 3     | Self-reported training background (get/set) and the derived tier signal.                                                                                                         |
+| `exercise.*`    | 2     | Search and fetch from the exercise catalog.                                                                                                                                      |
+| `isometric.*`   | 2     | Max-force and bilateral-imbalance assessment protocols.                                                                                                                          |
+| `baselines.*`   | 2     | Per-exercise baseline confidence STATE (`get`, `recalc`) — never baseline values, which are recomputed from stored reps on demand.                                               |
+| `mock.*`        | 2     | Configure the mock device / inject adapter errors. Registered only in mock mode.                                                                                                 |
+| `bilateral.*`   | 1     | Apply mode + weight + eccentric + chains across multiple bound slots in one call.                                                                                                |
+| `driftguard.*`  | 1     | `check` — is rep execution (tempo, ROM) comparable across two sessions of one exercise? Diagnostic read over the in-process gate every cross-session comparison must pass first. |
+| `metrics.*`     | 1     | `compute` — runs an analytics pipeline over a session, a set, or a set-id array. Dispatches to `@voltras/workout-analytics`; no analytics logic is reimplemented here.           |
+| `progression.*` | 1     | Progression history for one exercise.                                                                                                                                            |
+| `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                              |
 
 Some `device.*` tools are explicitly marked `@experimental` or `@deprecated` in their own
 descriptions; prefer the consolidated setters (for example `device.configure_isokinetic`
