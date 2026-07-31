@@ -53,14 +53,20 @@ import {
   getSetMeanVelocity,
   getSetVelocitySummary,
   type LoadVelocityDataPoint,
+  type ReadinessEstimate,
   type Set as AnalyticsSet,
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
+import {
+  checkFeatureGate,
+  deriveFeatureGate,
+  type FeatureGateVerdict,
+} from '../store/baseline-gate.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
-import type { StoredSet } from '../store/types.js';
+import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 type MetricsComputeInputType = z.infer<typeof MetricsComputeInput>;
@@ -221,7 +227,19 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // canonical for "fresh" velocity).
       const actualVel = getSetFirstRepVelocity(toAnalyticsSet(target[0]!));
       const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baseline[0]!));
-      return computeReadiness(actualVel, baselineVel);
+      const observed = { actualVelocityMps: actualVel, baselineVelocityMps: baselineVel };
+
+      // B57: a readiness ZONE is an assertion about where this lifter sits
+      // against their own norm, and it is only supportable once the exercise
+      // baseline is calibrated. The raw velocities are measurements and always
+      // ship; the interpreted estimate is what the gate withholds.
+      const gate = await readinessGate(state, input.baselineSessionId, [...target, ...baseline]);
+      const result: GatedReadinessResult = {
+        readiness: gate.activation === 'withheld' ? null : computeReadiness(actualVel, baselineVel),
+        observed,
+        gate,
+      };
+      return result;
     }
   }
 }
@@ -229,6 +247,66 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
 function mean(xs: number[]): number {
   if (xs.length === 0) return 0;
   return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+/**
+ * `session.readiness`'s response (B57).
+ *
+ * `readiness` is `null` when the gate withholds — the pipeline still answers,
+ * it just declines to interpret. `observed` carries the two velocities either
+ * way: those are measurements, not claims, and a caller that wants to show a
+ * bare ratio is entitled to them at any baseline tier.
+ */
+interface GatedReadinessResult {
+  readiness: ReadinessEstimate | null;
+  observed: { actualVelocityMps: number; baselineVelocityMps: number };
+  gate: FeatureGateVerdict;
+}
+
+/**
+ * The side to key the baseline on, or `undefined` for the side-agnostic pooled
+ * key. Only names a side when every scoped set agrees on one: a per-side
+ * baseline and a pooled one are different measurement streams, and reading a
+ * left-side baseline to grade a mixed comparison mixes them (see
+ * `recalcBaselineForSet` in set-tools.ts, which makes the same call at write
+ * time). Sets that recorded no side at all leave the key pooled.
+ */
+function resolveKeySide(sets: readonly StoredSet[]): StoredSide | undefined {
+  let seen: StoredSide | undefined;
+  for (const set of sets) {
+    if (set.side === undefined) return undefined;
+    if (seen === undefined) {
+      seen = set.side;
+      continue;
+    }
+    if (set.side !== seen) return undefined;
+  }
+  return seen;
+}
+
+/**
+ * Grade the readiness feature against the baseline session's exercise.
+ *
+ * A baseline session with no `exerciseId` is INCONCLUSIVE, not an error: there
+ * is no key to look a baseline up under, so the verdict is the same
+ * never-computed `withheld` a missing row produces. Throwing here would turn a
+ * hedge into a failure, which is exactly what an advisory gate must not do.
+ */
+async function readinessGate(
+  state: ServerState,
+  baselineSessionId: string,
+  comparedSets: readonly StoredSet[],
+): Promise<FeatureGateVerdict> {
+  const baselineSession = await state.store.getSession(baselineSessionId);
+  const exerciseId = baselineSession?.exerciseId;
+  if (exerciseId === undefined) return deriveFeatureGate(undefined, 'readiness-score');
+
+  const side = resolveKeySide(comparedSets);
+  return checkFeatureGate(
+    state.store,
+    { userId: LOCAL_USER_ID, exerciseId, ...(side !== undefined ? { side } : {}) },
+    'readiness-score',
+  );
 }
 
 /** Load recommendation derived by inverting a load-velocity profile. */
