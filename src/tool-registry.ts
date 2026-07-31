@@ -104,6 +104,10 @@ export const CORE_TOOL_NAMES = [
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   'baselines.get',
   'baselines.recalc',
+  // Execution-comparability gate (VW-90 / B15). DIAGNOSTIC ONLY — the real
+  // consumption path is the in-process `checkDriftGuard`. See
+  // src/tools/drift-guard-tools.ts.
+  'driftguard.check',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -258,6 +262,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',
+
+  'driftguard.check': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

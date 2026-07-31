@@ -43,6 +43,7 @@ import { registerProgressionTools } from './tools/progression-tools.js';
 import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerPlanTools } from './tools/plan-tools.js';
 import { registerBaselineTools } from './tools/baseline-tools.js';
+import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
 import { applyLeaseGuard } from './lease-guard.js';
@@ -214,6 +215,7 @@ function registerRealTools(
   registerPlanTools(server, state, placeholders);
   registerProfileTools(server, state, placeholders);
   registerBaselineTools(server, state, placeholders);
+  registerDriftGuardTools(server, state, placeholders);
   registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);
