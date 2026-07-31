@@ -68,6 +68,61 @@ interface PlaceholderTools {
  * is missing — the placeholder map is constructed from `CORE_TOOL_NAMES` in
  * `server.ts`, so a missing entry means the tool name was forgotten there.
  */
+// Plan hierarchy, top to bottom: program -> block -> week -> template ->
+// planned exercise. Each level's `create` takes its parent's id; each
+// `list_for_*` lists the children of one parent. `plan.next_workout` /
+// `plan.complete_workout` / `plan.attach_to_session` / `plan.suggest_progression`
+// are the runtime bridge between a static plan and an actual training session.
+const PLAN_PROGRAM_CREATE_DESCRIPTION =
+  'Create a new training program — the top-level container for a plan (holds one or more ' +
+  'blocks/mesocycles). Start here when scaffolding a new plan from scratch.';
+const PLAN_PROGRAM_LIST_DESCRIPTION = 'List existing programs.';
+const PLAN_PROGRAM_GET_DESCRIPTION = 'Fetch one program by id.';
+const PLAN_PROGRAM_ARCHIVE_DESCRIPTION =
+  'Archive a program (soft-retire it from active use without deleting its history).';
+
+const PLAN_BLOCK_CREATE_DESCRIPTION =
+  'Create a training block (mesocycle) under a program — takes the parent programId. A block ' +
+  'holds one or more weeks.';
+const PLAN_BLOCK_LIST_DESCRIPTION = 'List the blocks belonging to one program (takes programId).';
+
+const PLAN_WEEK_CREATE_DESCRIPTION =
+  'Create a week under a block — takes the parent blockId. A week holds one or more workout ' +
+  'templates.';
+const PLAN_WEEK_LIST_DESCRIPTION = 'List the weeks belonging to one block (takes blockId).';
+
+const PLAN_TEMPLATE_CREATE_DESCRIPTION =
+  'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
+  'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on.';
+const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
+const PLAN_TEMPLATE_LIST_DESCRIPTION =
+  'List the workout templates belonging to one week (takes weekId).';
+
+const PLAN_EXERCISE_CREATE_DESCRIPTION =
+  'Add a planned exercise to a workout template — takes the parent workoutTemplateId. This is ' +
+  'the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot ' +
+  'in one template.';
+const PLAN_EXERCISE_LIST_DESCRIPTION =
+  'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
+
+const PLAN_NEXT_WORKOUT_DESCRIPTION =
+  'Get the next un-completed workout template for a program (or the active/default program if ' +
+  'programId is omitted). Use this to answer "what should the user do today per their plan?"';
+const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
+  'Mark a workout template as completed, optionally linking the real session that completed it ' +
+  '(sessionId). Advances what `plan.next_workout` returns next.';
+const PLAN_ATTACH_TO_SESSION_DESCRIPTION =
+  'Link a live/real session to a plan entity — either a specific plannedExerciseId or a whole ' +
+  'workoutTemplateId (exactly one of the two). Use this to connect what the user is actually ' +
+  'doing right now to what the plan prescribed, without requiring the session to have been ' +
+  'started from the plan in the first place.';
+const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
+  'Get a suggested load/weight-delta for the next occurrence of an exercise, based on the most ' +
+  'recently completed session for it (completedSessionId, optional — inferred if omitted) ' +
+  'within a program. This is a suggestion the caller presents to the user, not an authoritative ' +
+  'prescription — RP-derived guidance treats progression suggestions as advisory, never a ' +
+  'silent auto-apply.';
+
 export function registerPlanTools(
   _server: McpServer,
   state: ServerState,
@@ -79,24 +134,28 @@ export function registerPlanTools(
     'plan.program.create',
     PlanProgramCreateInput,
     wrapHandler(PlanProgramCreateInput, (input) => createProgram(state, input)),
+    PLAN_PROGRAM_CREATE_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.program.list',
     PlanProgramListInput,
     wrapHandler(PlanProgramListInput, (input) => listPrograms(state, input)),
+    PLAN_PROGRAM_LIST_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.program.get',
     PlanProgramGetInput,
     wrapHandler(PlanProgramGetInput, (input) => getProgram(state, input)),
+    PLAN_PROGRAM_GET_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.program.archive',
     PlanProgramArchiveInput,
     wrapHandler(PlanProgramArchiveInput, (input) => archiveProgram(state, input)),
+    PLAN_PROGRAM_ARCHIVE_DESCRIPTION,
   );
 
   // blocks
@@ -105,12 +164,14 @@ export function registerPlanTools(
     'plan.block.create',
     PlanBlockCreateInput,
     wrapHandler(PlanBlockCreateInput, (input) => createBlock(state, input)),
+    PLAN_BLOCK_CREATE_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.block.list_for_program',
     PlanBlockListForProgramInput,
     wrapHandler(PlanBlockListForProgramInput, (input) => listBlocksForProgram(state, input)),
+    PLAN_BLOCK_LIST_DESCRIPTION,
   );
 
   // weeks
@@ -119,12 +180,14 @@ export function registerPlanTools(
     'plan.week.create',
     PlanWeekCreateInput,
     wrapHandler(PlanWeekCreateInput, (input) => createWeek(state, input)),
+    PLAN_WEEK_CREATE_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.week.list_for_block',
     PlanWeekListForBlockInput,
     wrapHandler(PlanWeekListForBlockInput, (input) => listWeeksForBlock(state, input)),
+    PLAN_WEEK_LIST_DESCRIPTION,
   );
 
   // workout templates
@@ -133,18 +196,21 @@ export function registerPlanTools(
     'plan.template.create',
     PlanTemplateCreateInput,
     wrapHandler(PlanTemplateCreateInput, (input) => createTemplate(state, input)),
+    PLAN_TEMPLATE_CREATE_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.template.get',
     PlanTemplateGetInput,
     wrapHandler(PlanTemplateGetInput, (input) => getTemplate(state, input)),
+    PLAN_TEMPLATE_GET_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.template.list_for_week',
     PlanTemplateListForWeekInput,
     wrapHandler(PlanTemplateListForWeekInput, (input) => listTemplatesForWeek(state, input)),
+    PLAN_TEMPLATE_LIST_DESCRIPTION,
   );
 
   // planned exercises
@@ -153,6 +219,7 @@ export function registerPlanTools(
     'plan.exercise.create',
     PlanExerciseCreateInput,
     wrapHandler(PlanExerciseCreateInput, (input) => createPlannedExercise(state, input)),
+    PLAN_EXERCISE_CREATE_DESCRIPTION,
   );
   install(
     placeholders,
@@ -161,6 +228,7 @@ export function registerPlanTools(
     wrapHandler(PlanExerciseListForTemplateInput, (input) =>
       listPlannedExercisesForTemplate(state, input),
     ),
+    PLAN_EXERCISE_LIST_DESCRIPTION,
   );
 
   // progression / session-link tools
@@ -169,24 +237,28 @@ export function registerPlanTools(
     'plan.next_workout',
     PlanNextWorkoutInput,
     wrapHandler(PlanNextWorkoutInput, (input) => nextWorkout(state, input)),
+    PLAN_NEXT_WORKOUT_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.complete_workout',
     PlanCompleteWorkoutInput,
     wrapHandler(PlanCompleteWorkoutInput, (input) => completeWorkout(state, input)),
+    PLAN_COMPLETE_WORKOUT_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.attach_to_session',
     PlanAttachToSessionInput,
     wrapHandler(PlanAttachToSessionInput, (input) => attachToSession(state, input)),
+    PLAN_ATTACH_TO_SESSION_DESCRIPTION,
   );
   install(
     placeholders,
     'plan.suggest_progression',
     PlanSuggestProgressionInput,
     wrapHandler(PlanSuggestProgressionInput, (input) => suggestProgression(state, input)),
+    PLAN_SUGGEST_PROGRESSION_DESCRIPTION,
   );
 }
 
@@ -195,12 +267,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 // --- programs ---

@@ -205,6 +205,11 @@ export function registerServerTools(
   }
   tool.update({
     paramsSchema: ServerHealthInput.shape,
+    description:
+      'Report server/process health: version, build, active adapter (real/mock), SDK and ' +
+      'analytics-package versions, db path, log level, push-channel status, and device-lease ' +
+      'status. Useful for diagnosing "is this the server I think it is" and "who holds the ' +
+      'device lease" without a dedicated lease.status call.',
     callback: wrapHandler(ServerHealthInput, () =>
       Promise.resolve({
         version: VMCP_VERSION,

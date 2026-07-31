@@ -26,6 +26,14 @@ interface PlaceholderTools {
  * Hot-swap the `driftguard.*` placeholder with its real handler. Mirrors the
  * install pattern used by the other tool registries (see `baseline-tools.ts`).
  */
+const DRIFT_GUARD_CHECK_DESCRIPTION =
+  'DIAGNOSTIC ONLY — not the consumption path. Ask "why did the system refuse (or accept) a ' +
+  'comparison between these two sessions for this exercise" and get the same comparability ' +
+  'verdict any internal cross-session check would see (drift in ROM/tempo, setup mismatch, ' +
+  'insufficient baseline). Real internal consumers import `checkDriftGuard` directly rather ' +
+  'than round-tripping through this tool. Use this when a human wants to inspect or debug a ' +
+  'refused comparison, not as a step in an automated coaching decision.';
+
 export function registerDriftGuardTools(
   _server: McpServer,
   state: ServerState,
@@ -36,6 +44,7 @@ export function registerDriftGuardTools(
     'driftguard.check',
     DriftGuardCheckInput,
     wrapHandler(DriftGuardCheckInput, (input) => checkDrift(state, input)),
+    DRIFT_GUARD_CHECK_DESCRIPTION,
   );
 }
 
@@ -44,12 +53,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 async function checkDrift(

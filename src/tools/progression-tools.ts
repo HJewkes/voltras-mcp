@@ -48,6 +48,13 @@ interface PlaceholderTools {
  * real handler is hot-swapped into the pre-registered placeholder via
  * `RegisteredTool.update({ paramsSchema, callback })`.
  */
+const PROGRESSION_GET_DESCRIPTION =
+  'Answer "what did I hit last time on this exercise?" by aggregating the most recent sessions ' +
+  '(default: last 20 within an 8-week lookback, both overridable) that trained the given ' +
+  'exerciseId — top weight and volume trends across those sessions. Cheaper than looping ' +
+  '`session.get` calls yourself (a single session response can be large). `exerciseId` is not ' +
+  'validated against the catalog, so historical data for a renamed/removed exercise still works.';
+
 export function registerProgressionTools(
   _server: McpServer,
   state: ServerState,
@@ -58,6 +65,7 @@ export function registerProgressionTools(
     'progression.get_for_exercise',
     ProgressionGetInput,
     wrapHandler(ProgressionGetInput, (input) => getProgressionForExercise(state, input)),
+    PROGRESSION_GET_DESCRIPTION,
   );
 }
 
@@ -66,12 +74,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 async function getProgressionForExercise(

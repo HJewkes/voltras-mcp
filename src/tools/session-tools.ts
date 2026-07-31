@@ -74,6 +74,36 @@ interface PlaceholderTools {
  * `server.ts`; we replace each `STARTING` callback with the real handler via
  * `RegisteredTool.update({ callback })` so existing references stay valid.
  */
+const SESSION_START_DESCRIPTION =
+  'Start a workout session, optionally pinned to an exercise (`exerciseId` or `exerciseName`, ' +
+  'at least one required if either is given). `slot` selects which device slot (default ' +
+  "'primary'; use 'left'/'right' for a bilateral rig). A session with no exercise set at " +
+  'start can have one attached later via `session.set_exercise`. `verboseIdleReps` controls ' +
+  'whether idle-state rep noise is included in the channel event stream.';
+
+const SESSION_END_DESCRIPTION =
+  'End the active session on a slot and return its summary. Idempotent-adjacent: ending an ' +
+  'already-ended or nonexistent session is a normal, checkable outcome, not necessarily an ' +
+  'error — check the response shape rather than assuming a throw.';
+
+const SESSION_SET_EXERCISE_DESCRIPTION =
+  'Attach or change the exercise (`exerciseId` or `exerciseName`) on the active session for a ' +
+  'slot. Use this for a session that started without a pinned exercise, or a multi-exercise ' +
+  'session moving to its next movement. Exercise-name resolution is exact-match; prefer ' +
+  '`exerciseId` from `exercise.search`/`exercise.get` when you have it.';
+
+const SESSION_LIST_DESCRIPTION =
+  'List past sessions, optionally filtered by date range (`from`/`to`) and/or `exerciseId`, ' +
+  'with `sort`/`limit`/`offset` pagination. `detail` controls whether each entry is a summary ' +
+  'row or the full session payload — prefer summary (the default) for browsing; a session can ' +
+  'be 100+ KB of set/rep data at `detail: full` scale, so fetch that per-session via ' +
+  '`session.get` only for the one you actually need.';
+
+const SESSION_GET_DESCRIPTION =
+  'Fetch one full session by id, including its sets. Can be large for a long session — prefer ' +
+  '`session.list` for browsing/filtering and only call this for a session you already intend ' +
+  'to inspect in full.';
+
 export function registerSessionTools(
   _server: McpServer,
   state: ServerState,
@@ -84,30 +114,35 @@ export function registerSessionTools(
     'session.start',
     SessionStartInput,
     wrapHandler(SessionStartInput, (input) => startSession(state, input)),
+    SESSION_START_DESCRIPTION,
   );
   install(
     placeholders,
     'session.end',
     SessionEndInput,
     wrapHandler(SessionEndInput, (input) => endSession(state, input.slot)),
+    SESSION_END_DESCRIPTION,
   );
   install(
     placeholders,
     'session.set_exercise',
     SessionSetExerciseInput,
     wrapHandler(SessionSetExerciseInput, (input) => setSessionExercise(state, input)),
+    SESSION_SET_EXERCISE_DESCRIPTION,
   );
   install(
     placeholders,
     'session.list',
     SessionListInput,
     wrapHandler(SessionListInput, (input) => listSessions(state, input)),
+    SESSION_LIST_DESCRIPTION,
   );
   install(
     placeholders,
     'session.get',
     SessionGetInput,
     wrapHandler(SessionGetInput, (input) => getSession(state, input)),
+    SESSION_GET_DESCRIPTION,
   );
 }
 
@@ -116,6 +151,7 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
@@ -125,7 +161,14 @@ function install<S extends z.ZodObject>(
   // schema (`z.object({}).passthrough().shape`) loses passthrough through
   // `.shape`, so without this every required input would be stripped before
   // the callback's wrapHandler sees it.
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 async function startSession(

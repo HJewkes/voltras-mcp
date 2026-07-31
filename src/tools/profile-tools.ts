@@ -37,6 +37,27 @@ interface PlaceholderTools {
  * Hot-swap the `profile.*` placeholders with their real handlers. Mirrors the
  * install pattern used by the other tool registries (see `plan-tools.ts`).
  */
+const SET_TRAINING_BACKGROUND_DESCRIPTION =
+  "Record the user's self-reported onboarding/training-background answers: declaredTier, " +
+  'yearsTraining, historyConsistent, everPlateaued (a real plateau event — the honest signal ' +
+  'for graduating beginner->intermediate, more reliable than years trained or a physique ' +
+  'read), reportedSetsPerMuscle, goal, daysAvailable (days per week they WANT), and ' +
+  'daysReliable (days per week they can DEFINITELY make — the number to actually program ' +
+  'against, distinct from daysAvailable). Call is a merge onto the existing row, not an ' +
+  'overwrite — pass only the fields you have an answer for; earlier answers are preserved ' +
+  'across multiple onboarding turns. This tool only stores verbatim self-report; it never ' +
+  'infers or computes an experience tier (see profile.get_tier_signal for that).';
+
+const GET_TRAINING_BACKGROUND_DESCRIPTION =
+  'Read back the stored training-background/onboarding profile for the user. Returns ' +
+  '`profile: null` if nothing has been captured yet.';
+
+const GET_TIER_SIGNAL_DESCRIPTION =
+  'Read a crude experience-tier signal (VW-92 MVP) derived from the stored training profile ' +
+  '— a coarse ceiling, not a validated tier classification. Read-only; computes nothing new ' +
+  'and writes nothing. Do not treat this as authoritative for tier-gated decisions without ' +
+  'checking its `confidence`/`source` fields.';
+
 export function registerProfileTools(
   _server: McpServer,
   state: ServerState,
@@ -47,18 +68,21 @@ export function registerProfileTools(
     'profile.set_training_background',
     ProfileSetTrainingBackgroundInput,
     wrapHandler(ProfileSetTrainingBackgroundInput, (input) => setTrainingBackground(state, input)),
+    SET_TRAINING_BACKGROUND_DESCRIPTION,
   );
   install(
     placeholders,
     'profile.get_training_background',
     ProfileGetTrainingBackgroundInput,
     wrapHandler(ProfileGetTrainingBackgroundInput, () => getTrainingBackground(state)),
+    GET_TRAINING_BACKGROUND_DESCRIPTION,
   );
   install(
     placeholders,
     'profile.get_tier_signal',
     ProfileGetTierSignalInput,
     wrapHandler(ProfileGetTierSignalInput, () => getTierSignalTool(state)),
+    GET_TIER_SIGNAL_DESCRIPTION,
   );
 }
 
@@ -67,12 +91,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 /**

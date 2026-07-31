@@ -163,6 +163,24 @@ async function release(state: ServerState, self: ClientId): Promise<unknown> {
 }
 
 /** Register `system.lease_status` / `lease_acquire` / `lease_release`. */
+const LEASE_STATUS_DESCRIPTION =
+  'Read who currently holds the single-writer device lease, and whether that is you. ' +
+  'Ordinary use never needs this — the lease is acquired implicitly on your first write ' +
+  'call. Use it to diagnose a contended device (another client already connected).';
+
+const LEASE_ACQUIRE_DESCRIPTION =
+  'Take the device lease. Only needed for the contended case — normally the first write ' +
+  'call acquires it for you. If another client holds it, this returns acquired:false with a ' +
+  "hint unless `force: true` is passed, which unloads the current holder's device first " +
+  '(surrendering any in-progress set) and steals the lease. If the cable cannot be confirmed ' +
+  'unloaded, this refuses unless `acceptLoadedDevice: true` is ALSO passed — do not pass that ' +
+  'unless the device is confirmed unattended, since it accepts the risk of a still-loaded cable.';
+
+const LEASE_RELEASE_DESCRIPTION =
+  'Release the device lease you hold. Surrenders (unloads) the device first if it is still ' +
+  'engaged, so the next holder never inherits a loaded cable. A no-op if you do not hold the ' +
+  'lease.';
+
 export function registerLeaseTools(
   _server: McpServer,
   state: ServerState,
@@ -174,18 +192,21 @@ export function registerLeaseTools(
     'system.lease_status',
     LeaseStatusInput,
     wrapHandler(LeaseStatusInput, () => Promise.resolve(leaseView(state, self))),
+    LEASE_STATUS_DESCRIPTION,
   );
   install(
     placeholders,
     'system.lease_acquire',
     LeaseAcquireInput,
     wrapHandler(LeaseAcquireInput, (input) => acquire(state, self, input)),
+    LEASE_ACQUIRE_DESCRIPTION,
   );
   install(
     placeholders,
     'system.lease_release',
     LeaseReleaseInput,
     wrapHandler(LeaseReleaseInput, () => release(state, self)),
+    LEASE_RELEASE_DESCRIPTION,
   );
 }
 
@@ -194,10 +215,18 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }

@@ -28,6 +28,23 @@ interface PlaceholderTools {
  * the install pattern used by the other tool registries (see
  * `profile-tools.ts`).
  */
+const GET_BASELINE_DESCRIPTION =
+  'Read the persisted confidence state for one exercise baseline (COLD -> SHAPE_ONLY -> ' +
+  'PROVISIONAL -> CALIBRATED -> STALE). This is a diagnostic read over an internal state ' +
+  'machine (B56/VW-116), not a value lookup — it answers "how much do we know about this ' +
+  'exercise, and how consistent was it", never "what is the median ROM". `baseline: null` ' +
+  'means this (user, exercise, side) key has never been recalculated — that is NOT the same ' +
+  'as COLD (COLD means it HAS been observed but shape is not yet established). A number ' +
+  'derived from a baseline below CALIBRATED should be treated as provisional; do not present ' +
+  'RIR or readiness-zone claims as confident until state is CALIBRATED.';
+
+const RECALC_BASELINE_DESCRIPTION =
+  'Force a baseline recalculation for one (exercise, side) key. Set-close already recalculates ' +
+  'the key it touched, so this only matters for two cases: history recorded before that hook ' +
+  'shipped, or an algorithm-version bump that makes a stored `state` stale against the current ' +
+  'thresholds. Prefer `baselines.get` for a normal read; only call this when you specifically ' +
+  'need to force a fresh derivation.';
+
 export function registerBaselineTools(
   _server: McpServer,
   state: ServerState,
@@ -38,12 +55,14 @@ export function registerBaselineTools(
     'baselines.get',
     BaselinesGetInput,
     wrapHandler(BaselinesGetInput, (input) => getBaseline(state, input)),
+    GET_BASELINE_DESCRIPTION,
   );
   install(
     placeholders,
     'baselines.recalc',
     BaselinesRecalcInput,
     wrapHandler(BaselinesRecalcInput, (input) => recalcBaseline(state, input)),
+    RECALC_BASELINE_DESCRIPTION,
   );
 }
 
@@ -52,12 +71,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 /**
