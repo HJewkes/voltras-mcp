@@ -5,17 +5,12 @@
 // `@voltras/workout-analytics`; the Wave 3 handler dispatches based on the
 // literal.
 //
-// PENDING: verify backing function with WA owner before Wave 3.
-// The `vbt.set` variant has no known set-level VBT function in
-// `@voltras/workout-analytics` (the VBT module is profile/rep-scoped:
-// `buildProfile`, `fitLVProfile`, `predictVelocity`, `estimateLoad`, etc.).
-// Per critic-report.md, this variant is undispatchable as currently designed.
-// Wave 3 (metrics-tools.ts) MUST resolve one of:
-//   (a) confirm an existing WA function that produces a set-level VBT result;
-//   (b) compose a set-level VBT result from rep-level fields without
-//       reimplementing analytics logic in this repo;
-//   (c) remove the `vbt.set` variant from this union.
-// Do not merge PR 3 until this is resolved.
+// `vbt.set` is fully resolved and merged: it dispatches to
+// `getSetVelocitySummary(set)` in `@voltras/workout-analytics`, which returns
+// the canonical single-set VBT result (first/last/best/mean/peak/lossPct/
+// repCount). The PENDING/"undispatchable" note that used to live here was
+// stale by the time it was read — see `metrics-tools.ts`'s `compute()`
+// switch for the live dispatch.
 
 import { z } from 'zod';
 import { IdSchema } from './common.js';
@@ -25,7 +20,6 @@ import { IdSchema } from './common.js';
  * function the handler dispatches to.
  */
 export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
-  // PENDING: verify backing function with WA owner before Wave 3.
   // Single-set VBT metrics (velocity loss%, mean/peak velocity, ROM).
   z.object({ pipeline: z.literal('vbt.set'), setId: IdSchema }),
 

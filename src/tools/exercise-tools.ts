@@ -47,12 +47,20 @@ export function registerExerciseTools(
   placeholders.get('exercise.search')?.update({
     paramsSchema: ExerciseSearchInput.shape,
     callback: search as never,
-  });
+    description:
+      'Search the exercise catalog by free-text query (name/aliases). Returns matching ' +
+      'exercises with their catalog ids — use the returned `id` for `exercise.get` or any ' +
+      'other tool that takes an `exerciseId`. Empty query behavior depends on the catalog ' +
+      'service; pass a specific term rather than relying on it to list everything.',
+  } as never);
 
   placeholders.get('exercise.get')?.update({
     paramsSchema: ExerciseGetInput.shape,
     callback: makeGetCallback(state) as never,
-  });
+    description:
+      'Look up one exercise by its catalog id. Returns NOT_FOUND if the id does not exist — ' +
+      'use `exercise.search` first if you only have a name, not an id.',
+  } as never);
 }
 
 /**

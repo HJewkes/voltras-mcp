@@ -115,6 +115,28 @@ interface PlaceholderTools {
  * unit (event-bridge.ts:onInProgress). `set.get` is read-only: it pulls a
  * completed set straight from the store and is unaffected by live state.
  */
+const SET_START_DESCRIPTION =
+  "Start recording a new set on the given slot's active session. `watch` (notifyOn[], " +
+  'optional inactivityTimeoutMs) subscribes the channel event stream to specific mid-set ' +
+  'signals (e.g. velocity-loss thresholds) as they fire, rather than requiring you to poll ' +
+  '`set.live_metrics`. Pass `isWarmup: true` for warm-up sets so downstream analytics (e.g. ' +
+  'baseline derivation) can exclude them.';
+
+const SET_END_DESCRIPTION =
+  'Finalize the active set on a slot and return the closed set record (persisted reps + ' +
+  'summary). Also fires as an automatic finalize path when the user presses Stop on the ' +
+  'physical device — an explicit call here and a device-initiated end converge on the same ' +
+  'closed-set shape.';
+
+const SET_LIVE_METRICS_DESCRIPTION =
+  'Poll rolling metrics for the in-progress set on a slot (reps so far, current velocity/ROM ' +
+  "trend). Prefer subscribing via `set.start`'s `watch` option for threshold-triggered " +
+  'events instead of polling this in a tight loop.';
+
+const SET_GET_DESCRIPTION =
+  'Fetch one completed, persisted set by id, including its reps. Read-only and unaffected by ' +
+  'live device state — use `set.live_metrics` for an in-progress set instead.';
+
 export function registerSetTools(
   _server: McpServer,
   state: ServerState,
@@ -125,24 +147,28 @@ export function registerSetTools(
     'set.start',
     SetStartInput,
     wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot, input.isWarmup)),
+    SET_START_DESCRIPTION,
   );
   install(
     placeholders,
     'set.end',
     SetEndInput,
     wrapHandler(SetEndInput, (input) => endSetTool(state, input.slot)),
+    SET_END_DESCRIPTION,
   );
   install(
     placeholders,
     'set.live_metrics',
     SetLiveMetricsInput,
     wrapHandler(SetLiveMetricsInput, (input) => liveMetrics(state, input.slot)),
+    SET_LIVE_METRICS_DESCRIPTION,
   );
   install(
     placeholders,
     'set.get',
     SetGetInput,
     wrapHandler(SetGetInput, (input) => getStoredSet(state, input.setId)),
+    SET_GET_DESCRIPTION,
   );
 }
 
@@ -151,12 +177,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 /**

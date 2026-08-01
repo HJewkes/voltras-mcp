@@ -93,19 +93,27 @@ export function registerMockTools(
 
   configurePh.update({
     paramsSchema: MockConfigureInput.shape,
+    description:
+      'Only registered when VOLTRA_ADAPTER=mock. Currently ALWAYS returns NOT_IMPLEMENTED — ' +
+      '@voltras/node-sdk 0.3.x does not yet expose a runtime MockBLEAdapter.configure() API. ' +
+      'Do not call expecting an effect; check the error before assuming mock config changed.',
     callback: notImplementedHandler(
       MockConfigureInput,
       MOCK_CONFIGURE,
       'a runtime MockBLEAdapter.configure() method',
     ) as never,
-  });
+  } as never);
 
   injectPh.update({
     paramsSchema: MockInjectErrorInput.shape,
+    description:
+      'Only registered when VOLTRA_ADAPTER=mock. Currently ALWAYS returns NOT_IMPLEMENTED — ' +
+      '@voltras/node-sdk 0.3.x does not yet expose a public error-injection API. Do not call ' +
+      'expecting a fault to actually be injected; check the error before assuming it fired.',
     callback: notImplementedHandler(
       MockInjectErrorInput,
       MOCK_INJECT_ERROR,
       'a public MockBLEAdapter.injectError() / error-injection method',
     ) as never,
-  });
+  } as never);
 }

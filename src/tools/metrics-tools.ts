@@ -20,19 +20,27 @@
 // at. The schema's `PENDING` comment is satisfied by binding `vbt.set` to
 // `getSetVelocitySummary`. No schema change required.
 //
-// ── Pipelines NOT_IMPLEMENTED in this wave ─────────────────────────────────
+// ── Status of all 8 pipelines ──────────────────────────────────────────────
 //
-// `quality.rep` — `assessRepQuality(rep, baseline, schemes?)` requires a
-// `TechniqueBaseline` not present in the schema. Building one here would
-// inject invented expectations, which is exactly the analytics logic AC-20
-// forbids. Returns `NOT_IMPLEMENTED` until the schema gains a baseline
-// argument or the analytics package ships a baseline-free overload.
+// All 8 pipelines below are fully implemented and merged (`quality.rep` and
+// `session.readiness` included) — see the `compute()` switch below. An
+// earlier revision of this file marked those two `NOT_IMPLEMENTED`; that was
+// stale by the time this comment was written and has been corrected. Do not
+// trust a "not implemented" claim about this tool without reading the switch
+// statement.
 //
-// `session.readiness` — `computeReadiness(actualVelocity, baselineVelocity)`
-// takes two scalars; deriving them from a `sessionId` requires policy
-// decisions (which set's first rep counts as "actual"? whose history is
-// the baseline?). Returns `NOT_IMPLEMENTED` until the schema gains explicit
-// scalar inputs or a session-level overload ships.
+// `quality.rep` derives its `TechniqueBaseline` from a caller-supplied
+// `baselineSetId` (a real prior set, not an invented target) — the handler
+// is the policy layer that turns "a set" into a `TechniqueBaseline`; the
+// analytics package owns the per-rep comparison logic.
+//
+// `session.readiness` resolves `actualVelocity`/`baselineVelocity` from the
+// first-rep concentric velocity of each session's first set OF THE SESSION'S
+// OWN EXERCISE — see `setsForSessionExercise`. PR #232 (B57/VW-90, not yet
+// merged as of this comment) adds baseline-confidence gating on top of this
+// pipeline — below CALIBRATED it will withhold the readiness zone while
+// still returning the raw observed velocities. Check whether that PR has
+// landed before assuming this pipeline always asserts a confident zone.
 
 import {
   assessRepQuality,
@@ -273,6 +281,28 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  * startup with the live dispatcher. Mirrors the pattern Wave 1 documented
  * in `server.ts` and `state/server-state.ts`.
  */
+const METRICS_COMPUTE_DESCRIPTION =
+  'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
+  'field (one of 8 literals) to a single `@voltras/workout-analytics` function; each pipeline ' +
+  'takes different input fields, all optional at the schema level but required per-pipeline: ' +
+  '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
+  '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
+  'and, if targetVelocity is given, inverts it to a recommended load + confidence (null if the ' +
+  'fit is flat/non-invertible — never a fabricated number). ' +
+  '`fatigue.set` (setId) — within-set fatigue index for one set. ' +
+  '`session.volume` (sessionId) — whole-session tonnage, deliberately NOT narrowed to one ' +
+  'exercise (a session may span several). ' +
+  "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
+  'folded with within-set fatigue so a single hard set still reads as fatigued. ' +
+  "`session.strength` (sessionId) — session-level strength estimate for the session's own " +
+  'exercise. ' +
+  '`quality.rep` (setId, baselineSetId) — per-rep technique quality against a caller-supplied ' +
+  'baseline set (a real prior set, not an invented target). ' +
+  '`session.readiness` (sessionId, baselineSessionId) — compares first-rep velocity between two ' +
+  'sessions of the same exercise; treat the result as provisional unless the exercise baseline ' +
+  'is CALIBRATED (see `baselines.get`). ' +
+  'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';
+
 export function registerMetricsTools(
   server: McpServer,
   state: ServerState,
@@ -306,7 +336,8 @@ export function registerMetricsTools(
   placeholder.update({
     paramsSchema: looseShape,
     callback: handler as never,
-  });
+    description: METRICS_COMPUTE_DESCRIPTION,
+  } as never);
 }
 
 // `errorResult` and `textResult` are referenced indirectly via `wrapHandler`
