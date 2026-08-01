@@ -44,6 +44,7 @@ import { registerIsometricTools } from './tools/isometric-tools.js';
 import { registerPlanTools } from './tools/plan-tools.js';
 import { registerBaselineTools } from './tools/baseline-tools.js';
 import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
+import { registerMrvGuardTools } from './tools/mrv-guard-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
 import { applyLeaseGuard } from './lease-guard.js';
@@ -216,6 +217,7 @@ function registerRealTools(
   registerProfileTools(server, state, placeholders);
   registerBaselineTools(server, state, placeholders);
   registerDriftGuardTools(server, state, placeholders);
+  registerMrvGuardTools(server, state, placeholders);
   registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);
@@ -250,13 +252,15 @@ const SERVER_INSTRUCTIONS = [
   '- `system.lease_*` — the single-writer lease over the device. Acquire before driving hardware.',
   '- `server.health`, `debug.*`, `mock.*` — operator diagnostics and the mock-adapter surface.',
   '',
-  'DIAGNOSTIC-ONLY surfaces: `driftguard.check` and `baselines.get` are reads over internal ' +
-    'state, not prescriptive tools. `baselines.get` reports how much the server knows about an ' +
-    'exercise (the COLD -> SHAPE_ONLY -> PROVISIONAL -> CALIBRATED -> STALE confidence machine); ' +
-    '`driftguard.check` reports whether two sessions are comparable enough for the in-process ' +
-    'detectors to have used them. Neither returns a recommendation, and the consumers that act ' +
-    'on these verdicts call them in-process — treat both as "why did the system decide that", ' +
-    'never as a coaching answer to relay verbatim.',
+  'DIAGNOSTIC-ONLY surfaces: `driftguard.check`, `mrvguard.check`, and `baselines.get` are reads ' +
+    'over internal state, not prescriptive tools. `baselines.get` reports how much the server ' +
+    'knows about an exercise (the COLD -> SHAPE_ONLY -> PROVISIONAL -> CALIBRATED -> STALE ' +
+    'confidence machine); `driftguard.check` reports whether two sessions are comparable enough ' +
+    'for the in-process detectors to have used them; `mrvguard.check` reports whether two ' +
+    'consecutive sessions underperformed their prior benchmark (the B04 MRV/under-recovery ' +
+    'signal). None returns a recommendation, and any code that acts on these verdicts calls the ' +
+    'underlying function in-process rather than through the tool — treat all three as "why did ' +
+    'the system decide that", never as a coaching answer to relay verbatim.',
 ].join('\n');
 
 /**
