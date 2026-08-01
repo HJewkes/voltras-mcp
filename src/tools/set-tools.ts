@@ -120,7 +120,16 @@ const SET_START_DESCRIPTION =
   'optional inactivityTimeoutMs) subscribes the channel event stream to specific mid-set ' +
   'signals (e.g. velocity-loss thresholds) as they fire, rather than requiring you to poll ' +
   '`set.live_metrics`. Pass `isWarmup: true` for warm-up sets so downstream analytics (e.g. ' +
-  'baseline derivation) can exclude them.';
+  'baseline derivation) can exclude them. Coaching around this specific set is budgeted: spend ' +
+  'at most 1–2 cues per interval — one or two before the set, at most 1–2 reminders of THE SAME ' +
+  'cue during it (never new information mid-set), and 1–2 points in the post-set debrief. ' +
+  'Detecting more faults does not buy more cues; hold the extras for a later set. The budget is ' +
+  "tier-qualified, so weight it by the lifter's experience tier (silence during the set for an " +
+  'advanced lifter, more in-set cueing for a beginner). When `isWarmup` is true, remember the ' +
+  'warm-up ramp is individualized rather than templated: how many warm-up sets this lifter ' +
+  'needs depends on the exercise and on what is already warm (a second exercise for an ' +
+  'already-warmed muscle needs only one brief feel set), and each warm-up set carries its own ' +
+  'focus rather than generic "warming up" copy.';
 
 const SET_END_DESCRIPTION =
   'Finalize the active set on a slot and return the closed set record (persisted reps + ' +

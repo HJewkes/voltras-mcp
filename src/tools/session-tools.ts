@@ -79,7 +79,17 @@ const SESSION_START_DESCRIPTION =
   'at least one required if either is given). `slot` selects which device slot (default ' +
   "'primary'; use 'left'/'right' for a bilateral rig). A session with no exercise set at " +
   'start can have one attached later via `session.set_exercise`. `verboseIdleReps` controls ' +
-  'whether idle-state rep noise is included in the channel event stream.';
+  'whether idle-state rep noise is included in the channel event stream. Two coaching ' +
+  'constraints govern the session you are about to run. (1) Cue budget: at most 1–2 coaching ' +
+  'cues per interval (pre-set / intra-set / post-set), even when several faults are visible — ' +
+  'presenting multiple corrections at once means none of them land, so queue the rest for a ' +
+  'later interval rather than spending the budget up front. Cue density is itself tier-split ' +
+  '(advanced lifters get silence during the set; beginners tolerate more in-set cueing), so ' +
+  "attach the lifter's experience tier to any cue-count guidance you pass on. (2) Warm-up sets " +
+  'are individualized, not templated: warm-up set COUNT varies by lifter and by exercise (2 for ' +
+  'a small movement on an already-warm muscle, 4–5 for a large, technically demanding one), and ' +
+  'a second exercise for a muscle the first exercise already warmed needs only one brief feel ' +
+  'set. Do not emit a fixed warm-up block for every session.';
 
 const SESSION_END_DESCRIPTION =
   'End the active session on a slot and return its summary. Idempotent-adjacent: ending an ' +
