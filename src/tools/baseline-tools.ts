@@ -36,7 +36,12 @@ const GET_BASELINE_DESCRIPTION =
   'means this (user, exercise, side) key has never been recalculated — that is NOT the same ' +
   'as COLD (COLD means it HAS been observed but shape is not yet established). A number ' +
   'derived from a baseline below CALIBRATED should be treated as provisional; do not present ' +
-  'RIR or readiness-zone claims as confident until state is CALIBRATED.';
+  'RIR or readiness-zone claims as confident until state is CALIBRATED. More generally: an ' +
+  'unqualified number here is meaningless. Every value you surface from a baseline must carry ' +
+  "its qualifier — the confidence `state` above, and the lifter's experience tier where the " +
+  'interpretation is tier-split (RIR self-report, for instance, is off by 5–10 reps for a ' +
+  'beginner but ~1–2 for an intermediate/advanced lifter, so the same raw number means ' +
+  'different things). Hand baseline numbers to the user tier-qualified, or not at all.';
 
 const RECALC_BASELINE_DESCRIPTION =
   'Force a baseline recalculation for one (exercise, side) key. Set-close already recalculates ' +
