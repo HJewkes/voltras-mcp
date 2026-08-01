@@ -226,6 +226,39 @@ function registerRealTools(
   applyLeaseGuard(placeholders, state, self);
 }
 
+// Server-level onboarding text handed to every connecting client (VW-126).
+// Tool descriptions cover individual calls; this covers what a client cannot
+// infer from any single one — how the namespaces divide up, and which surfaces
+// read internal state rather than prescribe an action.
+const SERVER_INSTRUCTIONS = [
+  'Voltras MCP drives a Voltra cable-resistance trainer and records what it measures.',
+  '',
+  'Namespaces:',
+  '- `device.*`, `slot.*`, `bilateral.cascade` — connect over BLE and set weight, mode, chains, ' +
+    'eccentric overload, isokinetic config. A `slot` is one device: `primary` for single-device ' +
+    'flows, `left`/`right` for bilateral.',
+  '- `session.*` / `set.*` — the recording lifecycle. Open a session, then a set per working ' +
+    'bout; `set.end` is what persists reps and triggers downstream derivation, so never skip it.',
+  '- `exercise.*` — the exercise catalog (search by name, get by id).',
+  '- `metrics.compute` — derived analytics over recorded work (VBT, rep quality, fatigue, ' +
+    'volume, readiness, strength), selected by the `pipeline` field.',
+  '- `plan.*` — programs, blocks, weeks, workout templates, planned exercises, and progression ' +
+    'suggestions.',
+  '- `profile.*`, `progression.*` — athlete self-report, derived tier signal, and per-exercise ' +
+    'history.',
+  '- `timer.*`, `system.speak`, `system.listen_*` — rest timers and local voice I/O.',
+  '- `system.lease_*` — the single-writer lease over the device. Acquire before driving hardware.',
+  '- `server.health`, `debug.*`, `mock.*` — operator diagnostics and the mock-adapter surface.',
+  '',
+  'DIAGNOSTIC-ONLY surfaces: `driftguard.check` and `baselines.get` are reads over internal ' +
+    'state, not prescriptive tools. `baselines.get` reports how much the server knows about an ' +
+    'exercise (the COLD -> SHAPE_ONLY -> PROVISIONAL -> CALIBRATED -> STALE confidence machine); ' +
+    '`driftguard.check` reports whether two sessions are comparable enough for the in-process ' +
+    'detectors to have used them. Neither returns a recommendation, and the consumers that act ' +
+    'on these verdicts call them in-process — treat both as "why did the system decide that", ' +
+    'never as a coaching answer to relay verbatim.',
+].join('\n');
+
 /**
  * Build a client connection: an `McpServer` with placeholder tools and
  * resources registered, ready for `server.connect(transport)`.
@@ -242,6 +275,7 @@ export function createClientConnection(clientId: ClientId = mintClientId()): Cli
   const server = new McpServer(
     { name: 'voltras-mcp', version: '0.1.0' },
     {
+      instructions: SERVER_INSTRUCTIONS,
       capabilities: {
         tools: {},
         resources: { subscribe: true },
