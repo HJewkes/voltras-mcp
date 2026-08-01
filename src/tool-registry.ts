@@ -112,6 +112,10 @@ export const CORE_TOOL_NAMES = [
   // same stance as `driftguard.check` (VW-131 decision): no internal wiring
   // yet. See src/tools/mrv-guard-tools.ts.
   'mrvguard.check',
+  // RP-derived knowledge/prose lookup (VW-136/VW-137). A genuinely new
+  // namespace per the locked consolidation design — kept to ONE tool with a
+  // bounded topic enum, not one tool per topic. See src/tools/coaching-tools.ts.
+  'coaching.explain',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -269,6 +273,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'driftguard.check': 'read',
   'mrvguard.check': 'read',
+  'coaching.explain': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',
