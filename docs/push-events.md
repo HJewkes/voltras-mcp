@@ -10,14 +10,21 @@ events as `notifications/claude/channel`. Each event arrives in the live convers
 
 ## Enabling them
 
-Push events require **Claude Code v2.1.80 or later**, launched with:
+Push events require **Claude Code v2.1.80 or later**, launched with a `--channels` entry
+naming this server. There are two ways to get one accepted:
 
 ```
---dangerously-load-development-channels server:voltras
+--channels plugin:voltras-channel@voltras-local        # allowlisted plugin (default)
+--dangerously-load-development-channels server:voltras # development fallback
 ```
 
-`scripts/voltra-pt` passes this for you. **Without the flag the host silently drops the
-events** — there is no error; the rest of the MCP just keeps working over polling.
+`scripts/voltra-pt` passes the first for you, and the second under `VOLTRA_PT_DEV=1`. The
+plugin route needs a one-time install plus a machine-wide allowlist entry; both are
+covered in [channel-plugin-packaging.md](channel-plugin-packaging.md). A bare
+`server:<name>` entry can never be allowlisted, which is why the packaging exists.
+
+**Without an accepted entry the host silently drops the events** — there is no error; the
+rest of the MCP just keeps working over polling.
 
 To check delivery end to end: call `debug.push_test_channel`, read the `nonce` off the
 `<channel>` tag that arrives, and echo it back with `debug.confirm_channel`.
