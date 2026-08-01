@@ -45,6 +45,7 @@ import { registerPlanTools } from './tools/plan-tools.js';
 import { registerBaselineTools } from './tools/baseline-tools.js';
 import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
 import { registerMrvGuardTools } from './tools/mrv-guard-tools.js';
+import { registerCoachingTools } from './tools/coaching-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
 import { applyLeaseGuard } from './lease-guard.js';
@@ -218,6 +219,7 @@ function registerRealTools(
   registerBaselineTools(server, state, placeholders);
   registerDriftGuardTools(server, state, placeholders);
   registerMrvGuardTools(server, state, placeholders);
+  registerCoachingTools(server, state, placeholders);
   registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);
@@ -251,6 +253,9 @@ const SERVER_INSTRUCTIONS = [
   '- `timer.*`, `system.speak`, `system.listen_*` — rest timers and local voice I/O.',
   '- `system.lease_*` — the single-writer lease over the device. Acquire before driving hardware.',
   '- `server.health`, `debug.*`, `mock.*` — operator diagnostics and the mock-adapter surface.',
+  '- `coaching.explain` — RP-derived coaching knowledge on demand, by topic (onboarding/live/' +
+    'meso/diet). Always returns tier-qualified prose plus its source citations; never a bare ' +
+    'number.',
   '',
   'DASHBOARD: a local web dashboard may be running alongside this server. Its existence and URL ' +
     'are NOT in this instructions text (the dashboard binds after this text is already sent) — ' +
