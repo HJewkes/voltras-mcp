@@ -31,8 +31,8 @@ import {
   type DriftSummary,
 } from '@voltras/workout-analytics';
 
-import { scopeSessionSetsToExerciseId } from './set-scope.js';
-import type { SessionStore, StoredSet } from './types.js';
+import { isEligibleForComparison, scopeSessionSetsToExerciseId } from './set-scope.js';
+import type { SessionStore } from './types.js';
 
 export interface DriftGuardInput {
   /** Identity of the thing being compared. `setupId` has no writer yet. */
@@ -68,12 +68,9 @@ export async function checkDriftGuard(
 
 /**
  * Sets of one exercise (and, when the key names one, one side) within a
- * session, reduced to their execution shape.
- *
- * Warm-ups are excluded. A ramp-up set is performed at deliberately different
- * intent and cadence, so pooling it with working sets manufactures tempo drift
- * out of a session that simply warmed up differently — the same exclusion
- * `recalcBaseline` applies for the same reason.
+ * session, reduced to their execution shape. Warm-up and side scoping is
+ * `isEligibleForComparison`, shared with the MRV detector so the gate and the
+ * thing it gates always read the same sets.
  */
 async function summarizeSession(
   store: SessionStore,
@@ -82,16 +79,9 @@ async function summarizeSession(
 ): Promise<DriftSummary | undefined> {
   const allSets = await store.getSetsForSession(sessionId);
   const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId).filter((set) =>
-    isEligible(set, key),
+    isEligibleForComparison(set, key),
   );
   return summarizeSetsForDrift(scoped);
-}
-
-function isEligible(set: StoredSet, key: BaselineKey): boolean {
-  if (set.isWarmup === true) return false;
-  // An absent key side is the side-agnostic view: pool every set, matching
-  // `recalcBaseline`, which only adds a `side` predicate when the key names one.
-  return key.side === undefined || set.side === key.side;
 }
 
 /** The verdict for "one side of the comparison has no reps to read". */

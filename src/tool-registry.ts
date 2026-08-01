@@ -108,6 +108,10 @@ export const CORE_TOOL_NAMES = [
   // consumption path is the in-process `checkDriftGuard`. See
   // src/tools/drift-guard-tools.ts.
   'driftguard.check',
+  // Two-session MRV/underperformance signal (VW-91 / B04). DIAGNOSTIC ONLY,
+  // same stance as `driftguard.check` (VW-131 decision): no internal wiring
+  // yet. See src/tools/mrv-guard-tools.ts.
+  'mrvguard.check',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -264,6 +268,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'baselines.recalc': 'write',
 
   'driftguard.check': 'read',
+  'mrvguard.check': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

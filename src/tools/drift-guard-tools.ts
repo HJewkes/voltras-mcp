@@ -1,11 +1,12 @@
 // `driftguard.check` handler — a DIAGNOSTIC read over `checkDriftGuard`
 // (VW-90 / B15).
 //
-// This tool is not the consumption path. The cross-session comparisons that
-// need a drift verdict (VW-91 / B04's MRV detector, progression scoring) run
-// inside this process and import `checkDriftGuard` directly — routing them
-// through an MCP round-trip would buy nothing and lose the type. The tool
-// exists so a human can ask "why did the detector refuse to compare these two
+// This tool is not the only consumption path. `checkMrvUnderperformance`
+// (VW-91 / B04's MRV detector, `store/mrv-guard.ts`) imports `checkDriftGuard`
+// directly and gates on its verdict — a prior version of this comment also
+// claimed "progression scoring" as a consumer; grepping turned up no such
+// caller, so that claim is removed rather than repeated. This tool exists so
+// a human can ask "why did the detector refuse to compare these two
 // sessions" and get the same verdict the detector saw.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';

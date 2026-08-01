@@ -118,3 +118,31 @@ export function scopeSessionSetsToExerciseId<T extends ExerciseScopedSet>(
   if (exerciseId === undefined) return [...allSessionSets];
   return scopeSessionSetsToExercise(allSessionSets, (id) => id === exerciseId);
 }
+
+// --- warm-up / side eligibility -------------------------------------------
+//
+// Exercise scoping answers "which sets are this movement". This answers the
+// second half of the same question — "which of those sets describe the WORK" —
+// and every cross-session comparator needs both. It lived privately inside
+// `drift-guard.ts` until the MRV detector (VW-91 / B04) needed the identical
+// filter; two copies of a warm-up rule that drift apart would mean the gate and
+// the thing it gates reading different sets.
+
+/**
+ * Whether a set belongs in a cross-session comparison for `key`.
+ *
+ * Warm-ups are excluded. A ramp-up set is performed at deliberately different
+ * load, intent and cadence, so pooling it with working sets manufactures drift
+ * (and deflates volume load) out of a session that simply warmed up differently
+ * — the same exclusion `recalcBaseline` applies for the same reason.
+ *
+ * An absent `key.side` is the side-agnostic view: pool every set, matching
+ * `recalcBaseline`, which only adds a `side` predicate when the key names one.
+ */
+export function isEligibleForComparison(
+  set: { isWarmup?: boolean | undefined; side?: string | undefined },
+  key: { side?: string | undefined },
+): boolean {
+  if (set.isWarmup === true) return false;
+  return key.side === undefined || set.side === key.side;
+}
