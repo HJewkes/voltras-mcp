@@ -11,6 +11,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,6 +148,30 @@ describe('registration', () => {
     // And the id is reusable afterwards, so a reconnecting socket is not
     // permanently poisoned by the duplicate guard.
     expect(() => registerClient(state, createClientConnection(a.clientId))).not.toThrow();
+  });
+});
+
+describe('server instructions', () => {
+  it('hands the connecting client non-empty onboarding text', async () => {
+    // Asserted through a real handshake rather than off the server object: the
+    // SDK keeps `instructions` private and only surfaces it in the initialize
+    // result, which is the only place a client can see it.
+    const connection = createClientConnection();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await Promise.all([
+      connection.server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    const instructions = client.getInstructions();
+    expect(instructions).toBeTruthy();
+    expect(instructions).toContain('driftguard.check');
+    expect(instructions).toContain('baselines.get');
+    expect(instructions).toContain('DIAGNOSTIC-ONLY');
+
+    await client.close();
+    await connection.server.close();
   });
 });
 
