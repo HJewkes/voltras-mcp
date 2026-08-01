@@ -19,6 +19,7 @@ describe('loadConfig', () => {
       restTimer: 'off',
       repCorrections: 'off',
       cues: 'off',
+      cuesMidSet: 'off',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -146,5 +147,21 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_CUES: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_CUES: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_CUES: 'yes' })).toThrow(/on/);
+  });
+
+  it('defaults VMCP_CUES_MIDSET to "off"', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.cuesMidSet).toBe('off');
+  });
+
+  it('honors VMCP_CUES_MIDSET="on" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_CUES_MIDSET: 'on', HOME: '/home/test' });
+    expect(cfg.cuesMidSet).toBe('on');
+  });
+
+  it('throws on invalid VMCP_CUES_MIDSET, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/on/);
   });
 });

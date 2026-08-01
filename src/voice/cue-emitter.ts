@@ -13,8 +13,21 @@ import { spawn } from 'node:child_process';
 
 import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
 import { speak, type SpeakDeps, type VoiceListenerRef } from '../tools/tts-tools.js';
-import { decideCue } from './cue-policy.js';
+import { decideCue, type CueDecision } from './cue-policy.js';
 import { CueSelector, slotFill } from './cue-templates.js';
+
+/**
+ * Cue categories that can fire while the lifter is still under load, mid-set
+ * (VMCP-05.01) — unlike `set_intro`/`set_complete`, which only fire at set
+ * boundaries. Every cue mutes (and discards frames from) the mic for its
+ * `say` duration, so the ungated voice "stop" fast-path is unavailable for
+ * that window; these are gated off by default to keep that blind spot out of
+ * the riskiest part of a set. See `CuesMidSetMode` in config.ts.
+ */
+const MID_SET_CATEGORIES: ReadonlySet<CueDecision['category']> = new Set([
+  'target_hit',
+  'slowdown',
+]);
 
 export interface CueEmitterDeps {
   /** How/where to play cues. `platform` gates the emitter (say is macOS-only). */
@@ -23,6 +36,12 @@ export interface CueEmitterDeps {
   speak?: typeof speak;
   /** Injectable for deterministic tests; defaults to a fresh selector. */
   selector?: CueSelector;
+  /**
+   * Whether `target_hit`/`slowdown` cues (mid-set, still under load) may
+   * speak. Defaults to `false` — see `MID_SET_CATEGORIES`. `set_intro` and
+   * `set_complete` are unaffected either way.
+   */
+  midSetEnabled?: boolean;
 }
 
 /**
@@ -35,6 +54,7 @@ export class CueEmitter {
   private readonly speakDeps: SpeakDeps;
   private readonly speakFn: typeof speak;
   private readonly selector: CueSelector;
+  private readonly midSetEnabled: boolean;
   /** `${category}:${setId}` keys already spoken, so a category fires once/set. */
   private readonly fired = new Set<string>();
 
@@ -42,12 +62,14 @@ export class CueEmitter {
     this.speakDeps = deps.speakDeps;
     this.speakFn = deps.speak ?? speak;
     this.selector = deps.selector ?? new CueSelector();
+    this.midSetEnabled = deps.midSetEnabled ?? false;
   }
 
   onEvent(event: ChannelEvent): void {
     if (this.speakDeps.platform !== 'darwin') return;
     const decision = decideCue(event);
     if (decision === null) return;
+    if (!this.midSetEnabled && MID_SET_CATEGORIES.has(decision.category)) return;
     const key = `${decision.category}:${decision.setId}`;
     if (this.fired.has(key)) return;
     this.fired.add(key);
@@ -100,7 +122,12 @@ export class CueTeePublisher implements ChannelPublisher {
  */
 export function maybeCueTee(
   inner: ChannelPublisher,
-  opts: { enabled: boolean; voiceListenerRef: VoiceListenerRef | null },
+  opts: {
+    enabled: boolean;
+    voiceListenerRef: VoiceListenerRef | null;
+    /** See `CueEmitterDeps.midSetEnabled`. Defaults to `false`. */
+    midSetEnabled?: boolean;
+  },
 ): ChannelPublisher {
   if (!opts.enabled) return inner;
   const speakDeps: SpeakDeps = {
@@ -108,5 +135,8 @@ export function maybeCueTee(
     spawn: spawn as SpeakDeps['spawn'],
     voiceListenerRef: opts.voiceListenerRef,
   };
-  return new CueTeePublisher(inner, new CueEmitter({ speakDeps }));
+  return new CueTeePublisher(
+    inner,
+    new CueEmitter({ speakDeps, midSetEnabled: opts.midSetEnabled ?? false }),
+  );
 }

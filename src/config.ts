@@ -9,6 +9,7 @@
 //   - VMCP_REST_TIMER                  — 'on' | 'off', default 'off'.
 //   - VMCP_REP_CORRECTIONS             — 'on' | 'off', default 'off'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
+//   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER, or
@@ -75,6 +76,24 @@ export type RepCorrectionsMode = 'off' | 'on';
  */
 export type CuesMode = 'off' | 'on';
 
+/**
+ * Whether `target_hit` / `slowdown` cues are allowed to fire (VMCP-05.01).
+ * Both categories can land mid-set, while the lifter is still under load —
+ * unlike `set_intro`/`set_complete`, which only fire at set boundaries. Every
+ * cue mutes the mic for its `say` duration (~2s), and that mute discards
+ * frames outright rather than buffering them, so the ungated voice "stop"
+ * fast-path is unavailable for that window. Gating mid-set cues off by
+ * default keeps that blind spot out of the riskiest part of a set — under
+ * load, mid-rep — without losing the safe-boundary cues.
+ *   - `'off'` (DEFAULT) — only `set_intro`/`set_complete` cues speak, when
+ *     `VMCP_CUES='on'`. No cue plays while more reps are still expected.
+ *   - `'on'` — all four categories speak. Opt in only when a spotter or
+ *     other physical backstop is present, or for supervised/controlled
+ *     sets (e.g. filming) where the bounded per-cue mute window is
+ *     acceptable.
+ */
+export type CuesMidSetMode = 'off' | 'on';
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
@@ -84,6 +103,7 @@ export interface Config {
   readonly restTimer: RestTimerMode;
   readonly repCorrections: RepCorrectionsMode;
   readonly cues: CuesMode;
+  readonly cuesMidSet: CuesMidSetMode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -107,6 +127,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (cues !== 'off' && cues !== 'on') {
     throw new Error(`Invalid VMCP_CUES="${cues}". Must be "off" or "on".`);
   }
+  const cuesMidSet = env.VMCP_CUES_MIDSET ?? 'off';
+  if (cuesMidSet !== 'off' && cuesMidSet !== 'on') {
+    throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -119,5 +143,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     restTimer,
     repCorrections,
     cues,
+    cuesMidSet,
   }) satisfies Config;
 }
