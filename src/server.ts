@@ -136,6 +136,18 @@ export async function runServer(): Promise<void> {
         }
       }
     }
+    // VW-127/VW-128: the only way an MCP client learns the dashboard exists.
+    // Set here rather than left implicit in `dashboardHandle`, because
+    // `server.health` (state-only) has no visibility into this function's
+    // locals — and because "off"/"port in use" both need to read as
+    // `available: false`, not throw or go unreported.
+    state.dashboard = {
+      available: dashboardHandle !== undefined,
+      url:
+        dashboardHandle !== undefined
+          ? `http://${DEFAULT_DASHBOARD_HOST}:${dashboardHandle.port}`
+          : null,
+    };
 
     // Register the shutdown hook regardless of whether the dashboard came
     // up — the process still needs to exit on SIGINT/SIGTERM and on stdin

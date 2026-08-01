@@ -207,9 +207,13 @@ export function registerServerTools(
     paramsSchema: ServerHealthInput.shape,
     description:
       'Report server/process health: version, build, active adapter (real/mock), SDK and ' +
-      'analytics-package versions, db path, log level, push-channel status, and device-lease ' +
-      'status. Useful for diagnosing "is this the server I think it is" and "who holds the ' +
-      'device lease" without a dedicated lease.status call.',
+      'analytics-package versions, db path, log level, push-channel status, device-lease ' +
+      'status, and dashboard-sidecar availability. Useful for diagnosing "is this the server I ' +
+      'think it is", "who holds the device lease", and "is there a dashboard to point the user ' +
+      'at" without a dedicated call for each. `dashboardAvailable`/`dashboardUrl` are the only ' +
+      'way to learn the local dashboard exists — it is never mentioned in server instructions ' +
+      '(the dashboard binds after those are already sent) and has no MCP tool or resource of ' +
+      'its own; when available, suggest the URL to the user rather than relaying it silently.',
     callback: wrapHandler(ServerHealthInput, () =>
       Promise.resolve({
         version: VMCP_VERSION,
@@ -219,6 +223,8 @@ export function registerServerTools(
         analyticsVersion: ANALYTICS_VERSION,
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
+        dashboardAvailable: state.dashboard?.available ?? false,
+        dashboardUrl: state.dashboard?.url ?? null,
         ...resolveChannelStatus(state),
         ...resolveLeaseStatus(state),
       }),

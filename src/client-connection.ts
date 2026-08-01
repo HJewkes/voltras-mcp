@@ -252,6 +252,11 @@ const SERVER_INSTRUCTIONS = [
   '- `system.lease_*` — the single-writer lease over the device. Acquire before driving hardware.',
   '- `server.health`, `debug.*`, `mock.*` — operator diagnostics and the mock-adapter surface.',
   '',
+  'DASHBOARD: a local web dashboard may be running alongside this server. Its existence and URL ' +
+    'are NOT in this instructions text (the dashboard binds after this text is already sent) — ' +
+    'call `server.health` and read `dashboardAvailable`/`dashboardUrl` (VW-127/VW-128). When ' +
+    'available, suggest the URL to the user rather than assuming they already know about it.',
+  '',
   'DIAGNOSTIC-ONLY surfaces: `driftguard.check`, `mrvguard.check`, and `baselines.get` are reads ' +
     'over internal state, not prescriptive tools. `baselines.get` reports how much the server ' +
     'knows about an exercise (the COLD -> SHAPE_ONLY -> PROVISIONAL -> CALIBRATED -> STALE ' +
