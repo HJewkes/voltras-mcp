@@ -125,6 +125,12 @@ const TOOL_DESCRIPTION = [
   'Pass `interrupt: true` to cut off any still-playing cue from a previous',
   'call before this one starts — useful when a more urgent prompt needs to',
   'override an in-flight one.',
+  '',
+  'Playback mutes the local voice listener, if one is armed: mic frames are',
+  'discarded (not buffered) for the duration of the cue, so the user cannot',
+  'barge in while it plays and anything they say — including a safety phrase',
+  '— is lost. Keep cues short, and do not speak when you are waiting on a',
+  'spoken reply. A hard 8s failsafe caps the mute window even if `say` hangs.',
 ].join(' ');
 
 /**
