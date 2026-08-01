@@ -150,6 +150,61 @@ describe('server.health', () => {
     expect(body.channelsWired).toBe(false);
   });
 
+  it('reports dashboard as unavailable when state.dashboard was never set', async () => {
+    // Arrange: a state that predates bootstrap resolving the bind attempt —
+    // must read as unavailable, not throw or read undefined.
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.dashboardAvailable).toBe(false);
+    expect(body.dashboardUrl).toBeNull();
+  });
+
+  it('reports dashboardUrl once the bind attempt has resolved successfully', async () => {
+    // Arrange
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      dashboard: { available: true, url: 'http://127.0.0.1:7723' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.dashboardAvailable).toBe(true);
+    expect(body.dashboardUrl).toBe('http://127.0.0.1:7723');
+  });
+
+  it('reports dashboardUrl null when the bind attempt failed or was disabled', async () => {
+    // Arrange: `state.dashboard` was set (bootstrap resolved), but no handle
+    // — port-in-use, VMCP_DASHBOARD_PORT=off, or any other non-fatal failure.
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      dashboard: { available: false, url: null },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.dashboardAvailable).toBe(false);
+    expect(body.dashboardUrl).toBeNull();
+  });
+
   it('throws if the placeholder is missing', () => {
     const { placeholders } = makePlaceholders([]); // no server.health
     const state = {

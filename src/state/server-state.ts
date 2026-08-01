@@ -368,6 +368,17 @@ export interface ServerState {
    * Fitness-units only; no protocol data crosses this hub (NF-07).
    */
   liveSignals?: LiveSignalHub;
+  /**
+   * Result of the dashboard sidecar's one bind attempt (VW-127/VW-128).
+   * `undefined` until `runServer`'s bootstrap resolves it — which happens
+   * AFTER the client already received the MCP `initialize` response, so this
+   * cannot be baked into `SERVER_INSTRUCTIONS` (client-connection.ts): that
+   * text is fixed at `McpServer` construction time, before the dashboard has
+   * even attempted to bind. `server.health` reads this live at call time
+   * instead, which is always after bootstrap has settled it. Never
+   * re-attempted — a fixed VMCP_DASHBOARD_PORT config is the escape hatch.
+   */
+  dashboard?: { available: boolean; url: string | null };
 }
 
 /**
