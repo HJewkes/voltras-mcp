@@ -25,11 +25,16 @@ function makeSpeakSpy(): ReturnType<typeof vi.fn> {
   return vi.fn(() => Promise.resolve({ content: [] } as unknown as ToolResult));
 }
 
-function makeEmitter(speakSpy: ReturnType<typeof vi.fn>, deps: Partial<SpeakDeps> = {}) {
+function makeEmitter(
+  speakSpy: ReturnType<typeof vi.fn>,
+  deps: Partial<SpeakDeps> = {},
+  midSetEnabled = true,
+) {
   return new CueEmitter({
     speakDeps: { ...speakDeps, ...deps },
     speak: speakSpy as never,
     selector: new CueSelector({ rng: () => 0 }),
+    midSetEnabled,
   });
 }
 
@@ -167,5 +172,47 @@ describe('CueTeePublisher', () => {
     expect(inner.slotOf).toEqual(['primary']);
     expect(inner.published).toHaveLength(1);
     expect(speakSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+const targetHit = () =>
+  event('set_target_reached', { set_id: 's1', target_rep_count: '8', actual_rep_count: '9' });
+
+describe('CueEmitter — mid-set cue gating (VMCP-05.01)', () => {
+  it('defaults to suppressing target_hit and slowdown', () => {
+    const speakSpy = makeSpeakSpy();
+    // omit the third arg entirely so the emitter uses CueEmitterDeps's own default
+    const emitter = new CueEmitter({
+      speakDeps,
+      speak: speakSpy as never,
+      selector: new CueSelector({ rng: () => 0 }),
+    });
+    emitter.onEvent(targetHit());
+    emitter.onEvent(velocityLoss());
+    expect(speakSpy).not.toHaveBeenCalled();
+  });
+
+  it('midSetEnabled: false suppresses target_hit and slowdown', () => {
+    const speakSpy = makeSpeakSpy();
+    const emitter = makeEmitter(speakSpy, {}, false);
+    emitter.onEvent(targetHit());
+    emitter.onEvent(velocityLoss());
+    expect(speakSpy).not.toHaveBeenCalled();
+  });
+
+  it('midSetEnabled: false still speaks set_intro and set_complete', () => {
+    const speakSpy = makeSpeakSpy();
+    const emitter = makeEmitter(speakSpy, {}, false);
+    emitter.onEvent(setStarted());
+    emitter.onEvent(setEnded());
+    expect(speakSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('midSetEnabled: true allows target_hit and slowdown', () => {
+    const speakSpy = makeSpeakSpy();
+    const emitter = makeEmitter(speakSpy, {}, true);
+    emitter.onEvent(targetHit());
+    emitter.onEvent(velocityLoss());
+    expect(speakSpy).toHaveBeenCalledTimes(2);
   });
 });

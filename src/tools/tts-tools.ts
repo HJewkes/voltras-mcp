@@ -32,6 +32,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 
+import { log } from '../logger.js';
 import { SystemSpeakInput, type SystemSpeakInputType } from '../schemas/system.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 
@@ -76,6 +77,41 @@ let inFlight: ChildProcess | null = null;
 /** Test-only: clear any tracked in-flight child between cases. */
 export function __resetSpeakState(): void {
   inFlight = null;
+}
+
+/**
+ * Hard ceiling on how long a single `speak()` call may hold the mic muted.
+ * `unmute()` is normally driven by the child's `exit`/`error` events, but a
+ * `say` process that hangs (or whose events are lost) would otherwise mute
+ * the mic — and with it the ungated safety-phrase fast-path — forever. This
+ * is a failsafe, not the expected path: any real cue finishes in well under
+ * this window.
+ */
+const MUTE_FAILSAFE_MS = 8000;
+
+/**
+ * Mute now, and guarantee a matching unmute fires exactly once — either from
+ * the caller-driven path (child exit/error, or the blocking `finally`) or,
+ * failing that, from a hard timeout. Guards against double-unmute (which
+ * would under-count VoiceListener's refcount) if both paths fire.
+ */
+function muteWithFailsafe(voiceListener: MutableVoiceListener | null): () => void {
+  if (voiceListener === null) return () => {};
+  voiceListener.mute();
+  let unmuted = false;
+  const timer = setTimeout(() => {
+    if (unmuted) return;
+    unmuted = true;
+    log.warn(`speak(): mute failsafe fired after ${MUTE_FAILSAFE_MS}ms — forcing unmute`);
+    voiceListener.unmute();
+  }, MUTE_FAILSAFE_MS);
+  timer.unref?.();
+  return () => {
+    if (unmuted) return;
+    unmuted = true;
+    clearTimeout(timer);
+    voiceListener.unmute();
+  };
 }
 
 const TOOL_DESCRIPTION = [
@@ -147,11 +183,11 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
   if (input.interrupt) interruptInFlight();
 
   const voiceListener = deps.voiceListenerRef?.listener ?? null;
-  voiceListener?.mute();
+  const unmuteOnce = muteWithFailsafe(voiceListener);
 
   const child = trySpawn(deps, buildSayArgs(input));
   if (child === null) {
-    voiceListener?.unmute();
+    unmuteOnce();
     return errorResult({
       code: 'TTS_NOT_AVAILABLE',
       message: '`say` binary not found on PATH; macOS TTS is unavailable.',
@@ -171,7 +207,7 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
     try {
       return await awaitExit(child);
     } finally {
-      voiceListener?.unmute();
+      unmuteOnce();
     }
   }
 
@@ -180,12 +216,8 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
   // already registered above) so unmute fires even if the caller ignores the
   // result. 'error' also triggers unmute because spawn-ENOENT surfaces as an
   // 'error' event and the child never emits 'exit'.
-  child.once('exit', () => {
-    voiceListener?.unmute();
-  });
-  child.once('error', () => {
-    voiceListener?.unmute();
-  });
+  child.once('exit', unmuteOnce);
+  child.once('error', unmuteOnce);
 
   return textResult({ ok: true });
 }
