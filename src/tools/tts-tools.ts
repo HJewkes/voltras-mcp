@@ -127,10 +127,11 @@ const TOOL_DESCRIPTION = [
   'override an in-flight one.',
   '',
   'Playback mutes the local voice listener, if one is armed: mic frames are',
-  'discarded (not buffered) for the duration of the cue, so the user cannot',
-  'barge in while it plays and anything they say — including a safety phrase',
-  '— is lost. Keep cues short, and do not speak when you are waiting on a',
-  'spoken reply. A hard 8s failsafe caps the mute window even if `say` hangs.',
+  'discarded (not buffered) for the duration of the cue, and any utterance',
+  'already in progress is dropped when the mute starts. The user cannot barge',
+  'in while a cue plays — anything they say, including a safety phrase, is',
+  'lost. Keep cues short, and do not speak when you are waiting on a spoken',
+  'reply. A hard 8s failsafe caps the mute window even if `say` hangs.',
 ].join(' ');
 
 /**
