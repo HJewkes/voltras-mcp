@@ -175,6 +175,14 @@ const START_DESCRIPTION = [
   'phrase (`hey coach`) to address the trainer; safety phrases (stop, unload,',
   'cut the weight, …) are always-on and need no wake phrase. Default STT:',
   '`tiny.en` (low latency). Idempotent — re-arming returns the current state.',
+  '',
+  'The mic goes deaf during TTS: `system.speak` and the automatic cue emitter',
+  'mute the listener and discard in-flight frames for the length of each cue',
+  '(an utterance already in progress is dropped too), so nothing said during',
+  'playback is heard — wake phrase and safety phrases alike. Each mute window',
+  'is bounded by a hard 8s failsafe, and the mid-set',
+  '`target_hit`/`slowdown` cues stay silent unless `VMCP_CUES_MIDSET=on`, so',
+  'the blind spot normally lands only at set boundaries.',
 ].join(' ');
 
 const STOP_DESCRIPTION = [
