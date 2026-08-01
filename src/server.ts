@@ -75,6 +75,7 @@ function wireProcessState(state: ServerState, connection: ClientConnection): voi
   state.channels = maybeCueTee(connection.channels, {
     enabled: state.config.cues === 'on' && process.platform === 'darwin',
     voiceListenerRef: state.voice,
+    midSetEnabled: state.config.cuesMidSet === 'on',
   });
   state.server = connection.server;
   // Wire the SDK event bridge for every slot currently in the slots map.
