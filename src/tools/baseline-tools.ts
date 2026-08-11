@@ -16,6 +16,12 @@ import type { z } from 'zod';
 
 import { BaselinesGetInput, BaselinesRecalcInput } from '../schemas/baselines.js';
 import type { ServerState } from '../state/server-state.js';
+import {
+  deriveAllFeatureGates,
+  describeBaselineState,
+  type FeatureGateVerdict,
+  type GatedFeature,
+} from '../store/baseline-gate.js';
 import { LOCAL_USER_ID, type StoredExerciseBaseline } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
@@ -97,17 +103,31 @@ function install<S extends z.ZodObject>(
  * recalculated — which is NOT the same as `COLD`, and is deliberately not
  * coalesced to it: "never observed" and "observed, not enough evidence" are
  * different answers and the caller decides how to say so.
+ *
+ * `gates` (B57) answers the question a caller actually has once it holds the
+ * row: what may I say out loud? Every gated feature is graded here, always all
+ * three — a caller that only wanted one still benefits from seeing that the
+ * same row supports a different readout, and a filter parameter would just
+ * hide that.
  */
 async function getBaseline(
   state: ServerState,
   input: z.infer<typeof BaselinesGetInput>,
-): Promise<{ baseline: StoredExerciseBaseline | null }> {
+): Promise<{
+  baseline: StoredExerciseBaseline | null;
+  summaryMessage: string;
+  gates: Record<GatedFeature, FeatureGateVerdict>;
+}> {
   const baseline = await state.store.getBaseline({
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
     ...(input.side !== undefined ? { side: input.side } : {}),
   });
-  return { baseline: baseline ?? null };
+  return {
+    baseline: baseline ?? null,
+    summaryMessage: describeBaselineState(baseline),
+    gates: deriveAllFeatureGates(baseline),
+  };
 }
 
 /**

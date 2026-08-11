@@ -103,6 +103,9 @@ export const CORE_TOOL_NAMES = [
   'profile.get_tier_signal',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
+  // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
+  // per-feature `gates` map — the advisory activation verdicts from
+  // src/store/baseline-gate.ts (B57). Gates degrade features, never block them.
   'baselines.get',
   'baselines.recalc',
   // Execution-comparability gate (VW-90 / B15). DIAGNOSTIC ONLY — the real

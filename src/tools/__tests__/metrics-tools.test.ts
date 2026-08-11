@@ -31,7 +31,14 @@ const { textResult } = await import('../helpers.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
-import type { StoredRep, StoredSet, StoredSession } from '../../store/types.js';
+import type {
+  BaselineState,
+  StoredExerciseBaseline,
+  StoredRep,
+  StoredSet,
+  StoredSession,
+} from '../../store/types.js';
+import type { FeatureGateVerdict } from '../../store/baseline-gate.js';
 import type { ToolResult } from '../helpers.js';
 
 // ─── Test fixtures ────────────────────────────────────────────────────────
@@ -76,6 +83,34 @@ function makeSet(id: string, sessionId = 'sess-1', weight = 100): StoredSet {
   };
 }
 
+/** `null` means a session that names NO exercise — not the same as omitting
+ *  the argument, which yields the ordinary named-exercise session. */
+function makeSession(id: string, exerciseId: string | null = 'bench-press'): StoredSession {
+  return {
+    id,
+    startedAt: '2025-01-01T00:00:00.000Z',
+    ...(exerciseId !== null ? { exerciseId } : {}),
+  };
+}
+
+function makeBaselineRow(
+  state: BaselineState,
+  confidence: number,
+  exerciseId = 'bench-press',
+): StoredExerciseBaseline {
+  return {
+    id: `local|${exerciseId}`,
+    userId: 'local',
+    exerciseId,
+    state,
+    confidence,
+    observedSessions: 4,
+    anchorCount: state === 'CALIBRATED' ? 3 : 0,
+    updatedAt: '2025-01-01T00:00:00.000Z',
+    algorithmVersion: 'baseline@1.0.0',
+  };
+}
+
 // ─── Test doubles ─────────────────────────────────────────────────────────
 
 interface RegisteredHandler {
@@ -110,6 +145,7 @@ interface StoreStub {
   getSet: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
+  getBaseline: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   putSession: ReturnType<typeof vi.fn>;
   putSet: ReturnType<typeof vi.fn>;
@@ -120,7 +156,13 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
   const store: StoreStub = {
     getSet: vi.fn(async () => undefined),
     getSetsForSession: vi.fn(async () => []),
-    getSession: vi.fn(async () => undefined),
+    // A session that names its exercise is the ordinary case. `session.readiness`'s
+    // B57 gate needs one to build a baseline key at all, so a blanket `undefined`
+    // here would silently withhold on every readiness test.
+    getSession: vi.fn(async (id: string) => makeSession(id)),
+    // No baseline row by default — the gate withholds, which is the honest
+    // answer for a store that was never recalculated.
+    getBaseline: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
@@ -606,9 +648,12 @@ describe('metrics.compute — quality.rep and session.readiness', () => {
   it('session.readiness dispatches to computeReadiness with first-rep velocities from each session', async () => {
     const target = makeSet('s1', 'sess-target');
     const baseline = makeSet('s1', 'sess-baseline');
-    const readinessSpy = vi.spyOn(analytics, 'computeReadiness').mockReturnValue({} as never);
+    const readinessSpy = vi
+      .spyOn(analytics, 'computeReadiness')
+      .mockReturnValue({ zone: 'green' } as never);
     const state = makeStateWithStore({
       getSetsForSession: vi.fn(async (id: string) => [id === 'sess-target' ? target : baseline]),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
     });
     const { server, tools } = makeFakeServer();
     const placeholders = makePlaceholders(server);
@@ -622,7 +667,125 @@ describe('metrics.compute — quality.rep and session.readiness', () => {
 
     expect(readinessSpy).toHaveBeenCalledOnce();
     expect(result.isError).toBeUndefined();
+    // B57 wraps the estimate; the estimate itself is still passed through raw.
+    expect((parsePayload(result) as GatedReadiness).readiness).toEqual({ zone: 'green' });
     readinessSpy.mockRestore();
+  });
+});
+
+// ─── B57: baseline-gated readiness ────────────────────────────────────────
+
+interface GatedReadiness {
+  readiness: unknown;
+  observed: { actualVelocityMps: number; baselineVelocityMps: number };
+  gate: FeatureGateVerdict;
+}
+
+describe('metrics.compute — session.readiness baseline gating (B57)', () => {
+  let readinessSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    readinessSpy = vi
+      .spyOn(analytics, 'computeReadiness')
+      .mockReturnValue({ zone: 'green' } as never);
+  });
+  afterEach(() => {
+    readinessSpy.mockRestore();
+  });
+
+  function stateFor(overrides: Parameters<typeof makeStateWithStore>[0] = {}): ServerState {
+    const target = makeSet('s1', 'sess-target');
+    const baseline = makeSet('s2', 'sess-baseline');
+    return makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) => [id === 'sess-target' ? target : baseline]),
+      ...overrides,
+    });
+  }
+
+  async function run(state: ServerState): Promise<ToolResult> {
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+    return callTool(tools, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+    });
+  }
+
+  it('activates fully against a CALIBRATED baseline', async () => {
+    // Arrange
+    const state = stateFor({ getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)) });
+
+    // Act
+    const body = parsePayload(await run(state)) as GatedReadiness;
+
+    // Assert
+    expect(body.gate.activation).toBe('full');
+    expect(body.gate.observedState).toBe('CALIBRATED');
+    expect(body.readiness).toEqual({ zone: 'green' });
+  });
+
+  it('still answers, flagged degraded, when the baseline only knows the movement shape', async () => {
+    // Arrange
+    const state = stateFor({ getBaseline: vi.fn(async () => makeBaselineRow('SHAPE_ONLY', 0.3)) });
+
+    // Act
+    const body = parsePayload(await run(state)) as GatedReadiness;
+
+    // Assert: degraded means hedged, NOT missing
+    expect(body.gate.activation).toBe('degraded');
+    expect(body.readiness).toEqual({ zone: 'green' });
+    expect(body.gate.userMessage.length).toBeGreaterThan(0);
+  });
+
+  it('withholds the estimate but still reports both observed velocities with no baseline row', async () => {
+    // Arrange
+    const state = stateFor({ getBaseline: vi.fn(async () => undefined) });
+
+    // Act
+    const result = await run(state);
+    const body = parsePayload(result) as GatedReadiness;
+
+    // Assert: inconclusive, not an error
+    expect(result.isError).toBeUndefined();
+    expect(body.readiness).toBeNull();
+    expect(body.gate.evaluable).toBe(false);
+    expect(typeof body.observed.actualVelocityMps).toBe('number');
+    expect(typeof body.observed.baselineVelocityMps).toBe('number');
+  });
+
+  it('does not compute a readiness estimate at all when the gate withholds', async () => {
+    // Arrange
+    const state = stateFor({ getBaseline: vi.fn(async () => makeBaselineRow('COLD', 0)) });
+
+    // Act
+    const body = parsePayload(await run(state)) as GatedReadiness;
+
+    // Assert
+    expect(body.gate.activation).toBe('withheld');
+    expect(body.readiness).toBeNull();
+    expect(readinessSpy).not.toHaveBeenCalled();
+  });
+
+  it('withholds rather than throwing when the baseline session names no exercise', async () => {
+    // Arrange: no exerciseId means no key to look a baseline up under
+    const state = stateFor({
+      getSession: vi.fn(async (id: string) =>
+        id === 'sess-baseline' ? makeSession(id, null) : makeSession(id),
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+
+    // Act
+    const result = await run(state);
+    const body = parsePayload(result) as GatedReadiness;
+
+    // Assert
+    expect(result.isError).toBeUndefined();
+    expect(body.gate.evaluable).toBe(false);
+    expect(body.gate.activation).toBe('withheld');
+    expect(body.readiness).toBeNull();
+    expect(readinessSpy).not.toHaveBeenCalled();
   });
 });
 
