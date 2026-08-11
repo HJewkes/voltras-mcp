@@ -15,6 +15,7 @@ import type { Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionChangedPayload,
   buildDeterministicStopTriggeredPayload,
+  buildDeterministicStopUnavailablePayload,
   buildGuidedLoadStatePayload,
   buildIdleTimeoutPayload,
   buildRepFinalizedPayload,
@@ -1582,5 +1583,89 @@ describe('buildDeterministicStopTriggeredPayload (VMCP-02.78)', () => {
     expect(parsed.matched_phrase).toBe('stop the machine');
     expect(parsed.predicate_reason).toBe('loaded');
     expect(parsed.unloaded).toBe(true);
+  });
+});
+
+describe('buildDeterministicStopTriggeredPayload — bilateral trigger (VMCP-02.86)', () => {
+  it('defaults trigger to `warranted`', () => {
+    const { meta } = buildDeterministicStopTriggeredPayload({
+      slot: 'right',
+      setId: 'set-9',
+      matchedPhrase: 'stop',
+      predicateReason: 'active_set',
+    });
+    expect(meta.trigger).toBe('warranted');
+  });
+
+  it('marks a swept side and says so in the summary', () => {
+    const { meta, content } = buildDeterministicStopTriggeredPayload({
+      slot: 'right',
+      setId: null,
+      matchedPhrase: 'stop',
+      predicateReason: 'none',
+      trigger: 'bilateral_sweep',
+    });
+    expect(meta.trigger).toBe('bilateral_sweep');
+    expect(meta.unloaded).toBe('true');
+    const parsed = JSON.parse(content) as { summary: string; trigger: string };
+    expect(parsed.trigger).toBe('bilateral_sweep');
+    expect(parsed.summary).toContain('warranted side');
+  });
+});
+
+describe('buildDeterministicStopUnavailablePayload (VMCP-02.86)', () => {
+  it('is a distinct event type carrying unloaded=false and the reason', () => {
+    const { meta } = buildDeterministicStopUnavailablePayload({
+      matchedPhrase: 'stop',
+      transcript: 'Stop.',
+      reason: 'not_warranted',
+      slots: [{ slot: 'right', reason: 'none' }],
+    });
+    expect(meta.event_type).toBe('deterministic_stop_unavailable');
+    expect(meta.source).toBe('voltras');
+    expect(meta.reason).toBe('not_warranted');
+    expect(meta.unloaded).toBe('false');
+    expect(meta.matched_phrase).toBe('stop');
+  });
+
+  it('carries slot in meta only when exactly one slot was evaluated', () => {
+    const one = buildDeterministicStopUnavailablePayload({
+      matchedPhrase: 'stop',
+      transcript: 'Stop.',
+      reason: 'not_warranted',
+      slots: [{ slot: 'left', reason: 'none' }],
+    });
+    const two = buildDeterministicStopUnavailablePayload({
+      matchedPhrase: 'stop',
+      transcript: 'Stop.',
+      reason: 'not_warranted',
+      slots: [
+        { slot: 'left', reason: 'none' },
+        { slot: 'right', reason: 'none' },
+      ],
+    });
+    expect(one.meta.slot).toBe('left');
+    expect(two.meta.slot).toBeUndefined();
+  });
+
+  it('content spells out that nothing was unloaded and points at device.unload', () => {
+    const { content } = buildDeterministicStopUnavailablePayload({
+      matchedPhrase: 'cut the weight',
+      transcript: 'cut the weight',
+      reason: 'no_connected_slot',
+      slots: [],
+    });
+    const parsed = JSON.parse(content) as {
+      summary: string;
+      transcript: string;
+      evaluated_slots: unknown[];
+      unloaded: boolean;
+    };
+    expect(parsed.summary).toContain('NO cable was unloaded');
+    expect(parsed.summary).toContain('no device is connected');
+    expect(parsed.summary).toContain('device.unload');
+    expect(parsed.transcript).toBe('cut the weight');
+    expect(parsed.evaluated_slots).toEqual([]);
+    expect(parsed.unloaded).toBe(false);
   });
 });

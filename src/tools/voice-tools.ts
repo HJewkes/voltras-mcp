@@ -5,8 +5,10 @@
 // wake-word model. Every detected utterance is transcribed and routed on the
 // transcript text: a `hey coach` wake phrase forwards to the model as a
 // `voice_input` channel event; the always-on safety phrases (stop/unload/…)
-// route through `onSafetyPhrase` (the ungated unload fast-path lands in
-// VMCP-02.78; for now they also surface as `voice_input`).
+// route through `onSafetyPhrase` into the ungated unload fast-path
+// (VMCP-02.78), which cuts every connected slot when any of them is mid-set or
+// loaded and otherwise reports `deterministic_stop_unavailable` alongside the
+// conversational `voice_input`.
 //
 // Off-by-default: nothing happens at boot. The user (or PT Claude) calls
 // `system.listen_start` to arm the mic. `listen_stop` is idempotent.
@@ -20,7 +22,9 @@ import {
 } from '../schemas/voice.js';
 import {
   buildDeterministicStopTriggeredPayload,
+  buildDeterministicStopUnavailablePayload,
   buildVoiceInputPayload,
+  type StopUnavailableReason,
 } from '../state/channel-payloads.js';
 import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
 import {
@@ -73,6 +77,12 @@ export function makeVoiceHolder(deps: VoiceListenerDeps | null = null): VoiceLis
  * from `isSafetyUnloadWarranted` + `unloadSlot` + `speak`.
  */
 export interface VoiceSafetyContext {
+  /**
+   * Slot ids with a connected device, in evaluation order. The safety path
+   * resolves its targets from this rather than a fixed name (VMCP-02.86) —
+   * a rig bound to `left`/`right` has no `primary` slot at all.
+   */
+  connectedSlots(): string[];
   /** Whether an emergency unload is warranted for the slot, + the active set id. */
   evaluate(slotId: string): { warranted: boolean; reason: string; setId: string | null };
   /** Unload the slot (idempotent mode-bounce that slackens the cable). */
@@ -81,59 +91,139 @@ export interface VoiceSafetyContext {
   speakAck(text: string): void;
 }
 
-/** Single-arm bench flows unload the primary slot; bilateral demux is VW-48. */
-const SAFETY_SLOT = 'primary';
-
 /** Deterministic ack spoken the instant the cable is cut. */
 const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
 
+interface SlotVerdict {
+  slot: string;
+  warranted: boolean;
+  reason: string;
+  setId: string | null;
+}
+
+interface SafetySurvey {
+  connected: string[];
+  verdicts: SlotVerdict[];
+}
+
+type StopEvent = {
+  matchedPhrase: string;
+  transcript: string;
+  sttModel: SttModelName;
+  latencyMs: number;
+  audioDurationMs: number;
+};
+
 /**
- * Tier-A ungated safety path: a recognized stop phrase → immediate unload when a
- * set is active/loaded, bypassing the LLM. When nothing is loaded (or the safety
- * context isn't wired, e.g. tests) the phrase still reaches the model as
- * voice_input so it can respond conversationally. On unload failure the model is
- * told so it can retry `device.unload` as the backstop.
+ * Tier-A ungated safety path: a recognized stop phrase → immediate unload when
+ * any connected slot is mid-set or loaded, bypassing the LLM.
+ *
+ * The predicate still decides WHETHER to fire; once it does, every connected
+ * slot is cut. On a bilateral rig "stop" means both cables — one side left
+ * loaded while the other goes slack is its own hazard, and the two slots are
+ * always the same athlete's rig (MAX_SLOTS is 2, one client per process).
+ *
+ * When nothing is warranted the phrase still reaches the model as voice_input
+ * so it can respond conversationally — but never silently: a
+ * `deterministic_stop_unavailable` event rides alongside it. On unload failure
+ * the model is told so it can retry `device.unload` as the backstop.
  */
 async function runSafetyFastPath(
   channels: ChannelPublisher,
   safety: VoiceSafetyContext | null,
-  ev: {
-    matchedPhrase: string;
-    transcript: string;
-    sttModel: SttModelName;
-    latencyMs: number;
-    audioDurationMs: number;
-  },
+  ev: StopEvent,
 ): Promise<void> {
-  const verdict = safety === null ? null : evaluateSafely(safety);
-  if (safety === null || verdict === null || !verdict.warranted) {
-    publishVoiceInput(channels, ev); // not loaded/active, or no safety context → let the model handle it
+  const survey = safety === null ? { connected: [], verdicts: [] } : surveySlots(safety);
+  if (safety === null || !survey.verdicts.some((v) => v.warranted)) {
+    channels.publish(
+      buildDeterministicStopUnavailablePayload({
+        matchedPhrase: ev.matchedPhrase,
+        transcript: ev.transcript,
+        reason: unavailableReason(safety, survey),
+        slots: survey.verdicts.map((v) => ({ slot: v.slot, reason: v.reason })),
+      }),
+    );
+    publishVoiceInput(channels, ev); // let the model still handle it conversationally
     return;
   }
-  try {
-    await safety.unload(SAFETY_SLOT);
-  } catch (err) {
+  await executeStop(channels, safety, survey.verdicts, ev);
+}
+
+/** Cut every surveyed slot; ack + report per slot. */
+async function executeStop(
+  channels: ChannelPublisher,
+  safety: VoiceSafetyContext,
+  verdicts: SlotVerdict[],
+  ev: StopEvent,
+): Promise<void> {
+  const results = await Promise.all(
+    verdicts.map(async (verdict) => ({ verdict, error: await unloadError(safety, verdict.slot) })),
+  );
+  const cut = results.filter((r) => r.error === null);
+  const failed = results.filter((r) => r.error !== null);
+  if (cut.length === 0) {
     publishVoiceInput(channels, ev);
-    channels.publish(safetyUnloadFailedPayload(err));
+    for (const f of failed) channels.publish(safetyUnloadFailedPayload(f.error, f.verdict.slot));
     return;
   }
   safety.speakAck(SAFETY_ACK_TEXT);
-  channels.publish(
-    buildDeterministicStopTriggeredPayload({
-      slot: SAFETY_SLOT,
-      setId: verdict.setId,
-      matchedPhrase: ev.matchedPhrase,
-      predicateReason: verdict.reason,
-    }),
-  );
+  for (const { verdict } of cut) {
+    channels.publish(
+      buildDeterministicStopTriggeredPayload({
+        slot: verdict.slot,
+        setId: verdict.setId,
+        matchedPhrase: ev.matchedPhrase,
+        predicateReason: verdict.reason,
+        trigger: verdict.warranted ? 'warranted' : 'bilateral_sweep',
+      }),
+    );
+  }
+  for (const f of failed) channels.publish(safetyUnloadFailedPayload(f.error, f.verdict.slot));
+}
+
+/** Unload, returning the error instead of throwing so one slot can't abort the other. */
+async function unloadError(safety: VoiceSafetyContext, slot: string): Promise<unknown | null> {
+  try {
+    await safety.unload(slot);
+    return null;
+  } catch (err) {
+    return err ?? new Error('unload rejected');
+  }
+}
+
+/** Evaluate every connected slot, dropping any whose predicate threw. */
+function surveySlots(safety: VoiceSafetyContext): SafetySurvey {
+  let connected: string[];
+  try {
+    connected = safety.connectedSlots();
+  } catch {
+    return { connected: [], verdicts: [] };
+  }
+  const verdicts: SlotVerdict[] = [];
+  for (const slot of connected) {
+    const verdict = evaluateSafely(safety, slot);
+    if (verdict !== null) verdicts.push({ slot, ...verdict });
+  }
+  return { connected, verdicts };
+}
+
+function unavailableReason(
+  safety: VoiceSafetyContext | null,
+  survey: SafetySurvey,
+): StopUnavailableReason {
+  if (safety === null) return 'no_safety_context';
+  if (survey.connected.length === 0) return 'no_connected_slot';
+  if (survey.verdicts.length === 0) return 'evaluate_failed';
+  return 'not_warranted';
 }
 
 /** Run the predicate, treating a thrown getSlot (unknown slot) as "not warranted". */
 function evaluateSafely(
   safety: VoiceSafetyContext,
+  slotId: string,
 ): { warranted: boolean; reason: string; setId: string | null } | null {
   try {
-    return safety.evaluate(SAFETY_SLOT);
+    return safety.evaluate(slotId);
   } catch {
     return null;
   }
@@ -153,17 +243,19 @@ function publishVoiceInput(
   );
 }
 
-function safetyUnloadFailedPayload(err: unknown): ChannelEvent {
+function safetyUnloadFailedPayload(err: unknown, slot: string): ChannelEvent {
   const message = err instanceof Error ? err.message : String(err);
   return {
     meta: {
       source: 'voltras',
       event_type: 'voice_input_failed',
       error_code: 'SAFETY_UNLOAD_FAILED',
+      slot,
     },
     content: JSON.stringify({
-      summary: `Safety unload FAILED — call device.unload now. ${message}`,
+      summary: `Safety unload FAILED on slot ${slot} — call device.unload now. ${message}`,
       error_code: 'SAFETY_UNLOAD_FAILED',
+      slot,
       message,
     }),
   };
