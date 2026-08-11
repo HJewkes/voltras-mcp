@@ -1,6 +1,6 @@
 // `metrics.compute` — Wave 3C dispatcher (Task 12).
 //
-// One MCP tool, one zod discriminated union, eight pipelines, eight distinct
+// One MCP tool, one zod discriminated union, nine pipelines, nine distinct
 // `@voltras/workout-analytics` functions. The handler's only jobs are:
 //
 //   1. Fetch the targeted persistence rows (`getSet`, `getSetsForSession`).
@@ -20,14 +20,14 @@
 // at. The schema's `PENDING` comment is satisfied by binding `vbt.set` to
 // `getSetVelocitySummary`. No schema change required.
 //
-// ── Status of all 8 pipelines ──────────────────────────────────────────────
+// ── Status of all 9 pipelines ──────────────────────────────────────────────
 //
-// All 8 pipelines below are fully implemented and merged (`quality.rep` and
-// `session.readiness` included) — see the `compute()` switch below. An
-// earlier revision of this file marked those two `NOT_IMPLEMENTED`; that was
-// stale by the time this comment was written and has been corrected. Do not
-// trust a "not implemented" claim about this tool without reading the switch
-// statement.
+// All 9 pipelines below are fully implemented and merged (`quality.rep`,
+// `session.readiness` and `vbt.rir` included) — see the `compute()` switch
+// below. An earlier revision of this file marked the first two
+// `NOT_IMPLEMENTED`; that was stale by the time this comment was written and
+// has been corrected. Do not trust a "not implemented" claim about this tool
+// without reading the switch statement.
 //
 // `quality.rep` derives its `TechniqueBaseline` from a caller-supplied
 // `baselineSetId` (a real prior set, not an invented target) — the handler
@@ -36,11 +36,13 @@
 //
 // `session.readiness` resolves `actualVelocity`/`baselineVelocity` from the
 // first-rep concentric velocity of each session's first set OF THE SESSION'S
-// OWN EXERCISE — see `setsForSessionExercise`. PR #232 (B57/VW-90, not yet
-// merged as of this comment) adds baseline-confidence gating on top of this
-// pipeline — below CALIBRATED it will withhold the readiness zone while
-// still returning the raw observed velocities. Check whether that PR has
-// landed before assuming this pipeline always asserts a confident zone.
+// OWN EXERCISE — see `setsForSessionExercise`. Baseline-confidence gating
+// (B57/VW-90, PR #232) LANDED 2026-08-11: below CALIBRATED the readiness zone
+// is withheld while the raw observed velocities still ship. `vbt.rir` (VW-134)
+// is gated the same way, on the `rir-estimate` feature.
+//
+// GATES DEGRADE, THEY NEVER BLOCK. A `withheld` activation hedges a claim; it
+// does not empty the response. See `store/baseline-gate.ts`'s header.
 
 import {
   assessRepQuality,
@@ -53,15 +55,18 @@ import {
   computeVBTSetFatigueIndex,
   computeVolume,
   createTechniqueBaseline,
+  estimateRIRWithProfile,
   getPhaseDuration,
   getPhaseRangeOfMotion,
   getRepMeanVelocity,
+  getRepPeakVelocity,
   getSetFatigueIndex,
   getSetFirstRepVelocity,
   getSetMeanVelocity,
   getSetVelocitySummary,
   type LoadVelocityDataPoint,
   type ReadinessEstimate,
+  type Rep as AnalyticsRep,
   type Set as AnalyticsSet,
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -73,6 +78,11 @@ import {
   deriveFeatureGate,
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
+import {
+  RIR_MODEL_CALIBRATION_CONFIDENCE,
+  rirInputDomainConfidence,
+  type ConfidenceIndicator,
+} from '../store/confidence-indicator.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
@@ -158,6 +168,13 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       const set = await state.store.getSet(input.setId);
       if (!set) throw notFound(`set '${input.setId}' not found`);
       return getSetFatigueIndex(toAnalyticsSet(set));
+    }
+
+    case 'vbt.rir': {
+      const set = await state.store.getSet(input.setId);
+      if (!set) throw notFound(`set '${input.setId}' not found`);
+      if (set.reps.length === 0) throw notFound(`set '${input.setId}' has no reps`);
+      return rirForSet(state, set, input.targetReps);
     }
 
     case 'session.volume': {
@@ -317,6 +334,159 @@ async function readinessGate(
   );
 }
 
+/**
+ * One rep's RIR estimate, with the inputs the regression actually saw.
+ *
+ * Restates `ExerciseRIREstimate`'s fields rather than extending it: under
+ * NodeNext resolution the package's `.d.ts` types degrade to `any` here, so
+ * `extends ExerciseRIREstimate` silently contributes NO members and every
+ * inherited field reads as a type error at the use site. Spelling them out
+ * keeps this shape checked.
+ */
+interface RepRIREstimate {
+  /** Point estimate, clamped to >= 0. */
+  rir: number;
+  /** 95% CI band from the profile's stderr, half-rep resolution. */
+  range: { low: number; high: number };
+  /** Analytics' own grade of how far the inputs sit from the fitted range. */
+  confidence: 'low' | 'medium' | 'high';
+  /** 1-indexed rep number within the set. */
+  repIndex: number;
+  /**
+   * This rep's peak concentric velocity, in whatever unit the persisted
+   * samples carry — device-native mm/s today, NOT m/s (see `rirForSet`).
+   * Reported for transparency about what the model was fed; do not render it
+   * as a speed without converting.
+   */
+  peakVelocity: number;
+  /** Loss from the set's fastest rep to this one (%), PEAK-based. See `rirForSet`. */
+  velocityLossPct: number;
+}
+
+/**
+ * `vbt.rir`'s response (VW-134).
+ *
+ * THREE CONFIDENCE AXES, NAMED AND SEPARATE (VW-151). They answer different
+ * questions and are never merged into a single score:
+ *   - `modelCalibration` — is the MODEL trustworthy? Always `low`; the shipped
+ *     coefficients are placeholders. Identical for every user and every set.
+ *   - `inputDomain` — is THIS REP inside the model's fitted range? Varies per
+ *     rep; taken from workout-analytics' own per-estimate grade.
+ *   - `baselineMaturity` — do we know THIS USER on THIS EXERCISE well enough
+ *     to interpret the number? B57's verdict, unchanged.
+ *
+ * Per B57's advisory-only rule the estimate SHIPS at every gate activation —
+ * `baselineMaturity.activation === 'withheld'` hedges the reading, it does not
+ * blank it. Silence reads as breakage; a hedge reads as honesty.
+ */
+interface SetRIRResult {
+  /** The set's final rep — the "how much did you leave in the tank" headline. */
+  final: RepRIREstimate;
+  /** Every rep's estimate, so a caller can see the trajectory, not just the end. */
+  perRep: RepRIREstimate[];
+  /** The fastest rep's peak velocity — the ratio's denominator, same unit as `peakVelocity`. */
+  baselineMaxVelocity: number;
+  /** What the model was told the set's length was, and whether that was supplied. */
+  repsInSet: { value: number; source: 'targetReps' | 'actualRepCount' };
+  confidence: {
+    modelCalibration: ConfidenceIndicator;
+    inputDomain: ConfidenceIndicator;
+    baselineMaturity: FeatureGateVerdict;
+  };
+}
+
+/**
+ * Per-rep RIR across one recorded set.
+ *
+ * BASELINE VELOCITY IS THE SET'S FASTEST REP, NOT REP 1. The model asks for
+ * "baseline max velocity from the first reps of the set", but rep 1 on this
+ * hardware is routinely a cable-engagement artifact with a tiny ROM and a
+ * meaninglessly low velocity — anchoring on it inflates every subsequent
+ * v_ratio. Substituting the set's peak rep is the same workaround
+ * `peakConcentricBaseline` already applies elsewhere in this server.
+ *
+ * VELOCITY UNITS ARE NOT m/s. `WorkoutSample.velocity` is documented by
+ * workout-analytics as m/s, but this server's bridge converts position
+ * (mm->m) and force (tenths->lb) and passes velocity through RAW
+ * (`event-bridge.ts`: `velocity: frame.velocity`, with the SSE tap below it
+ * calling `mmsToMps` precisely because the value is still mm/s). Every
+ * absolute velocity in the store is therefore ~1000x its documented unit.
+ * THE RIR ESTIMATE IS UNAFFECTED: the model consumes `peakVelocity /
+ * baselineMaxVelocity` and a percentage loss, both scale-invariant, so a
+ * consistent unit error cancels. The raw figures are surfaced under
+ * unit-neutral names rather than a false `...Mps`. Tracked as VW-160.
+ *
+ * VELOCITY LOSS HERE IS PEAK-BASED, AND WILL NOT MATCH `vbt.set`. That
+ * pipeline reports the canonical MEAN-concentric loss (VW-62). This one feeds
+ * a regression whose `peakVelocity` / `baselineMaxVelocity` terms are both
+ * peaks, so its loss term has to be on the same basis or the model is fed
+ * mixed units. Two different numbers, both correct for their own question.
+ */
+async function rirForSet(
+  state: ServerState,
+  set: StoredSet,
+  targetReps: number | undefined,
+): Promise<SetRIRResult> {
+  const analyticsSet = toAnalyticsSet(set);
+  // `reps` degrades to `any[]` through the package's .d.ts here, so the
+  // element type is annotated explicitly rather than inferred.
+  const peaks: number[] = analyticsSet.reps.map((rep: AnalyticsRep) => getRepPeakVelocity(rep));
+  const baselineMax = Math.max(...peaks);
+  const repsInSet = targetReps ?? peaks.length;
+
+  const perRep: RepRIREstimate[] = peaks.map((peak: number, i: number) => {
+    // Clamped at 0: a rep faster than the set's fastest is impossible by
+    // construction here, but a 0 baseline (a set that never moved) would
+    // otherwise produce a negative or non-finite loss.
+    const velocityLossPct =
+      baselineMax > 0 ? Math.max(0, ((baselineMax - peak) / baselineMax) * 100) : 0;
+    const estimate = estimateRIRWithProfile({
+      peakVelocity: peak,
+      baselineMaxVelocity: baselineMax,
+      velLossPct: velocityLossPct,
+      repIndex: i + 1,
+      repsInSet,
+    });
+    return { ...estimate, repIndex: i + 1, peakVelocity: peak, velocityLossPct };
+  });
+
+  const final = perRep[perRep.length - 1]!;
+  return {
+    final,
+    perRep,
+    baselineMaxVelocity: baselineMax,
+    repsInSet: {
+      value: repsInSet,
+      source: targetReps === undefined ? 'actualRepCount' : 'targetReps',
+    },
+    confidence: {
+      modelCalibration: RIR_MODEL_CALIBRATION_CONFIDENCE,
+      // The headline number is the final rep's, so the input-domain axis grades
+      // that same rep — a per-rep axis on a per-rep value.
+      inputDomain: rirInputDomainConfidence(final.confidence),
+      baselineMaturity: await rirGate(state, set),
+    },
+  };
+}
+
+/**
+ * Grade the RIR feature for the set's own exercise. A set with no `exerciseId`
+ * has no baseline key to look up, which is `evaluable: false` ("we never
+ * looked") rather than a failed gate ("we looked and it's thin").
+ */
+async function rirGate(state: ServerState, set: StoredSet): Promise<FeatureGateVerdict> {
+  if (set.exerciseId === undefined) return deriveFeatureGate(undefined, 'rir-estimate');
+  return checkFeatureGate(
+    state.store,
+    {
+      userId: LOCAL_USER_ID,
+      exerciseId: set.exerciseId,
+      ...(set.side !== undefined ? { side: set.side } : {}),
+    },
+    'rir-estimate',
+  );
+}
+
 /** Load recommendation derived by inverting a load-velocity profile. */
 interface LoadRecommendation {
   /** The target mean concentric velocity the load was solved for (m/s). */
@@ -361,13 +531,20 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 8 literals) to a single `@voltras/workout-analytics` function; each pipeline ' +
+  'field (one of 9 literals) to a single `@voltras/workout-analytics` function; each pipeline ' +
   'takes different input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
   'and, if targetVelocity is given, inverts it to a recommended load + confidence (null if the ' +
   'fit is flat/non-invertible — never a fabricated number). ' +
   '`fatigue.set` (setId) — within-set fatigue index for one set. ' +
+  '`vbt.rir` (setId, optional targetReps) — per-rep reps-in-reserve from the VBT §5.3 ' +
+  'regression, plus the final rep as the headline. Carries THREE separately named confidence ' +
+  'axes and never a bare number: model-calibration (always low — the coefficients are ' +
+  'placeholders pending real-device calibration), input-domain (is this rep inside the fitted ' +
+  'range), and baseline-maturity (B57). Relay the estimate WITH its caveats; do not present it ' +
+  'as a precise rep count. Its velocity loss is peak-based by model contract and will not equal ' +
+  "`vbt.set`'s mean-based lossPct. " +
   '`session.volume` (sessionId) — whole-session tonnage, deliberately NOT narrowed to one ' +
   'exercise (a session may span several). ' +
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
