@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
 import { speak, type SpeakDeps, type VoiceListenerRef } from '../tools/tts-tools.js';
 import { decideCue, type CueDecision } from './cue-policy.js';
+import type { CueSettings } from './cue-settings.js';
 import { CueSelector, slotFill } from './cue-templates.js';
 
 /**
@@ -37,11 +38,11 @@ export interface CueEmitterDeps {
   /** Injectable for deterministic tests; defaults to a fresh selector. */
   selector?: CueSelector;
   /**
-   * Whether `target_hit`/`slowdown` cues (mid-set, still under load) may
-   * speak. Defaults to `false` — see `MID_SET_CATEGORIES`. `set_intro` and
-   * `set_complete` are unaffected either way.
+   * Live cue settings, read on EVERY event rather than captured — that is what
+   * lets `system.set_cues` flip either switch without a server restart
+   * (VMCP-02.85). Held by reference; the tool mutates this same object.
    */
-  midSetEnabled?: boolean;
+  settings: CueSettings;
 }
 
 /**
@@ -49,12 +50,17 @@ export interface CueEmitterDeps {
  * never blocks and its failure is swallowed by the tee, so channel delivery is
  * never affected. Speaks each category at most once per set. macOS-only — a
  * no-op on any other platform.
+ *
+ * Both on/off switches are consulted per event, so an emitter constructed while
+ * cues were off starts speaking the moment they are turned on. A cue suppressed
+ * by a switch is NOT recorded as fired, so the category can still speak later
+ * in the same set once it is re-enabled.
  */
 export class CueEmitter {
   private readonly speakDeps: SpeakDeps;
   private readonly speakFn: typeof speak;
   private readonly selector: CueSelector;
-  private readonly midSetEnabled: boolean;
+  private readonly settings: CueSettings;
   /** `${category}:${setId}` keys already spoken, so a category fires once/set. */
   private readonly fired = new Set<string>();
 
@@ -62,14 +68,17 @@ export class CueEmitter {
     this.speakDeps = deps.speakDeps;
     this.speakFn = deps.speak ?? speak;
     this.selector = deps.selector ?? new CueSelector();
-    this.midSetEnabled = deps.midSetEnabled ?? false;
+    this.settings = deps.settings;
   }
 
   onEvent(event: ChannelEvent): void {
+    // Static by design: `say` does not exist off macOS, so no runtime toggle
+    // can make cues audible there.
     if (this.speakDeps.platform !== 'darwin') return;
+    if (!this.settings.enabled) return;
     const decision = decideCue(event);
     if (decision === null) return;
-    if (!this.midSetEnabled && MID_SET_CATEGORIES.has(decision.category)) return;
+    if (!this.settings.midSetEnabled && MID_SET_CATEGORIES.has(decision.category)) return;
     const key = `${decision.category}:${decision.setId}`;
     if (this.fired.has(key)) return;
     this.fired.add(key);
@@ -116,27 +125,24 @@ export class CueTeePublisher implements ChannelPublisher {
 }
 
 /**
- * Wrap `inner` with a cue-emitting tee when cues are enabled, else return it
- * unchanged. Builds the emitter's speak deps from the live process + the same
+ * Wrap `inner` with a cue-emitting tee. ALWAYS installs the tee — even with
+ * cues off — because a tee that was never installed can never be switched on
+ * later (VMCP-02.85); the emitter itself decides per event whether to speak.
+ * Builds the emitter's speak deps from the live process + the same
  * voice-listener ref `system.speak` uses (so cues duck the mic).
  */
-export function maybeCueTee(
+export function installCueTee(
   inner: ChannelPublisher,
   opts: {
-    enabled: boolean;
+    /** Live settings object, shared with `system.set_cues`. */
+    settings: CueSettings;
     voiceListenerRef: VoiceListenerRef | null;
-    /** See `CueEmitterDeps.midSetEnabled`. Defaults to `false`. */
-    midSetEnabled?: boolean;
   },
 ): ChannelPublisher {
-  if (!opts.enabled) return inner;
   const speakDeps: SpeakDeps = {
     platform: process.platform,
     spawn: spawn as SpeakDeps['spawn'],
     voiceListenerRef: opts.voiceListenerRef,
   };
-  return new CueTeePublisher(
-    inner,
-    new CueEmitter({ speakDeps, midSetEnabled: opts.midSetEnabled ?? false }),
-  );
+  return new CueTeePublisher(inner, new CueEmitter({ speakDeps, settings: opts.settings }));
 }

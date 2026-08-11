@@ -227,7 +227,8 @@ Everything is optional; the defaults are a working configuration.
 | `VMCP_DB_PATH`            | `~/.voltras/vmcp.sqlite`        | absolute path                          | SQLite store. Parent directory is created if missing. See [running more than one instance](#running-more-than-one-instance).                                                                                                                                                                                                                                                  |
 | `VMCP_DASHBOARD_PORT`     | `7723`                          | port number \| `off` \| `0`            | Dashboard sidecar port. `off` disables it. An unparseable value silently falls back to the default rather than failing.                                                                                                                                                                                                                                                       |
 | `VMCP_LOG_LEVEL`          | `info`                          | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr — stdout is reserved for the MCP transport.                                                                                                                                                                                                                                                                                              |
-| `VMCP_CUES`               | `off`                           | `off` \| `on`                          | Deterministic spoken coaching cues (set intros, "two reps left", set-complete) fired the instant the triggering event does, with no model round-trip. **macOS only** — routes through the built-in `say` binary; a no-op elsewhere. Off by default because cues are audible and will double up with model-generated speech unless the coaching prompt cedes those categories. |
+| `VMCP_CUES`               | `off`                           | `off` \| `on`                          | Deterministic spoken coaching cues (set intros, "two reps left", set-complete) fired the instant the triggering event does, with no model round-trip. **macOS only** — routes through the built-in `say` binary; a no-op elsewhere. Off by default because cues are audible and will double up with model-generated speech unless the coaching prompt cedes those categories. STARTUP DEFAULT ONLY — `system.set_cues` flips it at runtime and `server.health` reports the live value. |
+| `VMCP_CUES_MIDSET`        | `off`                           | `off` \| `on`                          | Whether the two cue categories that fire while the lifter is still under load (`target_hit`, `slowdown`) may speak. Off by default: every cue mutes the mic for its duration, so the ungated voice "stop" path is unavailable for that window, and mid-set is the worst place for that blind spot. Also a startup default only — see `system.set_cues`. |
 | `VMCP_REST_TIMER`         | `off`                           | `off` \| `on`                          | When `on`, a natural set close auto-arms the passive `rest_status` push cycle. Never armed on a `session.end` cascade.                                                                                                                                                                                                                                                        |
 | `VMCP_REP_SOURCE`         | `analytics`                     | `analytics` \| `firmware`              | Which rep pipeline the read boundary draws from. `firmware` is a dark flag pending a hardware cutover.                                                                                                                                                                                                                                                                        |
 | `VMCP_REP_CORRECTIONS`    | `off`                           | `off` \| `on`                          | Movement-class-dependent rep-segmentation corrections. Dark until validated across movement classes — on an untested movement it can drop valid reps.                                                                                                                                                                                                                         |
@@ -276,7 +277,7 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-86 tools in mock mode; 84 with the real adapter (`mock.*` is registered only when
+87 tools in mock mode; 85 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
@@ -289,7 +290,7 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `session.*`     | 5     | `start`, `end`, `set_exercise`, `list`, `get`.                                                                                                                                   |
 | `set.*`         | 4     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `get`.                                                                                               |
 | `timer.*`       | 3     | `start` (non-blocking, push-completed — preferred for rest), `wait` (blocking, singleton), `cancel`.                                                                             |
-| `system.*`      | 6     | `speak` (macOS `say`), start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine — plus the device write-lease. |
+| `system.*`      | 7     | `speak` (macOS `say`), start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine — plus `set_cues` (runtime cue toggles) and the device write-lease. |
 | `profile.*`     | 3     | Self-reported training background (get/set) and the derived tier signal.                                                                                                         |
 | `exercise.*`    | 2     | Search and fetch from the exercise catalog.                                                                                                                                      |
 | `isometric.*`   | 2     | Max-force and bilateral-imbalance assessment protocols.                                                                                                                          |
@@ -341,7 +342,9 @@ built — it's an optional dependency, so a failed build is silent at install ti
 
 **Nothing works and the error mentions `node:sqlite`.** Your Node is older than 22.5.0.
 
-**No spoken cues.** `VMCP_CUES` defaults to `off`, and cues are macOS-only regardless.
+**No spoken cues.** Call `server.health` and read `cues` / `cuesMidSet` — both default to
+`off`, and cues are macOS-only regardless. `system.set_cues` turns either on without a
+restart; the mid-set categories (`target_hit`, `slowdown`) need BOTH on.
 
 ---
 

@@ -181,7 +181,8 @@ const START_DESCRIPTION = [
   '(an utterance already in progress is dropped too), so nothing said during',
   'playback is heard — wake phrase and safety phrases alike. Each mute window',
   'is bounded by a hard 8s failsafe, and the mid-set',
-  '`target_hit`/`slowdown` cues stay silent unless `VMCP_CUES_MIDSET=on`, so',
+  '`target_hit`/`slowdown` cues stay silent unless mid-set cues are on (startup',
+  'default `VMCP_CUES_MIDSET`, changeable at runtime with `system.set_cues`), so',
   'the blind spot normally lands only at set boundaries.',
 ].join(' ');
 
