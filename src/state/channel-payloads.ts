@@ -1846,33 +1846,99 @@ export function buildVoltrasAvailablePayload(
  * armed, or `loaded` when the cable carried tension). `setId` is present only
  * when the stop interrupted an armed set — omitted from meta when null so
  * attribute filtering never sees a "null" string.
+ *
+ * One event per unloaded slot (VMCP-02.86), so each carries its own `slot` for
+ * bilateral disambiguation. `trigger` says why THIS slot was cut: `warranted`
+ * when its own predicate fired, `bilateral_sweep` when it was cut alongside a
+ * warranted slot because "stop" on a bilateral rig means both cables.
  */
 export function buildDeterministicStopTriggeredPayload(args: {
   slot: string;
   setId: string | null;
   matchedPhrase: string;
   predicateReason: string;
+  trigger?: 'warranted' | 'bilateral_sweep';
 }): { meta: Record<string, string>; content: string } {
-  const { slot, setId, matchedPhrase, predicateReason } = args;
+  const { slot, setId, matchedPhrase, predicateReason, trigger = 'warranted' } = args;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'deterministic_stop_triggered',
     slot,
     matched_phrase: matchedPhrase,
     predicate_reason: predicateReason,
+    trigger,
     unloaded: 'true',
   };
   if (setId !== null) {
     meta.set_id = setId;
   }
-  const summary = `Emergency stop: heard "${matchedPhrase}" — cable unloaded (slot ${slot}).`;
+  const scope =
+    trigger === 'bilateral_sweep' ? `slot ${slot}, cut with the warranted side` : `slot ${slot}`;
+  const summary = `Emergency stop: heard "${matchedPhrase}" — cable unloaded (${scope}).`;
   const content = JSON.stringify({
     summary,
     slot,
     set_id: setId,
     matched_phrase: matchedPhrase,
     predicate_reason: predicateReason,
+    trigger,
     unloaded: true,
+  });
+  return { meta, content };
+}
+
+/** Why a matched safety phrase cut nothing. */
+export type StopUnavailableReason =
+  | 'no_safety_context'
+  | 'no_connected_slot'
+  | 'evaluate_failed'
+  | 'not_warranted';
+
+const STOP_UNAVAILABLE_DETAIL: Record<StopUnavailableReason, string> = {
+  no_safety_context: 'the deterministic stop path is not wired in this server',
+  no_connected_slot: 'no device is connected to any slot',
+  evaluate_failed: 'the per-slot safety check could not be evaluated',
+  not_warranted: 'no connected slot reads as mid-set or loaded',
+};
+
+/**
+ * Build the meta + content for a `deterministic_stop_unavailable` channel event
+ * (VMCP-02.86). Fired when a safety phrase DID match but no cable was cut.
+ *
+ * This event exists because the absence of one hid a critical bug: the matched
+ * phrase used to fall through to a bare `voice_input`, indistinguishable from
+ * ordinary speech, so a stop that targeted a slot with no device looked exactly
+ * like conversation. The fast-path still forwards the transcript so the model
+ * can answer conversationally — this rides alongside it as the loud signal that
+ * the deterministic path declined.
+ */
+export function buildDeterministicStopUnavailablePayload(args: {
+  matchedPhrase: string;
+  transcript: string;
+  reason: StopUnavailableReason;
+  slots: { slot: string; reason: string }[];
+}): { meta: Record<string, string>; content: string } {
+  const { matchedPhrase, transcript, reason, slots } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'deterministic_stop_unavailable',
+    matched_phrase: matchedPhrase,
+    reason,
+    unloaded: 'false',
+  };
+  // Only meaningful as a filter key when a single slot was in play; a joined
+  // list would break attribute matching for bilateral consumers.
+  if (slots.length === 1) meta.slot = slots[0].slot;
+  const summary =
+    `Safety phrase "${matchedPhrase}" matched but NO cable was unloaded — ` +
+    `${STOP_UNAVAILABLE_DETAIL[reason]}. Check device state and call device.unload if the athlete is loaded.`;
+  const content = JSON.stringify({
+    summary,
+    matched_phrase: matchedPhrase,
+    transcript,
+    reason,
+    evaluated_slots: slots,
+    unloaded: false,
   });
   return { meta, content };
 }

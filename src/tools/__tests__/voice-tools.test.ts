@@ -207,6 +207,7 @@ function fakeSafety(over?: Partial<VoiceSafetyContext>): FakeSafety {
   const unloadCalls: string[] = [];
   const acks: string[] = [];
   const ctx: VoiceSafetyContext = {
+    connectedSlots: over?.connectedSlots ?? (() => ['primary']),
     evaluate: over?.evaluate ?? (() => ({ warranted: true, reason: 'active_set', setId: 'set-1' })),
     unload:
       over?.unload ??
@@ -216,6 +217,24 @@ function fakeSafety(over?: Partial<VoiceSafetyContext>): FakeSafety {
     speakAck: over?.speakAck ?? ((text: string) => acks.push(text)),
   };
   return { ctx, unloadCalls, acks };
+}
+
+/**
+ * Safety context over a set of bound slots, mirroring the real one built by
+ * `makeVoiceSafety`: `evaluate` on an unbound slot THROWS, exactly as
+ * `getSlot` does. That is the behavior VMCP-02.86 tripped over.
+ */
+function slotAwareSafety(
+  bound: Record<string, { warranted: boolean; reason: string; setId: string | null }>,
+): FakeSafety {
+  return fakeSafety({
+    connectedSlots: () => Object.keys(bound),
+    evaluate: (slotId: string) => {
+      const verdict = bound[slotId];
+      if (verdict === undefined) throw new Error(`Unknown slot: ${slotId}`);
+      return verdict;
+    },
+  });
 }
 
 async function driveSafetyPhrase(h: Harness): Promise<void> {
@@ -282,6 +301,125 @@ describe('Tier-A safety fast-path (VMCP-02.78)', () => {
 
     expect(safety.unloadCalls).toEqual([]);
     expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
+  });
+});
+
+// VMCP-02.86, the hardware defect: the fast-path targeted a hardcoded
+// `primary` slot, so a rig bound to left/right unloaded nothing AND looked
+// exactly like ordinary speech on the wire. Reproduced twice on VTR-212006.
+describe('Tier-A safety fast-path — slot resolution (VMCP-02.86)', () => {
+  function stops(h: Harness): ChannelEvent[] {
+    return h.events.filter((e) => e.meta.event_type === 'deterministic_stop_triggered');
+  }
+  function unavailable(h: Harness): ChannelEvent[] {
+    return h.events.filter((e) => e.meta.event_type === 'deterministic_stop_unavailable');
+  }
+
+  it('device on `right` only, mid-set → unloads right and publishes the stop', async () => {
+    const safety = slotAwareSafety({
+      right: { warranted: true, reason: 'active_set', setId: 'set-9' },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls).toEqual(['right']);
+    expect(safety.acks).toHaveLength(1);
+    expect(stops(h)).toHaveLength(1);
+    expect(stops(h)[0].meta).toMatchObject({
+      slot: 'right',
+      set_id: 'set-9',
+      predicate_reason: 'active_set',
+      trigger: 'warranted',
+      unloaded: 'true',
+    });
+    expect(h.events.some((e) => e.meta.event_type === 'voice_input')).toBe(false);
+  });
+
+  it('bilateral: one warranted side cuts BOTH cables', async () => {
+    const safety = slotAwareSafety({
+      left: { warranted: true, reason: 'active_set', setId: 'set-L' },
+      right: { warranted: false, reason: 'none', setId: null },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls.sort()).toEqual(['left', 'right']);
+    expect(safety.acks).toHaveLength(1);
+    const bySlot = Object.fromEntries(stops(h).map((e) => [e.meta.slot, e.meta]));
+    expect(bySlot.left).toMatchObject({ trigger: 'warranted', predicate_reason: 'active_set' });
+    expect(bySlot.right).toMatchObject({ trigger: 'bilateral_sweep' });
+  });
+
+  it('one side failing to unload still reports the side that was cut', async () => {
+    const unloadCalls: string[] = [];
+    const safety = fakeSafety({
+      connectedSlots: () => ['left', 'right'],
+      evaluate: () => ({ warranted: true, reason: 'active_set', setId: 'set-1' }),
+      unload: async (slotId: string) => {
+        unloadCalls.push(slotId);
+        if (slotId === 'right') throw new Error('BLE write failed');
+      },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(unloadCalls.sort()).toEqual(['left', 'right']);
+    expect(stops(h).map((e) => e.meta.slot)).toEqual(['left']);
+    const failed = h.events.filter((e) => e.meta.error_code === 'SAFETY_UNLOAD_FAILED');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].meta.slot).toBe('right');
+  });
+
+  it('nothing warranted → loud deterministic_stop_unavailable, not a bare voice_input', async () => {
+    const safety = slotAwareSafety({
+      right: { warranted: false, reason: 'none', setId: null },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.unloadCalls).toEqual([]);
+    expect(unavailable(h)).toHaveLength(1);
+    expect(unavailable(h)[0].meta).toMatchObject({
+      matched_phrase: 'cut the weight',
+      reason: 'not_warranted',
+      slot: 'right',
+      unloaded: 'false',
+    });
+    expect(JSON.parse(unavailable(h)[0].content)).toMatchObject({
+      transcript: 'cut the weight',
+      evaluated_slots: [{ slot: 'right', reason: 'none' }],
+    });
+    expect(h.events.filter((e) => e.meta.event_type === 'voice_input')).toHaveLength(1);
+  });
+
+  it('no device connected → unavailable with reason no_connected_slot', async () => {
+    const safety = slotAwareSafety({});
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(unavailable(h)[0].meta.reason).toBe('no_connected_slot');
+    expect(unavailable(h)[0].meta.slot).toBeUndefined();
+  });
+
+  it('no safety context wired → unavailable with reason no_safety_context', async () => {
+    const h = buildHarness();
+    await driveSafetyPhrase(h);
+
+    expect(unavailable(h)).toHaveLength(1);
+    expect(unavailable(h)[0].meta.reason).toBe('no_safety_context');
+  });
+
+  it('every connected slot unwarranted-by-throw → reason evaluate_failed', async () => {
+    const safety = fakeSafety({
+      connectedSlots: () => ['right'],
+      evaluate: () => {
+        throw new Error('Unknown slot: right');
+      },
+    });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(unavailable(h)[0].meta.reason).toBe('evaluate_failed');
   });
 });
 
