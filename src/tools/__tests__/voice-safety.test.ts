@@ -44,9 +44,10 @@ interface FakeSlot {
   client: { isConnected: boolean; unloadDevice: Mock<() => Promise<void>> };
 }
 
-function makeState(
-  slots: { slotId: string; connected?: boolean; activeSetId?: string }[],
-): { state: unknown; slots: Map<string, FakeSlot> } {
+function makeState(slots: { slotId: string; connected?: boolean; activeSetId?: string }[]): {
+  state: unknown;
+  slots: Map<string, FakeSlot>;
+} {
   const map = new Map<string, FakeSlot>();
   for (const spec of slots) {
     map.set(spec.slotId, {
@@ -79,7 +80,11 @@ function makeState(
 describe('makeVoiceSafety — connectedSlots', () => {
   it('reports a bilateral rig bound to left/right, with no primary at all', () => {
     const { state } = makeState([{ slotId: 'left' }, { slotId: 'right' }]);
-    expect(makeVoiceSafety(state as never).connectedSlots().sort()).toEqual(['left', 'right']);
+    expect(
+      makeVoiceSafety(state as never)
+        .connectedSlots()
+        .sort(),
+    ).toEqual(['left', 'right']);
   });
 
   it('reports `right` when that is the only bound slot (the hardware case)', () => {

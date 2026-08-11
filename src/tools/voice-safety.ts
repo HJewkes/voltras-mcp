@@ -24,7 +24,9 @@ import type { VoiceSafetyContext } from './voice-tools.js';
 export function makeVoiceSafety(state: ServerState): VoiceSafetyContext {
   return {
     connectedSlots: () =>
-      [...state.slots.values()].filter((slot) => slot.client.isConnected).map((slot) => slot.slotId),
+      [...state.slots.values()]
+        .filter((slot) => slot.client.isConnected)
+        .map((slot) => slot.slotId),
     evaluate: (slotId) => {
       const verdict = isSafetyUnloadWarranted(state, slotId);
       const setId = state.slots.get(slotId)?.live.snapshotSet()?.setId ?? null;
