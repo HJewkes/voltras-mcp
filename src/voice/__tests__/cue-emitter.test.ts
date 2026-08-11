@@ -9,6 +9,7 @@ vi.mock('@voltras/node-sdk', () => ({}));
 
 const { CueEmitter, CueTeePublisher } = await import('../cue-emitter.js');
 
+import { makeCueSettings } from '../cue-settings.js';
 import { CueSelector } from '../cue-templates.js';
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';
 import type { SpeakDeps } from '../../tools/tts-tools.js';
@@ -29,12 +30,13 @@ function makeEmitter(
   speakSpy: ReturnType<typeof vi.fn>,
   deps: Partial<SpeakDeps> = {},
   midSetEnabled = true,
+  enabled = true,
 ) {
   return new CueEmitter({
     speakDeps: { ...speakDeps, ...deps },
     speak: speakSpy as never,
     selector: new CueSelector({ rng: () => 0 }),
-    midSetEnabled,
+    settings: { enabled, midSetEnabled },
   });
 }
 
@@ -179,13 +181,14 @@ const targetHit = () =>
   event('set_target_reached', { set_id: 's1', target_rep_count: '8', actual_rep_count: '9' });
 
 describe('CueEmitter — mid-set cue gating (VMCP-05.01)', () => {
-  it('defaults to suppressing target_hit and slowdown', () => {
+  it('suppresses target_hit and slowdown under the shipped default settings', () => {
     const speakSpy = makeSpeakSpy();
-    // omit the third arg entirely so the emitter uses CueEmitterDeps's own default
+    // The settings a default `VMCP_CUES=on`, unset `VMCP_CUES_MIDSET` produces.
     const emitter = new CueEmitter({
       speakDeps,
       speak: speakSpy as never,
       selector: new CueSelector({ rng: () => 0 }),
+      settings: makeCueSettings({ cues: 'on', cuesMidSet: 'off' }),
     });
     emitter.onEvent(targetHit());
     emitter.onEvent(velocityLoss());

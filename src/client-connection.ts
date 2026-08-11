@@ -38,6 +38,7 @@ import { registerServerTools } from './tools/server-tools.js';
 import { registerDebugTools } from './tools/debug-tools.js';
 import { registerSystemTools, speak, type SpeakDeps } from './tools/tts-tools.js';
 import { registerVoiceTools, type VoiceSafetyContext } from './tools/voice-tools.js';
+import { registerCueTools } from './tools/cue-tools.js';
 import { registerSlotTools } from './tools/slot-tools.js';
 import { registerProgressionTools } from './tools/progression-tools.js';
 import { registerIsometricTools } from './tools/isometric-tools.js';
@@ -211,6 +212,7 @@ function registerRealTools(
   registerDebugTools(server, state, placeholders);
   registerSystemTools(server, placeholders, undefined, state.voice);
   registerVoiceTools(server, state, placeholders, makeVoiceSafety(state));
+  registerCueTools(server, state, placeholders);
   registerSlotTools(server, state, placeholders);
   registerProgressionTools(server, state, placeholders);
   registerIsometricTools(server, state, placeholders);
@@ -251,6 +253,8 @@ const SERVER_INSTRUCTIONS = [
   '- `profile.*`, `progression.*` — athlete self-report, derived tier signal, and per-exercise ' +
     'history.',
   '- `timer.*`, `system.speak`, `system.listen_*` — rest timers and local voice I/O.',
+  '- `system.set_cues` — turn the automatic spoken cues (and the mid-set subset) on or off ' +
+    'at runtime; `server.health` reports the live values.',
   '- `system.lease_*` — the single-writer lease over the device. Acquire before driving hardware.',
   '- `server.health`, `debug.*`, `mock.*` — operator diagnostics and the mock-adapter surface.',
   '- `coaching.explain` — RP-derived coaching knowledge on demand, by topic (onboarding/live/' +

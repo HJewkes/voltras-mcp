@@ -55,6 +55,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: {
         adapter: 'mock',
         dbPath: '/tmp/test.sqlite',
@@ -85,6 +86,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
     } as never;
@@ -109,6 +111,7 @@ describe('server.health', () => {
     channelDelivery.recordConfirmation('n1');
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       channelDelivery,
@@ -127,6 +130,7 @@ describe('server.health', () => {
     // (nonexistent) client-side capability signal.
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: realPublisher,
       server: { server: { getClientCapabilities: () => ({ experimental: {} }) } },
@@ -141,6 +145,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       channels: noopChannelPublisher,
     } as never;
@@ -156,6 +161,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
@@ -173,6 +179,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: true, url: 'http://127.0.0.1:7723' },
     } as never;
@@ -192,6 +199,7 @@ describe('server.health', () => {
     const { placeholders, invoke } = makePlaceholders(['server.health']);
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
       dashboard: { available: false, url: null },
     } as never;
@@ -205,10 +213,50 @@ describe('server.health', () => {
     expect(body.dashboardUrl).toBeNull();
   });
 
+  it('reports the LIVE cue settings, not the env vars they were seeded from', async () => {
+    // Arrange: config still says both cues env vars were `off` at startup,
+    // while `system.set_cues` has since turned both on. Health must report the
+    // live values — reporting config here would recreate exactly the blind spot
+    // that made a missing VMCP_CUES_MIDSET invisible (VMCP-02.85).
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: true, midSetEnabled: true },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info', cues: 'off', cuesMidSet: 'off' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.cues).toBe('on');
+    expect(body.cuesMidSet).toBe('on');
+  });
+
+  it('reports each cue switch independently', async () => {
+    // Arrange: the bench-relevant combination — cues on, mid-set still off.
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: true, midSetEnabled: false },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(body.cues).toBe('on');
+    expect(body.cuesMidSet).toBe('off');
+  });
+
   it('throws if the placeholder is missing', () => {
     const { placeholders } = makePlaceholders([]); // no server.health
     const state = {
       lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
     } as never;
     expect(() => registerServerTools({} as never, state, placeholders as never)).toThrow(

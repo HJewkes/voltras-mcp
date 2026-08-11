@@ -62,6 +62,7 @@ import { createPassiveScanState, type PassiveScanState } from './passive-scanner
 import { SlotBindingsStore } from './slot-bindings.js';
 import type { PushTimer } from '../tools/timer-tools.js';
 import { makeVoiceHolder, type VoiceListenerHolder } from '../tools/voice-tools.js';
+import { makeCueSettings, type CueSettings } from '../voice/cue-settings.js';
 
 /**
  * Per-slot processing unit. A slot owns one BLE connection (`client`) and the
@@ -332,6 +333,16 @@ export interface ServerState {
    */
   voice: VoiceListenerHolder;
   /**
+   * Live on/off switches for the deterministic cue emitter (VMCP-02.85).
+   * Seeded from `VMCP_CUES` / `VMCP_CUES_MIDSET` at bootstrap, then mutated in
+   * place by `system.set_cues`. The emitter holds this same object by
+   * reference and reads it per event, so a toggle takes effect on the next
+   * channel event — no restart, which the plugin child-process shape makes
+   * impossible anyway. `server.health` reports it so the setting is
+   * observable without inspecting the process env.
+   */
+  cueSettings: CueSettings;
+  /**
    * Persistent deviceId ↔ physical-side bindings (VMCP-02.05). Loaded at
    * bootstrap from `config.slotBindingsPath` and written through on every
    * `slot.bind` call. When a known deviceId reconnects, `device.connect`
@@ -460,6 +471,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
       setWatchdog,
       restTimers,
       voice: makeVoiceHolder(),
+      cueSettings: makeCueSettings(config),
       slotBindings,
       passiveScan: createPassiveScanState(),
       bilateralReconciler: new BilateralReconciler(),

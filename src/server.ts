@@ -28,7 +28,7 @@ import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
-import { maybeCueTee } from './voice/cue-emitter.js';
+import { installCueTee } from './voice/cue-emitter.js';
 import {
   createClientConnection,
   registerClient,
@@ -68,14 +68,15 @@ function resolveDashboardPort(env: NodeJS.ProcessEnv = process.env): number | nu
  * this per connection — fanning these out is VMCP-01.63.
  */
 function wireProcessState(state: ServerState, connection: ClientConnection): void {
-  // When cues are enabled (and we're on macOS, where `say` exists), tee the
-  // channel stream through the deterministic cue emitter. It shares the same
-  // voice-listener ref as `system.speak` so spoken cues duck the STT mic.
-  // Passthrough is byte-identical otherwise.
-  state.channels = maybeCueTee(connection.channels, {
-    enabled: state.config.cues === 'on' && process.platform === 'darwin',
+  // Always tee the channel stream through the deterministic cue emitter; the
+  // emitter reads `state.cueSettings` per event to decide whether to speak, so
+  // `system.set_cues` can turn cues on mid-session (VMCP-02.85). Installing
+  // conditionally would make that impossible — the tee would not be there to
+  // enable. The emitter shares the same voice-listener ref as `system.speak`
+  // so spoken cues duck the STT mic. Passthrough is byte-identical either way.
+  state.channels = installCueTee(connection.channels, {
+    settings: state.cueSettings,
     voiceListenerRef: state.voice,
-    midSetEnabled: state.config.cuesMidSet === 'on',
   });
   state.server = connection.server;
   // Wire the SDK event bridge for every slot currently in the slots map.

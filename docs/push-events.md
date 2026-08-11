@@ -98,4 +98,5 @@ Consequences:
   one rep late.
 
 If you want cues that don't depend on the model reacting to these events at all, see
-`VMCP_CUES` in the [main README](../README.md#environment-variables).
+`VMCP_CUES` in the [main README](../README.md#environment-variables). Both cue switches are
+runtime-togglable via `system.set_cues` and reported by `server.health`.

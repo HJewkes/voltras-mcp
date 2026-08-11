@@ -13,6 +13,9 @@
 //   - analyticsVersion — same trick for @voltras/workout-analytics.
 //   - dbPath        — `state.config.dbPath`.
 //   - logLevel      — `state.config.logLevel`.
+//   - cues / cuesMidSet — LIVE spoken-cue switches (`state.cueSettings`), not
+//                     the env vars they were seeded from; `system.set_cues`
+//                     moves them at runtime (VMCP-02.85).
 //   - channelsWired — a real (non-noop) `claude/channel` publisher is
 //                     installed, so the server IS emitting channel
 //                     notifications (see below).
@@ -173,6 +176,21 @@ function resolveChannelStatus(state: ServerState): ChannelStatus {
 }
 
 /**
+ * Report the LIVE cue settings (VMCP-02.85) — the current values of
+ * `state.cueSettings`, which start from `VMCP_CUES` / `VMCP_CUES_MIDSET` and
+ * are then whatever `system.set_cues` last set them to. Before this, the only
+ * way to check either was `ps eww -p <pid> | grep VMCP`, which is exactly why a
+ * missing `VMCP_CUES_MIDSET` went unnoticed through a bench setup: mid-set cues
+ * that never fire produce no error, just silence.
+ */
+function resolveCueStatus(state: ServerState): { cues: 'on' | 'off'; cuesMidSet: 'on' | 'off' } {
+  return {
+    cues: state.cueSettings.enabled ? 'on' : 'off',
+    cuesMidSet: state.cueSettings.midSetEnabled ? 'on' : 'off',
+  };
+}
+
+/**
  * Report the device write-lease (VMCP-01.61) so an operator can see who owns
  * the device without calling a second tool. Deliberately does NOT say whether
  * the CALLER holds it — `server.health` is registered without a client identity
@@ -207,9 +225,12 @@ export function registerServerTools(
     paramsSchema: ServerHealthInput.shape,
     description:
       'Report server/process health: version, build, active adapter (real/mock), SDK and ' +
-      'analytics-package versions, db path, log level, push-channel status, device-lease ' +
+      'analytics-package versions, db path, log level, live spoken-cue settings ' +
+      '(`cues`/`cuesMidSet` — the values `system.set_cues` last set, not just the env vars), ' +
+      'push-channel status, device-lease ' +
       'status, and dashboard-sidecar availability. Useful for diagnosing "is this the server I ' +
-      'think it is", "who holds the device lease", and "is there a dashboard to point the user ' +
+      'think it is", "who holds the device lease", "are spoken cues actually armed", and "is ' +
+      'there a dashboard to point the user ' +
       'at" without a dedicated call for each. `dashboardAvailable`/`dashboardUrl` are the only ' +
       'way to learn the local dashboard exists — it is never mentioned in server instructions ' +
       '(the dashboard binds after those are already sent) and has no MCP tool or resource of ' +
@@ -223,6 +244,7 @@ export function registerServerTools(
         analyticsVersion: ANALYTICS_VERSION,
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
+        ...resolveCueStatus(state),
         dashboardAvailable: state.dashboard?.available ?? false,
         dashboardUrl: state.dashboard?.url ?? null,
         ...resolveChannelStatus(state),

@@ -47,3 +47,20 @@ export const SystemSpeakInput = z
   .strict();
 
 export type SystemSpeakInputType = z.infer<typeof SystemSpeakInput>;
+
+/**
+ * Input for `system.set_cues` (VMCP-02.85).
+ *
+ * Both fields are optional and independent: omitting one leaves that switch
+ * alone, so `{ midSet: 'on' }` arms mid-set cues without touching the master
+ * switch. An empty object is a legal read-only call — the result always
+ * reports the resulting state either way.
+ */
+export const SystemSetCuesInput = z
+  .object({
+    cues: z.enum(['on', 'off']).optional(),
+    midSet: z.enum(['on', 'off']).optional(),
+  })
+  .strict();
+
+export type SystemSetCuesInputType = z.infer<typeof SystemSetCuesInput>;

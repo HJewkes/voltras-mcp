@@ -62,6 +62,7 @@ export const CORE_TOOL_NAMES = [
   'system.speak',
   'system.listen_start',
   'system.listen_stop',
+  'system.set_cues',
   // Device write-lease (VMCP-01.61). Exempt from lease enforcement itself —
   // see LEASE_EXEMPT_TOOLS in lease-guard.ts.
   'system.lease_status',
@@ -147,7 +148,7 @@ export type ToolAccess = 'read' | 'write';
  * …>` makes tsc reject a missing entry, and `tool-registry.test.ts` catches the
  * inverse (a stale entry for a tool that no longer exists).
  *
- * Three entries are `write` by POLICY rather than by literal state mutation —
+ * Four entries are `write` by POLICY rather than by literal state mutation —
  * each verified against its handler, each annotated below. When in doubt the
  * classification is `write`: a wrongly-`read` tool lets an observer session
  * interfere with a live lift, while a wrongly-`write` one only costs an
@@ -222,6 +223,10 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'system.speak': 'write',
   'system.listen_start': 'write',
   'system.listen_stop': 'write',
+  // Process-wide: flipping cues changes what every session's channel events
+  // cause the speaker to say, so it is a `write` even though no device or
+  // store row moves.
+  'system.set_cues': 'write',
 
   // `lease_status` only reads. `acquire`/`release` mutate the lease, so they
   // are `write` — this table describes what a tool DOES, not whether it is
