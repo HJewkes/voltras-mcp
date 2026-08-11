@@ -192,6 +192,7 @@ const PIPELINE_TO_ANALYTICS_FN: Record<string, keyof typeof analytics | null> = 
   'vbt.set': 'getSetVelocitySummary',
   'vbt.profile': 'buildProfile',
   'fatigue.set': 'getSetFatigueIndex',
+  'vbt.rir': 'estimateRIRWithProfile',
   'session.volume': 'computeVolume',
   'session.fatigue': 'computeSessionFatigue',
   'session.strength': 'computeStrengthEstimate',
@@ -817,6 +818,209 @@ describe('metrics.compute — registration', () => {
 
     expect(updateSpy).toHaveBeenCalledTimes(1);
     expect(updateSpy.mock.calls[0]?.[0]).toHaveProperty('callback');
+  });
+});
+
+// ─── vbt.rir (VW-134) ─────────────────────────────────────────────────────
+
+/** The `vbt.rir` response, mirrored for assertions (the impl's type is private). */
+interface RirAxis {
+  axis: string;
+  level: string;
+  reasoning: string;
+  userMessage: string;
+  improvementPath: string;
+}
+interface RirRep {
+  repIndex: number;
+  rir: number;
+  range: { low: number; high: number };
+  confidence: string;
+  peakVelocity: number;
+  velocityLossPct: number;
+}
+interface RirPayload {
+  final: RirRep;
+  perRep: RirRep[];
+  baselineMaxVelocity: number;
+  repsInSet: { value: number; source: string };
+  confidence: {
+    modelCalibration: RirAxis;
+    inputDomain: RirAxis;
+    baselineMaturity: FeatureGateVerdict;
+  };
+}
+
+describe('metrics.compute — vbt.rir', () => {
+  /** Register the tool against a state and hand back the captured handlers. */
+  function registerAndCapture(state: ServerState): Map<string, RegisteredHandler> {
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+    return tools;
+  }
+
+  /** A set whose reps SLOW DOWN, so velocity loss is real rather than zero. */
+  function decayingSet(id: string, peaks: number[]): StoredSet {
+    const base = makeSet(id);
+    return {
+      ...base,
+      exerciseId: 'bench-press',
+      reps: peaks.map((peak, i) => ({
+        ...makeRep(id, i),
+        concentric: { ...EMPTY_PHASE, peakVelocity: peak },
+      })),
+    };
+  }
+
+  const PEAKS = [0.8, 0.7, 0.6, 0.45];
+
+  it('estimates every rep and reports the final rep as the headline', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const payload = await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' });
+    const body = parsePayload(payload) as RirPayload;
+
+    expect(body.perRep).toHaveLength(PEAKS.length);
+    expect(body.perRep.map((r) => r.repIndex)).toEqual([1, 2, 3, 4]);
+    expect(body.final).toEqual(body.perRep[PEAKS.length - 1]);
+    // Baseline is the set's FASTEST rep, not rep 1's -- here they coincide, so
+    // assert the value rather than the position.
+    expect(body.baselineMaxVelocity).toBeCloseTo(0.8, 6);
+  });
+
+  it('derives velocity loss from the set peak, rising as the reps slow', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    const losses = body.perRep.map((r) => r.velocityLossPct);
+    expect(losses[0]).toBeCloseTo(0, 6); // the fastest rep has lost nothing
+    expect(losses[3]).toBeCloseTo(((0.8 - 0.45) / 0.8) * 100, 6);
+    for (let i = 1; i < losses.length; i++) expect(losses[i]).toBeGreaterThan(losses[i - 1]);
+  });
+
+  it('uses the set peak as baseline even when rep 1 is a slow engagement artifact', async () => {
+    // Rep 1 crawls (cable takeup); the real work starts at rep 2. Anchoring on
+    // rep 1 would make every later rep look faster than baseline.
+    const set = decayingSet('set-rir', [0.05, 0.9, 0.8, 0.6]);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.baselineMaxVelocity).toBeCloseTo(0.9, 6);
+    // Every loss stays non-negative -- nothing is "faster than the baseline".
+    for (const r of body.perRep) expect(r.velocityLossPct).toBeGreaterThanOrEqual(0);
+  });
+
+  it('names all three confidence axes and never returns a bare number', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.confidence.modelCalibration.axis).toBe('model-calibration');
+    expect(body.confidence.inputDomain.axis).toBe('input-domain');
+    expect(body.confidence.baselineMaturity.feature).toBe('rir-estimate');
+    // The model axis is a property of the shipped coefficients, not the user.
+    expect(body.confidence.modelCalibration.level).toBe('low');
+    // Populated at every level, per VW-151 -- including the improvement path.
+    for (const axis of [body.confidence.modelCalibration, body.confidence.inputDomain]) {
+      expect(axis.userMessage.length).toBeGreaterThan(0);
+      expect(axis.improvementPath.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('STILL SHIPS the estimate when the baseline gate withholds (B57 is advisory)', async () => {
+    // No baseline row at all -> the gate withholds. The number must survive:
+    // silence reads as breakage, a hedge reads as honesty.
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getBaseline: vi.fn(async () => undefined),
+    });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.confidence.baselineMaturity.activation).toBe('withheld');
+    expect(body.confidence.baselineMaturity.evaluable).toBe(false);
+    expect(typeof body.final.rir).toBe('number');
+    expect(body.perRep).toHaveLength(PEAKS.length);
+  });
+
+  it('grades the gate off the set exercise when a calibrated baseline exists', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.confidence.baselineMaturity.evaluable).toBe(true);
+    expect(body.confidence.baselineMaturity.activation).not.toBe('withheld');
+  });
+
+  it('reports the set as unevaluable when it names no exercise', async () => {
+    const { exerciseId: _dropped, ...noExercise } = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => noExercise as StoredSet) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    // "We never looked" -- not the same as a graded-and-thin baseline.
+    expect(body.confidence.baselineMaturity.evaluable).toBe(false);
+  });
+
+  it('records where repsInSet came from, and honours a supplied targetReps', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const implied = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+    expect(implied.repsInSet).toEqual({ value: 4, source: 'actualRepCount' });
+
+    const targeted = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir', targetReps: 10 }),
+    ) as RirPayload;
+    expect(targeted.repsInSet).toEqual({ value: 10, source: 'targetReps' });
+    // A set cut short of its target is not read as one taken to the end, so
+    // the rep-progress term differs and the estimate moves.
+    expect(targeted.final.rir).not.toBeCloseTo(implied.final.rir, 6);
+  });
+
+  it('returns NOT_FOUND for a missing set, and for a set with no reps', async () => {
+    const missing = makeStateWithStore();
+    expect(
+      await callTool(registerAndCapture(missing), { pipeline: 'vbt.rir', setId: 'nope' }),
+    ).toMatchObject({ isError: true });
+
+    const empty = { ...makeSet('set-empty'), reps: [] };
+    const noReps = makeStateWithStore({ getSet: vi.fn(async () => empty) });
+    expect(
+      await callTool(registerAndCapture(noReps), { pipeline: 'vbt.rir', setId: 'set-empty' }),
+    ).toMatchObject({ isError: true });
   });
 });
 

@@ -52,6 +52,21 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: getSetFatigueIndex(set) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('fatigue.set'), setId: IdSchema }),
 
+  // Per-rep RIR (reps in reserve) from the VBT §5.3 regression (VW-134).
+  // Analytics: estimateRIRWithProfile(inputs, profile) — DISTINCT from
+  // `fatigue.set`'s RIR, which is the simpler velocity-loss interpolation.
+  //
+  // `targetReps` is the set's PLANNED length, which the model uses for its
+  // rep-progress term (repIndex/repsInSet). Omitted → the actual rep count is
+  // used, which makes the final rep's progress ratio exactly 1.0; supply the
+  // prescribed target when there was one so a set cut short is not read as a
+  // set taken to its planned end.
+  z.object({
+    pipeline: z.literal('vbt.rir'),
+    setId: IdSchema,
+    targetReps: z.number().int().positive().optional(),
+  }),
+
   // Total session volume (load × reps).
   // Analytics: computeVolume(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.volume'), sessionId: IdSchema }),
