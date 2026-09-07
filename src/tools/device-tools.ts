@@ -330,6 +330,27 @@ const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engaging', 'ac
 const SEND_RAW_DESCRIPTION =
   'DIAGNOSTIC ONLY. Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.';
 
+const SCAN_DESCRIPTION =
+  'Discover Voltra devices over BLE and return them as `devices`. Nothing is connected — pass a returned `deviceId` to device.connect. `timeoutMs` (min 1000, default 10000) is the scan window and the call blocks for it. device.connect looks its `deviceId` up in the MOST RECENT scan result only, so a DEVICE_NOT_FOUND from connect means the device has fallen out of (or never entered) the last scan — re-scan and retry.';
+
+const SET_PASSIVE_SCAN_DESCRIPTION =
+  'Turn the background BLE scanner on or off (off at server start). While on, a newly-seen Voltra publishes a `voltras_available` channel event; `intervalSeconds` (5-600) sets the sweep period. The scanner skips its window entirely while any slot is connected, so it never fights device.scan or device.connect for the adapter — do not rely on it to notice a device while one is already up. Idempotent in both directions. Returns `{ ok, enabled, intervalSeconds }` when enabling and `{ ok, enabled: false }` when disabling.';
+
+const DISCONNECT_DESCRIPTION =
+  'Drop the BLE link for one slot. Best-effort returns the device to Idle first so it leaves any active workout and shows its home screen; a failed mode write is logged and never blocks teardown. `slot` defaults to `primary`, which survives the disconnect with a fresh client and a fresh LiveState so the next device.connect works; any other slot is removed outright and frees its place against the slot cap. A disconnect against an already-idle primary slot is a true no-op and still returns `{ ok: true }`. An error from the underlying disconnect is rethrown only AFTER slot teardown, so the bookkeeping is clean either way. Does NOT close an open session or set — call set.end and session.end first or the in-flight set is left unpersisted.';
+
+const SET_WEIGHT_DESCRIPTION =
+  'Set the base training weight for one slot (5-200 lbs, integer). This is a SETTING, not a load engagement: the firmware holds the previously-engaged load until the cable goes slack, so a change made under tension does not apply to the rep in progress or to the remainder of the current set (VW-170). The value is snapshotted into the set header at set.start, so set the weight BEFORE set.start or the recorded set carries the old number (VW-165). A device-side coercion (the firmware landing somewhere other than the requested value) surfaces asynchronously as a `setting_coerced` channel event, never as an error here — confirm with device.get_state.';
+
+const SET_MODE_DESCRIPTION =
+  'Set the training mode on ONE slot. `mode` is a TrainingMode name; `Idle` is not selectable and is rejected with INVALID_INPUT. For Isokinetic and every other non-WeightTraining mode, set the mode HERE per slot FIRST and then cascade the remaining settings — a bilateral.cascade carrying a non-WeightTraining mode silently reverts both units (VW-162). Rowing routes through the SDK rowing entry automatically; use device.enter_row_mode + device.start_row when a distance preset is needed. The call resolves on BLE-write completion, not on a device acknowledgement, so read device.get_state and compare `requested_mode` against `active_mode` before starting a set.';
+
+const SET_CHAINS_DESCRIPTION =
+  'Set the chains contribution for one slot (0-100 lbs, integer). Chains are a MODIFIER layered on the base weight, not a mode of their own. The firmware caps chains at the current base weight, so a request above it comes back as a `setting_coerced` channel event at the capped value rather than as an error here. The ramp DIRECTION across the rep is contested (open in workout-analytics KNOWN-ISSUES) — do not tell the user which end of the range is heavier. Confirm the applied value with device.get_state (`chainSettingLbs`).';
+
+const GET_STATE_DESCRIPTION =
+  "Read one slot's current device state. Call it after EVERY setter and after every bilateral.cascade: the setters resolve on BLE-write completion rather than on a device acknowledgement, so this is the only confirmation a request actually landed. Fields are FLAT, not nested — `weightLbs`, `chainSettingLbs`, `active_mode`, `requested_mode`, `load_state`, `mode_revert_latched`. VW-156 vocabulary: SETTINGS (`weightLbs`, `chainSettingLbs`) are what the device will apply next; MODE splits into what was asked for (`requested_mode`) and what the device reports (`active_mode`); `load_state` is the mechanical state of the cable and is independent of both; the SET LIFECYCLE (session.start / set.start / set.end) is recording state this tool neither reads nor drives. `mode_revert_latched` means the device bounced back out of the requested mode. Values are the preserved last-known ones across a disconnect window rather than defaults, and a delayed drop advisory is drained into `disconnect_notice` exactly once.";
+
 type Placeholders = Map<string, RegisteredTool>;
 
 /**
@@ -394,6 +415,7 @@ export function registerDeviceTools(
       const devices = await state.manager.scan({ timeout });
       return { devices };
     }),
+    SCAN_DESCRIPTION,
   );
 
   // device.set_passive_scan — toggle the background BLE scanner that
@@ -427,6 +449,7 @@ export function registerDeviceTools(
       stopPassiveScan(state.passiveScan);
       return { ok: true, enabled: false };
     }),
+    SET_PASSIVE_SCAN_DESCRIPTION,
   );
 
   // device.connect — looks up the previously-discovered device by id and
@@ -606,6 +629,7 @@ export function registerDeviceTools(
       }
       return { ok: true };
     }),
+    DISCONNECT_DESCRIPTION,
   );
 
   // device.set_weight — direct passthrough to the SDK; the schema clamps
@@ -624,6 +648,7 @@ export function registerDeviceTools(
       await setSlotWeight(state, input.slot, input.lbs);
       return { ok: true };
     }),
+    SET_WEIGHT_DESCRIPTION,
   );
 
   // device.set_mode — input is the enum NAME; map back to the SDK numeric
@@ -647,6 +672,7 @@ export function registerDeviceTools(
       await getSlot(state, input.slot).client.setMode(value as TrainingMode);
       return { ok: true };
     }),
+    SET_MODE_DESCRIPTION,
   );
 
   // <Bug-22> Stage 1 of Rowing entry — opens the Just-Row / Distance
@@ -704,6 +730,7 @@ export function registerDeviceTools(
       );
       return { ok: true };
     }),
+    SET_CHAINS_DESCRIPTION,
   );
 
   // device.set_eccentric — passthrough; schema enforces -195..+195 in pound
@@ -1306,6 +1333,7 @@ export function registerDeviceTools(
       }
       return response;
     }),
+    GET_STATE_DESCRIPTION,
   );
 
   // bilateral.cascade — bundle 1..4 device setters across 1..N slots into

@@ -1,9 +1,9 @@
 /**
- * Feature-flagged mount for the ported north-star live page (VW-38).
+ * The ported north-star live page (VW-38) — the DEFAULT live route.
  *
- * Opt in with `?live=1`. Off by default: the page is a work-in-progress port whose data
- * gaps (VW-41..52) are still open, so it must not replace the shipped dashboard until it
- * is at least as truthful.
+ * The `?live=1` opt-in is retired: this is what `/app` renders (see `main.tsx`), no query
+ * param involved. `?variant=` survives as a manual stage pin only (see
+ * `live-page/stage-variant.ts`).
  *
  * SINGLE vs DUAL comes from STATE (VMCP-04.07), not from a hand-typed URL:
  * {@link selectLiveVariant} reads which limb slots are bound off the snapshot, so a second

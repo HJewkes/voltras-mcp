@@ -23,9 +23,10 @@
  * computed from `@voltras/workout-analytics` (bumped to 1.7.0 for the verdict).
  *
  * Units: velocities are already m/s — the server's bridge converts once when it
- * builds each `WorkoutSample` (VW-160) — and are only rounded here. Distances
- * are converted from WA-native mm at this boundary. No force/impulse/power
- * dimension — WA-side per-sample `load` is 0 (the bridge never populates it).
+ * builds each `WorkoutSample` (VW-160) — and distances are already metres, WA having
+ * returned metres from every position/ROM accessor since 2.0.0. Both are ROUNDED
+ * here and never converted (VW-175). No force/impulse/power dimension — WA-side
+ * per-sample `load` is 0 (the bridge never populates it).
  *
  * Dual-Voltra (VMCP-04.04): the fatigue card stays SINGLE and SHARED — it reads the
  * athlete, not a limb. Two live devices are folded to one rep stream before any
@@ -81,12 +82,14 @@ function samplesOf(phase: { samples?: readonly Sample[] } | undefined): readonly
   return phase?.samples ?? [];
 }
 
-/** Millimetres per metre — the ROM figures on this surface are WA-native mm. */
-const MM_PER_METRE = 1000;
-
-/** Native mm → m. */
-function toMetres(mm: number): number {
-  return Number((mm / MM_PER_METRE).toFixed(3));
+/**
+ * Round a WA distance to millimetre precision. WA has returned METRES from every
+ * position/ROM accessor since 2.0.0 (`getPhaseRangeOfMotion` and everything built on
+ * it), so there is no conversion here — this used to divide by 1000 and rendered a
+ * 0.45 m working ROM as 0.00045 (VW-175).
+ */
+function roundMetres(metres: number): number {
+  return Number(metres.toFixed(3));
 }
 
 /** WA `MovementPhase` enum → the contract's spelled-out sample phase. */
@@ -177,20 +180,21 @@ function buildVelocityCurve(
 
 /**
  * The working ROM standard (metres) — WA `getSetWorkingROM` (trimmed peak: drop
- * rep 1 + the in-progress/last rep; `null` until ≥ 3 reps establish a middle),
- * converted from WA-native mm to metres at this boundary.
+ * rep 1 + the in-progress/last rep; `null` until ≥ 3 reps establish a middle).
+ * WA-native metres, rounded only.
  */
 function workingRomMetres(reps: readonly Rep[]): number | null {
-  const standardMm = getSetWorkingROM({ reps: reps as Rep[] });
-  return standardMm == null ? null : toMetres(standardMm);
+  const standard = getSetWorkingROM({ reps: reps as Rep[] });
+  return standard == null ? null : roundMetres(standard);
 }
 
 /** The per-rep ROM progression (metres), skipping reps with no finite ROM. */
 function romProgression(reps: readonly Rep[]): RepRomPoint[] {
   const out: RepRomPoint[] = [];
   reps.forEach((rep, i) => {
-    const mm = getRepRangeOfMotion(rep);
-    if (Number.isFinite(mm)) out.push({ repNumber: rep.repNumber ?? i + 1, romM: toMetres(mm) });
+    const rom = getRepRangeOfMotion(rep);
+    if (Number.isFinite(rom))
+      out.push({ repNumber: rep.repNumber ?? i + 1, romM: roundMetres(rom) });
   });
   return out;
 }

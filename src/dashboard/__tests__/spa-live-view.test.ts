@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { TrainingMode } from '@voltras/node-sdk';
 import type { Rep } from '@voltras/workout-analytics';
 
 import {
@@ -753,6 +754,53 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       }),
     );
     expect(deriveActiveSetStates(model)[0]).toMatchObject({ velocities: [0, 0] });
+  });
+});
+
+describe('mapCompletedSet mode labels (VW-59)', () => {
+  /** Drive a store `trainingMode` through the accumulator and read the label back. */
+  function labelFor(trainingMode: string | null): CompletedSet['mode'] {
+    const set: StoreCompletedSet = {
+      weightLbs: 140,
+      mode: trainingMode,
+      repCount: 1,
+      exerciseName: 'Cable Chest Press',
+      bestPeakVelocityMps: null,
+      peakForceLbs: null,
+      reps: [],
+    };
+    const accumulator = { ...initialAccumulatorState(), setLog: [set] };
+    return mapStoreToDashboardModel(sources({ accumulator }))!.session.completedSets[0].mode;
+  }
+
+  // Every member of the SDK's TrainingMode enum, by NAME — the form the settings
+  // cascade echoes into the store. Sourced from the enum itself so a mode added by a
+  // future SDK release fails this table instead of silently falling into 'unknown'.
+  const EXPECTED: Record<string, CompletedSet['mode']> = {
+    Idle: 'unknown',
+    WeightTraining: 'weight',
+    ResistanceBand: 'band',
+    Rowing: 'rowing',
+    Damper: 'damper',
+    CustomCurves: 'custom',
+    Isokinetic: 'isokinetic',
+    Isometric: 'isometric',
+  };
+
+  it('covers every TrainingMode the SDK defines', () => {
+    const enumNames = Object.keys(TrainingMode).filter((k) => isNaN(Number(k)));
+    expect(enumNames.sort()).toEqual(Object.keys(EXPECTED).sort());
+  });
+
+  it.each(Object.entries(EXPECTED))('labels %s as %s', (trainingMode, expected) => {
+    expect(labelFor(trainingMode)).toBe(expected);
+  });
+
+  it('reads a mode the store could not report as unknown, never as weight', () => {
+    // The old mapper defaulted every unrecognised value to 'weight', which recapped a
+    // rowing or damper set as a weight set. 'unknown' lets the page hide the label.
+    expect(labelFor(null)).toBe('unknown');
+    expect(labelFor('SomeModeAFutureSdkAdds')).toBe('unknown');
   });
 });
 

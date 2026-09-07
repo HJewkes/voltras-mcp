@@ -86,6 +86,17 @@ export const RECENT_EVENTS_DESCRIPTION =
   '`{ types: ["set_boundary", "guided_load_state"] }` returns only set-boundary and guided-load phase events; ' +
   '`{ includeRawFrames: true }` restores the legacy firehose (parsed events + raw frames).';
 
+const RECENT_FRAMES_DESCRIPTION =
+  'DIAGNOSTIC ONLY. Returns the last `n` telemetry frames the bridge captured, oldest first, from a process-local ring buffer (default capacity 256, override `VMCP_DEBUG_BUFFER_SIZE`). `n` is capped at what the buffer currently holds, and a server restart empties it. ' +
+  'Values are typed and DEVICE-NATIVE — not the converted units the session/set surfaces report — so never quote a number from here to a user, and never compare one against a recorded set. ' +
+  'For the decoded bridge-level view (rep/set boundaries, settings updates, connection changes) use debug.recent_events instead.';
+
+const PUSH_TEST_CHANNEL_DESCRIPTION =
+  'DIAGNOSTIC ONLY. Publishes exactly one `claude/channel` notification through the same publisher the event bridge uses, so channel delivery can be verified with no hardware attached. ' +
+  '`content` is the line the host renders; `meta` is a flat string→string map that becomes attributes on the delivered `<channel>` tag. ' +
+  'A `nonce` is minted when you do not supply one, injected into the delivered meta, and recorded as the outstanding probe — echo it back through debug.confirm_channel to prove end-to-end delivery. ' +
+  'Returns `{ ok: true, nonce }` whether or not the host accepted the push: a session launched without a registering `--channels` flag drops the notification silently, so the ABSENCE of a `<channel>` tag is the only failure signal.';
+
 const RECORDING_STATUS_DESCRIPTION =
   'Returns the opt-in BLE flight-recorder status: whether capture is enabled (VMCP_RECORD_SESSION), ' +
   'whether a capture file is currently active, its path, the frame count so far, and the capture start time. ' +
@@ -117,6 +128,7 @@ export function registerDebugTools(
         frames,
       });
     }),
+    RECENT_FRAMES_DESCRIPTION,
   );
   install(
     placeholders,
@@ -172,6 +184,7 @@ export function registerDebugTools(
       state.channels.publish({ content: input.content, meta: { ...input.meta, nonce } });
       return Promise.resolve({ ok: true, nonce });
     }),
+    PUSH_TEST_CHANNEL_DESCRIPTION,
   );
   install(
     placeholders,

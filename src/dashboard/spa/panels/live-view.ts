@@ -90,29 +90,41 @@ function mapPhase(phase: StoreLiveModel['phase']): LiveModel['phase'] {
 }
 
 /**
- * Device training mode → the page's resistance-mode label.
+ * Device `TrainingMode` name → the page's resistance-mode label (VW-59).
  *
- * PROVISIONAL — the two vocabularies do not line up and this is a lossy map:
- * the device has seven modes (Idle · WeightTraining · ResistanceBand · Rowing ·
- * Damper · CustomCurves · Isokinetic) while the specimen's union has four, and its
- * `'eccentric'` is not a device mode at all — eccentric overload is a MODIFIER on
- * WeightTraining (`eccentricPercent`/`eccentricOverloadLbs`), so it can never be
- * produced from `trainingMode` alone. Rowing/Damper/CustomCurves have no analog and
- * fall back to `'weight'`. Reconciling the unions (and sourcing eccentric from the
- * settings cascade) is its own ticket; until then the recap may mislabel a
- * non-weight set.
+ * TOTAL over the SDK enum: every mode gets its own label, and anything else — Idle,
+ * a null store field, a mode name a newer SDK adds — reads `'unknown'`. It used to
+ * collapse ResistanceBand onto `'chains'` and everything non-isokinetic onto
+ * `'weight'`, so a rowing or damper set was recapped as a weight set and a band set
+ * claimed chains it never had. `'unknown'` is the honest floor: the page hides the
+ * label rather than naming a mode the device never reported.
+ *
+ * Chains and eccentric overload are MODIFIERS on WeightTraining
+ * (`chainsLbs` / `eccentricOverloadLbs`), not device modes, so neither can be
+ * produced from `trainingMode` alone. Sourcing them from the settings cascade is
+ * additive and stays its own ticket.
  *
  * `trainingMode` is the REQUESTED mode echoed from the settings cascade — the
  * correct source. Never read the lazy state-dump fields.
  */
 function mapMode(trainingMode: string | null): CompletedSet['mode'] {
   switch (trainingMode) {
+    case 'WeightTraining':
+      return 'weight';
+    case 'ResistanceBand':
+      return 'band';
+    case 'Rowing':
+      return 'rowing';
+    case 'Damper':
+      return 'damper';
+    case 'CustomCurves':
+      return 'custom';
     case 'Isokinetic':
       return 'isokinetic';
-    case 'ResistanceBand':
-      return 'chains';
+    case 'Isometric':
+      return 'isometric';
     default:
-      return 'weight';
+      return 'unknown';
   }
 }
 
