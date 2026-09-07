@@ -63,6 +63,8 @@ vi.mock('../../state/event-bridge.js', () => ({
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
+const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+type ModeRevertGuard = InstanceType<typeof ModeRevertGuard>;
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -556,5 +558,30 @@ describe('bilateral.cascade', () => {
     expect(isError).toBe(true);
     expect(payload.code).toBe('INVALID_INPUT');
     expect(primary.client.setWeight).not.toHaveBeenCalled();
+  });
+
+  // VW-162: the slot's mode-revert guard is what the cascade waits on, so the
+  // handler must pass it through. Ordering semantics themselves are covered in
+  // state/__tests__/bilateral-cascade-mode-order.test.ts, where the echo
+  // timeout can be shortened.
+  it('VW-162: waits on the slot mode-revert guard and reports the echo', async () => {
+    const guard = new ModeRevertGuard();
+    guard.onSettingsUpdate(FakeTrainingMode.Idle as never);
+    const order: string[] = [];
+    primary.client.setMode.mockImplementation(async (mode: number) => {
+      order.push('setMode');
+      setTimeout(() => guard.onSettingsUpdate(mode as never), 0);
+    });
+    primary.client.setWeight.mockImplementation(async () => {
+      order.push('setWeight');
+    });
+    (primary as unknown as { modeRevertGuard: ModeRevertGuard }).modeRevertGuard = guard;
+
+    const { payload } = await invoke(reg, { ...FULL_SETTINGS, slots: ['primary'] });
+
+    const [result] = payload.results as Array<SlotResult & { modeEcho?: string }>;
+    expect(result.modeEcho).toBe('confirmed');
+    expect(order).toEqual(['setMode', 'setWeight']);
+    expect(guard.echoedMode()).toBe(FakeTrainingMode.WeightTraining);
   });
 });

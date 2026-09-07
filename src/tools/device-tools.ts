@@ -226,7 +226,8 @@ const BilateralCascadeInput = z
 const BILATERAL_CASCADE_DESCRIPTION =
   'Apply all four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
   'Full-settings contract: every call MUST supply `mode`, `weightLbs`, `eccentricOverloadLbs`, and `chainsLbs` — omitting any is rejected with INVALID_INPUT naming the missing setters. This is deliberate: a partial cascade would leave the unset settings at their prior firmware value, silently carrying stale state (e.g. chains lingering after a weight-only call). Requiring the complete set makes each cascade idempotent and its applied state fully specified. ' +
-  'Within each slot the setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'Ordering within a slot (VW-162): the mode write goes FIRST and alone. When the requested mode differs from the one the device currently reports, the cascade waits for the device to echo it back before weight/eccentric/chains fire — those writes racing a mode change make the firmware fall back to the previous mode (observed twice on 2026-09-07: an Isokinetic cascade left one unit in Weight Training and the other in Idle). Weight, eccentric and chains then fire concurrently; slots run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'Each `results[i]` reports `modeEcho`: `confirmed` (with `echoedAfterMs`), `skipped` (mode unchanged, nothing to wait for), or `timeout`. On `timeout` the slot FAILS and its other setters are never issued — re-issue `device.set_mode` for that slot and read `device.get_state` before retrying. ' +
   'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
   'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with an `applied.<setter>` outcome for each of the four setters. ' +
   'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release.';
@@ -1366,6 +1367,7 @@ export function registerDeviceTools(
           slotId,
           client: slot.client,
           coercionWatch: slot.coercionWatch,
+          modeRevertGuard: slot.modeRevertGuard,
         };
       });
       const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
