@@ -21,6 +21,9 @@
 //                     notifications (see below).
 //   - channelsLastConfirmedAt — ISO timestamp of the last model-confirmed
 //                     channel delivery (reply-tool round-trip), or null.
+//   - voiceReady    — presence of the two whisper artifacts. `npm ci` restores
+//                     `nodejs-whisper` without its compiled CLI, so voice input
+//                     can be dead while everything else looks healthy (VW-155).
 //
 // Resolution and version reads happen at module load time; the per-call
 // handler just composes the output. This keeps `server.health` cheap and
@@ -37,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { ServerHealthInput } from '../schemas/server.js';
 import { noopChannelPublisher } from '../state/channel-publisher.js';
 import type { ServerState } from '../state/server-state.js';
+import { readVoiceReady } from '../voice/whisper-paths.js';
 import { wrapHandler } from './helpers.js';
 
 interface PlaceholderTools {
@@ -121,6 +125,9 @@ const VMCP_VERSION = readVoltrasMcpVersion();
 const SDK_VERSION = readResolvedDependencyVersion('@voltras/node-sdk');
 const ANALYTICS_VERSION = readResolvedDependencyVersion('@voltras/workout-analytics');
 const BUILD_SHA = readGitShortSha();
+// Probed once at load, like the version reads: the artifacts cannot appear
+// mid-process, since a rebuild happens at install or launch time.
+const VOICE_READY = readVoiceReady();
 
 /**
  * Reported state of the `claude/channel` push surface.
@@ -228,8 +235,11 @@ export function registerServerTools(
       'analytics-package versions, db path, log level, live spoken-cue settings ' +
       '(`cues`/`cuesMidSet` — the values `system.set_cues` last set, not just the env vars), ' +
       'push-channel status, device-lease ' +
-      'status, and dashboard-sidecar availability. Useful for diagnosing "is this the server I ' +
-      'think it is", "who holds the device lease", "are spoken cues actually armed", and "is ' +
+      'status, voice-input readiness (`voiceReady.whisperCli`/`voiceReady.model` — false means ' +
+      'speech will not transcribe, usually because `npm ci` wiped the compiled binary), ' +
+      'and dashboard-sidecar availability. Useful for diagnosing "is this the server I ' +
+      'think it is", "who holds the device lease", "are spoken cues actually armed", "can voice ' +
+      'input work at all", and "is ' +
       'there a dashboard to point the user ' +
       'at" without a dedicated call for each. `dashboardAvailable`/`dashboardUrl` are the only ' +
       'way to learn the local dashboard exists — it is never mentioned in server instructions ' +
@@ -245,6 +255,7 @@ export function registerServerTools(
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
         ...resolveCueStatus(state),
+        voiceReady: VOICE_READY,
         dashboardAvailable: state.dashboard?.available ?? false,
         dashboardUrl: state.dashboard?.url ?? null,
         ...resolveChannelStatus(state),

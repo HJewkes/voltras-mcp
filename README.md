@@ -27,8 +27,9 @@ releases. This is newer than the default on most machines — check before you s
 node --version    # must be v22.5.0 or later
 ```
 
-There is no automatic preflight check for this; on an older Node the server fails at
-startup with a module-resolution error for `node:sqlite`, which is not an obvious message.
+On an older Node the server fails at startup with a module-resolution error for
+`node:sqlite`, which is not an obvious message. `scripts/voltra-pt` checks the version
+before it launches; nothing else does. See [docs/bench-preflight.md](docs/bench-preflight.md).
 
 **For real hardware (macOS):**
 
@@ -113,6 +114,12 @@ lift --print "list my sessions today"   # non-interactive query
 ```
 
 Set `VOLTRA_PT_PROMPT` to change the default prompt without editing the script.
+
+Before launching, it runs the bench pre-flight: it rebuilds the whisper binary if `npm ci`
+wiped it, then prints one line per gate that would otherwise fail silently mid-session
+(voice, Node version, push channel, spoken cues, dashboard port). Blockers exit non-zero;
+everything else is advisory. `VOLTRA_PT_SKIP_PREFLIGHT=1` skips it. Details in
+[docs/bench-preflight.md](docs/bench-preflight.md).
 
 By default the script runs the server as the **`voltras-channel` plugin** and passes
 `--channels plugin:voltras-channel@voltras-local`, which avoids the
@@ -341,6 +348,10 @@ built — it's an optional dependency, so a failed build is silent at install ti
 `VMCP_DASHBOARD_PORT` is `off`. Check stderr — the sidecar logs the URL it bound to.
 
 **Nothing works and the error mentions `node:sqlite`.** Your Node is older than 22.5.0.
+
+**Voice input hears nothing.** Call `server.health` and read `voiceReady`. A false
+`whisperCli` means `npm ci` wiped the compiled binary (VW-155) — run
+`node scripts/ensure-whisper.mjs`, which needs cmake.
 
 **No spoken cues.** Call `server.health` and read `cues` / `cuesMidSet` — both default to
 `off`, and cues are macOS-only regardless. `system.set_cues` turns either on without a
