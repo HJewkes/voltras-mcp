@@ -17,6 +17,7 @@ import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publish
 import type { AudioSource, Vad, VoiceListenerDeps } from '../../voice/voice-listener.js';
 import type { ToolResult } from '../helpers.js';
 import type { VoiceSafetyContext } from '../voice-tools.js';
+import type { VoiceWeightContext } from '../voice-weight.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -36,6 +37,7 @@ interface Harness {
 function buildHarness(
   safety: VoiceSafetyContext | null = null,
   depsOverride: Partial<VoiceListenerDeps> = {},
+  weight: VoiceWeightContext | null = null,
 ): Harness {
   const audio = new PassThrough();
   const probs: number[] = [];
@@ -77,7 +79,13 @@ function buildHarness(
       },
     } as unknown as RegisteredTool);
   }
-  registerVoiceTools({} as McpServer, { channels: publisher, voice: holder }, placeholders, safety);
+  registerVoiceTools(
+    {} as McpServer,
+    { channels: publisher, voice: holder },
+    placeholders,
+    safety,
+    weight,
+  );
   if (slots.start === undefined || slots.stop === undefined) {
     throw new Error('callbacks not registered');
   }
@@ -632,5 +640,61 @@ describe('voice_input timing instrumentation', () => {
     expect(content.latency_ms).toBeGreaterThan(0);
     expect(content.audio_duration_ms).toBeGreaterThan(0);
     expect(event.meta.latency_ms).not.toBe('0');
+  });
+});
+
+// The weight fast-path, end to end through the tool: a spoken command reaches
+// the device setter without the model, and the model learns it already landed.
+describe('system.listen_start — weight fast-path wiring', () => {
+  function weightContext(currentWeightLbs: number | null = 50) {
+    const setWeight = vi.fn(async () => undefined);
+    const context: VoiceWeightContext = {
+      slots: () => [
+        { slot: 'right', activeSetStartedAtMs: 1, lastSetEndedAtMs: null, currentWeightLbs },
+      ],
+      setWeight,
+    };
+    return { context, setWeight };
+  }
+
+  it('applies a heard weight command locally and publishes voice_command_applied', async () => {
+    const { context, setWeight } = weightContext();
+    const h = buildHarness(null, {}, context);
+    await h.start({});
+    h.whisperTranscripts.push('set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(setWeight).toHaveBeenCalledWith('right', 70);
+    const types = h.events.map((e) => e.meta.event_type);
+    expect(types).toEqual(['voice_command_applied']);
+    expect(h.events[0].meta.slot).toBe('right');
+  });
+
+  it('publishes voice_command_rejected plus voice_input when it cannot act', async () => {
+    const { context, setWeight } = weightContext(null);
+    const h = buildHarness(null, {}, context);
+    await h.start({});
+    h.whisperTranscripts.push('up 10');
+    feedSegment(h);
+    await settle();
+    expect(setWeight).not.toHaveBeenCalled();
+    expect(h.events.map((e) => e.meta.event_type)).toEqual([
+      'voice_command_rejected',
+      'voice_input',
+    ]);
+    expect(h.events[0].meta.reason).toBe('unknown_current_weight');
+  });
+
+  it('leaves the command with the model when no weight context is wired', async () => {
+    const h = buildHarness();
+    await h.start({});
+    h.whisperTranscripts.push('set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(h.events.map((e) => e.meta.event_type)).toEqual([
+      'voice_command_rejected',
+      'voice_input',
+    ]);
+    expect(h.events[0].meta.reason).toBe('no_weight_context');
   });
 });

@@ -27,8 +27,8 @@ vi.mock('../../state/event-bridge.js', () => ({
   wireBridgeForSlot: vi.fn(() => vi.fn()),
 }));
 
-const { createWeightFastPath, makeVoiceWeight, planWeight, resolveTargetSlot } =
-  await import('../voice-weight.js');
+const { createWeightFastPath, planWeight, resolveTargetSlot } = await import('../voice-weight.js');
+const { makeVoiceWeight } = await import('../voice-weight-context.js');
 
 type Published = { meta: Record<string, string>; content: string };
 

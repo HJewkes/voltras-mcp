@@ -25,6 +25,7 @@ import { log } from '../logger.js';
 import type { SystemListenStartInputType } from '../schemas/voice.js';
 import { SpeechSegmenter } from './speech-segmenter.js';
 import { routeTranscript } from './transcript-router.js';
+import type { WeightCommand } from './weight-command.js';
 import { createSileroVad, VAD_FRAME_SAMPLES, type Vad } from './vad.js';
 import { stripWhisperMarkup } from './whisper-markup.js';
 
@@ -67,9 +68,19 @@ export interface SafetyPhraseEvent {
   audioDurationMs: number;
 }
 
+/** A local weight command ("set it to 70", "up 10", "cancel") was recognized. */
+export interface WeightCommandEvent {
+  command: WeightCommand;
+  transcript: string;
+  latencyMs: number;
+  audioDurationMs: number;
+}
+
 export interface VoiceListenerEvents {
   onVoiceInput?: (event: VoiceInputEvent) => void;
   onSafetyPhrase?: (event: SafetyPhraseEvent) => void;
+  /** Unwired: command-tier transcripts fall back to `onVoiceInput`. */
+  onWeightCommand?: (event: WeightCommandEvent) => void;
   onError?: (err: { code: string; message: string }) => void;
 }
 
@@ -583,7 +594,18 @@ export class VoiceListener {
       });
       return;
     }
-    if (result.tier === 'wake') {
+    // A command with no handler must still reach the model — the fast path is
+    // an accelerator, never the only way a heard command gets acted on.
+    if (result.tier === 'command' && this.events.onWeightCommand !== undefined) {
+      this.events.onWeightCommand({
+        command: result.command!,
+        transcript,
+        latencyMs: timing.latencyMs,
+        audioDurationMs: timing.audioDurationMs,
+      });
+      return;
+    }
+    if (result.tier === 'wake' || result.tier === 'command') {
       this.events.onVoiceInput?.({
         transcript: result.commandText || transcript,
         latencyMs: timing.latencyMs,

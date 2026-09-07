@@ -38,6 +38,7 @@ import { registerDebugTools } from './tools/debug-tools.js';
 import { registerSystemTools } from './tools/tts-tools.js';
 import { registerVoiceTools } from './tools/voice-tools.js';
 import { makeVoiceSafety } from './tools/voice-safety.js';
+import { makeVoiceWeight } from './tools/voice-weight-context.js';
 import { registerCueTools } from './tools/cue-tools.js';
 import { registerSlotTools } from './tools/slot-tools.js';
 import { registerProgressionTools } from './tools/progression-tools.js';
@@ -184,7 +185,7 @@ function registerRealTools(
   registerServerTools(server, state, placeholders);
   registerDebugTools(server, state, placeholders);
   registerSystemTools(server, placeholders, undefined, state.voice);
-  registerVoiceTools(server, state, placeholders, makeVoiceSafety(state));
+  registerVoiceTools(server, state, placeholders, makeVoiceSafety(state), makeVoiceWeight(state));
   registerCueTools(server, state, placeholders);
   registerSlotTools(server, state, placeholders);
   registerProgressionTools(server, state, placeholders);

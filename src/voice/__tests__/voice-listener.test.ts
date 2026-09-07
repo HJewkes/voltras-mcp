@@ -18,6 +18,7 @@ import type {
   Vad,
   VoiceInputEvent,
   VoiceListenerDeps,
+  WeightCommandEvent,
 } from '../voice-listener.js';
 
 const FRAME_BYTES = 512 * 2;
@@ -33,10 +34,14 @@ interface Harness {
   setWhisper: (fn: VoiceListenerDeps['whisper']) => void;
   voiceInput: VoiceInputEvent[];
   safety: SafetyPhraseEvent[];
+  commands: WeightCommandEvent[];
   errors: { code: string; message: string }[];
 }
 
-function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
+function buildHarness(
+  overrides: Partial<VoiceListenerDeps> = {},
+  opts: { weightHandler?: boolean } = {},
+): Harness {
   const audio = new PassThrough();
   const probs: number[] = [];
   const process = vi.fn(async () => probs.shift() ?? 0);
@@ -51,6 +56,7 @@ function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
   );
   const voiceInput: VoiceInputEvent[] = [];
   const safety: SafetyPhraseEvent[] = [];
+  const commands: WeightCommandEvent[] = [];
   const errors: { code: string; message: string }[] = [];
   const deps: VoiceListenerDeps = {
     audioFactory: (): AudioSource => ({ stream: audio, stop: vi.fn() }),
@@ -65,6 +71,9 @@ function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
   const listener = new VoiceListener(deps, {
     onVoiceInput: (e) => voiceInput.push(e),
     onSafetyPhrase: (e) => safety.push(e),
+    // Omitted on purpose in the unwired case: a command with no fast-path must
+    // still reach the model.
+    ...(opts.weightHandler === false ? {} : { onWeightCommand: (e) => commands.push(e) }),
     onError: (e) => errors.push(e),
   });
   return {
@@ -80,6 +89,7 @@ function buildHarness(overrides: Partial<VoiceListenerDeps> = {}): Harness {
     },
     voiceInput,
     safety,
+    commands,
     errors,
   };
 }
@@ -142,6 +152,40 @@ describe('VoiceListener — routing', () => {
     expect(h.safety).toHaveLength(1);
     expect(h.safety[0].matchedPhrase).toBe('stop');
     expect(h.voiceInput).toHaveLength(0);
+  });
+
+  it('routes a weight command to onWeightCommand (not onVoiceInput)', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('to like, , set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(h.commands).toHaveLength(1);
+    expect(h.commands[0].command).toEqual({ kind: 'absolute', lbs: 70 });
+    expect(h.commands[0].transcript).toBe('to like, , set it to 70');
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.safety).toHaveLength(0);
+  });
+
+  it('keeps a safety phrase out of the command path', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('stop drop 5');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    expect(h.commands).toHaveLength(0);
+  });
+
+  it('falls back to onVoiceInput when no weight handler is wired', async () => {
+    const h = buildHarness({}, { weightHandler: false });
+    await h.listener.start(resolveStartArgs({}));
+    h.whisperTranscripts.push('set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(h.commands).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(1);
+    expect(h.voiceInput[0].transcript).toBe('set it to 70');
   });
 
   it('drops ambient (non-wake, non-safety) speech', async () => {

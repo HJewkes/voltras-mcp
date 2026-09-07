@@ -18,9 +18,7 @@ import {
   type VoiceCommandRejectReason,
 } from '../state/channel-payloads.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
-import type { ServerState } from '../state/server-state.js';
 import type { WeightCommand, WeightCommandSlot } from '../voice/weight-command.js';
-import { setSlotWeight } from './device-tools.js';
 
 /** Device-allowed range, mirroring the `device.set_weight` schema. */
 export const MIN_WEIGHT_LBS = 5;
@@ -203,32 +201,4 @@ function reject(
       event.audioDurationMs,
     ),
   );
-}
-
-/**
- * Build the fast-path hooks over live server state. Weight writes go through
- * the same coercion-tracked setter as `device.set_weight` so a firmware
- * rewrite still surfaces as `setting_coerced`.
- */
-export function makeVoiceWeight(state: ServerState): VoiceWeightContext {
-  return {
-    slots: () =>
-      [...state.slots.values()]
-        .filter((slot) => slot.client.isConnected)
-        .map((slot) => ({
-          slot: slot.slotId,
-          activeSetStartedAtMs: activeSetStartedAtMs(slot.live.snapshotSet()),
-          lastSetEndedAtMs: state.lastSetEndedAtMs.get(slot.slotId) ?? null,
-          currentWeightLbs: slot.live.snapshotDevice().weightLbs ?? null,
-        })),
-    setWeight: (slotId, lbs) => setSlotWeight(state, slotId, lbs),
-  };
-}
-
-function activeSetStartedAtMs(
-  set: { status: string; startedAt: string } | undefined,
-): number | null {
-  if (set === undefined || set.status !== 'active') return null;
-  const ms = Date.parse(set.startedAt);
-  return Number.isNaN(ms) ? null : ms;
 }

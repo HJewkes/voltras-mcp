@@ -38,6 +38,7 @@ import {
   type VoiceListenerDeps,
 } from '../voice/voice-listener.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
+import { createWeightFastPath, type VoiceWeightContext } from './voice-weight.js';
 
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
@@ -268,6 +269,17 @@ const START_DESCRIPTION = [
   'cut the weight, …) are always-on and need no wake phrase. Default STT:',
   '`tiny.en` (low latency). Idempotent — re-arming returns the current state.',
   '',
+  'WEIGHT COMMANDS RUN LOCALLY. Spoken weight changes — absolute ("set it to',
+  '70", "70 pounds", "go to 65", "seventy"), relative ("up 10", "drop 5", "take',
+  'off ten", "lighter"/"heavier" = 5 lb) and "cancel"/"never mind"/"undo that"',
+  '(one-deep revert per slot) — are applied to the device inside the listener,',
+  'with no wake phrase and no model turn. They arrive as `voice_command_applied`:',
+  'the write ALREADY HAPPENED, so do not call `device.set_weight` for it. A',
+  'recognized command the fast-path declines (ambiguous slot on a bilateral rig,',
+  'out of the 5-200 lb range, nothing to undo, failed write) arrives as',
+  '`voice_command_rejected` PLUS the usual `voice_input` — that pair is yours to',
+  'handle. Anything conversational still routes to `voice_input` as before.',
+  '',
   'The mic goes deaf during TTS: `system.speak` and the automatic cue emitter',
   'mute the listener and discard in-flight frames for the length of each cue',
   '(an utterance already in progress is dropped too), so nothing said during',
@@ -288,6 +300,7 @@ export function registerVoiceTools(
   state: VoiceToolState,
   placeholders: PlaceholderTools,
   safety: VoiceSafetyContext | null = null,
+  weight: VoiceWeightContext | null = null,
 ): void {
   const startTool = placeholders.get('system.listen_start');
   const stopTool = placeholders.get('system.listen_stop');
@@ -300,7 +313,7 @@ export function registerVoiceTools(
   startTool.update({
     description: START_DESCRIPTION,
     paramsSchema: SystemListenStartInput.shape,
-    callback: makeStartCallback(state, safety),
+    callback: makeStartCallback(state, safety, weight),
   });
   stopTool.update({
     description: STOP_DESCRIPTION,
@@ -312,13 +325,14 @@ export function registerVoiceTools(
 function makeStartCallback(
   state: VoiceToolState,
   safety: VoiceSafetyContext | null,
+  weight: VoiceWeightContext | null,
 ): (args: unknown, extra?: unknown) => Promise<ToolResult> {
   return async (args: unknown, _extra?: unknown): Promise<ToolResult> => {
     const parsed = SystemListenStartInput.safeParse(args);
     if (!parsed.success) {
       return errorResult({ code: 'INVALID_INPUT', message: parsed.error.message });
     }
-    return startListener(state, parsed.data, safety);
+    return startListener(state, parsed.data, safety, weight);
   };
 }
 
@@ -338,6 +352,7 @@ async function startListener(
   state: VoiceToolState,
   input: SystemListenStartInputType,
   safety: VoiceSafetyContext | null,
+  weight: VoiceWeightContext | null,
 ): Promise<ToolResult> {
   const startArgs = resolveStartArgs(input);
   if (state.voice.listener !== null && state.voice.starting === null) {
@@ -353,7 +368,7 @@ async function startListener(
   // mic. `starting` is assigned before any await, so nothing can interleave
   // between the check and the assignment.
   if (state.voice.starting !== null) return state.voice.starting;
-  const pending = armListener(state, startArgs, safety);
+  const pending = armListener(state, startArgs, safety, weight);
   state.voice.starting = pending;
   try {
     return await pending;
@@ -366,9 +381,12 @@ async function armListener(
   state: VoiceToolState,
   startArgs: ReturnType<typeof resolveStartArgs>,
   safety: VoiceSafetyContext | null,
+  weight: VoiceWeightContext | null,
 ): Promise<ToolResult> {
   const deps = state.voice.__deps !== null ? state.voice.__deps : buildProductionDeps();
   const channels = state.channels;
+  // Per-arming so the one-deep undo ledger never outlives the mic session.
+  const applyWeightCommand = createWeightFastPath(channels, weight);
   const listener = new VoiceListener(deps, {
     onVoiceInput: ({ transcript, latencyMs, sttModel, audioDurationMs }) => {
       channels.publish(buildVoiceInputPayload(transcript, latencyMs, sttModel, audioDurationMs));
@@ -376,6 +394,15 @@ async function armListener(
     onSafetyPhrase: ({ matchedPhrase, transcript, latencyMs, audioDurationMs }) => {
       void runSafetyFastPath(channels, safety, {
         matchedPhrase,
+        transcript,
+        sttModel: startArgs.sttModel,
+        latencyMs,
+        audioDurationMs,
+      });
+    },
+    onWeightCommand: ({ command, transcript, latencyMs, audioDurationMs }) => {
+      void applyWeightCommand({
+        command,
         transcript,
         sttModel: startArgs.sttModel,
         latencyMs,
