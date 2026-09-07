@@ -93,7 +93,7 @@ export interface VoiceSafetyContext {
 }
 
 /** Deterministic ack spoken the instant the cable is cut. */
-const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
+export const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
 
 interface SlotVerdict {
   slot: string;
