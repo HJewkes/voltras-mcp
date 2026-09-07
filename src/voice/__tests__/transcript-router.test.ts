@@ -165,8 +165,56 @@ describe('routeTranscript — whisper timestamp markup (safety regression)', () 
   });
 });
 
+describe('routeTranscript — command tier', () => {
+  it('routes a bare weight command without a wake phrase', () => {
+    expect(routeTranscript('set it to 70')).toEqual({
+      tier: 'command',
+      command: { kind: 'absolute', lbs: 70 },
+    });
+  });
+
+  it('routes the messy bench transcript', () => {
+    expect(routeTranscript('to like, , set it to 70')).toEqual({
+      tier: 'command',
+      command: { kind: 'absolute', lbs: 70 },
+    });
+  });
+
+  it('routes relative and undo cues', () => {
+    expect(routeTranscript('up 10')).toEqual({
+      tier: 'command',
+      command: { kind: 'relative', deltaLbs: 10 },
+    });
+    expect(routeTranscript('never mind')).toEqual({ tier: 'command', command: { kind: 'undo' } });
+  });
+
+  it('honours a wake phrase in front of a command', () => {
+    expect(routeTranscript('hey coach, put it at 55')).toEqual({
+      tier: 'command',
+      command: { kind: 'absolute', lbs: 55 },
+    });
+  });
+
+  it('survives whisper markup', () => {
+    expect(routeTranscript('[00:00:00.000 --> 00:00:00.840]   Set it to 70.')).toEqual({
+      tier: 'command',
+      command: { kind: 'absolute', lbs: 70 },
+    });
+  });
+
+  it('leaves conversation about weight on the wake/ignore tiers', () => {
+    expect(routeTranscript('how much weight should i use').tier).toBe('ignore');
+    expect(routeTranscript("don't set it to 70").tier).toBe('ignore');
+    expect(routeTranscript('hey coach how heavy was that').tier).toBe('wake');
+  });
+});
+
 describe('routeTranscript — precedence', () => {
   it('lets safety beat wake on a short utterance ("hey coach stop")', () => {
     expect(routeTranscript('hey coach stop')).toEqual({ tier: 'safety', matchedPhrase: 'stop' });
+  });
+
+  it('lets safety beat a command in the same utterance ("stop, drop 5")', () => {
+    expect(routeTranscript('stop drop 5')).toEqual({ tier: 'safety', matchedPhrase: 'stop' });
   });
 });
