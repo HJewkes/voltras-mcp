@@ -119,8 +119,10 @@ npm start                    # node ./dist/bin.js — starts voltras-mcp,
 ```
 
 Then, with the MCP server running, open `http://127.0.0.1:7723/app` — the sole
-dashboard surface. (Port defaults to `7723`; configurable via
-`VMCP_DASHBOARD_PORT`.) If `dist/spa` hasn't been built yet, `/app` serves a
+dashboard surface; `/` redirects there. (Port defaults to `7723`; configurable
+via `VMCP_DASHBOARD_PORT`, and a port already held by another session's server
+falls back to an OS-assigned one, so `server.health`'s `dashboardUrl` is the
+authoritative address.) If `dist/spa` hasn't been built yet, `/app` serves a
 small "SPA not built" HTML placeholder rather than a 404 or a server error.
 
 An optional `?variant=live` / `?variant=live-dual` query param pins the single

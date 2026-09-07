@@ -101,7 +101,7 @@ function dashboardPortGate({ portListeners, selfPid }) {
     return {
       id: 'dashboard-port',
       level: 'warn',
-      message: `Port ${DASHBOARD_PORT} is already held by ${who}. Every session spawns its own server and the first one wins the port, so this session's dashboard will not bind.`,
+      message: `Port ${DASHBOARD_PORT} is already held by ${who}. Every session spawns its own server and the first one wins the port, so this session falls back to an OS-assigned port (VW-167) — read the real URL from \`server.health\` (\`dashboardUrl\`), not from memory.`,
     };
   }
   return { id: 'dashboard-port', level: 'ok', message: `Port ${DASHBOARD_PORT} is free.` };

@@ -175,7 +175,7 @@ vi.mock('../state/server-state.js', () => ({
   },
 }));
 
-const { runServer } = await import('../server.js');
+const { runServer, dashboardUrlFor } = await import('../server.js');
 
 beforeEach(() => {
   bootstrapMock.mockReset();
@@ -335,5 +335,18 @@ describe('runServer startup race', () => {
     expect(exitCallOrder).toBeDefined();
 
     exitSpy.mockRestore();
+  });
+});
+
+describe('dashboardUrlFor — the URL server.health hands a human (VW-167)', () => {
+  it('ends in the SPA path, not the bare origin', () => {
+    // `http://127.0.0.1:7723` answered {"error":"not_found"}, so every agent
+    // that relayed `dashboardUrl` sent the user to a blank page.
+    expect(dashboardUrlFor(7723)).toBe('http://127.0.0.1:7723/app');
+    expect(dashboardUrlFor(7723).endsWith('/app')).toBe(true);
+  });
+
+  it('reports the port actually bound, not the default', () => {
+    expect(dashboardUrlFor(51234)).toBe('http://127.0.0.1:51234/app');
   });
 });

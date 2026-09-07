@@ -18,6 +18,7 @@ import { type Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionStatus,
   buildCurrentSet,
+  pickRepresentativeDevice,
   repMeanVelocityMps,
   roundMps,
   type AccumulatorState,
@@ -278,7 +279,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
   if (!snapshot) return null;
 
   const currentSet = buildCurrentSet(snapshot);
-  const device = snapshot.devices[0]?.device ?? null;
+  const device = pickRepresentativeDevice(snapshot);
   const weightLbs = device?.weightLbs ?? null;
   // The active set's per-rep velocities — the same array the existing hero's VelocityStrip
   // reads, so the two views cannot disagree about what landed.
