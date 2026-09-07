@@ -48,7 +48,12 @@ type SpawnFn = (
 
 /** Minimal surface we need from VoiceListener — avoids a circular import. */
 export interface MutableVoiceListener {
-  mute(): void;
+  /**
+   * `spokenText` is what is about to be read aloud. The listener keeps routing
+   * safety phrases through the mute window (VMCP-05.20) and uses this to tell
+   * the lifter's voice apart from its own.
+   */
+  mute(spokenText?: string): void;
   unmute(): void;
 }
 
@@ -82,10 +87,10 @@ export function __resetSpeakState(): void {
 /**
  * Hard ceiling on how long a single `speak()` call may hold the mic muted.
  * `unmute()` is normally driven by the child's `exit`/`error` events, but a
- * `say` process that hangs (or whose events are lost) would otherwise mute
- * the mic — and with it the ungated safety-phrase fast-path — forever. This
- * is a failsafe, not the expected path: any real cue finishes in well under
- * this window.
+ * `say` process that hangs (or whose events are lost) would otherwise duck the
+ * mic — suppressing the wake and command tiers, and holding the echo filter
+ * open over stale text — forever. This is a failsafe, not the expected path:
+ * any real cue finishes in well under this window.
  */
 const MUTE_FAILSAFE_MS = 8000;
 
@@ -94,10 +99,13 @@ const MUTE_FAILSAFE_MS = 8000;
  * the caller-driven path (child exit/error, or the blocking `finally`) or,
  * failing that, from a hard timeout. Guards against double-unmute (which
  * would under-count VoiceListener's refcount) if both paths fire.
+ *
+ * `text` is handed to the listener so it can drop its own audio while still
+ * hearing a safety phrase spoken over the cue (VMCP-05.20).
  */
-function muteWithFailsafe(voiceListener: MutableVoiceListener | null): () => void {
+function muteWithFailsafe(voiceListener: MutableVoiceListener | null, text: string): () => void {
   if (voiceListener === null) return () => {};
-  voiceListener.mute();
+  voiceListener.mute(text);
   let unmuted = false;
   const timer = setTimeout(() => {
     if (unmuted) return;
@@ -126,12 +134,16 @@ const TOOL_DESCRIPTION = [
   'call before this one starts — useful when a more urgent prompt needs to',
   'override an in-flight one.',
   '',
-  'Playback mutes the local voice listener, if one is armed: mic frames are',
-  'discarded (not buffered) for the duration of the cue, and any utterance',
-  'already in progress is dropped when the mute starts. The user cannot barge',
-  'in while a cue plays — anything they say, including a safety phrase, is',
-  'lost. Keep cues short, and do not speak when you are waiting on a spoken',
-  'reply. A hard 8s failsafe caps the mute window even if `say` hangs.',
+  'Playback ducks the local voice listener, if one is armed: for the duration',
+  'of the cue only SAFETY phrases (stop, unload, cut the weight, …) are acted',
+  'on. The wake phrase and spoken weight commands are ignored until playback',
+  'ends, and any utterance already in progress is dropped when the cue starts.',
+  'A transcript that matches the words being spoken is discarded as our own',
+  'echo, so a safety word inside the cue text cannot self-trigger — and, by the',
+  'same rule, a lifter shouting a safety word that also appears in the cue is',
+  'dropped with it. Keep cues short, avoid safety words in cue text, and do not',
+  'speak when you are waiting on a spoken reply. A hard 8s failsafe caps the',
+  'duck window even if `say` hangs.',
 ].join(' ');
 
 /**
@@ -190,7 +202,7 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
   if (input.interrupt) interruptInFlight();
 
   const voiceListener = deps.voiceListenerRef?.listener ?? null;
-  const unmuteOnce = muteWithFailsafe(voiceListener);
+  const unmuteOnce = muteWithFailsafe(voiceListener, input.text);
 
   const child = trySpawn(deps, buildSayArgs(input));
   if (child === null) {
