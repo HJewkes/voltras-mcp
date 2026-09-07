@@ -293,6 +293,13 @@ const START_DESCRIPTION = [
 const STOP_DESCRIPTION = [
   'Tear down the voice listener. Idempotent — calling on a stopped listener',
   'succeeds quietly. Safe to invoke from a Stop button.',
+  '',
+  'The mic goes deaf during TTS, so a stop request spoken over a cue never',
+  'arrives: `system.speak` and the automatic cue emitter mute the listener and',
+  'discard in-flight frames for the length of each cue (an utterance already in',
+  'progress is dropped too), bounded by a hard 8s failsafe. Wake phrase and',
+  'safety phrases alike are lost for that window — call this tool directly',
+  'rather than waiting to be told to.',
 ].join(' ');
 
 export function registerVoiceTools(

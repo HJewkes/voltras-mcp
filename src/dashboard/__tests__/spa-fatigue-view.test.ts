@@ -17,7 +17,7 @@ import {
 } from '@voltras/workout-analytics';
 import { initialAccumulatorState, type Snapshot } from '../spa/adapter.js';
 import { type LiveViewSources } from '../spa/panels/live-view.js';
-import { mmsToMps } from '../../state/live-signal.js';
+import { mmToM, mmsToMps } from '../../state/live-signal.js';
 import {
   mapStoreToDivergingHeroModel,
   mapStoreToFatigueModel,
@@ -33,9 +33,11 @@ interface RepSpec {
 }
 
 /**
- * Velocities in a `RepSpec` are DEVICE-NATIVE mm/s; every sample built here
- * applies the same mm/s→m/s conversion the server's bridge applies (VW-160), so
- * these reps carry what `/api/snapshot` actually delivers.
+ * Velocities AND positions in a `RepSpec` are DEVICE-NATIVE mm/s and mm; every sample
+ * built here applies the same mm/s→m/s and mm→m conversions the server's bridge applies
+ * (VW-160 / VW-175), so these reps carry what `/api/snapshot` actually delivers. The
+ * position conversion used to be missing here, which is what let the mapper's own
+ * spurious ÷1000 look correct.
  */
 function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
   const { concVel, rom, eccVel = concVel * 0.5, concMs = 500 } = spec;
@@ -52,7 +54,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       sequence: seq + 1,
       timestamp: t0 + concMs,
       phase: MovementPhase.CONCENTRIC,
-      position: rom,
+      position: mmToM(rom),
       velocity: mmsToMps(concVel),
       force: 100,
     },
@@ -60,7 +62,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       sequence: seq + 2,
       timestamp: t0 + concMs + 100,
       phase: MovementPhase.ECCENTRIC,
-      position: rom,
+      position: mmToM(rom),
       velocity: mmsToMps(eccVel),
       force: 80,
     },
@@ -106,7 +108,7 @@ function buildDetailedReps(
         sequence: seq++,
         timestamp: t + Math.round(i * dt),
         phase: MovementPhase.CONCENTRIC,
-        position: n > 1 ? Math.round((spec.rom * i) / (n - 1)) : spec.rom,
+        position: mmToM(n > 1 ? Math.round((spec.rom * i) / (n - 1)) : spec.rom),
         velocity: mmsToMps(v),
         force: 100,
       });
@@ -117,7 +119,7 @@ function buildDetailedReps(
       sequence: seq++,
       timestamp: tEcc,
       phase: MovementPhase.ECCENTRIC,
-      position: spec.rom,
+      position: mmToM(spec.rom),
       velocity: mmsToMps(eccVel),
       force: 80,
     });
@@ -193,6 +195,20 @@ describe('mapStoreToFatigueModel', () => {
     // backfilled from the reps logged so far.
     const unplanned = mapStoreToFatigueModel(sources({ snapshot }));
     expect(unplanned!.plannedReps).toBeUndefined();
+  });
+
+  it('passes a WA-native ROM through as metres, never divided again (VW-175)', () => {
+    // WA has returned METRES from every position/ROM accessor since 2.0.0, so a rep
+    // whose samples span 0.45 m must reach the card as 0.45. The mapper used to divide
+    // by 1000 on top, rendering a real working ROM as 0.00045 on the wall.
+    const reps = buildReps([
+      { concVel: 500, rom: 450 },
+      { concVel: 500, rom: 450 },
+      { concVel: 500, rom: 450 },
+    ]);
+    const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }));
+    expect(model!.romWorkingStandardM).toBeCloseTo(0.45, 5);
+    expect(model!.romProgression[0]!.romM).toBeCloseTo(0.45, 5);
   });
 
   it('builds the per-rep ROM progression in metres', () => {

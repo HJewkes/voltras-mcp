@@ -68,10 +68,25 @@ export interface CompletedSet {
   weightLbs: number | null;
   /**
    * Resistance mode, sourced from the settings-cascade echo (never a lazy state-dump
-   * field). See `panels/live-view.ts` — this union is narrower than the device's and
-   * the map onto it is lossy.
+   * field). One label per device `TrainingMode` (VW-59) — see `panels/live-view.ts`,
+   * which owns the total map. `'unknown'` covers Idle and a mode the store could not
+   * report; the page hides the label rather than guessing at 'weight'.
+   *
+   * `'chains'` and `'eccentric'` are MODIFIERS on WeightTraining, not device modes, so
+   * `mapMode` never produces them from `trainingMode` alone. They stay in the union
+   * because sourcing them from the settings cascade is additive and already ticketed.
    */
-  mode: 'weight' | 'chains' | 'eccentric' | 'isokinetic';
+  mode:
+    | 'weight'
+    | 'band'
+    | 'rowing'
+    | 'damper'
+    | 'custom'
+    | 'isokinetic'
+    | 'isometric'
+    | 'chains'
+    | 'eccentric'
+    | 'unknown';
   repCount: number;
   /** Per-rep MEAN concentric velocities (m/s) — same basis as the live bars (VW-62). */
   reps: number[];

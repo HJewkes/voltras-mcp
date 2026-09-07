@@ -25,6 +25,17 @@ interface PlaceholderTools {
  * Hot-swap the `mrvguard.*` placeholder with its real handler. Mirrors the
  * install pattern used by the other tool registries (see `drift-guard-tools.ts`).
  */
+const MRV_GUARD_CHECK_DESCRIPTION =
+  'DIAGNOSTIC ONLY — not the consumption path. Ask "did this lifter underperform their prior ' +
+  'benchmark on two consecutive sessions for this exercise" and get the same B04 ' +
+  'MRV/under-recovery verdict any internal check would see. All three session ids are ' +
+  'required and must be ordered oldest to newest: the signal is TWO pairwise comparisons ' +
+  '(session1 vs session2, then session2 vs session3), so a single pair cannot answer it. ' +
+  'Returns `priorPair`, `currentPair`, and the combined `guard` verdict. Real internal ' +
+  'consumers import `checkMrvGuard` directly rather than round-tripping through this tool. ' +
+  'Use this when a human wants to inspect a deload signal, not as a step in an automated ' +
+  'coaching decision.';
+
 export function registerMrvGuardTools(
   _server: McpServer,
   state: ServerState,
@@ -35,6 +46,7 @@ export function registerMrvGuardTools(
     'mrvguard.check',
     MrvGuardCheckInput,
     wrapHandler(MrvGuardCheckInput, (input) => checkMrv(state, input)),
+    MRV_GUARD_CHECK_DESCRIPTION,
   );
 }
 
@@ -43,12 +55,20 @@ function install<S extends z.ZodObject>(
   name: string,
   schema: S,
   callback: (args: unknown, extra?: unknown) => Promise<unknown>,
+  description?: string,
 ): void {
   const tool = placeholders.get(name);
   if (tool === undefined) {
     throw new Error(`tool placeholder not registered: ${name}`);
   }
-  tool.update({ paramsSchema: schema.shape, callback: callback as never });
+  const updates: Record<string, unknown> = {
+    paramsSchema: schema.shape,
+    callback: callback as never,
+  };
+  if (description !== undefined) {
+    updates.description = description;
+  }
+  tool.update(updates as never);
 }
 
 async function checkMrv(
