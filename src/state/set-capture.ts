@@ -162,5 +162,8 @@ export function measureSampleRateHz(reps: readonly Rep[]): number | undefined {
  * before this change are `'device_native'` and must not be compared against
  * rows written after it without rescaling — that's the entire point of
  * stamping the marker.
+ *
+ * Its velocity sibling is `CURRENT_VELOCITY_UNITS` in `store/velocity-units.ts`,
+ * which lives beside the read-side normaliser that acts on it.
  */
 export const CURRENT_POSITION_UNITS: NonNullable<StoredSet['positionUnits']> = 'meters';

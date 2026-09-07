@@ -55,6 +55,6 @@ describe('VMCP-05.14: eccentric peak velocity agrees across live and stored path
     const rep = capturedRep1();
     const stale: Rep = { ...rep, eccentric: { ...rep.eccentric, peakVelocity: 9999 } };
 
-    expect(finalizeReps([stale])[0].eccentric.peakVelocity).toBe(1137);
+    expect(finalizeReps([stale])[0].eccentric.peakVelocity).toBe(1.137);
   });
 });

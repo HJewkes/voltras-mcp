@@ -17,6 +17,7 @@ import {
 } from '@voltras/workout-analytics';
 import { initialAccumulatorState, type Snapshot } from '../spa/adapter.js';
 import { type LiveViewSources } from '../spa/panels/live-view.js';
+import { mmsToMps } from '../../state/live-signal.js';
 import {
   mapStoreToDivergingHeroModel,
   mapStoreToFatigueModel,
@@ -31,6 +32,11 @@ interface RepSpec {
   concMs?: number;
 }
 
+/**
+ * Velocities in a `RepSpec` are DEVICE-NATIVE mm/s; every sample built here
+ * applies the same mm/s→m/s conversion the server's bridge applies (VW-160), so
+ * these reps carry what `/api/snapshot` actually delivers.
+ */
 function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
   const { concVel, rom, eccVel = concVel * 0.5, concMs = 500 } = spec;
   return [
@@ -39,7 +45,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       timestamp: t0,
       phase: MovementPhase.CONCENTRIC,
       position: 0,
-      velocity: concVel,
+      velocity: mmsToMps(concVel),
       force: 100,
     },
     {
@@ -47,7 +53,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       timestamp: t0 + concMs,
       phase: MovementPhase.CONCENTRIC,
       position: rom,
-      velocity: concVel,
+      velocity: mmsToMps(concVel),
       force: 100,
     },
     {
@@ -55,7 +61,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       timestamp: t0 + concMs + 100,
       phase: MovementPhase.ECCENTRIC,
       position: rom,
-      velocity: eccVel,
+      velocity: mmsToMps(eccVel),
       force: 80,
     },
     {
@@ -63,7 +69,7 @@ function repSamples(spec: RepSpec, seq: number, t0: number): WorkoutSample[] {
       timestamp: t0 + concMs + 1100,
       phase: MovementPhase.ECCENTRIC,
       position: 0,
-      velocity: eccVel,
+      velocity: mmsToMps(eccVel),
       force: 80,
     },
   ];
@@ -101,7 +107,7 @@ function buildDetailedReps(
         timestamp: t + Math.round(i * dt),
         phase: MovementPhase.CONCENTRIC,
         position: n > 1 ? Math.round((spec.rom * i) / (n - 1)) : spec.rom,
-        velocity: v,
+        velocity: mmsToMps(v),
         force: 100,
       });
     });
@@ -112,7 +118,7 @@ function buildDetailedReps(
       timestamp: tEcc,
       phase: MovementPhase.ECCENTRIC,
       position: spec.rom,
-      velocity: eccVel,
+      velocity: mmsToMps(eccVel),
       force: 80,
     });
     set = addSampleToSet(set, {
@@ -120,7 +126,7 @@ function buildDetailedReps(
       timestamp: tEcc + 1000,
       phase: MovementPhase.ECCENTRIC,
       position: 0,
-      velocity: eccVel,
+      velocity: mmsToMps(eccVel),
       force: 80,
     });
     t = tEcc + 1400;
@@ -339,7 +345,11 @@ describe('mapStoreToFatigueModel — reps without a per-sample stream', () => {
   const summaryRep = (peakMms: number, repNumber: number): Rep =>
     ({
       repNumber,
-      concentric: { peakVelocity: peakMms, _totalVelocity: peakMms, _movementSampleCount: 1 },
+      concentric: {
+        peakVelocity: mmsToMps(peakMms),
+        _totalVelocity: mmsToMps(peakMms),
+        _movementSampleCount: 1,
+      },
       eccentric: {},
     }) as unknown as Rep;
 
@@ -369,7 +379,11 @@ describe('mapStoreToDivergingHeroModel', () => {
   function meanRep(meanMms: number, repNumber: number): Rep {
     return {
       repNumber,
-      concentric: { peakVelocity: meanMms, _totalVelocity: meanMms, _movementSampleCount: 1 },
+      concentric: {
+        peakVelocity: mmsToMps(meanMms),
+        _totalVelocity: mmsToMps(meanMms),
+        _movementSampleCount: 1,
+      },
       eccentric: {},
     } as unknown as Rep;
   }

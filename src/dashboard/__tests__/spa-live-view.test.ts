@@ -29,6 +29,7 @@ import {
   type SessionModel,
 } from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
+import { mmsToMps } from '../../state/live-signal.js';
 
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
@@ -387,7 +388,7 @@ describe('mapCompletedSet (VW-61 / VW-62)', () => {
       mode: 'weight',
       repCount: reps.length,
       exerciseName: 'Cable Chest Press',
-      bestPeakVelocityMms: null,
+      bestPeakVelocityMps: null,
       peakForceLbs,
       reps,
     };
@@ -397,7 +398,11 @@ describe('mapCompletedSet (VW-61 / VW-62)', () => {
   function repMeanVsPeak(repNumber: number): Rep {
     return {
       repNumber,
-      concentric: { peakVelocity: 800, _totalVelocity: 500, _movementSampleCount: 1 },
+      concentric: {
+        peakVelocity: mmsToMps(800),
+        _totalVelocity: mmsToMps(500),
+        _movementSampleCount: 1,
+      },
       eccentric: {},
     } as unknown as Rep;
   }
@@ -453,7 +458,7 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
       mode: 'weight',
       repCount,
       exerciseName: 'Cable Chest Press',
-      bestPeakVelocityMms: null,
+      bestPeakVelocityMps: null,
       peakForceLbs: null,
       reps: [],
     };

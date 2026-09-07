@@ -18,8 +18,8 @@ import { type Rep } from '@voltras/workout-analytics';
 import {
   buildConnectionStatus,
   buildCurrentSet,
-  repMeanMms,
-  toMps,
+  repMeanVelocityMps,
+  roundMps,
   type AccumulatorState,
   type CompletedSet as StoreCompletedSet,
   type PrescriptionView,
@@ -120,18 +120,19 @@ function mapMode(trainingMode: string | null): CompletedSet['mode'] {
  * Per-rep MEAN concentric velocities (m/s), ordered by rep.
  *
  * MEAN-concentric — the VBT decision metric, and the same quantity the live
- * VelocityStrip bars now show (VW-58 routed those through `repMeanMms`). A set must
- * not flip its bars from mean → peak the instant it closes, so the completed-set
+ * VelocityStrip bars now show (VW-58 routed those through `repMeanVelocityMps`).
+ * A set must not flip its bars from mean → peak the instant it closes, so the completed-set
  * strip reads mean too (VW-62). This is the PER-REP swap, which is unblocked: the
- * installed WA 1.5.0 exports `getRepMeanVelocity` (wrapped by `repMeanMms`). The
- * set-level `getSetRepMeanVelocities` sibling is not published in 1.5.0, so the
+ * installed WA 1.5.0 exports `getRepMeanVelocity` (wrapped by
+ * `repMeanVelocityMps`). The set-level `getSetRepMeanVelocities` sibling is not
+ * published in 1.5.0, so the
  * hero's `getSetRepPeakVelocities` path stays peak until then (see
  * `exercise-hero-view.ts`).
  */
 function repVelocitiesMps(reps: readonly Rep[]): number[] {
   const out: number[] = [];
   for (const rep of reps) {
-    const mps = toMps(repMeanMms(rep));
+    const mps = roundMps(repMeanVelocityMps(rep));
     if (mps !== null) out.push(mps);
   }
   return out;

@@ -20,12 +20,16 @@ import {
   toSetRowProps,
 } from '../spa/panels/exercise-hero-view.js';
 import type { WorkoutSetView } from '../spa/adapter.js';
+import { mmsToMps } from '../../state/live-signal.js';
 
-/** Build a Rep whose concentric peak velocity (mm/s) is `peakMms`. */
+/**
+ * Build a Rep whose concentric peak velocity is `peakMms` DEVICE-NATIVE mm/s,
+ * converted the way the server's bridge converts it (VW-160).
+ */
 function rep(repNumber: number, peakMms: number): Rep {
   return {
     repNumber,
-    concentric: { peakVelocity: peakMms },
+    concentric: { peakVelocity: mmsToMps(peakMms) },
     eccentric: {},
   } as unknown as Rep;
 }
@@ -47,7 +51,11 @@ function repWithTempo(repNumber: number): Rep {
 function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
   return {
     repNumber,
-    concentric: { peakVelocity: peakMms, _totalVelocity: meanMms, _movementSampleCount: 1 },
+    concentric: {
+      peakVelocity: mmsToMps(peakMms),
+      _totalVelocity: mmsToMps(meanMms),
+      _movementSampleCount: 1,
+    },
     eccentric: {},
   } as unknown as Rep;
 }
@@ -77,7 +85,7 @@ describe('toSetRowProps', () => {
     if (props.state !== 'done') throw new Error('expected a done row');
     expect(props.reps).toBe(2);
     expect(props.weight).toBe(100.4); // exact — SetRow rounds for display
-    expect(props.velocities).toEqual([0.8, 0.6]); // mm/s → m/s, unrounded
+    expect(props.velocities).toEqual([0.8, 0.6]); // m/s, unrounded
     // RPE is exactly WA's value — not rounded to 0.5 at this layer.
     expect(props.rpe).toBe(estimateSetRpe({ reps }));
     expect(props.rpe).not.toBeNull();

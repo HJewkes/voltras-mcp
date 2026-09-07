@@ -24,7 +24,7 @@ import type {
   StatusPillStatus,
   TempoDisplayProps,
 } from '@titan-design/react-ui';
-import { MMS_PER_MPS, type WorkoutSetView } from '../adapter';
+import { type WorkoutSetView } from '../adapter';
 
 /**
  * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
@@ -52,17 +52,15 @@ export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null
  * unplanned live set falls back its target to the reps done so far and the
  * current working weight. Passes EXACT WA values — RPE (SetRow rounds to 0.5 +
  * bands), per-rep velocity in m/s (SetRow's VelocityStrip formats), raw weights
- * (SetRow rounds). The mm/s→m/s conversion is the app's data-source
- * normalization (WA is unit-agnostic).
+ * (SetRow rounds). Velocities need no conversion: the server's bridge converts
+ * them once when it builds each `WorkoutSample` (VW-160).
  */
 export function toSetRowProps(view: WorkoutSetView): SetRowProps {
   // TODO(VW-62): swap to the set-level MEAN sibling once WA publishes
   // `getSetRepMeanVelocities` (WA 1.5.0 exports only the peak fold). The per-rep
   // strips already moved to mean (`panels/live-view.ts`); this set-level path stays
   // peak until the sibling ships, so the hero's SetRow reads optimistic vs the recap.
-  const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mms) =>
-    mms != null ? mms / MMS_PER_MPS : 0,
-  );
+  const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mps) => mps ?? 0);
   const rpe = estimateSetRpe({ reps: view.reps });
   const repsDone = view.reps.length;
   const weight = view.weightLbs ?? 0;

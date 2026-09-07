@@ -56,7 +56,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -209,6 +209,7 @@ const SCHEMA_SQL = `
     -- two incompatible populations into one untellable mix.
     sample_rate_hz REAL,
     position_units TEXT CHECK (position_units IN ('device_native','meters')),
+    velocity_units TEXT CHECK (velocity_units IN ('device_native','meters_per_second')),
     derive_version TEXT,
 
     -- Context.
@@ -921,6 +922,41 @@ function migrateV9ToV10(db: DatabaseSync): void {
 }
 
 /**
+ * v10→v11 (VW-160): add `sets.velocity_units` and stamp every existing row
+ * `'device_native'`.
+ *
+ * The exact shape `position_units` took in v7, for the exact same reason. Until
+ * this schema version the bridge passed `frame.velocity` through unconverted
+ * while converting position and force, so every absolute velocity persisted so
+ * far — per-sample `velocity`, per-phase `peakVelocity` — is device-native
+ * mm/s, roughly 1000× the m/s `WorkoutSample.velocity` is documented as. Rows
+ * written from here on are m/s.
+ *
+ * A MARKER, NOT A FIX. Nothing rewrites the stored numbers: the reads
+ * normalise on the way out (`normaliseVelocityToMps`), so a device-native row
+ * and a metres-per-second row answer the same question identically without
+ * either being silently rescaled on disk. Ratio outputs (velocity loss %,
+ * `vbt.rir`) were always scale-invariant and were never wrong.
+ *
+ * Backfilling `'device_native'` for every existing row is safe because it is
+ * true BY DEFINITION — no conversion has ever run on those rows. The column is
+ * left nullable so the CHECK constraint, not a DEFAULT, is what a future
+ * writer has to satisfy; `putSet` binds the value explicitly.
+ *
+ * Probed with `columnNames` (which reads `table_xinfo`, so it sees the
+ * generated `is_warmup` column) because `applyMigrations` also runs on fresh
+ * DBs whose `SCHEMA_SQL` already declares the column.
+ */
+function migrateV10ToV11(db: DatabaseSync): void {
+  if (columnNames(db, 'sets').has('velocity_units')) return;
+  db.exec(`
+    ALTER TABLE sets ADD COLUMN velocity_units TEXT
+      CHECK (velocity_units IN ('device_native','meters_per_second'))
+  `);
+  db.exec(`UPDATE sets SET velocity_units = 'device_native'`);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1128,6 +1164,7 @@ interface SetRow {
   battery_pct: number | null;
   source: string | null;
   position_units: string | null;
+  velocity_units: string | null;
   sample_rate_hz: number | null;
   firmware_rep_count: number | null;
   firmware_summary_duration_ms: number | null;
@@ -1381,13 +1418,13 @@ export class SqliteSessionStore implements SessionStore {
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
-          source, position_units, sample_rate_hz,
+          source, position_units, velocity_units, sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -1407,6 +1444,7 @@ export class SqliteSessionStore implements SessionStore {
          battery_pct = excluded.battery_pct,
          source = excluded.source,
          position_units = excluded.position_units,
+         velocity_units = excluded.velocity_units,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
@@ -1452,6 +1490,7 @@ export class SqliteSessionStore implements SessionStore {
         // local provenance unless the adapter says otherwise.
         s.source ?? 'local',
         s.positionUnits ?? null,
+        s.velocityUnits ?? null,
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
@@ -2365,6 +2404,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 9 = v9 schema; v10 adds `idx_sets_exercise_session` (VMCP-01.72b S4) so
   //     `listSessions`'s per-set exercise-id subquery can seek instead of
   //     scanning all of `sets` — additive index only, no data change.
+  // 10 = v10 schema; v11 adds `sets.velocity_units` (VW-160), additive column
+  //     backfilled 'device_native'.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2378,6 +2419,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 7 &&
     found !== 8 &&
     found !== 9 &&
+    found !== 10 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2419,6 +2461,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 9) {
     migrateV9ToV10(db);
+  }
+  if (current <= 10) {
+    migrateV10ToV11(db);
   }
 }
 
@@ -2531,6 +2576,9 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   }
   if (row.position_units === 'device_native' || row.position_units === 'meters') {
     out.positionUnits = row.position_units;
+  }
+  if (row.velocity_units === 'device_native' || row.velocity_units === 'meters_per_second') {
+    out.velocityUnits = row.velocity_units;
   }
   if (row.sample_rate_hz !== null) out.sampleRateHz = row.sample_rate_hz;
   if (row.firmware_rep_count !== null) out.firmwareRepCount = row.firmware_rep_count;

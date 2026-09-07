@@ -18,18 +18,23 @@ import {
   fmtWeight,
   initialAccumulatorState,
   reduceSnapshot,
-  toMps,
+  roundMps,
   type Snapshot,
   type SnapshotActiveSet,
   type SnapshotCompletedSet,
   type SnapshotDevice,
 } from '../spa/adapter.js';
+import { mmsToMps } from '../../state/live-signal.js';
 
-/** Build a Rep whose concentric peak velocity (mm/s) is `peakMms`. */
+/**
+ * Build a Rep whose concentric peak velocity is `peakMms` DEVICE-NATIVE mm/s,
+ * converted the way the server's bridge converts it (VW-160) so the rep carries
+ * the m/s a snapshot actually delivers.
+ */
 function rep(repNumber: number, peakMms: number): Rep {
   return {
     repNumber,
-    concentric: { peakVelocity: peakMms },
+    concentric: { peakVelocity: mmsToMps(peakMms) },
     eccentric: {},
   } as unknown as Rep;
 }
@@ -42,7 +47,11 @@ function rep(repNumber: number, peakMms: number): Rep {
 function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
   return {
     repNumber,
-    concentric: { peakVelocity: peakMms, _totalVelocity: meanMms, _movementSampleCount: 1 },
+    concentric: {
+      peakVelocity: mmsToMps(peakMms),
+      _totalVelocity: mmsToMps(meanMms),
+      _movementSampleCount: 1,
+    },
     eccentric: {},
   } as unknown as Rep;
 }
@@ -55,7 +64,7 @@ function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
 function repWithForce(repNumber: number, conForceLbs: number, eccForceLbs = 0): Rep {
   return {
     repNumber,
-    concentric: { peakVelocity: 700, peakForce: conForceLbs },
+    concentric: { peakVelocity: mmsToMps(700), peakForce: conForceLbs },
     eccentric: { peakForce: eccForceLbs },
   } as unknown as Rep;
 }
@@ -76,16 +85,16 @@ function snapshot(opts: {
 }
 
 describe('formatters (legacy parity)', () => {
-  it('fmtVelocity converts mm/s → m/s with 2 decimals', () => {
-    expect(fmtVelocity(741)).toBe('0.74 m/s');
-    expect(fmtVelocity(1000)).toBe('1.00 m/s');
+  it('fmtVelocity formats m/s with 2 decimals', () => {
+    expect(fmtVelocity(0.741)).toBe('0.74 m/s');
+    expect(fmtVelocity(1)).toBe('1.00 m/s');
     expect(fmtVelocity(null)).toBe('—');
     expect(fmtVelocity(undefined)).toBe('—');
   });
 
-  it('toMps converts mm/s → m/s number (2dp)', () => {
-    expect(toMps(741)).toBe(0.74);
-    expect(toMps(null)).toBeNull();
+  it('roundMps rounds an m/s number to 2dp', () => {
+    expect(roundMps(0.741)).toBe(0.74);
+    expect(roundMps(null)).toBeNull();
   });
 
   it('fmtWeight formats lbs with 1 decimal', () => {
@@ -272,7 +281,7 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       repCount: 2,
       // No exercise name in this snapshot → null tag (VW-50).
       exerciseName: null,
-      bestPeakVelocityMms: 900,
+      bestPeakVelocityMps: 0.9,
       // These reps carry no concentric force (the `rep` helper sets only peak
       // velocity), so the peak-force fold is null — hidden, never faked (VW-61).
       peakForceLbs: null,

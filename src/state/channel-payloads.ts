@@ -36,20 +36,23 @@ import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from
 import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
+import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
 import type { WeightImpliedResult } from './weight-implied-watch.js';
 import type { BilateralDivergence } from './bilateral-reconciler.js';
 
 /**
- * Convert a velocity from workout-analytics's native scale (mm/s, despite
- * the upstream m/s docstring — confirmed on hardware 2026-05-11) into m/s
- * for serialization. Three decimal places preserve mm/s granularity. The
- * conversion happens at the channel-payload boundary, NOT inside WA, so the
- * analytics layer's canonical unit stays untouched.
+ * Round an m/s velocity to three decimal places for serialization.
+ *
+ * A ROUNDER, NOT A CONVERSION (VW-160). This was `mmsToMps` until the bridge
+ * became the single mm/s→m/s conversion point; every rep reaching a payload
+ * builder now already carries WA's documented m/s. Three decimals is the
+ * granularity the device's mm/s resolution actually supports, so the wire
+ * values are byte-identical to what the old per-site conversion produced.
  */
-function mmsToMps(mms: number): number {
-  return Number((mms / 1000).toFixed(3));
+function roundMps(mps: number): number {
+  return Number(mps.toFixed(3));
 }
 
 /**
@@ -127,17 +130,17 @@ function pctOneDecimal(pct: number): number {
 }
 
 /**
- * Convert the 4-point mm/s envelope from workout-analytics into the same
- * m/s scale as `peak_velocity` / `mean_velocity`. Preserves length and
+ * Round the 4-point velocity envelope from workout-analytics to the same
+ * m/s precision as `peak_velocity` / `mean_velocity`. Preserves length and
  * order so consumers can read the entries positionally (25/50/75/100% of
  * the phase movement span).
  */
 function envelopeMps(env: readonly number[]): [number, number, number, number] {
   return [
-    mmsToMps(env[0] ?? 0),
-    mmsToMps(env[1] ?? 0),
-    mmsToMps(env[2] ?? 0),
-    mmsToMps(env[3] ?? 0),
+    roundMps(env[0] ?? 0),
+    roundMps(env[1] ?? 0),
+    roundMps(env[2] ?? 0),
+    roundMps(env[3] ?? 0),
   ];
 }
 
@@ -185,14 +188,13 @@ export function buildRepFinalizedPayload(
   repsLengthIncludingInProgress: number,
 ): { meta: Record<string, string>; content: string } {
   const repNumber = finalizedIndex + 1;
-  // WA delivers velocities in mm/s; we convert to m/s at the serialization
-  // boundary so the payload-field labels (`peak_velocity`, `mean_velocity`,
-  // m/s by convention) match the values without disturbing WA's internal
-  // canonical unit. See `mmsToMps`.
-  const concPeak = mmsToMps(finalizedRep.concentric.peakVelocity);
-  const eccPeak = mmsToMps(finalizedRep.eccentric.peakVelocity);
-  const concMean = mmsToMps(getPhaseMeanVelocity(finalizedRep.concentric));
-  const eccMean = mmsToMps(getPhaseMeanVelocity(finalizedRep.eccentric));
+  // Velocities are already m/s — the bridge converts once when it builds each
+  // `WorkoutSample` (VW-160) — so the payload-field labels (`peak_velocity`,
+  // `mean_velocity`, m/s by convention) match the values and this only rounds.
+  const concPeak = roundMps(finalizedRep.concentric.peakVelocity);
+  const eccPeak = roundMps(finalizedRep.eccentric.peakVelocity);
+  const concMean = roundMps(getPhaseMeanVelocity(finalizedRep.concentric));
+  const eccMean = roundMps(getPhaseMeanVelocity(finalizedRep.eccentric));
 
   const meta: Record<string, string> = {
     source: 'voltras',
@@ -283,9 +285,9 @@ export interface PreviousSetSummary {
 
 /**
  * Aggregate per-rep concentric peak velocities and return the simple mean
- * in m/s (converted from WA's native mm/s at the boundary). Returns null
- * when no reps have any concentric movement (would otherwise be 0 — and we
- * want the model to distinguish "we don't know" from "it was a zero set").
+ * in m/s. Returns null when no reps have any concentric movement (would
+ * otherwise be 0 — and we want the model to distinguish "we don't know" from
+ * "it was a zero set").
  */
 export function meanConcentricPeakVelocity(reps: readonly Rep[]): number | null {
   let total = 0;
@@ -299,16 +301,23 @@ export function meanConcentricPeakVelocity(reps: readonly Rep[]): number | null 
   if (count === 0) {
     return null;
   }
-  return mmsToMps(total / count);
+  return roundMps(total / count);
 }
 
-/** Build the previous-set summary from the most recent `StoredSet` in a session. */
+/**
+ * Build the previous-set summary from the most recent `StoredSet` in a session.
+ *
+ * Normalised on the way in (VW-160): `prev` came off disk and may predate the
+ * bridge's mm/s→m/s conversion, and `mean_concentric_velocity` is an ABSOLUTE
+ * velocity — the one field on this summary a stale scale would corrupt.
+ */
 export function summarizePreviousSet(prev: StoredSet): PreviousSetSummary {
+  const normalised = normaliseVelocityToMps(prev);
   return {
     set_id: prev.id,
     rep_count: prev.reps.length,
     weight_lbs: prev.weightLbs ?? null,
-    mean_concentric_velocity: meanConcentricPeakVelocity(prev.reps),
+    mean_concentric_velocity: meanConcentricPeakVelocity(normalised.reps),
   };
 }
 
@@ -626,13 +635,13 @@ export function serializeRepForPayload(rep: Rep): StoredRepVbt {
   return {
     rep_number: rep.repNumber,
     concentric: {
-      peak_velocity: mmsToMps(rep.concentric.peakVelocity),
-      mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.concentric)),
+      peak_velocity: roundMps(rep.concentric.peakVelocity),
+      mean_velocity: roundMps(getPhaseMeanVelocity(rep.concentric)),
       ...phaseEnrichment(rep.concentric),
     },
     eccentric: {
-      peak_velocity: mmsToMps(rep.eccentric.peakVelocity),
-      mean_velocity: mmsToMps(getPhaseMeanVelocity(rep.eccentric)),
+      peak_velocity: roundMps(rep.eccentric.peakVelocity),
+      mean_velocity: roundMps(getPhaseMeanVelocity(rep.eccentric)),
       ...phaseEnrichment(rep.eccentric),
     },
     rom_m: repRangeOfMotion(rep),
@@ -709,9 +718,8 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
       mean_velocity: null,
     };
   }
-  // Loss% is computed on the native scale (ratio is unit-invariant); the
-  // velocity values get converted to m/s for the payload so the field labels
-  // match. `meanConcentricPeakVelocity` already converts.
+  // Loss% is a ratio and therefore unit-invariant; the velocity values are
+  // already m/s and only get rounded for the payload.
   const firstRaw = reps[0].concentric.peakVelocity;
   const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
   const peakRaw = peakConcentricBaseline(reps);
@@ -720,10 +728,10 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
       ? null
       : Number((100 * ((peakRaw - lastRaw) / peakRaw)).toFixed(1));
   return {
-    first_rep_v: mmsToMps(firstRaw),
-    peak_rep_v: mmsToMps(peakRaw),
+    first_rep_v: roundMps(firstRaw),
+    peak_rep_v: roundMps(peakRaw),
     peak_rep_number: baselineRepNumberFor(reps),
-    last_rep_v: mmsToMps(lastRaw),
+    last_rep_v: roundMps(lastRaw),
     velocity_loss_pct: lossPct,
     mean_velocity: meanConcentricPeakVelocity(reps),
   };
@@ -871,12 +879,12 @@ export function buildVelocityLossExceededPayload(
   baselineRepNumber: number,
   actualReps: number,
 ): { meta: Record<string, string>; content: string } {
-  // `baseline` and `current` arrive in WA's native mm/s — convert at the
-  // serialization boundary so the labels (`baseline_velocity`,
+  // `baseline` and `current` arrive in m/s (converted once at the bridge) and
+  // are only rounded here so the labels (`baseline_velocity`,
   // `current_velocity`, m/s in the summary) match the values. Loss% is
   // unit-invariant so the caller's pre-computed `pct` is passed through.
-  const baselineMps = mmsToMps(baseline);
-  const currentMps = mmsToMps(current);
+  const baselineMps = roundMps(baseline);
+  const currentMps = roundMps(current);
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'velocity_loss_exceeded',
@@ -1870,12 +1878,10 @@ export function buildIdleRepPayload(
   entry: IdleRep,
   idleRepCount: number,
 ): { meta: Record<string, string>; content: string } {
-  // LiveState stores `vCon` in mm/s (the raw scale WA returns from
-  // `getPhaseMeanVelocity`) — convert at the emit boundary (F18 / VMCP-01.32).
-  // `rom` is already metres as of WA 2.0.0 (`getPhaseRangeOfMotion` returns
-  // metres now that `WorkoutSample.position` is fed in as metres at the
-  // bridge), so it needs no conversion here any more.
-  const vConMps = entry.vCon !== null ? mmsToMps(entry.vCon) : null;
+  // `vCon` and `rom` are both already in fitness units — WA returns m/s and
+  // metres now that the bridge converts `WorkoutSample.velocity` and
+  // `.position` once (VW-160 / WA 2.0.0) — so this only rounds.
+  const vConMps = entry.vCon !== null ? roundMps(entry.vCon) : null;
   const romM = entry.rom;
   const meta: Record<string, string> = {
     source: 'voltras',

@@ -43,6 +43,7 @@ import type {
   SessionSummaryView,
 } from './read-models/session-summary-view.js';
 import type { StoredPlannedExercise, StoredSession, StoredSet } from '../store/types.js';
+import { normaliseVelocityToMps } from '../store/velocity-units.js';
 
 export type {
   SessionSummaryExercise,
@@ -66,8 +67,13 @@ export interface DashboardSessionStore {
 /** Label for the group holding sets that recorded no exercise. */
 const UNATTRIBUTED_LABEL = 'Unattributed';
 
+/**
+ * Coerce a stored row into the analytics `Set` shape, normalising velocities to
+ * m/s first (VW-160) so `bestRepVelocity` reads as a speed on rows captured
+ * before the bridge conversion as well as after.
+ */
 function toAnalyticsSet(stored: StoredSet): AnalyticsSet {
-  return { reps: stored.reps };
+  return { reps: normaliseVelocityToMps(stored).reps };
 }
 
 /**

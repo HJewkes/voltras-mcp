@@ -59,13 +59,17 @@ import type { Phase, Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { rebuildPhaseFromSamples } from '@voltras/workout-analytics';
 
 /**
- * VMCP-02.65: velocity magnitude (workout-analytics' native mm/s scale) at or
- * below which a trailing eccentric sample is treated as idle parking rather
- * than real movement. The racked-cable idle tail sits at ~0; a real eccentric
- * descent runs well above this. Tunable threshold — see the ticket note on the
- * bench-observed "3 samples > 50u" real-movement window.
+ * VMCP-02.65: velocity magnitude, in m/s, at or below which a trailing
+ * eccentric sample is treated as idle parking rather than real movement. The
+ * racked-cable idle tail sits at ~0; a real eccentric descent runs well above
+ * this. Tunable threshold — see the ticket note on the bench-observed
+ * "3 samples > 50u" real-movement window.
+ *
+ * RESTATED IN m/s BY VW-160, not retuned: it was 50 on the device-native mm/s
+ * scale the bridge used to pass through, and 0.05 m/s is the identical
+ * cable speed now that the bridge converts once.
  */
-const ECCENTRIC_IDLE_VELOCITY_THRESHOLD = 50;
+const ECCENTRIC_IDLE_VELOCITY_THRESHOLD = 0.05;
 
 export interface RepFinalizeOptions {
   /**

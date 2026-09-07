@@ -12,7 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Rep } from '@voltras/workout-analytics';
 import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
-import { LiveSignalHub, mmsToMps, type LiveSignalEvent } from '../../state/live-signal.js';
+import {
+  LiveSignalHub,
+  mmsToMps,
+  roundMps,
+  type LiveSignalEvent,
+} from '../../state/live-signal.js';
 import type { LiveState as LiveStateType, FirmwareRep } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { RepSource } from '../../config.js';
@@ -750,9 +755,13 @@ describe('set.end terminal-rep SSE echo (VW-57)', () => {
   // A rep with empty sample buffers but explicit concentric peaks. finalizeReps'
   // signed-peak pass is a no-op on empty samples, so these peaks survive to the
   // emit verbatim — letting us assert exact wire values.
+  /** `peakVelocity` is device-native mm/s, converted as the bridge converts it. */
   function makeConcRep(n: number, peakForce: number, peakVelocity: number): Rep {
     const base = makeRep(n);
-    return { ...base, concentric: { ...base.concentric, peakForce, peakVelocity } };
+    return {
+      ...base,
+      concentric: { ...base.concentric, peakForce, peakVelocity: mmsToMps(peakVelocity) },
+    };
   }
 
   it('emits the terminal rep (rep N) with the final rep values, before the set ended signal (tool close)', async () => {
@@ -777,10 +786,9 @@ describe('set.end terminal-rep SSE echo (VW-57)', () => {
     expect(repEvents[0].data).toEqual({
       slot: 'primary',
       repIndex: 3,
-      vCon: mmsToMps(getPhaseMeanVelocity(reps[2].concentric)),
-      // WA 2.0.0: getRepRangeOfMotion already returns metres — no post-hoc
-      // mmToM conversion any more (these fixture reps carry metres-scale
-      // positions, matching what the bridge now feeds WA).
+      vCon: roundMps(getPhaseMeanVelocity(reps[2].concentric)),
+      // Both already fitness units — the bridge converts position to metres
+      // (WA 2.0.0) and velocity to m/s (VW-160), so these only round.
       rom: getRepRangeOfMotion(reps[2]),
       peakVelocity: mmsToMps(800),
       peakForceSoFar: 95, // set-wide concentric max (rep 2), not the last rep's 60

@@ -22,8 +22,9 @@
  * `getSetWorkingROM`), per-rep ROM, the tempo tuple, velocity loss, and RPE — is
  * computed from `@voltras/workout-analytics` (bumped to 1.7.0 for the verdict).
  *
- * Units: velocities → m/s, distances → m, converted from WA-native mm/s & mm at
- * this boundary (as the existing live-view mapping does). No force/impulse/power
+ * Units: velocities are already m/s — the server's bridge converts once when it
+ * builds each `WorkoutSample` (VW-160) — and are only rounded here. Distances
+ * are converted from WA-native mm at this boundary. No force/impulse/power
  * dimension — WA-side per-sample `load` is 0 (the bridge never populates it).
  *
  * Dual-Voltra (VMCP-04.04): the fatigue card stays SINGLE and SHARED — it reads the
@@ -43,13 +44,7 @@ import {
   MovementPhase,
   type Rep,
 } from '@voltras/workout-analytics';
-import {
-  MMS_PER_MPS,
-  repMeanMms,
-  toMps,
-  type Snapshot,
-  type SnapshotDeviceEntry,
-} from '../adapter';
+import { repMeanVelocityMps, roundMps, type Snapshot, type SnapshotDeviceEntry } from '../adapter';
 import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';
 import {
@@ -86,9 +81,12 @@ function samplesOf(phase: { samples?: readonly Sample[] } | undefined): readonly
   return phase?.samples ?? [];
 }
 
+/** Millimetres per metre — the ROM figures on this surface are WA-native mm. */
+const MM_PER_METRE = 1000;
+
 /** Native mm → m. */
 function toMetres(mm: number): number {
-  return Number((mm / MMS_PER_MPS).toFixed(3));
+  return Number((mm / MM_PER_METRE).toFixed(3));
 }
 
 /** WA `MovementPhase` enum → the contract's spelled-out sample phase. */
@@ -165,7 +163,7 @@ function buildVelocityCurve(
   const base = ordered.length > 0 ? ordered[0].timestamp : 0;
   const samples: VelocitySample[] = ordered.map((s) => ({
     tMs: s.timestamp - base,
-    velocityMps: Number((Math.abs(s.velocity) / MMS_PER_MPS).toFixed(3)),
+    velocityMps: Number(Math.abs(s.velocity).toFixed(3)),
     phase: mapSamplePhase(s.phase),
   }));
   return {
@@ -255,8 +253,8 @@ function foldLimitingReps(limbs: readonly LiveLimb[]): Rep[] {
 
 /** True when `candidate` is the more fatigued (slower) of the two observations. */
 function isMoreLimiting(candidate: Rep, incumbent: Rep): boolean {
-  const a = repMeanMms(candidate);
-  const b = repMeanMms(incumbent);
+  const a = repMeanVelocityMps(candidate);
+  const b = repMeanVelocityMps(incumbent);
   if (a === null) return false;
   if (b === null) return true;
   return a < b;
@@ -266,11 +264,11 @@ function isMoreLimiting(candidate: Rep, incumbent: Rep): boolean {
 function meanRepVelocityMps(reps: readonly Rep[]): number | null {
   const means: number[] = [];
   for (const rep of reps) {
-    const mms = repMeanMms(rep);
+    const mms = repMeanVelocityMps(rep);
     if (mms !== null) means.push(mms);
   }
   if (means.length === 0) return null;
-  return toMps(means.reduce((sum, v) => sum + v, 0) / means.length);
+  return roundMps(means.reduce((sum, v) => sum + v, 0) / means.length);
 }
 
 /**
@@ -388,7 +386,7 @@ function buildHeroSide(
   const reps: readonly Rep[] = entry.sets?.active?.reps ?? [];
   const velocities: number[] = [];
   for (const rep of reps) {
-    const mps = toMps(repMeanMms(rep));
+    const mps = roundMps(repMeanVelocityMps(rep));
     if (mps !== null) velocities.push(mps);
   }
   const best = velocities.length > 0 ? Math.max(...velocities) : null;
