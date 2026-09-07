@@ -43,21 +43,65 @@ filter on `slot` to keep parallel rep streams apart.
 
 ## Events
 
-| Event                    | Fires when                                                                                            | Auto-stops the set?       |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------- |
-| `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).         | —                         |
-| `set_started`            | `set.start` succeeds. Carries device config plus a previous-set summary for fatigue context.          | —                         |
-| `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.       | —                         |
-| `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                      | implicit (device stopped) |
-| `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                              | —                         |
-| `timer_complete`         | A `timer.start` duration elapses.                                                                     | —                         |
-| `set_target_reached`     | A `rep_count_reached` trigger matches.                                                                | optional, via `stopOn`    |
-| `velocity_loss_exceeded` | A `velocity_loss_exceeded` trigger matches (baseline = highest peak concentric velocity seen so far). | optional, via `stopOn`    |
-| `idle_timeout`           | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                     | optional, via `stopOn`    |
-| `rest_status`            | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close. | —                         |
+| Event                    | Fires when                                                                                               | Auto-stops the set?       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).            | —                         |
+| `set_started`            | `set.start` succeeds. Carries device config plus a previous-set summary for fatigue context.             | —                         |
+| `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.          | —                         |
+| `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                         | implicit (device stopped) |
+| `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                                 | —                         |
+| `timer_complete`         | A `timer.start` duration elapses.                                                                        | —                         |
+| `set_target_reached`     | A `rep_count_reached` trigger matches.                                                                   | optional, via `stopOn`    |
+| `velocity_loss_exceeded` | A `velocity_loss_exceeded` trigger matches (baseline = highest peak concentric velocity seen so far).    | optional, via `stopOn`    |
+| `idle_timeout`           | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                        | optional, via `stopOn`    |
+| `rest_status`            | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.    | —                         |
+| `voice_command_applied`  | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path). | —                         |
+| `voice_command_rejected` | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                 | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
+
+## The voice fast-path
+
+`system.listen_start` acts on two classes of utterance without a model turn. Safety
+phrases (stop, unload, cut the weight, …) unload every connected slot and publish
+`deterministic_stop_triggered`. Weight commands change the load and publish
+`voice_command_applied`.
+
+Recognized weight cues, wake phrase optional:
+
+- absolute — "set it to 70", "set to 70", "70 pounds", "go to 65", "put it at 55",
+  "weight 45", "make it 60", spelled-out numbers ("seventy", "a hundred and ten",
+  "one-thirty"). A bare number is a command only at 20 lb and above, so counting reps
+  aloud cannot write a weight.
+- relative — "up 10", "add five", "bump it 5", "go up ten", "down 10", "drop 5",
+  "take off ten", plus "lighter" / "heavier" for a 5 lb step.
+- cancel — "cancel", "never mind", "undo that". One deep per slot, reverting to the
+  weight held before that slot's last local command.
+- slot targeting — an explicit "left" / "right" wins; otherwise the slot that most
+  recently had a set (active beats finished), or the only connected one.
+
+`voice_command_applied` means **the write already happened**: do not call
+`device.set_weight` for it. `previous_lbs` is what "cancel" would restore, and
+`clamped` is `true` when a relative step ran into the 5-200 lb bound.
+
+`voice_command_rejected` carries a `reason` and is always published together with the
+ordinary `voice_input`, so the model can still act on the request:
+
+| Reason                   | Meaning                                                     |
+| ------------------------ | ----------------------------------------------------------- |
+| `ambiguous_slot`         | Two slots connected, no active set, no side word spoken.    |
+| `slot_not_connected`     | The named side has no connected device.                     |
+| `no_connected_slot`      | Nothing is connected.                                       |
+| `out_of_range`           | An absolute target outside 5-200 lb (refused, not clamped). |
+| `unknown_current_weight` | A relative step with no reported weight to step from.       |
+| `nothing_to_undo`        | No local voice change on that slot to revert.               |
+| `set_failed`             | The device rejected the write; `detail` carries the error.  |
+| `no_weight_context`      | The fast-path is not wired in this server build.            |
+
+Conversation about weight ("how much should I use", "that was seventy pounds last
+time", "don't set it to 70") never reaches the fast-path — it routes to `voice_input`
+as before.
 
 ## The trigger DSL
 
