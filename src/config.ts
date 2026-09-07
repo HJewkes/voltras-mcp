@@ -10,11 +10,12 @@
 //   - VMCP_REP_CORRECTIONS             — 'on' | 'off', default 'off'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
+//   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
-// throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER, or
-// VMCP_REP_CORRECTIONS is set to an unrecognized value so the failure surfaces
-// before bootstrapState begins.
+// throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
+// VMCP_REP_CORRECTIONS or VMCP_AUTO_ARM is set to an unrecognized value so the
+// failure surfaces before bootstrapState begins.
 
 import { homedir } from 'node:os';
 
@@ -94,6 +95,19 @@ export type CuesMode = 'off' | 'on';
  */
 export type CuesMidSetMode = 'off' | 'on';
 
+/**
+ * Whether the bridge opens a set on its own when an idle-arm rep lands while
+ * a session is active and no set is (VW-164).
+ *   - `'on'` (DEFAULT) — the first idle rep auto-arms a set and is counted as
+ *     its rep 1. Reps start within ~1s of a weight change on the unit, and the
+ *     2026-09-07 dogfood lost 2-5 reps per set to the gap between the lifter
+ *     starting and `set.start` arriving (30+ `idle_rep_summary` events).
+ *   - `'off'` — idle reps only surface as `idle_rep_summary` / `idle_rep`
+ *     coaching signals, as before. For flows that want every set to be an
+ *     explicit `set.start`.
+ */
+export type AutoArmMode = 'off' | 'on';
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
@@ -104,6 +118,7 @@ export interface Config {
   readonly repCorrections: RepCorrectionsMode;
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
+  readonly autoArm: AutoArmMode;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -131,6 +146,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (cuesMidSet !== 'off' && cuesMidSet !== 'on') {
     throw new Error(`Invalid VMCP_CUES_MIDSET="${cuesMidSet}". Must be "off" or "on".`);
   }
+  const autoArm = env.VMCP_AUTO_ARM ?? 'on';
+  if (autoArm !== 'off' && autoArm !== 'on') {
+    throw new Error(`Invalid VMCP_AUTO_ARM="${autoArm}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -144,5 +163,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     repCorrections,
     cues,
     cuesMidSet,
+    autoArm,
   }) satisfies Config;
 }

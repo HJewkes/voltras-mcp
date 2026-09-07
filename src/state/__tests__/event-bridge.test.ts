@@ -1485,6 +1485,68 @@ describe('wireEventBridge', () => {
       expect(setEnded).toBeDefined();
       expect(setEnded![0].meta.device_rep_count).toBe('3');
     });
+
+    // ── VW-165: the header weight follows the unit until rep 1 ────────────
+    describe('set header weight before the first rep', () => {
+      /** One C→E→C cycle: closes rep 1 in the active-set pipeline. */
+      function feedRep(base: number): void {
+        for (const [seq, phase] of [
+          [base, 1],
+          [base + 1, 3],
+          [base + 2, 1],
+        ] as const) {
+          client.fire.frame({
+            sequence: seq,
+            timestamp: seq,
+            phase,
+            position: 0.1 * seq,
+            velocity: 0.5,
+            force: 50,
+          });
+        }
+      }
+
+      function closeSet(): void {
+        client.fire.setSummary({
+          schemaVersion: 1,
+          targetWeightTenths: 1000,
+          repCount: 1,
+          repDurationMs: 1800,
+          raw: new Uint8Array(110),
+        });
+      }
+
+      function storedWeight(): number | undefined {
+        const call = fakeState.store.putSet.mock.calls.at(-1);
+        return (call?.[0] as { weightLbs?: number } | undefined)?.weightLbs;
+      }
+
+      it('follows a settings_update that lands before rep 1 (armed at 45, lifted at 40)', async () => {
+        client.fire.settingsUpdate({ weight: 45 });
+        startActiveSet({ startedAt: '2026-09-07T00:00:00.000Z' });
+        fakeState.setStartDeviceSnapshots.set('set-dev', { connected: true, weightLbs: 45 });
+
+        client.fire.settingsUpdate({ weight: 40 });
+        feedRep(100);
+        closeSet();
+        await flushMicrotasks();
+
+        expect(storedWeight()).toBe(40);
+      });
+
+      it('freezes once rep 1 exists — a mid-set weight write does not move it', async () => {
+        client.fire.settingsUpdate({ weight: 45 });
+        startActiveSet({ startedAt: '2026-09-07T00:00:00.000Z' });
+        fakeState.setStartDeviceSnapshots.set('set-dev', { connected: true, weightLbs: 45 });
+
+        feedRep(100);
+        client.fire.settingsUpdate({ weight: 60 });
+        closeSet();
+        await flushMicrotasks();
+
+        expect(storedWeight()).toBe(45);
+      });
+    });
   });
 
   describe('trigger DSL — synchronous evaluation on rep_finalized', () => {

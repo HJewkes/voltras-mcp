@@ -238,8 +238,13 @@ export interface ActiveSet {
    * close, not just the `guided_load_exited` reap — so the persisted set
    * header reflects the weight the reps were actually performed at rather
    * than the pre-armed value. VMCP-02.57.
+   *
+   * `'idle_rep'` marks the VW-164 auto-arm: the lifter started working with a
+   * session open and no set armed, so the bridge opened one on the first idle
+   * rep. Its start snapshot is taken at that rep, not before, so it needs no
+   * re-snapshot at close.
    */
-  autoCreatedBy?: 'guided_load';
+  autoCreatedBy?: 'guided_load' | 'idle_rep';
   /**
    * Marks a warm-up set flagged at `set.start` time. Carried onto the
    * persisted row ({@link StoredSet.isWarmup}) so progression scoring can
@@ -1128,6 +1133,29 @@ export class LiveState {
       this.idleReps = [...this.idleReps, entry];
     }
     return entry;
+  }
+
+  /**
+   * Hand the tail of the idle-arm pipeline to the set that was just started
+   * (VW-164). The auto-arm path opens a set the instant the first idle rep
+   * closes, so that rep — plus the in-progress rep behind it, which is the
+   * one the lifter is mid-way through — belongs to the new set rather than to
+   * the idle ledger it was detected in.
+   *
+   * Only the tail is adopted: the idle pipeline accumulates across the whole
+   * session (rope positioning, walk-ups, the previous set's stragglers), and
+   * dragging all of it into the set would inflate every auto-armed set.
+   *
+   * No-op when no set is active or the idle pipeline is empty.
+   */
+  adoptIdleTail(repCount: number): void {
+    if (this.set === undefined || this._idleAnalyticsSet === undefined) {
+      return;
+    }
+    const tail = this._idleAnalyticsSet.reps.slice(-repCount);
+    this._analyticsSet = { ...this._idleAnalyticsSet, reps: tail };
+    this.set = { ...this.set, reps: [...tail] };
+    this._idleAnalyticsSet = undefined;
   }
 
   /**

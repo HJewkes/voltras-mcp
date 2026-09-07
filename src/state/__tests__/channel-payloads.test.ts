@@ -427,8 +427,23 @@ describe('buildSetStartedPayload', () => {
       active_mode: 'WeightTraining', // VMCP-02.70: = echo (== requested)
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:05:00.000Z',
+      auto_armed: false,
     });
     expect(parsed.previous_set_summary).toBeNull();
+  });
+
+  // VW-164 — the server can open a set itself on the lifter's first rep.
+  it('marks an auto-armed set on meta and content', () => {
+    const { meta, content } = buildSetStartedPayload(set, device, 1, null, { autoArmed: true });
+    expect(meta.auto_armed).toBe('true');
+    const parsed = JSON.parse(content);
+    expect(parsed.set.auto_armed).toBe(true);
+    expect(parsed.summary).toContain('auto-armed');
+  });
+
+  it('omits the auto_armed meta key for an explicit set.start', () => {
+    const { meta } = buildSetStartedPayload(set, device, 1, null);
+    expect(meta.auto_armed).toBeUndefined();
   });
 
   // VMCP-02.09 — applied (cmd=0x07) mode surfaced on both meta and content.

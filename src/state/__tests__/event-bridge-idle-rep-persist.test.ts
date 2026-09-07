@@ -122,6 +122,11 @@ function makeHarness(opts: HarnessOpts = {}) {
   const state = {
     slots,
     channels,
+    // Durable idle-rep capture is what this file covers, so auto-arm (VW-164)
+    // stays off here — with it on, an idle rep inside a session becomes rep 1
+    // of an auto-armed set instead. That path has its own coverage in
+    // event-bridge-auto-arm.test.ts.
+    config: { autoArm: 'off' },
     server: { server: { sendResourceUpdated: vi.fn(() => Promise.resolve()) } },
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),

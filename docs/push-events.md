@@ -46,7 +46,7 @@ filter on `slot` to keep parallel rep streams apart.
 | Event                    | Fires when                                                                                               | Auto-stops the set?       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).            | —                         |
-| `set_started`            | `set.start` succeeds. Carries device config plus a previous-set summary for fatigue context.             | —                         |
+| `set_started`            | `set.start` succeeds, or the server auto-arms on the lifter's first rep (`auto_armed: true`).            | —                         |
 | `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.          | —                         |
 | `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                         | implicit (device stopped) |
 | `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                                 | —                         |

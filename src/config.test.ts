@@ -20,6 +20,7 @@ describe('loadConfig', () => {
       repCorrections: 'off',
       cues: 'off',
       cuesMidSet: 'off',
+      autoArm: 'on',
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -157,6 +158,22 @@ describe('loadConfig', () => {
   it('honors VMCP_CUES_MIDSET="on" when explicitly set', () => {
     const cfg = loadConfig({ VMCP_CUES_MIDSET: 'on', HOME: '/home/test' });
     expect(cfg.cuesMidSet).toBe('on');
+  });
+
+  it('defaults VMCP_AUTO_ARM to "on" (VW-164 — losing the first reps of a set is worse)', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.autoArm).toBe('on');
+  });
+
+  it('honors VMCP_AUTO_ARM="off" when explicitly set', () => {
+    const cfg = loadConfig({ VMCP_AUTO_ARM: 'off', HOME: '/home/test' });
+    expect(cfg.autoArm).toBe('off');
+  });
+
+  it('throws on invalid VMCP_AUTO_ARM, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/on/);
   });
 
   it('throws on invalid VMCP_CUES_MIDSET, naming the bad value and listing valid options', () => {
