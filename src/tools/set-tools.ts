@@ -907,8 +907,9 @@ async function stampPartnerGroup(
 }
 
 /**
- * Refresh the `exercise_baselines` state row the set just contributed to
- * (VW-116). Hooked here, at `finalizeSet`, because it is the single choke
+ * Harvest a failure anchor from the set if it stalled (VW-174), then refresh
+ * the `exercise_baselines` state row the set just contributed to (VW-116).
+ * Hooked here, at `finalizeSet`, because it is the single choke
  * point every close path funnels through — the tool close, the device-signal
  * close, the inactivity force-close and the guided-load reap alike.
  *
@@ -927,13 +928,17 @@ async function stampPartnerGroup(
 async function recalcBaselineForSet(state: ServerState, stored: StoredSet): Promise<void> {
   if (stored.exerciseId === undefined || stored.userId === undefined) return;
   try {
+    // HARVEST FIRST, then recalc, so the derivation sees this set's anchor in
+    // the same close rather than one set late. Retrospective labelling only —
+    // nothing here asks for a set to be taken to failure (B59 / VW-174).
+    await state.store.harvestFailureAnchor(stored);
     await state.store.recalcBaseline({
       userId: stored.userId,
       exerciseId: stored.exerciseId,
       ...(stored.side !== undefined ? { side: stored.side } : {}),
     });
   } catch (err) {
-    log.warn(`baseline recalc failed for exercise ${stored.exerciseId}`, err);
+    log.warn(`baseline harvest/recalc failed for exercise ${stored.exerciseId}`, err);
   }
 }
 

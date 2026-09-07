@@ -46,13 +46,17 @@ function makeBaseline(overrides: Partial<StoredExerciseBaseline> = {}): StoredEx
 interface Harness {
   getBaseline: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
+  reharvestExercise: ReturnType<typeof vi.fn>;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
 }
 
 function setup(row: StoredExerciseBaseline | undefined): Harness {
   const getBaseline = vi.fn(async () => row);
   const recalcBaseline = vi.fn(async () => makeBaseline({ state: 'PROVISIONAL' }));
-  const state = { store: { getBaseline, recalcBaseline } } as unknown as ServerState;
+  const reharvestExercise = vi.fn(async () => ({ failure: 2, abort: 1, notCandidate: 9 }));
+  const state = {
+    store: { getBaseline, recalcBaseline, reharvestExercise },
+  } as unknown as ServerState;
 
   const placeholders = new Map<string, FakeRegisteredTool>();
   for (const name of ['baselines.get', 'baselines.recalc']) {
@@ -73,6 +77,7 @@ function setup(row: StoredExerciseBaseline | undefined): Harness {
   return {
     getBaseline,
     recalcBaseline,
+    reharvestExercise,
     invoke: async (name, args) => {
       const tool = placeholders.get(name);
       if (!tool?.callback) throw new Error(`no callback installed for ${name}`);
@@ -159,5 +164,22 @@ describe('baselines.recalc', () => {
     expect(Object.keys(body)).toEqual(['baseline']);
     expect((body.baseline as StoredExerciseBaseline).state).toBe('PROVISIONAL');
     expect(h.recalcBaseline).toHaveBeenCalledOnce();
+    expect(h.reharvestExercise).not.toHaveBeenCalled();
+  });
+
+  it('back-fills anchors first and reports the tally when reharvest is asked for', async () => {
+    // Arrange
+    const h = setup(undefined);
+
+    // Act
+    const r = await h.invoke('baselines.recalc', { exerciseId: 'row', reharvest: true });
+
+    // Assert — harvest runs BEFORE the derivation, or the recalc reads a
+    // corpus one pass out of date.
+    const body = parse<Record<string, unknown>>(r);
+    expect(body.harvest).toEqual({ failure: 2, abort: 1, notCandidate: 9 });
+    expect(h.reharvestExercise.mock.invocationCallOrder[0]).toBeLessThan(
+      h.recalcBaseline.mock.invocationCallOrder[0],
+    );
   });
 });

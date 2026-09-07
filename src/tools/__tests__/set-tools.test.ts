@@ -126,6 +126,8 @@ function makeStore(): SessionStore & {
   getSession: ReturnType<typeof vi.fn>;
   getSet: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
+  harvestFailureAnchor: ReturnType<typeof vi.fn>;
+  recalcBaseline: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -150,6 +152,8 @@ function makeStore(): SessionStore & {
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
     getAssignmentsForTemplate: vi.fn(async () => []),
+    harvestFailureAnchor: vi.fn(async () => 'not_candidate' as const),
+    recalcBaseline: vi.fn(async () => undefined),
     close: vi.fn(async () => {}),
   };
 }
@@ -949,6 +953,24 @@ describe('set.end', () => {
     expect(stored.positionUnits).toBe('meters');
     // Provenance, so a corpus fit can exclude synthetic rows.
     expect(stored.source).toBe('local');
+  });
+
+  it('harvests a failure anchor before recalculating the baseline (VW-174)', async () => {
+    // Order is the whole point: harvest writes the anchor this set may have
+    // produced, and the recalc that follows must see it in the SAME close
+    // rather than one set late.
+    startSession(h.live);
+    h.live.setSessionExercise('row', 'Cable Row');
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    const harvested = h.store.harvestFailureAnchor.mock.calls[0][0] as StoredSet;
+    expect(harvested.exerciseId).toBe('row');
+    expect(h.store.harvestFailureAnchor.mock.invocationCallOrder[0]).toBeLessThan(
+      h.store.recalcBaseline.mock.invocationCallOrder[0],
+    );
   });
 
   it('records no rest before the first set of a slot', async () => {

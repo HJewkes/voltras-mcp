@@ -118,6 +118,8 @@ export interface AnchorObservation {
    * caller — see `selectAnchors`.
    */
   sessionBucket: string;
+  /** When the anchor was observed, ISO-8601. */
+  observedAt: string;
   /** Terminal velocity at failure. Absent anchors do not contribute to spread. */
   terminalVelocityMps?: number;
 }
@@ -144,6 +146,7 @@ export interface BaselineDerivation {
   observedSessions: number;
   anchorCount: number;
   anchorSpread?: number;
+  lastAnchorAt?: string;
   firstObservedAt?: string;
   invalidatedAt?: string;
   invalidationReason?: string;
@@ -217,6 +220,8 @@ export function deriveBaselineState(obs: BaselineObservations, now: Date): Basel
     anchorCount,
   };
   if (anchorSpread !== undefined) out.anchorSpread = anchorSpread;
+  const lastAnchorAt = latestAnchorTimestamp(obs.anchors);
+  if (lastAnchorAt !== undefined) out.lastAnchorAt = lastAnchorAt;
   if (obs.firstObservedAt !== undefined) out.firstObservedAt = obs.firstObservedAt;
 
   if (!shapeEstablished) return out;
@@ -256,6 +261,10 @@ export function deriveBaselineState(obs: BaselineObservations, now: Date): Basel
 /** Row id for a baseline key: WA's stable, percent-encoded, collision-free id. */
 export function baselineRowId(key: BaselineKey): string {
   return baselineKeyId(key);
+}
+
+function latestAnchorTimestamp(anchors: AnchorObservation[]): string | undefined {
+  return anchors.map((a) => a.observedAt).sort()[anchors.length - 1];
 }
 
 function isStale(lastObservedAt: string | undefined, now: Date): boolean {
@@ -313,6 +322,7 @@ export function toBaselineRow(
   };
   if (key.side !== undefined) out.side = key.side;
   if (derived.anchorSpread !== undefined) out.anchorSpread = derived.anchorSpread;
+  if (derived.lastAnchorAt !== undefined) out.lastAnchorAt = derived.lastAnchorAt;
   if (derived.firstObservedAt !== undefined) out.firstObservedAt = derived.firstObservedAt;
   if (derived.invalidatedAt !== undefined) out.invalidatedAt = derived.invalidatedAt;
   if (derived.invalidationReason !== undefined) {

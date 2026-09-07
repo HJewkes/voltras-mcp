@@ -18,9 +18,16 @@
 // set row and replaces the entire rep array, so retries (e.g. force-end on
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
+import {
+  evaluateFailureCandidate,
+  type FailureCandidateContext,
+  type FailureCandidateEvaluation,
+  type FailureVerdict,
+} from './failure-harvest.js';
 import {
   baselineRowId,
   deriveBaselineState,
@@ -33,6 +40,7 @@ import {
   LOCAL_USER_ID,
   type BaselineState,
   type ExerciseSetsFilter,
+  type FailureHarvestCounts,
   type SessionCountFilter,
   type SessionDateSpan,
   type SessionListFilter,
@@ -44,6 +52,7 @@ import {
   type StoredIsometricTrial,
   type StoredPlannedExercise,
   type StoredExerciseBaseline,
+  type StoredFailureAnchor,
   type StoredProgramAssignment,
   type StoredRep,
   type StoredSession,
@@ -56,7 +65,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -442,6 +451,9 @@ const SCHEMA_SQL = `
     observed_sessions INTEGER NOT NULL DEFAULT 0,
     anchor_count INTEGER NOT NULL DEFAULT 0,
     anchor_spread REAL,
+    -- When the most recent counting anchor landed (v12). Count alone cannot
+    -- distinguish three anchors from last spring from three from last week.
+    last_anchor_at TEXT,
     first_observed_at TEXT,
     updated_at TEXT NOT NULL,
     invalidated_at TEXT,
@@ -478,6 +490,12 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_failure_anchors_key
     ON failure_anchors(user_id, exercise_id, setup_id, side, observed_at);
+  -- One verdict per (set, filter version) — the identity putFailureAnchor
+  -- upserts on (v12). Re-evaluating a set under the same filter rewrites its
+  -- verdict; a filter-version bump adds a row beside the old one, so history
+  -- is re-scorable rather than overwritten.
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_failure_anchors_set_filter
+    ON failure_anchors(set_id, filter_version);
 
   -- Persisting inputs AND the thresholds in force at issue time is what lets a
   -- changed threshold be re-scored against history — the mechanism by which an
@@ -957,6 +975,28 @@ function migrateV10ToV11(db: DatabaseSync): void {
 }
 
 /**
+ * v11→v12 (VW-174): give `failure_anchors` the identity its first writer
+ * upserts on, and `exercise_baselines` a `last_anchor_at` column.
+ *
+ * ADDITIVE ONLY, in the shape v10→v11 took. The unique index is creatable on
+ * any existing file because the table has never had a writer: every DB on disk
+ * has zero anchor rows, so there is nothing for it to conflict with. Nothing
+ * is backfilled — `last_anchor_at` is null until the next recalc derives it
+ * from anchors that do not exist yet either.
+ *
+ * Probed with `columnNames` because `applyMigrations` also runs on fresh DBs
+ * whose `SCHEMA_SQL` already declares both.
+ */
+function migrateV11ToV12(db: DatabaseSync): void {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_failure_anchors_set_filter
+      ON failure_anchors(set_id, filter_version)
+  `);
+  if (columnNames(db, 'exercise_baselines').has('last_anchor_at')) return;
+  db.exec(`ALTER TABLE exercise_baselines ADD COLUMN last_anchor_at TEXT`);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1261,6 +1301,7 @@ interface ExerciseBaselineRow {
   observed_sessions: number;
   anchor_count: number;
   anchor_spread: number | null;
+  last_anchor_at: string | null;
   first_observed_at: string | null;
   updated_at: string;
   invalidated_at: string | null;
@@ -2268,6 +2309,7 @@ export class SqliteSessionStore implements SessionStore {
     return rows.map((row) => {
       const out: AnchorObservation = {
         sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
+        observedAt: row.observed_at,
       };
       if (row.terminal_velocity_mps !== null) {
         out.terminalVelocityMps = row.terminal_velocity_mps;
@@ -2295,15 +2337,17 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(
         `INSERT INTO exercise_baselines
            (id, user_id, exercise_id, setup_id, side, state, confidence,
-            observed_sessions, anchor_count, anchor_spread, first_observed_at,
+            observed_sessions, anchor_count, anchor_spread, last_anchor_at,
+            first_observed_at,
             updated_at, invalidated_at, invalidation_reason, algorithm_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            state = excluded.state,
            confidence = excluded.confidence,
            observed_sessions = excluded.observed_sessions,
            anchor_count = excluded.anchor_count,
            anchor_spread = excluded.anchor_spread,
+           last_anchor_at = excluded.last_anchor_at,
            first_observed_at = excluded.first_observed_at,
            updated_at = excluded.updated_at,
            invalidated_at = excluded.invalidated_at,
@@ -2321,12 +2365,134 @@ export class SqliteSessionStore implements SessionStore {
         b.observedSessions,
         b.anchorCount,
         b.anchorSpread ?? null,
+        b.lastAnchorAt ?? null,
         b.firstObservedAt ?? null,
         b.updatedAt,
         b.invalidatedAt ?? null,
         b.invalidationReason ?? null,
         b.algorithmVersion,
       );
+  }
+
+  // --- Failure anchors (B59 / VW-174) ---
+
+  /**
+   * `ON CONFLICT (set_id, filter_version) DO UPDATE`, never `INSERT OR
+   * REPLACE`: `failure_anchors` hangs off the `users` cascade and points at
+   * `sets`, and a delete-then-insert is the wrong primitive there for the
+   * reason `putSet` spells out (#79).
+   *
+   * The conflict target is the (set, filter version) pair rather than `id`
+   * because that pair is the real identity — one verdict per set per filter.
+   * `id` is opaque and generated by the caller, so a re-evaluation arrives
+   * with a different one and must still update the row it re-scored.
+   * EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+   */
+  async putFailureAnchor(a: StoredFailureAnchor): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO failure_anchors
+           (id, user_id, set_id, exercise_id, setup_id, side, observed_at, source,
+            terminal_velocity_mps, load_lbs, rep_count, set_index_in_session,
+            session_position_sec, filter_inputs_json, filter_verdict, filter_version,
+            self_reported_rir)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(set_id, filter_version) DO UPDATE SET
+           user_id = excluded.user_id,
+           exercise_id = excluded.exercise_id,
+           setup_id = excluded.setup_id,
+           side = excluded.side,
+           observed_at = excluded.observed_at,
+           source = excluded.source,
+           terminal_velocity_mps = excluded.terminal_velocity_mps,
+           load_lbs = excluded.load_lbs,
+           rep_count = excluded.rep_count,
+           set_index_in_session = excluded.set_index_in_session,
+           session_position_sec = excluded.session_position_sec,
+           filter_inputs_json = excluded.filter_inputs_json,
+           filter_verdict = excluded.filter_verdict,
+           self_reported_rir = excluded.self_reported_rir`,
+      )
+      .run(
+        a.id,
+        a.userId,
+        a.setId,
+        a.exerciseId,
+        a.setupId ?? null,
+        a.side ?? null,
+        a.observedAt,
+        a.source,
+        a.terminalVelocityMps ?? null,
+        a.loadLbs ?? null,
+        a.repCount ?? null,
+        a.setIndexInSession ?? null,
+        a.sessionPositionSec ?? null,
+        JSON.stringify(a.filterInputs),
+        a.filterVerdict,
+        a.filterVersion,
+        a.selfReportedRir ?? null,
+      );
+    return Promise.resolve();
+  }
+
+  /**
+   * Evaluate one closed set and persist the verdict when it was a candidate.
+   *
+   * A set with no `exerciseId` or `userId` has no baseline key to belong to,
+   * so there is nothing an anchor could inform — skipped as `'not_candidate'`
+   * rather than written against a key that does not exist.
+   */
+  async harvestFailureAnchor(set: StoredSet): Promise<FailureVerdict> {
+    if (set.exerciseId === undefined || set.userId === undefined) {
+      return Promise.resolve('not_candidate');
+    }
+    const evaluation = evaluateFailureCandidate(set, this.harvestContext(set));
+    if (evaluation.verdict === 'not_candidate') return evaluation.verdict;
+    await this.putFailureAnchor(
+      toFailureAnchor(set, set.userId, set.exerciseId, randomUUID(), evaluation),
+    );
+    return evaluation.verdict;
+  }
+
+  /**
+   * Back-fill: re-run the filter over every working set for one key. Warm-ups
+   * are excluded here for the same reason `recalcBaseline` excludes them, and
+   * again inside the filter — a set that was never a working set is not an
+   * anchor candidate under any threshold.
+   */
+  async reharvestExercise(key: BaselineKey): Promise<FailureHarvestCounts> {
+    assertDefaultSetup(key);
+    const sets = await this.getSetsForExercise({
+      userId: key.userId,
+      exerciseId: key.exerciseId,
+      ...(key.side !== undefined ? { side: key.side } : {}),
+      purpose: ['working'],
+    });
+    const counts: FailureHarvestCounts = { failure: 0, abort: 0, notCandidate: 0 };
+    for (const set of sets) {
+      const verdict = await this.harvestFailureAnchor(set);
+      if (verdict === 'failure') counts.failure++;
+      else if (verdict === 'abort') counts.abort++;
+      else counts.notCandidate++;
+    }
+    return counts;
+  }
+
+  /**
+   * The selection-bias context for one set: where it sat in its session. Both
+   * values are recorded, never judged on — harvested anchors skew toward later
+   * sets, and correcting for that later needs the position it happened at.
+   */
+  private harvestContext(set: StoredSet): FailureCandidateContext {
+    const out: FailureCandidateContext = {};
+    if (set.setIndexInSession !== undefined) out.setIndexInSession = set.setIndexInSession;
+    const row = this.db
+      .prepare(`SELECT started_at FROM sessions WHERE id = ?`)
+      .get(set.sessionId) as { started_at: string } | undefined;
+    if (row === undefined) return out;
+    const seconds = (Date.parse(set.startedAt) - Date.parse(row.started_at)) / 1000;
+    if (Number.isFinite(seconds)) out.sessionPositionSec = Math.round(seconds);
+    return out;
   }
 
   async close(): Promise<void> {
@@ -2406,6 +2572,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   //     scanning all of `sets` — additive index only, no data change.
   // 10 = v10 schema; v11 adds `sets.velocity_units` (VW-160), additive column
   //     backfilled 'device_native'.
+  // 11 = v11 schema; v12 adds the `failure_anchors(set_id, filter_version)`
+  //     unique index and `exercise_baselines.last_anchor_at` (VW-174) —
+  //     additive index + column, nothing rewritten.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2420,6 +2589,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 8 &&
     found !== 9 &&
     found !== 10 &&
+    found !== 11 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2464,6 +2634,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 10) {
     migrateV10ToV11(db);
+  }
+  if (current <= 11) {
+    migrateV11ToV12(db);
   }
 }
 
@@ -2730,6 +2903,50 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   return out;
 }
 
+/**
+ * Assemble the row to persist from a set plus its verdict.
+ *
+ * `source` is always `'harvested'`: this path labels a failure that already
+ * happened in ordinary training. Nothing in the product prescribes one, so
+ * nothing here may write `'prescribed'`.
+ *
+ * `setupId` is left absent — `exercise_setups` has no writer either (VW-119),
+ * and `selectAnchors` filters `setup_id IS NULL`, so a value here would hide
+ * the anchor from the only reader there is.
+ */
+function toFailureAnchor(
+  set: StoredSet,
+  userId: string,
+  exerciseId: string,
+  id: string,
+  evaluation: FailureCandidateEvaluation,
+): StoredFailureAnchor {
+  const out: StoredFailureAnchor = {
+    id,
+    userId,
+    setId: set.id,
+    exerciseId,
+    observedAt: set.endedAt,
+    source: 'harvested',
+    repCount: set.reps.length,
+    filterInputs: { ...evaluation.inputs },
+    filterVerdict: evaluation.verdict,
+    filterVersion: evaluation.filterVersion,
+  };
+  if (set.side !== undefined) out.side = set.side;
+  if (set.weightLbs !== undefined) out.loadLbs = set.weightLbs;
+  if (evaluation.terminalVelocityMps !== undefined) {
+    out.terminalVelocityMps = evaluation.terminalVelocityMps;
+  }
+  if (evaluation.inputs.setIndexInSession !== undefined) {
+    out.setIndexInSession = evaluation.inputs.setIndexInSession;
+  }
+  if (evaluation.inputs.sessionPositionSec !== undefined) {
+    out.sessionPositionSec = evaluation.inputs.sessionPositionSec;
+  }
+  return out;
+}
+
 function rowToExerciseBaseline(row: ExerciseBaselineRow): StoredExerciseBaseline {
   const out: StoredExerciseBaseline = {
     id: row.id,
@@ -2745,6 +2962,7 @@ function rowToExerciseBaseline(row: ExerciseBaselineRow): StoredExerciseBaseline
   if (row.side !== null) out.side = row.side;
   if (row.confidence !== null) out.confidence = row.confidence;
   if (row.anchor_spread !== null) out.anchorSpread = row.anchor_spread;
+  if (row.last_anchor_at !== null) out.lastAnchorAt = row.last_anchor_at;
   if (row.first_observed_at !== null) out.firstObservedAt = row.first_observed_at;
   if (row.invalidated_at !== null) out.invalidatedAt = row.invalidated_at;
   if (row.invalidation_reason !== null) out.invalidationReason = row.invalidation_reason;
