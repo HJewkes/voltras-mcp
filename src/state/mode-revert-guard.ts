@@ -61,14 +61,17 @@ interface RequestedEntry {
  * `arm()` call (e.g., session.start followed by set.start) overwrites the
  * first entry — the guard always watches the most recently requested mode.
  *
- * Latched abort state persists until `consumeAbort()` is called. A pending
- * abort blocks every set.start until consumed, which is intentional: a
- * detected mode revert is a hard safety stop, not a soft notification, and
- * the user should be told what happened before any further load engagement.
+ * Latched abort state persists until `consumeAbort()` is called or the
+ * device echoes the requested mode back (the recovery signal — see
+ * `onSettingsUpdate`). A pending abort blocks every set.start until then,
+ * which is intentional: an UNRESOLVED mode revert is a hard safety stop, not
+ * a soft notification, and the user should be told what happened before any
+ * further load engagement.
  */
 export class ModeRevertGuard {
   private requested: RequestedEntry | null = null;
   private aborted: ModeRevertAbort | null = null;
+  private lastEcho: TrainingMode | undefined = undefined;
 
   /**
    * Wall-clock provider — defaulted to `Date.now` and parameterised so unit
@@ -82,14 +85,22 @@ export class ModeRevertGuard {
    * trainingMode differs from `mode` will latch an abort.
    *
    * Calling `arm` while an abort is already latched does NOT clear the
-   * abort by itself — only an in-window matched-mode echo (see
-   * `onSettingsUpdate`) or `consumeAbort()` does — but DOES reset the
-   * requested entry to the new mode so a fresh detection cycle starts.
-   * This keeps the abort surface live until either the user's setter
-   * cascade is corroborated by the device or set.start consumes it.
+   * abort by itself — only a matched-mode echo (see `onSettingsUpdate`)
+   * or `consumeAbort()` does — but DOES reset the requested entry to the
+   * new mode so a fresh detection cycle starts. This keeps the abort
+   * surface live until either the user's setter cascade is corroborated by
+   * the device or set.start consumes it.
+   *
+   * VW-163: the one exception is arming for the mode the device is ALREADY
+   * echoing. The revert the latch recorded is over — the device sits in the
+   * mode being asked for — so holding the latch would block the next
+   * set.start over a resolved condition.
    */
   arm(mode: TrainingMode): void {
     this.requested = { mode, at: this.now() };
+    if (this.lastEcho === mode) {
+      this.aborted = null;
+    }
   }
 
   /**
@@ -113,8 +124,18 @@ export class ModeRevertGuard {
    * those events do not affect the guard.
    */
   onSettingsUpdate(trainingMode: TrainingMode | undefined): void {
-    if (this.requested === null) return;
     if (trainingMode === undefined) return;
+    this.lastEcho = trainingMode;
+    // VW-163: recovery is not bounded by the detection window. The device
+    // echoing the mode the latch recorded as REQUESTED means the revert has
+    // resolved, whether that echo lands 200ms or 20 minutes later. Before
+    // this, a latch could only clear inside a 2s window after a fresh
+    // `arm()`, so a hardware recovery that arrived late blocked every
+    // subsequent set.start until the session was cycled.
+    if (this.aborted !== null && this.aborted.requested === trainingMode) {
+      this.aborted = null;
+    }
+    if (this.requested === null) return;
     const elapsed = this.now() - this.requested.at;
     if (elapsed > MODE_REVERT_WINDOW_MS) {
       // Window expired without divergence — clear the requested entry so
@@ -171,9 +192,10 @@ export class ModeRevertGuard {
     return abort;
   }
 
-  /** Drop both in-flight and latched state. Used in tests / on disconnect. */
+  /** Drop in-flight, latched and echo state. Used in tests / on disconnect. */
   reset(): void {
     this.requested = null;
     this.aborted = null;
+    this.lastEcho = undefined;
   }
 }

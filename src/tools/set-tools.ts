@@ -229,6 +229,26 @@ function armModeRevertGuardForSet(slot: ReturnType<typeof getSlot>): void {
   }
 }
 
+/**
+ * VW-163: has the latched revert already resolved on the device?
+ *
+ * The cmd=0x10 echo (`DeviceSnapshot.trainingMode`) is the single reliable
+ * mode signal (see `active-mode.ts`), so the revert is live only while the
+ * device still echoes the mode it reverted TO. Once the echo moves — back to
+ * the requested mode after a later `device.set_mode`, or on to some third
+ * mode, which is what a stale `{requested: Weight Training, actual: Idle}`
+ * latch from `device.unload`'s mode bounce looks like — the latch describes
+ * a condition that no longer exists and must not block the next set.
+ */
+function isModeRevertResolved(
+  abort: { requested: TrainingMode; actual: TrainingMode },
+  slot: ReturnType<typeof getSlot>,
+): boolean {
+  const echoed = slot.live.snapshotDevice().trainingMode;
+  if (echoed === undefined) return false;
+  return echoed !== TrainingModeNames[abort.actual];
+}
+
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
@@ -280,8 +300,14 @@ async function startSet(
   // mode on the unit and retry; arming the guard again happens implicitly
   // when set.start is called and `armModeRevertGuardForSet` records the
   // device's *current* mode below.
+  //
+  // VW-163: a latch whose requested mode is what the device now echoes is
+  // stale — the revert resolved (a later `device.set_mode`, or the mode
+  // bounce inside `device.unload` settling back). `consumeAbort` clears the
+  // latch either way, so the recovered case simply falls through and starts
+  // the set instead of refusing it.
   const pendingAbort = slot.modeRevertGuard.consumeAbort();
-  if (pendingAbort !== null) {
+  if (pendingAbort !== null && !isModeRevertResolved(pendingAbort, slot)) {
     const requestedName =
       TrainingModeNames[pendingAbort.requested] ?? String(pendingAbort.requested);
     const actualName = TrainingModeNames[pendingAbort.actual] ?? String(pendingAbort.actual);
@@ -296,8 +322,8 @@ async function startSet(
       'SET_ABORTED_BY_MODE_REVERT',
       `Set aborted: device reverted from ${requestedName} to ${actualName} after the user requested ${requestedName}. ` +
         `Motor not engaged. Recovery: (1) re-issue the setter cascade that targets ${requestedName} ` +
-        `(e.g. device.set_mode); the latch auto-clears as soon as the device echoes back ${requestedName} ` +
-        `within the detection window. (2) Or call session.end + session.start to drop the latched session ` +
+        `(e.g. device.set_mode); the latch clears as soon as the device stops echoing ${actualName}, ` +
+        `however long that takes. (2) Or call session.end + session.start to drop the latched session ` +
         `state and start fresh. The current device mode is ${actualName} — use device.get_state to inspect ` +
         `the mode_revert_latched block before retrying.`,
     );
