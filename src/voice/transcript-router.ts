@@ -1,19 +1,22 @@
 // Pure transcript classifier for the VAD+whisper listener (VMCP-02.77 P3).
 //
-// Splits a whisper transcript into three routing tiers so the listener can act:
+// Splits a whisper transcript into four routing tiers so the listener can act:
 //   - 'safety'  emergency stop phrases (ungated by wake; wired to unload in .78)
+//   - 'command' a local weight command -> applied on the device, no model turn
 //   - 'wake'    the user addressed the coach -> forward the stripped command
 //   - 'ignore'  ambient speech -> drop
 // No I/O: classification is a function of the string alone.
 
 import { stripWhisperMarkup } from './whisper-markup.js';
+import { parseWeightCommand, type WeightCommand } from './weight-command.js';
 
-export type TranscriptTier = 'safety' | 'wake' | 'ignore';
+export type TranscriptTier = 'safety' | 'command' | 'wake' | 'ignore';
 
 export interface RouteResult {
   tier: TranscriptTier;
   matchedPhrase?: string; // set when tier==='safety' — which safety phrase matched
   commandText?: string; // set when tier==='wake' — transcript with the wake phrase stripped
+  command?: WeightCommand; // set when tier==='command' — the parsed weight intent
 }
 
 export const SAFETY_PHRASES: readonly string[] = [
@@ -118,6 +121,15 @@ export function routeTranscript(
     return { tier: 'safety', matchedPhrase: safety };
   }
 
+  // Weight commands are wake-free by design (hands are busy mid-set), but a
+  // wake-prefixed one still has to reach the fast path, so the stripped
+  // remainder gets a second parse.
+  const command = parseWeightCommand(text);
+  if (command !== null) return { tier: 'command', command };
+
   const wakePhrases = opts?.wakePhrases ?? DEFAULT_WAKE_PHRASES;
-  return findWake(text, wakePhrases) ?? { tier: 'ignore' };
+  const wake = findWake(text, wakePhrases);
+  if (wake === undefined) return { tier: 'ignore' };
+  const wakeCommand = parseWeightCommand(wake.commandText!);
+  return wakeCommand === null ? wake : { tier: 'command', command: wakeCommand };
 }

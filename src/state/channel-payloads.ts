@@ -1650,6 +1650,112 @@ export function buildVoiceInputPayload(
   return { meta, content };
 }
 
+/** Which spoken form drove a local weight change. */
+export type VoiceCommandKind = 'absolute' | 'relative' | 'undo';
+
+/**
+ * Build the meta + content for a `voice_command_applied` channel event
+ * (VMCP-02.87). Fired when the listener recognized a weight command and wrote
+ * it to the cable itself, with no model turn in between.
+ *
+ * The model must read this as "already done": re-issuing `device.set_weight`
+ * would fight the athlete's voice. `previousLbs` is what the slot carried
+ * before the write — the value a subsequent "cancel" reverts to. `clamped` is
+ * true when a relative step ran into the 5-200 lb bound and was pinned to it.
+ */
+export function buildVoiceCommandAppliedPayload(args: {
+  slot: string;
+  kind: VoiceCommandKind;
+  lbs: number;
+  previousLbs: number | null;
+  transcript: string;
+  clamped?: boolean;
+}): { meta: Record<string, string>; content: string } {
+  const { slot, kind, lbs, previousLbs, transcript, clamped = false } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'voice_command_applied',
+    slot,
+    command: kind,
+    weight_lbs: String(lbs),
+    applied: 'true',
+  };
+  if (clamped) meta.clamped = 'true';
+  const from = previousLbs === null ? '' : ` (from ${previousLbs} lb)`;
+  const summary =
+    `Voice fast-path already set slot ${slot} to ${lbs} lb${from} on "${transcript}" — ` +
+    'do NOT call device.set_weight for this.';
+  const content = JSON.stringify({
+    summary,
+    slot,
+    command: kind,
+    weight_lbs: lbs,
+    previous_lbs: previousLbs,
+    transcript,
+    clamped,
+    applied: true,
+  });
+  return { meta, content };
+}
+
+/** Why a recognized weight command changed nothing. */
+export type VoiceCommandRejectReason =
+  | 'no_weight_context'
+  | 'no_connected_slot'
+  | 'ambiguous_slot'
+  | 'slot_not_connected'
+  | 'out_of_range'
+  | 'unknown_current_weight'
+  | 'nothing_to_undo'
+  | 'set_failed';
+
+const COMMAND_REJECT_DETAIL: Record<VoiceCommandRejectReason, string> = {
+  no_weight_context: 'the local weight fast-path is not wired in this server',
+  no_connected_slot: 'no device is connected to any slot',
+  ambiguous_slot: 'two slots are connected and the phrase named no side',
+  slot_not_connected: 'the named side has no connected device',
+  out_of_range: 'the requested weight is outside the device range (5-200 lb)',
+  unknown_current_weight: 'the slot has not reported a weight yet, so a relative step has no base',
+  nothing_to_undo: 'no local voice weight change has been made to revert',
+  set_failed: 'the weight write to the device failed',
+};
+
+/**
+ * Build the meta + content for a `voice_command_rejected` channel event
+ * (VMCP-02.87). Fired when the parser recognized a weight command but the
+ * fast-path declined to act. The transcript is ALSO published as an ordinary
+ * `voice_input` alongside this, so the model can still handle the request —
+ * this event exists so a declined command never looks like plain conversation
+ * (the failure mode `deterministic_stop_unavailable` was added to close).
+ */
+export function buildVoiceCommandRejectedPayload(args: {
+  transcript: string;
+  reason: VoiceCommandRejectReason;
+  slot?: string | undefined;
+  detail?: string | undefined;
+}): { meta: Record<string, string>; content: string } {
+  const { transcript, reason, slot, detail } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'voice_command_rejected',
+    reason,
+    applied: 'false',
+  };
+  if (slot !== undefined) meta.slot = slot;
+  const summary =
+    `Voice weight command "${transcript}" was NOT applied — ${COMMAND_REJECT_DETAIL[reason]}. ` +
+    'Handle it yourself if the athlete meant it.';
+  const content = JSON.stringify({
+    summary,
+    transcript,
+    reason,
+    slot: slot ?? null,
+    detail: detail ?? null,
+    applied: false,
+  });
+  return { meta, content };
+}
+
 /**
  * Build the meta + content for an `idle_rep` channel event. Fires when the
  * bridge detects a rep boundary from the frame stream while no MCP set is
