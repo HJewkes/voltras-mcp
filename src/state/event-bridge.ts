@@ -1178,6 +1178,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (typeof incomingWeight === 'number' && incomingWeight !== lastBaseWeight) {
         lastBaseWeight = incomingWeight;
         publishCmd10SettingsUpdate('weightLbs', incomingWeight, live, slotChannels);
+        refreshPreFirstRepSnapshot(state, live);
       }
 
       // F2/F3 coercion correlation: walk every field the SDK surfaced and
@@ -1654,6 +1655,26 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       delete slot.pendingGuidedLoadInactivityMs;
     }
   }
+}
+
+/**
+ * Re-take the open set's start snapshot while it still has no reps (VW-165).
+ *
+ * The header weight is snapshotted at `set.start`, so pre-arming — arm, then
+ * dial the weight in on the unit, then lift — logged the PREVIOUS weight on
+ * every set (139 for a set lifted at 170) and fired `weight_implied_mismatch`
+ * each time, even though the reps themselves carried the right load.
+ *
+ * The snapshot freezes at rep 1 and stays frozen: a weight written mid-set is
+ * the firmware's own no-op — it does not apply while the cable is under
+ * tension (dogfood item 10: peak force stayed at 31 lb for a full set after
+ * setting 45) — so following it would make the header describe a load nobody
+ * lifted. Everything after rep 1 keeps the existing snapshot-at-start rule.
+ */
+function refreshPreFirstRepSnapshot(state: ServerState, live: LiveState): void {
+  const set = live.snapshotSet();
+  if (set === undefined || set.reps.length > 0) return;
+  state.setStartDeviceSnapshots.set(set.setId, live.snapshotDevice());
 }
 
 /**

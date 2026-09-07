@@ -165,6 +165,10 @@ tool calls are what Claude issues underneath.
    training plan later, start with `exerciseId`.
 4. **"Starting my set — stop me at 8 reps."** → `set.start`, optionally with a `watch`
    block so the server auto-stops the set at 8 reps or on a velocity-loss threshold. Lift.
+   The set's header weight tracks the unit until the first rep closes, so arming before
+   you dial the weight in still logs the weight you lifted. After rep 1 it is frozen: a
+   weight written mid-set is the firmware's own no-op — it does not apply while the cable
+   is under tension — so the header would otherwise name a load nobody lifted.
 5. **"Done."** → `set.end`. This persists the set and every rep with its telemetry.
 6. Repeat 4–5 per set. Rest timers: ask for one and Claude uses `timer.start`, which is
    non-blocking and fires an event when it elapses.
