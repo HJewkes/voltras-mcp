@@ -219,8 +219,11 @@ Add `?variant=live-dual` (or `?variant=live`) to pin the two-device (bilateral) 
 single-device layout for testing; without it, the page picks the stage from live state.
 
 The port defaults to **7723** and is set by `VMCP_DASHBOARD_PORT`; `off` (or `0`) disables
-the sidecar entirely. If `dist/spa` was never built, `/app` serves a small "SPA not built"
-placeholder instead of erroring — if you see that, run `npm run build:dashboard`.
+the sidecar entirely. If the port is already held (another session's server got there
+first), the sidecar binds an OS-assigned port instead of giving up — so **read the URL
+from `server.health`'s `dashboardUrl`** rather than assuming 7723. `/` redirects to
+`/app`. If `dist/spa` was never built, `/app` serves a small "SPA not built" placeholder
+instead of erroring — if you see that, run `npm run build:dashboard`.
 
 `src/dashboard/README.md` documents the architecture: why a React Native component library
 renders on the web here, the Vite aliasing that makes it build, and the `/api/snapshot`
@@ -236,7 +239,7 @@ Everything is optional; the defaults are a working configuration.
 | ------------------------- | ------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VOLTRA_ADAPTER`          | `node`                          | `node` \| `mock`                       | BLE adapter. `mock` uses an in-process device and adds the `mock.*` tools. Invalid values throw at startup.                                                                                                                                                                                                                                                                                                                                                                            |
 | `VMCP_DB_PATH`            | `~/.voltras/vmcp.sqlite`        | absolute path                          | SQLite store. Parent directory is created if missing. See [running more than one instance](#running-more-than-one-instance).                                                                                                                                                                                                                                                                                                                                                           |
-| `VMCP_DASHBOARD_PORT`     | `7723`                          | port number \| `off` \| `0`            | Dashboard sidecar port. `off` disables it. An unparseable value silently falls back to the default rather than failing.                                                                                                                                                                                                                                                                                                                                                                |
+| `VMCP_DASHBOARD_PORT`     | `7723`                          | port number \| `off` \| `0`            | Dashboard sidecar port. `off` disables it. An unparseable value silently falls back to the default rather than failing. A port already in use falls back to an OS-assigned one — `server.health`'s `dashboardUrl` always names the port actually bound.                                                                                                                                                                                                                                |
 | `VMCP_LOG_LEVEL`          | `info`                          | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr — stdout is reserved for the MCP transport.                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `VMCP_CUES`               | `off`                           | `off` \| `on`                          | Deterministic spoken coaching cues (set intros, "two reps left", set-complete) fired the instant the triggering event does, with no model round-trip. **macOS only** — routes through the built-in `say` binary; a no-op elsewhere. Off by default because cues are audible and will double up with model-generated speech unless the coaching prompt cedes those categories. STARTUP DEFAULT ONLY — `system.set_cues` flips it at runtime and `server.health` reports the live value. |
 | `VMCP_CUES_MIDSET`        | `off`                           | `off` \| `on`                          | Whether the two cue categories that fire while the lifter is still under load (`target_hit`, `slowdown`) may speak. Off by default: every cue mutes the mic for its duration, so the ungated voice "stop" path is unavailable for that window, and mid-set is the worst place for that blind spot. Also a startup default only — see `system.set_cues`.                                                                                                                                |
@@ -258,9 +261,9 @@ immediately rather than being silently ignored.
 Stdio is a single-client transport, so **every Claude Code session spawns its own
 `voltras-mcp` process**. Two of them with default settings will collide in two places:
 
-- **Port 7723.** The second sidecar fails to bind. The error names the port and suggests
-  `VMCP_DASHBOARD_PORT`; the MCP server itself keeps working, you just lose that
-  dashboard.
+- **Port 7723.** The second sidecar can't bind it, so it falls back to an OS-assigned
+  port and logs both. The MCP server itself keeps working; ask `server.health` which URL
+  belongs to this session, or pin one with `VMCP_DASHBOARD_PORT`.
 - **The SQLite file.** Both processes open `~/.voltras/vmcp.sqlite`. On open, the store
   runs a single write-lock probe, which rejects the newcomer _only if_ the incumbent
   happens to hold a write lock at that instant. Otherwise both succeed and their later
@@ -349,8 +352,10 @@ built — it's an optional dependency, so a failed build is silent at install ti
 
 **`/app` shows "SPA not built".** Run `npm run build:dashboard`.
 
-**The dashboard is unreachable.** Another instance already holds port 7723, or
-`VMCP_DASHBOARD_PORT` is `off`. Check stderr — the sidecar logs the URL it bound to.
+**The dashboard is unreachable.** You are probably on the wrong port: another instance
+holds 7723, so this session fell back to an OS-assigned one. Call `server.health` and read
+`dashboardUrl` (or check stderr — the sidecar logs the URL it bound to). A null
+`dashboardUrl` means `VMCP_DASHBOARD_PORT` is `off` or the bind failed outright.
 
 **Nothing works and the error mentions `node:sqlite`.** Your Node is older than 22.5.0.
 

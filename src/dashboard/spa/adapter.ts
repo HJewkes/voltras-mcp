@@ -274,8 +274,28 @@ export interface CurrentSetView {
   velocitiesMps: number[];
 }
 
-function firstDevice(snapshot: Snapshot): SnapshotDevice | null {
-  return snapshot.devices[0]?.device ?? null;
+/**
+ * The one device a single-device view should speak for.
+ *
+ * `devices[0]` is the wrong answer on a bilateral rig (VW-166): the `primary`
+ * slot is allocated but never connected once both cables are bound to
+ * `left`/`right`, so the wall read OFFLINE while both limbs were live.
+ * Preference order:
+ *
+ *   1. the slot carrying the active set — a mid-set drop must still read
+ *      OFFLINE, so this wins over a connected bystander slot;
+ *   2. any connected slot — the bilateral case, where `primary` is dead weight;
+ *   3. the first entry — keeps a lone disconnected device reading OFFLINE
+ *      rather than downgrading it to the softer WAITING;
+ *   4. null when the snapshot carries no slots at all.
+ */
+export function pickRepresentativeDevice(snapshot: Snapshot): SnapshotDevice | null {
+  const entries = snapshot.devices;
+  const active = entries.find((entry) => entry.sets?.active != null);
+  if (active !== undefined) return active.device;
+  const connected = entries.find((entry) => entry.device.connected === true);
+  if (connected !== undefined) return connected.device;
+  return entries[0]?.device ?? null;
 }
 
 /** Read the configured rep target from the set's `watch.notifyOn` triggers. */
@@ -341,7 +361,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
       velocitiesMps: [],
     };
   }
-  const device = firstDevice(snapshot);
+  const device = pickRepresentativeDevice(snapshot);
   const reps = Array.isArray(set.reps) ? set.reps : [];
   const latest = reps.length > 0 ? reps[reps.length - 1] : null;
   const targetTenths = set.latestInProgress?.targetWeightTenths;
@@ -401,7 +421,7 @@ export function buildConnectionStatus(
   snapshot: Snapshot,
   pollStatus: 'ok' | 'stale' | 'error',
 ): ConnectionStatus {
-  const device = firstDevice(snapshot);
+  const device = pickRepresentativeDevice(snapshot);
   // Sidecar unreachable — we cannot vouch for device state at all.
   if (pollStatus === 'error') {
     return {
@@ -604,7 +624,7 @@ export function reduceSnapshot(
 ): AccumulatorState {
   const sessionId = snapshot.session?.sessionId ?? null;
   const activeSet = snapshot.sets.active;
-  const device = firstDevice(snapshot);
+  const device = pickRepresentativeDevice(snapshot);
 
   let setLog = state.setLog;
   let lastSessionId = state.lastSessionId;

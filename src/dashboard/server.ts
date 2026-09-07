@@ -27,6 +27,8 @@
 //
 // ── Endpoints ─────────────────────────────────────────────────────────────
 //
+//   GET /                — 302 to `/app`. The root is what an operator types
+//                          from memory, so it must land on the dashboard.
 //   GET /app             — titan-design React SPA (Vite + react-native-web),
 //                          served read-only from the vite-built bundle in
 //                          `dist/spa` (js/css under `/app/assets/*`). The sole
@@ -111,6 +113,10 @@ import type {
 export const DEFAULT_DASHBOARD_PORT = 7723;
 /** Default bind address — loopback only. See module header for rationale. */
 export const DEFAULT_DASHBOARD_HOST = '127.0.0.1';
+/** Path the SPA is served at. `/` redirects here; `dashboardUrl` ends here. */
+export const DASHBOARD_SPA_PATH = '/app';
+/** `listen(0)` — let the OS assign a free port. Used by the EADDRINUSE retry. */
+const EPHEMERAL_PORT = 0;
 /** Hard cap on `?limit=` for `/api/history`. Anything larger is clamped. */
 export const HISTORY_MAX_LIMIT = 100;
 /** Default `?limit=` for `/api/history` when the query parameter is absent. */
@@ -121,6 +127,14 @@ export interface DashboardServerOptions {
   port?: number;
   /** Bind address. Defaults to `127.0.0.1` (loopback). */
   host?: string;
+  /**
+   * On `EADDRINUSE`, retry once on an OS-assigned port instead of rejecting
+   * (VW-167). Any idle session that spawned a server first holds 7723, and the
+   * session actually driving the bench then got no dashboard at all. A
+   * different port beats no dashboard; the caller reports {@link
+   * DashboardServerHandle.port}, which is always the real bound port.
+   */
+  fallbackToEphemeralPort?: boolean;
   /** Live server state. Snapshot/history endpoints read from this. */
   state: DashboardServerState;
 }
@@ -210,14 +224,37 @@ export interface DashboardServerHandle {
 /**
  * Start the dashboard HTTP sidecar. Resolves once the server is listening on
  * the resolved port; rejects on bind failure (port-in-use, EACCES, etc.).
+ *
+ * With `fallbackToEphemeralPort`, an `EADDRINUSE` on the requested port is
+ * retried once on an OS-assigned port rather than surfacing (VW-167).
  */
-export function startDashboardServer(opts: DashboardServerOptions): Promise<DashboardServerHandle> {
+export async function startDashboardServer(
+  opts: DashboardServerOptions,
+): Promise<DashboardServerHandle> {
   const port = opts.port ?? DEFAULT_DASHBOARD_PORT;
   const host = opts.host ?? DEFAULT_DASHBOARD_HOST;
+  try {
+    return await listenOnPort(port, host, opts.state);
+  } catch (err) {
+    const retryable =
+      opts.fallbackToEphemeralPort === true && isAddressInUse(err) && port !== EPHEMERAL_PORT;
+    if (!retryable) throw err;
+    const handle = await listenOnPort(EPHEMERAL_PORT, host, opts.state);
+    log.warn(dashboardPortFallbackMessage(port, handle.port, host));
+    return handle;
+  }
+}
+
+/** One bind attempt: a fresh `http.Server` listening on exactly `port`. */
+function listenOnPort(
+  port: number,
+  host: string,
+  state: DashboardServerState,
+): Promise<DashboardServerHandle> {
   const startedAt = Date.now();
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, opts.state, startedAt).catch((err) => {
+    handleRequest(req, res, state, startedAt).catch((err) => {
       log.warn('dashboard: handler threw', err);
       if (!res.headersSent) {
         sendJson(res, 500, { error: 'internal_error' });
@@ -258,22 +295,43 @@ export function isAddressInUse(err: unknown): boolean {
 }
 
 /**
- * Operator-facing explanation for an `EADDRINUSE` dashboard bind failure. A
- * second voltras-mcp instance already holds the port, so THIS session gets no
- * dashboard — and the dashboard visible on that port belongs to the OTHER
- * server, not this one. That exact confusion (an operator watching a dead
- * server's dashboard while live set data flowed to a portless one) is the
- * incident VW-68 addresses; the single shared daemon removes the race. Emitted
- * at error level so it can't be mistaken for the routine warn on the deliberately
- * non-fatal bind path.
+ * Operator-facing explanation for the `EADDRINUSE` fallback (VW-167): the
+ * requested port was taken, so this session bound an OS-assigned one instead.
+ * Names both ports because the operator's muscle memory (and any stale browser
+ * tab) points at the requested one, which now belongs to another server.
+ */
+export function dashboardPortFallbackMessage(
+  requestedPort: number,
+  boundPort: number,
+  host: string,
+): string {
+  return (
+    `dashboard sidecar could not bind ${host}:${requestedPort} — another process ` +
+    `already holds it, so THIS session bound ${host}:${boundPort} instead. Open ` +
+    `http://${host}:${boundPort}${DASHBOARD_SPA_PATH}; a dashboard on ` +
+    `${host}:${requestedPort} belongs to the OTHER server and will NOT reflect this ` +
+    `session's live set data. \`server.health\` reports the URL for this session.`
+  );
+}
+
+/**
+ * Operator-facing explanation for an `EADDRINUSE` dashboard bind failure that
+ * even the port-0 fallback could not rescue (VW-167 narrowed this from every
+ * port conflict to that residual case). THIS session gets no dashboard, and the
+ * dashboard visible on the requested port belongs to the OTHER server. That
+ * exact confusion — an operator watching a dead server's dashboard while live
+ * set data flowed to a portless one — is the incident VW-68 addresses. Emitted
+ * at error level so it can't be mistaken for the routine warn on the
+ * deliberately non-fatal bind path.
  */
 export function dashboardPortInUseMessage(port: number, host: string): string {
   return (
     `dashboard sidecar could NOT bind ${host}:${port} — another voltras-mcp ` +
-    `instance already holds it. THIS session has NO dashboard; any dashboard open ` +
-    `on ${host}:${port} belongs to the OTHER server and will NOT reflect this ` +
-    `session's live set data. Stop the other instance, or set VMCP_DASHBOARD_PORT ` +
-    `to a free port for this session. (VW-68: one shared daemon removes this race.)`
+    `instance already holds it, and the fallback to an OS-assigned port failed too. ` +
+    `THIS session has NO dashboard; any dashboard open on ${host}:${port} belongs to ` +
+    `the OTHER server and will NOT reflect this session's live set data. Stop the ` +
+    `other instance, or set VMCP_DASHBOARD_PORT to a free port for this session. ` +
+    `(VW-68: one shared daemon removes this race.)`
   );
 }
 
@@ -325,13 +383,22 @@ async function handleRequest(
     return;
   }
 
+  // The root is what an operator types from memory; the SPA lives at `/app`,
+  // and `/` used to answer `{"error":"not_found"}` (VW-167). Exact path only —
+  // every other unmatched path keeps its honest 404.
+  if (pathname === '/') {
+    res.writeHead(302, { Location: DASHBOARD_SPA_PATH });
+    res.end();
+    return;
+  }
+
   // React SPA (VMCP-01.44), served read-only under `/app` from the vite-built
   // bundle in `dist/spa` — the sole dashboard surface.
-  if (pathname === '/app' || pathname === '/app/') {
+  if (pathname === DASHBOARD_SPA_PATH || pathname === `${DASHBOARD_SPA_PATH}/`) {
     serveSpaIndex(res);
     return;
   }
-  if (pathname.startsWith('/app/')) {
+  if (pathname.startsWith(`${DASHBOARD_SPA_PATH}/`)) {
     serveSpaAsset(res, pathname);
     return;
   }

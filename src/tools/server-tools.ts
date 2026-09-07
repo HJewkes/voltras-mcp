@@ -246,7 +246,10 @@ export function registerServerTools(
       'at" without a dedicated call for each. `dashboardAvailable`/`dashboardUrl` are the only ' +
       'way to learn the local dashboard exists — it is never mentioned in server instructions ' +
       '(the dashboard binds after those are already sent) and has no MCP tool or resource of ' +
-      'its own; when available, suggest the URL to the user rather than relaying it silently.',
+      'its own; when available, suggest the URL to the user rather than relaying it silently. ' +
+      '`dashboardUrl` is the full SPA address (it ends in `/app`) and names the port THIS ' +
+      'session actually bound — not always the default, since a port already held by another ' +
+      'session falls back to an OS-assigned one. Give it to the user verbatim.',
     callback: wrapHandler(ServerHealthInput, () =>
       Promise.resolve({
         version: VMCP_VERSION,

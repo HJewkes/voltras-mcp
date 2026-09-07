@@ -17,6 +17,7 @@ import {
   fmtVelocity,
   fmtWeight,
   initialAccumulatorState,
+  pickRepresentativeDevice,
   reduceSnapshot,
   roundMps,
   type Snapshot,
@@ -255,6 +256,97 @@ describe('buildConnectionStatus — device-derived header state', () => {
     );
     expect(s).toMatchObject({ tone: 'error', label: 'NO SIGNAL', showBanner: true });
   });
+});
+
+/** A multi-slot snapshot — the shape a bilateral rig actually produces. */
+function slotSnapshot(
+  entries: Array<{ slotId: string; device: SnapshotDevice; activeSet?: SnapshotActiveSet }>,
+): Snapshot {
+  return {
+    session: { sessionId: 's1' },
+    devices: entries.map(({ slotId, device, activeSet }) => ({
+      slotId,
+      device,
+      ...(activeSet !== undefined ? { sets: { active: activeSet } } : {}),
+    })),
+    sets: { active: null },
+  };
+}
+
+describe('pickRepresentativeDevice — badge slot selection (VW-166)', () => {
+  const LIVE: SnapshotDevice = { connected: true, deviceId: 'V-live' };
+  const DEAD: SnapshotDevice = { connected: false, deviceId: 'V-dead' };
+
+  const cases: Array<{
+    name: string;
+    snapshot: Snapshot;
+    deviceId: string | undefined;
+    label: string;
+  }> = [
+    {
+      // The 2026-09-07 bench rig: `primary` is allocated but never connected,
+      // so devices[0] read OFFLINE while both limbs were live.
+      name: 'bilateral rig — primary disconnected, right + left connected',
+      snapshot: slotSnapshot([
+        { slotId: 'primary', device: DEAD },
+        { slotId: 'right', device: { connected: true, deviceId: 'V-right' } },
+        { slotId: 'left', device: { connected: true, deviceId: 'V-left' } },
+      ]),
+      deviceId: 'V-right',
+      label: 'LIVE',
+    },
+    {
+      name: 'single device, connected',
+      snapshot: slotSnapshot([{ slotId: 'primary', device: LIVE }]),
+      deviceId: 'V-live',
+      label: 'LIVE',
+    },
+    {
+      // No connected slot to promote: the lone dead device must keep its
+      // OFFLINE badge rather than degrade to the softer WAITING.
+      name: 'single device, disconnected',
+      snapshot: slotSnapshot([{ slotId: 'primary', device: DEAD }]),
+      deviceId: 'V-dead',
+      label: 'OFFLINE',
+    },
+    {
+      name: 'two connected, one with the active set',
+      snapshot: slotSnapshot([
+        { slotId: 'right', device: { connected: true, deviceId: 'V-right' } },
+        {
+          slotId: 'left',
+          device: { connected: true, deviceId: 'V-left' },
+          activeSet: { reps: [] },
+        },
+      ]),
+      deviceId: 'V-left',
+      label: 'LIVE',
+    },
+    {
+      // A drop mid-set outranks a connected bystander: the wall must say OFFLINE
+      // while the lifter is under load on the slot that dropped.
+      name: 'active set on a slot that dropped, bystander still connected',
+      snapshot: slotSnapshot([
+        { slotId: 'right', device: { connected: true, deviceId: 'V-right' } },
+        { slotId: 'left', device: DEAD, activeSet: { reps: [] } },
+      ]),
+      deviceId: 'V-dead',
+      label: 'OFFLINE',
+    },
+    {
+      name: 'no slots at all',
+      snapshot: slotSnapshot([]),
+      deviceId: undefined,
+      label: 'WAITING',
+    },
+  ];
+
+  for (const { name, snapshot: snap, deviceId, label } of cases) {
+    it(`${name} → ${label}`, () => {
+      expect(pickRepresentativeDevice(snap)?.deviceId).toBe(deviceId);
+      expect(buildConnectionStatus(snap, 'ok').label).toBe(label);
+    });
+  }
 });
 
 describe('reduceSnapshot — completed-set accumulation', () => {

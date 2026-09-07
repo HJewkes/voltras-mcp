@@ -40,6 +40,7 @@ import {
   dashboardPortInUseMessage,
   DEFAULT_DASHBOARD_PORT,
   DEFAULT_DASHBOARD_HOST,
+  DASHBOARD_SPA_PATH,
   type DashboardServerHandle,
 } from './dashboard/server.js';
 
@@ -57,6 +58,18 @@ function resolveDashboardPort(env: NodeJS.ProcessEnv = process.env): number | nu
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DASHBOARD_PORT;
   return parsed;
+}
+
+/**
+ * The URL to hand a human for a dashboard bound on `port`.
+ *
+ * Ends in `/app`, the path the SPA is actually served at (VW-167). The bare
+ * `http://host:port` this used to report answered `{"error":"not_found"}`, so
+ * every agent that relayed `server.health`'s `dashboardUrl` sent the user to a
+ * blank page.
+ */
+export function dashboardUrlFor(port: number, host: string = DEFAULT_DASHBOARD_HOST): string {
+  return `http://${host}:${port}${DASHBOARD_SPA_PATH}`;
 }
 
 /**
@@ -119,17 +132,22 @@ export async function runServer(): Promise<void> {
     let dashboardHandle: DashboardServerHandle | undefined;
     if (dashboardPort !== null) {
       try {
-        dashboardHandle = await startDashboardServer({ port: dashboardPort, state });
-        log.info(
-          `dashboard sidecar listening at http://${DEFAULT_DASHBOARD_HOST}:${dashboardHandle.port}`,
-        );
+        // VW-167: an idle session that started first owns 7723, and the session
+        // actually driving the bench used to get no dashboard at all. Fall back
+        // to an OS-assigned port and report the one we really bound.
+        dashboardHandle = await startDashboardServer({
+          port: dashboardPort,
+          state,
+          fallbackToEphemeralPort: true,
+        });
+        log.info(`dashboard sidecar listening at ${dashboardUrlFor(dashboardHandle.port)}`);
       } catch (err) {
-        // A port conflict is not routine warn noise: another voltras-mcp
-        // instance already owns the dashboard port, so this session gets no
-        // dashboard while the operator may be staring at the other server's.
-        // Escalate to a loud, unmistakable error (VW-68). The MCP process
-        // itself still stays up — the bind is deliberately non-fatal so a
-        // stuck port never blocks all tool use.
+        // Reaching here with EADDRINUSE means even the OS-assigned fallback
+        // failed, so this session really does get no dashboard while the
+        // operator may be staring at the other server's. Escalate to a loud,
+        // unmistakable error (VW-68). The MCP process itself still stays up —
+        // the bind is deliberately non-fatal so a stuck port never blocks all
+        // tool use.
         if (isAddressInUse(err)) {
           log.error(dashboardPortInUseMessage(dashboardPort, DEFAULT_DASHBOARD_HOST));
         } else {
@@ -144,10 +162,7 @@ export async function runServer(): Promise<void> {
     // `available: false`, not throw or go unreported.
     state.dashboard = {
       available: dashboardHandle !== undefined,
-      url:
-        dashboardHandle !== undefined
-          ? `http://${DEFAULT_DASHBOARD_HOST}:${dashboardHandle.port}`
-          : null,
+      url: dashboardHandle !== undefined ? dashboardUrlFor(dashboardHandle.port) : null,
     };
 
     // Register the shutdown hook regardless of whether the dashboard came

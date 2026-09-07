@@ -181,7 +181,7 @@ describe('server.health', () => {
       lease: new WriteLease(),
       cueSettings: { enabled: false, midSetEnabled: false },
       config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
-      dashboard: { available: true, url: 'http://127.0.0.1:7723' },
+      dashboard: { available: true, url: 'http://127.0.0.1:7723/app' },
     } as never;
     registerServerTools({} as never, state, placeholders as never);
 
@@ -190,7 +190,7 @@ describe('server.health', () => {
 
     // Assert
     expect(body.dashboardAvailable).toBe(true);
-    expect(body.dashboardUrl).toBe('http://127.0.0.1:7723');
+    expect(body.dashboardUrl).toBe('http://127.0.0.1:7723/app');
   });
 
   it('reports dashboardUrl null when the bind attempt failed or was disabled', async () => {

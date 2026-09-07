@@ -107,6 +107,9 @@ describe('evaluateGates', () => {
     expect(found.level).toBe('warn');
     expect(found.message).toContain(`Port ${DASHBOARD_PORT}`);
     expect(found.message).toContain('node(41231)');
+    // VW-167: the session no longer loses its dashboard outright, so the gate
+    // must point the operator at server.health rather than at the taken port.
+    expect(found.message).toContain('server.health');
   });
 
   it('ignores a listener that is this process itself', () => {

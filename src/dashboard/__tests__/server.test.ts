@@ -16,6 +16,8 @@ import {
   startDashboardServer,
   isAddressInUse,
   dashboardPortInUseMessage,
+  dashboardPortFallbackMessage,
+  DASHBOARD_SPA_PATH,
   type DashboardServerHandle,
   type DashboardServerState,
 } from '../server.js';
@@ -656,6 +658,71 @@ describe('GET /api/history', () => {
   });
 });
 
+describe('GET / → /app redirect (VW-167)', () => {
+  it('302s the bare root to the SPA path', async () => {
+    const handle = await startWithFake(makeFakeState());
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(DASHBOARD_SPA_PATH);
+  });
+
+  it('leaves every other unmatched path on its honest 404', async () => {
+    // The redirect is exact-path only: `/nope` and `/apple` must not be swept
+    // into the SPA just because they start at the root.
+    const handle = await startWithFake(makeFakeState());
+    for (const path of ['/nope', '/apple']) {
+      const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, path);
+      expect(res.status).toBe(404);
+    }
+  });
+
+  it('still resolves /app/assets/* and the API routes', async () => {
+    // Both live behind the new redirect branch — a missing asset must reach the
+    // SPA asset handler (404 there, not a 302 to /app), and /api must not move.
+    const handle = await startWithFake(makeFakeState());
+    const asset = await fetchPath(
+      DEFAULT_DASHBOARD_HOST,
+      handle.port,
+      '/app/assets/nonexistent.js',
+    );
+    expect(asset.status).toBe(404);
+    expect(asset.headers.location).toBeUndefined();
+    const health = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/health');
+    expect(health.status).toBe(200);
+  });
+});
+
+describe('EADDRINUSE fallback (VW-167)', () => {
+  it('retries once on an OS-assigned port and reports the real bound port', async () => {
+    const incumbent = await startWithFake(makeFakeState(), 0);
+    const handle = await startDashboardServer({
+      port: incumbent.port,
+      state: makeFakeState(),
+      fallbackToEphemeralPort: true,
+    });
+    liveHandles.push(handle);
+    expect(handle.port).toBeGreaterThan(0);
+    expect(handle.port).not.toBe(incumbent.port);
+    // The fallback server must actually serve, not merely hold a port.
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/health');
+    expect(res.status).toBe(200);
+  });
+
+  it('still rejects on a collision when the fallback is off', async () => {
+    const incumbent = await startWithFake(makeFakeState(), 0);
+    await expect(
+      startDashboardServer({ port: incumbent.port, state: makeFakeState() }),
+    ).rejects.toThrow();
+  });
+
+  it('the fallback message names both the requested and the bound port', () => {
+    const msg = dashboardPortFallbackMessage(7723, 51234, DEFAULT_DASHBOARD_HOST);
+    expect(msg).toContain('7723');
+    expect(msg).toContain('51234');
+    expect(msg).toContain(DASHBOARD_SPA_PATH);
+  });
+});
+
 describe('routing', () => {
   it('returns 404 + JSON { error: "not_found" } for unknown paths', async () => {
     const handle = await startWithFake(makeFakeState());
@@ -960,5 +1027,8 @@ describe('loud port-conflict reporting (VW-68)', () => {
     expect(msg).toContain(DEFAULT_DASHBOARD_HOST);
     expect(msg).toContain('another voltras-mcp');
     expect(msg).toMatch(/NO dashboard/);
+    // VW-167: this fires only when the port-0 fallback also failed, so the
+    // message must not read as if no fallback was attempted.
+    expect(msg).toContain('fallback');
   });
 });
