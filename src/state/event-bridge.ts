@@ -158,6 +158,7 @@ import type { CoercionWatch } from './coercion-watch.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
+import { autoArmSet } from './auto-arm.js';
 import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
@@ -225,7 +226,8 @@ const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active
  * WA rep boundary) lands on it for this many milliseconds. 90s is wide
  * enough to cover heavy slow lifts (15s+ per rep) plus a brief mid-set
  * pause, but short enough that a forgotten or disconnected set surfaces
- * before the user starts a new session.
+ * before the user starts a new session. VW-164: this is the FLOOR, not a cap
+ * — a set that asked for a longer window keeps it (`inactivityThresholdFor`).
  *
  * In WT/RB/Damper modes the device's `onSetSummary` (`aa 85 5f`) is the
  * canonical per-set close marker and the watchdog rarely fires. Modes that
@@ -249,6 +251,22 @@ const SET_INACTIVITY_TIMEOUT_MS = 90_000;
  * `lastActivityAt` field.
  */
 const SET_INACTIVITY_POLL_MS = 10_000;
+
+/**
+ * The inactivity threshold this set's safety net should honour (VW-164).
+ *
+ * A set that asked for a longer window via `watch.inactivityTimeoutMs` gets
+ * it: the 90s net used to force-close every set regardless, so a `set.start`
+ * asking for 180s or 300s — pre-arming before a rest period, exactly the case
+ * the field asks for — still died at 90-99s. The net never shortens below the
+ * default; a set asking for LESS (guided load's 30s) is reaped by its own
+ * `state.setWatchdog` timer, which stays the tighter of the two.
+ */
+function inactivityThresholdFor(set: Pick<ActiveSet, 'watch'>): number {
+  const requested = set.watch?.inactivityTimeoutMs;
+  if (requested === undefined) return SET_INACTIVITY_TIMEOUT_MS;
+  return Math.max(SET_INACTIVITY_TIMEOUT_MS, requested);
+}
 
 /**
  * Capacity of the per-slot WorkoutSample ring buffer used by the VMCP-02.29
@@ -628,6 +646,13 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
+          // VW-164: with a session open, the first idle rep means the lifter
+          // started before `set.start` could land. Open the set here and
+          // adopt this rep into it rather than reporting it as lost work.
+          if (autoArmSet(state, slotId)) {
+            notifySlot(server, slotId, SET_URI, setUriForSlot);
+            return;
+          }
           const entry = live.recordIdleRep(idleRep, slotId);
           if (live.session?.verboseIdleReps === true) {
             slotChannels.publish(buildIdleRepPayload(entry, live.idleRepCount));
@@ -962,7 +987,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     if (set === undefined || set.lastActivityAt === undefined) {
       return;
     }
-    if (Date.now() - set.lastActivityAt < SET_INACTIVITY_TIMEOUT_MS) {
+    if (Date.now() - set.lastActivityAt < inactivityThresholdFor(set)) {
       return;
     }
     void finalizeSet(state, slotId, {

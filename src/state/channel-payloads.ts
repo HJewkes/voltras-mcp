@@ -326,18 +326,25 @@ export function summarizePreviousSet(prev: StoredSet): PreviousSetSummary {
  * 1-indexed (this is set N of the session). `previous` is the most recent
  * persisted set in the session, or null when this is the session's first
  * set.
+ *
+ * `opts.autoArmed` marks a set the server opened on the lifter's first idle
+ * rep rather than one a `set.start` call asked for (VW-164), so a coaching
+ * consumer can tell "I armed this" from "the lifter just started".
  */
 export function buildSetStartedPayload(
   set: ActiveSet,
   device: DeviceSnapshot,
   ordinal: number,
   previous: PreviousSetSummary | null,
+  opts: { autoArmed?: boolean } = {},
 ): { meta: Record<string, string>; content: string } {
+  const autoArmed = opts.autoArmed === true;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'set_started',
     set_id: set.setId,
     session_id: set.sessionId,
+    ...(autoArmed ? { auto_armed: 'true' } : {}),
   };
   if (device.weightLbs !== undefined && device.weightLbs > 0) {
     meta.weight_lbs = String(device.weightLbs);
@@ -353,7 +360,9 @@ export function buildSetStartedPayload(
     meta.active_mode = activeModeName;
   }
 
-  const summary = buildSetStartedSummary(device, ordinal);
+  const summary = autoArmed
+    ? `${buildSetStartedSummary(device, ordinal)} (auto-armed on your first rep)`
+    : buildSetStartedSummary(device, ordinal);
   const content = JSON.stringify({
     summary,
     set: {
@@ -364,6 +373,7 @@ export function buildSetStartedPayload(
       active_mode: activeModeName,
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
+      auto_armed: autoArmed,
     },
     previous_set_summary: previous,
   });
