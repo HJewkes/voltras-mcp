@@ -21,6 +21,11 @@
 #     plugin installed AND the plugin allowlisted in machine-wide managed
 #     settings; see docs/channel-plugin-packaging.md.
 #
+#
+# Before launching it runs the bench pre-flight (scripts/ensure-whisper.mjs then
+# scripts/preflight.mjs); set VOLTRA_PT_SKIP_PREFLIGHT=1 to bypass it. See
+# docs/bench-preflight.md.
+#
 #   dev mode (VOLTRA_PT_DEV=1) — the original path: registers nothing, and
 #     passes --dangerously-load-development-channels for a `claude mcp add`ed
 #     `voltras` server. Use this if the managed-settings file isn't installed.
@@ -85,6 +90,14 @@ EOF
   # Lets the plugin's launch shim find this checkout's dist/bin.js.
   export VOLTRAS_MCP_HOME="$REPO_ROOT"
   CHANNEL_FLAG=(--channels "$CHANNEL_ENTRY")
+fi
+
+# Bench pre-flight (VW-155 / VW-66). Rebuild whisper-cli if `npm ci` wiped it,
+# then report every gate that would otherwise fail silently mid-session.
+# Set VOLTRA_PT_SKIP_PREFLIGHT=1 to launch anyway.
+if [ "${VOLTRA_PT_SKIP_PREFLIGHT:-0}" != "1" ]; then
+  node "$REPO_ROOT/scripts/ensure-whisper.mjs"
+  node "$REPO_ROOT/scripts/preflight.mjs"
 fi
 
 DEFAULT_PROMPT="Start a PT session. I'm ready to lift."

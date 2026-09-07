@@ -120,6 +120,10 @@ lift                    # --channels plugin:voltras-channel@voltras-local
 VOLTRA_PT_DEV=1 lift    # --dangerously-load-development-channels server:voltras
 ```
 
+The dev-mode line above registers nothing in a scripted session (VW-158), so the bench
+pre-flight prints a WARN whenever `VOLTRA_PT_DEV=1` is set. See
+[bench-preflight.md](bench-preflight.md).
+
 Plugin mode refuses to launch if a standalone `voltras` server is **also** registered with
 `claude mcp`: the plugin ships the server too, so both would run, and two processes
 collide on `~/.voltras/vmcp.sqlite` and port 7723. Under plugin mode, run
