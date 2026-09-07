@@ -280,14 +280,16 @@ const START_DESCRIPTION = [
   '`voice_command_rejected` PLUS the usual `voice_input` — that pair is yours to',
   'handle. Anything conversational still routes to `voice_input` as before.',
   '',
-  'The mic goes deaf during TTS: `system.speak` and the automatic cue emitter',
-  'mute the listener and discard in-flight frames for the length of each cue',
-  '(an utterance already in progress is dropped too), so nothing said during',
-  'playback is heard — wake phrase and safety phrases alike. Each mute window',
-  'is bounded by a hard 8s failsafe, and the mid-set',
+  'DURING TTS THE MIC IS SAFETY-ONLY. `system.speak` and the automatic cue',
+  'emitter duck the listener for the length of each cue: safety phrases are',
+  'still transcribed and still fire the unload, while the wake phrase and',
+  'spoken weight commands are ignored until playback ends (an utterance already',
+  'in progress when the cue starts is dropped too). A transcript made of the',
+  'words being spoken is discarded as the machine hearing itself, so a lifter',
+  'shouting a safety word that also appears in the cue text is dropped with it.',
+  'Each duck window is bounded by a hard 8s failsafe, and the mid-set',
   '`target_hit`/`slowdown` cues stay silent unless mid-set cues are on (startup',
-  'default `VMCP_CUES_MIDSET`, changeable at runtime with `system.set_cues`), so',
-  'the blind spot normally lands only at set boundaries.',
+  'default `VMCP_CUES_MIDSET`, changeable at runtime with `system.set_cues`).',
 ].join(' ');
 
 const STOP_DESCRIPTION = [
