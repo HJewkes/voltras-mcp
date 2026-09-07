@@ -134,6 +134,11 @@ function makeBareState(opts: {
     server: opts.server,
     setWatchdog: new SetWatchdog(),
     restTimers: new RestTimerRegistry(),
+    setStartDeviceSnapshots: new Map(),
+    // The idle-rep surfacing this file covers is what auto-arm (VW-164)
+    // deliberately pre-empts inside an open session, so it stays off here.
+    // Auto-arm has its own coverage in event-bridge-auto-arm.test.ts.
+    config: { autoArm: 'off' },
   };
 }
 

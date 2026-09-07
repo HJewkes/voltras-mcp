@@ -234,6 +234,8 @@ export function registerServerTools(
       'Report server/process health: version, build, active adapter (real/mock), SDK and ' +
       'analytics-package versions, db path, log level, live spoken-cue settings ' +
       '(`cues`/`cuesMidSet` — the values `system.set_cues` last set, not just the env vars), ' +
+      'whether the server auto-arms a set on the first idle rep of an open session (`autoArm`, ' +
+      'from VMCP_AUTO_ARM), ' +
       'push-channel status, device-lease ' +
       'status, voice-input readiness (`voiceReady.whisperCli`/`voiceReady.model` — false means ' +
       'speech will not transcribe, usually because `npm ci` wiped the compiled binary), ' +
@@ -257,6 +259,7 @@ export function registerServerTools(
         analyticsVersion: ANALYTICS_VERSION,
         dbPath: state.config.dbPath,
         logLevel: state.config.logLevel,
+        autoArm: state.config.autoArm,
         ...resolveCueStatus(state),
         voiceReady: VOICE_READY,
         dashboardAvailable: state.dashboard?.available ?? false,

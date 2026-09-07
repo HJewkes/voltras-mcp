@@ -234,4 +234,46 @@ describe('ModeRevertGuard', () => {
       expect(guard.peekAbort()).toBeNull();
     });
   });
+
+  // ── VW-163: recovery is not bounded by the detection window ─────────────
+  describe('VW-163 — late recovery clears the latch', () => {
+    it('clears the latch on a matching echo that arrives long after the window closed', () => {
+      const { guard, setNow } = makeGuard();
+      guard.arm(TrainingMode.Isokinetic);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+
+      // Ten minutes later the device finally echoes Isokinetic. Before
+      // VW-163 this left the latch armed and every set.start refused.
+      setNow(1_600_000);
+      guard.onSettingsUpdate(TrainingMode.Isokinetic);
+      expect(guard.isAborted()).toBe(false);
+    });
+
+    it('clears the latch when arming for the mode the device is already echoing', () => {
+      const { guard, setNow } = makeGuard();
+      guard.arm(TrainingMode.Isokinetic);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+
+      // The user asks for the mode the device already sits in — nothing is
+      // reverting any more.
+      setNow(1_500_000);
+      guard.arm(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(false);
+    });
+
+    it('holds the latch while the device keeps echoing the reverted-to mode', () => {
+      const { guard, setNow } = makeGuard();
+      guard.arm(TrainingMode.Isokinetic);
+      setNow(1_000_100);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+
+      setNow(1_400_000);
+      guard.onSettingsUpdate(TrainingMode.WeightTraining);
+      expect(guard.isAborted()).toBe(true);
+    });
+  });
 });

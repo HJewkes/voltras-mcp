@@ -918,6 +918,21 @@ describe('registerDeviceTools', () => {
       expect(primaryClient(state).setMode).toHaveBeenCalledWith(FakeTrainingMode.Rowing);
     });
     // </Bug-22>
+
+    // VW-163: an explicit mode write must re-arm the guard, so the device's
+    // echo of that mode is recognised as recovery from an earlier revert.
+    it('arms the mode-revert guard so a later matching echo clears a stale latch', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.modeRevertGuard.arm(FakeTrainingMode.Isokinetic);
+      slot.modeRevertGuard.onSettingsUpdate(FakeTrainingMode.WeightTraining);
+      expect(slot.modeRevertGuard.isAborted()).toBe(true);
+
+      const reg = placeholders.get('device.set_mode')!;
+      await invoke(reg, { mode: 'Isokinetic' });
+      slot.modeRevertGuard.onSettingsUpdate(FakeTrainingMode.Isokinetic);
+
+      expect(slot.modeRevertGuard.isAborted()).toBe(false);
+    });
   });
 
   // <Bug-22>

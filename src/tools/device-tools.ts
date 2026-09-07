@@ -669,7 +669,13 @@ export function registerDeviceTools(
     DeviceSetModeInput,
     wrapHandler(DeviceSetModeInput, async (input) => {
       const value = (TrainingMode as unknown as Record<string, number>)[input.mode];
-      await getSlot(state, input.slot).client.setMode(value as TrainingMode);
+      const slot = getSlot(state, input.slot);
+      await slot.client.setMode(value as TrainingMode);
+      // VW-163: an explicit mode write is a user request, so the guard must
+      // watch it. Without this the guard never learned about the recovery
+      // cascade and a latched revert survived every `device.set_mode`,
+      // blocking set.start until the session was cycled.
+      slot.modeRevertGuard.arm(value as TrainingMode);
       return { ok: true };
     }),
     SET_MODE_DESCRIPTION,

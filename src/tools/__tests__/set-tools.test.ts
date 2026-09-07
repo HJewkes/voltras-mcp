@@ -730,12 +730,81 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
     expect(body.code).toBe('SET_ABORTED_BY_MODE_REVERT');
     // Mentions the matched-mode cascade auto-clear recovery path.
     expect(body.message).toMatch(/re-issue the setter cascade/i);
-    expect(body.message).toMatch(/auto-clears/i);
+    expect(body.message).toMatch(/the latch clears as soon as/i);
     // Mentions the session reset fallback.
     expect(body.message).toMatch(/session\.end \+ session\.start/i);
     // Points callers at get_state for inspection.
     expect(body.message).toMatch(/device\.get_state/);
     expect(body.message).toMatch(/mode_revert_latched/);
+  });
+
+  // ── VW-163: a resolved revert must not block the next set ──────────────
+  it('VW-163: set.start proceeds once the device echoes the requested mode again, however stale the latch', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    const guard = slot.modeRevertGuard as unknown as {
+      onSettingsUpdate: (m: number) => void;
+      isAborted: () => boolean;
+    };
+    arm(slot as never, 7); // Isokinetic requested
+    guard.onSettingsUpdate(1); // device reverts to WT — latch
+    expect(guard.isAborted()).toBe(true);
+
+    // Recovery: a later device.set_mode(Isokinetic) that the device honours.
+    // The echo lands long after the 2s detection window has closed.
+    h.live.applySettings({ trainingMode: 'Isokinetic' });
+    guard.onSettingsUpdate(7);
+    expect(guard.isAborted()).toBe(false);
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('VW-163: a latch left behind by an unrelated mode (unload mode-bounce) does not block set.start', async () => {
+    startSession(h.live);
+    const slot = h.state.slots.get('primary')!;
+    const guard = slot.modeRevertGuard as unknown as {
+      onSettingsUpdate: (m: number) => void;
+      isAborted: () => boolean;
+    };
+    // device.unload bounces Damper → WeightTraining and the device settles in
+    // Idle, latching {requested: WeightTraining, actual: Idle}.
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Damper' });
+    arm(slot as never, 1); // WeightTraining requested
+    guard.onSettingsUpdate(0); // Idle — latch
+    expect(guard.isAborted()).toBe(true);
+
+    // The user then drives the device to Isokinetic, which sticks. The stale
+    // latch describes a mode nobody is asking for any more.
+    h.live.applySettings({ trainingMode: 'Isokinetic' });
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBeUndefined();
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('VW-163: an unrecovered revert (device still in the reverted mode) still refuses', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Isokinetic' });
+    const slot = h.state.slots.get('primary')!;
+    const guard = slot.modeRevertGuard as unknown as { onSettingsUpdate: (m: number) => void };
+    arm(slot as never, 7); // Isokinetic requested
+    // Device reverts to WT and STAYS there — the snapshot follows the echo.
+    h.live.applySettings({ trainingMode: 'WeightTraining' });
+    guard.onSettingsUpdate(1);
+
+    const r = await h.invoke('set.start', {});
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_ABORTED_BY_MODE_REVERT');
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).not.toHaveBeenCalled();
   });
 });
 
