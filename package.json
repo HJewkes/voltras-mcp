@@ -12,7 +12,9 @@
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "scripts/ensure-whisper.mjs",
+    "scripts/lib/whisper-paths.mjs"
   ],
   "engines": {
     "node": ">=22.5.0"
@@ -22,6 +24,8 @@
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
     "start": "node ./dist/bin.js",
     "dashboard:sim": "node scripts/dashboard-sim.mjs",
+    "postinstall": "node scripts/ensure-whisper.mjs",
+    "preflight": "node scripts/preflight.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -29,8 +33,8 @@
     "lint:fix": "eslint src --fix",
     "typecheck": "tsc --noEmit && npm run typecheck:spa",
     "typecheck:spa": "tsc -p src/dashboard/spa/tsconfig.json",
-    "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\"",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
     "prepare": "husky"
   },
   "dependencies": {

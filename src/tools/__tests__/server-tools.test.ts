@@ -252,6 +252,27 @@ describe('server.health', () => {
     expect(body.cuesMidSet).toBe('off');
   });
 
+  it('reports voiceReady for both whisper artifacts', async () => {
+    // Arrange: the probe reads the real node_modules at module load, so assert
+    // the shape rather than the values — CI installs nodejs-whisper without
+    // building it, a bench machine has both (VW-155).
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    // Act
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    // Assert
+    expect(Object.keys(body.voiceReady).sort()).toEqual(['model', 'whisperCli']);
+    expect(typeof body.voiceReady.whisperCli).toBe('boolean');
+    expect(typeof body.voiceReady.model).toBe('boolean');
+  });
+
   it('throws if the placeholder is missing', () => {
     const { placeholders } = makePlaceholders([]); // no server.health
     const state = {
