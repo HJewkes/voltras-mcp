@@ -109,6 +109,19 @@ function feedSegment(h: Harness, speech = 8, silence = 16): void {
   h.audio.emit('data', Buffer.alloc((speech + silence) * FRAME_BYTES));
 }
 
+// Byte fills that survive into the emitted utterance, so a test can tell which
+// segment a whisper call was given. Silence is left zeroed: it becomes the next
+// segment's pre-roll and would otherwise smear the mark across utterances.
+const LIFTER_MARK = 0xcd;
+const CUE_MARK = 0xab;
+
+function feedMarkedSegment(h: Harness, mark: number, speech = 8, silence = 16): void {
+  for (let i = 0; i < speech; i += 1) h.probs.push(0.9);
+  for (let i = 0; i < silence; i += 1) h.probs.push(0);
+  h.audio.emit('data', Buffer.alloc(speech * FRAME_BYTES, mark));
+  h.audio.emit('data', Buffer.alloc(silence * FRAME_BYTES));
+}
+
 describe('VoiceListener — lifecycle', () => {
   it('starts into listening and stop() is idempotent', async () => {
     const h = buildHarness();
@@ -626,5 +639,44 @@ describe('VoiceListener — transcription queue', () => {
     for (let s = 0; s < 7; s += 1) feedSegment(h);
     await settle();
     expect(h.errors.some((e) => e.code === 'QUEUE_OVERFLOW')).toBe(true);
+  });
+
+  // Muted frames are transcribed now, so cue audio takes queue slots that used
+  // to belong to the lifter alone. At the cap the echo is the one to sacrifice.
+  it('drops a queued muted utterance before an older unmuted one', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+
+    const seen: Buffer[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.setWhisper(async (audio) => {
+      seen.push(audio);
+      if (seen.length === 1) await gate; // first call blocks the drain
+      return { transcript: '' };
+    });
+
+    feedSegment(h); // in flight, holding the drain open
+    await settle();
+
+    // Settle between feeds: frames are VAD-processed asynchronously, so the mute
+    // window has to still be open when the cue segment's frames are drained.
+    feedMarkedSegment(h, LIFTER_MARK); // queued first, unmuted
+    await settle();
+    const handle = h.listener.mute('two reps left');
+    feedMarkedSegment(h, CUE_MARK);
+    await settle();
+    h.listener.unmute(handle);
+    for (let s = 0; s < 4; s += 1) feedSegment(h); // pushes the queue past the cap
+    await settle();
+
+    release();
+    await settle();
+
+    expect(h.errors.some((e) => e.code === 'QUEUE_OVERFLOW')).toBe(true);
+    expect(seen.some((audio) => audio.includes(CUE_MARK))).toBe(false);
+    expect(seen.some((audio) => audio.includes(LIFTER_MARK))).toBe(true);
   });
 });

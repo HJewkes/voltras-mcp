@@ -613,14 +613,27 @@ export class VoiceListener {
 
   private enqueueTranscription(audio: Buffer): void {
     if (this.transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
-      this.transcriptionQueue.shift();
-      this.emitError({
-        code: 'QUEUE_OVERFLOW',
-        message: 'Transcription queue full — oldest queued utterance dropped.',
-      });
+      this.dropOneQueued();
     }
     this.transcriptionQueue.push({ audio, closedAt: this.deps.now!(), origin: this.takeOrigin() });
     if (!this.drainingTranscriptions) void this.drainTranscriptions();
+  }
+
+  /**
+   * Make room at the cap. Cue audio competes for these slots now that muted
+   * frames are transcribed, so the oldest muted-origin utterance goes first: it
+   * is most likely our own echo, while an unmuted one may be the lifter.
+   */
+  private dropOneQueued(): void {
+    const muted = this.transcriptionQueue.findIndex((item) => item.origin.muted);
+    const index = muted === -1 ? 0 : muted;
+    const dropped = this.transcriptionQueue.splice(index, 1)[0];
+    this.emitError({
+      code: 'QUEUE_OVERFLOW',
+      message: dropped.origin.muted
+        ? 'Transcription queue full — oldest cue-overlapped utterance dropped.'
+        : 'Transcription queue full — oldest queued utterance dropped.',
+    });
   }
 
   /** Drain queued utterances one at a time through whisper, then route. */
