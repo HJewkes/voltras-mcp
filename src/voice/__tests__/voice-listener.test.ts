@@ -435,18 +435,110 @@ describe('VoiceListener — mic readiness', () => {
   });
 });
 
-describe('VoiceListener — ducking', () => {
-  it('does not run VAD or whisper while muted', async () => {
+// VMCP-05.20. Muting used to discard mic frames outright, so a cue made the
+// listener deaf for its whole duration — the bench watched a lifter say "stop"
+// mid-cue twice and the cable stayed loaded both times
+// (RESULTS-2026-08-11-VMCP-05.01-deaf-window). Ducking is now safety-only, not
+// a discard.
+describe('VoiceListener — ducking (safety exemption)', () => {
+  const CUE = 'That rep was 15 percent slower. Reset.';
+
+  it('runs VAD and whisper on frames captured while muted', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.process).toHaveBeenCalled();
+    expect(h.whisper).toHaveBeenCalledTimes(1);
+    h.listener.unmute();
+  });
+
+  it('fires a safety phrase spoken during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    expect(h.safety[0].matchedPhrase).toBe('stop');
+    h.listener.unmute();
+  });
+
+  it('still fires a safety phrase when the cue text was not threaded through', async () => {
     const h = buildHarness();
     await h.listener.start(resolveStartArgs({}));
     h.listener.mute();
+    h.whisperTranscripts.push('cut the weight');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
+    h.listener.unmute();
+  });
+
+  it('ignores the wake phrase during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
     h.whisperTranscripts.push('hey coach do a set');
     feedSegment(h);
     await settle();
-    expect(h.process).not.toHaveBeenCalled();
-    expect(h.whisper).not.toHaveBeenCalled();
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.safety).toHaveLength(0);
+    h.listener.unmute();
+  });
+
+  it('ignores a weight command during a cue', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
+    h.whisperTranscripts.push('set it to 70');
+    feedSegment(h);
+    await settle();
+    expect(h.commands).toHaveLength(0);
     expect(h.voiceInput).toHaveLength(0);
     h.listener.unmute();
+  });
+
+  it('drops the cue text fed back as a muted-window transcript', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
+    h.whisperTranscripts.push(CUE);
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    expect(h.commands).toHaveLength(0);
+    h.listener.unmute();
+  });
+
+  // The echo filter, not the safety tier, is what has to win here — otherwise
+  // the machine unloads the cable on its own voice. Documented residual risk:
+  // a lifter's real "stop" over this cue is dropped along with the echo.
+  it('drops a cue whose own text contains a safety word', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute("Don't stop now.");
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(0);
+    expect(h.voiceInput).toHaveLength(0);
+    h.listener.unmute();
+  });
+
+  it('applies the echo filter only inside the muted window', async () => {
+    const h = buildHarness();
+    await h.listener.start(resolveStartArgs({}));
+    h.listener.mute(CUE);
+    h.listener.unmute();
+    h.whisperTranscripts.push('stop');
+    feedSegment(h);
+    await settle();
+    expect(h.safety).toHaveLength(1);
   });
 
   it('resumes after unmute (refcounted)', async () => {

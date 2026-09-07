@@ -370,9 +370,11 @@ describe('system.speak — platform gating', () => {
 function makeFakeVoiceListener(): MutableVoiceListener & {
   muteCalls: number;
   unmuteCalls: number;
+  mutedTexts: (string | undefined)[];
 } {
   let muteCalls = 0;
   let unmuteCalls = 0;
+  const mutedTexts: (string | undefined)[] = [];
   return {
     get muteCalls() {
       return muteCalls;
@@ -380,8 +382,10 @@ function makeFakeVoiceListener(): MutableVoiceListener & {
     get unmuteCalls() {
       return unmuteCalls;
     },
-    mute: () => {
+    mutedTexts,
+    mute: (spokenText?: string) => {
       muteCalls += 1;
+      mutedTexts.push(spokenText);
     },
     unmute: () => {
       unmuteCalls += 1;
@@ -454,6 +458,18 @@ describe('system.speak — TTS ducking (mute/unmute)', () => {
 
     child.emitExit(0);
     expect(vl.unmuteCalls).toBe(1);
+  });
+
+  // VMCP-05.20: the listener keeps hearing safety phrases through the cue, so
+  // it needs the cue text to tell the lifter's voice from its own.
+  it('hands the spoken text to mute() so the echo filter can run', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    harness.setNextChild(new FakeChild());
+
+    await harness.invoke({ text: 'That rep was 15 percent slower. Reset.' });
+
+    expect(vl.mutedTexts).toEqual(['That rep was 15 percent slower. Reset.']);
   });
 
   it('calls unmute() after exit in blocking mode (success)', async () => {
