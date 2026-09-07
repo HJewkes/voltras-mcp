@@ -85,6 +85,7 @@ import {
 } from '../store/confidence-indicator.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
+import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 type MetricsComputeInputType = z.infer<typeof MetricsComputeInput>;
@@ -97,9 +98,14 @@ const TOOL_NAME = 'metrics.compute';
  * means the rep array passes through untouched; the `loadSettings` field is
  * intentionally omitted because session-level callers pass weights as a
  * parallel array argument.
+ *
+ * Velocities are normalised to m/s first (VW-160) so a row captured before the
+ * bridge conversion and one captured after produce the same absolute numbers.
+ * EVERY pipeline below routes through this function, which is why the
+ * normalisation lives here rather than at each pipeline.
  */
 function toAnalyticsSet(stored: StoredSet): AnalyticsSet {
-  return { reps: stored.reps };
+  return { reps: normaliseVelocityToMps(stored).reps };
 }
 
 /**
@@ -352,12 +358,7 @@ interface RepRIREstimate {
   confidence: 'low' | 'medium' | 'high';
   /** 1-indexed rep number within the set. */
   repIndex: number;
-  /**
-   * This rep's peak concentric velocity, in whatever unit the persisted
-   * samples carry — device-native mm/s today, NOT m/s (see `rirForSet`).
-   * Reported for transparency about what the model was fed; do not render it
-   * as a speed without converting.
-   */
+  /** This rep's peak concentric velocity, m/s. */
   peakVelocity: number;
   /** Loss from the set's fastest rep to this one (%), PEAK-based. See `rirForSet`. */
   velocityLossPct: number;
@@ -384,7 +385,7 @@ interface SetRIRResult {
   final: RepRIREstimate;
   /** Every rep's estimate, so a caller can see the trajectory, not just the end. */
   perRep: RepRIREstimate[];
-  /** The fastest rep's peak velocity — the ratio's denominator, same unit as `peakVelocity`. */
+  /** The fastest rep's peak velocity, m/s — the ratio's denominator. */
   baselineMaxVelocity: number;
   /** What the model was told the set's length was, and whether that was supplied. */
   repsInSet: { value: number; source: 'targetReps' | 'actualRepCount' };
@@ -405,16 +406,12 @@ interface SetRIRResult {
  * v_ratio. Substituting the set's peak rep is the same workaround
  * `peakConcentricBaseline` already applies elsewhere in this server.
  *
- * VELOCITY UNITS ARE NOT m/s. `WorkoutSample.velocity` is documented by
- * workout-analytics as m/s, but this server's bridge converts position
- * (mm->m) and force (tenths->lb) and passes velocity through RAW
- * (`event-bridge.ts`: `velocity: frame.velocity`, with the SSE tap below it
- * calling `mmsToMps` precisely because the value is still mm/s). Every
- * absolute velocity in the store is therefore ~1000x its documented unit.
- * THE RIR ESTIMATE IS UNAFFECTED: the model consumes `peakVelocity /
- * baselineMaxVelocity` and a percentage loss, both scale-invariant, so a
- * consistent unit error cancels. The raw figures are surfaced under
- * unit-neutral names rather than a false `...Mps`. Tracked as VW-160.
+ * VELOCITIES ARE m/s, normalised by `toAnalyticsSet`. Sets recorded before
+ * VW-160 hold device-native mm/s on disk and are rescaled on read, so a
+ * pre-fix and a post-fix set produce comparable absolute figures. The estimate
+ * itself never depended on this: the model consumes `peakVelocity /
+ * baselineMaxVelocity` and a percentage loss, both scale-invariant, so the old
+ * unit error cancelled out. Only the reported figures were wrong.
  *
  * VELOCITY LOSS HERE IS PEAK-BASED, AND WILL NOT MATCH `vbt.set`. That
  * pipeline reports the canonical MEAN-concentric loss (VW-62). This one feeds

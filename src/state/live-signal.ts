@@ -38,9 +38,27 @@ export function mapPhase(code: number): LivePhase {
   }
 }
 
-/** Convert workout-analytics' native mm/s velocity into m/s for the wire. */
+/**
+ * Convert a device-native mm/s velocity into the m/s workout-analytics'
+ * `WorkoutSample.velocity` contract requires.
+ *
+ * ONE CALLER BY DESIGN (VW-160): the `WorkoutSample` construction in
+ * `event-bridge.ts`, alongside the single `mmToM` position conversion and the
+ * single tenths→lb force conversion. Everything downstream of that bridge is
+ * already m/s and must NOT call this — a second application scales by 1e-6.
+ * Emit sites that only need display rounding use {@link roundMps}.
+ */
 export function mmsToMps(mms: number): number {
   return Number((mms / 1000).toFixed(3));
+}
+
+/**
+ * Round an already-m/s velocity to the 3 decimal places the wire payloads use.
+ * A ROUNDER, NOT A CONVERSION — replaced the `mmsToMps` calls that used to sit
+ * at every emit site before the bridge became the single conversion point.
+ */
+export function roundMps(mps: number): number {
+  return Number(mps.toFixed(3));
 }
 
 /** Convert a millimetre range-of-motion into metres for the wire. */

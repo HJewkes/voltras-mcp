@@ -594,16 +594,17 @@ describe('wireEventBridge', () => {
       velocity: number;
       force: number;
     }
-    // WA 2.0.0: the bridge converts `frame.position` (device-native mm) to
-    // metres via `mmToM` before building each `WorkoutSample` — the golden
-    // computation must apply the same conversion or it silently diverges
+    // The bridge converts `frame.position` (device-native mm) to metres via
+    // `mmToM` and `frame.velocity` (device-native mm/s) to m/s via `mmsToMps`
+    // before building each `WorkoutSample` (WA 2.0.0 / VW-160) — the golden
+    // computation must apply the same conversions or it silently diverges
     // 1000x from the real enrichment path it's meant to verify.
     const toSample = (f: FrameInput): Parameters<typeof addSampleToSet>[1] => ({
       sequence: f.sequence,
       timestamp: f.timestamp,
       phase: f.phase as Parameters<typeof addSampleToSet>[1]['phase'],
       position: mmToM(f.position),
-      velocity: f.velocity,
+      velocity: mmsToMps(f.velocity),
       force: f.force,
     });
     // Golden: replay a slice through a fresh analytics set exactly as the
@@ -727,7 +728,7 @@ describe('wireEventBridge', () => {
         getPhaseRangeOfMotion(gold2.concentric),
       );
       // Distinct windows: rep 2's slice must not fold in rep 1's stronger pull.
-      expect(enriched2?.concentric.peakVelocity).toBe(500);
+      expect(enriched2?.concentric.peakVelocity).toBe(0.5);
       // Measurement-only: the analytics pipeline publishes its usual
       // `rep_finalized` events (driven by the same frames), but the firmware
       // enrichment path adds NO event of its own — no publish carries a
@@ -1593,8 +1594,18 @@ describe('wireEventBridge', () => {
     }
 
     /**
-     * Drive a rep cycle through the bridge's frame handler. `velocity` is
-     * stamped on every frame so the rep's concentric peakVelocity equals
+     * The device-native mm/s a frame must carry for the rep to land at `mps`
+     * once the bridge applies its single mm/s→m/s conversion (VW-160). Lets the
+     * trigger tests below keep stating velocities in the m/s their assertions
+     * and thresholds reason about.
+     */
+    function frameVelocity(mps: number): number {
+      return mps * 1000;
+    }
+
+    /**
+     * Drive a rep cycle through the bridge's frame handler. `velocity` is m/s
+     * and is stamped on every frame so the rep's concentric peakVelocity equals
      * `velocity` (matching the existing test pattern). Rep N finalizes
      * when the next CONCENTRIC frame begins rep N+1.
      */
@@ -1604,7 +1615,7 @@ describe('wireEventBridge', () => {
         timestamp: 1000 + seq * 100,
         phase: 1, // CONCENTRIC
         position: seq * 0.1,
-        velocity,
+        velocity: frameVelocity(velocity),
         force: 50,
       });
       client.fire.frame({
@@ -1612,7 +1623,7 @@ describe('wireEventBridge', () => {
         timestamp: 1000 + seq * 100 + 50,
         phase: 3, // ECCENTRIC
         position: seq * 0.1 + 0.1,
-        velocity,
+        velocity: frameVelocity(velocity),
         force: 50,
       });
     }
@@ -1624,7 +1635,7 @@ describe('wireEventBridge', () => {
         timestamp: 1000 + seq * 100,
         phase: 1,
         position: seq * 0.1,
-        velocity,
+        velocity: frameVelocity(velocity),
         force: 50,
       });
     }
@@ -1711,7 +1722,7 @@ describe('wireEventBridge', () => {
           timestamp: 1500,
           phase: 3, // ECCENTRIC
           position: 0.4,
-          velocity: 0.6,
+          velocity: frameVelocity(0.6),
           force: 50,
         });
         startNextRep(5, 0.6); // closes rep 4 — cue must NOT re-fire
@@ -1740,7 +1751,7 @@ describe('wireEventBridge', () => {
           timestamp: 1500,
           phase: 3,
           position: 0.4,
-          velocity: 0.6,
+          velocity: frameVelocity(0.6),
           force: 50,
         });
         startNextRep(4, 0.6); // closes rep 3 — must NOT re-fire
@@ -1789,7 +1800,7 @@ describe('wireEventBridge', () => {
           timestamp: 1300,
           phase: 3,
           position: 0.3,
-          velocity: 1.0,
+          velocity: frameVelocity(1.0),
           force: 50,
         });
         // Open rep 3 with very low velocity
@@ -1820,7 +1831,7 @@ describe('wireEventBridge', () => {
           timestamp: 1400,
           phase: 3,
           position: 0.3,
-          velocity: 0.5,
+          velocity: frameVelocity(0.5),
           force: 50,
         });
         startNextRep(3, 0.5);
@@ -1849,7 +1860,7 @@ describe('wireEventBridge', () => {
           timestamp: 1300,
           phase: 3,
           position: 0.3,
-          velocity: 1.0,
+          velocity: frameVelocity(1.0),
           force: 50,
         });
         // Rep 3 opens at 1.2 — that's the new peak. Rep 2's peak was 1.0
@@ -1876,7 +1887,7 @@ describe('wireEventBridge', () => {
           timestamp: 1400,
           phase: 3,
           position: 0.3,
-          velocity: 0.5,
+          velocity: frameVelocity(0.5),
           force: 50,
         });
         startNextRep(3, 0.5);
@@ -1911,7 +1922,7 @@ describe('wireEventBridge', () => {
           timestamp: 1400,
           phase: 3,
           position: 0.3,
-          velocity: 0.5,
+          velocity: frameVelocity(0.5),
           force: 50,
         });
         // Rep 3 begins — closes rep 2, both rep_count_reached:2 AND
@@ -2110,7 +2121,7 @@ describe('wireEventBridge', () => {
         timestamp: 1001,
         phase: 1,
         position: 0.1,
-        velocity: 0.5,
+        velocity: 500,
         force: 50,
       });
       client.fire.frame({
@@ -2118,7 +2129,7 @@ describe('wireEventBridge', () => {
         timestamp: 1002,
         phase: 3,
         position: 0.2,
-        velocity: 0.5,
+        velocity: 500,
         force: 50,
       });
       live.endSet();
@@ -4205,5 +4216,121 @@ describe('position mm→m conversion at the WA ingestion boundary (VMCP-05.19)',
     // Guards against the two call sites (bridge conversion, this test's
     // expectation) silently drifting apart from the shared `mmToM` helper.
     expect(mmToM(600)).toBeCloseTo(0.6, 3);
+  });
+});
+
+// VW-160: `WorkoutSample.velocity` is documented by workout-analytics as m/s.
+// The bridge used to pass `frame.velocity` (device-native mm/s) through
+// unconverted while converting position and force, so every absolute velocity
+// downstream — peak, mean, envelope, e1RM inputs — read ~1000x high (a real set
+// reported a peak of 1101 "m/s"). These pin the single conversion point.
+describe('velocity mm/s→m/s conversion at the WA ingestion boundary (VW-160)', () => {
+  let live: LiveStateT;
+  let client: FakeClient;
+  let server: FakeServer;
+  let channels: FakeChannels;
+  let liveSignals: LiveSignalHub;
+  let events: LiveSignalEvent[];
+
+  beforeEach(() => {
+    live = new LiveState();
+    client = makeFakeClient();
+    server = makeFakeServer();
+    channels = makeFakeChannels();
+    liveSignals = new LiveSignalHub();
+    events = [];
+    liveSignals.subscribe((e) => events.push(e));
+    const bareState = makeBareState({ client, live, server, channels });
+    (bareState as unknown as { liveSignals: LiveSignalHub }).liveSignals = liveSignals;
+    wireBridgeForSlot(
+      bareState as unknown as Parameters<typeof wireBridgeForSlot>[0],
+      bareState.slots.get('primary') as unknown as Parameters<typeof wireBridgeForSlot>[1],
+    );
+  });
+
+  function driveOneRepAtVelocity(mmPerSec: number): void {
+    startSet(live);
+    client.fire.frame({
+      sequence: 1,
+      timestamp: 1,
+      phase: 1,
+      position: 0,
+      velocity: mmPerSec,
+      force: 50,
+    });
+    client.fire.frame({
+      sequence: 2,
+      timestamp: 2,
+      phase: 1,
+      position: 600,
+      velocity: mmPerSec,
+      force: 50,
+    });
+    client.fire.frame({
+      sequence: 3,
+      timestamp: 3,
+      phase: 3,
+      position: 600,
+      velocity: mmPerSec,
+      force: 30,
+    });
+    client.fire.frame({
+      sequence: 4,
+      timestamp: 4,
+      phase: 3,
+      position: 0,
+      velocity: mmPerSec,
+      force: 30,
+    });
+    // A second CONCENTRIC sample closes rep 1 (the ECC -> CONC boundary).
+    client.fire.frame({
+      sequence: 5,
+      timestamp: 5,
+      phase: 1,
+      position: 0,
+      velocity: mmPerSec,
+      force: 50,
+    });
+  }
+
+  it('feeds WA a 1.0 m/s sample.velocity for a 1000 mm/s frame', () => {
+    driveOneRepAtVelocity(1000);
+
+    const rep = live.snapshotSet()?.reps[0];
+    expect(rep).toBeDefined();
+    // The samples WA holds ARE the samples the bridge built — reading one back
+    // is a direct assertion on the `WorkoutSample` contract, not on a
+    // downstream derivation that might correct it.
+    expect(rep!.concentric.samples[0].velocity).toBe(1.0);
+    expect(rep!.concentric.peakVelocity).toBe(1.0);
+  });
+
+  it('converts exactly once — the SSE tap must not re-divide', () => {
+    driveOneRepAtVelocity(1000);
+
+    const phaseEvents = events.filter(
+      (e): e is Extract<LiveSignalEvent, { type: 'phase' }> => e.type === 'phase',
+    );
+    expect(phaseEvents.length).toBeGreaterThan(0);
+    // A second application would land this at 0.001, which is the exact defect
+    // shape the old per-emit-site conversion invited.
+    expect(phaseEvents[0].data.velocity).toBe(1.0);
+  });
+
+  it('publishes a physically plausible peak_velocity on rep_finalized', () => {
+    driveOneRepAtVelocity(1101);
+
+    expect(channels.publish).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(channels.publish.mock.calls[0][0].content) as {
+      rep: { concentric: { peak_velocity: number } };
+    };
+    // 1.101 m/s — a fast but human cable speed. Read 1101 before the fix.
+    expect(parsed.rep.concentric.peak_velocity).toBe(1.101);
+  });
+
+  it('mmsToMps matches the bridge conversion applied to frame.velocity', () => {
+    // Guards against the bridge call site and these expectations silently
+    // drifting apart from the shared helper.
+    expect(mmsToMps(1000)).toBe(1.0);
   });
 });

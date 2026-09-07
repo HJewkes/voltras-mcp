@@ -42,9 +42,13 @@ export const LOCAL_USER_ID = 'local';
 export type StoredSide = 'left' | 'right';
 
 /**
- * Per-phase slice of the persisted derived VBT block. Native telemetry
- * (mm/s, ms) is converted to the payload scale (m/s) at the derivation
- * boundary, so these read identically to the `set_ended` channel event.
+ * Per-phase slice of the persisted derived VBT block. Velocities are m/s and
+ * times are ms, and these read identically to the `set_ended` channel event.
+ *
+ * ALREADY m/s ON EVERY ROW EVER WRITTEN, including rows whose raw reps are
+ * device-native (see {@link StoredSet.velocityUnits}): the derivation boundary
+ * applied the mm/s→m/s conversion before the bridge took it over (VW-160). So
+ * `normaliseVelocityToMps` deliberately leaves this block alone.
  */
 export interface StoredRepPhaseVbt {
   peak_velocity: number;
@@ -227,6 +231,19 @@ export interface StoredSet {
    * being silently rescaled.
    */
   positionUnits?: 'device_native' | 'meters';
+  /**
+   * Scale of `WorkoutSample.velocity` on this set's reps (VW-160). The same
+   * kind of MARKER as {@link positionUnits}, and for the same reason: rows
+   * written before the bridge started converting carry device-native mm/s,
+   * roughly 1000× the m/s the field is documented as, and rescaling them on
+   * disk would destroy the evidence of which scale they were captured at.
+   *
+   * Read through `normaliseVelocityToMps` rather than branching on this field
+   * at each call site. Absent means "never round-tripped through the store" —
+   * the v10→v11 migration stamps every pre-existing row, and every write since
+   * carries the current value — so an absent marker reads as current.
+   */
+  velocityUnits?: 'device_native' | 'meters_per_second';
   /**
    * Telemetry sample rate for this set, in Hz, MEASURED from the sample
    * timestamps rather than assumed. There is no configured rate to read: the

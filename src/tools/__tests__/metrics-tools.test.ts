@@ -1028,3 +1028,76 @@ describe('metrics.compute — vbt.rir', () => {
 void textResult;
 // Reference unused fixture types so removing them later breaks the build.
 void (null as unknown as StoredSession);
+
+// VW-160: sets recorded before the bridge started converting hold device-native
+// mm/s on disk. `toAnalyticsSet` normalises them, so a legacy row answers
+// `vbt.set` in the same m/s a row recorded today does. Runs the REAL
+// `getSetVelocitySummary` — a spy would assert plumbing, and the point here is
+// the number.
+describe('metrics.compute — vbt.set on a device_native stored set (VW-160)', () => {
+  function legacyRep(setId: string, index: number, peakMms: number): StoredRep {
+    return {
+      id: `${setId}-rep-${index}`,
+      setId,
+      index,
+      repNumber: index + 1,
+      concentric: {
+        ...EMPTY_PHASE,
+        peakVelocity: peakMms,
+        _totalVelocity: peakMms,
+        _movementSampleCount: 1,
+      },
+      eccentric: { ...EMPTY_PHASE },
+    };
+  }
+
+  it('reports physically plausible m/s, not the ~1000x device-native figure', async () => {
+    const set: StoredSet = {
+      ...makeSet('legacy-set'),
+      velocityUnits: 'device_native',
+      reps: [
+        legacyRep('legacy-set', 0, 900),
+        legacyRep('legacy-set', 1, 800),
+        legacyRep('legacy-set', 2, 600),
+      ],
+    };
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 'legacy-set' ? set : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'vbt.set', setId: 'legacy-set' });
+    const summary = parsePayload(result) as { best: number; first: number; last: number };
+
+    // Cable speeds a human can produce. Read 900 / 600 "m/s" before the fix.
+    expect(summary.best).toBeCloseTo(0.9, 6);
+    expect(summary.first).toBeCloseTo(0.9, 6);
+    expect(summary.last).toBeCloseTo(0.6, 6);
+  });
+
+  it('leaves a set recorded after the fix untouched', async () => {
+    const set: StoredSet = {
+      ...makeSet('current-set'),
+      velocityUnits: 'meters_per_second',
+      reps: [
+        legacyRep('current-set', 0, 0.9),
+        legacyRep('current-set', 1, 0.8),
+        legacyRep('current-set', 2, 0.6),
+      ],
+    };
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 'current-set' ? set : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'vbt.set', setId: 'current-set' });
+    const summary = parsePayload(result) as { best: number; last: number };
+
+    expect(summary.best).toBeCloseTo(0.9, 6);
+    expect(summary.last).toBeCloseTo(0.6, 6);
+  });
+});

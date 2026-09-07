@@ -102,8 +102,9 @@ export interface RepRomPoint {
  *
  * Proxy: at a common load, the side moving the bar faster is the stronger/fresher
  * one, so the comparison is over each side's MEAN of its per-rep mean concentric
- * velocities (WA `getRepMeanVelocity` via the adapter's `repMeanMms`, the same
- * per-rep number the diverging hero plots — no second definition of "rep velocity").
+ * velocities (WA `getRepMeanVelocity` via the adapter's `repMeanVelocityMps`, the
+ * same per-rep number the diverging hero plots — no second definition of
+ * "rep velocity").
  * There is no force dimension available here (WA-side `load` is 0).
  *
  * DISPLAY ONLY: never persisted, and never a clinical/injury claim.

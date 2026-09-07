@@ -12,6 +12,7 @@
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import { MovementPhase, rebuildPhaseFromSamples } from '@voltras/workout-analytics';
 
+import { mmsToMps } from '../../live-signal.js';
 import type { ActiveSet, DeviceSnapshot } from '../../live-state.js';
 
 export const benchDevice: DeviceSnapshot = {
@@ -29,10 +30,15 @@ export const benchSet: ActiveSet = {
 };
 
 /**
- * Build a phase from raw sample velocities (WA's native mm/s) via WA's own
- * accumulator. Velocities are passed SIGNED — the device decoder emits negative
- * values on the eccentric — because the sign carried on the samples is
- * precisely what the finalize-time peak recompute reads.
+ * Build a phase from RAW DEVICE-NATIVE sample velocities (mm/s, as captured off
+ * the wire) via WA's own accumulator, applying the same single mm/s→m/s
+ * conversion `event-bridge.ts` applies when it builds a `WorkoutSample`
+ * (VW-160). The captured figures below therefore stay as recorded while the
+ * phases carry what production carries.
+ *
+ * Velocities are passed SIGNED — the device decoder emits negative values on
+ * the eccentric — because the sign carried on the samples is precisely what the
+ * finalize-time peak recompute reads.
  */
 export function phaseFromVelocities(
   velocities: readonly number[],
@@ -44,7 +50,7 @@ export function phaseFromVelocities(
     timestamp: opts.startTime + i * 90,
     phase: MovementPhase.CONCENTRIC,
     position: opts.startPosition + (span * (i + 1)) / velocities.length,
-    velocity,
+    velocity: mmsToMps(velocity),
     force: 200,
   }));
   return rebuildPhaseFromSamples(samples);

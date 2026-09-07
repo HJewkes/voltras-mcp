@@ -38,6 +38,7 @@ import {
   type WatchConfig,
 } from '../schemas/set.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../store/types.js';
+import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
 import {
@@ -46,7 +47,7 @@ import {
   measureSampleRateHz,
   readSettingsContext,
 } from '../state/set-capture.js';
-import { mmsToMps } from '../state/live-signal.js';
+import { roundMps } from '../state/live-signal.js';
 import {
   buildIdleTimeoutPayload,
   buildSetAbortedByModeRevertPayload,
@@ -78,6 +79,7 @@ type SetCapture = Pick<
   | 'batteryPct'
   | 'source'
   | 'positionUnits'
+  | 'velocityUnits'
   | 'sampleRateHz'
   | 'firmwareRepCount'
   | 'firmwareSummaryDurationMs'
@@ -768,12 +770,12 @@ export async function finalizeSet(
       data: {
         slot: slotId,
         repIndex: correctedForStore.reps.length,
-        vCon: mmsToMps(getPhaseMeanVelocity(terminalRep.concentric)),
-        // WA 2.0.0: `getRepRangeOfMotion` already returns metres — the bridge
-        // now feeds `WorkoutSample.position` in metres, so no post-hoc mm→m
-        // conversion is needed here any more.
+        vCon: roundMps(getPhaseMeanVelocity(terminalRep.concentric)),
+        // The bridge now feeds `WorkoutSample.position` in metres (WA 2.0.0)
+        // and `.velocity` in m/s (VW-160), so ROM and velocity arrive in
+        // fitness units already and these calls only round.
         rom: getRepRangeOfMotion(terminalRep),
-        peakVelocity: mmsToMps(terminalRep.concentric.peakVelocity),
+        peakVelocity: roundMps(terminalRep.concentric.peakVelocity),
         peakForceSoFar: peakConcentricForce,
       },
     });
@@ -1045,6 +1047,7 @@ function buildSetCapture(
     // silently ingests synthetic sets alongside real hardware.
     source: state.config?.adapter === 'mock' ? 'mock' : 'local',
     positionUnits: CURRENT_POSITION_UNITS,
+    velocityUnits: CURRENT_VELOCITY_UNITS,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(restBeforeSec !== undefined ? { restBeforeSec } : {}),
     ...(device.batteryPercent !== undefined ? { batteryPct: device.batteryPercent } : {}),

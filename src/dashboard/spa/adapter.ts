@@ -10,8 +10,9 @@
  *
  * Velocity math is routed through `@voltras/workout-analytics`
  * (`getRepPeakVelocity` / `getRepMeanVelocity`) rather than hand-reading
- * `rep.concentric`. WA velocities are millimetres/second; divide by 1000 for m/s
- * (matches the legacy dashboard's `fmtVelocity`).
+ * `rep.concentric`. Velocities arrive in m/s: the server's bridge converts
+ * device-native mm/s once when it builds each `WorkoutSample` (VW-160), so
+ * nothing on this side rescales — it only rounds for display.
  */
 import {
   getRepMeanVelocity,
@@ -27,29 +28,22 @@ import type { Device, DeviceRowState, SessionState } from '@titan-design/react-u
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
 
-/**
- * mm/s → m/s divisor. The device pipeline records velocities in mm/s; converting
- * to the m/s the UI reasons in is a data-source concern the app owns (WA stays
- * unit-agnostic; the design system rounds for display).
- */
-export const MMS_PER_MPS = 1000;
-
-/** Peak concentric velocity (mm/s) for a rep, via WA. Null when unavailable. */
-export function repPeakMms(rep: Rep): number | null {
+/** Peak concentric velocity (m/s) for a rep, via WA. Null when unavailable. */
+export function repPeakVelocityMps(rep: Rep): number | null {
   const v = getRepPeakVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /**
- * Mean concentric velocity (MCV, mm/s) for a rep, via WA. Null when unavailable.
+ * Mean concentric velocity (MCV, m/s) for a rep, via WA. Null when unavailable.
  *
  * MCV is the VBT decision metric: the velocity-loss %, FatigueMeter, and
  * StatusPill verdict all derive from per-rep MCV (`getSetVelocityLossPct`
  * folds `getRepMeanVelocity` over the first/last rep). The live VelocityStrip
- * bars use this — not {@link repPeakMms} — so the visible bar-to-bar drop is the
- * same quantity as the stated loss %/verdict shown beside it (VW-58).
+ * bars use this — not {@link repPeakVelocityMps} — so the visible bar-to-bar
+ * drop is the same quantity as the stated loss %/verdict shown beside it (VW-58).
  */
-export function repMeanMms(rep: Rep): number | null {
+export function repMeanVelocityMps(rep: Rep): number | null {
   const v = getRepMeanVelocity(rep);
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
@@ -68,10 +62,10 @@ export function repPeakConcentricForceLbs(rep: Rep): number | null {
   return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : null;
 }
 
-/** Convert a mm/s velocity to m/s (2-dp) as a number for chart props. */
-export function toMps(mmPerSec: number | null | undefined): number | null {
-  if (mmPerSec == null || !Number.isFinite(mmPerSec)) return null;
-  return Number((mmPerSec / MMS_PER_MPS).toFixed(2));
+/** Round an m/s velocity to 2 dp as a number for chart props. */
+export function roundMps(mps: number | null | undefined): number | null {
+  if (mps == null || !Number.isFinite(mps)) return null;
+  return Number(mps.toFixed(2));
 }
 
 /**
@@ -233,10 +227,10 @@ export interface Snapshot {
 
 // ── Formatters (mirror legacy dashboard-html.ts) ─────────────────────────────
 
-/** Format a mm/s velocity as `"0.74 m/s"`, or the em-dash placeholder. */
-export function fmtVelocity(mmPerSec: number | null | undefined): string {
-  if (mmPerSec == null || !Number.isFinite(mmPerSec)) return '—';
-  return `${(mmPerSec / MMS_PER_MPS).toFixed(2)} m/s`;
+/** Format an m/s velocity as `"0.74 m/s"`, or the em-dash placeholder. */
+export function fmtVelocity(mps: number | null | undefined): string {
+  if (mps == null || !Number.isFinite(mps)) return '—';
+  return `${mps.toFixed(2)} m/s`;
 }
 
 /** Format a pounds value as `"135.0 lbs"`, or the em-dash placeholder. */
@@ -359,7 +353,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
   // across the room (VW-58).
   const velocitiesMps: number[] = [];
   for (const rep of reps) {
-    velocitiesMps.push(toMps(repMeanMms(rep)) ?? 0);
+    velocitiesMps.push(roundMps(repMeanVelocityMps(rep)) ?? 0);
   }
 
   return {
@@ -371,7 +365,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
     repsLabel: fmtRepsLabel(reps.length, repTarget),
     velocityLoss: fmtVelocityLoss(reps),
     velocityLossPct: computeVelocityLossPct(reps),
-    latestPeakVelocity: fmtVelocity(latest ? repPeakMms(latest) : null),
+    latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB) : '—',
     velocitiesMps,
   };
@@ -523,8 +517,8 @@ export interface CompletedSet {
    * Null when the snapshot carried no exercise name at close.
    */
   exerciseName: string | null;
-  /** Best (max) per-rep peak concentric velocity for the set, in mm/s. */
-  bestPeakVelocityMms: number | null;
+  /** Best (max) per-rep peak concentric velocity for the set, in m/s. */
+  bestPeakVelocityMps: number | null;
   /**
    * Best (max) per-rep peak CONCENTRIC force for the set, in lbs (VW-61). Lets the
    * rest recap show the just-closed set's peak force (VW-45 is live-overlay-only, so
@@ -579,7 +573,7 @@ function summariseClosedSet(
   let bestPeak: number | null = null;
   let peakForce: number | null = null;
   for (const rep of reps) {
-    const v = repPeakMms(rep);
+    const v = repPeakVelocityMps(rep);
     if (v != null && (bestPeak === null || v > bestPeak)) bestPeak = v;
     const f = repPeakConcentricForceLbs(rep);
     if (f != null && (peakForce === null || f > peakForce)) peakForce = f;
@@ -590,7 +584,7 @@ function summariseClosedSet(
     mode: device?.trainingMode ?? null,
     repCount: reps.length,
     exerciseName,
-    bestPeakVelocityMms: bestPeak,
+    bestPeakVelocityMps: bestPeak,
     peakForceLbs: peakForce,
     reps: [...reps],
   };

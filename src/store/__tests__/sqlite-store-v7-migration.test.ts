@@ -18,6 +18,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import type { StoredRep, StoredSet } from '../types.js';
+import { normaliseVelocityToMps } from '../velocity-units.js';
 
 const EMPTY_PHASE = {
   samples: [],
@@ -207,7 +208,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(10);
+      expect(version.user_version).toBe(11);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -574,7 +575,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(10);
+        expect(version.user_version).toBe(11);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -675,7 +676,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(10);
+        expect(version.user_version).toBe(11);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -735,7 +736,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(10);
+        expect(version.user_version).toBe(11);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -785,6 +786,108 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
       expect(setsStep?.detail).toContain('SEARCH');
       expect(setsStep?.detail).toContain('idx_sets_exercise_session');
       expect(setsStep?.detail).not.toContain('SCAN sets');
+    } finally {
+      void store.close();
+    }
+  });
+});
+
+describe('v10 → v11: sets.velocity_units (VW-160)', () => {
+  it('adds the column and stamps every pre-existing row device_native, through open()', () => {
+    // Through SqliteSessionStore.open so the PRODUCTION migrateV10ToV11 runs
+    // at the end of the same ladder a real user's file walks. The seeded row
+    // predates the bridge's mm/s→m/s conversion, which is exactly what
+    // `device_native` records.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v11-'));
+    const path = join(dir, 'v10.sqlite');
+    try {
+      const seed = new DatabaseSync(path);
+      seed.exec(V6_SCHEMA_SQL);
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2025-06-01T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs, is_warmup)
+        VALUES ('pre-v11', 's1', 'a', 'b', 0, 'WeightTraining', 100, 0)`);
+      seed.exec('PRAGMA user_version = 6');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        expect(columnNames(raw, 'sets')).toContain('velocity_units');
+        const rows = raw.prepare(`SELECT id, velocity_units FROM sets`).all() as {
+          id: string;
+          velocity_units: string | null;
+        }[];
+        expect(rows).toEqual([{ id: 'pre-v11', velocity_units: 'device_native' }]);
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(11);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a migrated row back as device_native, and normalises it to m/s', async () => {
+    // The marker is only worth stamping if a reader can act on it. A row whose
+    // reps hold 1200 device-native units must come back tagged, and must read
+    // as 1.2 m/s once normalised — never rescaled on disk.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v11-read-'));
+    const path = join(dir, 'v10-read.sqlite');
+    try {
+      const seed = new DatabaseSync(path);
+      seed.exec(V6_SCHEMA_SQL);
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2025-06-01T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs, is_warmup)
+        VALUES ('legacy', 's1', 'a', 'b', 0, 'WeightTraining', 100, 0)`);
+      const rep = makeRep('legacy', 0);
+      rep.concentric = { ...EMPTY_PHASE, peakVelocity: 1200 };
+      seed
+        .prepare(`INSERT INTO reps (id, set_id, rep_index, payload) VALUES (?, ?, ?, ?)`)
+        .run(rep.id, 'legacy', 0, JSON.stringify(rep));
+      seed.exec('PRAGMA user_version = 6');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const stored = await opened.getSet('legacy');
+        expect(stored?.velocityUnits).toBe('device_native');
+        expect(stored?.reps[0].concentric.peakVelocity).toBe(1200);
+
+        const normalised = normaliseVelocityToMps(stored!);
+        expect(normalised.velocityUnits).toBe('meters_per_second');
+        expect(normalised.reps[0].concentric.peakVelocity).toBeCloseTo(1.2, 6);
+        // The stored row is a record, not a draft: normalising must not mutate it.
+        expect(stored?.reps[0].concentric.peakVelocity).toBe(1200);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a set written after the fix alone', () => {
+    // `meters_per_second` rows are already correct; normalising one would
+    // divide a good number by 1000.
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      const set = {
+        id: 'fresh',
+        sessionId: 's1',
+        startedAt: 'a',
+        endedAt: 'b',
+        partial: false,
+        velocityUnits: 'meters_per_second',
+        reps: [{ ...makeRep('fresh', 0), concentric: { ...EMPTY_PHASE, peakVelocity: 1.2 } }],
+      } as unknown as StoredSet;
+      const normalised = normaliseVelocityToMps(set);
+      expect(normalised).toBe(set);
+      expect(normalised.reps[0].concentric.peakVelocity).toBe(1.2);
     } finally {
       void store.close();
     }

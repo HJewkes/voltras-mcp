@@ -476,6 +476,10 @@ const PROGRESSION_VELOCITY_LOSS_HOLD_PCT = 25;
  * (baseline = highest peak concentric velocity in the set, which sidesteps the
  * rep-1 setup-pause artifact). Returns 0 when the set is too short or carries no
  * velocity telemetry to judge — i.e. "no fatigue signal", never a false override.
+ *
+ * Deliberately NOT routed through `normaliseVelocityToMps` (VW-160): both terms
+ * come from the same set, so the ratio is scale-invariant and a device-native
+ * row already yields the right percentage.
  */
 function setVelocityLossPct(set: StoredSet): number {
   if (set.reps.length < 2) return 0;

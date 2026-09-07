@@ -34,14 +34,16 @@ import {
 import type { PendingCoercionCheck } from '../coercion-watch.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
+import { mmsToMps } from '../live-signal.js';
 
-// Note on units: `peakVelocity` and `totalVelocity` here are in WA's native
-// scale (mm/s) — the channel-payload builders divide by 1000 on the way out
-// so the serialized values land as m/s. `startPos`/`endPos`, per WA 2.0.0,
-// are cable extension in **metres** (converted at the producer's bridge
-// before WA ever sees a sample) — `getPhaseRangeOfMotion` returns that value
-// verbatim now, with no post-hoc mm→m conversion in the payload builders.
-// Tests below pass values like `850` (= 0.85 m/s) and `0.6` (= 0.6 m ROM)
+// Note on units: the velocity overrides here are stated in DEVICE-NATIVE mm/s
+// (the readings as they come off the wire) and `makePhase` applies the same
+// single mm/s→m/s conversion `event-bridge.ts` applies when it builds a
+// `WorkoutSample` (VW-160), so the phases carry what production carries and the
+// payload builders only round. `startPos`/`endPos`, per WA 2.0.0, are cable
+// extension in **metres** (converted at the producer's bridge before WA ever
+// sees a sample) — `getPhaseRangeOfMotion` returns that value verbatim. Tests
+// below pass values like `850` (= 0.85 m/s) and `0.6` (= 0.6 m ROM)
 // accordingly.
 function makePhase(
   overrides: Partial<{
@@ -78,22 +80,22 @@ function makePhase(
     endTime: overrides.endTime ?? 0,
     startPosition: overrides.startPos ?? 0,
     endPosition: overrides.endPos ?? 0,
-    _totalVelocity: overrides.totalVelocity ?? 0,
+    _totalVelocity: mmsToMps(overrides.totalVelocity ?? 0),
     _totalForce: overrides.totalForce ?? 0,
     _totalLoad: 0,
     _movementSampleCount: overrides.movementSampleCount ?? 0,
     _totalHoldDuration: overrides.holdMs ?? 0,
     _peakVelocityTime: overrides.peakVelocityTime ?? 0,
-    _lastMovementVelocity: overrides.lastMovementVelocity ?? 0,
-    peakVelocity: overrides.peakVelocity ?? 0,
+    _lastMovementVelocity: mmsToMps(overrides.lastMovementVelocity ?? 0),
+    peakVelocity: mmsToMps(overrides.peakVelocity ?? 0),
     peakForce: overrides.peakForce ?? 0,
     peakLoad: 0,
   };
 }
 
-// `concPeak` and `eccPeak` are in mm/s (WA's native unit, unaffected by the
-// 2.0.0 position change). Positions are in metres (WA 2.0.0) — 0.6 here is a
-// 0.6 m ROM, read straight through with no payload-boundary conversion.
+// `concPeak` and `eccPeak` are device-native mm/s, converted by `makePhase`.
+// Positions are in metres (WA 2.0.0) — 0.6 here is a 0.6 m ROM, read straight
+// through with no payload-boundary conversion.
 function makeRep(repNumber: number, concPeak: number, eccPeak: number): Rep {
   return {
     repNumber,
@@ -900,17 +902,17 @@ describe('buildVelocityLossExceededPayload', () => {
   }
 
   it('exposes scalar velocity context in meta and trigger details in content', () => {
-    // baseline/current arrive in WA's native mm/s; builder converts to m/s
-    // for the payload labels. Pre-computed `pct` is unit-invariant and
-    // passes through unchanged.
+    // baseline/current arrive in m/s (converted once at the bridge); the
+    // builder only rounds for the payload labels. Pre-computed `pct` is
+    // unit-invariant and passes through unchanged.
     const set = activeSet([makeRep(1, 850, 500), makeRep(2, 800, 500), makeRep(3, 550, 400)]);
     const { meta, content } = buildVelocityLossExceededPayload(
       set,
       device,
       25,
       35.3,
-      850,
-      550,
+      0.85,
+      0.55,
       1,
       3,
     );
