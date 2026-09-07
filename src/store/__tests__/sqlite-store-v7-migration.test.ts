@@ -831,6 +831,44 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
     }
   });
 
+  it('opens a real v10 file (the pre-VW-160 production shape) instead of refusing it', () => {
+    // The version allowlist is enumerated by hand. Before this test a v10 file
+    // (every DB written between 2026-07-30 and this change) was rejected as
+    // SCHEMA_INCOMPATIBLE because 10 was only ever admitted as SCHEMA_VERSION.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v11-from-v10-'));
+    const path = join(dir, 'real-v10.sqlite');
+    try {
+      const fresh = SqliteSessionStore.open(path);
+      void fresh.close();
+      const seed = new DatabaseSync(path);
+      seed.exec('ALTER TABLE sets DROP COLUMN velocity_units');
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2026-08-11T10:00:00.000Z')`);
+      seed.exec(`INSERT INTO sets
+        (id, session_id, started_at, ended_at, partial, training_mode, weight_lbs)
+        VALUES ('v10-row', 's1', 'a', 'b', 0, 'WeightTraining', 100)`);
+      seed.exec('PRAGMA user_version = 10');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        const rows = raw.prepare(`SELECT id, velocity_units FROM sets`).all() as {
+          id: string;
+          velocity_units: string | null;
+        }[];
+        expect(rows).toEqual([{ id: 'v10-row', velocity_units: 'device_native' }]);
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(11);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reads a migrated row back as device_native, and normalises it to m/s', async () => {
     // The marker is only worth stamping if a reader can act on it. A row whose
     // reps hold 1200 device-native units must come back tagged, and must read

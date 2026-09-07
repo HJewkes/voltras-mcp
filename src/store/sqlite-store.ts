@@ -2404,6 +2404,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 9 = v9 schema; v10 adds `idx_sets_exercise_session` (VMCP-01.72b S4) so
   //     `listSessions`'s per-set exercise-id subquery can seek instead of
   //     scanning all of `sets` — additive index only, no data change.
+  // 10 = v10 schema; v11 adds `sets.velocity_units` (VW-160), additive column
+  //     backfilled 'device_native'.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2417,6 +2419,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 7 &&
     found !== 8 &&
     found !== 9 &&
+    found !== 10 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
