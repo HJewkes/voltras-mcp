@@ -621,13 +621,7 @@ export function registerDeviceTools(
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
-      const slot = getSlot(state, input.slot);
-      await trackedSetterCall(
-        slot.coercionWatch,
-        'device.set_weight',
-        [{ field: 'baseWeight', requested: input.lbs }],
-        () => slot.client.setWeight(input.lbs),
-      );
+      await setSlotWeight(state, input.slot, input.lbs);
       return { ok: true };
     }),
   );
@@ -1639,6 +1633,30 @@ function buildDeviceGetStateResponse(
  * onGuidedLoadState so the bridge publishes the terminal `guided_load_state`
  * channel event (outcome: 'ended'), and lets us reap the auto-created scaffold.
  */
+/**
+ * Reusable weight write for a slot — single source of truth shared by the
+ * `device.set_weight` tool and the VMCP-02.87 voice weight fast-path, which
+ * applies a spoken command without an MCP/LLM round-trip and so cannot go
+ * through the tool. Callers own the range check (the tool's schema, the
+ * fast-path's clamp): the SDK must never see out-of-band lbs.
+ *
+ * There is deliberately no "not while a set is active" guard — `device.set_weight`
+ * has never had one, and mid-set adjustment is a normal drop-set move.
+ */
+export async function setSlotWeight(
+  state: ServerState,
+  slotId: string | undefined,
+  lbs: number,
+): Promise<void> {
+  const slot = getSlot(state, slotId);
+  await trackedSetterCall(
+    slot.coercionWatch,
+    'device.set_weight',
+    [{ field: 'baseWeight', requested: lbs }],
+    () => slot.client.setWeight(lbs),
+  );
+}
+
 export async function unloadSlot(state: ServerState, slotId: string): Promise<void> {
   const slot = getSlot(state, slotId);
   const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
