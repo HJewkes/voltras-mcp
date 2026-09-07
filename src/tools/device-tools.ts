@@ -97,6 +97,7 @@ import {
   shouldPreflightWeightTraining,
   buildGuidedLoadTrackedFields,
   teardownBleResources,
+  isModeRevertStillActive,
 } from './device-handler-helpers.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { log } from '../logger.js';
@@ -1319,6 +1320,7 @@ export function registerDeviceTools(
       // the response, which prefers preserved values for routability).
       const slotBinding =
         typeof device.deviceId === 'string' ? state.slotBindings.get(device.deviceId) : null;
+      const latched = slot.modeRevertGuard.peekAbort();
       const response = buildDeviceGetStateResponse(
         slot.client.isConnected,
         slot.client.connectionState,
@@ -1326,7 +1328,13 @@ export function registerDeviceTools(
         slot.client.isRecording,
         slot.client.guidedLoadState,
         device,
-        slot.modeRevertGuard.peekAbort(),
+        latched,
+        latched !== null &&
+          isModeRevertStillActive(
+            slot.modeRevertGuard.isStillReverted(),
+            TrainingModeNames[latched.actual],
+            device.trainingMode,
+          ),
         slot.live.snapshotSet(),
         slotBinding,
       );
@@ -1575,8 +1583,11 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  *     for the connected deviceId (null when unbound). Lets the agent
  *     decide whether the side-ID ritual is needed.
  *   * `mode_revert_latched` — VMCP-02.14: present when the mode-revert
- *     guard is holding a safety abort that will block the next set.start
- *     with SET_ABORTED_BY_MODE_REVERT. Absent ⇒ no abort latched.
+ *     guard is holding a safety abort. Absent ⇒ no abort latched. VW-178:
+ *     the latch is no longer consumed by the set.start refusal, so
+ *     `still_active` reports whether it will actually block the next
+ *     set.start (false ⇒ the device has moved off the reverted-to mode and
+ *     the latch is a spent record).
  */
 function buildDeviceGetStateResponse(
   isConnected: boolean,
@@ -1586,6 +1597,7 @@ function buildDeviceGetStateResponse(
   guidedLoadState: GuidedLoadState,
   device: DeviceSnapshot,
   modeRevertLatched: ModeRevertAbort | null,
+  modeRevertStillActive: boolean,
   activeSet: ActiveSet | undefined,
   slotBinding: SlotBinding | null,
 ): Record<string, unknown> {
@@ -1647,6 +1659,7 @@ function buildDeviceGetStateResponse(
         TrainingModeNames[modeRevertLatched.requested] ?? String(modeRevertLatched.requested),
       actual_mode: TrainingModeNames[modeRevertLatched.actual] ?? String(modeRevertLatched.actual),
       timestamp_ms: modeRevertLatched.timestampMs,
+      still_active: modeRevertStillActive,
     };
   }
   return out;

@@ -44,7 +44,7 @@ describe('ModeRevertGuard', () => {
   it('starts with no abort and no requested mode', () => {
     const { guard } = makeGuard();
     expect(guard.isAborted()).toBe(false);
-    expect(guard.consumeAbort()).toBeNull();
+    expect(guard.peekAbort()).toBeNull();
   });
 
   it('latches an abort when settings_update reports a different mode within the window', () => {
@@ -57,21 +57,70 @@ describe('ModeRevertGuard', () => {
     guard.onSettingsUpdate(TrainingMode.WeightTraining);
 
     expect(guard.isAborted()).toBe(true);
-    const abort = guard.consumeAbort();
+    const abort = guard.peekAbort();
     expect(abort).not.toBeNull();
     expect(abort!.requested).toBe(TrainingMode.Rowing);
     expect(abort!.actual).toBe(TrainingMode.WeightTraining);
     expect(abort!.timestampMs).toBe(1_000_100);
   });
 
-  it('clears the latch on consumeAbort (single-fire safety)', () => {
+  it('VW-178: reading the latch never clears it', () => {
     const { guard } = makeGuard();
     guard.arm(TrainingMode.Rowing);
     guard.onSettingsUpdate(TrainingMode.WeightTraining);
 
-    guard.consumeAbort(); // first read: returns abort
+    guard.peekAbort();
+    guard.isStillReverted();
+    expect(guard.isAborted()).toBe(true);
+    expect(guard.peekAbort()).not.toBeNull();
+    expect(guard.isStillReverted()).toBe(true);
+  });
+
+  it('VW-178: isStillReverted goes false once the device echoes some other mode', () => {
+    const { guard } = makeGuard();
+    guard.arm(TrainingMode.Rowing);
+    guard.onSettingsUpdate(TrainingMode.WeightTraining);
+    expect(guard.isStillReverted()).toBe(true);
+
+    // Device moves on to a third mode — the recorded revert is over even
+    // though the latch itself has not been cleared by a matching echo.
+    guard.onSettingsUpdate(TrainingMode.Isokinetic);
+    expect(guard.isStillReverted()).toBe(false);
+    expect(guard.isAborted()).toBe(true);
+  });
+
+  it('VW-178: a matching echo clears the latch and isStillReverted', () => {
+    const { guard } = makeGuard();
+    guard.arm(TrainingMode.Rowing);
+    guard.onSettingsUpdate(TrainingMode.WeightTraining);
+
+    guard.onSettingsUpdate(TrainingMode.Rowing);
     expect(guard.isAborted()).toBe(false);
-    expect(guard.consumeAbort()).toBeNull();
+    expect(guard.isStillReverted()).toBe(false);
+  });
+
+  it('VW-178: arming for the mode the device already echoes clears the latch', () => {
+    const { guard } = makeGuard();
+    guard.arm(TrainingMode.Rowing);
+    guard.onSettingsUpdate(TrainingMode.WeightTraining);
+
+    guard.arm(TrainingMode.WeightTraining);
+    expect(guard.isAborted()).toBe(false);
+  });
+
+  it('VW-178: isStillReverted is false with no latch at all', () => {
+    const { guard } = makeGuard();
+    guard.onSettingsUpdate(TrainingMode.WeightTraining);
+    expect(guard.isStillReverted()).toBe(false);
+  });
+
+  it('echoedMode reports the last observed trainingMode', () => {
+    const { guard } = makeGuard();
+    expect(guard.echoedMode()).toBeUndefined();
+    guard.onSettingsUpdate(TrainingMode.Isokinetic);
+    expect(guard.echoedMode()).toBe(TrainingMode.Isokinetic);
+    guard.reset();
+    expect(guard.echoedMode()).toBeUndefined();
   });
 
   it('does NOT latch when the reported mode matches the requested mode', () => {
@@ -161,7 +210,7 @@ describe('ModeRevertGuard', () => {
 
     guard.reset();
     expect(guard.isAborted()).toBe(false);
-    expect(guard.consumeAbort()).toBeNull();
+    expect(guard.peekAbort()).toBeNull();
   });
 
   it('uses Date.now by default when no clock is supplied', () => {
@@ -190,7 +239,7 @@ describe('ModeRevertGuard', () => {
       setNow(1_001_100);
       guard.onSettingsUpdate(TrainingMode.Rowing);
       expect(guard.isAborted()).toBe(false);
-      expect(guard.consumeAbort()).toBeNull();
+      expect(guard.peekAbort()).toBeNull();
     });
 
     it('a non-matching echo does NOT auto-clear; it re-latches with the new revert', () => {
@@ -207,7 +256,7 @@ describe('ModeRevertGuard', () => {
       setNow(1_001_100);
       guard.onSettingsUpdate(TrainingMode.WeightTraining);
       expect(guard.isAborted()).toBe(true);
-      const abort = guard.consumeAbort();
+      const abort = guard.peekAbort();
       expect(abort!.requested).toBe(TrainingMode.Isokinetic);
       expect(abort!.actual).toBe(TrainingMode.WeightTraining);
     });

@@ -83,3 +83,26 @@ export async function teardownBleResources(
     log.info('device.disconnect: client dispose failed (best-effort, proceeding)', e);
   }
 }
+
+/**
+ * VW-178: will the next `set.start` refuse over a latched mode revert?
+ *
+ * Two independent views of the same cmd=0x10 echo must both say the revert is
+ * still live: the guard's own last settings_update (`stillRevertedPerGuard`
+ * from `ModeRevertGuard.isStillReverted()`) and the LiveState snapshot every
+ * other mode surface reads (`echoedModeName`). Since VW-178 nothing clears the
+ * latch on read, so requiring both keeps one stale view from turning a resolved
+ * revert into a permanent block. A snapshot with no mode at all cannot vouch
+ * for recovery, so the guard's view stands.
+ *
+ * `revertedToModeName` is the display name of the abort's `actual` mode.
+ */
+export function isModeRevertStillActive(
+  stillRevertedPerGuard: boolean,
+  revertedToModeName: string | undefined,
+  echoedModeName: string | undefined,
+): boolean {
+  if (!stillRevertedPerGuard) return false;
+  if (echoedModeName === undefined) return true;
+  return echoedModeName === revertedToModeName;
+}

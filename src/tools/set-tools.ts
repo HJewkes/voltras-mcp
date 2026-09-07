@@ -66,6 +66,7 @@ import type { PhysicalSide } from '../state/slot-bindings.js';
 import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
+import { isModeRevertStillActive } from './device-handler-helpers.js';
 
 /**
  * The v7 capture fields stamped onto a stored set at close. A subset of
@@ -230,7 +231,7 @@ function armModeRevertGuardForSet(slot: ReturnType<typeof getSlot>): void {
 }
 
 /**
- * VW-163: has the latched revert already resolved on the device?
+ * VW-163: is the latched revert still live on the device?
  *
  * The cmd=0x10 echo (`DeviceSnapshot.trainingMode`) is the single reliable
  * mode signal (see `active-mode.ts`), so the revert is live only while the
@@ -240,13 +241,15 @@ function armModeRevertGuardForSet(slot: ReturnType<typeof getSlot>): void {
  * latch from `device.unload`'s mode bounce looks like — the latch describes
  * a condition that no longer exists and must not block the next set.
  */
-function isModeRevertResolved(
+function isRevertStillLive(
   abort: { requested: TrainingMode; actual: TrainingMode },
   slot: ReturnType<typeof getSlot>,
 ): boolean {
-  const echoed = slot.live.snapshotDevice().trainingMode;
-  if (echoed === undefined) return false;
-  return echoed !== TrainingModeNames[abort.actual];
+  return isModeRevertStillActive(
+    slot.modeRevertGuard.isStillReverted(),
+    TrainingModeNames[abort.actual],
+    slot.live.snapshotDevice().trainingMode,
+  );
 }
 
 async function startSet(
@@ -303,11 +306,15 @@ async function startSet(
   //
   // VW-163: a latch whose requested mode is what the device now echoes is
   // stale — the revert resolved (a later `device.set_mode`, or the mode
-  // bounce inside `device.unload` settling back). `consumeAbort` clears the
-  // latch either way, so the recovered case simply falls through and starts
-  // the set instead of refusing it.
-  const pendingAbort = slot.modeRevertGuard.consumeAbort();
-  if (pendingAbort !== null && !isModeRevertResolved(pendingAbort, slot)) {
+  // bounce inside `device.unload` settling back), so the recovered case
+  // falls through and starts the set instead of refusing it.
+  //
+  // VW-178: the read no longer clears the latch, so an immediate retry of a
+  // refused set.start refuses again instead of engaging the motor in the
+  // wrong mode. Recovery is the device echoing the requested mode back (a
+  // `device.set_mode` that sticks), not a second call.
+  const pendingAbort = slot.modeRevertGuard.peekAbort();
+  if (pendingAbort !== null && isRevertStillLive(pendingAbort, slot)) {
     const requestedName =
       TrainingModeNames[pendingAbort.requested] ?? String(pendingAbort.requested);
     const actualName = TrainingModeNames[pendingAbort.actual] ?? String(pendingAbort.actual);

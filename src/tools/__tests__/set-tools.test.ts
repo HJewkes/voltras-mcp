@@ -641,22 +641,67 @@ describe('set.start — mode-revert guard (Bug 22)', () => {
     expect(parsed.abort.reason).toBe('mode_revert');
   });
 
-  it('clears the abort latch after refusal so a subsequent valid set.start can proceed', async () => {
+  it('VW-178: two consecutive set.start calls after an unrecovered revert BOTH refuse', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
     const slot = h.state.slots.get('primary')!;
     arm(slot as never, 3); // Rowing requested
     (
       slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
-    ).modeRevertGuard.onSettingsUpdate(1); // WT — latch
+    ).modeRevertGuard.onSettingsUpdate(1); // WT — latch, and the device stays there
 
-    // First call refuses.
+    const first = await h.invoke('set.start', {});
+    expect(first.isError).toBe(true);
+    expect((parseResult(first) as { code: string }).code).toBe('SET_ABORTED_BY_MODE_REVERT');
+
+    // Retrying a refused set.start is the natural agent reaction. Before
+    // VW-178 the first refusal consumed the latch and this call engaged the
+    // motor in the reverted mode.
+    const retry = await h.invoke('set.start', {});
+    expect(retry.isError).toBe(true);
+    expect((parseResult(retry) as { code: string }).code).toBe('SET_ABORTED_BY_MODE_REVERT');
+    expect(
+      (slot.client as { startRecording: ReturnType<typeof vi.fn> }).startRecording,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('VW-178: every refused set.start re-publishes set_aborted_by_mode_revert', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    arm(slot as never, 3);
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1);
+
+    h.channels.publish.mockClear();
+    await h.invoke('set.start', {});
+    await h.invoke('set.start', {});
+
+    const aborts = h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string> })
+      .filter((e) => e.meta.event_type === 'set_aborted_by_mode_revert');
+    expect(aborts).toHaveLength(2);
+  });
+
+  it('VW-178: a matching echo between two refused calls lets the second one start', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    const slot = h.state.slots.get('primary')!;
+    const guard = slot.modeRevertGuard as unknown as { onSettingsUpdate: (m: number) => void };
+    arm(slot as never, 3); // Rowing requested
+    guard.onSettingsUpdate(1); // WT — latch
+
     const refused = await h.invoke('set.start', {});
     expect(refused.isError).toBe(true);
 
-    // Second call (user accepted the safety abort, retried with WT-as-current-mode):
-    // the latch was consumed by the first refusal, the new arm at set.start
-    // records WT (current mode), and no new revert has been observed.
+    // The device comes back to Rowing on its own. Rowing blocks set.start for
+    // an unrelated reason (Bug 22), so recover into a mode a set can run in:
+    // the echo clears the latch, then a WT re-arm is what the user asked for.
+    guard.onSettingsUpdate(3);
+    h.live.applySettings({ trainingMode: 'WeightTraining' });
+    guard.onSettingsUpdate(1);
+
     const retry = await h.invoke('set.start', {});
     expect(retry.isError).toBeUndefined();
     expect(

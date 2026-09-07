@@ -12,10 +12,10 @@
 // `onSettingsUpdate` stream for trainingMode drift after the user has
 // requested a mode via `session.start` or `set.start`. When the actual
 // mode diverges from the requested mode within the configured detection
-// window, the guard latches into the `aborted` state. The next `set.start`
-// invocation consults the latch via `consumeAbort()`, refuses to engage the
-// motor, and emits a `set_aborted_by_mode_revert` channel event so PT Claude
-// can explain the safety abort to the user.
+// window, the guard latches into the `aborted` state. Every subsequent
+// `set.start` consults the latch via `peekAbort()` + `isStillReverted()`,
+// refuses to engage the motor, and emits a `set_aborted_by_mode_revert`
+// channel event so PT Claude can explain the safety abort to the user.
 //
 // Design follows the sketch in
 // `voltra-private/research/safety-state-error-frames-2026-05-07-android-deep.md`
@@ -61,12 +61,13 @@ interface RequestedEntry {
  * `arm()` call (e.g., session.start followed by set.start) overwrites the
  * first entry — the guard always watches the most recently requested mode.
  *
- * Latched abort state persists until `consumeAbort()` is called or the
- * device echoes the requested mode back (the recovery signal — see
- * `onSettingsUpdate`). A pending abort blocks every set.start until then,
- * which is intentional: an UNRESOLVED mode revert is a hard safety stop, not
- * a soft notification, and the user should be told what happened before any
- * further load engagement.
+ * VW-178: latched abort state clears ONLY when the revert actually recovers —
+ * the device echoes the requested mode back (see `onSettingsUpdate`), `arm()`
+ * asks for a mode the device is already echoing, or `reset()` drops the slot's
+ * state. Nothing clears it on read. A pending abort therefore blocks EVERY
+ * set.start until then, which is intentional: an UNRESOLVED mode revert is a
+ * hard safety stop, not a soft notification, and retrying a refused set.start
+ * (the natural agent reaction) must not be what defeats it.
  */
 export class ModeRevertGuard {
   private requested: RequestedEntry | null = null;
@@ -86,10 +87,9 @@ export class ModeRevertGuard {
    *
    * Calling `arm` while an abort is already latched does NOT clear the
    * abort by itself — only a matched-mode echo (see `onSettingsUpdate`)
-   * or `consumeAbort()` does — but DOES reset the requested entry to the
-   * new mode so a fresh detection cycle starts. This keeps the abort
-   * surface live until either the user's setter cascade is corroborated by
-   * the device or set.start consumes it.
+   * does — but DOES reset the requested entry to the new mode so a fresh
+   * detection cycle starts. This keeps the abort surface live until the
+   * user's setter cascade is corroborated by the device.
    *
    * VW-163: the one exception is arming for the mode the device is ALREADY
    * echoing. The revert the latch recorded is over — the device sits in the
@@ -154,7 +154,7 @@ export class ModeRevertGuard {
     }
     // Divergence inside the window — latch the abort. Keep the requested
     // entry untouched so a subsequent settings_update doesn't re-trigger
-    // (the latch is the source of truth from here until consumeAbort).
+    // (the latch is the source of truth from here until it recovers).
     this.aborted = {
       requested: this.requested.mode,
       actual: trainingMode,
@@ -181,15 +181,28 @@ export class ModeRevertGuard {
   }
 
   /**
-   * Read the latched abort state and clear it. Returns `null` when no
-   * abort is pending. Call from `set.start` before engaging the motor: a
-   * non-null return is the signal to refuse the engage and emit a
-   * `set_aborted_by_mode_revert` channel event with the returned payload.
+   * VW-178: is the latched revert still the device's live condition — an
+   * abort is latched AND the device is still echoing the mode it reverted
+   * TO. This is the refusal predicate for `set.start`, replacing the old
+   * read-and-clear `consumeAbort()`: a latch that nothing consumes is what
+   * makes a retried `set.start` refuse again instead of engaging the motor
+   * in the wrong mode.
+   *
+   * False once the echo moves on, so a resolved revert never blocks a set
+   * (VW-163 semantics, unchanged).
    */
-  consumeAbort(): ModeRevertAbort | null {
-    const abort = this.aborted;
-    this.aborted = null;
-    return abort;
+  isStillReverted(): boolean {
+    return this.aborted !== null && this.lastEcho === this.aborted.actual;
+  }
+
+  /**
+   * The device's most recently echoed training mode, or `undefined` before
+   * the first settings_update carrying one. Read by `bilateral.cascade` to
+   * decide whether a planned mode is already the live one (skip the echo
+   * wait) and to detect the echo landing after the mode write (VW-162).
+   */
+  echoedMode(): TrainingMode | undefined {
+    return this.lastEcho;
   }
 
   /** Drop in-flight, latched and echo state. Used in tests / on disconnect. */

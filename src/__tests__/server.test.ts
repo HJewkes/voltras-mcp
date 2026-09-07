@@ -239,7 +239,8 @@ function fakeBootstrapResult(): unknown {
     arm: () => {},
     onSettingsUpdate: () => {},
     isAborted: () => false,
-    consumeAbort: () => null,
+    peekAbort: () => null,
+    isStillReverted: () => false,
     reset: () => {},
   };
   slots.set('primary', { slotId: 'primary', client, live, modeRevertGuard });

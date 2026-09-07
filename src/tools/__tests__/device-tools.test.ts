@@ -1313,6 +1313,26 @@ describe('registerDeviceTools', () => {
         expect(typeof payload.mode_revert_latched.timestamp_ms).toBe('number');
       });
 
+      it('VW-178: still_active tracks whether the next set.start will refuse', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live.applySettings({ trainingMode: 'WeightTraining' });
+        slot.modeRevertGuard.arm(3 /* Rowing */);
+        slot.modeRevertGuard.onSettingsUpdate(1 /* WeightTraining */);
+
+        const reg = placeholders.get('device.get_state')!;
+        const latched = (await invoke(reg, {})).payload;
+        expect(latched.mode_revert_latched.still_active).toBe(true);
+
+        // The device moves off the reverted-to mode: the latch survives (only
+        // a matching echo or an arm for the live mode clears it) but it no
+        // longer describes a live condition, so set.start stops refusing.
+        slot.live.applySettings({ trainingMode: 'Isokinetic' });
+        slot.modeRevertGuard.onSettingsUpdate(7 /* Isokinetic */);
+        const spent = (await invoke(reg, {})).payload;
+        expect(spent.mode_revert_latched).toBeDefined();
+        expect(spent.mode_revert_latched.still_active).toBe(false);
+      });
+
       it('get_state inspection does NOT consume the latch (peek-only)', async () => {
         const slot = state.slots.get('primary')!;
         slot.modeRevertGuard.arm(3);
@@ -1323,7 +1343,7 @@ describe('registerDeviceTools', () => {
         // Latch must still be present on a second call.
         const { payload } = await invoke(reg, {});
         expect(payload.mode_revert_latched).toBeDefined();
-        // And consumeAbort still returns the latch (it was never cleared).
+        // And the latch is still there (nothing consumes it).
         expect(slot.modeRevertGuard.isAborted()).toBe(true);
       });
     });
