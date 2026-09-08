@@ -12,7 +12,10 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
+    // `tools/**` holds standalone packages with their own dependencies and
+    // toolchains (see tools/truecoach-submit). They are never part of this
+    // package's lint, typecheck, test or build.
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'tools/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
