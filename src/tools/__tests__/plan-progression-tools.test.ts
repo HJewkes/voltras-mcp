@@ -139,6 +139,12 @@ function makeStore(): SessionStore & {
     // VMCP-01.72b (S5): resolveBasisSession now finds the basis session via
     // this narrow lookup, not getSetsForExercise (which hydrates reps).
     getMostRecentSessionIdForExercise: vi.fn(async () => null),
+    // VMCP-06.07: suggest_progression reads getTierSignal, which reads the
+    // profile row plus the session aggregates. Defaults model a fresh user
+    // (no declared tier, no history) — i.e. tier 'beginner', source 'default'.
+    getTrainingProfile: vi.fn(async () => undefined),
+    countSessions: vi.fn(async () => 0),
+    getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
     listTrainingPrograms: vi.fn(async () => []),
