@@ -146,9 +146,8 @@ import {
   buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
-  baselineRepNumberFor,
-  peakConcentricBaseline,
   triggerDedupeKey,
+  velocityLossBaseline,
   type ActiveSetAtDisconnect,
   type CoercionSetContext,
   type SettingsUpdateAll,
@@ -1418,14 +1417,17 @@ function evaluateRepTriggers(
     return;
   }
   const actualReps = finalizedIndex + 1;
-  // Baseline = highest peak concentric velocity across all finalized reps
-  // up to and INCLUDING the just-finalized rep. This intentionally folds
+  // Baseline = highest peak concentric velocity across the ELIGIBLE finalized
+  // reps up to and INCLUDING the just-finalized rep. This intentionally folds
   // the new rep into the baseline candidate set: when it's the new max,
   // baseline equals current and loss = 0% so nothing fires. That's the
   // desired behavior — a stronger rep should not trigger a loss event for
   // any prior threshold.
+  //
+  // VW-168: the eligibility filter is what keeps a rope-positioning pull from
+  // becoming the baseline and firing every threshold on rep 2.
   const finalizedReps = set.reps.slice(0, finalizedIndex + 1);
-  const baseline = peakConcentricBaseline(finalizedReps);
+  const { velocity: baseline, repNumber: baselineRepNumber } = velocityLossBaseline(finalizedReps);
   const current = finalizedRep.concentric.peakVelocity;
 
   for (const spec of set.watch.notifyOn) {
@@ -1447,7 +1449,6 @@ function evaluateRepTriggers(
       const lossPct = (100 * (baseline - current)) / baseline;
       if (lossPct < spec.pct) continue;
       if (!live.tryFireTrigger(key)) continue;
-      const baselineRepNumber = baselineRepNumberFor(finalizedReps);
       const payload = buildVelocityLossExceededPayload(
         set,
         device,

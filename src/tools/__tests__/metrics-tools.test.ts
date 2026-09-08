@@ -39,6 +39,12 @@ import type {
   StoredSession,
 } from '../../store/types.js';
 import type { FeatureGateVerdict } from '../../store/baseline-gate.js';
+import {
+  makeShapedRep,
+  makeWorkingSet,
+  POSITIONING_PULL,
+  WORKING_REP,
+} from '../../state/__tests__/fixtures/rep-shapes.js';
 import type { ToolResult } from '../helpers.js';
 
 // ─── Test fixtures ────────────────────────────────────────────────────────
@@ -919,6 +925,32 @@ describe('metrics.compute — vbt.rir', () => {
     expect(body.baselineMaxVelocity).toBeCloseTo(0.9, 6);
     // Every loss stays non-negative -- nothing is "faster than the baseline".
     for (const r of body.perRep) expect(r.velocityLossPct).toBeGreaterThanOrEqual(0);
+  });
+
+  it('VW-168: takes the denominator from the eligible reps, not a positioning pull', async () => {
+    // A rope-positioning pull opens the set: ~1 m of cable at ~1.6 m/s against
+    // working reps of ~0.5 m at ~0.85 m/s. Left in, it becomes the baseline and
+    // every real rep reads as a ~50% loss.
+    const reps = [
+      makeShapedRep(1, POSITIONING_PULL),
+      ...makeWorkingSet(3).map((rep, i) => ({ ...rep, repNumber: i + 2 })),
+    ];
+    const set: StoredSet = {
+      ...makeSet('set-rir'),
+      exerciseId: 'bench-press',
+      reps: reps.map((rep, i) => ({ ...rep, id: `rep-${i}`, setId: 'set-rir', index: i })),
+    };
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.baselineMaxVelocity).toBeCloseTo(WORKING_REP.peakMps, 6);
+    // The pull is still SCORED — excluded from setting the baseline, not from
+    // the response.
+    expect(body.perRep).toHaveLength(reps.length);
   });
 
   it('names all three confidence axes and never returns a bare number', async () => {

@@ -39,6 +39,7 @@ import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
+import { selectEligibleReps } from './rep-eligibility.js';
 import type { WeightImpliedResult } from './weight-implied-watch.js';
 import type { BilateralDivergence } from './bilateral-reconciler.js';
 
@@ -685,6 +686,30 @@ export function peakConcentricBaseline(reps: readonly Rep[]): number {
  * the model can reason "baseline came from rep 1, current from rep 8"
  * without ambiguity.
  */
+/**
+ * The velocity-loss baseline for a window of finalized reps, over ELIGIBLE
+ * reps only (VW-168).
+ *
+ * The 2026-09-07 positioning pull was the fastest "rep" of most sets, so the
+ * unfiltered peak made it the baseline and `velocity_loss_exceeded` fired on
+ * rep 2 of every set. The trigger, the `set_ended` VBT summary and `vbt.rir`
+ * all read the baseline from here, so a rep the rule excludes cannot be the
+ * baseline in one surface and not in another.
+ *
+ * `repNumber` names the rep the baseline came from in the set's own numbering,
+ * which survives the filter because it lives on the rep.
+ */
+export function velocityLossBaseline(reps: readonly Rep[]): {
+  velocity: number;
+  repNumber: number;
+} {
+  const eligible = selectEligibleReps(reps);
+  return {
+    velocity: peakConcentricBaseline(eligible),
+    repNumber: baselineRepNumberFor(eligible),
+  };
+}
+
 export function baselineRepNumberFor(reps: readonly Rep[]): number {
   let best = 0;
   let idx = 0;
@@ -730,9 +755,16 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   }
   // Loss% is a ratio and therefore unit-invariant; the velocity values are
   // already m/s and only get rounded for the payload.
-  const firstRaw = reps[0].concentric.peakVelocity;
+  //
+  // VW-168: first / peak / mean read the ELIGIBLE reps so the summary agrees
+  // with the `velocity_loss_exceeded` trigger and `vbt.rir` about which reps
+  // were work. `last_rep_v` stays the set's actual final rep: it answers "how
+  // did you finish", and a short or slow last rep is the fatigue signal
+  // itself, not an artifact to filter out.
+  const eligible = selectEligibleReps(reps);
+  const firstRaw = eligible[0].concentric.peakVelocity;
   const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
-  const peakRaw = peakConcentricBaseline(reps);
+  const { velocity: peakRaw, repNumber } = velocityLossBaseline(reps);
   const lossPct =
     reps.length < 2 || peakRaw <= 0
       ? null
@@ -740,10 +772,10 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   return {
     first_rep_v: roundMps(firstRaw),
     peak_rep_v: roundMps(peakRaw),
-    peak_rep_number: baselineRepNumberFor(reps),
+    peak_rep_number: repNumber,
     last_rep_v: roundMps(lastRaw),
     velocity_loss_pct: lossPct,
-    mean_velocity: meanConcentricPeakVelocity(reps),
+    mean_velocity: meanConcentricPeakVelocity(eligible),
   };
 }
 
