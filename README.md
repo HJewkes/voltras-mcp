@@ -261,9 +261,11 @@ Everything is optional; the defaults are a working configuration.
 | `VMCP_TRUECOACH_CLIENT_ID`    | token response `user_id`          | string                                 | Override for the TrueCoach client id. Set it if the pull 404s with the id taken from the grant.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `VMCP_TRUECOACH_TOKEN_PATH`   | `~/.voltras/truecoach-token.json` | absolute path                          | Cached access token, written mode 0600. Never logged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `VMCP_TRUECOACH_CACHE_DIR`    | `~/.voltras/truecoach-cache`      | absolute path                          | Raw response cache, 6-hour TTL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `VMCP_TRUECOACH_OUTBOX`       | `off`                             | `off` \| `on`                          | When `on`, `session.end` writes the session's rendered coach results to the outbox (see [Coach results and the outbox](#coach-results-and-the-outbox)). Local file only — nothing is uploaded. A session with no working sets writes nothing, and a failed write never fails the close. Invalid values throw at startup.                                                                                                                                                                                                        |
+| `VMCP_TRUECOACH_OUTBOX_DIR`   | `~/.voltras/truecoach-outbox`     | absolute path                          | Outbox root. `pending/` under it is created on demand, mode 0700.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `VOLTRA_ADAPTER`, `VMCP_REP_SOURCE`, `VMCP_REST_TIMER`, `VMCP_REP_CORRECTIONS`,
-`VMCP_AUTO_ARM`, and `VMCP_CUES` throw synchronously at startup on an unrecognized value, so a typo surfaces
+`VMCP_AUTO_ARM`, `VMCP_TRUECOACH_OUTBOX`, and `VMCP_CUES` throw synchronously at startup on an unrecognized value, so a typo surfaces
 immediately rather than being silently ignored.
 
 ---
@@ -458,6 +460,24 @@ warm-ups are excluded, then the sets at the top load are kept. A guest lifter's 
 (`session.set_lifter`), mock-adapter sets and zero-rep sets never appear, and an exercise
 with no working set is omitted rather than reported empty. The tool reads the store and
 makes **no network call** — it never writes to TrueCoach, and nothing in this repo does.
+
+### The outbox
+
+Set `VMCP_TRUECOACH_OUTBOX=on` and every `session.end` also drops the same payload, plus a
+`generatedAt` stamp, at:
+
+```
+~/.voltras/truecoach-outbox/pending/<sessionId>.json
+```
+
+`VMCP_TRUECOACH_OUTBOX_DIR` moves the root; `pending/` is created on demand, mode 0700.
+This is a **local file drop, not a pipe**: nothing reads the directory, nothing uploads it,
+and nothing schedules anything. It exists so the results of a session survive the
+conversation that produced them, ready to paste.
+
+A session with no working sets writes nothing (logged at `debug`), and a write failure is
+logged and swallowed — the file is a by-product of `session.end`, never a precondition for
+it.
 
 ---
 

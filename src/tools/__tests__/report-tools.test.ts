@@ -101,6 +101,24 @@ describe('report.session_results', () => {
     );
   });
 
+  it('keeps only the top-load sets when the ramp-up was never flagged', async () => {
+    // Arrange: the same ramp-up as above, with nobody having set `isWarmup`.
+    const state = makeState({
+      sets: [
+        workingSet('w1', 70, 8),
+        workingSet('w2', 100, 6),
+        workingSet('s1', 170, 12),
+        workingSet('s2', 170, 10),
+      ],
+    });
+
+    // Act
+    const results = await buildSessionResults(state, SESSION_ID);
+
+    // Assert: an unflagged 70 lb ramp-up is not a 70 lb working set.
+    expect(results.exercises[0]?.result).toBe('170 lb x 12\n170 lb x 10');
+  });
+
   it("omits a guest lifter's sets from the owner's result", async () => {
     // Arrange: the owner's 170s plus a guest's heavier set on the same session.
     const state = makeState({

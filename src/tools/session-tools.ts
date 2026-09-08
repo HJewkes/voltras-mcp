@@ -3,7 +3,9 @@
 // Owns the workout-session lifecycle exposed over MCP:
 //   * `session.start` — begins a session, validating exercise context (R21).
 //   * `session.end` — closes the session, force-ending any active set with
-//     `partialReason: 'session_end'` (EC-06) before writing the final row.
+//     `partialReason: 'session_end'` (EC-06) before writing the final row, then
+//     dropping the rendered coach results in the local outbox when
+//     `VMCP_TRUECOACH_OUTBOX=on` (a by-product; it cannot fail the close).
 //   * `session.list` — read-side query, default sort `startedAt:desc` (R19).
 //   * `session.get` — composes a stored session with its sets.
 //
@@ -50,6 +52,7 @@ import {
 import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
 import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
+import { writeSessionOutbox } from '../integrations/truecoach/outbox.js';
 
 /**
  * Error type used by tool handlers to signal a known, mapped error code.
@@ -519,6 +522,10 @@ async function endSession(state: ServerState, slotId: string | undefined): Promi
     ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
   };
   await state.store.putSession(stored);
+  // Strictly after the session row lands: the outbox renders from the store,
+  // so it has to read the ended session, and it must never be able to fail a
+  // close that already succeeded (it swallows its own errors).
+  await writeSessionOutbox(state, active.sessionId);
   void finalizedSession; // referenced via `active` snapshot for upsert payload
   return { ok: true };
 }
