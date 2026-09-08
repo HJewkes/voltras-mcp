@@ -805,6 +805,13 @@ export interface StoredProgramAssignment {
  * is a separate, already-scoped effort (VW-92) that reads this row; it does
  * not write it.
  */
+/**
+ * Willingness to be pushed hard, which RP keeps DISTINCT from both where the
+ * lifter is now and where they want to end up (VMCP-06.04 / B39). It moves how
+ * aggressively effort is prescribed; it never moves a set count.
+ */
+export type EffortTolerance = 'low' | 'moderate' | 'high';
+
 export interface StoredTrainingProfile {
   userId: string;
   /** 'beginner' | 'intermediate' | 'advanced', as declared by the user. */
@@ -820,6 +827,11 @@ export interface StoredTrainingProfile {
   goalSetAt?: string;
   daysAvailable?: number;
   daysReliable?: number;
+  /** Where the lifter is NOW, free text. Never merged into `goal`. */
+  currentBaseline?: string;
+  effortTolerance?: EffortTolerance;
+  /** Where the lifter wants to END UP, free text. Never merged into `goal`. */
+  target?: string;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */

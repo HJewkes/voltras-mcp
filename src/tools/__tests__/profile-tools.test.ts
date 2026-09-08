@@ -24,6 +24,7 @@ const TOOL_NAMES = [
   'profile.set_training_background',
   'profile.get_training_background',
   'profile.get_tier_signal',
+  'profile.get_starting_prescription',
 ];
 
 function makeFakePlaceholders(): {
@@ -177,5 +178,109 @@ describe('profile.set_training_background', () => {
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
     const stored = await h.store.getTrainingProfile(LOCAL_USER_ID);
     expect(stored).toBeUndefined();
+  });
+});
+
+describe('profile.set_training_background — the three split intake fields', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('round-trips currentBaseline, effortTolerance and target through the store', async () => {
+    await h.invoke('profile.set_training_background', {
+      currentBaseline: 'benching 185 for 5',
+      effortTolerance: 'moderate',
+      target: '225 for 3 by spring',
+    });
+
+    const r = await h.invoke('profile.get_training_background', {});
+
+    const { profile } = parseResult(r) as { profile: StoredTrainingProfile };
+    expect(profile).toMatchObject({
+      currentBaseline: 'benching 185 for 5',
+      effortTolerance: 'moderate',
+      target: '225 for 3 by spring',
+    });
+    expect(profile.provenance).toMatchObject({
+      currentBaseline: 'user',
+      effortTolerance: 'user',
+      target: 'user',
+    });
+  });
+
+  it('keeps target separate from goal rather than overwriting it', async () => {
+    await h.invoke('profile.set_training_background', { goal: 'hypertrophy' });
+
+    await h.invoke('profile.set_training_background', { target: 'visible abs' });
+
+    const stored = await h.store.getTrainingProfile(LOCAL_USER_ID);
+    expect(stored?.goal).toBe('hypertrophy');
+    expect(stored?.target).toBe('visible abs');
+  });
+
+  it('rejects an effortTolerance outside the enum', async () => {
+    const r = await h.invoke('profile.set_training_background', { effortTolerance: 'ferocious' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('profile.get_starting_prescription', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface PrescriptionBody {
+    prescription: {
+      tier: string;
+      assumesBeginner: boolean;
+      seeds: {
+        sessionsPerWeek: [number, number];
+        setsPerExercise: [number, number] | string;
+        rirTarget: number | null;
+      };
+      reasons: string[];
+    };
+  }
+
+  it('assumes a beginner and seeds beginner numbers when no profile exists', async () => {
+    const r = await h.invoke('profile.get_starting_prescription', {});
+
+    const { prescription } = parseResult(r) as PrescriptionBody;
+    expect(prescription.assumesBeginner).toBe(true);
+    expect(prescription.tier).toBe('beginner');
+    expect(prescription.seeds.sessionsPerWeek).toEqual([2, 3]);
+    expect(prescription.seeds.setsPerExercise).toEqual([2, 2]);
+    expect(prescription.seeds.rirTarget).toBeNull();
+  });
+
+  it('caps sessions at the days the lifter said they can definitely make', async () => {
+    await h.invoke('profile.set_training_background', { daysAvailable: 5, daysReliable: 2 });
+
+    const r = await h.invoke('profile.get_starting_prescription', {});
+
+    const { prescription } = parseResult(r) as PrescriptionBody;
+    // daysAvailable is the aspirational 5; the cap must come from daysReliable.
+    expect(prescription.seeds.sessionsPerWeek).toEqual([2, 2]);
+  });
+
+  it('never lets effortTolerance move a set count', async () => {
+    await h.invoke('profile.set_training_background', { effortTolerance: 'low' });
+
+    const r = await h.invoke('profile.get_starting_prescription', {});
+
+    const { prescription } = parseResult(r) as PrescriptionBody;
+    expect(prescription.seeds.setsPerExercise).toEqual([2, 2]);
+    expect(prescription.seeds.sessionsPerWeek).toEqual([2, 3]);
+  });
+
+  it('rejects unknown keys with INVALID_INPUT', async () => {
+    const r = await h.invoke('profile.get_starting_prescription', { userId: 'someone' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });

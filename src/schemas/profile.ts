@@ -22,6 +22,11 @@ export const ProfileSetTrainingBackgroundInput = z
     goal: z.string().min(1).optional(),
     daysAvailable: z.number().int().min(0).max(7).optional(),
     daysReliable: z.number().int().min(0).max(7).optional(),
+    // VMCP-06.04 / B39. RP keeps these three DISTINCT from each other and from
+    // `goal`; collapsing them is what makes intake read a target as a baseline.
+    currentBaseline: z.string().min(1).optional(),
+    effortTolerance: z.enum(['low', 'moderate', 'high']).optional(),
+    target: z.string().min(1).optional(),
   })
   .strict();
 
@@ -31,3 +36,7 @@ export const ProfileGetTrainingBackgroundInput = z.object({}).strict();
 // effectively single-user in practice (see `tier-signal.ts`), so there is
 // nothing for a caller to disambiguate yet.
 export const ProfileGetTierSignalInput = z.object({}).strict();
+
+// `profile.get_starting_prescription` (VMCP-06.04). Same single-user posture as
+// the tier signal it reads: nothing to disambiguate, so nothing to pass.
+export const ProfileGetStartingPrescriptionInput = z.object({}).strict();

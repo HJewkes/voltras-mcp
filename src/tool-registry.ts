@@ -107,6 +107,10 @@ export const CORE_TOOL_NAMES = [
   // Tier-signal MVP (VW-92) — crude ceiling only, no gate wiring. See
   // src/tools/tier-signal.ts.
   'profile.get_tier_signal',
+  // Conservative tier-seeded starting prescription (VMCP-06.04 / B39). A READ
+  // over the tier signal plus the stored self-report; advisory, applies
+  // nothing. See src/profile/starting-prescription.ts.
+  'profile.get_starting_prescription',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -293,6 +297,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'profile.set_training_background': 'write',
   'profile.get_training_background': 'read',
   'profile.get_tier_signal': 'read',
+  'profile.get_starting_prescription': 'read',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',
