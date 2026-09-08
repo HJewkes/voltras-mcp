@@ -710,6 +710,30 @@ describe('plan.suggest_progression', () => {
     expect(body.suggestion.delta).toBe(0);
   });
 
+  // VMCP-02.84 — a heavy low-rep probe used to have to be recorded as a
+  // working set. Being the session's top load, it then became the ONLY set
+  // `selectWorkingSets` kept, and 3 reps against an 8-12 band read as a miss.
+  it('excludes a probe rung at top load, so the real working sets decide the delta', async () => {
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.getMostRecentSessionIdForExercise.mockResolvedValueOnce('sess-prior');
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      { ...setWithReps('probe', 3, undefined, 155), setPurpose: 'probe' },
+      setWithReps('w1', 12, undefined, 135),
+      setWithReps('w2', 12, undefined, 135),
+      setWithReps('w3', 12, undefined, 135),
+    ]);
+
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+
+    const body = parseResult(r) as { suggestion: { delta: number; reasoning: string } };
+    expect(body.suggestion.delta).toBe(5);
+    expect(body.suggestion.reasoning).toContain('3/3 sets');
+  });
+
   it('VMCP-02.25: holds (not +5) when a set hit its reps but at high velocity loss', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);

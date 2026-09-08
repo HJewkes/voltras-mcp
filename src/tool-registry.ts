@@ -96,6 +96,10 @@ export const CORE_TOOL_NAMES = [
   'plan.complete_workout',
   'plan.attach_to_session',
   'plan.suggest_progression',
+  // RP warm-up ramp for one exercise at one working load (VMCP-06.08 / B25).
+  // Read-only and advisory: it returns rows, never starts a set. See
+  // src/tools/warmup-ramp-tools.ts.
+  'plan.warmup_ramp',
   // Self-reported training background (VW-96 Wave 3). Storage only — no
   // tier derivation here. See src/tools/profile-tools.ts.
   'profile.set_training_background',
@@ -284,6 +288,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'plan.complete_workout': 'write',
   'plan.attach_to_session': 'write',
   'plan.suggest_progression': 'read',
+  'plan.warmup_ramp': 'read',
 
   'profile.set_training_background': 'write',
   'profile.get_training_background': 'read',

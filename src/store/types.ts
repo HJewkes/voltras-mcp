@@ -140,11 +140,20 @@ export interface StoredSet {
    */
   weightLbs?: number;
   /**
-   * Marks a warm-up (ramp-up) set. Warm-ups flow through the same
-   * `set.start`/`set.end` path as working sets; this first-class flag lets
-   * progression scoring exclude them explicitly rather than inferring them
-   * from load alone (see `selectWorkingSets`). Absent/`false` ⇒ a working set,
-   * which keeps every pre-flag row and fixture behaving exactly as before.
+   * Why this set was performed (VMCP-02.84). Stated at `set.start`; the
+   * column backing it has admitted all four values since v6, so widening the
+   * tool surface to write them needed no migration. Absent ⇒ `'working'`,
+   * which keeps every pre-enum row and fixture behaving exactly as before.
+   *
+   * `selectWorkingSets` scores `'working'` only, so a probe or technique rung
+   * is neither scored against the planned rep band nor discarded as a warm-up.
+   */
+  setPurpose?: SetPurpose;
+  /**
+   * DERIVED from {@link setPurpose} — `true` exactly when it is `'warmup'`,
+   * never written independently (see `set-purpose.ts`, and the GENERATED
+   * `sets.is_warmup` column it mirrors). Kept because the channel payloads,
+   * the dashboard read-models and the failure harvest all read it.
    */
   isWarmup?: boolean;
   /**

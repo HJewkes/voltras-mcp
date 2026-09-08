@@ -38,7 +38,8 @@ import {
   SetUpdateInput,
   type WatchConfig,
 } from '../schemas/set.js';
-import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../store/types.js';
+import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
+import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
 import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
@@ -126,21 +127,29 @@ interface PlaceholderTools {
 const SET_START_DESCRIPTION =
   "Start recording a new set on the given slot's active session. If the lifter already " +
   'started and the server auto-armed a set (you saw `set_started {auto_armed: true}`), this ' +
-  'call UPGRADES that set in place instead of failing: your `isWarmup` and `watch` are ' +
+  'call UPGRADES that set in place instead of failing: your `setPurpose` and `watch` are ' +
   'applied to the set already running, its reps and start time are kept, the motor is not ' +
   're-engaged, and the result carries `upgraded: true` with `adoptedReps`. It works once per ' +
-  'set — a second call is a request for a new set and is refused. Pass `isWarmup` BEFORE the ' +
+  'set — a second call is a request for a new set and is refused. Pass `setPurpose` BEFORE the ' +
   'lifter moves whenever you can: the auto-armed set is a working set until you say ' +
   'otherwise. `watch` (notifyOn[], ' +
   'optional inactivityTimeoutMs) subscribes the channel event stream to specific mid-set ' +
   'signals (e.g. velocity-loss thresholds) as they fire, rather than requiring you to poll ' +
-  '`set.live_metrics`. Pass `isWarmup: true` for warm-up sets so downstream analytics (e.g. ' +
-  'baseline derivation) can exclude them. Coaching around this specific set is budgeted: spend ' +
+  '`set.live_metrics`. `setPurpose` says WHY the set is being performed and decides how ' +
+  'progression reads it: `working` (the default) is the only value scored against the planned ' +
+  'rep band and the only one that sets the top load a progression step is measured from; ' +
+  '`warmup` is excluded from progression and from baseline derivation, and is counted ' +
+  'separately in the coach report; `probe` is a deliberate heavy low-rep feeler — excluded from ' +
+  'scoring, so 3 reps at top load never reads as a missed 5-10 rep band and never drives a ' +
+  'deload; `technique` is a light practice rung, likewise excluded. `isWarmup: true` is the ' +
+  'deprecated alias for `setPurpose: "warmup"` — still accepted, but passing both with ' +
+  'different meanings is refused as INVALID_INPUT. Coaching around this specific set is ' +
+  'budgeted: spend ' +
   'at most 1–2 cues per interval — one or two before the set, at most 1–2 reminders of THE SAME ' +
   'cue during it (never new information mid-set), and 1–2 points in the post-set debrief. ' +
   'Detecting more faults does not buy more cues; hold the extras for a later set. The budget is ' +
   "tier-qualified, so weight it by the lifter's experience tier (silence during the set for an " +
-  'advanced lifter, more in-set cueing for a beginner). When `isWarmup` is true, remember the ' +
+  'advanced lifter, more in-set cueing for a beginner). On a warm-up set, remember the ' +
   'warm-up ramp is individualized rather than templated: how many warm-up sets this lifter ' +
   'needs depends on the exercise and on what is already warm (a second exercise for an ' +
   'already-warmed muscle needs only one brief feel set), and each warm-up set carries its own ' +
@@ -178,7 +187,7 @@ export function registerSetTools(
     'set.start',
     SetStartInput,
     wrapHandler(SetStartInput, (input) =>
-      startSet(state, input.watch, input.slot, input.isWarmup, input.lifter),
+      startSet(state, input.watch, input.slot, resolveSetPurpose(input), input.lifter),
     ),
     SET_START_DESCRIPTION,
   );
@@ -210,6 +219,31 @@ export function registerSetTools(
     wrapHandler(SetGetInput, (input) => getStoredSet(state, input.setId)),
     SET_GET_DESCRIPTION,
   );
+}
+
+/**
+ * Collapse `setPurpose` and the deprecated `isWarmup` alias into one value
+ * (VMCP-02.84).
+ *
+ * A caller that supplies both and means two different things is REFUSED, not
+ * silently resolved in favour of either: `{ setPurpose: 'probe', isWarmup:
+ * true }` is a caller that believes something untrue about the set it is about
+ * to record, and picking a winner would persist that belief.
+ */
+function resolveSetPurpose(input: {
+  setPurpose?: SetPurpose | undefined;
+  isWarmup?: boolean | undefined;
+}): SetPurpose | undefined {
+  if (input.isWarmup === undefined) return input.setPurpose;
+  const aliased: SetPurpose = input.isWarmup ? 'warmup' : 'working';
+  if (input.setPurpose !== undefined && input.setPurpose !== aliased) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      `setPurpose "${input.setPurpose}" contradicts isWarmup ${String(input.isWarmup)}. ` +
+        'isWarmup is the deprecated alias for setPurpose "warmup" — pass setPurpose alone.',
+    );
+  }
+  return aliased;
 }
 
 function install<S extends z.ZodObject>(
@@ -389,7 +423,7 @@ function upgradeAutoArmedSet(
   slotId: string,
   opts: {
     watch: WatchConfig | undefined;
-    isWarmup: boolean | undefined;
+    setPurpose: SetPurpose | undefined;
     lifter: string | undefined;
   },
 ): UpgradedSet {
@@ -398,7 +432,7 @@ function upgradeAutoArmedSet(
   const existing = slot.live.set;
   const upgraded = slot.live.upgradeActiveSet({
     upgradedAt: new Date().toISOString(),
-    ...(opts.isWarmup === true ? { isWarmup: true } : {}),
+    ...(opts.setPurpose !== undefined ? { setPurpose: opts.setPurpose } : {}),
     ...(opts.watch !== undefined ? { watch: opts.watch } : {}),
     // VW-169: unlike the exercise pointer below, a lifter passed here WINS
     // over the one auto-arm inherited — the reps happened before anyone could
@@ -426,7 +460,7 @@ async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
   slotIdInput: string | undefined,
-  isWarmup: boolean | undefined,
+  setPurpose: SetPurpose | undefined,
   lifter: string | undefined,
 ): Promise<{ setId: string } | UpgradedSet> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
@@ -444,7 +478,7 @@ async function startSet(
     // set, which this slot cannot give while one is recording.
     if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
       assertEngageAllowed(state, slot, slotId, session.sessionId);
-      return upgradeAutoArmedSet(state, slotId, { watch, isWarmup, lifter });
+      return upgradeAutoArmedSet(state, slotId, { watch, setPurpose, lifter });
     }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
@@ -491,7 +525,7 @@ async function startSet(
       startedAt,
       reps: [],
       status: 'active',
-      ...(isWarmup === true ? { isWarmup: true } : {}),
+      ...setPurposeFields(setPurpose),
       ...(watch !== undefined ? { watch } : {}),
       // VMCP-01.72b: snapshot the session's CURRENT exercise pointer now, not
       // at close. A `session.set_exercise` call after this point (mid-set)
@@ -1265,7 +1299,7 @@ function toStoredSet(
     // the gap detectable instead of plausible.
     ...(device.trainingMode !== undefined ? { trainingMode: device.trainingMode } : {}),
     ...(device.weightLbs !== undefined ? { weightLbs: device.weightLbs } : {}),
-    ...(active.isWarmup === true ? { isWarmup: true } : {}),
+    ...setPurposeFields(setPurposeOf(active)),
     // VW-180: how the set came to exist, and whether a `set.start` later
     // claimed it. Both change how the row's stated intent should be read.
     ...(active.autoCreatedBy !== undefined ? { autoCreatedBy: active.autoCreatedBy } : {}),

@@ -168,11 +168,11 @@ needs a model turn plus a tool round-trip. So with a session open and no set arm
 server opens the set itself on the lifter's reps and publishes `set_started` with
 `auto_armed: true`.
 
-Such a set carries no watch, no warm-up flag, and only whatever exercise the session held.
-Call `set.start {isWarmup, watch}` as soon as you see the event: it UPGRADES that set in
+Such a set carries no watch, no stated purpose, and only whatever exercise the session held.
+Call `set.start {setPurpose, watch}` as soon as you see the event: it UPGRADES that set in
 place rather than failing with `SET_ALREADY_ACTIVE`. The set keeps its id, start time and
 reps, the motor is not re-engaged, and the result is `{setId, upgraded: true, adoptedReps}`.
-A `set_updated` event follows, carrying the new warm-up and watch state. It works once per
+A `set_updated` event follows, carrying the new purpose and watch state. It works once per
 set; a second `set.start` is a request for a new set and is refused as before.
 
 The arm waits for a second rep before it fires. The rope-positioning pull that opens many
@@ -198,6 +198,17 @@ label as part of the upgrade.
 A labelled set contributes nothing to the owner's baselines, failure anchors, progression
 or session history. To relabel a set that already ran under the wrong name, call
 `set.update {setId, lifter}`.
+
+## Why a set was performed (`set_purpose`)
+
+`set_started` and `set_updated` carry `set_purpose` in `meta` and in the `set` block:
+`working`, `warmup`, `probe` or `technique`, stated by `set.start` and defaulting to
+`working`. Only `working` is scored against a planned rep band, so a heavy 3-rep `probe`
+never reads as a missed set and never drives a deload.
+
+The older `is_warmup` boolean rides alongside it for one more release — `true` exactly
+when `set_purpose` is `warmup`. Read `set_purpose`; a consumer still reading `is_warmup`
+keeps working until it is removed.
 
 ## Which reps set the velocity baseline
 

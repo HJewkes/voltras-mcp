@@ -4,15 +4,19 @@
 // report render the same set list. Two copies of a warm-up rule that drift
 // apart would mean the report shows sets the progression suggestion ignored.
 
+import { setPurposeOf } from './set-purpose.js';
 import type { StoredSet } from './types.js';
 
 /**
  * Warmups and working sets flow through the same `set.start`/`set.end` path.
  * Two signals separate them, applied in order:
  *
- *   1. The explicit `StoredSet.isWarmup` flag (set at `set.start`). A flagged
- *      warmup is never a working set — even a heavy primer at working weight,
- *      which the load heuristic below would wrongly keep.
+ *   1. The explicit `StoredSet.setPurpose` (stated at `set.start`). Only
+ *      `'working'` is work. A flagged warmup is never a working set — even a
+ *      heavy primer at working weight, which the load heuristic below would
+ *      wrongly keep — and neither is a `'probe'` or a `'technique'` rung
+ *      (VMCP-02.84): a 3-rep probe at the session's top load would otherwise
+ *      score as a MISS against a 5-10 rep band and drive a bogus -5 lb step.
  *   2. Top load, for the (still common) unflagged warmups: a warmup is a
  *      sub-working-weight ramp-up, so treat the sets at the heaviest load as
  *      the working sets — the ones the rep band is actually prescribed against.
@@ -28,7 +32,7 @@ import type { StoredSet } from './types.js';
  * plan's original target has been outgrown.
  */
 export function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
-  const working = sets.filter((set) => !isWarmupSet(set));
+  const working = sets.filter((set) => setPurposeOf(set) === 'working');
   if (working.length === 0) return working;
   // Only weighted sets can be ranked by load. When none recorded a weight there
   // is no basis to discriminate, so every working set is kept — which is what
@@ -40,10 +44,10 @@ export function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
 }
 
 /**
- * The single read of the warm-up intent. `isWarmup` is the flag on current
- * main; the queued `setPurpose` enum is meant to subsume it, and aliasing the
- * new value here is the only edit that needs.
+ * Warm-up sets specifically — what `report.session_results` counts as
+ * "warm-up: N sets". Narrower than "not a working set": a probe or a
+ * technique rung is neither work nor a warm-up.
  */
 export function isWarmupSet(set: StoredSet): boolean {
-  return set.isWarmup === true;
+  return setPurposeOf(set) === 'warmup';
 }

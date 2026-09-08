@@ -410,6 +410,9 @@ describe('buildSetStartedPayload', () => {
       requested_mode: 'WeightTraining',
       active_mode: 'WeightTraining',
       training_mode: 'WeightTraining',
+      // VMCP-02.84: the purpose, plus the deprecated boolean alias.
+      set_purpose: 'working',
+      is_warmup: 'false',
     });
   });
 
@@ -428,6 +431,8 @@ describe('buildSetStartedPayload', () => {
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:05:00.000Z',
       auto_armed: false,
+      set_purpose: 'working',
+      is_warmup: false,
       // VW-169: null is the owner, which is who every unlabelled set is.
       lifter: null,
     });
