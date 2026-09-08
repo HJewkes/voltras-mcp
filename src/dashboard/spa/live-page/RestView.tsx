@@ -6,7 +6,9 @@ import {
   TimerReadout,
   Metric,
   MetricGroup,
-  ExerciseCard,
+  ExerciseCardHeading,
+  SetRow,
+  SetTableHeader,
   Surface,
   useOnSurfaceColor,
   type MetricProps,
@@ -14,11 +16,13 @@ import {
 } from '@titan-design/react-ui';
 import {
   activeCompletedSets,
+  deriveRecapPrescription,
   velocityLossPct,
   velocityRatios,
   verdictFromLoss,
   type CompletedSet,
   type DashboardModel,
+  type PrescriptionCells,
 } from './model';
 import { type MassUnit, formatMass } from './mass';
 
@@ -44,12 +48,14 @@ import { type MassUnit, formatMass } from './mass';
  *     count-UP the legacy `RestTimerPanel` shows.
  */
 
-const NO_VALUE = '—';
 /** Rest countdown ring diameter (px) — the across-the-room wall treatment. */
 const RING_SIZE = 220;
 
 /** A verdict metric to render, or null to hide it (no honest source). */
 type MetricSpec = Pick<MetricProps, 'value' | 'unit' | 'label' | 'trend'> | null;
+
+/** One logged set's row — the `done` arm of titan's `SetRowProps` union. */
+type DoneSetRow = Extract<SetRowProps, { state: 'done' }>;
 
 /**
  * The just-completed set of the ACTIVE exercise — the last set tagged with it (VW-50), or
@@ -61,7 +67,7 @@ function justCompletedSet(model: DashboardModel): CompletedSet | null {
 }
 
 /** The recap card's rows — one `done` row per logged set of the active exercise. */
-function recapRows(model: DashboardModel, displayUnit: MassUnit): SetRowProps[] {
+function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
   const { session } = model;
   return activeCompletedSets(session).map((set, i) => {
     // SetRow needs a number; under the mock adapter no weight cascade arrives → 0, the same
@@ -176,6 +182,50 @@ function RestCountdown({ model }: { model: DashboardModel }): ReactElement | nul
 }
 
 /**
+ * The recap card: the prescription heading over the logged `done` rows.
+ *
+ * Composed from titan's standalone parts rather than `ExerciseCard` (VMCP-03.05).
+ * `ExerciseCardProps.summary.weight` is `number`, and the card renders `summary?.weight ?? 0`
+ * — so an unknown load can only reach that heading as a fabricated `0 lbs`. The parts titan
+ * exports for exactly this (`ExerciseCardHeading` is documented as standalone, `SetTableHeader`
+ * as extracted from the expanded card for reuse) take `load: number | string`, so the gap can
+ * read as a gap. Same visual chrome as the expanded card.
+ */
+function RecapCard({
+  name,
+  heading,
+  rows,
+  tempo,
+}: {
+  name: string;
+  heading: PrescriptionCells;
+  rows: DoneSetRow[];
+  tempo?: [number, number, number, number];
+}): ReactElement {
+  return (
+    <View className="bg-surface-elevated border-hairline" style={{ borderWidth: 1 }}>
+      <ExerciseCardHeading
+        name={name}
+        sets={heading.sets}
+        reps={heading.reps}
+        load={heading.load}
+        unit={heading.unit}
+        {...(tempo ? { tempo } : {})}
+        indicator="velocity-loss"
+        setStates={rows.map((row) => ({ status: 'done' as const, velocities: row.velocities }))}
+        testID="recap-card-heading"
+      />
+      <View style={{ borderTopWidth: 1 }}>
+        <SetTableHeader unit={heading.unit} showPrevious={false} />
+        {rows.map((row, i) => (
+          <SetRow key={i} {...row} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/**
  * Lab specimen PORT — the REST stage of the North Star wall dashboard, store-fed.
  *
  * A between-sets read-out: the rest countdown, a recap of the set just finished, and the
@@ -195,7 +245,7 @@ export function RestView({
   const metrics = set
     ? verdictMetrics(set, displayUnit).filter((m): m is NonNullable<MetricSpec> => m !== null)
     : [];
-  const summaryLoad = formatMass(session.weightLbs ?? 0, displayUnit);
+  const heading = deriveRecapPrescription(session, rows.length, displayUnit);
 
   return (
     // The rest stage's charcoal plane (surface-base) + on-surface colour context for the
@@ -207,18 +257,11 @@ export function RestView({
         {rows.length > 0 && (
           <View style={{ gap: 8 }}>
             <Eyebrow>SET JUST COMPLETED</Eyebrow>
-            <ExerciseCard
+            <RecapCard
               name={session.exerciseName}
-              expanded
-              summary={{
-                sets: session.plannedSets ?? rows.length,
-                reps: session.targetReps ?? NO_VALUE,
-                weight: summaryLoad.value,
-                unit: summaryLoad.unit,
-              }}
+              heading={heading}
+              rows={rows}
               {...(session.tempo ? { tempo: session.tempo } : {})}
-              indicator="velocity-loss"
-              sets={rows}
             />
           </View>
         )}

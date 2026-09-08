@@ -10,11 +10,13 @@
  * `@titan-design/react-ui@0.12.0`, and both stages now render it — the single stage
  * through `LiveFatiguePanel`, the diverging dual stage through the hero + `asymmetry`.
  *
- * ⚠ The local contract in `fatigue-model.ts` MIRRORS titan's exported `LiveFatigueModel`
- * rather than importing it, so the two drift SILENTLY on any OPTIONAL field — nothing
- * type-checks a prop that is allowed to be absent. `plannedReps` did exactly that: it
- * shipped in titan and this mapper never set it, costing the ROM chart its "N of M done"
- * read with no error anywhere. When touching either side, diff both.
+ * The contract in `fatigue-model.ts` now IMPORTS titan's `LiveFatigueModel` rather than
+ * mirroring it (VMCP-03.06), so a field titan adds reaches this mapper's return type
+ * instead of drifting silently. That closes the type gap, not the coverage one: a NEW
+ * optional field is still one this mapper can simply not set, exactly as it never set
+ * `plannedReps` and cost the ROM chart its "N of M done" read. On a titan bump, work
+ * through `__tests__/fatigue-model-contract.test.ts` — it spells titan's optionals out
+ * one by one, and its literals fail `tsc` when that list stops matching titan.
  *
  * The data path is now REAL end to end: the full WA `Rep[]` (with per-sample
  * streams) crosses `/api/snapshot`, and every model field — the multi-dimension
