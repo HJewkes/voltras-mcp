@@ -45,6 +45,7 @@ import { deriveLoadState } from './load-state.js';
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
+import type { WatchConfig } from '../schemas/set.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
@@ -132,6 +133,17 @@ export interface SlotState {
    */
   pendingGuidedLoadExerciseName?: string;
   pendingGuidedLoadExerciseId?: string;
+  /**
+   * Set-level intent for the next bridge-minted guided-load auto-set
+   * (VW-168a), stashed by `device.start_guided_load` from its optional
+   * `isWarmup` / `watch` params and consumed once by
+   * `ensureGuidedLoadSessionAndSet`. The set is minted before any `set.start`
+   * could run, so this is the only way a guided-load warm-up gets flagged as
+   * one or a guided-load set gets a watch. Reset on every call so a stash
+   * from a trigger that never armed can't leak into the next one.
+   */
+  pendingGuidedLoadIsWarmup?: boolean;
+  pendingGuidedLoadWatch?: WatchConfig;
   /**
    * Requested guided-load target weight (lbs) for the in-flight direct-load
    * flow (VMCP-02.03). Set by `device.start_guided_load` so the bridge can

@@ -208,7 +208,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(12);
+      expect(version.user_version).toBe(13);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -575,7 +575,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -676,7 +676,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -736,7 +736,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -822,7 +822,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
       } finally {
         void opened.close();
       }
@@ -860,7 +860,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
       } finally {
         void opened.close();
       }
@@ -963,7 +963,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
         // The pre-existing row survived the additive migration untouched.
         const sessions = raw.prepare(`SELECT id FROM sessions`).all() as { id: string }[];
         expect(sessions.map((s) => s.id)).toEqual(['s1']);
@@ -972,6 +972,88 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('opens a real v12 file, adds the set-provenance columns, and stamps 13', () => {
+    // Built through open() and then downgraded, so the seed is the genuine v12
+    // production shape. The version allowlist is enumerated by hand and 12
+    // moved off SCHEMA_VERSION in this change — the failure #246 shipped.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v13-from-v12-'));
+    const path = join(dir, 'real-v12.sqlite');
+    try {
+      const fresh = SqliteSessionStore.open(path);
+      void fresh.close();
+      const seed = new DatabaseSync(path);
+      seed.exec('ALTER TABLE sets DROP COLUMN auto_created_by');
+      seed.exec('ALTER TABLE sets DROP COLUMN upgraded');
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2026-09-01T10:00:00.000Z')`);
+      seed.exec(
+        `INSERT INTO sets (id, session_id, started_at, ended_at, partial, set_purpose)
+         VALUES ('set-old', 's1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:30.000Z', 0, 'working')`,
+      );
+      seed.exec('PRAGMA user_version = 12');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        expect(columnNames(raw, 'sets')).toContain('auto_created_by');
+        expect(columnNames(raw, 'sets')).toContain('upgraded');
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(13);
+        // Nothing is backfilled: a pre-v13 row genuinely does not know which
+        // path opened it, and it survives the additive migration untouched.
+        const rows = raw.prepare(`SELECT id, auto_created_by, upgraded FROM sets`).all() as {
+          id: string;
+          auto_created_by: string | null;
+          upgraded: number | null;
+        }[];
+        expect(rows).toEqual([{ id: 'set-old', auto_created_by: null, upgraded: null }]);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('round-trips the auto-created and upgraded tags on a set', async () => {
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      await store.putSession({ id: 'sess-1', startedAt: '2026-09-08T00:00:00.000Z' });
+      await store.putSet({
+        id: 'set-armed',
+        sessionId: 'sess-1',
+        startedAt: '2026-09-08T00:00:10.000Z',
+        endedAt: '2026-09-08T00:00:50.000Z',
+        partial: false,
+        isWarmup: true,
+        autoCreatedBy: 'idle_rep',
+        upgraded: true,
+        reps: [makeRep('set-armed', 0)],
+      });
+      await store.putSet({
+        id: 'set-explicit',
+        sessionId: 'sess-1',
+        startedAt: '2026-09-08T00:01:10.000Z',
+        endedAt: '2026-09-08T00:01:50.000Z',
+        partial: false,
+        reps: [makeRep('set-explicit', 0)],
+      });
+
+      const armed = await store.getSet('set-armed');
+      expect(armed?.autoCreatedBy).toBe('idle_rep');
+      expect(armed?.upgraded).toBe(true);
+      expect(armed?.isWarmup).toBe(true);
+      // An explicit set keeps the pre-flag shape: neither key present.
+      const explicit = await store.getSet('set-explicit');
+      expect(explicit).not.toHaveProperty('autoCreatedBy');
+      expect(explicit).not.toHaveProperty('upgraded');
+    } finally {
+      void store.close();
     }
   });
 
@@ -988,7 +1070,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(12);
+        expect(version.user_version).toBe(13);
       } finally {
         void second.close();
       }

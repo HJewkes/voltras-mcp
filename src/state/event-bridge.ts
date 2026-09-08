@@ -146,9 +146,8 @@ import {
   buildSettingCoercedPayload,
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
-  baselineRepNumberFor,
-  peakConcentricBaseline,
   triggerDedupeKey,
+  velocityLossBaseline,
   type ActiveSetAtDisconnect,
   type CoercionSetContext,
   type SettingsUpdateAll,
@@ -646,10 +645,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
-          // VW-164: with a session open, the first idle rep means the lifter
-          // started before `set.start` could land. Open the set here and
-          // adopt this rep into it rather than reporting it as lost work.
-          if (autoArmSet(state, slotId)) {
+          // VW-164: with a session open, an idle rep means the lifter started
+          // before `set.start` could land. Open the set here and adopt this
+          // rep into it rather than reporting it as lost work. VW-181: reps
+          // the set adopts retroactively leave the pending summary batch, so
+          // the window never reports work that ended up inside the set.
+          const armed = autoArmSet(state, slotId);
+          if (armed.armed) {
+            idleRepBatch.count = Math.max(0, idleRepBatch.count - armed.reclaimedIdleReps);
             notifySlot(server, slotId, SET_URI, setUriForSlot);
             return;
           }
@@ -1418,14 +1421,17 @@ function evaluateRepTriggers(
     return;
   }
   const actualReps = finalizedIndex + 1;
-  // Baseline = highest peak concentric velocity across all finalized reps
-  // up to and INCLUDING the just-finalized rep. This intentionally folds
+  // Baseline = highest peak concentric velocity across the ELIGIBLE finalized
+  // reps up to and INCLUDING the just-finalized rep. This intentionally folds
   // the new rep into the baseline candidate set: when it's the new max,
   // baseline equals current and loss = 0% so nothing fires. That's the
   // desired behavior — a stronger rep should not trigger a loss event for
   // any prior threshold.
+  //
+  // VW-168: the eligibility filter is what keeps a rope-positioning pull from
+  // becoming the baseline and firing every threshold on rep 2.
   const finalizedReps = set.reps.slice(0, finalizedIndex + 1);
-  const baseline = peakConcentricBaseline(finalizedReps);
+  const { velocity: baseline, repNumber: baselineRepNumber } = velocityLossBaseline(finalizedReps);
   const current = finalizedRep.concentric.peakVelocity;
 
   for (const spec of set.watch.notifyOn) {
@@ -1447,7 +1453,6 @@ function evaluateRepTriggers(
       const lossPct = (100 * (baseline - current)) / baseline;
       if (lossPct < spec.pct) continue;
       if (!live.tryFireTrigger(key)) continue;
-      const baselineRepNumber = baselineRepNumberFor(finalizedReps);
       const payload = buildVelocityLossExceededPayload(
         set,
         device,
@@ -1604,6 +1609,14 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     if (session === undefined) return; // belt-and-braces; startSession just ran
     const setId = randomUUID();
     const startedAt = new Date().toISOString();
+    // VW-168a: set-level intent the `start_guided_load` caller supplied. The
+    // set is minted here, before any `set.start` could attach a warm-up flag
+    // or a watch, so the tool's options ride through the same single-shot
+    // stash the exercise identity uses.
+    const isWarmup = slot.pendingGuidedLoadIsWarmup;
+    const watch = slot.pendingGuidedLoadWatch;
+    delete slot.pendingGuidedLoadIsWarmup;
+    delete slot.pendingGuidedLoadWatch;
     slot.live.startSet({
       setId,
       sessionId: session.sessionId,
@@ -1611,6 +1624,8 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       reps: [],
       status: 'active',
       autoCreatedBy: 'guided_load',
+      ...(isWarmup === true ? { isWarmup: true } : {}),
+      ...(watch !== undefined ? { watch } : {}),
       // VMCP-01.72b: snapshot the session's exercise pointer the same way
       // set-tools.ts's startSet does. buildSetCapture now reads the SET's
       // own snapshot rather than re-reading the live session at close, so
@@ -1643,13 +1658,18 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     // user triggered guided load directly on the unit), fall back to no
     // extra watchdog — the bridge's default `SET_INACTIVITY_TIMEOUT_MS`
     // safety net still applies.
-    const guidedInactivityMs = slot.pendingGuidedLoadInactivityMs;
+    //
+    // VW-168a: a `watch.inactivityTimeoutMs` on the tool call is the caller
+    // stating the same threshold explicitly, so it wins over the guided-load
+    // default. One watchdog per set either way — `armIdleWatchdog` registers
+    // by setId, so arming twice would just overwrite.
+    const guidedInactivityMs = watch?.inactivityTimeoutMs ?? slot.pendingGuidedLoadInactivityMs;
     if (typeof guidedInactivityMs === 'number') {
       armIdleWatchdog(
         state,
         setId,
         startedAt,
-        { notifyOn: [], inactivityTimeoutMs: guidedInactivityMs },
+        { notifyOn: watch?.notifyOn ?? [], inactivityTimeoutMs: guidedInactivityMs },
         slotId,
       );
       delete slot.pendingGuidedLoadInactivityMs;

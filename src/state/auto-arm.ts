@@ -11,37 +11,70 @@
 // set, so rep 1 is the rep the lifter actually performed. From there the
 // normal active-set path in event-bridge takes over.
 //
+// VW-181: the arm waits for a SECOND closed rep before it fires. The
+// 2026-09-07 dogfood opened most sets with a rope-positioning pull, and arming
+// on it made the pull rep 1 of the set, the velocity-loss baseline, and the
+// event that cancelled the rest timer. One rep tells us nothing about itself;
+// the rep after it does. When the two agree, both are adopted and no rep is
+// lost — the wait costs the couple of seconds until the next rep begins.
+//
 // Opt out with `VMCP_AUTO_ARM=off`; `server.health` reports the live value.
 
 import { randomUUID } from 'node:crypto';
+import type { Rep } from '@voltras/workout-analytics';
 
 import { buildSetStartedPayload } from './channel-payloads.js';
 import type { ActiveSet } from './live-state.js';
+import { isTailPairConsistent } from './rep-eligibility.js';
 import { getSlot, type ServerState } from './server-state.js';
 
 /**
- * Reps handed from the idle pipeline to the freshly-armed set: the rep that
- * just closed (the trigger) and the in-progress rep opened behind it by the
- * same eccentric→concentric transition.
+ * Reps adopted when the rep before the trigger corroborates it: that rep, the
+ * trigger rep, and the in-progress rep opened behind the trigger by the same
+ * eccentric→concentric transition. Nothing the lifter performed is lost.
  */
-const ADOPTED_IDLE_REP_COUNT = 2;
+const ADOPTED_WITH_CORROBORATION = 3;
+
+/**
+ * Reps adopted when the rep before the trigger contradicts it (VW-181): the
+ * trigger rep and the in-progress one only. The contradicting rep — the
+ * rope-positioning pull of the 2026-09-07 dogfood — stays in the idle ledger
+ * and is still reported through `idle_rep_summary`.
+ */
+const ADOPTED_WITHOUT_CORROBORATION = 2;
+
+export interface AutoArmResult {
+  armed: boolean;
+  /**
+   * Idle-rep ledger entries the armed set adopted. The caller subtracts these
+   * from its pending `idle_rep_summary` batch so the same rep isn't reported
+   * as lost work and counted into the set.
+   */
+  reclaimedIdleReps: number;
+}
+
+const NOT_ARMED: AutoArmResult = { armed: false, reclaimedIdleReps: 0 };
 
 /**
  * Open a set on `slotId` because an idle rep landed with a session active.
- * Returns true when a set was armed, false when the conditions don't hold
- * (auto-arm off, no session, a set already recording) and the caller should
- * fall through to the ordinary idle-rep reporting path.
+ * Returns `armed: true` when a set was opened; when it wasn't (auto-arm off,
+ * no session, a set already recording, or a window that can't yet tell work
+ * from a positioning pull) the caller falls through to the ordinary idle-rep
+ * reporting path and nothing is lost.
  *
  * The device motor is deliberately NOT engaged: the lifter is already lifting
  * — that is what produced the rep — so there is nothing to engage, and a
  * strength-mode GO mid-rep would be a load change nobody asked for. Mirrors
  * the guided-load bootstrap, which also mints its set without re-engaging.
  */
-export function autoArmSet(state: ServerState, slotId: string): boolean {
-  if (state.config?.autoArm === 'off') return false;
+export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
+  if (state.config?.autoArm === 'off') return NOT_ARMED;
   const slot = getSlot(state, slotId);
   const session = slot.live.session;
-  if (session === undefined || slot.live.set !== undefined) return false;
+  if (session === undefined || slot.live.set !== undefined) return NOT_ARMED;
+
+  const adopt = repsToAdopt(slot.live.idleTailClosedReps(2));
+  if (adopt === null) return NOT_ARMED;
 
   const setId = randomUUID();
   const startedAt = new Date().toISOString();
@@ -54,11 +87,32 @@ export function autoArmSet(state: ServerState, slotId: string): boolean {
     autoCreatedBy: 'idle_rep',
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
   });
-  slot.live.adoptIdleTail(ADOPTED_IDLE_REP_COUNT);
+  slot.live.adoptIdleTail(adopt);
+  const reclaimedIdleReps = adopt - ADOPTED_WITHOUT_CORROBORATION;
+  slot.live.forgetIdleReps(reclaimedIdleReps);
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
   publishAutoArmed(state, slotId, setId, startedAt, session.sessionId);
-  return true;
+  return { armed: true, reclaimedIdleReps };
+}
+
+/**
+ * How many idle reps the new set should adopt, or `null` to hold off arming.
+ *
+ * The arm needs TWO closed reps (VW-181). At the first boundary of an idle
+ * window there is only one, and one rep says nothing about itself: a
+ * positioning pull and a working rep look identical until something else in
+ * the window disagrees with one of them. The in-progress rep can't break the
+ * tie either — it carries a single sample at that instant — so the decision
+ * waits one boundary, roughly the two seconds until the next rep begins, and
+ * the held rep is adopted retroactively when it turns out to be work.
+ */
+function repsToAdopt(closedTail: readonly Rep[]): number | null {
+  if (closedTail.length < 2) return null;
+  const [earlier, trigger] = closedTail;
+  return isTailPairConsistent(earlier, trigger)
+    ? ADOPTED_WITH_CORROBORATION
+    : ADOPTED_WITHOUT_CORROBORATION;
 }
 
 /**

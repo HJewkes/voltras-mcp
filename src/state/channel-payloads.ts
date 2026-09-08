@@ -39,6 +39,7 @@ import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
+import { selectEligibleReps } from './rep-eligibility.js';
 import type { WeightImpliedResult } from './weight-implied-watch.js';
 import type { BilateralDivergence } from './bilateral-reconciler.js';
 
@@ -381,6 +382,57 @@ export function buildSetStartedPayload(
 }
 
 /**
+ * Build the meta + content for a `set_updated` channel event (VW-180).
+ *
+ * Fires when `set.start` upgrades an auto-armed set in place: the set the
+ * lifter is already performing gains the warm-up flag, the watch config and
+ * possibly an exercise pointer. A separate event rather than a second
+ * `set_started` — the set did not start twice, and a consumer that counts
+ * `set_started` to number the sets of a session must not double-count.
+ *
+ * `reps` is the count already in the set at upgrade time, so the consumer
+ * knows the watch attached mid-set and its rep-count triggers are measured
+ * against a set that was already under way.
+ */
+export function buildSetUpdatedPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+): { meta: Record<string, string>; content: string } {
+  const notifyOn = set.watch?.notifyOn ?? [];
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'set_updated',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    upgraded: 'true',
+    reps: String(set.reps.length),
+    is_warmup: String(set.isWarmup === true),
+  };
+  const warmupNote = set.isWarmup === true ? 'warm-up, ' : '';
+  const content = JSON.stringify({
+    summary:
+      `Set updated: ${warmupNote}${notifyOn.length} watch trigger(s) attached to the ` +
+      `set already in progress (${set.reps.length} rep(s) so far)`,
+    set: {
+      set_id: set.setId,
+      session_id: set.sessionId,
+      weight_lbs: device.weightLbs ?? null,
+      started_at: set.startedAt,
+      auto_armed: set.autoCreatedBy === 'idle_rep',
+      upgraded: true,
+      is_warmup: set.isWarmup === true,
+      exercise_id: set.exerciseId ?? null,
+      reps_so_far: set.reps.length,
+      watch: {
+        notify_on: notifyOn,
+        inactivity_timeout_ms: set.watch?.inactivityTimeoutMs ?? null,
+      },
+    },
+  });
+  return { meta, content };
+}
+
+/**
  * Build the meta + content for a `session_exercise_changed` channel event
  * (VMCP-01.72b). Fires from `session.set_exercise` so a channel-subscribed
  * host learns of a mid-session exercise switch without polling `session.get`
@@ -697,6 +749,30 @@ export function peakConcentricBaseline(reps: readonly Rep[]): number {
  * the model can reason "baseline came from rep 1, current from rep 8"
  * without ambiguity.
  */
+/**
+ * The velocity-loss baseline for a window of finalized reps, over ELIGIBLE
+ * reps only (VW-168).
+ *
+ * The 2026-09-07 positioning pull was the fastest "rep" of most sets, so the
+ * unfiltered peak made it the baseline and `velocity_loss_exceeded` fired on
+ * rep 2 of every set. The trigger, the `set_ended` VBT summary and `vbt.rir`
+ * all read the baseline from here, so a rep the rule excludes cannot be the
+ * baseline in one surface and not in another.
+ *
+ * `repNumber` names the rep the baseline came from in the set's own numbering,
+ * which survives the filter because it lives on the rep.
+ */
+export function velocityLossBaseline(reps: readonly Rep[]): {
+  velocity: number;
+  repNumber: number;
+} {
+  const eligible = selectEligibleReps(reps);
+  return {
+    velocity: peakConcentricBaseline(eligible),
+    repNumber: baselineRepNumberFor(eligible),
+  };
+}
+
 export function baselineRepNumberFor(reps: readonly Rep[]): number {
   let best = 0;
   let idx = 0;
@@ -742,9 +818,16 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   }
   // Loss% is a ratio and therefore unit-invariant; the velocity values are
   // already m/s and only get rounded for the payload.
-  const firstRaw = reps[0].concentric.peakVelocity;
+  //
+  // VW-168: first / peak / mean read the ELIGIBLE reps so the summary agrees
+  // with the `velocity_loss_exceeded` trigger and `vbt.rir` about which reps
+  // were work. `last_rep_v` stays the set's actual final rep: it answers "how
+  // did you finish", and a short or slow last rep is the fatigue signal
+  // itself, not an artifact to filter out.
+  const eligible = selectEligibleReps(reps);
+  const firstRaw = eligible[0].concentric.peakVelocity;
   const lastRaw = reps[reps.length - 1].concentric.peakVelocity;
-  const peakRaw = peakConcentricBaseline(reps);
+  const { velocity: peakRaw, repNumber } = velocityLossBaseline(reps);
   const lossPct =
     reps.length < 2 || peakRaw <= 0
       ? null
@@ -752,10 +835,10 @@ function computeVbtSummary(reps: readonly Rep[]): VbtSummary {
   return {
     first_rep_v: roundMps(firstRaw),
     peak_rep_v: roundMps(peakRaw),
-    peak_rep_number: baselineRepNumberFor(reps),
+    peak_rep_number: repNumber,
     last_rep_v: roundMps(lastRaw),
     velocity_loss_pct: lossPct,
-    mean_velocity: meanConcentricPeakVelocity(reps),
+    mean_velocity: meanConcentricPeakVelocity(eligible),
   };
 }
 

@@ -54,6 +54,7 @@ import {
   buildBilateralDivergencePayload,
   buildSetEndedPayload,
   buildSetStartedPayload,
+  buildSetUpdatedPayload,
   buildWeightImpliedMismatchPayload,
   serializeRepForPayload,
   summarizePreviousSet,
@@ -121,7 +122,14 @@ interface PlaceholderTools {
  * completed set straight from the store and is unaffected by live state.
  */
 const SET_START_DESCRIPTION =
-  "Start recording a new set on the given slot's active session. `watch` (notifyOn[], " +
+  "Start recording a new set on the given slot's active session. If the lifter already " +
+  'started and the server auto-armed a set (you saw `set_started {auto_armed: true}`), this ' +
+  'call UPGRADES that set in place instead of failing: your `isWarmup` and `watch` are ' +
+  'applied to the set already running, its reps and start time are kept, the motor is not ' +
+  're-engaged, and the result carries `upgraded: true` with `adoptedReps`. It works once per ' +
+  'set — a second call is a request for a new set and is refused. Pass `isWarmup` BEFORE the ' +
+  'lifter moves whenever you can: the auto-armed set is a working set until you say ' +
+  'otherwise. `watch` (notifyOn[], ' +
   'optional inactivityTimeoutMs) subscribes the channel event stream to specific mid-set ' +
   'signals (e.g. velocity-loss thresholds) as they fire, rather than requiring you to poll ' +
   '`set.live_metrics`. Pass `isWarmup: true` for warm-up sets so downstream analytics (e.g. ' +
@@ -254,19 +262,163 @@ function isRevertStillLive(
   );
 }
 
+/**
+ * Every safety condition that must hold before this slot takes on a set —
+ * whether by engaging the motor (`set.start`) or by adopting the one the
+ * lifter already began (the VW-180 upgrade). Throws a structured `ToolError`
+ * and publishes the mode-revert channel event; returns silently when clear.
+ */
+function assertEngageAllowed(
+  state: ServerState,
+  slot: ReturnType<typeof getSlot>,
+  slotId: string,
+  sessionId: string,
+): void {
+  assertNotRowing(slot);
+  assertNoLiveModeRevert(state, slot, slotId, sessionId);
+}
+
+/**
+ * <Bug-22> Refuse to engage strength-mode GO when the device is in Rowing.
+ * `client.startRecording()` writes the strength arm, which silently reverts an
+ * active rowing session — HIGH safety severity. Rowing is committed via the
+ * SDK's `enterRowMode + startRow` pair; once `client.isRowingActive` is true
+ * (or the device has already settled into Rowing mode), the user must not
+ * engage via `set.start`. </Bug-22>
+ */
+function assertNotRowing(slot: ReturnType<typeof getSlot>): void {
+  const trainingMode = slot.live.snapshotDevice().trainingMode;
+  if (trainingMode === 'Rowing' || slot.client.isRowingActive) {
+    throw new ToolError(
+      'ROWING_USE_TWO_STAGE',
+      'Cannot start a set while the device is in Rowing mode. Rowing engages via ' +
+        'device.enter_row_mode + device.start_row, not set.start. set.start would issue ' +
+        'the strength-mode GO and silently revert the rowing session.',
+    );
+  }
+}
+
+/**
+ * Bug 22 — consult the mode-revert guard BEFORE engaging the motor. If the
+ * per-slot guard latched an abort (a settings_update inside the detection
+ * window reported a trainingMode different from what the user requested at
+ * session.start / a prior set.start), refuse the engage, emit a
+ * `set_aborted_by_mode_revert` channel event, and surface a structured tool
+ * error. The motor never engages — this is the HIGH-severity safety guarantee.
+ *
+ * VW-163: a latch whose requested mode is what the device now echoes is stale
+ * — the revert resolved — so the recovered case falls through and starts the
+ * set instead of refusing it. VW-178: the read no longer CLEARS the latch, so
+ * an immediate retry refuses again instead of engaging in the wrong mode.
+ * Recovery is the device echoing the requested mode back, not a second call.
+ */
+function assertNoLiveModeRevert(
+  state: ServerState,
+  slot: ReturnType<typeof getSlot>,
+  slotId: string,
+  sessionId: string,
+): void {
+  const pendingAbort = slot.modeRevertGuard.peekAbort();
+  if (pendingAbort === null || !isRevertStillLive(pendingAbort, slot)) return;
+  const requestedName = TrainingModeNames[pendingAbort.requested] ?? String(pendingAbort.requested);
+  const actualName = TrainingModeNames[pendingAbort.actual] ?? String(pendingAbort.actual);
+  state.channels
+    .forSlot(slotId)
+    .publish(
+      buildSetAbortedByModeRevertPayload(
+        requestedName,
+        actualName,
+        pendingAbort.timestampMs,
+        sessionId,
+      ),
+    );
+  throw new ToolError(
+    'SET_ABORTED_BY_MODE_REVERT',
+    `Set aborted: device reverted from ${requestedName} to ${actualName} after the user requested ${requestedName}. ` +
+      `Motor not engaged. Recovery: (1) re-issue the setter cascade that targets ${requestedName} ` +
+      `(e.g. device.set_mode); the latch clears as soon as the device stops echoing ${actualName}, ` +
+      `however long that takes. (2) Or call session.end + session.start to drop the latched session ` +
+      `state and start fresh. The current device mode is ${actualName} — use device.get_state to inspect ` +
+      `the mode_revert_latched block before retrying.`,
+  );
+}
+
+/** `set.start`'s answer when it upgraded an auto-armed set instead of opening one. */
+interface UpgradedSet {
+  setId: string;
+  upgraded: true;
+  /** Reps already recorded in the set at upgrade time. */
+  adoptedReps: number;
+}
+
+/**
+ * Apply this `set.start` call's options to the set auto-arm already opened
+ * (VW-180).
+ *
+ * THE MOTOR IS NOT ENGAGED. The lifter is mid-set — that is what opened the
+ * set — so there is nothing to engage, and a strength-mode GO between two reps
+ * is a load change nobody asked for (see auto-arm.ts). No new start snapshot
+ * is taken either: auto-arm took one at the rep it armed on, which is when the
+ * lifting was actually happening.
+ *
+ * The idle watchdog's deadline is measured from the set's LAST ACTIVITY (its
+ * `startedAt` when it has had none), so an `inactivityTimeoutMs` covers the
+ * idle time already accrued rather than restarting at the upgrade call. A set
+ * whose window has already elapsed closes promptly.
+ */
+function upgradeAutoArmedSet(
+  state: ServerState,
+  slotId: string,
+  opts: { watch: WatchConfig | undefined; isWarmup: boolean | undefined },
+): UpgradedSet {
+  const slot = getSlot(state, slotId);
+  const sessionExerciseId = slot.live.session?.exerciseId;
+  const existing = slot.live.set;
+  const upgraded = slot.live.upgradeActiveSet({
+    upgradedAt: new Date().toISOString(),
+    ...(opts.isWarmup === true ? { isWarmup: true } : {}),
+    ...(opts.watch !== undefined ? { watch: opts.watch } : {}),
+    // The session may have gained an exercise pointer between the arm and this
+    // call; a set that already carries one keeps it (VMCP-01.72b).
+    ...(existing?.exerciseId === undefined && sessionExerciseId !== undefined
+      ? { exerciseId: sessionExerciseId }
+      : {}),
+  });
+  if (upgraded === undefined) {
+    throw new ToolError('NO_ACTIVE_SET', 'The auto-armed set closed before it could be upgraded.');
+  }
+  if (opts.watch !== undefined) {
+    armIdleWatchdog(state, upgraded.setId, upgraded.startedAt, opts.watch, slotId);
+  }
+  state.channels
+    .forSlot(slotId)
+    .publish(buildSetUpdatedPayload(upgraded, slot.live.snapshotDevice()));
+  return { setId: upgraded.setId, upgraded: true, adoptedReps: upgraded.reps.length };
+}
+
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
   slotIdInput: string | undefined,
   isWarmup: boolean | undefined,
-): Promise<{ setId: string }> {
+): Promise<{ setId: string } | UpgradedSet> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   const slot = getSlot(state, slotId);
   const session = slot.live.session;
   if (session === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active. Call session.start first.');
   }
-  if (slot.live.set !== undefined) {
+  const active = slot.live.set;
+  if (active !== undefined) {
+    // VW-180: the lifter started before the call landed and auto-arm opened
+    // the set. Upgrade it in place rather than refusing — the caller wants
+    // ITS watch and warm-up flag on the set in front of them, and there is no
+    // other way to attach them. Only once: a second call is asking for a new
+    // set, which this slot cannot give while one is recording.
+    if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
+      assertEngageAllowed(state, slot, slotId, session.sessionId);
+      return upgradeAutoArmedSet(state, slotId, { watch, isWarmup });
+    }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
   // VMCP-02.52: reject a second set.start that raced past the guard above
@@ -278,65 +430,7 @@ async function startSet(
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already being started on this slot.');
   }
 
-  // <Bug-22> Refuse to engage strength-mode GO when the device is in Rowing.
-  // `client.startRecording()` writes `BP_SET_FITNESS_MODE = 5` (the strength
-  // arm), which silently reverts an active rowing session — HIGH safety
-  // severity. Rowing is committed via the SDK's `enterRowMode + startRow`
-  // pair; once `client.isRowingActive` is true (or the device has already
-  // settled into Rowing mode), the user must not engage via `set.start`.
-  const trainingMode = slot.live.snapshotDevice().trainingMode;
-  if (trainingMode === 'Rowing' || slot.client.isRowingActive) {
-    throw new ToolError(
-      'ROWING_USE_TWO_STAGE',
-      'Cannot start a set while the device is in Rowing mode. Rowing engages via ' +
-        'device.enter_row_mode + device.start_row, not set.start. set.start would issue ' +
-        'the strength-mode GO and silently revert the rowing session.',
-    );
-  }
-  // </Bug-22>
-
-  // Bug 22 — consult the mode-revert guard BEFORE engaging the motor.
-  // If the per-slot guard latched an abort (a settings_update inside the
-  // detection window reported a trainingMode different from what the user
-  // requested at session.start / a prior set.start), refuse the engage,
-  // emit a `set_aborted_by_mode_revert` channel event, and surface a
-  // structured tool error. The motor never engages — this is the
-  // HIGH-severity safety guarantee. The user must re-select the desired
-  // mode on the unit and retry; arming the guard again happens implicitly
-  // when set.start is called and `armModeRevertGuardForSet` records the
-  // device's *current* mode below.
-  //
-  // VW-163: a latch whose requested mode is what the device now echoes is
-  // stale — the revert resolved (a later `device.set_mode`, or the mode
-  // bounce inside `device.unload` settling back), so the recovered case
-  // falls through and starts the set instead of refusing it.
-  //
-  // VW-178: the read no longer clears the latch, so an immediate retry of a
-  // refused set.start refuses again instead of engaging the motor in the
-  // wrong mode. Recovery is the device echoing the requested mode back (a
-  // `device.set_mode` that sticks), not a second call.
-  const pendingAbort = slot.modeRevertGuard.peekAbort();
-  if (pendingAbort !== null && isRevertStillLive(pendingAbort, slot)) {
-    const requestedName =
-      TrainingModeNames[pendingAbort.requested] ?? String(pendingAbort.requested);
-    const actualName = TrainingModeNames[pendingAbort.actual] ?? String(pendingAbort.actual);
-    const payload = buildSetAbortedByModeRevertPayload(
-      requestedName,
-      actualName,
-      pendingAbort.timestampMs,
-      session.sessionId,
-    );
-    state.channels.forSlot(slotId).publish(payload);
-    throw new ToolError(
-      'SET_ABORTED_BY_MODE_REVERT',
-      `Set aborted: device reverted from ${requestedName} to ${actualName} after the user requested ${requestedName}. ` +
-        `Motor not engaged. Recovery: (1) re-issue the setter cascade that targets ${requestedName} ` +
-        `(e.g. device.set_mode); the latch clears as soon as the device stops echoing ${actualName}, ` +
-        `however long that takes. (2) Or call session.end + session.start to drop the latched session ` +
-        `state and start fresh. The current device mode is ${actualName} — use device.get_state to inspect ` +
-        `the mode_revert_latched block before retrying.`,
-    );
-  }
+  assertEngageAllowed(state, slot, slotId, session.sessionId);
 
   // Re-arm the guard for the upcoming engagement window. The user's
   // intent at this exact moment is the device's current trainingMode (the
@@ -458,9 +552,50 @@ export function armIdleWatchdog(
     return;
   }
   const idleMs = watch.inactivityTimeoutMs;
-  state.setWatchdog.register(setId, idleMs, () => {
-    fireIdleTimeout(state, setId, setStartedAt, idleMs, slotId);
-  });
+  // The deadline is measured from the set's LAST ACTIVITY, not from this call
+  // (VW-180). An upgrade arms the watchdog on a set the lifter began earlier,
+  // and a fresh full-length timer there would hand a set that had already sat
+  // idle for 40 s another 90 s. On the ordinary `set.start` path the anchor IS
+  // now, so the first fire is a full `idleMs` exactly as before. Every later
+  // re-arm goes through `resetIdleWatchdog`, which restarts the full window
+  // because a rep just landed.
+  state.setWatchdog.register(
+    setId,
+    remainingIdleMs(state, setId, setStartedAt, idleMs, slotId),
+    () => {
+      fireIdleTimeout(state, setId, setStartedAt, idleMs, slotId);
+    },
+  );
+}
+
+/**
+ * Floor for a computed first-fire delay. A set whose idle window has ALREADY
+ * expired still fires on a timer rather than synchronously inside the tool
+ * call, so the caller gets its result before the set closes underneath it.
+ */
+const MIN_WATCHDOG_DELAY_MS = 1_000;
+
+/**
+ * Milliseconds until `setId`'s inactivity window expires, from the set's last
+ * activity (`lastActivityAt`, bumped by the bridge on every SDK signal, and
+ * initialized to `startedAt`). Falls back to `setStartedAt` when the set is no
+ * longer the live one. Never longer than `idleMs` — an anchor in the future
+ * would otherwise extend the window past what the caller asked for.
+ */
+function remainingIdleMs(
+  state: ServerState,
+  setId: string,
+  setStartedAt: string,
+  idleMs: number,
+  slotId: string,
+): number {
+  const live = getSlot(state, slotId).live.snapshotSet();
+  const anchor =
+    live?.setId === setId
+      ? (live.lastActivityAt ?? Date.parse(live.startedAt))
+      : Date.parse(setStartedAt);
+  if (!Number.isFinite(anchor)) return idleMs;
+  return Math.min(idleMs, Math.max(MIN_WATCHDOG_DELAY_MS, anchor + idleMs - Date.now()));
 }
 
 /**
@@ -1038,6 +1173,10 @@ function toStoredSet(
     ...(device.trainingMode !== undefined ? { trainingMode: device.trainingMode } : {}),
     ...(device.weightLbs !== undefined ? { weightLbs: device.weightLbs } : {}),
     ...(active.isWarmup === true ? { isWarmup: true } : {}),
+    // VW-180: how the set came to exist, and whether a `set.start` later
+    // claimed it. Both change how the row's stated intent should be read.
+    ...(active.autoCreatedBy !== undefined ? { autoCreatedBy: active.autoCreatedBy } : {}),
+    ...(active.upgradedAt !== undefined ? { upgraded: true } : {}),
     slot: identity.slotId,
     ...(typeof identity.deviceId === 'string' ? { deviceId: identity.deviceId } : {}),
     ...(identity.side !== null ? { side: identity.side } : {}),

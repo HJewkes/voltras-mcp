@@ -83,6 +83,7 @@ import {
   rirInputDomainConfidence,
   type ConfidenceIndicator,
 } from '../store/confidence-indicator.js';
+import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
@@ -428,7 +429,13 @@ async function rirForSet(
   // `reps` degrades to `any[]` through the package's .d.ts here, so the
   // element type is annotated explicitly rather than inferred.
   const peaks: number[] = analyticsSet.reps.map((rep: AnalyticsRep) => getRepPeakVelocity(rep));
-  const baselineMax = Math.max(...peaks);
+  // VW-168: the denominator comes from the ELIGIBLE reps only, the same rule
+  // the `velocity_loss_exceeded` trigger and the `set_ended` VBT summary use.
+  // Every rep still GETS an estimate — a positioning pull is excluded from
+  // setting the baseline, not from being scored against it.
+  const baselineMax = Math.max(
+    ...selectEligibleReps(analyticsSet.reps).map((rep: AnalyticsRep) => getRepPeakVelocity(rep)),
+  );
   const repsInSet = targetReps ?? peaks.length;
 
   const perRep: RepRIREstimate[] = peaks.map((peak: number, i: number) => {

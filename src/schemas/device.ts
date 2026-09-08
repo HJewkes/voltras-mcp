@@ -17,6 +17,7 @@ import { TrainingMode } from '@voltras/node-sdk';
 import { z } from 'zod';
 
 import { SlotIdSchema } from './common.js';
+import { WatchConfig } from './set.js';
 
 /**
  * Selectable training-mode names derived from the SDK enum.
@@ -229,6 +230,15 @@ export const DeviceStartGuidedLoadInput = z.object({
    */
   exerciseName: z.string().min(1).max(120).optional(),
   exerciseId: z.string().min(1).max(120).optional(),
+  /**
+   * Set-level intent for the set the bridge auto-creates on `armed`
+   * (VW-168a). Same shape and meaning as `set.start`'s own options: the set
+   * exists before any `set.start` can be made, so without these a guided-load
+   * warm-up could not be flagged as one and a guided-load set could not carry
+   * a watch at all. Ignored when a set is already recording on the slot.
+   */
+  isWarmup: z.boolean().optional(),
+  watch: WatchConfig.optional(),
   slot: SlotIdSchema,
 });
 
