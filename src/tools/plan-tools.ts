@@ -496,7 +496,7 @@ function setVelocityLossPct(set: StoredSet): number {
  * non-archived program (the store returns rows ordered by `created_at DESC`).
  * Throws `NO_PROGRAM_FOUND` when no eligible program exists.
  */
-async function resolveDefaultProgram(
+export async function resolveDefaultProgram(
   state: ServerState,
   programId: string | undefined,
 ): Promise<StoredTrainingProgram> {

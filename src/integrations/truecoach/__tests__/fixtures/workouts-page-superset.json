@@ -1,0 +1,59 @@
+{
+  "_fixture": "Hand-written from the field names documented by the OSS TrueCoach clients. No real account data. The workout_items array is deliberately OUT of position order, and carries one unknown extra key plus one unparseable instruction.",
+  "workouts": [
+    {
+      "id": 900003,
+      "title": "Shoulders + Accessories",
+      "due": "2026-09-11",
+      "state": "assigned",
+      "warmup": "Band external rotations",
+      "some_future_field": "kept verbatim, never thrown on",
+      "created_at": "2026-09-01T12:00:00Z"
+    }
+  ],
+  "workout_items": [
+    {
+      "id": 700012,
+      "workout_id": 900003,
+      "name": "Cable Lateral Raise",
+      "info": "E2. 3 x 15",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 2
+    },
+    {
+      "id": 700011,
+      "workout_id": 900003,
+      "name": "Cable Shoulder Press",
+      "info": "E1. 3 x 8 @ 95lb",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 1,
+      "another_future_field": 42
+    },
+    {
+      "id": 700013,
+      "workout_id": 900003,
+      "name": "Cable Face Pull",
+      "info": "Work up to a heavy single, coach's discretion.",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 3
+    },
+    {
+      "id": 700014,
+      "workout_id": 900003,
+      "name": "Bulgarian Split Squat",
+      "info": "3 x 10 each side",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 4
+    }
+  ],
+  "comments": [],
+  "meta": { "page": 1, "total_pages": 1, "per_page": 50, "total_count": 1 }
+}

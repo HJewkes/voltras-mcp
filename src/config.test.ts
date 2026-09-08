@@ -8,6 +8,7 @@ describe('loadConfig', () => {
       VMCP_DB_PATH: '/tmp/vmcp-test.sqlite',
       VMCP_SLOT_BINDINGS_PATH: '/tmp/vmcp-test-bindings.json',
       VMCP_LOG_LEVEL: 'debug',
+      HOME: '/home/test',
     });
 
     expect(cfg).toEqual({
@@ -21,6 +22,14 @@ describe('loadConfig', () => {
       cues: 'off',
       cuesMidSet: 'off',
       autoArm: 'on',
+      trueCoach: {
+        username: undefined,
+        password: undefined,
+        passwordCommand: undefined,
+        clientId: undefined,
+        tokenPath: '/home/test/.voltras/truecoach-token.json',
+        cacheDir: '/home/test/.voltras/truecoach-cache',
+      },
     });
     expect(Object.isFrozen(cfg)).toBe(true);
   });
@@ -180,5 +189,31 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_CUES_MIDSET: 'yes' })).toThrow(/on/);
+  });
+
+  it('leaves every TrueCoach credential absent by default', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.trueCoach.username).toBeUndefined();
+    expect(cfg.trueCoach.password).toBeUndefined();
+    expect(cfg.trueCoach.passwordCommand).toBeUndefined();
+    expect(cfg.trueCoach.clientId).toBeUndefined();
+  });
+
+  it('defaults the TrueCoach token and cache paths under ~/.voltras', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.trueCoach.tokenPath).toBe('/home/test/.voltras/truecoach-token.json');
+    expect(cfg.trueCoach.cacheDir).toBe('/home/test/.voltras/truecoach-cache');
+  });
+
+  it('reads the TrueCoach credentials from their env vars', () => {
+    const cfg = loadConfig({
+      HOME: '/home/test',
+      VMCP_TRUECOACH_USERNAME: 'lifter@example.test',
+      VMCP_TRUECOACH_PASSWORD_CMD: 'security find-generic-password -s truecoach -w',
+      VMCP_TRUECOACH_CLIENT_ID: '4242',
+    });
+    expect(cfg.trueCoach.username).toBe('lifter@example.test');
+    expect(cfg.trueCoach.passwordCommand).toBe('security find-generic-password -s truecoach -w');
+    expect(cfg.trueCoach.clientId).toBe('4242');
   });
 });

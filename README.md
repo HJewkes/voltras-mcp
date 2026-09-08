@@ -241,20 +241,26 @@ contract.
 
 Everything is optional; the defaults are a working configuration.
 
-| Var                       | Default                         | Allowed                                | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------------------------- | ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VOLTRA_ADAPTER`          | `node`                          | `node` \| `mock`                       | BLE adapter. `mock` uses an in-process device and adds the `mock.*` tools. Invalid values throw at startup.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `VMCP_DB_PATH`            | `~/.voltras/vmcp.sqlite`        | absolute path                          | SQLite store. Parent directory is created if missing. See [running more than one instance](#running-more-than-one-instance).                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `VMCP_DASHBOARD_PORT`     | `7723`                          | port number \| `off` \| `0`            | Dashboard sidecar port. `off` disables it. An unparseable value silently falls back to the default rather than failing. A port already in use falls back to an OS-assigned one — `server.health`'s `dashboardUrl` always names the port actually bound.                                                                                                                                                                                                                                                                         |
-| `VMCP_LOG_LEVEL`          | `info`                          | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr — stdout is reserved for the MCP transport.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `VMCP_CUES`               | `off`                           | `off` \| `on`                          | Deterministic spoken coaching cues (set intros, "two reps left", set-complete) fired the instant the triggering event does, with no model round-trip. **macOS only** — routes through the built-in `say` binary; a no-op elsewhere. Off by default because cues are audible and will double up with model-generated speech unless the coaching prompt cedes those categories. STARTUP DEFAULT ONLY — `system.set_cues` flips it at runtime and `server.health` reports the live value.                                          |
-| `VMCP_CUES_MIDSET`        | `off`                           | `off` \| `on`                          | Whether the two cue categories that fire while the lifter is still under load (`target_hit`, `slowdown`) may speak. Off by default: every cue mutes the mic for its duration, so the ungated voice "stop" path is unavailable for that window, and mid-set is the worst place for that blind spot. Also a startup default only — see `system.set_cues`.                                                                                                                                                                         |
-| `VMCP_REST_TIMER`         | `off`                           | `off` \| `on`                          | When `on`, a natural set close auto-arms the passive `rest_status` push cycle. Never armed on a `session.end` cascade.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `VMCP_AUTO_ARM`           | `on`                            | `off` \| `on`                          | When `on`, reps detected while a session is open (and no set is) open a set on the server's own initiative and count into it. Reps begin within ~1s of a weight change on the unit, so the gap before a `set.start` lands costs real reps. The arm waits for a second rep to corroborate the first, because a rope-positioning pull looks exactly like a rep until another rep disagrees with it (VW-181); when the two agree both are adopted. `off` restores idle-rep reporting only. `server.health` reports the live value. |
-| `VMCP_REP_SOURCE`         | `analytics`                     | `analytics` \| `firmware`              | Which rep pipeline the read boundary draws from. `firmware` is a dark flag pending a hardware cutover.                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `VMCP_REP_CORRECTIONS`    | `off`                           | `off` \| `on`                          | Movement-class-dependent rep-segmentation corrections. Dark until validated across movement classes — on an untested movement it can drop valid reps.                                                                                                                                                                                                                                                                                                                                                                           |
-| `VMCP_SLOT_BINDINGS_PATH` | `~/.voltras/slot-bindings.json` | absolute path                          | Where persisted device ↔ left/right side bindings live (see the `slot.*` tools).                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `VMCP_DEBUG_BUFFER_SIZE`  | `256`                           | integer                                | Capacity of the in-memory diagnostic ring buffer behind `debug.recent_frames` / `debug.recent_events`.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Var                           | Default                           | Allowed                                | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------- | --------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VOLTRA_ADAPTER`              | `node`                            | `node` \| `mock`                       | BLE adapter. `mock` uses an in-process device and adds the `mock.*` tools. Invalid values throw at startup.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `VMCP_DB_PATH`                | `~/.voltras/vmcp.sqlite`          | absolute path                          | SQLite store. Parent directory is created if missing. See [running more than one instance](#running-more-than-one-instance).                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `VMCP_DASHBOARD_PORT`         | `7723`                            | port number \| `off` \| `0`            | Dashboard sidecar port. `off` disables it. An unparseable value silently falls back to the default rather than failing. A port already in use falls back to an OS-assigned one — `server.health`'s `dashboardUrl` always names the port actually bound.                                                                                                                                                                                                                                                                         |
+| `VMCP_LOG_LEVEL`              | `info`                            | `debug` \| `info` \| `warn` \| `error` | Log verbosity. All logs go to stderr — stdout is reserved for the MCP transport.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `VMCP_CUES`                   | `off`                             | `off` \| `on`                          | Deterministic spoken coaching cues (set intros, "two reps left", set-complete) fired the instant the triggering event does, with no model round-trip. **macOS only** — routes through the built-in `say` binary; a no-op elsewhere. Off by default because cues are audible and will double up with model-generated speech unless the coaching prompt cedes those categories. STARTUP DEFAULT ONLY — `system.set_cues` flips it at runtime and `server.health` reports the live value.                                          |
+| `VMCP_CUES_MIDSET`            | `off`                             | `off` \| `on`                          | Whether the two cue categories that fire while the lifter is still under load (`target_hit`, `slowdown`) may speak. Off by default: every cue mutes the mic for its duration, so the ungated voice "stop" path is unavailable for that window, and mid-set is the worst place for that blind spot. Also a startup default only — see `system.set_cues`.                                                                                                                                                                         |
+| `VMCP_REST_TIMER`             | `off`                             | `off` \| `on`                          | When `on`, a natural set close auto-arms the passive `rest_status` push cycle. Never armed on a `session.end` cascade.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `VMCP_AUTO_ARM`               | `on`                              | `off` \| `on`                          | When `on`, reps detected while a session is open (and no set is) open a set on the server's own initiative and count into it. Reps begin within ~1s of a weight change on the unit, so the gap before a `set.start` lands costs real reps. The arm waits for a second rep to corroborate the first, because a rope-positioning pull looks exactly like a rep until another rep disagrees with it (VW-181); when the two agree both are adopted. `off` restores idle-rep reporting only. `server.health` reports the live value. |
+| `VMCP_REP_SOURCE`             | `analytics`                       | `analytics` \| `firmware`              | Which rep pipeline the read boundary draws from. `firmware` is a dark flag pending a hardware cutover.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `VMCP_REP_CORRECTIONS`        | `off`                             | `off` \| `on`                          | Movement-class-dependent rep-segmentation corrections. Dark until validated across movement classes — on an untested movement it can drop valid reps.                                                                                                                                                                                                                                                                                                                                                                           |
+| `VMCP_SLOT_BINDINGS_PATH`     | `~/.voltras/slot-bindings.json`   | absolute path                          | Where persisted device ↔ left/right side bindings live (see the `slot.*` tools).                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `VMCP_DEBUG_BUFFER_SIZE`      | `256`                             | integer                                | Capacity of the in-memory diagnostic ring buffer behind `debug.recent_frames` / `debug.recent_events`.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `VMCP_TRUECOACH_USERNAME`     | _unset_                           | email                                  | TrueCoach account email. See [TrueCoach (read-only pull)](#truecoach-read-only-pull).                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `VMCP_TRUECOACH_PASSWORD`     | _unset_                           | string                                 | TrueCoach password, in plaintext in the environment. Prefer `VMCP_TRUECOACH_PASSWORD_CMD`.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `VMCP_TRUECOACH_PASSWORD_CMD` | _unset_                           | shell command                          | A command whose stdout is the password, so the secret can stay in the macOS keychain. Wins over `VMCP_TRUECOACH_PASSWORD` when both are set.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `VMCP_TRUECOACH_CLIENT_ID`    | token response `user_id`          | string                                 | Override for the TrueCoach client id. Set it if the pull 404s with the id taken from the grant.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `VMCP_TRUECOACH_TOKEN_PATH`   | `~/.voltras/truecoach-token.json` | absolute path                          | Cached access token, written mode 0600. Never logged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `VMCP_TRUECOACH_CACHE_DIR`    | `~/.voltras/truecoach-cache`      | absolute path                          | Raw response cache, 6-hour TTL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 `VOLTRA_ADAPTER`, `VMCP_REP_SOURCE`, `VMCP_REST_TIMER`, `VMCP_REP_CORRECTIONS`,
 `VMCP_AUTO_ARM`, and `VMCP_CUES` throw synchronously at startup on an unrecognized value, so a typo surfaces
@@ -298,7 +304,7 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-91 tools in mock mode; 89 with the real adapter (`mock.*` is registered only when
+92 tools in mock mode; 90 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
@@ -324,6 +330,7 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `mrvguard.*`    | 1     | `check` — diagnostic read over the maximum-recoverable-volume guard.                                                                                                                                                  |
 | `coaching.*`    | 1     | `explain` — RP-derived coaching knowledge by topic, always tier-qualified and cited.                                                                                                                                  |
 | `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                                                                   |
+| `truecoach.*`   | 1     | `import_week` — read-only pull of coach-assigned programming into `plan.*`. Off unless credentials are set; see [TrueCoach (read-only pull)](#truecoach-read-only-pull).                                              |
 
 Some `device.*` tools are explicitly marked `@experimental` or `@deprecated` in their own
 descriptions; prefer the consolidated setters (for example `device.configure_isokinetic`
@@ -346,6 +353,85 @@ notification is a hint, not a requirement.
 The server can push structured rep/set/timer/connection events straight into the
 conversation, so a coaching flow doesn't have to poll. This needs a launch flag and is
 worth reading about separately: **[docs/push-events.md](docs/push-events.md)**.
+
+---
+
+## TrueCoach (read-only pull)
+
+`truecoach.import_week` pulls the coach-assigned workouts for a date range out of a
+TrueCoach account and upserts them into the local `plan.*` tree. It is **off unless you
+configure it**, it **only runs when you call it** (no timer, no startup hook, no
+background sync), and it **never writes to TrueCoach** — the only non-GET request it can
+make is the OAuth password grant.
+
+### Setup
+
+```bash
+# Put the password in the macOS keychain once:
+security add-generic-password -a "$USER" -s truecoach -w
+
+export VMCP_TRUECOACH_USERNAME='you@example.com'
+export VMCP_TRUECOACH_PASSWORD_CMD='security find-generic-password -a "$USER" -s truecoach -w'
+```
+
+`VMCP_TRUECOACH_PASSWORD` works too, but it puts the password in plaintext in your
+environment. With neither set the tool returns `NOT_CONFIGURED` and makes no network
+call; it never prompts.
+
+The access token is cached in memory for its lifetime and on disk at
+`~/.voltras/truecoach-token.json`, mode 0600. Raw responses are cached under
+`~/.voltras/truecoach-cache/` with a 6-hour TTL — pass `refresh: true` to bypass it. Both
+paths are gitignored and neither the token nor the password is ever written to a log line
+or an error message.
+
+### What it does
+
+```
+your program → "TrueCoach import" block → one week per ISO week → one template per workout
+```
+
+Exercise names must match the catalog **exactly** (case- and punctuation-insensitive). A
+ranked "close enough" hit is never accepted: a wrong `exerciseId` silently attributes a
+lift and its baselines to a movement the coach never prescribed. Unmatched names come back
+in `unmapped` with up to three candidates and are skipped — the template still lands — and
+you resolve them by re-running with
+`mapping: { "<TrueCoach name>": "<catalog exercise id>" }`.
+
+Targets are read from the coach's instruction text by a deliberately narrow parser
+(`3 x 8-10 @ 135lb, rest 90s`, `50lbs x AMRAP x 4 sets`, `4 sets of 12`). Anything it
+cannot read is left absent, and the **whole instruction is kept verbatim in `notes`**
+either way.
+
+Re-importing the same range is idempotent: every row carries a TrueCoach external id
+(`tc:workout:<id>`, `tc:item:<id>`) with a unique index behind it, so a second run updates
+in place and never duplicates. Use `dryRun: true` to see the mapped tree before writing.
+
+### Terms of service — read this before using it
+
+TrueCoach (an Xplor Technologies brand) **publishes no public developer API**. The
+endpoint this uses is undocumented and reverse-engineered. Xplor's terms of use, section
+A.4 "Prohibited Activities", say you will not:
+
+> (c) use any robot, spider, crawler, scraper, or other manual or automated means or
+> interface to access the Services, retrieve, index, scrape, "data mine" or otherwise
+> gather Content or extract other user's information.
+>
+> (d) use or develop any third-party applications that interact with the Services or other
+> users' content or information without our written consent.
+
+Clause (c) is arguably narrowed by "other user's information", which this is not. Clause
+(d) has no such qualifier. **The position taken here is a deliberate one**: this is a
+client-role read of your OWN data on your OWN account, run by hand, with no write path and
+no automation. The coach has not been asked for consent, and TrueCoach has not granted
+written consent under clause (d). The account at risk is yours. Do not present this as a
+sanctioned integration, and do not point it at anyone else's account.
+
+The write direction is deliberately **not** built. Results in TrueCoach are freeform text
+and the only working write path anyone has found is browser automation against the DOM;
+the marginal saving over pasting a pre-formatted block is a few seconds per session.
+
+Full research, including the alternatives that stay clear of all this:
+`sources/notes/2026-09-08-truecoach-integration-research.md`.
 
 ---
 

@@ -11,6 +11,7 @@
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
+//   - VMCP_TRUECOACH_*                 — read-only TrueCoach pull, see TrueCoachConfig.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
@@ -108,6 +109,32 @@ export type CuesMidSetMode = 'off' | 'on';
  */
 export type AutoArmMode = 'off' | 'on';
 
+/**
+ * Credentials and paths for the read-only TrueCoach pull (`truecoach.import_week`).
+ *
+ * Every field is optional and every field is absent by default: with no
+ * credentials the tool returns `NOT_CONFIGURED` and makes no network call. The
+ * server never prompts for these and never logs them — see `redact.ts`.
+ *
+ *   - `VMCP_TRUECOACH_USERNAME`     — the account email.
+ *   - `VMCP_TRUECOACH_PASSWORD`     — the password, in plaintext in the env.
+ *   - `VMCP_TRUECOACH_PASSWORD_CMD` — a shell command whose stdout is the
+ *     password, so the secret can live in the macOS keychain instead. Takes
+ *     precedence over `VMCP_TRUECOACH_PASSWORD` when both are set.
+ *   - `VMCP_TRUECOACH_CLIENT_ID`    — override for the client id; when absent
+ *     the `user_id` from the token response is used.
+ *   - `VMCP_TRUECOACH_TOKEN_PATH`   — on-disk access-token cache (mode 0600).
+ *   - `VMCP_TRUECOACH_CACHE_DIR`    — on-disk raw-response cache.
+ */
+export interface TrueCoachConfig {
+  readonly username: string | undefined;
+  readonly password: string | undefined;
+  readonly passwordCommand: string | undefined;
+  readonly clientId: string | undefined;
+  readonly tokenPath: string;
+  readonly cacheDir: string;
+}
+
 export interface Config {
   readonly adapter: AdapterKind;
   readonly dbPath: string;
@@ -119,6 +146,18 @@ export interface Config {
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
   readonly autoArm: AutoArmMode;
+  readonly trueCoach: TrueCoachConfig;
+}
+
+function loadTrueCoachConfig(env: NodeJS.ProcessEnv, home: string): TrueCoachConfig {
+  return Object.freeze({
+    username: env.VMCP_TRUECOACH_USERNAME,
+    password: env.VMCP_TRUECOACH_PASSWORD,
+    passwordCommand: env.VMCP_TRUECOACH_PASSWORD_CMD,
+    clientId: env.VMCP_TRUECOACH_CLIENT_ID,
+    tokenPath: env.VMCP_TRUECOACH_TOKEN_PATH ?? `${home}/.voltras/truecoach-token.json`,
+    cacheDir: env.VMCP_TRUECOACH_CACHE_DIR ?? `${home}/.voltras/truecoach-cache`,
+  }) satisfies TrueCoachConfig;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -164,5 +203,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cues,
     cuesMidSet,
     autoArm,
+    trueCoach: loadTrueCoachConfig(env, home),
   }) satisfies Config;
 }

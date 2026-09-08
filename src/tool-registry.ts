@@ -122,6 +122,10 @@ export const CORE_TOOL_NAMES = [
   // namespace per the locked consolidation design — kept to ONE tool with a
   // bounded topic enum, not one tool per topic. See src/tools/coaching-tools.ts.
   'coaching.explain',
+  // Read-only pull of coach-assigned programming from TrueCoach into plan.*
+  // (see src/tools/truecoach-tools.ts). Never writes to TrueCoach, and only
+  // runs when called — there is no background sync anywhere in this repo.
+  'truecoach.import_week',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -288,6 +292,10 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'driftguard.check': 'read',
   'mrvguard.check': 'read',
   'coaching.explain': 'read',
+
+  // `write`: it upserts the plan tree in SQLite. `dryRun: true` writes
+  // nothing, but the classification describes the tool, not one argument.
+  'truecoach.import_week': 'write',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',
