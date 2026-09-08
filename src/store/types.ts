@@ -277,6 +277,28 @@ export interface StoredSet {
    * know what it is.
    */
   firmwareSummaryDurationMs?: number;
+  /**
+   * Peak force over the set as the firmware reported it, in POUNDS (the frame
+   * carries tenths; the /10 is applied on the way in).
+   *
+   * Corroborated across nine archived capture sessions — it reads at or just
+   * above the set's target weight in every weight-mode capture and takes
+   * untargeted values in band / damper / isokinetic — but NOT vendor-confirmed.
+   * Stored for cross-checking; do NOT substitute it for the peak force
+   * workout-analytics computes from telemetry.
+   */
+  firmwarePeakForceLbs?: number;
+  /**
+   * Peak power over the set as the firmware reported it, RAW and in the
+   * device's own scale.
+   *
+   * UNITS UNVERIFIED. The value scales with rep speed the way power should,
+   * but its magnitude has never been checked against an instrumented
+   * reference, so it may be watts, centiwatts or another scaling. Treat it as
+   * a relative quantity and never label or convert it as watts until a bench
+   * measurement pins the unit.
+   */
+  firmwarePeakPower?: number;
   /** Per-rep firmware boundaries as JSON, for cross-checking segmentation. */
   firmwareRepsJson?: string;
   /**

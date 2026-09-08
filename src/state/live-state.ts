@@ -326,6 +326,13 @@ export interface ActiveSet {
     repDurationMs: number;
     targetWeightTenths: number;
     schemaVersion: number;
+    /** Firmware peak force for the set, in tenths of a pound. */
+    peakForceTenths?: number;
+    /**
+     * Firmware peak power for the set, in the device's own scale. The unit is
+     * UNVERIFIED — never present or convert it as watts.
+     */
+    peakPowerRaw?: number;
   };
   /**
    * Unix-ms timestamp of the most recent SDK activity on the active set
@@ -937,6 +944,12 @@ export class LiveState {
         repDurationMs: payload.repDurationMs,
         targetWeightTenths: payload.targetWeightTenths,
         schemaVersion: payload.schemaVersion,
+        // Copied verbatim, and only when the device actually sent a number: a
+        // fabricated 0 is indistinguishable downstream from a measured 0.
+        ...(typeof payload.peakForceTenths === 'number'
+          ? { peakForceTenths: payload.peakForceTenths }
+          : {}),
+        ...(typeof payload.peakPowerRaw === 'number' ? { peakPowerRaw: payload.peakPowerRaw } : {}),
       },
     };
   }

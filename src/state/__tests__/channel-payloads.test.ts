@@ -1191,6 +1191,37 @@ describe('buildSetEndedPayload — device_summary', () => {
     });
     expect(meta.device_rep_count).toBe('2');
   });
+
+  it('publishes the firmware peaks as lb and as a raw, unit-unverified figure', () => {
+    const stored = buildStored([makeRep(1, 800, 500)]);
+    const { content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
+      repCount: 1,
+      repDurationMs: 1000,
+      targetWeightTenths: 1700,
+      schemaVersion: 1,
+      peakForceTenths: 886,
+      peakPowerRaw: 412,
+    });
+    const parsed = JSON.parse(content) as {
+      device_set_summary: { peak_force_lbs: number; peak_power_raw: number };
+    };
+    expect(parsed.device_set_summary.peak_force_lbs).toBe(88.6);
+    // Raw and unconverted: the unit is unverified, so no scaling is applied.
+    expect(parsed.device_set_summary.peak_power_raw).toBe(412);
+  });
+
+  it('omits the peak keys when the frame carried none', () => {
+    const stored = buildStored([makeRep(1, 800, 500)]);
+    const { content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
+      repCount: 1,
+      repDurationMs: 1000,
+      targetWeightTenths: 1700,
+      schemaVersion: 1,
+    });
+    const parsed = JSON.parse(content) as { device_set_summary: Record<string, unknown> };
+    expect(parsed.device_set_summary).not.toHaveProperty('peak_force_lbs');
+    expect(parsed.device_set_summary).not.toHaveProperty('peak_power_raw');
+  });
 });
 
 describe('buildSettingCoercedPayload', () => {

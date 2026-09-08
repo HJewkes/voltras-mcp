@@ -84,6 +84,8 @@ type SetCapture = Pick<
   | 'sampleRateHz'
   | 'firmwareRepCount'
   | 'firmwareSummaryDurationMs'
+  | 'firmwarePeakForceLbs'
+  | 'firmwarePeakPower'
   | 'firmwareRepsJson'
   | 'chainsLbs'
   | 'damperLevel'
@@ -1058,7 +1060,9 @@ function buildSetCapture(
   slotId: string,
   active: ActiveSet,
   device: DeviceSnapshot,
-  deviceSetSummary: { repDurationMs: number } | undefined,
+  deviceSetSummary:
+    | { repDurationMs: number; peakForceTenths?: number; peakPowerRaw?: number }
+    | undefined,
 ): SetCapture {
   const settings = readSettingsContext(device);
   const settingsHash = hashSettingsContext(settings);
@@ -1105,6 +1109,15 @@ function buildSetCapture(
     // interpretation impossible.
     ...(deviceSetSummary !== undefined
       ? { firmwareSummaryDurationMs: deviceSetSummary.repDurationMs }
+      : {}),
+    // The device's own per-set peaks, for cross-checking the ones we derive
+    // from telemetry. Force is converted tenths → lb; power is stored raw
+    // because its unit is unverified — see StoredSet.firmwarePeakPower.
+    ...(deviceSetSummary?.peakForceTenths !== undefined
+      ? { firmwarePeakForceLbs: deviceSetSummary.peakForceTenths / 10 }
+      : {}),
+    ...(deviceSetSummary?.peakPowerRaw !== undefined
+      ? { firmwarePeakPower: deviceSetSummary.peakPowerRaw }
       : {}),
     ...settings,
     ...(settingsHash !== undefined ? { settingsHash } : {}),

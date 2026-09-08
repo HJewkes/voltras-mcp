@@ -997,3 +997,52 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
     }
   });
 });
+
+describe('firmware peak force / peak power columns (VMCP-02.87)', () => {
+  let store: SqliteSessionStore;
+
+  beforeEach(() => {
+    store = SqliteSessionStore.open(':memory:');
+  });
+
+  afterEach(async () => {
+    await store.close();
+  });
+
+  it('round-trips both peaks', async () => {
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(
+      makeSet({ id: 'peak-1', firmwarePeakForceLbs: 88.6, firmwarePeakPower: 412 }),
+    );
+    const stored = await store.getSet('peak-1');
+    expect(stored?.firmwarePeakForceLbs).toBe(88.6);
+    expect(stored?.firmwarePeakPower).toBe(412);
+  });
+
+  it('re-putting a set updates both peaks (the DO UPDATE half of the upsert)', async () => {
+    // A force-end followed by an explicit re-end hits the conflict branch. A
+    // column present in the INSERT but missing from the DO UPDATE would keep
+    // the stale value here and nowhere else.
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'peak-2', firmwarePeakForceLbs: 10, firmwarePeakPower: 1 }));
+    await store.putSet(
+      makeSet({ id: 'peak-2', firmwarePeakForceLbs: 88.6, firmwarePeakPower: 412 }),
+    );
+    const stored = await store.getSet('peak-2');
+    expect(stored?.firmwarePeakForceLbs).toBe(88.6);
+    expect(stored?.firmwarePeakPower).toBe(412);
+  });
+
+  it('leaves both columns NULL when the set carried no firmware summary', async () => {
+    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSet(makeSet({ id: 'peak-3' }));
+    const row = rawDb(store)
+      .prepare(`SELECT firmware_peak_force_lbs, firmware_peak_power FROM sets WHERE id = ?`)
+      .get('peak-3') as {
+      firmware_peak_force_lbs: number | null;
+      firmware_peak_power: number | null;
+    };
+    expect(row.firmware_peak_force_lbs).toBeNull();
+    expect(row.firmware_peak_power).toBeNull();
+  });
+});
