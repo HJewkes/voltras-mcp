@@ -166,6 +166,8 @@ export interface SnapshotActiveSet {
   latestInProgress?: { targetWeightTenths?: number };
   /** Trigger DSL registered at set.start — carries the configured rep target. */
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
+  /** Who is performing this set, when it is not the owner (VW-169). */
+  lifter?: string;
 }
 
 /**
@@ -205,7 +207,7 @@ export interface SnapshotDeviceEntry {
 
 /** Client-side view of the `/api/snapshot` JSON shape (server: buildSnapshot). */
 export interface Snapshot {
-  session: { sessionId: string; exerciseName?: string } | null;
+  session: { sessionId: string; exerciseName?: string; lifter?: string } | null;
   devices: SnapshotDeviceEntry[];
   /**
    * `active` is the in-progress set; `completed` is the current session's

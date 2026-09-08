@@ -246,6 +246,10 @@ function mapSession(
     // exercise is named yet — lets the idle stage tell "no session" from "session, no set".
     hasSession: snapshot.session != null,
     exerciseName: resolveExerciseName(snapshot, plannedExercises),
+    // VW-169: the open set's own label wins over the session default — it is
+    // who is lifting RIGHT NOW, and the default only says who the next set
+    // will be attributed to. Null (the owner) renders nothing.
+    lifter: snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null,
     title: null,
     weightLbs,
     unit: 'lbs',
