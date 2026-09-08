@@ -108,6 +108,17 @@ describe('coach-results outbox', () => {
     expect(statSync(join(dir, 'pending')).mode & 0o777).toBe(0o700);
   });
 
+  it('writes the entry itself owner-only', async () => {
+    // Arrange
+    const state = makeState(WORKING_SETS, 'on');
+
+    // Act
+    await writeSessionOutbox(state, SESSION_ID);
+
+    // Assert
+    expect(statSync(join(dir, 'pending', `${SESSION_ID}.json`)).mode & 0o777).toBe(0o600);
+  });
+
   it('writes nothing when the flag is off', async () => {
     // Arrange
     const state = makeState(WORKING_SETS, 'off');
