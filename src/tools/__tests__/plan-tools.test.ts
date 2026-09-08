@@ -147,6 +147,12 @@ function makeStore(): SessionStore & {
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
     getAssignmentsForTemplate: vi.fn(async () => []),
+    // Read by `getTierSignal`, which `plan.exercise.create` calls to pick its
+    // volume ceilings. Stubbed so the lint pass genuinely runs here rather than
+    // falling into its own "warnings are never worth a failed write" catch.
+    getTrainingProfile: vi.fn(async () => undefined),
+    countSessions: vi.fn(async () => 0),
+    getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     close: vi.fn(async () => {}),
   };
 }
@@ -164,6 +170,7 @@ function setup(): Harness {
   const store = makeStore();
   const state = {
     store,
+    exercises: { getById: vi.fn(() => undefined) },
   } as unknown as ServerState;
   const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
   const server = { tool: vi.fn() } as unknown as FakeServer;

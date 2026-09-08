@@ -35,6 +35,7 @@ import {
   PlanWeekCreateInput,
   PlanWeekListForBlockInput,
 } from '../schemas/plan.js';
+import { lintPlan, type LintPlanExercise, type PlanWarning } from '../plan/lint-plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
@@ -95,7 +96,9 @@ const PLAN_WEEK_LIST_DESCRIPTION = 'List the weeks belonging to one block (takes
 
 const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
-  'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on.';
+  'more planned exercises and is what `plan.next_workout`/`plan.complete_workout` operate on. ' +
+  'Returns `warnings: []` — a template holds no volume until exercises are added, so the ' +
+  'tier-aware volume lints run on `plan.exercise.create`, not here.';
 const PLAN_TEMPLATE_GET_DESCRIPTION = 'Fetch one workout template by id.';
 const PLAN_TEMPLATE_LIST_DESCRIPTION =
   'List the workout templates belonging to one week (takes weekId).';
@@ -103,7 +106,13 @@ const PLAN_TEMPLATE_LIST_DESCRIPTION =
 const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'Add a planned exercise to a workout template — takes the parent workoutTemplateId. This is ' +
   'the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot ' +
-  'in one template.';
+  'in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over ' +
+  'the WHOLE template after the insert (sets per exercise, and hard sets per muscle per ' +
+  "session, counted on each exercise's PRIMARY muscle group only). Each warning is a " +
+  'SUGGESTION; accept or decline it, and never re-apply it after a decline. The write ALWAYS ' +
+  'succeeds — a warning never blocks, never rolls back, and never edits the row you just ' +
+  'created. Read a warning out to the lifter and offer the fix it names; if they decline, drop ' +
+  'it and move on.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
@@ -388,10 +397,16 @@ async function listWeeksForBlock(
 
 // --- workout templates ---
 
+/**
+ * `warnings` is always empty here and that is not an oversight: a template is
+ * created before it holds any exercise, so there is no volume to measure yet.
+ * The key ships anyway so a caller can read `warnings` off both create tools
+ * without branching on which one it called.
+ */
 async function createTemplate(
   state: ServerState,
   input: z.infer<typeof PlanTemplateCreateInput>,
-): Promise<{ template: StoredWorkoutTemplate }> {
+): Promise<{ template: StoredWorkoutTemplate; warnings: PlanWarning[] }> {
   const template: StoredWorkoutTemplate = {
     id: input.id ?? randomUUID(),
     weekId: input.weekId,
@@ -401,7 +416,7 @@ async function createTemplate(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putWorkoutTemplate(template);
-  return { template };
+  return { template, warnings: [] };
 }
 
 async function getTemplate(
@@ -425,7 +440,7 @@ async function listTemplatesForWeek(
 async function createPlannedExercise(
   state: ServerState,
   input: z.infer<typeof PlanExerciseCreateInput>,
-): Promise<{ plannedExercise: StoredPlannedExercise }> {
+): Promise<{ plannedExercise: StoredPlannedExercise; warnings: PlanWarning[] }> {
   const plannedExercise: StoredPlannedExercise = {
     id: input.id ?? randomUUID(),
     workoutTemplateId: input.workoutTemplateId,
@@ -440,7 +455,40 @@ async function createPlannedExercise(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putPlannedExercise(plannedExercise);
-  return { plannedExercise };
+  const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
+  return { plannedExercise, warnings };
+}
+
+/**
+ * Re-lint the WHOLE template after an insert — the per-muscle ceiling is a
+ * property of the session, so the exercise just added is only judgeable
+ * alongside its siblings.
+ *
+ * Swallows anything that goes wrong on purpose. The row is already committed by
+ * the time this runs, and B31 is advisory: a catalog miss or a store hiccup must
+ * cost the caller its warnings, never its write.
+ */
+async function lintTemplateVolume(
+  state: ServerState,
+  workoutTemplateId: string,
+): Promise<PlanWarning[]> {
+  try {
+    const siblings = await state.store.getPlannedExercisesForTemplate(workoutTemplateId);
+    const { tier, confidence } = await getTierSignal(state);
+    return lintPlan({ exercises: siblings.map((e) => toLintExercise(state, e)), tier, confidence });
+  } catch {
+    return [];
+  }
+}
+
+/** Per-muscle lint is target-only (B47): `muscleGroups[0]`, never the secondaries. */
+function toLintExercise(state: ServerState, e: StoredPlannedExercise): LintPlanExercise {
+  const muscleGroup = state.exercises.getById(e.exerciseId)?.muscleGroups[0];
+  return {
+    exerciseId: e.exerciseId,
+    targetSets: e.targetSets,
+    ...(muscleGroup !== undefined ? { muscleGroup } : {}),
+  };
 }
 
 async function listPlannedExercisesForTemplate(
