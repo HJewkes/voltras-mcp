@@ -50,6 +50,7 @@ import {
   type StoredWorkoutTemplate,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
 class ToolError extends Error {
   readonly code: string;
@@ -120,9 +121,12 @@ const PLAN_ATTACH_TO_SESSION_DESCRIPTION =
 const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'Get a suggested load/weight-delta for the next occurrence of an exercise, based on the most ' +
   'recently completed session for it (completedSessionId, optional — inferred if omitted) ' +
-  'within a program. This is a suggestion the caller presents to the user, not an authoritative ' +
-  'prescription — RP-derived guidance treats progression suggestions as advisory, never a ' +
-  'silent auto-apply.';
+  'within a program. Returns `delta` (lb) plus `repDelta` — above a ~15-rep prescription the ' +
+  'rep is the finer dial than the load, so the suggestion adds a rep instead of weight. ' +
+  '`gates` reports the ordered progression gates (technique, effort, setsUnlocked: whether ' +
+  'adding a set is warranted) and `tier` the training-experience signal the gates were read ' +
+  'against. Suggestion only: the coach or lifter accepts or declines it, it is never ' +
+  'auto-applied, and a declined suggestion is not re-applied.';
 
 export function registerPlanTools(
   _server: McpServer,
@@ -472,6 +476,65 @@ const PROGRESSION_HOLD_LBS = 0;
 const PROGRESSION_VELOCITY_LOSS_HOLD_PCT = 25;
 
 /**
+ * B24 (VMCP-06.01): below ~15 prescribed reps load is the finer dial, above it
+ * the rep is — one rep moves effective RIR by ~3 in a 5-10 rep set.
+ */
+const REP_RANGE_LOAD_CEILING = 15;
+
+/**
+ * B07 (VMCP-06.07) effort gate: at or below this intra-set velocity loss the
+ * set is read as far from failure, i.e. 'easy'. The threshold is the only one
+ * the outcome table in `voltras-workspace/sources/research/
+ * vbt-rir-research-and-protocol.md` §1.3 (outside this repo) treats as a
+ * distinct regime, verbatim:
+ *
+ *   "Power / jump / sprint / velocity vs. submaximal loads | Lower VL (≤15 %)
+ *    is clearly better; high VL is actively counterproductive."
+ *
+ * Hypertrophy in the same table is flat from 20-30 %, so 15 % is the
+ * far-from-failure line and 15-25 % stays 'unknown' rather than guessing.
+ */
+const PROGRESSION_EASY_LOSS_PCT = 15;
+
+export type TechniqueGate = 'stable' | 'unstable' | 'unknown';
+export type EffortGate = 'hard' | 'easy' | 'unknown';
+
+/** B07's ordered gate: technique before load/reps, load/reps before sets. */
+export interface ProgressionGates {
+  technique: TechniqueGate;
+  effort: EffortGate;
+  setsUnlocked: boolean;
+}
+
+export interface ProgressionSuggestion {
+  delta: number;
+  repDelta: number;
+  reasoning: string;
+  basedOnSessionId: string | null;
+  gates: ProgressionGates;
+}
+
+/**
+ * What the caller knows that the stored sets don't. `tier` is read once by
+ * `suggestProgression` and passed in — this function never touches the store.
+ * `technique` is the VW-93 (B09 ROM-integrity) input; nothing supplies it yet,
+ * so it stays 'unknown', and 'unknown' never blocks.
+ */
+export interface ProgressionContext {
+  tier: Tier;
+  technique?: TechniqueGate;
+}
+
+const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = { tier: 'intermediate' };
+
+/** The slice of `getTierSignal` the suggestion carries back to the caller. */
+export interface SuggestionTier {
+  tier: Tier;
+  confidence: TierConfidence;
+  source: TierSource;
+}
+
+/**
  * Peak-to-last concentric velocity loss (%) for one set, using the same
  * peak-baseline definition as the `velocity_loss_exceeded` channel event
  * (baseline = highest peak concentric velocity in the set, which sidesteps the
@@ -483,12 +546,20 @@ const PROGRESSION_VELOCITY_LOSS_HOLD_PCT = 25;
  * row already yields the right percentage.
  */
 function setVelocityLossPct(set: StoredSet): number {
-  if (set.reps.length < 2) return 0;
+  if (!setCarriesVelocity(set)) return 0;
   const baseline = peakConcentricBaseline(set.reps);
-  if (baseline <= 0) return 0;
   const last = set.reps[set.reps.length - 1].concentric.peakVelocity;
   if (last >= baseline) return 0;
   return (100 * (baseline - last)) / baseline;
+}
+
+/**
+ * Whether a set can be judged for fatigue at all. `setVelocityLossPct` reports
+ * 0 both for "no loss" and "nothing to measure"; the B07 effort gate has to
+ * tell those apart, since only the first means the set was easy.
+ */
+function setCarriesVelocity(set: StoredSet): boolean {
+  return set.reps.length >= 2 && peakConcentricBaseline(set.reps) > 0;
 }
 
 /**
@@ -653,8 +724,16 @@ async function suggestProgression(
   input: z.infer<typeof PlanSuggestProgressionInput>,
 ): Promise<{
   plannedExercise: StoredPlannedExercise;
-  suggestion: { delta: number; reasoning: string; basedOnSessionId: string | null };
+  suggestion: ProgressionSuggestion & { tier: SuggestionTier };
 }> {
+  // VW-92 consumer 1 of 3: the tier is read HERE, once, and passed into the
+  // store-free heuristic — `computeProgressionDelta` never reads it itself.
+  const tierSignal = await getTierSignal(state);
+  const tier: SuggestionTier = {
+    tier: tierSignal.tier,
+    confidence: tierSignal.confidence,
+    source: tierSignal.source,
+  };
   const program = await resolveDefaultProgram(state, input.programId);
   const planned = await findPlannedExerciseInProgram(state, program.id, input.exerciseId);
   if (planned === undefined) {
@@ -674,8 +753,11 @@ async function suggestProgression(
       plannedExercise: planned,
       suggestion: {
         delta: PROGRESSION_HOLD_LBS,
+        repDelta: 0,
         reasoning: 'No prior session for this exercise; no progression suggestion.',
         basedOnSessionId: null,
+        gates: { technique: 'unknown', effort: 'unknown', setsUnlocked: false },
+        tier,
       },
     };
   }
@@ -693,8 +775,10 @@ async function suggestProgression(
     input.lifter,
   );
   const sets = scopeSessionSetsToExerciseId(sessionSets, input.exerciseId);
-  const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
-  return { plannedExercise: planned, suggestion };
+  const suggestion = computeProgressionDelta(planned, sets, basisSessionId, {
+    tier: tierSignal.tier,
+  });
+  return { plannedExercise: planned, suggestion: { ...suggestion, tier } };
 }
 
 /**
@@ -752,73 +836,175 @@ export function computeProgressionDelta(
   planned: StoredPlannedExercise,
   sets: StoredSet[],
   basisSessionId: string,
-): { delta: number; reasoning: string; basedOnSessionId: string | null } {
+  context: ProgressionContext = DEFAULT_PROGRESSION_CONTEXT,
+): ProgressionSuggestion {
   if (planned.targetRepsLow === undefined) {
-    return {
-      delta: PROGRESSION_HOLD_LBS,
-      reasoning: 'Planned exercise has no rep target; cannot suggest a load delta.',
-      basedOnSessionId: basisSessionId,
-    };
+    return ungatedSuggestion(
+      PROGRESSION_HOLD_LBS,
+      'Planned exercise has no rep target; cannot suggest a load delta.',
+      basisSessionId,
+      context,
+    );
   }
   if (sets.length === 0) {
-    return {
-      delta: PROGRESSION_DECREMENT_LBS,
-      reasoning: `Prior session has 0 completed sets (target ${planned.targetSets}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
-      basedOnSessionId: basisSessionId,
-    };
+    return ungatedSuggestion(
+      PROGRESSION_DECREMENT_LBS,
+      `Prior session has 0 completed sets (target ${planned.targetSets}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
+      basisSessionId,
+      context,
+    );
   }
 
   const workingSets = selectWorkingSets(sets);
-  const setsCompleted = workingSets.length;
-  const repsLow = planned.targetRepsLow;
-  const repsHigh = planned.targetRepsHigh ?? repsLow;
+  const tally = tallyRepBand(workingSets, planned.targetRepsLow, planned.targetRepsHigh);
+  const gates = computeGates(workingSets, tally, context);
+  const routed = routeSuggestion(tally, gates);
+  return { ...enforceTechniqueGate(routed, gates), basedOnSessionId: basisSessionId, gates };
+}
+
+/** A verdict reached before any set could be scored: no gate has an input. */
+function ungatedSuggestion(
+  delta: number,
+  reasoning: string,
+  basisSessionId: string,
+  context: ProgressionContext,
+): ProgressionSuggestion {
+  return {
+    delta,
+    repDelta: 0,
+    reasoning,
+    basedOnSessionId: basisSessionId,
+    gates: { technique: context.technique ?? 'unknown', effort: 'unknown', setsUnlocked: false },
+  };
+}
+
+interface RepBandTally {
+  setsCompleted: number;
+  hitHigh: number;
+  inBand: number;
+  missed: number;
+  /** Strict majority of completed sets; ties collapse to a hold. */
+  majority: number;
+  repsLow: number;
+  repsHigh: number;
+  bandLabel: string;
+  maxLossPct: number;
+}
+
+function tallyRepBand(
+  workingSets: StoredSet[],
+  targetRepsLow: number,
+  targetRepsHigh: number | undefined,
+): RepBandTally {
+  const repsHigh = targetRepsHigh ?? targetRepsLow;
   let hitHigh = 0;
   let inBand = 0;
   let missed = 0;
   for (const set of workingSets) {
     const count = set.reps.length;
     if (count >= repsHigh) hitHigh += 1;
-    else if (count >= repsLow) inBand += 1;
+    else if (count >= targetRepsLow) inBand += 1;
     else missed += 1;
   }
+  return {
+    setsCompleted: workingSets.length,
+    hitHigh,
+    inBand,
+    missed,
+    majority: Math.floor(workingSets.length / 2) + 1,
+    repsLow: targetRepsLow,
+    repsHigh,
+    bandLabel:
+      targetRepsLow === repsHigh ? `${targetRepsLow} reps` : `${targetRepsLow}-${repsHigh} reps`,
+    maxLossPct: Math.max(0, ...workingSets.map(setVelocityLossPct)),
+  };
+}
 
-  // "Most" = strict majority of completed sets. Ties (e.g. 1 hit / 1 miss)
-  // collapse to hold to avoid oscillating recommendations across sessions.
-  const majority = Math.floor(setsCompleted / 2) + 1;
-  const bandLabel = repsLow === repsHigh ? `${repsLow} reps` : `${repsLow}-${repsHigh} reps`;
-  if (hitHigh >= majority) {
-    // VMCP-02.25: layer VBT on top of the rep-band check. Hitting the rep
-    // target at high intra-set velocity loss means the load was already at/near
-    // functional failure — adding weight would accumulate misload week over
-    // week. Hold instead of incrementing when any set crossed the ceiling.
-    const maxLossPct = Math.max(0, ...workingSets.map(setVelocityLossPct));
-    if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
-      return {
-        delta: PROGRESSION_HOLD_LBS,
-        reasoning:
-          `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel}), ` +
-          `but velocity dropped ${Math.round(maxLossPct)}% within a set ` +
-          `(>= ${PROGRESSION_VELOCITY_LOSS_HOLD_PCT}% near-failure) — hold the load, don't add.`,
-        basedOnSessionId: basisSessionId,
-      };
-    }
-    return {
-      delta: PROGRESSION_INCREMENT_LBS,
-      reasoning: `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel}); add ${PROGRESSION_INCREMENT_LBS} lb.`,
-      basedOnSessionId: basisSessionId,
-    };
-  }
+/**
+ * B07's three gates. Sets are the last thing to move: they unlock only once
+ * load/reps are already producing genuinely hard sets, and never for a
+ * beginner, who progresses load and technique instead.
+ */
+function computeGates(
+  workingSets: StoredSet[],
+  tally: RepBandTally,
+  context: ProgressionContext,
+): ProgressionGates {
+  const effort = effortGate(workingSets, tally.maxLossPct);
+  return {
+    technique: context.technique ?? 'unknown',
+    effort,
+    setsUnlocked:
+      context.tier !== 'beginner' && effort === 'hard' && tally.hitHigh >= tally.majority,
+  };
+}
+
+function effortGate(workingSets: StoredSet[], maxLossPct: number): EffortGate {
+  if (!workingSets.some(setCarriesVelocity)) return 'unknown';
+  if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) return 'hard';
+  if (maxLossPct <= PROGRESSION_EASY_LOSS_PCT) return 'easy';
+  return 'unknown';
+}
+
+type RoutedSuggestion = Pick<ProgressionSuggestion, 'delta' | 'repDelta' | 'reasoning'>;
+
+function routeSuggestion(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+  const { hitHigh, missed, setsCompleted, majority, repsLow, bandLabel } = tally;
+  if (hitHigh >= majority) return routeHitHigh(tally, gates);
   if (missed >= majority) {
     return {
       delta: PROGRESSION_DECREMENT_LBS,
+      repDelta: 0,
       reasoning: `${missed}/${setsCompleted} sets missed ${repsLow} reps (target ${bandLabel}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
-      basedOnSessionId: basisSessionId,
     };
   }
   return {
     delta: PROGRESSION_HOLD_LBS,
-    reasoning: `${inBand}/${setsCompleted} sets landed in band (target ${bandLabel}); maintain load.`,
-    basedOnSessionId: basisSessionId,
+    repDelta: 0,
+    reasoning: `${tally.inBand}/${setsCompleted} sets landed in band (target ${bandLabel}); maintain load.`,
+  };
+}
+
+/**
+ * The band was topped out. VMCP-02.25 holds first when the sets were already
+ * near failure; otherwise B24 routes by range — load below the ceiling, reps
+ * at or above it.
+ */
+function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+  const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
+  const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
+  if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
+    const unlock = gates.setsUnlocked ? ', sets unlocked: consider +1 set next session' : '';
+    return {
+      delta: PROGRESSION_HOLD_LBS,
+      repDelta: 0,
+      reasoning:
+        `${hit}, but velocity dropped ${Math.round(maxLossPct)}% within a set ` +
+        `(>= ${PROGRESSION_VELOCITY_LOSS_HOLD_PCT}% near-failure) — hold the load, don't add${unlock}.`,
+    };
+  }
+  if (repsHigh < REP_RANGE_LOAD_CEILING) {
+    return {
+      delta: PROGRESSION_INCREMENT_LBS,
+      repDelta: 0,
+      reasoning: `${hit}; add ${PROGRESSION_INCREMENT_LBS} lb.`,
+    };
+  }
+  return {
+    delta: PROGRESSION_HOLD_LBS,
+    repDelta: 1,
+    reasoning: `${hit}; at ${REP_RANGE_LOAD_CEILING}+ reps the rep is the finer dial — hold the load and add 1 rep.`,
+  };
+}
+
+/** B07 gate 1: nothing moves while technique is unstable. */
+function enforceTechniqueGate(routed: RoutedSuggestion, gates: ProgressionGates): RoutedSuggestion {
+  if (gates.technique !== 'unstable') return routed;
+  if (routed.delta <= 0 && routed.repDelta <= 0) return routed;
+  return {
+    delta: Math.min(routed.delta, PROGRESSION_HOLD_LBS),
+    repDelta: 0,
+    reasoning: `${routed.reasoning} Technique is unstable — hold load and reps until it stabilises.`,
   };
 }
 
