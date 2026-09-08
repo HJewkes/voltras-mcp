@@ -17,7 +17,8 @@
 //
 //   beginner      ~5 sets/exercise, 5-8 sets/muscle/session, 10-20 hard
 //                 sets/muscle/week
-//   intermediate  attractor 2-4 sets/exercise/session (4-8/muscle in week 1)
+//   intermediate  attractor 2-4 sets/exercise/session, 4-8/muscle in week 1 —
+//                 the same per-muscle ceiling as a beginner, off a lower floor
 //   advanced      often zero or one set added across an ENTIRE mesocycle, so
 //                 there is no per-session number to compare against
 //
@@ -71,10 +72,24 @@ const SETS_PER_EXERCISE_CEILING: Record<Tier, number | null> = {
   advanced: null,
 };
 
+// Both 8s are the corpus's, from the one line that states them together:
+// "beginner ~5 sets/exercise, 5-8 sets/muscle/session, 10-20 hard
+// sets/muscle/week; intermediate attractor 2-4 sets/exercise/session (4-8/muscle
+// in week 1)" (rp-s5-volume-err-low-first-week). The intermediate range starts
+// LOWER than the beginner one and ends at the same place, so the two share a
+// ceiling — an intermediate may earn more across the mesocycle, which is why the
+// warning is advisory and says so.
 const SETS_PER_MUSCLE_PER_SESSION_CEILING: Record<Tier, number | null> = {
   beginner: 8,
-  intermediate: 10,
+  intermediate: 8,
   advanced: null,
+};
+
+/** The low end of each tier's per-muscle range, for the warning copy only. */
+const SETS_PER_MUSCLE_RANGE_FLOOR: Record<Tier, number> = {
+  beginner: 5,
+  intermediate: 4,
+  advanced: 0,
 };
 
 const PROVISIONAL_SUFFIX =
@@ -170,16 +185,19 @@ function setsPerMuscleMessage(
   tier: Tier,
   ceiling: number,
 ): string {
+  const range = `${SETS_PER_MUSCLE_RANGE_FLOOR[tier]}-${ceiling}`;
+  const opening =
+    `${observed} sets for ${muscleGroup} in this session is above the ${tier} range of ` +
+    `${range} sets per muscle per session.`;
   if (tier === 'beginner') {
     return (
-      `${observed} sets for ${muscleGroup} in this session is above the beginner range of ` +
-      `5-${ceiling} sets per muscle per session. ${REAL_FIX} — start at the low end and ` +
-      'add one set only when recovery says the last number was too easy.'
+      `${opening} ${REAL_FIX} — start at the low end and add one set only when recovery ` +
+      'says the last number was too easy.'
     );
   }
   return (
-    `${observed} sets for ${muscleGroup} in this session is above ${ceiling}. Whether that ` +
-    'is too much is recovery-dependent, not automatic: hold at this number and let the next ' +
-    `session's recovery decide, rather than planning the increase now. ${REAL_FIX}.`
+    `${opening} Whether that is too much is recovery-dependent, not automatic: hold at this ` +
+    "number and let the next session's recovery decide, rather than planning the increase " +
+    `now. ${REAL_FIX}.`
   );
 }

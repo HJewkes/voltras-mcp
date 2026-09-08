@@ -84,11 +84,13 @@ describe('sets per muscle per session', () => {
     expect(warnings).toEqual([]);
   });
 
-  it('calls the intermediate overage recovery-dependent rather than wrong', () => {
+  // The corpus gives the intermediate tier a LOWER floor than the beginner one
+  // and the SAME ceiling: "4-8/muscle in week 1" against the beginner's 5-8
+  // (rp-s5-volume-err-low-first-week). 9 sets is over both.
+  it('warns an intermediate at the same 9 sets, and calls it recovery-dependent', () => {
     const exercises = [
-      exercise({ exerciseId: 'bench-press', targetSets: 4 }),
+      exercise({ exerciseId: 'bench-press', targetSets: 5 }),
       exercise({ exerciseId: 'cable-fly', targetSets: 4 }),
-      exercise({ exerciseId: 'incline-press', targetSets: 3 }),
     ];
 
     const warnings = lintPlan({ exercises, tier: 'intermediate', confidence: CONFIDENT });
@@ -96,8 +98,46 @@ describe('sets per muscle per session', () => {
     const perMuscle = warnings.find(
       (w) => w.code === 'sets_per_muscle_per_session_over_tier_ceiling',
     );
-    expect(perMuscle).toMatchObject({ observed: 11, ceiling: 10 });
+    expect(perMuscle).toMatchObject({ muscleGroup: 'chest', observed: 9, ceiling: 8 });
     expect(perMuscle?.message).toContain('recovery-dependent');
+    expect(perMuscle?.message).toContain('intermediate range of 4-8');
+  });
+
+  it('leaves an intermediate at exactly 8 sets for a muscle alone', () => {
+    const exercises = [
+      exercise({ exerciseId: 'bench-press', targetSets: 4 }),
+      exercise({ exerciseId: 'cable-fly', targetSets: 4 }),
+    ];
+
+    const warnings = lintPlan({ exercises, tier: 'intermediate', confidence: CONFIDENT });
+
+    expect(
+      warnings.filter((w) => w.code === 'sets_per_muscle_per_session_over_tier_ceiling'),
+    ).toEqual([]);
+  });
+
+  it('leaves a beginner at exactly 8 sets for a muscle alone', () => {
+    const exercises = [
+      exercise({ exerciseId: 'bench-press', targetSets: 5 }),
+      exercise({ exerciseId: 'cable-fly', targetSets: 3 }),
+    ];
+
+    const warnings = lintPlan({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('names the tier it judged against in every per-muscle message', () => {
+    const exercises = [exercise({ targetSets: 9 })];
+
+    for (const tier of ['beginner', 'intermediate'] as const) {
+      const warnings = lintPlan({ exercises, tier, confidence: CONFIDENT });
+
+      const perMuscle = warnings.find(
+        (w) => w.code === 'sets_per_muscle_per_session_over_tier_ceiling',
+      );
+      expect(perMuscle?.message).toContain(`the ${tier} range of`);
+    }
   });
 
   it('keeps different muscle groups in separate buckets', () => {
