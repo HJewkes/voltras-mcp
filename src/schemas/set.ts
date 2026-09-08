@@ -11,6 +11,7 @@
 import { z } from 'zod';
 
 import { SlotIdSchema } from './common.js';
+import { LifterLabel } from './session.js';
 
 /**
  * Trigger DSL — server-evaluated conditions a coach can register at
@@ -108,6 +109,17 @@ export const SetStartInput = z.object({
   watch: WatchConfig.optional(),
   slot: SlotIdSchema,
   isWarmup: z.boolean().optional(),
+  /**
+   * VW-169. Who is performing this set, overriding the session's lifter
+   * default for this set only. Omitted ⇒ inherit the session default (which
+   * is normally the owner).
+   *
+   * On the auto-arm upgrade path — a `set.start` landing on a set the server
+   * already opened on the lifter's own reps — this REWRITES the in-flight
+   * set's label. That call is the operator's chance to say "that was Jordan"
+   * about reps that were already happening.
+   */
+  lifter: LifterLabel.optional(),
 });
 
 /** Input for `set.end` — operates on the active set in the slot's `live.set`. */
@@ -131,4 +143,19 @@ export const SetLiveMetricsInput = z.object({
  */
 export const SetGetInput = z.object({
   setId: z.string().min(1),
+});
+
+/**
+ * Input for `set.update` (VW-169) — retro-tag a STORED set with the lifter who
+ * actually performed it, and re-derive the owner's baseline for its exercise.
+ *
+ * The recovery path for a set that ran under the wrong label: a guest's set
+ * recorded as the owner's (`lifter: 'Jordan'`), or the owner's recorded as a
+ * guest's (`lifter: null`). Only the label is editable — nothing else about a
+ * closed set is a matter of intent, and a tool that could rewrite reps or
+ * weights would make stored history unfalsifiable.
+ */
+export const SetUpdateInput = z.object({
+  setId: z.string().min(1),
+  lifter: LifterLabel.nullable(),
 });

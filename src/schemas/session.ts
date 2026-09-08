@@ -11,6 +11,15 @@ import { z } from 'zod';
 import { IdSchema, SlotIdSchema } from './common.js';
 
 /**
+ * A lifter label (VW-169) — a short free-text name for whoever is on the
+ * cable, used ONLY to keep a guest's work out of the owner's baselines,
+ * anchors, progression and history. Not an identity: there is no user row, no
+ * profile and no tier behind it, and the owner never carries one (absent means
+ * the owner).
+ */
+export const LifterLabel = z.string().min(1).max(40);
+
+/**
  * Input for `session.start`. Both fields are optional individually so that
  * either may be supplied, but the refinement below requires at least one.
  *
@@ -34,6 +43,12 @@ export const SessionStartInput = z
      * double-emission.
      */
     verboseIdleReps: z.boolean().optional(),
+    /**
+     * VW-169. The session's default lifter: every set started on it is
+     * attributed to this label unless `set.start` overrides it. Omit for the
+     * owner's own session, which is the overwhelmingly common case.
+     */
+    lifter: LifterLabel.optional(),
   })
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',
@@ -54,6 +69,12 @@ export const SessionListInput = z.object({
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   exerciseId: z.string().optional(),
+  /**
+   * VW-169. Whose sessions to list. OMITTED MEANS THE OWNER'S — a guest's
+   * sessions are excluded by default and returned only when asked for by
+   * label.
+   */
+  lifter: LifterLabel.optional(),
   sort: z.enum(['startedAt:desc', 'startedAt:asc']).default('startedAt:desc').optional(),
   limit: z.number().int().min(1).max(200).default(50).optional(),
   offset: z.number().int().min(0).default(0).optional(),
@@ -88,3 +109,18 @@ export const SessionSetExerciseInput = z
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',
   });
+
+/**
+ * Input for `session.set_lifter` (VW-169) — set or clear the active session's
+ * default lifter, so a second person working in mid-workout does not need a
+ * session of their own.
+ *
+ * `lifter: null` CLEARS the default and hands the rig back to the owner. It is
+ * spelled explicitly rather than as an omitted field because omitting it would
+ * be indistinguishable from a caller that forgot, and the cost of guessing
+ * wrong is a guest's sets landing in the owner's baselines.
+ */
+export const SessionSetLifterInput = z.object({
+  lifter: LifterLabel.nullable(),
+  slot: SlotIdSchema,
+});

@@ -346,6 +346,9 @@ export function buildSetStartedPayload(
     set_id: set.setId,
     session_id: set.sessionId,
     ...(autoArmed ? { auto_armed: 'true' } : {}),
+    // VW-169: present ONLY when someone other than the owner is lifting, so a
+    // consumer can read its absence as "the owner" without a second lookup.
+    ...(set.lifter !== undefined ? { lifter: set.lifter } : {}),
   };
   if (device.weightLbs !== undefined && device.weightLbs > 0) {
     meta.weight_lbs = String(device.weightLbs);
@@ -375,6 +378,7 @@ export function buildSetStartedPayload(
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
       auto_armed: autoArmed,
+      lifter: set.lifter ?? null,
     },
     previous_set_summary: previous,
   });
@@ -584,6 +588,11 @@ export function buildSetEndedPayload(
   if (stored.partial && stored.partialReason !== undefined) {
     meta.partial_reason = stored.partialReason;
   }
+  // VW-169: present ONLY when someone other than the owner performed the set,
+  // matching `set_started`. Its absence is the owner, not a gap.
+  if (stored.lifter !== undefined) {
+    meta.lifter = stored.lifter;
+  }
   if (deviceSummary !== undefined) {
     // Device-asserted canonical counts harvested from the SDK's `onSummary`
     // vendor frame. Carried alongside the analytics-derived `rep_count` so
@@ -638,6 +647,7 @@ export function buildSetEndedPayload(
       ended_at: stored.endedAt,
       partial_reason: stored.partialReason ?? null,
       closed_by: closedBy,
+      lifter: stored.lifter ?? null,
     },
     reps,
     vbt_summary: vbt,

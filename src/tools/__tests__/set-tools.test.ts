@@ -184,7 +184,7 @@ function makeRepWithForce(n: number, peakForce: number): Rep {
   return { ...base, concentric: { ...base.concentric, peakForce } };
 }
 
-const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.get'];
+const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.update', 'set.get'];
 
 interface Harness {
   state: ServerState;

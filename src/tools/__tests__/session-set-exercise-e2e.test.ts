@@ -180,11 +180,13 @@ const TOOL_NAMES = [
   'session.start',
   'session.end',
   'session.set_exercise',
+  'session.set_lifter',
   'session.list',
   'session.get',
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.update',
   'set.get',
 ];
 

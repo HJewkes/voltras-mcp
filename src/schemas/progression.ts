@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import { LifterLabel } from './session.js';
+
 export const MAX_LOOKBACK_WEEKS = 52;
 
 /**
@@ -32,4 +34,8 @@ export const ProgressionGetInput = z.object({
     .max(200)
     .optional()
     .describe('Maximum number of sessions to return. Default 20, max 200.'),
+  lifter: LifterLabel.optional().describe(
+    "Whose history to read (VW-169). Omitted means the owner's — a guest working in is " +
+      'excluded by default and returned only when named.',
+  ),
 });

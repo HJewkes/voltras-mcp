@@ -86,6 +86,10 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
     status: 'active',
     autoCreatedBy: 'idle_rep',
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+    // VW-169: an auto-armed set inherits the session's lifter default. The
+    // whole point of the default is that the reps a guest starts before
+    // anyone can call a tool are still attributed to the guest.
+    ...(session.lifter !== undefined ? { lifter: session.lifter } : {}),
   });
   slot.live.adoptIdleTail(adopt);
   const reclaimedIdleReps = adopt - ADOPTED_WITHOUT_CORROBORATION;

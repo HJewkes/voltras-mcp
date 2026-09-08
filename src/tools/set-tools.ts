@@ -35,6 +35,7 @@ import {
   SetGetInput,
   SetLiveMetricsInput,
   SetStartInput,
+  SetUpdateInput,
   type WatchConfig,
 } from '../schemas/set.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSet } from '../store/types.js';
@@ -94,6 +95,7 @@ type SetCapture = Pick<
   | 'inverseChainsLbs'
   | 'assistMode'
   | 'settingsHash'
+  | 'lifter'
 >;
 
 class ToolError extends Error {
@@ -155,6 +157,13 @@ const SET_LIVE_METRICS_DESCRIPTION =
   "trend). Prefer subscribing via `set.start`'s `watch` option for threshold-triggered " +
   'events instead of polling this in a tight loop.';
 
+const SET_UPDATE_DESCRIPTION =
+  'Retro-tag a stored set with the lifter who actually performed it, and re-derive the ' +
+  "owner's baseline for that exercise. The fix for a set that ran under the wrong label: " +
+  "`{ setId, lifter: 'Jordan' }` moves a guest's set out of the owner's history; " +
+  '`{ setId, lifter: null }` moves one back in. Only the label is editable — nothing else ' +
+  'about a closed set is a matter of intent.';
+
 const SET_GET_DESCRIPTION =
   'Fetch one completed, persisted set by id, including its reps. Read-only and unaffected by ' +
   'live device state — use `set.live_metrics` for an in-progress set instead.';
@@ -168,7 +177,9 @@ export function registerSetTools(
     placeholders,
     'set.start',
     SetStartInput,
-    wrapHandler(SetStartInput, (input) => startSet(state, input.watch, input.slot, input.isWarmup)),
+    wrapHandler(SetStartInput, (input) =>
+      startSet(state, input.watch, input.slot, input.isWarmup, input.lifter),
+    ),
     SET_START_DESCRIPTION,
   );
   install(
@@ -184,6 +195,13 @@ export function registerSetTools(
     SetLiveMetricsInput,
     wrapHandler(SetLiveMetricsInput, (input) => liveMetrics(state, input.slot)),
     SET_LIVE_METRICS_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'set.update',
+    SetUpdateInput,
+    wrapHandler(SetUpdateInput, (input) => updateStoredSet(state, input)),
+    SET_UPDATE_DESCRIPTION,
   );
   install(
     placeholders,
@@ -369,7 +387,11 @@ interface UpgradedSet {
 function upgradeAutoArmedSet(
   state: ServerState,
   slotId: string,
-  opts: { watch: WatchConfig | undefined; isWarmup: boolean | undefined },
+  opts: {
+    watch: WatchConfig | undefined;
+    isWarmup: boolean | undefined;
+    lifter: string | undefined;
+  },
 ): UpgradedSet {
   const slot = getSlot(state, slotId);
   const sessionExerciseId = slot.live.session?.exerciseId;
@@ -378,6 +400,10 @@ function upgradeAutoArmedSet(
     upgradedAt: new Date().toISOString(),
     ...(opts.isWarmup === true ? { isWarmup: true } : {}),
     ...(opts.watch !== undefined ? { watch: opts.watch } : {}),
+    // VW-169: unlike the exercise pointer below, a lifter passed here WINS
+    // over the one auto-arm inherited — the reps happened before anyone could
+    // say whose they were, and this call is when the operator says it.
+    ...(opts.lifter !== undefined ? { lifter: opts.lifter } : {}),
     // The session may have gained an exercise pointer between the arm and this
     // call; a set that already carries one keeps it (VMCP-01.72b).
     ...(existing?.exerciseId === undefined && sessionExerciseId !== undefined
@@ -401,6 +427,7 @@ async function startSet(
   watch: WatchConfig | undefined,
   slotIdInput: string | undefined,
   isWarmup: boolean | undefined,
+  lifter: string | undefined,
 ): Promise<{ setId: string } | UpgradedSet> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   const slot = getSlot(state, slotId);
@@ -417,7 +444,7 @@ async function startSet(
     // set, which this slot cannot give while one is recording.
     if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
       assertEngageAllowed(state, slot, slotId, session.sessionId);
-      return upgradeAutoArmedSet(state, slotId, { watch, isWarmup });
+      return upgradeAutoArmedSet(state, slotId, { watch, isWarmup, lifter });
     }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
@@ -439,6 +466,8 @@ async function startSet(
   // for the *next* set.start, since this current call has already
   // committed past the abort check).
   armModeRevertGuardForSet(slot);
+
+  const setLifter = lifter ?? session.lifter;
 
   // Mint the set identity up front so the re-entrancy latch can wrap the
   // engage-and-install window without threading a possibly-unassigned setId.
@@ -468,6 +497,9 @@ async function startSet(
       // at close. A `session.set_exercise` call after this point (mid-set)
       // must not retroactively relabel this set.
       ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+      // VW-169: this call's own lifter wins; otherwise the set inherits the
+      // session default, which is normally absent (= the owner).
+      ...(setLifter !== undefined ? { lifter: setLifter } : {}),
     });
   } finally {
     slot.setStartInFlight = false;
@@ -498,6 +530,7 @@ async function startSet(
     startedAt,
     reps: [],
     status: 'active',
+    ...(setLifter !== undefined ? { lifter: setLifter } : {}),
   };
   const payload = buildSetStartedPayload(activeSet, device, ordinal, previousSummary);
   // Slot-scoped publisher auto-injects `slot: slotId` into meta — every
@@ -1071,6 +1104,12 @@ async function stampPartnerGroup(
  */
 async function recalcBaselineForSet(state: ServerState, stored: StoredSet): Promise<void> {
   if (stored.exerciseId === undefined || stored.userId === undefined) return;
+  // VW-169: a guest's set derives nothing. Not "derives its own baseline" —
+  // there is no per-lifter baseline, key or confidence state, and inventing
+  // one from the handful of sets someone does while working in would be a
+  // confident number built on nothing. The owner's baseline is untouched
+  // because the harvest never runs and the recalc never fires.
+  if (stored.lifter !== undefined) return;
   try {
     // HARVEST FIRST, then recalc, so the derivation sees this set's anchor in
     // the same close rather than one set late. Retrospective labelling only —
@@ -1106,6 +1145,60 @@ async function liveMetrics(
  * `errorResult` mapping in `wrapHandler` surfaces that as a structured tool
  * error to the MCP client.
  */
+/**
+ * Retro-tag a stored set with the lifter who performed it (VW-169) and put the
+ * owner's derived state back in agreement with the corrected history.
+ *
+ * The relabel alone is not enough. A set harvested as the owner's already has
+ * a `failure_anchors` row carrying no label, and `selectAnchors` would keep
+ * counting it after the set moved to a guest — so the anchor is re-harvested
+ * (an upsert on the same set + filter version) to carry the new label, and the
+ * owner's baseline is then re-derived from what is left.
+ */
+async function updateStoredSet(
+  state: ServerState,
+  input: z.infer<typeof SetUpdateInput>,
+): Promise<{ setId: string; lifter: string | null; exerciseId: string | null }> {
+  const stored = await state.store.getSet(input.setId);
+  if (stored === undefined) {
+    throw new ToolError('SET_NOT_FOUND', `No set found with id ${JSON.stringify(input.setId)}.`);
+  }
+  const updated: StoredSet = { ...stored };
+  if (input.lifter !== null) updated.lifter = input.lifter;
+  else delete updated.lifter;
+
+  await state.store.putSet(updated);
+  await resyncOwnerBaseline(state, updated);
+  return {
+    setId: updated.id,
+    lifter: input.lifter,
+    exerciseId: updated.exerciseId ?? null,
+  };
+}
+
+/**
+ * Re-derive the OWNER's baseline for a relabelled set's exercise.
+ *
+ * Runs whichever direction the set moved, because both change what the owner's
+ * key contains: a set leaving takes its evidence with it, and a set arriving
+ * brings evidence the baseline never saw. Best-effort for the same reason
+ * `recalcBaselineForSet` is — the durable record is the set row, and every
+ * derived value here is re-derivable via `baselines.recalc`.
+ */
+async function resyncOwnerBaseline(state: ServerState, updated: StoredSet): Promise<void> {
+  if (updated.exerciseId === undefined || updated.userId === undefined) return;
+  try {
+    await state.store.harvestFailureAnchor(updated);
+    await state.store.recalcBaseline({
+      userId: updated.userId,
+      exerciseId: updated.exerciseId,
+      ...(updated.side !== undefined ? { side: updated.side } : {}),
+    });
+  } catch (err) {
+    log.warn(`baseline resync failed after relabelling set ${updated.id}`, err);
+  }
+}
+
 async function getStoredSet(state: ServerState, setId: string): Promise<StoredSet> {
   const stored = await state.store.getSet(setId);
   if (stored === undefined) {
@@ -1212,6 +1305,10 @@ function buildSetCapture(
   // via `session.set_exercise`; re-reading it at close would let that call
   // retroactively rewrite an already-in-flight set's attribution.
   const exerciseId = active.exerciseId;
+  // VW-169: stamped from the SET's own snapshot for the same reason
+  // `exerciseId` is — a `session.set_lifter` call mid-set must not
+  // retroactively reattribute reps that have already happened.
+  const lifter = active.lifter;
 
   // Achieved rest: the gap since this slot's previous close. Absent for the
   // first set of a run and across a restart.
@@ -1230,6 +1327,7 @@ function buildSetCapture(
     positionUnits: CURRENT_POSITION_UNITS,
     velocityUnits: CURRENT_VELOCITY_UNITS,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
+    ...(lifter !== undefined ? { lifter } : {}),
     ...(restBeforeSec !== undefined ? { restBeforeSec } : {}),
     ...(device.batteryPercent !== undefined ? { batteryPct: device.batteryPercent } : {}),
     ...(sampleRateHz !== undefined ? { sampleRateHz } : {}),
