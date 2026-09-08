@@ -175,7 +175,10 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
     close: vi.fn(async () => undefined),
     ...overrides,
   };
-  return { store } as unknown as ServerState;
+  // `session.volume`'s B47 set count reads the catalog. An empty catalog is the
+  // honest default here: these fixtures use ids no seeded exercise carries.
+  const exercises = { getById: vi.fn(() => undefined) };
+  return { store, exercises } as unknown as ServerState;
 }
 
 async function callTool(tools: Map<string, RegisteredHandler>, args: unknown): Promise<ToolResult> {
@@ -490,7 +493,9 @@ describe('metrics.compute — session.volume', () => {
     expect(analyticsSets).toHaveLength(2);
     expect(weights).toEqual([100, 120]);
     expect(result.isError).toBeUndefined();
-    expect(parsePayload(result)).toBe(1234);
+    // B47 (VMCP-06.05) wrapped the bare number; `tonnageLbs` is still exactly
+    // what `computeVolume` returned, untransformed.
+    expect(parsePayload(result)).toMatchObject({ tonnageLbs: 1234, model: 'target-only' });
   });
 
   it('EC-07: empty session set list → NOT_FOUND, computeVolume NOT called', async () => {

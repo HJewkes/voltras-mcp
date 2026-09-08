@@ -172,7 +172,11 @@ function fakePlaceholders(names: readonly string[]): {
 }
 
 function stateWith(store: SqliteSessionStore): ServerState {
-  return { store, slots: new Map() } as unknown as ServerState;
+  // `session.volume`'s B47 set count resolves each set's exercise through the
+  // catalog. Empty here — this file is about set SCOPING, and the muscle
+  // mapping has its own test in `metrics-rp-readouts.test.ts`.
+  const exercises = { getById: () => undefined };
+  return { store, slots: new Map(), exercises } as unknown as ServerState;
 }
 
 let store: SqliteSessionStore;
@@ -302,9 +306,9 @@ describe('metrics.compute session pipelines — set-level scoping', () => {
     const res = (await invoke('metrics.compute', {
       pipeline: 'session.volume',
       sessionId: MIXED_SESSION_ID,
-    })) as number;
+    })) as { tonnageLbs: number };
 
     // 135×8 + 135×8 + 325×3 — every set in the session, squat included.
-    expect(res).toBe(135 * 8 + 135 * 8 + 325 * 3);
+    expect(res.tonnageLbs).toBe(135 * 8 + 135 * 8 + 325 * 3);
   });
 });

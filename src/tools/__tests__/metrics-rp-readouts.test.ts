@@ -480,3 +480,94 @@ describe('metrics.compute — session.junk_volume', () => {
     expect(result.sets.map((s) => s.setId)).toEqual(['j0', 'j1', 'j2', 'j3']);
   });
 });
+
+// ─── session.volume — B47 target-only set counting (VMCP-06.05) ───────────
+
+interface SessionVolume {
+  tonnageLbs: number;
+  setsByMuscle: Record<string, number>;
+  model: string;
+}
+
+/** A catalog entry whose SECONDARY muscles must never be credited a set. */
+const CHEST_PRESS = {
+  id: 'chest-press',
+  name: 'Cable Chest Press',
+  muscleGroups: ['chest'],
+  secondaryMuscleGroups: ['shoulders', 'triceps'],
+};
+
+function makeStateWithCatalog(sets: StoredSet[]): ServerState {
+  const state = makeState({ sets }) as unknown as { exercises: unknown };
+  state.exercises = {
+    getById: (id: string) => (id === CHEST_PRESS.id ? CHEST_PRESS : undefined),
+  };
+  return state as unknown as ServerState;
+}
+
+describe('metrics.compute — session.volume, B47 target-only set counting', () => {
+  it('credits a chest press to chest ONLY — its shoulders and triceps get nothing', async () => {
+    const sets = [
+      makeStoredSet({ id: 'p1', exerciseId: CHEST_PRESS.id, reps: flatReps(8, 0.9) }),
+      makeStoredSet({ id: 'p2', exerciseId: CHEST_PRESS.id, reps: flatReps(7, 0.85) }),
+    ];
+
+    const result = (await invoke(makeStateWithCatalog(sets), {
+      pipeline: 'session.volume',
+      sessionId: 'sess-1',
+    })) as SessionVolume;
+
+    // Synergist-weighted counting was scrapped by RP and is not to be built
+    // speculatively. If a future change credits secondaries, this fails.
+    expect(result.setsByMuscle).toEqual({ chest: 2 });
+    expect(result.setsByMuscle.shoulders).toBeUndefined();
+    expect(result.setsByMuscle.triceps).toBeUndefined();
+    expect(result.model).toBe('target-only');
+  });
+
+  it('keeps tonnage identical to the pre-B47 whole-session number, guest sets and warm-ups included', async () => {
+    const sets = [
+      makeStoredSet({
+        id: 'warm',
+        exerciseId: CHEST_PRESS.id,
+        reps: flatReps(10, 1.4),
+        weightLbs: 45,
+        isWarmup: true,
+      }),
+      makeStoredSet({
+        id: 'work',
+        exerciseId: CHEST_PRESS.id,
+        reps: flatReps(8, 0.9),
+        weightLbs: 135,
+      }),
+      makeStoredSet({
+        id: 'guest',
+        exerciseId: CHEST_PRESS.id,
+        reps: flatReps(6, 0.8),
+        weightLbs: 90,
+        lifter: 'Jordan',
+      }),
+    ];
+
+    const result = (await invoke(makeStateWithCatalog(sets), {
+      pipeline: 'session.volume',
+      sessionId: 'sess-1',
+    })) as SessionVolume;
+
+    expect(result.tonnageLbs).toBe(45 * 10 + 135 * 8 + 90 * 6);
+    // The set COUNT is a per-lifter training dose, so it drops the warm-up and
+    // the guest that the tonnage total keeps.
+    expect(result.setsByMuscle).toEqual({ chest: 1 });
+  });
+
+  it('counts a set whose exercise the catalog does not know under `unknown`', async () => {
+    const sets = [makeStoredSet({ id: 'x1', exerciseId: 'mystery-lift', reps: flatReps(8, 0.9) })];
+
+    const result = (await invoke(makeStateWithCatalog(sets), {
+      pipeline: 'session.volume',
+      sessionId: 'sess-1',
+    })) as SessionVolume;
+
+    expect(result.setsByMuscle).toEqual({ unknown: 1 });
+  });
+});

@@ -67,7 +67,7 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
     targetReps: z.number().int().positive().optional(),
   }),
 
-  // Total session volume (load × reps).
+  // Total session volume (load × reps) plus the B47 target-only set count.
   // Analytics: computeVolume(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.volume'), sessionId: IdSchema }),
 

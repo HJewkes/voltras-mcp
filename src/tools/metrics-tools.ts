@@ -33,6 +33,11 @@
 // within-set losses side by side over recorded work, which is the paired
 // comparison that has to run before the live 25% guard can be rebased.
 //
+// `session.volume` (VMCP-06.05 / B47) records the volume model rather than
+// changing it: target-only set counting, one set to one primary muscle, no
+// synergist weighting. See `setsByTargetMuscle` for the decision and the
+// reason it is not to be built speculatively.
+//
 // ── Status of the original 9 pipelines ─────────────────────────────────────
 //
 // All 9 pipelines below are fully implemented and merged (`quality.rep`,
@@ -204,7 +209,12 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // way the pipelines below are. See `setsForSessionExercise`.
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
-      return computeVolume(sets.map(toAnalyticsSet), weightsOf(sets));
+      const result: SessionVolumeResult = {
+        tonnageLbs: computeVolume(sets.map(toAnalyticsSet), weightsOf(sets)),
+        setsByMuscle: setsByTargetMuscle(state, sets),
+        model: 'target-only',
+      };
+      return result;
     }
 
     case 'session.fatigue': {
@@ -313,6 +323,46 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
 
 /** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
 const UNKNOWN_KEY = 'unknown';
+
+/**
+ * `session.volume`'s response. `tonnageLbs` is the number this pipeline
+ * returned bare before B47; the object wraps it rather than replacing it.
+ */
+interface SessionVolumeResult {
+  tonnageLbs: number;
+  setsByMuscle: Record<string, number>;
+  model: 'target-only';
+}
+
+/**
+ * VOLUME MODEL: TARGET-ONLY SET COUNTING (B47 / VMCP-06.05).
+ *
+ * A working set counts toward its exercise's PRIMARY muscle group and nothing
+ * else. `secondaryMuscleGroups` is NEVER counted, at any weight. RP built
+ * fractional / synergist-weighted set counting, scrapped it, and ships
+ * target-only because the complexity rarely earns its keep. Weighted counting
+ * stays reserved as an optional diagnostic for one specific non-responding
+ * muscle, and only if a real case appears — it is NOT to be built
+ * speculatively. The regression test on this function is what keeps a future
+ * synergist weighting from landing silently.
+ *
+ * SCOPE DIFFERS FROM `tonnageLbs` ON PURPOSE. Tonnage stays every set in the
+ * session, guest sets included, because that contract predates this and
+ * callers read it as "what got moved in this room". A set COUNT is a training
+ * dose for one lifter, so it takes the owner's working sets only: a guest's
+ * set (VW-169) is not the owner's volume and a warm-up is not a working set.
+ */
+function setsByTargetMuscle(
+  state: ServerState,
+  sets: readonly StoredSet[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [exerciseId, working] of workingSetsByExercise(sets, undefined)) {
+    const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0] ?? UNKNOWN_KEY;
+    counts[muscle] = (counts[muscle] ?? 0) + working.length;
+  }
+  return counts;
+}
 
 /**
  * A session's OWNER working sets, grouped by the exercise each set names.
@@ -856,8 +906,11 @@ const METRICS_COMPUTE_DESCRIPTION =
   'range), and baseline-maturity (B57). Relay the estimate WITH its caveats; do not present it ' +
   'as a precise rep count. Its velocity loss is peak-based by model contract and will not equal ' +
   "`vbt.set`'s mean-based lossPct. " +
-  '`session.volume` (sessionId) — whole-session tonnage, deliberately NOT narrowed to one ' +
-  'exercise (a session may span several). ' +
+  '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, model }`. Tonnage is ' +
+  'whole-session, deliberately NOT narrowed to one exercise (a session may span several). ' +
+  "`setsByMuscle` counts the owner's working sets under each exercise's PRIMARY muscle group " +
+  'only — `model` is always `target-only`, and secondary/synergist muscles are never credited ' +
+  '(B47). An exercise the catalog does not know counts under `unknown`. ' +
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
   'folded with within-set fatigue so a single hard set still reads as fatigued. ' +
   "`session.strength` (sessionId) — session-level strength estimate for the session's own " +
