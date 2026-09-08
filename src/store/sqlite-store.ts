@@ -65,7 +65,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -113,7 +113,9 @@ const SCHEMA_SQL = `
     -- Denormalized from diet_phases, stamped at write. The table is the
     -- source of truth and is retroactively correctable; this column is what
     -- filters cheaply.
-    diet_phase TEXT
+    diet_phase TEXT,
+    -- v14 (VW-169): the session's default lifter label. NULL = the owner.
+    lifter TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -228,6 +230,11 @@ const SCHEMA_SQL = `
     -- exercise_id stated intent rather than inference.
     auto_created_by TEXT CHECK (auto_created_by IN ('guided_load','idle_rep')),
     upgraded INTEGER,
+
+    -- Who performed the set (v14 / VW-169). A short free-text label, NULL for
+    -- the owner. Not an identity: user_id stays 'local' on a guest's set, and
+    -- every owner-scoped read filters lifter IS NULL.
+    lifter TEXT,
 
     -- Context.
     battery_pct INTEGER,
@@ -494,7 +501,10 @@ const SCHEMA_SQL = `
     filter_inputs_json TEXT NOT NULL,
     filter_verdict TEXT NOT NULL,
     filter_version TEXT NOT NULL,
-    self_reported_rir REAL
+    self_reported_rir REAL,
+    -- v14 (VW-169): the lifter label of the set this verdict is about. NULL =
+    -- the owner, and selectAnchors reads owner anchors only.
+    lifter TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_failure_anchors_key
     ON failure_anchors(user_id, exercise_id, setup_id, side, observed_at);
@@ -1031,6 +1041,25 @@ function migrateV12ToV13(db: DatabaseSync): void {
 }
 
 /**
+ * v13→v14 (VW-169): record who performed a set, when it was not the owner.
+ *
+ * ADDITIVE ONLY, in the shape every migration since v10→v11 has taken.
+ * NOTHING IS BACK-FILLED, and that is the whole point: NULL reads as "the
+ * owner", which is true of every row written before a second lifter could be
+ * named. Stamping anything else would manufacture a fact and, worse, would
+ * move rows out of the owner's own baselines.
+ *
+ * Probed with `columnNames` because `applyMigrations` also runs on fresh DBs
+ * whose `SCHEMA_SQL` already declares all three columns.
+ */
+function migrateV13ToV14(db: DatabaseSync): void {
+  for (const table of ['sets', 'sessions', 'failure_anchors']) {
+    if (columnNames(db, table).has('lifter')) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN lifter TEXT`);
+  }
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1213,6 +1242,7 @@ interface SessionRow {
   exercise_id: string | null;
   exercise_name: string | null;
   notes: string | null;
+  lifter: string | null;
 }
 
 interface SetRow {
@@ -1241,6 +1271,7 @@ interface SetRow {
   velocity_units: string | null;
   auto_created_by: string | null;
   upgraded: number | null;
+  lifter: string | null;
   sample_rate_hz: number | null;
   firmware_rep_count: number | null;
   firmware_summary_duration_ms: number | null;
@@ -1462,14 +1493,15 @@ export class SqliteSessionStore implements SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions
-           (id, started_at, ended_at, exercise_id, exercise_name, notes)
-         VALUES (?, ?, ?, ?, ?, ?)
+           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
            exercise_id = excluded.exercise_id,
            exercise_name = excluded.exercise_name,
-           notes = excluded.notes`,
+           notes = excluded.notes,
+           lifter = excluded.lifter`,
       )
       .run(
         s.id,
@@ -1478,6 +1510,7 @@ export class SqliteSessionStore implements SessionStore {
         s.exerciseId ?? null,
         s.exerciseName ?? null,
         s.notes ?? null,
+        s.lifter ?? null,
       );
     return Promise.resolve();
   }
@@ -1497,14 +1530,15 @@ export class SqliteSessionStore implements SessionStore {
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
-          source, position_units, velocity_units, auto_created_by, upgraded, sample_rate_hz,
+          source, position_units, velocity_units, auto_created_by, upgraded, lifter,
+          sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms,
           firmware_peak_force_lbs, firmware_peak_power, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -1527,6 +1561,7 @@ export class SqliteSessionStore implements SessionStore {
          velocity_units = excluded.velocity_units,
          auto_created_by = excluded.auto_created_by,
          upgraded = excluded.upgraded,
+         lifter = excluded.lifter,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
@@ -1577,6 +1612,7 @@ export class SqliteSessionStore implements SessionStore {
         s.velocityUnits ?? null,
         s.autoCreatedBy ?? null,
         s.upgraded === true ? 1 : null,
+        s.lifter ?? null,
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
@@ -1650,6 +1686,15 @@ export class SqliteSessionStore implements SessionStore {
       );
       params.push(filter.exerciseId, filter.exerciseId);
     }
+    // VW-169: owner-only unless a lifter is named. A guest's session is real
+    // history, but it is not the OWNER's history, and the default a caller
+    // gets when it says nothing must be the one that keeps the two apart.
+    if (filter.lifter === undefined) {
+      where.push('lifter IS NULL');
+    } else {
+      where.push('lifter = ?');
+      params.push(filter.lifter);
+    }
     const direction = filter.sort === 'startedAt:asc' ? 'ASC' : 'DESC';
     const limit = filter.limit ?? 50;
     const offset = filter.offset ?? 0;
@@ -1686,6 +1731,16 @@ export class SqliteSessionStore implements SessionStore {
       where.push('user_id = ?');
       params.push(filter.userId);
     }
+    // Same owner-only default as `listSessions` (VW-169). This method's
+    // contract is "the same predicates as listSessions", and the tier signal
+    // counts through here — a guest's sessions must not become the owner's
+    // graduation evidence.
+    if (filter.lifter === undefined) {
+      where.push('lifter IS NULL');
+    } else {
+      where.push('lifter = ?');
+      params.push(filter.lifter);
+    }
     if (filter.endedOnly === true) {
       where.push('ended_at IS NOT NULL');
     }
@@ -1719,6 +1774,16 @@ export class SqliteSessionStore implements SessionStore {
     if (filter.userId !== undefined) {
       where.push('user_id = ?');
       params.push(filter.userId);
+    }
+    // Same owner-only default as `listSessions` (VW-169). This method's
+    // contract is "the same predicates as listSessions", and the tier signal
+    // counts through here — a guest's sessions must not become the owner's
+    // graduation evidence.
+    if (filter.lifter === undefined) {
+      where.push('lifter IS NULL');
+    } else {
+      where.push('lifter = ?');
+      params.push(filter.lifter);
     }
     if (filter.endedOnly === true) {
       where.push('ended_at IS NOT NULL');
@@ -1788,6 +1853,15 @@ export class SqliteSessionStore implements SessionStore {
       where.push('settings_hash = ?');
       params.push(filter.settingsHash);
     }
+    // VW-169: owner-only unless a lifter is named. This one filter is what
+    // keeps a guest's working set out of `recalcBaseline`, `reharvestExercise`
+    // and `progression.get_for_exercise` — all three read through here.
+    if (filter.lifter === undefined) {
+      where.push('lifter IS NULL');
+    } else {
+      where.push('lifter = ?');
+      params.push(filter.lifter);
+    }
     if (filter.purpose !== undefined) {
       where.push(`set_purpose IN (${filter.purpose.map(() => '?').join(', ')})`);
       params.push(...filter.purpose);
@@ -1815,16 +1889,25 @@ export class SqliteSessionStore implements SessionStore {
   async getMostRecentSessionIdForExercise(filter: {
     userId: string;
     exerciseId: string;
+    lifter?: string;
   }): Promise<string | null> {
     // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
     // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
     // No rep hydration — the caller only wants the session id.
+    //
+    // VW-169: owner-only unless a lifter is named, matching
+    // `getSetsForExercise`. Without it a guest's set — which is by definition
+    // the most recent one on a shared rig — becomes the owner's progression
+    // basis.
+    const lifterClause = filter.lifter === undefined ? 'lifter IS NULL' : 'lifter = ?';
+    const params = [filter.userId, filter.exerciseId];
+    if (filter.lifter !== undefined) params.push(filter.lifter);
     const row = this.db
       .prepare(
-        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? ` +
+        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause} ` +
           `ORDER BY started_at DESC LIMIT 1`,
       )
-      .get(filter.userId, filter.exerciseId) as { session_id: string } | undefined;
+      .get(...params) as { session_id: string } | undefined;
     return Promise.resolve(row?.session_id ?? null);
   }
 
@@ -2337,7 +2420,15 @@ export class SqliteSessionStore implements SessionStore {
    * are.
    */
   private selectAnchors(key: BaselineKey): AnchorObservation[] {
-    const where = ['fa.user_id = ?', 'fa.exercise_id = ?', 'fa.setup_id IS NULL'];
+    // `fa.lifter IS NULL` (VW-169): baselines are the OWNER's, and `BaselineKey`
+    // has no lifter dimension because a guest working in gets no baseline at
+    // all — no row, no anchors, no confidence state.
+    const where = [
+      'fa.user_id = ?',
+      'fa.exercise_id = ?',
+      'fa.setup_id IS NULL',
+      'fa.lifter IS NULL',
+    ];
     const params: string[] = [key.userId, key.exerciseId];
     if (key.side !== undefined) {
       where.push('fa.side = ?');
@@ -2442,8 +2533,8 @@ export class SqliteSessionStore implements SessionStore {
            (id, user_id, set_id, exercise_id, setup_id, side, observed_at, source,
             terminal_velocity_mps, load_lbs, rep_count, set_index_in_session,
             session_position_sec, filter_inputs_json, filter_verdict, filter_version,
-            self_reported_rir)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            self_reported_rir, lifter)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(set_id, filter_version) DO UPDATE SET
            user_id = excluded.user_id,
            exercise_id = excluded.exercise_id,
@@ -2458,7 +2549,8 @@ export class SqliteSessionStore implements SessionStore {
            session_position_sec = excluded.session_position_sec,
            filter_inputs_json = excluded.filter_inputs_json,
            filter_verdict = excluded.filter_verdict,
-           self_reported_rir = excluded.self_reported_rir`,
+           self_reported_rir = excluded.self_reported_rir,
+           lifter = excluded.lifter`,
       )
       .run(
         a.id,
@@ -2478,6 +2570,7 @@ export class SqliteSessionStore implements SessionStore {
         a.filterVerdict,
         a.filterVersion,
         a.selfReportedRir ?? null,
+        a.lifter ?? null,
       );
     return Promise.resolve();
   }
@@ -2624,6 +2717,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   //     additive index + column, nothing rewritten.
   // 12 = v12 schema; v13 adds `sets.auto_created_by` / `sets.upgraded`
   //     (VW-180) — additive columns, nothing backfilled.
+  // 13 = v13 schema; v14 adds `sets.lifter` / `sessions.lifter` /
+  //     `failure_anchors.lifter` (VW-169) — additive columns, nothing
+  //     backfilled (NULL = the owner).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2640,6 +2736,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 10 &&
     found !== 11 &&
     found !== 12 &&
+    found !== 13 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2690,6 +2787,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 12) {
     migrateV12ToV13(db);
+  }
+  if (current <= 13) {
+    migrateV13ToV14(db);
   }
 }
 
@@ -2760,6 +2860,8 @@ function rowToSession(row: SessionRow): StoredSession {
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
   if (row.exercise_name !== null) out.exerciseName = row.exercise_name;
   if (row.notes !== null) out.notes = row.notes;
+  // Absent = the owner (VW-169), which is what every pre-v14 row is.
+  if (row.lifter !== null) out.lifter = row.lifter;
   return out;
 }
 
@@ -2810,6 +2912,8 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
     out.autoCreatedBy = row.auto_created_by;
   }
   if (row.upgraded !== null && row.upgraded !== 0) out.upgraded = true;
+  // Absent = the owner (VW-169), which is what every pre-v14 row is.
+  if (row.lifter !== null) out.lifter = row.lifter;
   if (row.sample_rate_hz !== null) out.sampleRateHz = row.sample_rate_hz;
   if (row.firmware_rep_count !== null) out.firmwareRepCount = row.firmware_rep_count;
   if (row.firmware_summary_duration_ms !== null) {
@@ -2995,6 +3099,7 @@ function toFailureAnchor(
     filterVersion: evaluation.filterVersion,
   };
   if (set.side !== undefined) out.side = set.side;
+  if (set.lifter !== undefined) out.lifter = set.lifter;
   if (set.weightLbs !== undefined) out.loadLbs = set.weightLbs;
   if (evaluation.terminalVelocityMps !== undefined) {
     out.terminalVelocityMps = evaluation.terminalVelocityMps;
