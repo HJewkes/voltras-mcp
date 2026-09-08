@@ -12,7 +12,7 @@
 // the store layer).
 
 import { z } from 'zod';
-import { IdSchema } from './common.js';
+import { IdSchema, SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
 
 // --- programs ---
@@ -193,5 +193,22 @@ export const PlanSuggestProgressionInput = z
      * basis for the owner's next load.
      */
     lifter: LifterLabel.optional(),
+  })
+  .strict();
+
+/**
+ * Input for `plan.warmup_ramp` (VMCP-06.08 / B25) — a READ that proposes a
+ * warm-up ramp for one exercise at one working load. It writes nothing and
+ * never starts a set.
+ *
+ * `slot` picks whose active session decides whether the muscle is already
+ * warm; omitted, any slot holding a session counts.
+ */
+export const PlanWarmupRampInput = z
+  .object({
+    exerciseId: IdSchema,
+    /** The load the working sets will be performed at. */
+    workingWeightLbs: z.number().positive(),
+    slot: SlotIdSchema,
   })
   .strict();
