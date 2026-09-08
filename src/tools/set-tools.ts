@@ -361,9 +361,10 @@ interface UpgradedSet {
  * is taken either: auto-arm took one at the rep it armed on, which is when the
  * lifting was actually happening.
  *
- * The idle watchdog is armed from the ORIGINAL `startedAt`, so an
- * `inactivityTimeoutMs` measures from when the lifter began rather than from
- * when the agent caught up.
+ * The idle watchdog's deadline is measured from the set's LAST ACTIVITY (its
+ * `startedAt` when it has had none), so an `inactivityTimeoutMs` covers the
+ * idle time already accrued rather than restarting at the upgrade call. A set
+ * whose window has already elapsed closes promptly.
  */
 function upgradeAutoArmedSet(
   state: ServerState,
@@ -551,9 +552,50 @@ export function armIdleWatchdog(
     return;
   }
   const idleMs = watch.inactivityTimeoutMs;
-  state.setWatchdog.register(setId, idleMs, () => {
-    fireIdleTimeout(state, setId, setStartedAt, idleMs, slotId);
-  });
+  // The deadline is measured from the set's LAST ACTIVITY, not from this call
+  // (VW-180). An upgrade arms the watchdog on a set the lifter began earlier,
+  // and a fresh full-length timer there would hand a set that had already sat
+  // idle for 40 s another 90 s. On the ordinary `set.start` path the anchor IS
+  // now, so the first fire is a full `idleMs` exactly as before. Every later
+  // re-arm goes through `resetIdleWatchdog`, which restarts the full window
+  // because a rep just landed.
+  state.setWatchdog.register(
+    setId,
+    remainingIdleMs(state, setId, setStartedAt, idleMs, slotId),
+    () => {
+      fireIdleTimeout(state, setId, setStartedAt, idleMs, slotId);
+    },
+  );
+}
+
+/**
+ * Floor for a computed first-fire delay. A set whose idle window has ALREADY
+ * expired still fires on a timer rather than synchronously inside the tool
+ * call, so the caller gets its result before the set closes underneath it.
+ */
+const MIN_WATCHDOG_DELAY_MS = 1_000;
+
+/**
+ * Milliseconds until `setId`'s inactivity window expires, from the set's last
+ * activity (`lastActivityAt`, bumped by the bridge on every SDK signal, and
+ * initialized to `startedAt`). Falls back to `setStartedAt` when the set is no
+ * longer the live one. Never longer than `idleMs` — an anchor in the future
+ * would otherwise extend the window past what the caller asked for.
+ */
+function remainingIdleMs(
+  state: ServerState,
+  setId: string,
+  setStartedAt: string,
+  idleMs: number,
+  slotId: string,
+): number {
+  const live = getSlot(state, slotId).live.snapshotSet();
+  const anchor =
+    live?.setId === setId
+      ? (live.lastActivityAt ?? Date.parse(live.startedAt))
+      : Date.parse(setStartedAt);
+  if (!Number.isFinite(anchor)) return idleMs;
+  return Math.min(idleMs, Math.max(MIN_WATCHDOG_DELAY_MS, anchor + idleMs - Date.now()));
 }
 
 /**

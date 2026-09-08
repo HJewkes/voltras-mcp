@@ -742,8 +742,13 @@ describe('set.start — upgrading an auto-armed set (VW-180)', () => {
 describe('set.start — upgrade arms the watchdog from the original start (VW-180)', () => {
   let h: Harness;
 
+  // The lifter's set opens here; the agent's `set.start` lands some time
+  // later. Every assertion below is stated in seconds SINCE THIS INSTANT.
+  const ARMED_AT = '2026-09-08T10:00:00.000Z';
+
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date(ARMED_AT));
     h = setup();
   });
 
@@ -752,7 +757,7 @@ describe('set.start — upgrade arms the watchdog from the original start (VW-18
     vi.useRealTimers();
   });
 
-  it('force-closes the upgraded set once the requested inactivity window elapses', async () => {
+  function autoArm(): void {
     h.live.startSession({
       sessionId: 'sess-A',
       startedAt: '2026-09-08T09:59:00.000Z',
@@ -763,24 +768,62 @@ describe('set.start — upgrade arms the watchdog from the original start (VW-18
     h.live.startSet({
       setId: 'set-armed',
       sessionId: 'sess-A',
-      startedAt: '2026-09-08T10:00:00.000Z',
+      startedAt: ARMED_AT,
       reps: [makeRep(1)],
       status: 'active',
       autoCreatedBy: 'idle_rep',
     });
+  }
 
-    await h.invoke('set.start', { watch: { inactivityTimeoutMs: 45_000 } });
+  async function advance(ms: number): Promise<void> {
+    await vi.advanceTimersByTimeAsync(ms);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+  }
+
+  it('counts the idle time the set already accrued before the upgrade', async () => {
+    autoArm();
+    // The lifter has been idle 40s by the time the agent catches up. A 90s
+    // window measured from the upgrade would give them 130s in total.
+    await advance(40_000);
+
+    await h.invoke('set.start', { watch: { inactivityTimeoutMs: 90_000 } });
     expect((h.state.setWatchdog as { has: (id: string) => boolean }).has('set-armed')).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(45_000);
-    for (let i = 0; i < 8; i++) await Promise.resolve();
+    await advance(49_000); // 89s since the set opened
+    expect(h.live.set).toBeDefined();
+    expect(h.store.putSet).not.toHaveBeenCalled();
 
+    await advance(1_000); // 90s since the set opened
     expect(h.live.set).toBeUndefined();
     const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
     expect(stored.partialReason).toBe('inactivity_timeout');
-    // The watchdog measures the set the lifter began, not a fresh one: the
-    // persisted row keeps the arm-time start.
-    expect(stored.startedAt).toBe('2026-09-08T10:00:00.000Z');
+    expect(stored.startedAt).toBe(ARMED_AT);
+  });
+
+  it('force-closes promptly, once, when the window had already elapsed', async () => {
+    autoArm();
+    await advance(120_000);
+
+    await h.invoke('set.start', { watch: { inactivityTimeoutMs: 90_000 } });
+    // Not synchronously inside the call — the caller gets its result first.
+    expect(h.live.set).toBeDefined();
+
+    await advance(1_000);
+
+    expect(h.live.set).toBeUndefined();
+    expect(h.store.putSet).toHaveBeenCalledTimes(1);
+    expect((h.store.putSet.mock.calls[0][0] as StoredSet).partialReason).toBe('inactivity_timeout');
+  });
+
+  it('gives an ordinary upgrade the full window when no time has passed', async () => {
+    autoArm();
+
+    await h.invoke('set.start', { watch: { inactivityTimeoutMs: 45_000 } });
+
+    await advance(44_000);
+    expect(h.live.set).toBeDefined();
+    await advance(1_000);
+    expect(h.live.set).toBeUndefined();
   });
 });
 
