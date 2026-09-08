@@ -65,7 +65,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -220,6 +220,14 @@ const SCHEMA_SQL = `
     position_units TEXT CHECK (position_units IN ('device_native','meters')),
     velocity_units TEXT CHECK (velocity_units IN ('device_native','meters_per_second')),
     derive_version TEXT,
+
+    -- How the set came to exist (v13 / VW-180). NULL is an explicit
+    -- set.start; 'guided_load' and 'idle_rep' name the two server paths that
+    -- open a set on the lifter's behalf. upgraded marks one of those that a
+    -- later set.start claimed, which is what makes its is_warmup /
+    -- exercise_id stated intent rather than inference.
+    auto_created_by TEXT CHECK (auto_created_by IN ('guided_load','idle_rep')),
+    upgraded INTEGER,
 
     -- Context.
     battery_pct INTEGER,
@@ -997,6 +1005,32 @@ function migrateV11ToV12(db: DatabaseSync): void {
 }
 
 /**
+ * v12→v13 (VW-180): record on each set how it came to exist, and whether a
+ * later `set.start` claimed it.
+ *
+ * ADDITIVE ONLY, in the shape v10→v11 and v11→v12 took. Nothing is
+ * backfilled: an existing row genuinely does not know which path opened it —
+ * the tag was not captured when it was written — and stamping every historical
+ * row 'explicit' would manufacture a fact. NULL reads as "not recorded", which
+ * is the truth.
+ *
+ * Probed with `columnNames` because `applyMigrations` also runs on fresh DBs
+ * whose `SCHEMA_SQL` already declares both columns.
+ */
+function migrateV12ToV13(db: DatabaseSync): void {
+  const columns = columnNames(db, 'sets');
+  if (!columns.has('auto_created_by')) {
+    db.exec(`
+      ALTER TABLE sets ADD COLUMN auto_created_by TEXT
+        CHECK (auto_created_by IN ('guided_load','idle_rep'))
+    `);
+  }
+  if (!columns.has('upgraded')) {
+    db.exec(`ALTER TABLE sets ADD COLUMN upgraded INTEGER`);
+  }
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1205,6 +1239,8 @@ interface SetRow {
   source: string | null;
   position_units: string | null;
   velocity_units: string | null;
+  auto_created_by: string | null;
+  upgraded: number | null;
   sample_rate_hz: number | null;
   firmware_rep_count: number | null;
   firmware_summary_duration_ms: number | null;
@@ -1459,13 +1495,13 @@ export class SqliteSessionStore implements SessionStore {
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
-          source, position_units, velocity_units, sample_rate_hz,
+          source, position_units, velocity_units, auto_created_by, upgraded, sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -1486,6 +1522,8 @@ export class SqliteSessionStore implements SessionStore {
          source = excluded.source,
          position_units = excluded.position_units,
          velocity_units = excluded.velocity_units,
+         auto_created_by = excluded.auto_created_by,
+         upgraded = excluded.upgraded,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
@@ -1532,6 +1570,8 @@ export class SqliteSessionStore implements SessionStore {
         s.source ?? 'local',
         s.positionUnits ?? null,
         s.velocityUnits ?? null,
+        s.autoCreatedBy ?? null,
+        s.upgraded === true ? 1 : null,
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
@@ -2575,6 +2615,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 11 = v11 schema; v12 adds the `failure_anchors(set_id, filter_version)`
   //     unique index and `exercise_baselines.last_anchor_at` (VW-174) —
   //     additive index + column, nothing rewritten.
+  // 12 = v12 schema; v13 adds `sets.auto_created_by` / `sets.upgraded`
+  //     (VW-180) — additive columns, nothing backfilled.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2590,6 +2632,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 9 &&
     found !== 10 &&
     found !== 11 &&
+    found !== 12 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2637,6 +2680,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 11) {
     migrateV11ToV12(db);
+  }
+  if (current <= 12) {
+    migrateV12ToV13(db);
   }
 }
 
@@ -2753,6 +2799,10 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.velocity_units === 'device_native' || row.velocity_units === 'meters_per_second') {
     out.velocityUnits = row.velocity_units;
   }
+  if (row.auto_created_by === 'guided_load' || row.auto_created_by === 'idle_rep') {
+    out.autoCreatedBy = row.auto_created_by;
+  }
+  if (row.upgraded !== null && row.upgraded !== 0) out.upgraded = true;
   if (row.sample_rate_hz !== null) out.sampleRateHz = row.sample_rate_hz;
   if (row.firmware_rep_count !== null) out.firmwareRepCount = row.firmware_rep_count;
   if (row.firmware_summary_duration_ms !== null) {

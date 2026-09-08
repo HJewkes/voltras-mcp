@@ -382,6 +382,57 @@ export function buildSetStartedPayload(
 }
 
 /**
+ * Build the meta + content for a `set_updated` channel event (VW-180).
+ *
+ * Fires when `set.start` upgrades an auto-armed set in place: the set the
+ * lifter is already performing gains the warm-up flag, the watch config and
+ * possibly an exercise pointer. A separate event rather than a second
+ * `set_started` — the set did not start twice, and a consumer that counts
+ * `set_started` to number the sets of a session must not double-count.
+ *
+ * `reps` is the count already in the set at upgrade time, so the consumer
+ * knows the watch attached mid-set and its rep-count triggers are measured
+ * against a set that was already under way.
+ */
+export function buildSetUpdatedPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+): { meta: Record<string, string>; content: string } {
+  const notifyOn = set.watch?.notifyOn ?? [];
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'set_updated',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    upgraded: 'true',
+    reps: String(set.reps.length),
+    is_warmup: String(set.isWarmup === true),
+  };
+  const warmupNote = set.isWarmup === true ? 'warm-up, ' : '';
+  const content = JSON.stringify({
+    summary:
+      `Set updated: ${warmupNote}${notifyOn.length} watch trigger(s) attached to the ` +
+      `set already in progress (${set.reps.length} rep(s) so far)`,
+    set: {
+      set_id: set.setId,
+      session_id: set.sessionId,
+      weight_lbs: device.weightLbs ?? null,
+      started_at: set.startedAt,
+      auto_armed: set.autoCreatedBy === 'idle_rep',
+      upgraded: true,
+      is_warmup: set.isWarmup === true,
+      exercise_id: set.exerciseId ?? null,
+      reps_so_far: set.reps.length,
+      watch: {
+        notify_on: notifyOn,
+        inactivity_timeout_ms: set.watch?.inactivityTimeoutMs ?? null,
+      },
+    },
+  });
+  return { meta, content };
+}
+
+/**
  * Build the meta + content for a `session_exercise_changed` channel event
  * (VMCP-01.72b). Fires from `session.set_exercise` so a channel-subscribed
  * host learns of a mid-session exercise switch without polling `session.get`

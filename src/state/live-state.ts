@@ -246,6 +246,14 @@ export interface ActiveSet {
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep';
   /**
+   * When `set.start` upgraded this auto-armed set in place (VW-180) — the
+   * agent attaching its warm-up flag and watch config to a set the lifter had
+   * already begun. Present ⇒ the upgrade has happened; a second `set.start`
+   * is refused as `SET_ALREADY_ACTIVE`, because by then the caller is asking
+   * for a new set rather than for the one in front of them.
+   */
+  upgradedAt?: string;
+  /**
    * Marks a warm-up set flagged at `set.start` time. Carried onto the
    * persisted row ({@link StoredSet.isWarmup}) so progression scoring can
    * exclude warm-ups explicitly. Undefined ⇒ a working set.
@@ -665,6 +673,38 @@ export class LiveState {
       ...(s.watch !== undefined ? { watch: s.watch, firedTriggers: new Set<string>() } : {}),
     };
     this._analyticsSet = createSet();
+  }
+
+  /**
+   * Apply `set.start`'s options to the set auto-arm already opened (VW-180),
+   * and stamp `upgradedAt` so a second call is refused as
+   * `SET_ALREADY_ACTIVE`.
+   *
+   * `setId`, `startedAt` and the reps adopted from the idle window are
+   * PRESERVED: the lifter is mid-set and those reps are the set. Only the
+   * caller intent auto-arm could not know — warm-up, the watch config, the
+   * exercise pointer — is written on. Returns the upgraded set, or `undefined`
+   * when no set is active.
+   */
+  upgradeActiveSet(patch: {
+    isWarmup?: boolean;
+    watch?: WatchConfig;
+    exerciseId?: string;
+    upgradedAt: string;
+  }): ActiveSet | undefined {
+    if (this.set === undefined) {
+      return undefined;
+    }
+    this.set = {
+      ...this.set,
+      upgradedAt: patch.upgradedAt,
+      ...(patch.isWarmup === true ? { isWarmup: true } : {}),
+      ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
+      ...(patch.watch !== undefined
+        ? { watch: patch.watch, firedTriggers: new Set<string>() }
+        : {}),
+    };
+    return this.snapshotSet();
   }
 
   /**

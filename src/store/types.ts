@@ -148,6 +148,25 @@ export interface StoredSet {
    */
   isWarmup?: boolean;
   /**
+   * Which server path opened this set, when no `set.start` call did (VW-180).
+   * `'guided_load'` is the Phase 1g bootstrap's set; `'idle_rep'` is the
+   * VW-164 auto-arm, opened because the lifter started working with a session
+   * open and no set armed. Absent ⇒ an explicit `set.start`.
+   *
+   * Recorded because it changes how the row should be read: an auto-created
+   * set carries whatever intent the server could infer, not what a coach
+   * stated. Analytics that weight stated intent (warm-up filtering, planned
+   * rep targets) can tell the two apart instead of assuming.
+   */
+  autoCreatedBy?: 'guided_load' | 'idle_rep';
+  /**
+   * The set was auto-created and then upgraded in place by a later
+   * `set.start` (VW-180) — so its `isWarmup` / `exerciseId` DO carry stated
+   * intent, unlike an auto-created set nobody claimed. Absent ⇒ never
+   * upgraded.
+   */
+  upgraded?: boolean;
+  /**
    * GROUND TRUTH for per-unit identity. BLE device id of the unit that
    * performed the set, captured from the slot's connected client. The device
    * id is the stable physical identity and the only one of the three identity

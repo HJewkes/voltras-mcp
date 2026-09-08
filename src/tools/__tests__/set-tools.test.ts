@@ -584,6 +584,206 @@ describe('set.start', () => {
   // </Bug-22>
 });
 
+// ── VW-180 — set.start upgrades an auto-armed set in place ────────────────
+describe('set.start — upgrading an auto-armed set (VW-180)', () => {
+  let h: Harness;
+
+  const ARMED_AT = '2026-09-08T10:00:00.000Z';
+
+  beforeEach(() => {
+    h = setup();
+  });
+
+  /** Stand in for auto-arm: a set the server opened, with reps already in it. */
+  function autoArm(opts: { exerciseId?: string } = {}): void {
+    h.live.startSession({
+      sessionId: 'sess-A',
+      startedAt: '2026-09-08T09:59:00.000Z',
+      setIds: [],
+      status: 'active',
+      ...(opts.exerciseId !== undefined ? { exerciseId: opts.exerciseId } : {}),
+    });
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+    h.live.startSet({
+      setId: 'set-armed',
+      sessionId: 'sess-A',
+      startedAt: ARMED_AT,
+      reps: [makeRep(1), makeRep(2)],
+      status: 'active',
+      autoCreatedBy: 'idle_rep',
+    });
+  }
+
+  function startRecordingSpy(): ReturnType<typeof vi.fn> {
+    const slot = h.state.slots.get('primary') as unknown as {
+      client: { startRecording: ReturnType<typeof vi.fn> };
+    };
+    return slot.client.startRecording;
+  }
+
+  it('applies isWarmup and the watch, and keeps the reps already performed', async () => {
+    autoArm();
+
+    const r = await h.invoke('set.start', {
+      isWarmup: true,
+      watch: { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] },
+    });
+
+    expect(r.isError).toBeUndefined();
+    expect(parseResult(r)).toEqual({ setId: 'set-armed', upgraded: true, adoptedReps: 2 });
+    expect(h.live.set?.isWarmup).toBe(true);
+    expect(h.live.set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    expect(h.live.set?.reps).toHaveLength(2);
+    expect(h.live.set?.startedAt).toBe(ARMED_AT);
+  });
+
+  it('adopts the session exercise the set was armed without', async () => {
+    autoArm({ exerciseId: 'triceps-pushdown' });
+
+    await h.invoke('set.start', {});
+
+    expect(h.live.set?.exerciseId).toBe('triceps-pushdown');
+  });
+
+  it('does NOT engage the motor — the lifter is already mid-set', async () => {
+    autoArm();
+
+    await h.invoke('set.start', { isWarmup: true });
+
+    expect(startRecordingSpy()).not.toHaveBeenCalled();
+  });
+
+  it('does not re-snapshot the device: auto-arm already took one', async () => {
+    autoArm();
+    h.state.setStartDeviceSnapshots.set('set-armed', { connected: true, weightLbs: 170 });
+    h.live.applySettings({ connected: true, weightLbs: 45, trainingMode: 'WeightTraining' });
+
+    await h.invoke('set.start', {});
+
+    expect(h.state.setStartDeviceSnapshots.get('set-armed')).toMatchObject({ weightLbs: 170 });
+    expect(h.state.setStartDeviceSnapshots.size).toBe(1);
+  });
+
+  it('publishes set_updated rather than a second set_started', async () => {
+    autoArm();
+    h.channels.publish.mockClear();
+
+    await h.invoke('set.start', { isWarmup: true, watch: { inactivityTimeoutMs: 120_000 } });
+
+    const events = h.channels.publish.mock.calls.map(
+      (c) => c[0] as { meta: Record<string, string>; content: string },
+    );
+    const updated = events.find((e) => e.meta.event_type === 'set_updated');
+    expect(updated).toBeDefined();
+    expect(updated!.meta.upgraded).toBe('true');
+    expect(updated!.meta.is_warmup).toBe('true');
+    expect(updated!.meta.reps).toBe('2');
+    expect(events.map((e) => e.meta.event_type)).not.toContain('set_started');
+  });
+
+  it('refuses a SECOND upgrade with SET_ALREADY_ACTIVE', async () => {
+    autoArm();
+    await h.invoke('set.start', { isWarmup: true });
+
+    const r = await h.invoke('set.start', {});
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_ALREADY_ACTIVE');
+    expect(startRecordingSpy()).not.toHaveBeenCalled();
+  });
+
+  it('still refuses while a mode revert is live, and never clears the latch', async () => {
+    autoArm();
+    const slot = h.state.slots.get('primary')!;
+    slot.modeRevertGuard.arm(3); // Rowing requested
+    (
+      slot as never as { modeRevertGuard: { onSettingsUpdate: (m: number) => void } }
+    ).modeRevertGuard.onSettingsUpdate(1); // device reported Weight Training
+
+    const r = await h.invoke('set.start', { isWarmup: true });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('SET_ABORTED_BY_MODE_REVERT');
+    expect(h.live.set?.isWarmup).toBeUndefined();
+    // VW-178: the refusal is repeatable until the device recovers.
+    expect(slot.modeRevertGuard.peekAbort()).not.toBeNull();
+  });
+
+  it('persists the upgraded warm-up flag, exercise and provenance at set.end (VW-179)', async () => {
+    autoArm({ exerciseId: 'triceps-pushdown' });
+
+    await h.invoke('set.start', { isWarmup: true });
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.id).toBe('set-armed');
+    expect(stored.isWarmup).toBe(true);
+    expect(stored.exerciseId).toBe('triceps-pushdown');
+    expect(stored.autoCreatedBy).toBe('idle_rep');
+    expect(stored.upgraded).toBe(true);
+    // The triggering rep the set was armed on is still in the row, and the
+    // header weight is the one auto-arm snapshotted.
+    expect(stored.reps).toHaveLength(2);
+    expect(stored.weightLbs).toBe(170);
+  });
+
+  it('records an un-upgraded auto-armed set as a working set with no upgrade tag', async () => {
+    autoArm();
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.autoCreatedBy).toBe('idle_rep');
+    expect(stored).not.toHaveProperty('upgraded');
+    expect(stored).not.toHaveProperty('isWarmup');
+  });
+});
+
+describe('set.start — upgrade arms the watchdog from the original start (VW-180)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h = setup();
+  });
+
+  afterEach(() => {
+    (h.state.setWatchdog as { clearAll: () => void }).clearAll();
+    vi.useRealTimers();
+  });
+
+  it('force-closes the upgraded set once the requested inactivity window elapses', async () => {
+    h.live.startSession({
+      sessionId: 'sess-A',
+      startedAt: '2026-09-08T09:59:00.000Z',
+      setIds: [],
+      status: 'active',
+    });
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+    h.live.startSet({
+      setId: 'set-armed',
+      sessionId: 'sess-A',
+      startedAt: '2026-09-08T10:00:00.000Z',
+      reps: [makeRep(1)],
+      status: 'active',
+      autoCreatedBy: 'idle_rep',
+    });
+
+    await h.invoke('set.start', { watch: { inactivityTimeoutMs: 45_000 } });
+    expect((h.state.setWatchdog as { has: (id: string) => boolean }).has('set-armed')).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+
+    expect(h.live.set).toBeUndefined();
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.partialReason).toBe('inactivity_timeout');
+    // The watchdog measures the set the lifter began, not a fresh one: the
+    // persisted row keeps the arm-time start.
+    expect(stored.startedAt).toBe('2026-09-08T10:00:00.000Z');
+  });
+});
+
 // ── Bug 22 — Mode-revert guard refusal at set.start ──────────────────────
 describe('set.start — mode-revert guard (Bug 22)', () => {
   let h: Harness;
