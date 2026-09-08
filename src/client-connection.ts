@@ -48,6 +48,7 @@ import { registerBaselineTools } from './tools/baseline-tools.js';
 import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
 import { registerMrvGuardTools } from './tools/mrv-guard-tools.js';
 import { registerCoachingTools } from './tools/coaching-tools.js';
+import { registerTrueCoachTools } from './tools/truecoach-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
 import { applyLeaseGuard } from './lease-guard.js';
@@ -196,6 +197,7 @@ function registerRealTools(
   registerDriftGuardTools(server, state, placeholders);
   registerMrvGuardTools(server, state, placeholders);
   registerCoachingTools(server, state, placeholders);
+  registerTrueCoachTools(server, state, placeholders);
   registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);
