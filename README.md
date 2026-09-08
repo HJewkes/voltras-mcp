@@ -304,7 +304,7 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-92 tools in mock mode; 90 with the real adapter (`mock.*` is registered only when
+93 tools in mock mode; 91 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
@@ -331,6 +331,7 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `coaching.*`    | 1     | `explain` — RP-derived coaching knowledge by topic, always tier-qualified and cited.                                                                                                                                  |
 | `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                                                                   |
 | `truecoach.*`   | 1     | `import_week` — read-only pull of coach-assigned programming into `plan.*`. Off unless credentials are set; see [TrueCoach (read-only pull)](#truecoach-read-only-pull).                                              |
+| `report.*`      | 1     | `session_results` — per-exercise free-text result strings for one ended session, in the idiom a coach reads; see [Coach results and the outbox](#coach-results-and-the-outbox).                                       |
 
 Some `device.*` tools are explicitly marked `@experimental` or `@deprecated` in their own
 descriptions; prefer the consolidated setters (for example `device.configure_isokinetic`
@@ -432,6 +433,31 @@ the marginal saving over pasting a pre-formatted block is a few seconds per sess
 
 Full research, including the alternatives that stay clear of all this:
 `sources/notes/2026-09-08-truecoach-integration-research.md`.
+
+---
+
+## Coach results and the outbox
+
+`report.session_results` turns one ended session into the block of text a coach expects to
+read back — the same freeform "Result" idiom TrueCoach's own exports use, one string per
+exercise:
+
+```
+170 lb x 12
+170 lb x 10
+warm-up: 3 sets
+missed: 1 of 3 sets below 8 reps
+```
+
+A bilateral effort renders as `L 30 lb x 13` / `R 30 lb x 12`. The `missed:` line appears
+only when the session had a plan attached (`plan.complete_workout` /
+`plan.attach_to_session`) and a working set fell below its `targetRepsLow`.
+
+Which sets count is decided the same way `plan.suggest_progression` decides it: flagged
+warm-ups are excluded, then the sets at the top load are kept. A guest lifter's sets
+(`session.set_lifter`), mock-adapter sets and zero-rep sets never appear, and an exercise
+with no working set is omitted rather than reported empty. The tool reads the store and
+makes **no network call** — it never writes to TrueCoach, and nothing in this repo does.
 
 ---
 
