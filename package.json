@@ -42,7 +42,7 @@
     "@fontsource/nunito-sans": "^5.2.7",
     "@fontsource/space-grotesk": "^5.2.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@voltras/node-sdk": "^0.11.0",
+    "@voltras/node-sdk": "^0.13.0",
     "@voltras/workout-analytics": "^2.2.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
