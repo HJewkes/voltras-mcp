@@ -13,6 +13,7 @@
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
 //   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
+//   - VMCP_TRUECOACH_SUBMIT_ON_END     — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_*                 — read-only TrueCoach pull, see TrueCoachConfig.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
@@ -124,6 +125,19 @@ export type AutoArmMode = 'off' | 'on';
 export type TrueCoachOutboxMode = 'off' | 'on';
 
 /**
+ * Whether writing an outbox entry also spawns `tools/truecoach-submit` to post
+ * it (`VMCP_TRUECOACH_SUBMIT_ON_END`).
+ *   - `'off'` (DEFAULT) — nothing is spawned. The file is the end of the line.
+ *   - `'on'` — one detached `truecoach-submit --submit --session <id>` per
+ *     written entry, once, with no retry and no polling. Requires
+ *     `VMCP_TRUECOACH_OUTBOX=on` (there is no entry to submit otherwise) and a
+ *     browser profile the human has already signed in. That tool interacts
+ *     with TrueCoach, which its terms forbid without written consent — read
+ *     `tools/truecoach-submit/README.md` before turning this on.
+ */
+export type TrueCoachSubmitOnEndMode = 'off' | 'on';
+
+/**
  * Credentials and paths for the read-only TrueCoach pull (`truecoach.import_week`).
  *
  * Every field is optional and every field is absent by default: with no
@@ -162,6 +176,7 @@ export interface Config {
   readonly autoArm: AutoArmMode;
   readonly trueCoachOutbox: TrueCoachOutboxMode;
   readonly trueCoachOutboxDir: string;
+  readonly trueCoachSubmitOnEnd: TrueCoachSubmitOnEndMode;
   readonly trueCoach: TrueCoachConfig;
 }
 
@@ -209,6 +224,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (trueCoachOutbox !== 'off' && trueCoachOutbox !== 'on') {
     throw new Error(`Invalid VMCP_TRUECOACH_OUTBOX="${trueCoachOutbox}". Must be "off" or "on".`);
   }
+  const trueCoachSubmitOnEnd = env.VMCP_TRUECOACH_SUBMIT_ON_END ?? 'off';
+  if (trueCoachSubmitOnEnd !== 'off' && trueCoachSubmitOnEnd !== 'on') {
+    throw new Error(
+      `Invalid VMCP_TRUECOACH_SUBMIT_ON_END="${trueCoachSubmitOnEnd}". Must be "off" or "on".`,
+    );
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -225,6 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     autoArm,
     trueCoachOutbox,
     trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
+    trueCoachSubmitOnEnd,
     trueCoach: loadTrueCoachConfig(env, home),
   }) satisfies Config;
 }
