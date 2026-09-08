@@ -96,7 +96,7 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
   slot.live.forgetIdleReps(reclaimedIdleReps);
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
-  publishAutoArmed(state, slotId, setId, startedAt, session.sessionId);
+  publishAutoArmed(state, slotId, setId, startedAt, session.sessionId, session.lifter);
   return { armed: true, reclaimedIdleReps };
 }
 
@@ -131,10 +131,18 @@ function publishAutoArmed(
   setId: string,
   startedAt: string,
   sessionId: string,
+  lifter: string | undefined,
 ): void {
   const slot = getSlot(state, slotId);
   const ordinal = (slot.live.snapshotSession()?.setIds.length ?? 0) + 1;
-  const activeSet: ActiveSet = { setId, sessionId, startedAt, reps: [], status: 'active' };
+  const activeSet: ActiveSet = {
+    setId,
+    sessionId,
+    startedAt,
+    reps: [],
+    status: 'active',
+    ...(lifter !== undefined ? { lifter } : {}),
+  };
   const payload = buildSetStartedPayload(activeSet, slot.live.snapshotDevice(), ordinal, null, {
     autoArmed: true,
   });

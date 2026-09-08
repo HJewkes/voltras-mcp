@@ -486,6 +486,9 @@ const SCHEMA_SQL = `
     exercise_id TEXT NOT NULL,
     setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
     side TEXT CHECK (side IN ('left','right')),
+    -- v14 (VW-169): the lifter label of the set this verdict is about. NULL =
+    -- the owner, and selectAnchors reads owner anchors only.
+    lifter TEXT,
     observed_at TEXT NOT NULL,
     -- 'harvested' = observed in ordinary training; 'prescribed' = deliberately
     -- taken to failure. Named to avoid colliding with set_purpose='probe',
@@ -501,10 +504,7 @@ const SCHEMA_SQL = `
     filter_inputs_json TEXT NOT NULL,
     filter_verdict TEXT NOT NULL,
     filter_version TEXT NOT NULL,
-    self_reported_rir REAL,
-    -- v14 (VW-169): the lifter label of the set this verdict is about. NULL =
-    -- the owner, and selectAnchors reads owner anchors only.
-    lifter TEXT
+    self_reported_rir REAL
   );
   CREATE INDEX IF NOT EXISTS idx_failure_anchors_key
     ON failure_anchors(user_id, exercise_id, setup_id, side, observed_at);

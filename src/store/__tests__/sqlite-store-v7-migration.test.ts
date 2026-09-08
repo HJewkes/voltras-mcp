@@ -1080,6 +1080,112 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
   });
 });
 
+describe('v13 → v14: lifter identity (VW-169)', () => {
+  it('opens a real v13 file, adds the lifter columns, and stamps 14', async () => {
+    // Arrange: a genuine v13 file, built through open() and downgraded by
+    // dropping exactly the columns v14 adds. The version allowlist is
+    // enumerated by hand, so 13 moving off SCHEMA_VERSION is the failure this
+    // guards.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v14-from-v13-'));
+    const path = join(dir, 'real-v13.sqlite');
+    try {
+      const fresh = SqliteSessionStore.open(path);
+      void fresh.close();
+      const seed = new DatabaseSync(path);
+      for (const table of ['sets', 'sessions', 'failure_anchors']) {
+        seed.exec(`ALTER TABLE ${table} DROP COLUMN lifter`);
+      }
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2026-09-01T10:00:00.000Z')`);
+      seed.exec(
+        `INSERT INTO sets (id, session_id, started_at, ended_at, partial, set_purpose)
+         VALUES ('set-old', 's1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:30.000Z', 0, 'working')`,
+      );
+      seed.exec('PRAGMA user_version = 13');
+      seed.close();
+
+      // Act.
+      const opened = SqliteSessionStore.open(path);
+      try {
+        // Assert: the columns exist, the version moved, and nothing was
+        // back-filled — a pre-v14 row was the owner's, which is what an
+        // absent label already says.
+        const raw = rawDb(opened);
+        for (const table of ['sets', 'sessions', 'failure_anchors']) {
+          expect(columnNames(raw, table)).toContain('lifter');
+        }
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(14);
+        expect(await opened.getSet('set-old')).not.toHaveProperty('lifter');
+        expect(await opened.getSession('s1')).not.toHaveProperty('lifter');
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('round-trips a lifter label on a set and its session', async () => {
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      await store.putSession({ id: 'sess-g', startedAt: '2026-09-08T00:00:00.000Z' });
+      await store.putSession({
+        id: 'sess-j',
+        startedAt: '2026-09-08T00:00:00.000Z',
+        lifter: 'Jordan',
+      });
+      await store.putSet({
+        id: 'set-guest',
+        sessionId: 'sess-j',
+        startedAt: '2026-09-08T00:00:10.000Z',
+        endedAt: '2026-09-08T00:00:50.000Z',
+        partial: false,
+        lifter: 'Jordan',
+        reps: [makeRep('set-guest', 0)],
+      });
+
+      expect((await store.getSet('set-guest'))?.lifter).toBe('Jordan');
+      expect((await store.getSession('sess-j'))?.lifter).toBe('Jordan');
+      // The owner's own row keeps the pre-flag shape: the key is absent, not
+      // null, so "the owner" and "unlabelled" cannot drift apart.
+      expect(await store.getSession('sess-g')).not.toHaveProperty('lifter');
+    } finally {
+      void store.close();
+    }
+  });
+
+  it('clears the label on a re-put rather than leaving the old one behind', async () => {
+    // The DO UPDATE half of the upsert: a column present in the INSERT but
+    // missing from the update list silently never updates, which is invisible
+    // until a relabel has to move a set back to the owner.
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      await store.putSession({ id: 's', startedAt: '2026-09-08T00:00:00.000Z', lifter: 'Jordan' });
+      const set = {
+        id: 'set-1',
+        sessionId: 's',
+        startedAt: '2026-09-08T00:00:10.000Z',
+        endedAt: '2026-09-08T00:00:50.000Z',
+        partial: false,
+        lifter: 'Jordan',
+        reps: [makeRep('set-1', 0)],
+      };
+      await store.putSet(set);
+
+      const { lifter: _dropped, ...ownerSet } = set;
+      await store.putSet(ownerSet);
+      await store.putSession({ id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
+
+      expect(await store.getSet('set-1')).not.toHaveProperty('lifter');
+      expect(await store.getSession('s')).not.toHaveProperty('lifter');
+    } finally {
+      void store.close();
+    }
+  });
+});
+
 describe('firmware peak force / peak power columns (VMCP-02.87)', () => {
   let store: SqliteSessionStore;
 

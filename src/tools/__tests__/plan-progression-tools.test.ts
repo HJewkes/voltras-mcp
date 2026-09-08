@@ -679,6 +679,37 @@ describe('plan.suggest_progression', () => {
     expect(body.suggestion.reasoning.length).toBeGreaterThan(0);
   });
 
+  // VW-169 — one session can hold both the owner's sets and a guest's, and
+  // `getSetsForSession` returns all of them.
+  it("ignores a guest's sets when computing the owner's next load", async () => {
+    // Arrange: the owner held in the rep band; the guest working in on the
+    // same exercise topped their band out. Unfiltered, the guest's three
+    // 12-rep sets outvote the owner's and the delta comes back +5.
+    const h = setup();
+    primeProgramWithBenchPlan(h);
+    h.store.getMostRecentSessionIdForExercise.mockResolvedValueOnce('sess-prior');
+    const guestSet = (id: string): StoredSet => ({
+      ...setWithReps(id, 12),
+      lifter: 'Jordan',
+    });
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('owner-1', 10),
+      guestSet('guest-1'),
+      guestSet('guest-2'),
+      guestSet('guest-3'),
+    ]);
+
+    // Act.
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'bench-press',
+    });
+
+    // Assert: a hold, computed from the owner's single in-band set alone.
+    const body = parseResult(r) as { suggestion: { delta: number } };
+    expect(body.suggestion.delta).toBe(0);
+  });
+
   it('VMCP-02.25: holds (not +5) when a set hit its reps but at high velocity loss', async () => {
     const h = setup();
     primeProgramWithBenchPlan(h);
