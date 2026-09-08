@@ -2983,6 +2983,38 @@ describe('wireEventBridge — guided-load auto-create', () => {
     expect(state.setStartDeviceSnapshots.has(set!.setId)).toBe(true);
   });
 
+  it('VW-168a: the auto-created set carries the caller’s isWarmup and watch', () => {
+    // The `start_guided_load` tool stashes both on the slot; the set is minted
+    // here, before any `set.start` could attach them.
+    const slot = state.slots.get('primary') as unknown as {
+      pendingGuidedLoadIsWarmup?: boolean;
+      pendingGuidedLoadWatch?: unknown;
+    };
+    slot.pendingGuidedLoadIsWarmup = true;
+    slot.pendingGuidedLoadWatch = {
+      notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }],
+      inactivityTimeoutMs: 60_000,
+    };
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const set = live.snapshotSet();
+    expect(set?.isWarmup).toBe(true);
+    expect(set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    expect(state.setWatchdog.has(set!.setId)).toBe(true);
+    // Single-shot: the next guided-load set on this slot brings its own.
+    expect(slot.pendingGuidedLoadIsWarmup).toBeUndefined();
+    expect(slot.pendingGuidedLoadWatch).toBeUndefined();
+  });
+
+  it('VW-168a: an ordinary guided load still records a working set with no watch', () => {
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 });
+
+    const set = live.snapshotSet();
+    expect(set?.isWarmup).toBeUndefined();
+    expect(set?.watch).toBeUndefined();
+  });
+
   it("does NOT auto-create on 'idle' / 'exited' / 'timeout' phases", () => {
     client.fireGuided({ phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null });
     client.fireGuided({ phase: 'exited', countdownRemainingMs: null, fitnessModeRaw: 0x0004 });

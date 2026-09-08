@@ -342,6 +342,8 @@ interface FakeSlot {
   pendingGuidedLoadExerciseName?: string;
   pendingGuidedLoadExerciseId?: string;
   pendingGuidedLoadTargetLbs?: number;
+  pendingGuidedLoadIsWarmup?: boolean;
+  pendingGuidedLoadWatch?: { notifyOn: unknown[]; inactivityTimeoutMs?: number };
 }
 
 interface FakeSlotBindings {
@@ -2030,6 +2032,33 @@ describe('registerDeviceTools', () => {
       const slot = state.slots.get('primary')!;
       expect(slot.pendingGuidedLoadExerciseName).toBe('Barbell Squat');
       expect(slot.pendingGuidedLoadExerciseId).toBe('ex-squat-001');
+    });
+
+    it('VW-168a: stashes isWarmup / watch for the set the bridge is about to mint', async () => {
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, {
+        targetWeightLbs: 50,
+        isWarmup: true,
+        watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }], inactivityTimeoutMs: 60000 },
+      });
+      expect(isError).toBeUndefined();
+      const slot = state.slots.get('primary')!;
+      expect(slot.pendingGuidedLoadIsWarmup).toBe(true);
+      expect(slot.pendingGuidedLoadWatch?.notifyOn).toEqual([
+        { type: 'rep_count_reached', value: 8 },
+      ]);
+      expect(slot.pendingGuidedLoadWatch?.inactivityTimeoutMs).toBe(60000);
+    });
+
+    it('VW-168a: clears a stale set-intent stash when called without the params', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.pendingGuidedLoadIsWarmup = true;
+      slot.pendingGuidedLoadWatch = { notifyOn: [] };
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBeUndefined();
+      expect(slot.pendingGuidedLoadIsWarmup).toBeUndefined();
+      expect(slot.pendingGuidedLoadWatch).toBeUndefined();
     });
 
     it('VMCP-02.13: clears any stale exercise stash when called without the params', async () => {

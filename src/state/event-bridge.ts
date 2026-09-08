@@ -1609,6 +1609,14 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     if (session === undefined) return; // belt-and-braces; startSession just ran
     const setId = randomUUID();
     const startedAt = new Date().toISOString();
+    // VW-168a: set-level intent the `start_guided_load` caller supplied. The
+    // set is minted here, before any `set.start` could attach a warm-up flag
+    // or a watch, so the tool's options ride through the same single-shot
+    // stash the exercise identity uses.
+    const isWarmup = slot.pendingGuidedLoadIsWarmup;
+    const watch = slot.pendingGuidedLoadWatch;
+    delete slot.pendingGuidedLoadIsWarmup;
+    delete slot.pendingGuidedLoadWatch;
     slot.live.startSet({
       setId,
       sessionId: session.sessionId,
@@ -1616,6 +1624,8 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       reps: [],
       status: 'active',
       autoCreatedBy: 'guided_load',
+      ...(isWarmup === true ? { isWarmup: true } : {}),
+      ...(watch !== undefined ? { watch } : {}),
       // VMCP-01.72b: snapshot the session's exercise pointer the same way
       // set-tools.ts's startSet does. buildSetCapture now reads the SET's
       // own snapshot rather than re-reading the live session at close, so
@@ -1648,13 +1658,18 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     // user triggered guided load directly on the unit), fall back to no
     // extra watchdog — the bridge's default `SET_INACTIVITY_TIMEOUT_MS`
     // safety net still applies.
-    const guidedInactivityMs = slot.pendingGuidedLoadInactivityMs;
+    //
+    // VW-168a: a `watch.inactivityTimeoutMs` on the tool call is the caller
+    // stating the same threshold explicitly, so it wins over the guided-load
+    // default. One watchdog per set either way — `armIdleWatchdog` registers
+    // by setId, so arming twice would just overwrite.
+    const guidedInactivityMs = watch?.inactivityTimeoutMs ?? slot.pendingGuidedLoadInactivityMs;
     if (typeof guidedInactivityMs === 'number') {
       armIdleWatchdog(
         state,
         setId,
         startedAt,
-        { notifyOn: [], inactivityTimeoutMs: guidedInactivityMs },
+        { notifyOn: watch?.notifyOn ?? [], inactivityTimeoutMs: guidedInactivityMs },
         slotId,
       );
       delete slot.pendingGuidedLoadInactivityMs;
