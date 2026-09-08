@@ -28,6 +28,7 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
+import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
   baselineRowId,
   deriveBaselineState,
@@ -1674,7 +1675,7 @@ export class SqliteSessionStore implements SessionStore {
         s.partialReason ?? null,
         s.trainingMode ?? null,
         s.weightLbs ?? null,
-        s.isWarmup === true ? 'warmup' : 'working',
+        setPurposeOf(s),
         s.slot ?? null,
         s.deviceId ?? null,
         s.side ?? null,
@@ -3045,6 +3046,12 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.training_mode !== null) out.trainingMode = row.training_mode;
   if (row.weight_lbs !== null) out.weightLbs = row.weight_lbs;
   if (row.partial_reason !== null) out.partialReason = row.partial_reason;
+  // `set_purpose` is the stored value and `is_warmup` the column GENERATED
+  // from it, so reading both cannot produce a disagreeing pair. A `'working'`
+  // row contributes neither key, keeping the pre-enum shape (VMCP-02.84).
+  if (isSetPurpose(row.set_purpose) && row.set_purpose !== 'working') {
+    out.setPurpose = row.set_purpose;
+  }
   if (row.is_warmup !== 0) out.isWarmup = true;
   // Absent (not null / not `'primary'`) on pre-v5 rows: unknown slot is not
   // the same claim as "the primary slot did it".

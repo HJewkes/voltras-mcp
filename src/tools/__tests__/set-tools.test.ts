@@ -490,6 +490,54 @@ describe('set.start', () => {
     expect(h.live.set).toBeUndefined();
   });
 
+  // ── VMCP-02.84 — setPurpose, and the deprecated isWarmup alias ──────────
+  it('carries setPurpose onto the live set and the persisted row', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+
+    await h.invoke('set.start', { setPurpose: 'probe' });
+    expect(h.live.set?.setPurpose).toBe('probe');
+    expect(h.live.set?.isWarmup).toBeUndefined();
+
+    await h.invoke('set.end', {});
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.setPurpose).toBe('probe');
+    expect(stored.isWarmup).toBeUndefined();
+  });
+
+  it('still accepts a bare isWarmup:true, aliased to setPurpose warmup', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 60, trainingMode: 'WeightTraining' });
+
+    await h.invoke('set.start', { isWarmup: true });
+    expect(h.live.set?.setPurpose).toBe('warmup');
+    expect(h.live.set?.isWarmup).toBe(true);
+
+    await h.invoke('set.end', {});
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.setPurpose).toBe('warmup');
+    expect(stored.isWarmup).toBe(true);
+  });
+
+  it('refuses a setPurpose that contradicts isWarmup rather than picking one', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('set.start', { setPurpose: 'probe', isWarmup: true });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+    expect(h.live.set).toBeUndefined();
+  });
+
+  it('accepts an agreeing setPurpose + isWarmup pair', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 60, trainingMode: 'WeightTraining' });
+
+    const r = await h.invoke('set.start', { setPurpose: 'warmup', isWarmup: true });
+    expect(r.isError).toBeUndefined();
+    expect(h.live.set?.setPurpose).toBe('warmup');
+  });
+
   it('omitted watch config leaves live.set.watch + firedTriggers undefined', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });

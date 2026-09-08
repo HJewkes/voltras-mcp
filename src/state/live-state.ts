@@ -37,6 +37,8 @@ import {
 import type { RepSource } from '../config.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { WatchConfig } from '../schemas/set.js';
+import { setPurposeFields } from '../store/set-purpose.js';
+import type { SetPurpose } from '../store/types.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
@@ -264,9 +266,16 @@ export interface ActiveSet {
    */
   upgradedAt?: string;
   /**
-   * Marks a warm-up set flagged at `set.start` time. Carried onto the
-   * persisted row ({@link StoredSet.isWarmup}) so progression scoring can
-   * exclude warm-ups explicitly. Undefined ⇒ a working set.
+   * Why this set is being performed, stated at `set.start` time (VMCP-02.84).
+   * Carried onto the persisted row ({@link StoredSet.setPurpose}) so
+   * progression scoring reads intent rather than inferring it from load.
+   * Undefined ⇒ a working set.
+   */
+  setPurpose?: SetPurpose;
+  /**
+   * DERIVED from {@link setPurpose} — never set on its own. Written together
+   * by `setPurposeFields` so the channel payloads and the close path keep
+   * reading the boolean they always read.
    */
   isWarmup?: boolean;
   /**
@@ -731,12 +740,14 @@ export class LiveState {
    *
    * `setId`, `startedAt` and the reps adopted from the idle window are
    * PRESERVED: the lifter is mid-set and those reps are the set. Only the
-   * caller intent auto-arm could not know — warm-up, the watch config, the
-   * exercise pointer, who is lifting — is written on. Returns the upgraded
+   * caller intent auto-arm could not know — the set's purpose, the watch
+   * config, the exercise pointer, who is lifting — is written on. A
+   * `'working'` purpose writes nothing, which is what an unclaimed auto-armed
+   * set already is. Returns the upgraded
    * set, or `undefined` when no set is active.
    */
   upgradeActiveSet(patch: {
-    isWarmup?: boolean;
+    setPurpose?: SetPurpose;
     watch?: WatchConfig;
     exerciseId?: string;
     lifter?: string;
@@ -748,7 +759,7 @@ export class LiveState {
     this.set = {
       ...this.set,
       upgradedAt: patch.upgradedAt,
-      ...(patch.isWarmup === true ? { isWarmup: true } : {}),
+      ...setPurposeFields(patch.setPurpose),
       ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
       // VW-169: the upgrade is the operator's chance to say "that was Jordan"
       // about a set the server auto-armed, so a lifter here REWRITES the

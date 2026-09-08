@@ -101,6 +101,24 @@ describe('report.session_results', () => {
     );
   });
 
+  // VMCP-02.84 — the ramp now labels its rungs `setPurpose: 'warmup'`; the
+  // count the coach reads must not change.
+  it("counts setPurpose 'warmup' rows as warm-ups, and excludes a probe from both", async () => {
+    const state = makeState({
+      sets: [
+        workingSet('w1', 70, 8, { setPurpose: 'warmup' }),
+        workingSet('w2', 100, 6, { setPurpose: 'warmup' }),
+        workingSet('p1', 185, 3, { setPurpose: 'probe' }),
+        workingSet('s1', 170, 12),
+        workingSet('s2', 170, 10),
+      ],
+    });
+
+    const results = await buildSessionResults(state, SESSION_ID);
+
+    expect(results.exercises[0]?.result).toBe('170 lb x 12\n170 lb x 10\nwarm-up: 2 sets');
+  });
+
   it('keeps only the top-load sets when the ramp-up was never flagged', async () => {
     // Arrange: the same ramp-up as above, with nobody having set `isWarmup`.
     const state = makeState({
