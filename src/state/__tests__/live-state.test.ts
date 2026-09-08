@@ -5,6 +5,7 @@
 // pair plus a final group for cross-cutting invariants (independence of
 // snapshots, stale-rep drop, null battery coercion).
 import { describe, expect, it } from 'vitest';
+import type { SetSummaryEvent } from '@voltras/node-sdk';
 import type { Rep, WorkoutSample } from '@voltras/workout-analytics';
 import {
   LiveState,
@@ -881,5 +882,61 @@ describe('LiveState', () => {
       expect(snap.chainTargetForceTenths).toBe(500);
       expect(snap.trainingModeRaw).toBe(1);
     });
+  });
+});
+
+describe('applySetSummary / consumeLatestSetSummary — firmware peaks', () => {
+  function makeSetSummary(overrides: Partial<SetSummaryEvent> = {}): SetSummaryEvent {
+    return {
+      schemaVersion: 1,
+      targetWeightTenths: 1700,
+      repCount: 7,
+      repDurationMs: 5730,
+      peakForceTenths: 886,
+      peakPowerRaw: 412,
+      raw: new Uint8Array(0),
+      ...overrides,
+    };
+  }
+
+  it('retains the firmware peaks and hands them back on consume', () => {
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet());
+    live.applySetSummary(makeSetSummary());
+
+    const consumed = live.consumeLatestSetSummary();
+    expect(consumed?.peakForceTenths).toBe(886);
+    expect(consumed?.peakPowerRaw).toBe(412);
+    // Still read-and-clear: a second consume returns nothing.
+    expect(live.consumeLatestSetSummary()).toBeUndefined();
+  });
+
+  it('omits peaks a frame did not carry rather than defaulting them to zero', () => {
+    // A synthetic or pre-0.13.0 frame has no peak fields. Storing 0 would be
+    // indistinguishable from a genuinely measured 0 further downstream.
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet());
+    const withoutPeaks = makeSetSummary();
+    delete (withoutPeaks as Partial<SetSummaryEvent>).peakForceTenths;
+    delete (withoutPeaks as Partial<SetSummaryEvent>).peakPowerRaw;
+    live.applySetSummary(withoutPeaks);
+
+    const consumed = live.consumeLatestSetSummary();
+    expect(consumed?.repDurationMs).toBe(5730);
+    expect(consumed).not.toHaveProperty('peakForceTenths');
+    expect(consumed).not.toHaveProperty('peakPowerRaw');
+  });
+
+  it('keeps a measured zero peak', () => {
+    const live = new LiveState();
+    live.startSession(makeSession());
+    live.startSet(makeSet());
+    live.applySetSummary(makeSetSummary({ peakForceTenths: 0, peakPowerRaw: 0 }));
+
+    const consumed = live.consumeLatestSetSummary();
+    expect(consumed?.peakForceTenths).toBe(0);
+    expect(consumed?.peakPowerRaw).toBe(0);
   });
 });

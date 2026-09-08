@@ -62,6 +62,39 @@ filter on `slot` to keep parallel rep streams apart.
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
 
+## The `device_set_summary` block on `set_ended`
+
+When the device closes the set itself, `set_ended` carries a `device_set_summary`
+block holding the firmware's own numbers for the set, alongside everything the
+server derived from telemetry:
+
+```jsonc
+{
+  "device_set_summary": {
+    "rep_count": 7, // the raw frame count, verbatim; meta.device_rep_count is reconciled
+    "rep_duration_ms": 5730, // a SET-level aggregate despite the name — not a per-rep figure
+    "target_weight_tenths": 200,
+    "schema_version": 1,
+    "peak_force_lbs": 88.6,
+    "peak_power_raw": 412,
+  },
+}
+```
+
+`peak_force_lbs` and `peak_power_raw` are present only when the frame carried them,
+and both are cross-checks rather than replacements for the analytics pipeline's own
+peaks:
+
+- `peak_force_lbs` is corroborated across nine archived capture sessions but is not
+  vendor-confirmed.
+- `peak_power_raw` has **unverified units**. It scales with rep speed the way power
+  should, but its magnitude has never been checked against an instrumented
+  reference, so it may be watts, centiwatts or another scaling. Treat it as a
+  relative quantity and do not present it to the lifter as watts.
+
+Both are persisted on the stored set as `firmwarePeakForceLbs` and
+`firmwarePeakPower`, so `set.get` and `session.get` return them too.
+
 ## The voice fast-path
 
 `system.listen_start` acts on two classes of utterance without a model turn. Safety

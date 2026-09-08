@@ -1244,6 +1244,8 @@ interface SetRow {
   sample_rate_hz: number | null;
   firmware_rep_count: number | null;
   firmware_summary_duration_ms: number | null;
+  firmware_peak_force_lbs: number | null;
+  firmware_peak_power: number | null;
   firmware_reps_json: string | null;
   bilateral_group_id: string | null;
   group_source: string | null;
@@ -1496,12 +1498,13 @@ export class SqliteSessionStore implements SessionStore {
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
           source, position_units, velocity_units, auto_created_by, upgraded, sample_rate_hz,
-          firmware_rep_count, firmware_summary_duration_ms, firmware_reps_json,
+          firmware_rep_count, firmware_summary_duration_ms,
+          firmware_peak_force_lbs, firmware_peak_power, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -1527,6 +1530,8 @@ export class SqliteSessionStore implements SessionStore {
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
+         firmware_peak_force_lbs = excluded.firmware_peak_force_lbs,
+         firmware_peak_power = excluded.firmware_peak_power,
          firmware_reps_json = excluded.firmware_reps_json,
          bilateral_group_id = excluded.bilateral_group_id,
          group_source = excluded.group_source,
@@ -1575,6 +1580,8 @@ export class SqliteSessionStore implements SessionStore {
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
+        s.firmwarePeakForceLbs ?? null,
+        s.firmwarePeakPower ?? null,
         s.firmwareRepsJson ?? null,
         s.bilateralGroupId ?? null,
         s.groupSource ?? null,
@@ -2808,6 +2815,10 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.firmware_summary_duration_ms !== null) {
     out.firmwareSummaryDurationMs = row.firmware_summary_duration_ms;
   }
+  if (row.firmware_peak_force_lbs !== null) {
+    out.firmwarePeakForceLbs = row.firmware_peak_force_lbs;
+  }
+  if (row.firmware_peak_power !== null) out.firmwarePeakPower = row.firmware_peak_power;
   if (row.firmware_reps_json !== null) out.firmwareRepsJson = row.firmware_reps_json;
   if (row.bilateral_group_id !== null) out.bilateralGroupId = row.bilateral_group_id;
   if (row.group_source === 'live' || row.group_source === 'inferred') {

@@ -64,6 +64,7 @@ class FakeVoltraSDKError extends Error {
 interface FakeListeners {
   rep: Array<(event: unknown) => void>;
   set: Array<(event: unknown) => void>;
+  setSummary: Array<(event: unknown) => void>;
   settings: Array<(s: unknown) => void>;
   conn: Array<(s: 'disconnected' | 'connecting' | 'authenticating' | 'connected') => void>;
 }
@@ -73,7 +74,13 @@ class FakeVoltraClient {
   connectionState: 'disconnected' | 'connecting' | 'authenticating' | 'connected' = 'disconnected';
   connectedDeviceId: string | null = null;
   settings: Record<string, unknown> | undefined = undefined;
-  readonly listeners: FakeListeners = { rep: [], set: [], settings: [], conn: [] };
+  readonly listeners: FakeListeners = {
+    rep: [],
+    set: [],
+    setSummary: [],
+    settings: [],
+    conn: [],
+  };
 
   onPerRep(cb: (event: unknown) => void): () => void {
     this.listeners.rep.push(cb);
@@ -86,8 +93,15 @@ class FakeVoltraClient {
   onSummary(_cb: (event: unknown) => void): () => void {
     return () => undefined;
   }
-  onSetSummary(_cb: (event: unknown) => void): () => void {
+  // The SDK's own mock adapter never emits this frame, so the device-driven
+  // set close is injected here instead of through `mock.*` — see the
+  // firmware-peaks test below.
+  onSetSummary(cb: (event: unknown) => void): () => void {
+    this.listeners.setSummary.push(cb);
     return () => undefined;
+  }
+  fireSetSummary(event: Record<string, unknown>): void {
+    for (const cb of this.listeners.setSummary) cb(event);
   }
   onSettingsUpdate(cb: (s: unknown) => void): () => void {
     this.listeners.settings.push(cb);
@@ -222,7 +236,7 @@ const { wireEventBridge } = await import('../../state/event-bridge.js');
 const { errorResult } = await import('../../tools/helpers.js');
 const { registerDeviceTools } = await import('../../tools/device-tools.js');
 const { registerSessionTools } = await import('../../tools/session-tools.js');
-const { registerSetTools } = await import('../../tools/set-tools.js');
+const { registerSetTools, finalizeSet } = await import('../../tools/set-tools.js');
 const { registerMetricsTools } = await import('../../tools/metrics-tools.js');
 const { registerExerciseTools } = await import('../../tools/exercise-tools.js');
 const { registerMockTools } = await import('../../tools/mock-tools.js');
@@ -230,6 +244,7 @@ const { registerDeviceResource } = await import('../../resources/device-resource
 const { registerSessionResource } = await import('../../resources/session-resource.js');
 const { registerSetResource } = await import('../../resources/set-resource.js');
 
+import type { DatabaseSync } from 'node:sqlite';
 import type { ServerState } from '../../state/server-state.js';
 import type { ChannelPublisher } from '../../state/channel-publisher.js';
 import type { ToolResult } from '../../tools/helpers.js';
@@ -378,6 +393,11 @@ async function call(
     isError: result.isError,
     payload: JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>,
   };
+}
+
+/** The store's own connection, so a test can assert on column names. */
+function rawDb(store: ServerState['store']): DatabaseSync {
+  return (store as unknown as { db: DatabaseSync }).db;
 }
 
 async function readJson(client: Client, uri: string): Promise<unknown> {
@@ -562,5 +582,94 @@ describe('VMCP full mock-adapter flow (integration)', () => {
     });
     expect(readinessMissing.isError).toBe(true);
     expect(readinessMissing.payload.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('firmware peak force / peak power persistence (VMCP-02.87)', () => {
+  let h: Harness;
+
+  beforeAll(async () => {
+    h = await buildHarness();
+    getSlot(h.state).live.applySettings({
+      connected: true,
+      weightLbs: 170,
+      trainingMode: 'WeightTraining',
+    });
+  });
+
+  afterAll(async () => {
+    await h.cleanup();
+  });
+
+  /** The client the bridge subscribed to — see the two-client note in the header. */
+  function bridgeClient(): FakeVoltraClient {
+    return getSlot(h.state).client as unknown as FakeVoltraClient;
+  }
+
+  it('stores the device peaks on a set the device closed itself', async () => {
+    await call(h.client, 'session.start', { exerciseName: 'Bench Press' });
+    const setStart = await call(h.client, 'set.start');
+    const setId = setStart.payload.setId as string;
+    getSlot(h.state).live.appendRep(syntheticRep(1));
+
+    // The set-summary frame the device sends when it closes the set. 886
+    // tenths is 88.6 lb; the power figure is stored in the device's own
+    // scale because its unit is unverified.
+    bridgeClient().fireSetSummary({
+      schemaVersion: 1,
+      targetWeightTenths: 1700,
+      repCount: 1,
+      repDurationMs: 5730,
+      peakForceTenths: 886,
+      peakPowerRaw: 412,
+      raw: new Uint8Array(0),
+    });
+    await vi.waitFor(async () => {
+      expect(await h.state.store.getSet(setId)).toBeDefined();
+    });
+
+    const stored = await h.state.store.getSet(setId);
+    expect(stored?.firmwarePeakForceLbs).toBe(88.6);
+    expect(stored?.firmwarePeakPower).toBe(412);
+
+    // And on the columns themselves, not just the mapped object.
+    const row = rawDb(h.state.store)
+      .prepare(`SELECT firmware_peak_force_lbs, firmware_peak_power FROM sets WHERE id = ?`)
+      .get(setId) as { firmware_peak_force_lbs: number; firmware_peak_power: number };
+    expect(row.firmware_peak_force_lbs).toBe(88.6);
+    expect(row.firmware_peak_power).toBe(412);
+
+    await call(h.client, 'session.end');
+  });
+
+  it('stores NULL for both when a set times out with no summary frame', async () => {
+    await call(h.client, 'session.start', { exerciseName: 'Bench Press' });
+    const setStart = await call(h.client, 'set.start');
+    const setId = setStart.payload.setId as string;
+    getSlot(h.state).live.appendRep(syntheticRep(1));
+
+    // Exactly the close the bridge's inactivity watchdog performs once
+    // `SET_INACTIVITY_TIMEOUT_MS` elapses, without waiting 90 s of wall clock.
+    await finalizeSet(h.state, 'primary', {
+      cause: 'tool',
+      disengageMotor: true,
+      partialReason: 'inactivity_timeout',
+    });
+
+    const stored = await h.state.store.getSet(setId);
+    expect(stored?.partialReason).toBe('inactivity_timeout');
+    // No fabricated zeros: a set with no summary frame has no peaks.
+    expect(stored?.firmwarePeakForceLbs).toBeUndefined();
+    expect(stored?.firmwarePeakPower).toBeUndefined();
+    const row = rawDb(h.state.store)
+      .prepare(`SELECT firmware_peak_force_lbs, firmware_peak_power FROM sets WHERE id = ?`)
+      .get(setId) as {
+      firmware_peak_force_lbs: number | null;
+      firmware_peak_power: number | null;
+    };
+    expect(row.firmware_peak_force_lbs).toBeNull();
+    expect(row.firmware_peak_power).toBeNull();
+
+    await call(h.client, 'session.end');
   });
 });

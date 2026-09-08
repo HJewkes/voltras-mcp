@@ -526,6 +526,10 @@ export interface DeviceSetSummaryBlock {
   repDurationMs: number;
   targetWeightTenths: number;
   schemaVersion: number;
+  /** Firmware peak force for the set, in tenths of a pound. */
+  peakForceTenths?: number;
+  /** Firmware peak power for the set, raw. Units UNVERIFIED — never watts. */
+  peakPowerRaw?: number;
 }
 
 /**
@@ -652,6 +656,14 @@ export function buildSetEndedPayload(
             rep_duration_ms: deviceSetSummary.repDurationMs,
             target_weight_tenths: deviceSetSummary.targetWeightTenths,
             schema_version: deviceSetSummary.schemaVersion,
+            // Force is published in lb; power is published raw because its
+            // unit is unverified. Both omitted when the frame carried none.
+            ...(deviceSetSummary.peakForceTenths !== undefined
+              ? { peak_force_lbs: deviceSetSummary.peakForceTenths / 10 }
+              : {}),
+            ...(deviceSetSummary.peakPowerRaw !== undefined
+              ? { peak_power_raw: deviceSetSummary.peakPowerRaw }
+              : {}),
           },
         }
       : {}),
