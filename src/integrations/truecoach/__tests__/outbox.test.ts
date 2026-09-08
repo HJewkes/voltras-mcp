@@ -7,7 +7,8 @@
 //
 // Every case writes into a fresh temp directory; nothing touches `~/.voltras`.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -24,6 +25,12 @@ import type { ServerState } from '../../../state/server-state.js';
 import type { StoredSession, StoredSet } from '../../../store/types.js';
 import { writeSessionOutbox } from '../outbox.js';
 
+// The submit-on-end trigger spawns a real browser job; the child is mocked so
+// the test asserts the contract (once, with the session id) and starts nothing.
+vi.mock('node:child_process', () => ({
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
+}));
+
 const SESSION_ID = 'session-outbox-1';
 const ROW_ID = 'seated-row';
 /** Local noon on a past date: the rendered `date` is zone-independent, and
@@ -34,6 +41,7 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'vmcp-outbox-'));
+  vi.mocked(spawn).mockClear();
 });
 
 afterEach(() => {
@@ -52,10 +60,19 @@ function makeSet(overrides: Partial<StoredSet> & { id: string }): StoredSet {
   };
 }
 
-function makeState(sets: StoredSet[], mode: 'on' | 'off'): ServerState {
+function makeState(
+  sets: StoredSet[],
+  mode: 'on' | 'off',
+  submitOnEnd: 'on' | 'off' = 'off',
+): ServerState {
   const session: StoredSession = { id: SESSION_ID, startedAt: ENDED_AT, endedAt: ENDED_AT };
   return {
-    config: { adapter: 'node', trueCoachOutbox: mode, trueCoachOutboxDir: dir },
+    config: {
+      adapter: 'node',
+      trueCoachOutbox: mode,
+      trueCoachOutboxDir: dir,
+      trueCoachSubmitOnEnd: submitOnEnd,
+    },
     store: {
       getSession: () => Promise.resolve(session),
       getSetsForSession: () => Promise.resolve(sets),
@@ -169,5 +186,53 @@ describe('coach-results outbox', () => {
     // Act + Assert
     await expect(writeSessionOutbox(state, SESSION_ID)).resolves.toBeUndefined();
     expect(readdirSync(dir)).toEqual(['not-a-directory']);
+  });
+});
+
+describe('VMCP_TRUECOACH_SUBMIT_ON_END', () => {
+  it('spawns nothing by default', async () => {
+    // Arrange
+    const state = makeState(WORKING_SETS, 'on');
+
+    // Act
+    await writeSessionOutbox(state, SESSION_ID);
+
+    // Assert
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('spawns the submitter once, detached, for the session it just wrote', async () => {
+    // Arrange
+    const state = makeState(WORKING_SETS, 'on', 'on');
+
+    // Act
+    await writeSessionOutbox(state, SESSION_ID);
+
+    // Assert
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [command, args, options] = vi.mocked(spawn).mock.calls[0] as [
+      string,
+      string[],
+      { detached: boolean; stdio: string },
+    ];
+    expect(command).toBe(process.execPath);
+    expect(args[0]).toMatch(/tools\/truecoach-submit\/src\/cli\.js$/);
+    expect(args.slice(1)).toEqual(['--submit', '--session', SESSION_ID]);
+    expect(options).toMatchObject({ detached: true, stdio: 'ignore' });
+  });
+
+  it('spawns nothing when there was no entry to submit', async () => {
+    // Arrange: warm-ups only, so no file is written.
+    const state = makeState(
+      [makeSet({ id: 'w1', weightLbs: 70, firmwareRepCount: 8, isWarmup: true })],
+      'on',
+      'on',
+    );
+
+    // Act
+    await writeSessionOutbox(state, SESSION_ID);
+
+    // Assert
+    expect(spawn).not.toHaveBeenCalled();
   });
 });

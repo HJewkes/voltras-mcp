@@ -24,6 +24,7 @@ describe('loadConfig', () => {
       autoArm: 'on',
       trueCoachOutbox: 'off',
       trueCoachOutboxDir: '/home/test/.voltras/truecoach-outbox',
+      trueCoachSubmitOnEnd: 'off',
       trueCoach: {
         username: undefined,
         password: undefined,
@@ -201,6 +202,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/on/);
+  });
+
+  it('defaults VMCP_TRUECOACH_SUBMIT_ON_END to "off" — the write-back is opt-in', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.trueCoachSubmitOnEnd).toBe('off');
+  });
+
+  it('honors VMCP_TRUECOACH_SUBMIT_ON_END when provided', () => {
+    const cfg = loadConfig({ VMCP_TRUECOACH_SUBMIT_ON_END: 'on', HOME: '/home/test' });
+    expect(cfg.trueCoachSubmitOnEnd).toBe('on');
+  });
+
+  it('throws on invalid VMCP_TRUECOACH_SUBMIT_ON_END, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_TRUECOACH_SUBMIT_ON_END: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_TRUECOACH_SUBMIT_ON_END: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_TRUECOACH_SUBMIT_ON_END: 'yes' })).toThrow(/on/);
   });
 
   it('throws on invalid VMCP_CUES_MIDSET, naming the bad value and listing valid options', () => {

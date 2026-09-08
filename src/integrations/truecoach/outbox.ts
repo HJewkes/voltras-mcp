@@ -1,10 +1,16 @@
 // The coach-results outbox: one JSON file per ended session, on local disk.
 //
-// LOCAL ONLY. This writes a file under `~/.voltras/` and does nothing else —
-// no upload, no network call, no browser automation. TrueCoach publishes no
-// write API and its terms prohibit third-party applications that interact with
-// the service, so the write direction stops at a file a human can read or
-// paste. The directory name records the intent; it does not create a pipe.
+// LOCAL by default. This writes a file under `~/.voltras/` and does nothing
+// else — no upload, no network call, no browser automation. TrueCoach
+// publishes no write API and its terms prohibit third-party applications that
+// interact with the service, so the write direction stops at a file a human
+// can read or paste.
+//
+// `VMCP_TRUECOACH_SUBMIT_ON_END='on'` is the one exception, and it is off by
+// default: it hands the entry to `tools/truecoach-submit`, a standalone
+// Playwright job that is not part of this bundle. Turning it on accepts the
+// terms-of-service risk documented in that tool's README. Nothing in this
+// process ever reaches TrueCoach itself.
 //
 // The payload is exactly what `report.session_results` returns, plus
 // `generatedAt`. One rendering function serves both, so the file on disk and
@@ -15,8 +21,10 @@
 // full disk or a read-only home must not turn a completed workout into an
 // error.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { log } from '../../logger.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -41,9 +49,39 @@ export async function writeSessionOutbox(state: ServerState, sessionId: string):
     }
     const path = writePending(state.config.trueCoachOutboxDir, results);
     log.info('truecoach outbox: wrote', path);
+    if (state.config.trueCoachSubmitOnEnd === 'on') spawnSubmitter(sessionId);
   } catch (err) {
     log.warn('truecoach outbox: could not write results for session', sessionId, String(err));
   }
+}
+
+/**
+ * Hand the entry to `tools/truecoach-submit`, once, detached.
+ *
+ * One trigger per written entry: no retry, no polling, no interval. The child
+ * is unref'd because `session.end` must not wait on a browser, and a failed
+ * spawn is logged rather than raised — the entry is still on disk, and the
+ * scheduled run or a manual `truecoach-submit` picks it up unchanged.
+ */
+function spawnSubmitter(sessionId: string): void {
+  const script = submitterPath();
+  if (!existsSync(script)) {
+    log.warn('truecoach submit-on-end: no submitter at', script, '— entry left pending');
+    return;
+  }
+  const child = spawn(process.execPath, [script, '--submit', '--session', sessionId], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.on('error', (err) => log.warn('truecoach submit-on-end: spawn failed', String(err)));
+  child.unref();
+  log.info('truecoach submit-on-end: spawned submitter for session', sessionId);
+}
+
+/** Three levels up from this module is the package root, from `src/` or `dist/`. */
+function submitterPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, '..', '..', '..', 'tools', 'truecoach-submit', 'src', 'cli.js');
 }
 
 /** `<dir>/pending/<sessionId>.json`, creating the directory on demand. */
