@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      // The SPA is react-native-web; the same alias `src/dashboard/spa/vite.config.ts`
+      // sets, so a test can render an SPA component with `renderToStaticMarkup`.
+      'react-native': 'react-native-web',
     },
   },
   test: {
@@ -20,7 +23,9 @@ export default defineConfig({
       // so tests can `vi.spyOn(analytics, 'foo')` instead of rewriting every
       // call to a `vi.mock(...)` factory.
       deps: {
-        inline: ['@voltras/workout-analytics'],
+        // titan ships untransformed react-native syntax; inline it so the render
+        // tests can mount its components under the node environment.
+        inline: ['@voltras/workout-analytics', '@titan-design/react-ui'],
       },
     },
     coverage: {

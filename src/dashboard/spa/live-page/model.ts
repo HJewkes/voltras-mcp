@@ -423,10 +423,47 @@ export function derivePrescription(
 ): PrescriptionCells | null {
   const { plannedSets } = session;
   const reps = plannedRepTarget(session) ?? session.targetReps;
-  const weightLbs = session.plannedExercises.find((e) => e.active)?.weightLbs ?? session.weightLbs;
   if (plannedSets === null || reps === null) return null;
-  const { weight, unit } = summaryLoad(weightLbs, displayUnit);
+  const { weight, unit } = summaryLoad(prescribedLoadLbs(session), displayUnit);
   return { sets: plannedSets, reps, load: weight, unit };
+}
+
+/**
+ * The load cell's source, prescribed-first: the active planned exercise's target load, else
+ * the live cascade weight, else `null` for "genuinely unknown". Shared so the page header and
+ * the rest recap cannot disagree about the same set's load.
+ */
+function prescribedLoadLbs(session: SessionModel): number | null {
+  return session.plannedExercises.find((e) => e.active)?.weightLbs ?? session.weightLbs;
+}
+
+/**
+ * The REST recap heading's `sets × reps @ load` cells (VMCP-03.05).
+ *
+ * Same prescribed-first sourcing as {@link derivePrescription}; the recap used to run its own
+ * path (`formatMass(session.weightLbs ?? 0)`) and printed `2 × — @ 0 lbs` for a set whose plan
+ * said `2 × 12–15 @ 45 lbs` — a fabricated zero where the plan had a real number.
+ *
+ * It differs from the header in ONE way: the recap always has a heading to draw (it renders
+ * only once a set is logged), so a missing rep target or load degrades to `—` rather than
+ * hiding the lockup. `sets` stays NUMERIC because titan's `SetsRepsLoadProps.sets` is `number`
+ * — only `reps` and `load` accept a string placeholder — and the count is genuinely known
+ * here: the prescribed total when planned, else the sets actually logged.
+ */
+export function deriveRecapPrescription(
+  session: SessionModel,
+  loggedSets: number,
+  displayUnit: MassUnit = 'lbs',
+): PrescriptionCells {
+  const prescribed = derivePrescription(session, displayUnit);
+  if (prescribed !== null) return prescribed;
+  const { weight, unit } = summaryLoad(prescribedLoadLbs(session), displayUnit);
+  return {
+    sets: session.plannedSets ?? loggedSets,
+    reps: plannedRepTarget(session) ?? session.targetReps ?? NO_VALUE,
+    load: weight,
+    unit,
+  };
 }
 
 /**
