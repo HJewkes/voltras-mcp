@@ -19,6 +19,8 @@
 // task; the alias will be unified once both branches merge.
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
+import type { FailureVerdict } from './failure-harvest.js';
+
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
 
@@ -736,12 +738,68 @@ export interface StoredExerciseBaseline {
   anchorCount: number;
   /** Coefficient of variation of anchor terminal velocity; absent below two anchors. */
   anchorSpread?: number;
+  /**
+   * When the most recent counting anchor was observed. Absent when the key has
+   * none. Answers "how long since we last saw this user fail here", which
+   * `anchorCount` alone cannot: three anchors from last spring and three from
+   * last week are the same count and different evidence.
+   */
+  lastAnchorAt?: string;
   firstObservedAt?: string;
   updatedAt: string;
   invalidatedAt?: string;
   invalidationReason?: string;
   /** Which rule set produced `state`. A row is only interpretable against it. */
   algorithmVersion: string;
+}
+
+/**
+ * A persisted `failure_anchors` row (B59 / VW-174) — one set the harvest
+ * filter examined and found to be a candidate.
+ *
+ * HARVESTED, NEVER PRESCRIBED. `source: 'harvested'` is the only value any
+ * writer produces today: the product does not ask anyone to train to failure,
+ * it labels a failure that already happened. `'prescribed'` exists in the
+ * schema for an opt-in probe that has not been built and may never be.
+ *
+ * ABORTS ARE STORED TOO, and are what makes the hazard filter auditable: a set
+ * cut short by pain looks exactly like a failure to a naive stall test, so it
+ * is recorded with `filterVerdict: 'abort'` and its inputs, and never counted.
+ * Sets that were never candidates at all (warm-ups, short sets) are not
+ * written — a row per closed set would be noise, not history.
+ */
+export interface StoredFailureAnchor {
+  id: string;
+  userId: string;
+  /** The set this verdict is about. */
+  setId: string;
+  exerciseId: string;
+  /** Inferred physical configuration. Always absent until setup clustering ships. */
+  setupId?: string;
+  side?: StoredSide;
+  observedAt: string;
+  source: 'harvested' | 'prescribed';
+  /** Final-rep concentric mean velocity, m/s. Only anchors that carry one contribute spread. */
+  terminalVelocityMps?: number;
+  loadLbs?: number;
+  repCount?: number;
+  /** Recorded so the selection bias in harvested anchors can be corrected later. */
+  setIndexInSession?: number;
+  /** Seconds from session start to this set's start; same purpose as the index. */
+  sessionPositionSec?: number;
+  /** The measurements behind the verdict, so a later filter version can re-score it. */
+  filterInputs: Record<string, unknown>;
+  filterVerdict: 'failure' | 'abort' | 'not_candidate';
+  /** Which filter produced `filterVerdict`, thresholds included. */
+  filterVersion: string;
+  selfReportedRir?: number;
+}
+
+/** Verdict tally from a reharvest pass over one key's sets. */
+export interface FailureHarvestCounts {
+  failure: number;
+  abort: number;
+  notCandidate: number;
 }
 
 /**
@@ -997,6 +1055,35 @@ export interface SessionStore {
    * and writes one row. The returned row is the freshly-written one.
    */
   recalcBaseline(key: BaselineKey): Promise<StoredExerciseBaseline>;
+
+  // --- Failure anchors (B59 / VW-174) ---
+
+  /**
+   * Upsert one anchor row, keyed on `(setId, filterVersion)`: re-evaluating a
+   * set under the SAME filter version rewrites its verdict in place, while a
+   * new filter version adds a row beside the old one so a threshold change is
+   * re-scorable against history rather than destructive of it.
+   *
+   * `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE` — see `putSession`.
+   */
+  putFailureAnchor(anchor: StoredFailureAnchor): Promise<void>;
+
+  /**
+   * Run the harvest filter over one closed set and persist the verdict when
+   * the set was a candidate. Returns the verdict either way; `'not_candidate'`
+   * writes nothing.
+   *
+   * Retrospective by construction: it reads reps that were recorded anyway and
+   * never asks for a set to be taken anywhere.
+   */
+  harvestFailureAnchor(set: StoredSet): Promise<FailureVerdict>;
+
+  /**
+   * Re-run the harvest filter over every working set for one key. Idempotent
+   * at a fixed filter version, so back-filling an existing corpus is safe to
+   * repeat.
+   */
+  reharvestExercise(key: BaselineKey): Promise<FailureHarvestCounts>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;

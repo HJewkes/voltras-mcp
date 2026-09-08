@@ -208,7 +208,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(11);
+      expect(version.user_version).toBe(12);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -575,7 +575,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(11);
+        expect(version.user_version).toBe(12);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -676,7 +676,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(11);
+        expect(version.user_version).toBe(12);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -736,7 +736,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(11);
+        expect(version.user_version).toBe(12);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -822,7 +822,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(11);
+        expect(version.user_version).toBe(12);
       } finally {
         void opened.close();
       }
@@ -860,7 +860,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(11);
+        expect(version.user_version).toBe(12);
       } finally {
         void opened.close();
       }
@@ -928,6 +928,72 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
       expect(normalised.reps[0].concentric.peakVelocity).toBe(1.2);
     } finally {
       void store.close();
+    }
+  });
+});
+
+describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () => {
+  it('opens a real v11 file, adds the unique index and the column, and stamps 12', () => {
+    // Built through open() and then downgraded, so the seed is the genuine v11
+    // production shape rather than a hand-written approximation of it. The
+    // version allowlist is enumerated by hand and 11 moved off SCHEMA_VERSION
+    // in this change — the failure #246 shipped and had to fix in 77ba2fc.
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v12-from-v11-'));
+    const path = join(dir, 'real-v11.sqlite');
+    try {
+      const fresh = SqliteSessionStore.open(path);
+      void fresh.close();
+      const seed = new DatabaseSync(path);
+      seed.exec('DROP INDEX idx_failure_anchors_set_filter');
+      seed.exec('ALTER TABLE exercise_baselines DROP COLUMN last_anchor_at');
+      seed.exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', '2026-09-01T10:00:00.000Z')`);
+      seed.exec('PRAGMA user_version = 11');
+      seed.close();
+
+      const opened = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(opened);
+        expect(columnNames(raw, 'exercise_baselines')).toContain('last_anchor_at');
+        const indexes = raw.prepare(`PRAGMA index_list(failure_anchors)`).all() as {
+          name: string;
+          unique: number;
+        }[];
+        const unique = indexes.find((i) => i.name === 'idx_failure_anchors_set_filter');
+        expect(unique?.unique).toBe(1);
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(12);
+        // The pre-existing row survived the additive migration untouched.
+        const sessions = raw.prepare(`SELECT id FROM sessions`).all() as { id: string }[];
+        expect(sessions.map((s) => s.id)).toEqual(['s1']);
+      } finally {
+        void opened.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op on a second open of an already-migrated file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vmcp-v12-idem-'));
+    const path = join(dir, 'v12.sqlite');
+    try {
+      const first = SqliteSessionStore.open(path);
+      void first.close();
+      const second = SqliteSessionStore.open(path);
+      try {
+        const raw = rawDb(second);
+        expect(columnNames(raw, 'exercise_baselines')).toContain('last_anchor_at');
+        const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
+          user_version?: number;
+        };
+        expect(version.user_version).toBe(12);
+      } finally {
+        void second.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

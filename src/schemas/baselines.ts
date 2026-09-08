@@ -19,4 +19,15 @@ const BaselineKeyFields = {
 
 export const BaselinesGetInput = z.object(BaselineKeyFields).strict();
 
-export const BaselinesRecalcInput = z.object(BaselineKeyFields).strict();
+export const BaselinesRecalcInput = z
+  .object({
+    ...BaselineKeyFields,
+    /**
+     * Re-run the failure-anchor harvest filter over the key's stored sets
+     * before deriving. Off by default: set close already harvests the set it
+     * just wrote, so this is for history recorded before that hook shipped, or
+     * for a filter-version bump that makes old verdicts re-scorable.
+     */
+    reharvest: z.boolean().optional(),
+  })
+  .strict();

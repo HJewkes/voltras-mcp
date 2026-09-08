@@ -22,7 +22,11 @@ import {
   type FeatureGateVerdict,
   type GatedFeature,
 } from '../store/baseline-gate.js';
-import { LOCAL_USER_ID, type StoredExerciseBaseline } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type FailureHarvestCounts,
+  type StoredExerciseBaseline,
+} from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
 interface PlaceholderTools {
@@ -54,7 +58,11 @@ const RECALC_BASELINE_DESCRIPTION =
   'the key it touched, so this only matters for two cases: history recorded before that hook ' +
   'shipped, or an algorithm-version bump that makes a stored `state` stale against the current ' +
   'thresholds. Prefer `baselines.get` for a normal read; only call this when you specifically ' +
-  'need to force a fresh derivation.';
+  'need to force a fresh derivation. `reharvest: true` additionally re-runs the failure-anchor ' +
+  "filter over the key's stored working sets and returns the verdict tally — a retrospective " +
+  'back-fill over history already recorded. It never asks anyone to train to failure, and a ' +
+  'harvested anchor is a measurement, not a goal: do not report it as an achievement or ' +
+  'encourage the user to produce more.';
 
 export function registerBaselineTools(
   _server: McpServer,
@@ -139,11 +147,15 @@ async function getBaseline(
 async function recalcBaseline(
   state: ServerState,
   input: z.infer<typeof BaselinesRecalcInput>,
-): Promise<{ baseline: StoredExerciseBaseline }> {
-  const baseline = await state.store.recalcBaseline({
+): Promise<{ baseline: StoredExerciseBaseline; harvest?: FailureHarvestCounts }> {
+  const key = {
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
     ...(input.side !== undefined ? { side: input.side } : {}),
-  });
-  return { baseline };
+  };
+  // Harvest BEFORE deriving, so the recalc that follows reads the anchors this
+  // pass just wrote rather than the corpus as it stood a call ago.
+  const harvest = input.reharvest === true ? await state.store.reharvestExercise(key) : undefined;
+  const baseline = await state.store.recalcBaseline(key);
+  return harvest === undefined ? { baseline } : { baseline, harvest };
 }

@@ -66,6 +66,19 @@ export interface FeatureGateVerdict {
    * it. Gating is state-only.
    */
   confidence: number | null;
+  /**
+   * Failure anchors backing the row, as counted by the harvest writer (B59 /
+   * VW-174). `null` when there is no row to count from.
+   *
+   * REPORTED, NEVER GATED ON. The activation decision stays state-only —
+   * `state` already encodes the count, the spread and the session spread
+   * together, and re-deriving activation from a bare count here would let a
+   * key with three disagreeing anchors speak as loudly as one with three that
+   * agree. This is here so a caller can say WHY a gate reads as it does.
+   */
+  anchorCount: number | null;
+  /** When the most recent anchor landed. Absent when the key has none. */
+  lastAnchorAt?: string;
   requiredState: BaselineState;
   /** Internal-facing. Explains the decision for logs and debugging. */
   reasoning: string;
@@ -150,6 +163,7 @@ export function deriveFeatureGate(
       activation: 'withheld',
       observedState: null,
       confidence: null,
+      anchorCount: null,
       requiredState,
       reasoning: `${feature} requires ${requiredState}; no baseline row has ever been computed for this key, so there is no state to grade`,
       userMessage: NO_BASELINE_MESSAGE,
@@ -175,10 +189,12 @@ export function deriveFeatureGate(
     activation,
     observedState,
     confidence: baseline.confidence ?? null,
+    anchorCount: baseline.anchorCount,
     requiredState,
-    reasoning: explain(feature, observedState, rank, requiredState, fullRank, activation, stale),
+    reasoning: `${explain(feature, observedState, rank, requiredState, fullRank, activation, stale)}; ${String(baseline.anchorCount)} failure anchor(s) back this row`,
     userMessage: STATE_MESSAGES[observedState],
   };
+  if (baseline.lastAnchorAt !== undefined) verdict.lastAnchorAt = baseline.lastAnchorAt;
   if (stale && baseline.invalidatedAt !== undefined) {
     verdict.staleSince = baseline.invalidatedAt;
   }
