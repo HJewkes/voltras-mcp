@@ -126,6 +126,9 @@ export const CORE_TOOL_NAMES = [
   // (see src/tools/truecoach-tools.ts). Never writes to TrueCoach, and only
   // runs when called — there is no background sync anywhere in this repo.
   'truecoach.import_week',
+  // Per-exercise result strings for one ended session, in the free-text idiom
+  // a coach reads (see src/tools/report-tools.ts). Read-only and local.
+  'report.session_results',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -296,6 +299,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // `write`: it upserts the plan tree in SQLite. `dryRun: true` writes
   // nothing, but the classification describes the tool, not one argument.
   'truecoach.import_week': 'write',
+
+  // Reads stored sets and returns strings. No device traffic, no row moves.
+  'report.session_results': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

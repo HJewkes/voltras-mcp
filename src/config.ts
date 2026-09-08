@@ -11,12 +11,15 @@
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
+//   - VMCP_TRUECOACH_OUTBOX            — 'on' | 'off', default 'off'.
+//   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
 //   - VMCP_TRUECOACH_*                 — read-only TrueCoach pull, see TrueCoachConfig.
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
 // VMCP_REP_CORRECTIONS or VMCP_AUTO_ARM is set to an unrecognized value so the
-// failure surfaces before bootstrapState begins.
+// failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
+// on the same terms.
 
 import { homedir } from 'node:os';
 
@@ -110,6 +113,17 @@ export type CuesMidSetMode = 'off' | 'on';
 export type AutoArmMode = 'off' | 'on';
 
 /**
+ * Whether `session.end` drops the session's rendered coach results into the
+ * local outbox directory (`src/integrations/truecoach/outbox.ts`).
+ *   - `'off'` (DEFAULT) — nothing is written. `report.session_results` still
+ *     renders on demand; this flag only governs the automatic file drop.
+ *   - `'on'` — one JSON file per ended session under
+ *     `<VMCP_TRUECOACH_OUTBOX_DIR>/pending/`. Local only: the file is written
+ *     for a human to read or paste, and nothing in this repo uploads it.
+ */
+export type TrueCoachOutboxMode = 'off' | 'on';
+
+/**
  * Credentials and paths for the read-only TrueCoach pull (`truecoach.import_week`).
  *
  * Every field is optional and every field is absent by default: with no
@@ -146,6 +160,8 @@ export interface Config {
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
   readonly autoArm: AutoArmMode;
+  readonly trueCoachOutbox: TrueCoachOutboxMode;
+  readonly trueCoachOutboxDir: string;
   readonly trueCoach: TrueCoachConfig;
 }
 
@@ -189,6 +205,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (autoArm !== 'off' && autoArm !== 'on') {
     throw new Error(`Invalid VMCP_AUTO_ARM="${autoArm}". Must be "off" or "on".`);
   }
+  const trueCoachOutbox = env.VMCP_TRUECOACH_OUTBOX ?? 'off';
+  if (trueCoachOutbox !== 'off' && trueCoachOutbox !== 'on') {
+    throw new Error(`Invalid VMCP_TRUECOACH_OUTBOX="${trueCoachOutbox}". Must be "off" or "on".`);
+  }
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -203,6 +223,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cues,
     cuesMidSet,
     autoArm,
+    trueCoachOutbox,
+    trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
     trueCoach: loadTrueCoachConfig(env, home),
   }) satisfies Config;
 }

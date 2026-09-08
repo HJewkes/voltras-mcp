@@ -22,6 +22,8 @@ describe('loadConfig', () => {
       cues: 'off',
       cuesMidSet: 'off',
       autoArm: 'on',
+      trueCoachOutbox: 'off',
+      trueCoachOutboxDir: '/home/test/.voltras/truecoach-outbox',
       trueCoach: {
         username: undefined,
         password: undefined,
@@ -183,6 +185,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/yes/);
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/off/);
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/on/);
+  });
+
+  it('defaults VMCP_TRUECOACH_OUTBOX to "off" — the file drop is opt-in', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.trueCoachOutbox).toBe('off');
+  });
+
+  it('honors VMCP_TRUECOACH_OUTBOX_DIR when provided', () => {
+    const cfg = loadConfig({ VMCP_TRUECOACH_OUTBOX_DIR: '/elsewhere/outbox', HOME: '/home/test' });
+    expect(cfg.trueCoachOutboxDir).toBe('/elsewhere/outbox');
+  });
+
+  it('throws on invalid VMCP_TRUECOACH_OUTBOX, naming the bad value and listing valid options', () => {
+    expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/yes/);
+    expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/off/);
+    expect(() => loadConfig({ VMCP_TRUECOACH_OUTBOX: 'yes' })).toThrow(/on/);
   });
 
   it('throws on invalid VMCP_CUES_MIDSET, naming the bad value and listing valid options', () => {

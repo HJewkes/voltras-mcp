@@ -12,7 +12,10 @@
 // The MCP `RegisteredTool` is faked with the minimum surface that
 // `registerSessionTools` actually consumes (`update({ callback })`); the
 // real SDK is mocked so the static import chain doesn't pull native peers.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Rep } from '@voltras/workout-analytics';
 import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -958,5 +961,89 @@ describe('session.list', () => {
     const r = await h.invoke('session.list', {});
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual([]);
+  });
+});
+
+// ── Coach-results outbox on session.end ─────────────────────────────────────
+//
+// The rendering itself is covered by report-tools.test.ts and the writer's own
+// skip conditions by integrations/truecoach/__tests__/outbox.test.ts. What is
+// specific to this file is the WIRING: that `session.end` triggers the write
+// after the session row lands, and that a failed write cannot fail the close.
+describe('session.end coach-results outbox', () => {
+  let h: Harness;
+  let dir: string;
+
+  beforeEach(() => {
+    h = setup();
+    dir = mkdtempSync(join(tmpdir(), 'vmcp-session-outbox-'));
+    // The default harness config is empty; the outbox reads these two keys.
+    (h.state as { config: unknown }).config = {
+      adapter: 'node',
+      trueCoachOutbox: 'on',
+      trueCoachOutboxDir: dir,
+    };
+    // The writer re-reads the session it just persisted.
+    let saved: StoredSession | undefined;
+    h.store.putSession.mockImplementation((s: StoredSession) => {
+      saved = s;
+      return Promise.resolve();
+    });
+    h.store.getSession.mockImplementation(() => Promise.resolve(saved));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes the ended session to the outbox', async () => {
+    // Arrange
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const sessionId = h.live.session!.sessionId;
+    h.store.getSetsForSession.mockResolvedValue([
+      makeStoredSet('s1', sessionId, {
+        weightLbs: 170,
+        firmwareRepCount: 12,
+        exerciseId: 'bench-press',
+      }),
+    ]);
+
+    // Act
+    const r = await h.invoke('session.end', {});
+
+    // Assert
+    expect(r.isError).toBeUndefined();
+    const payload = JSON.parse(readFileSync(join(dir, 'pending', `${sessionId}.json`), 'utf8')) as {
+      endedAt: string;
+      generatedAt: string;
+      exercises: { result: string }[];
+    };
+    expect(payload.exercises[0]?.result).toBe('170 lb x 12');
+    expect(new Date(payload.generatedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(payload.endedAt).getTime(),
+    );
+  });
+
+  it('still ends the session when the outbox write fails', async () => {
+    // Arrange: an outbox root that is a regular file, so the write fails.
+    const asFile = join(dir, 'not-a-directory');
+    writeFileSync(asFile, 'occupied');
+    (h.state.config as { trueCoachOutboxDir: string }).trueCoachOutboxDir = asFile;
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const sessionId = h.live.session!.sessionId;
+    h.store.getSetsForSession.mockResolvedValue([
+      makeStoredSet('s1', sessionId, {
+        weightLbs: 170,
+        firmwareRepCount: 12,
+        exerciseId: 'bench-press',
+      }),
+    ]);
+
+    // Act
+    const r = await h.invoke('session.end', {});
+
+    // Assert
+    expect(r.isError).toBeUndefined();
+    expect(h.live.session).toBeUndefined();
   });
 });

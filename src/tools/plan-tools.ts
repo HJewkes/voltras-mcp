@@ -38,6 +38,7 @@ import {
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
+import { selectWorkingSets } from '../store/working-sets.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
@@ -734,39 +735,6 @@ async function resolveBasisSession(
     exerciseId: input.exerciseId,
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
   });
-}
-
-/**
- * Warmups and working sets flow through the same `set.start`/`set.end` path.
- * Two signals separate them, applied in order:
- *
- *   1. The explicit `StoredSet.isWarmup` flag (set at `set.start`). A flagged
- *      warmup is never a working set — even a heavy primer at working weight,
- *      which the load heuristic below would wrongly keep.
- *   2. Top load, for the (still common) unflagged warmups: a warmup is a
- *      sub-working-weight ramp-up, so treat the sets at the heaviest load as
- *      the working sets — the ones the rep band is actually prescribed against.
- *
- * `sets` MUST already be scoped to one exercise. The top-load rank is relative
- * to whatever it is given, so a mixed list resolves to the heaviest movement in
- * the session and discards every set of the lighter one as a warm-up.
- *
- * Judging progression on the full set list lets light, low-rep warmups inflate
- * the "missed" tally into a bogus deload (VMCP-progression-warmups), and a
- * single high-velocity-loss warmup can suppress a legit +5. Observed top load
- * (not `targetWeightLbs`) tracks the load actually lifted, even after the
- * plan's original target has been outgrown.
- */
-function selectWorkingSets(sets: StoredSet[]): StoredSet[] {
-  const working = sets.filter((set) => set.isWarmup !== true);
-  if (working.length === 0) return working;
-  // Only weighted sets can be ranked by load. When none recorded a weight there
-  // is no basis to discriminate, so every working set is kept — which is what
-  // the pre-v6 sentinel produced anyway (all loads equal at 0).
-  const loads = working.map((set) => set.weightLbs).filter((w): w is number => w !== undefined);
-  if (loads.length === 0) return working;
-  const topLoad = Math.max(...loads);
-  return working.filter((set) => set.weightLbs !== undefined && set.weightLbs >= topLoad);
 }
 
 /**
