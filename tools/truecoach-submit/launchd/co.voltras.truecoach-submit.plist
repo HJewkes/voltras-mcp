@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Scheduled full auto-submit. NOT installed by this package: copy it to
+  ~/Library/LaunchAgents/, replace YOUR-USER and the two absolute paths, then
+  `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.voltras.truecoach-submit.plist`.
+
+  One run a day at 21:30, after typical training hours. StartCalendarInterval,
+  never StartInterval: this job posts into a coach's workout, so it fires once
+  on a clock and never polls. Anything it refuses stays pending for the human.
+
+  Read GATES 1 and 2 in tools/truecoach-submit/README.md before installing this.
+  Do a dry run first; the submit selector is UNVERIFIED until you have.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>co.voltras.truecoach-submit</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/node</string>
+      <string>/Users/YOUR-USER/projects/voltras-mcp/tools/truecoach-submit/src/cli.js</string>
+      <string>--submit</string>
+      <string>--all</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>21</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR-USER/.voltras/truecoach-outbox/submit.log</string>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR-USER/.voltras/truecoach-outbox/submit.log</string>
+  </dict>
+</plist>
