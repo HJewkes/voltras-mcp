@@ -482,11 +482,16 @@ const PROGRESSION_VELOCITY_LOSS_HOLD_PCT = 25;
 const REP_RANGE_LOAD_CEILING = 15;
 
 /**
- * B07 (VMCP-06.07) effort gate: below this intra-set velocity loss the set is
- * read as far from failure, i.e. 'easy'. `sources/research/
- * vbt-rir-research-and-protocol.md` §1.3 is the only threshold the outcome
- * table treats as a distinct regime ("lower VL (<=15 %) is clearly better" for
- * power, against a hypertrophy curve that is flat from 20-30 %), so 15 % is the
+ * B07 (VMCP-06.07) effort gate: at or below this intra-set velocity loss the
+ * set is read as far from failure, i.e. 'easy'. The threshold is the only one
+ * the outcome table in `voltras-workspace/sources/research/
+ * vbt-rir-research-and-protocol.md` §1.3 (outside this repo) treats as a
+ * distinct regime, verbatim:
+ *
+ *   "Power / jump / sprint / velocity vs. submaximal loads | Lower VL (≤15 %)
+ *    is clearly better; high VL is actively counterproductive."
+ *
+ * Hypertrophy in the same table is flat from 20-30 %, so 15 % is the
  * far-from-failure line and 15-25 % stays 'unknown' rather than guessing.
  */
 const PROGRESSION_EASY_LOSS_PCT = 15;
@@ -937,7 +942,7 @@ function computeGates(
 function effortGate(workingSets: StoredSet[], maxLossPct: number): EffortGate {
   if (!workingSets.some(setCarriesVelocity)) return 'unknown';
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) return 'hard';
-  if (maxLossPct < PROGRESSION_EASY_LOSS_PCT) return 'easy';
+  if (maxLossPct <= PROGRESSION_EASY_LOSS_PCT) return 'easy';
   return 'unknown';
 }
 

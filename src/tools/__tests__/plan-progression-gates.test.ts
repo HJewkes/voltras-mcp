@@ -215,6 +215,21 @@ describe('computeProgressionDelta — B07 gates', () => {
     expect(suggestion.gates.setsUnlocked).toBe(false);
   });
 
+  it('calls a set at exactly the easy-loss threshold easy, and one just over it unknown', () => {
+    // Arrange: 15% loss (1000 -> 850) is the cited "<=15%" boundary; 16%
+    // (1000 -> 840) is the first loss past it, and short of the 25% hold.
+    const at = [setWithReps('at', 12, [1000, 850])];
+    const over = [setWithReps('over', 12, [1000, 840])];
+
+    // Act.
+    const atThreshold = computeProgressionDelta(plannedBand(8, 12), at, BASIS);
+    const overThreshold = computeProgressionDelta(plannedBand(8, 12), over, BASIS);
+
+    // Assert.
+    expect(atThreshold.gates.effort).toBe('easy');
+    expect(overThreshold.gates.effort).toBe('unknown');
+  });
+
   it('reports effort unknown, and today’s delta, when no set carries velocity', () => {
     // Arrange: three band-topping sets whose reps recorded no velocity at all.
     const sets = [1, 2, 3].map((n) => setWithReps(`s${String(n)}`, 12, 'none'));
