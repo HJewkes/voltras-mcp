@@ -159,6 +159,7 @@ import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-to
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
 import { autoArmSet } from './auto-arm.js';
 import { LOCAL_USER_ID } from '../store/sqlite-store.js';
+import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
 
@@ -1624,7 +1625,7 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       reps: [],
       status: 'active',
       autoCreatedBy: 'guided_load',
-      ...(isWarmup === true ? { isWarmup: true } : {}),
+      ...setPurposeFields(isWarmup === true ? 'warmup' : undefined),
       ...(watch !== undefined ? { watch } : {}),
       // VMCP-01.72b: snapshot the session's exercise pointer the same way
       // set-tools.ts's startSet does. buildSetCapture now reads the SET's

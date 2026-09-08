@@ -141,6 +141,29 @@ describe('SqliteSessionStore', () => {
       expect(await store.getSet('set-work')).not.toHaveProperty('isWarmup');
     });
 
+    // VMCP-02.84 — the column has admitted four purposes since v6; only the
+    // tool surface was narrower.
+    it('round-trips a probe set: setPurpose survives and isWarmup stays false', async () => {
+      await store.putSet(makeSet({ id: 'set-probe', setPurpose: 'probe' }));
+      const stored = await store.getSet('set-probe');
+      expect(stored?.setPurpose).toBe('probe');
+      expect(stored).not.toHaveProperty('isWarmup');
+    });
+
+    it('round-trips a technique set', async () => {
+      await store.putSet(makeSet({ id: 'set-tech', setPurpose: 'technique' }));
+      expect((await store.getSet('set-tech'))?.setPurpose).toBe('technique');
+    });
+
+    // A pre-enum fixture writes the boolean alone; it must still land as
+    // 'warmup' rather than defaulting to 'working'.
+    it('maps a bare isWarmup:true to setPurpose warmup on write', async () => {
+      await store.putSet(makeSet({ id: 'set-legacy-warm', isWarmup: true }));
+      const stored = await store.getSet('set-legacy-warm');
+      expect(stored?.setPurpose).toBe('warmup');
+      expect(stored?.isWarmup).toBe(true);
+    });
+
     it('coerces non-finite rep numbers to 0 rather than storing null (VMCP-01.41)', async () => {
       // Simulate bad upstream data: non-finite numeric fields on a rep. Plain
       // JSON.stringify renders NaN/Infinity as `null`, which reads back as

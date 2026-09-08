@@ -33,6 +33,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { computeProgressionDelta } from '../tools/plan-tools.js';
+import { setPurposeOf } from '../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import type { DashboardPlanStore } from './plan-api.js';
 import type { ExerciseNameLookup } from './read-models/index.js';
@@ -258,7 +259,9 @@ function scoreVerdictSet(
   maxVelocityLossPct: number | null;
 } {
   const paired = sets.map((set, index) => ({ set, view: views[index] }));
-  const working = paired.filter((p) => p.set.isWarmup !== true);
+  // VMCP-02.84: the verdict is scored against WORKING sets. A probe or a
+  // technique rung is no more scorable here than a warm-up is.
+  const working = paired.filter((p) => setPurposeOf(p.set) === 'working');
   const scoped = working.length > 0 ? working : paired;
   let worst: (typeof scoped)[number] | undefined;
   for (const candidate of scoped) {

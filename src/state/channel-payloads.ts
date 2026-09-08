@@ -35,6 +35,7 @@ import {
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
 import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
+import { setPurposeOf } from '../store/set-purpose.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { TriggerSpec } from '../schemas/set.js';
@@ -346,6 +347,10 @@ export function buildSetStartedPayload(
     set_id: set.setId,
     session_id: set.sessionId,
     ...(autoArmed ? { auto_armed: 'true' } : {}),
+    // VMCP-02.84. `is_warmup` is the deprecated alias, kept for one release so
+    // an existing consumer keeps reading the boolean it already reads.
+    set_purpose: setPurposeOf(set),
+    is_warmup: String(set.isWarmup === true),
     // VW-169: present ONLY when someone other than the owner is lifting, so a
     // consumer can read its absence as "the owner" without a second lookup.
     ...(set.lifter !== undefined ? { lifter: set.lifter } : {}),
@@ -378,6 +383,8 @@ export function buildSetStartedPayload(
       training_mode: device.trainingMode ?? null,
       started_at: set.startedAt,
       auto_armed: autoArmed,
+      set_purpose: setPurposeOf(set),
+      is_warmup: set.isWarmup === true,
       lifter: set.lifter ?? null,
     },
     previous_set_summary: previous,
@@ -410,6 +417,7 @@ export function buildSetUpdatedPayload(
     session_id: set.sessionId,
     upgraded: 'true',
     reps: String(set.reps.length),
+    set_purpose: setPurposeOf(set),
     is_warmup: String(set.isWarmup === true),
   };
   const warmupNote = set.isWarmup === true ? 'warm-up, ' : '';
@@ -424,6 +432,7 @@ export function buildSetUpdatedPayload(
       started_at: set.startedAt,
       auto_armed: set.autoCreatedBy === 'idle_rep',
       upgraded: true,
+      set_purpose: setPurposeOf(set),
       is_warmup: set.isWarmup === true,
       exercise_id: set.exerciseId ?? null,
       reps_so_far: set.reps.length,

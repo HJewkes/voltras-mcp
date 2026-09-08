@@ -307,18 +307,18 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-93 tools in mock mode; 91 with the real adapter (`mock.*` is registered only when
+94 tools in mock mode; 92 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
 | Namespace       | Count | What it covers                                                                                                                                                                                                        |
 | --------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `device.*`      | 24    | Scan, connect, disconnect, read state, and every resistance setting — weight, mode, eccentric overload, chains, damper, band ceiling, assist, isokinetic, rowing, guided load.                                        |
-| `plan.*`        | 17    | Training-plan hierarchy: programs → blocks → weeks → templates → exercises, plus `next_workout`, `complete_workout`, `suggest_progression`, and `attach_to_session`.                                                  |
+| `plan.*`        | 18    | Training-plan hierarchy: programs → blocks → weeks → templates → exercises, plus `next_workout`, `complete_workout`, `suggest_progression`, `attach_to_session`, and `warmup_ramp` (read-only RP warm-up rungs).      |
 | `debug.*`       | 6     | Diagnostic ring buffers, rep-stream parity comparison, flight-recorder status, and the channel-delivery round-trip probe.                                                                                             |
 | `slot.*`        | 5     | Bind, identify, swap, list, and unbind the device ↔ physical-side (left/right) mapping used for bilateral work.                                                                                                       |
 | `session.*`     | 6     | `start`, `end`, `set_exercise`, `set_lifter` (name a guest working in, or `null` to hand the rig back), `list`, `get`.                                                                                                |
-| `set.*`         | 5     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `update` (retro-tag a stored set's lifter), `get`.                                                                                        |
+| `set.*`         | 5     | `start` (with `setPurpose` — `working` / `warmup` / `probe` / `technique` — and the optional `watch` block), `end`, `live_metrics`, `update` (retro-tag a stored set's lifter), `get`.                                |
 | `timer.*`       | 3     | `start` (non-blocking, push-completed — preferred for rest), `wait` (blocking, singleton), `cancel`.                                                                                                                  |
 | `system.*`      | 7     | `speak` (macOS `say`), start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine — plus `set_cues` (runtime cue toggles) and the device write-lease. |
 | `profile.*`     | 3     | Self-reported training background (get/set) and the derived tier signal.                                                                                                                                              |

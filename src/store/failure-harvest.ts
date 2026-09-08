@@ -24,7 +24,8 @@
 
 import { getPhaseMeanVelocity, getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
-import type { StoredSet } from './types.js';
+import { setPurposeOf } from './set-purpose.js';
+import type { SetPurpose, StoredSet } from './types.js';
 import { normaliseVelocityToMps } from './velocity-units.js';
 
 /**
@@ -93,6 +94,13 @@ export interface FailureCandidateContext {
  */
 export interface FailureFilterInputs extends FailureCandidateContext {
   repCount: number;
+  /**
+   * Why the set was performed (VMCP-02.84). Only `'working'` is scorable — a
+   * probe is one deliberate heavy effort and a technique rung is light
+   * practice, so neither is evidence of reaching failure.
+   */
+  setPurpose: SetPurpose;
+  /** Derived from {@link setPurpose}; kept so stored rows stay comparable. */
   isWarmup: boolean;
   /** Concentric mean velocity of the final rep, m/s. */
   lastRepVelocityMps?: number;
@@ -135,10 +143,17 @@ export function evaluateFailureCandidate(
   ctx: FailureCandidateContext = {},
 ): FailureCandidateEvaluation {
   const reps = normaliseVelocityToMps(set).reps;
-  const isWarmup = set.isWarmup === true;
-  const base: FailureFilterInputs = { repCount: reps.length, isWarmup, reason: '', ...ctx };
+  const setPurpose = setPurposeOf(set);
+  const base: FailureFilterInputs = {
+    repCount: reps.length,
+    setPurpose,
+    isWarmup: setPurpose === 'warmup',
+    reason: '',
+    ...ctx,
+  };
 
-  if (isWarmup) return notCandidate(base, 'warm-up set');
+  if (setPurpose === 'warmup') return notCandidate(base, 'warm-up set');
+  if (setPurpose !== 'working') return notCandidate(base, `${setPurpose} set, not working`);
   if (reps.length < HARVEST_THRESHOLDS.minReps) {
     return notCandidate(base, `fewer than ${String(HARVEST_THRESHOLDS.minReps)} reps`);
   }
