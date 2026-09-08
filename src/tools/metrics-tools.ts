@@ -27,6 +27,12 @@
 // not a validated dose-response, so the pipeline reports first-vs-last
 // working-set decay and refuses to label it. It is not an input to anything.
 //
+// `session.junk_volume` (VMCP-06.13) is the RETROSPECTIVE half of B03 and
+// nothing else: it changes no watch, emits no push event, fires no cue and
+// moves no progression hold. It exists to put the mean-based and peak-based
+// within-set losses side by side over recorded work, which is the paired
+// comparison that has to run before the live 25% guard can be rebased.
+//
 // ── Status of the original 9 pipelines ─────────────────────────────────────
 //
 // All 9 pipelines below are fully implemented and merged (`quality.rep`,
@@ -81,6 +87,7 @@ import { z } from 'zod';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import {
+  BASELINE_STATE_RANK,
   checkFeatureGate,
   deriveFeatureGate,
   type FeatureGateVerdict,
@@ -291,6 +298,16 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       );
       return { exercises };
     }
+
+    case 'session.junk_volume': {
+      const sets = await state.store.getSetsForSession(input.sessionId);
+      if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
+      const groups = workingSetsByExercise(sets, input.exerciseId);
+      const exercises = await Promise.all(
+        [...groups].map(([id, working]) => junkVolumeForExercise(state, id, working)),
+      );
+      return { exercises };
+    }
   }
 }
 
@@ -429,6 +446,141 @@ async function relativeSignalGate(
     { userId: LOCAL_USER_ID, exerciseId, ...(side !== undefined ? { side } : {}) },
     'relative-signal',
   );
+}
+
+/**
+ * Within-set MEAN-concentric loss at which a working set is called
+ * probably-junk (VMCP-06.13 / B03).
+ *
+ * 25 is the figure the shipped progression hold already uses, and Addendum 2
+ * of `sources/mined/rp-university-idea-backlog.md` records the reason it is
+ * applied HERE rather than on the peak-based number: every study the 25%
+ * figure is reasoned from measures MEAN concentric velocity, so a threshold
+ * imported from that literature and applied to a peak measurement is not the
+ * same threshold. That mismatch is the leading explanation for the live
+ * peak-based watch firing on 58% of sets.
+ */
+const JUNK_MEAN_LOSS_PCT = 25;
+
+/**
+ * One working set's two velocity-loss readings, side by side ON PURPOSE.
+ *
+ * `meanLossPct` is the basis the 25% literature uses; `peakLossPct` is the
+ * basis the live `velocity_loss_exceeded` watch uses today. Reporting both
+ * unmerged is the whole point of the retrospective: it is the paired
+ * comparison that decides whether the watch should move.
+ */
+interface JunkSetReading {
+  setId: string;
+  /** Position within this exercise's working sets, 0-based. */
+  index: number;
+  meanLossPct: number;
+  peakLossPct: number;
+}
+
+/**
+ * The retrospective verdict. `firstJunkIndex` is `null` when the exercise was
+ * judged and NO set crossed the threshold — distinct from a `retrospective` of
+ * `null`, which means the baseline was too thin to judge at all.
+ */
+interface JunkRetrospective {
+  firstJunkIndex: number | null;
+  probablyJunkSets: JunkSetReading[];
+}
+
+interface ExerciseJunkVolume {
+  exerciseId: string;
+  /**
+   * Always false: VMCP-02.63 (movement-class-aware criteria) is not built, so
+   * a consumer must assume the ballistic-pull caveat applies — the within-set
+   * velocity-loss signal is not valid for pulls, and nothing here can tell a
+   * pull from a press.
+   */
+  movementClassKnown: false;
+  sets: JunkSetReading[];
+  retrospective: JunkRetrospective | null;
+  gate: FeatureGateVerdict;
+  note?: string;
+}
+
+/**
+ * Per-set losses for one exercise, plus the retrospective when the baseline
+ * supports one. Below PROVISIONAL the NUMBERS still ship — they are
+ * measurements — and only the verdict is withheld, per the gate module's
+ * degrade-never-block rule.
+ */
+async function junkVolumeForExercise(
+  state: ServerState,
+  exerciseId: string,
+  working: readonly StoredSet[],
+): Promise<ExerciseJunkVolume> {
+  const gate = await relativeSignalGate(state, exerciseId, working);
+  const sets: JunkSetReading[] = working.map((set, index) => ({
+    setId: set.id,
+    index,
+    meanLossPct: meanLossPctOf(set),
+    peakLossPct: peakLossPctOf(set),
+  }));
+  const base: ExerciseJunkVolume = {
+    exerciseId,
+    movementClassKnown: false,
+    sets,
+    retrospective: null,
+    gate,
+  };
+  if (!atLeastProvisional(gate)) {
+    return { ...base, note: `${gate.userMessage} — not judged against the junk threshold yet` };
+  }
+  return { ...base, retrospective: retrospectiveOver(sets) };
+}
+
+/**
+ * The first set at or past the threshold, and that set together with every set
+ * after it. The crossing set is INCLUDED: it is the set on which the reps went
+ * past the overload band, not the last clean one.
+ */
+function retrospectiveOver(sets: readonly JunkSetReading[]): JunkRetrospective {
+  const index = sets.findIndex((set) => set.meanLossPct >= JUNK_MEAN_LOSS_PCT);
+  if (index < 0) return { firstJunkIndex: null, probablyJunkSets: [] };
+  return { firstJunkIndex: index, probablyJunkSets: sets.slice(index) };
+}
+
+/**
+ * Within-set loss on MEAN concentric velocity, as a percentage. Reuses the
+ * `computeVBTSetFatigueIndex` path (fastest MEAN rep → last rep), which
+ * reports it as a 0..1 ratio.
+ */
+function meanLossPctOf(set: StoredSet): number {
+  return computeVBTSetFatigueIndex(toAnalyticsSet(set)).velLossPct * 100;
+}
+
+/**
+ * Within-set loss on PEAK concentric velocity — the same basis the live
+ * `velocity_loss_exceeded` watch computes, so the two columns are directly
+ * comparable. The baseline is the fastest ELIGIBLE rep (VW-168), which is what
+ * keeps a positioning pull from anchoring it, exactly as the watch does.
+ */
+function peakLossPctOf(set: StoredSet): number {
+  const reps = normaliseVelocityToMps(set).reps;
+  const last = reps[reps.length - 1];
+  if (reps.length < 2 || last === undefined) return 0;
+  const baseline = Math.max(
+    0,
+    ...selectEligibleReps(reps).map((rep: AnalyticsRep) => getRepPeakVelocity(rep)),
+  );
+  if (baseline <= 0) return 0;
+  return Math.max(0, ((baseline - getRepPeakVelocity(last)) / baseline) * 100);
+}
+
+/**
+ * Is the baseline mature enough to call a set junk? The threshold is stated in
+ * PROVISIONAL terms rather than in the gate's own activation because B03 is
+ * explicit about which tier the verdict needs, and `relative-signal` reaches
+ * `full` a tier earlier than that.
+ */
+function atLeastProvisional(gate: FeatureGateVerdict): boolean {
+  if (gate.observedState === null) return false;
+  return BASELINE_STATE_RANK[gate.observedState] >= BASELINE_STATE_RANK.PROVISIONAL;
 }
 
 function mean(xs: number[]): number {
@@ -718,6 +870,13 @@ const METRICS_COMPUTE_DESCRIPTION =
   '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
   'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
   'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
+  "`session.junk_volume` (sessionId, optional exerciseId) — per exercise, each working set's " +
+  'within-set MEAN-concentric loss % beside its PEAK-based loss % (the two are different numbers ' +
+  'on purpose: the 25% literature is mean-based, the live watch is peak-based), plus a ' +
+  'retrospective naming the first set past the mean-based threshold and the sets from there on. ' +
+  '`retrospective` is null below a PROVISIONAL baseline — the losses still ship, only the verdict ' +
+  'is withheld. `movementClassKnown` is always false: the signal is not valid for ballistic ' +
+  'pulls and nothing here can tell a pull from a press, so relay that caveat. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';

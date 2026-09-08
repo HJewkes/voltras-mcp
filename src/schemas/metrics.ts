@@ -98,4 +98,15 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
     sessionId: IdSchema,
     exerciseId: IdSchema.optional(),
   }),
+
+  // Per-exercise retrospective junk-volume readout — the RETROSPECTIVE half of
+  // B03 (VMCP-06.13). Reports each working set's within-set MEAN-concentric
+  // loss beside its PEAK-based loss (the basis the live watch uses), and names
+  // the first set past the mean-based junk threshold. `exerciseId` narrows as
+  // above. Retrospective only: no push event, no watch change, no cue.
+  z.object({
+    pipeline: z.literal('session.junk_volume'),
+    sessionId: IdSchema,
+    exerciseId: IdSchema.optional(),
+  }),
 ]);
