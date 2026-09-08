@@ -97,6 +97,7 @@ import {
   shouldPreflightWeightTraining,
   buildGuidedLoadTrackedFields,
   teardownBleResources,
+  isModeRevertStillActive,
 } from './device-handler-helpers.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { log } from '../logger.js';
@@ -225,7 +226,8 @@ const BilateralCascadeInput = z
 const BILATERAL_CASCADE_DESCRIPTION =
   'Apply all four device setters (mode, weight, eccentric, chains) across one or more bound slots in a single call. ' +
   'Full-settings contract: every call MUST supply `mode`, `weightLbs`, `eccentricOverloadLbs`, and `chainsLbs` — omitting any is rejected with INVALID_INPUT naming the missing setters. This is deliberate: a partial cascade would leave the unset settings at their prior firmware value, silently carrying stale state (e.g. chains lingering after a weight-only call). Requiring the complete set makes each cascade idempotent and its applied state fully specified. ' +
-  'Within each slot the setters fire concurrently (no documented ordering dependency between them); slots also run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'Ordering within a slot (VW-162): the mode write goes FIRST and alone. When the requested mode differs from the one the device currently reports, the cascade waits for the device to echo it back before weight/eccentric/chains fire — those writes racing a mode change make the firmware fall back to the previous mode (observed twice on 2026-09-07: an Isokinetic cascade left one unit in Weight Training and the other in Idle). Weight, eccentric and chains then fire concurrently; slots run concurrently with each other so a failure on slot A does not block slot B. ' +
+  'Each `results[i]` reports `modeEcho`: `confirmed` (with `echoedAfterMs`), `skipped` (mode unchanged, nothing to wait for), or `timeout`. On `timeout` the slot FAILS and its other setters are never issued — re-issue `device.set_mode` for that slot and read `device.get_state` before retrying. ' +
   'When `abortOnFirstFailure: true`, setters within each slot run sequentially and the first rejection on any slot prevents subsequent setters from firing. ' +
   'Defaults `slots` to every currently-connected slot. Returns one `results[i]` entry per requested slot, with an `applied.<setter>` outcome for each of the four setters. ' +
   'Eccentric param: `eccentricOverloadLbs` is the preferred name (pounds added on the eccentric phase, -195..+195). The legacy alias `eccentricPercent` is accepted with a deprecation warning logged on use and will be removed in the next release.';
@@ -1319,6 +1321,7 @@ export function registerDeviceTools(
       // the response, which prefers preserved values for routability).
       const slotBinding =
         typeof device.deviceId === 'string' ? state.slotBindings.get(device.deviceId) : null;
+      const latched = slot.modeRevertGuard.peekAbort();
       const response = buildDeviceGetStateResponse(
         slot.client.isConnected,
         slot.client.connectionState,
@@ -1326,7 +1329,13 @@ export function registerDeviceTools(
         slot.client.isRecording,
         slot.client.guidedLoadState,
         device,
-        slot.modeRevertGuard.peekAbort(),
+        latched,
+        latched !== null &&
+          isModeRevertStillActive(
+            slot.modeRevertGuard.isStillReverted(),
+            TrainingModeNames[latched.actual],
+            device.trainingMode,
+          ),
         slot.live.snapshotSet(),
         slotBinding,
       );
@@ -1358,6 +1367,7 @@ export function registerDeviceTools(
           slotId,
           client: slot.client,
           coercionWatch: slot.coercionWatch,
+          modeRevertGuard: slot.modeRevertGuard,
         };
       });
       const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
@@ -1575,8 +1585,11 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  *     for the connected deviceId (null when unbound). Lets the agent
  *     decide whether the side-ID ritual is needed.
  *   * `mode_revert_latched` — VMCP-02.14: present when the mode-revert
- *     guard is holding a safety abort that will block the next set.start
- *     with SET_ABORTED_BY_MODE_REVERT. Absent ⇒ no abort latched.
+ *     guard is holding a safety abort. Absent ⇒ no abort latched. VW-178:
+ *     the latch is no longer consumed by the set.start refusal, so
+ *     `still_active` reports whether it will actually block the next
+ *     set.start (false ⇒ the device has moved off the reverted-to mode and
+ *     the latch is a spent record).
  */
 function buildDeviceGetStateResponse(
   isConnected: boolean,
@@ -1586,6 +1599,7 @@ function buildDeviceGetStateResponse(
   guidedLoadState: GuidedLoadState,
   device: DeviceSnapshot,
   modeRevertLatched: ModeRevertAbort | null,
+  modeRevertStillActive: boolean,
   activeSet: ActiveSet | undefined,
   slotBinding: SlotBinding | null,
 ): Record<string, unknown> {
@@ -1647,6 +1661,7 @@ function buildDeviceGetStateResponse(
         TrainingModeNames[modeRevertLatched.requested] ?? String(modeRevertLatched.requested),
       actual_mode: TrainingModeNames[modeRevertLatched.actual] ?? String(modeRevertLatched.actual),
       timestamp_ms: modeRevertLatched.timestampMs,
+      still_active: modeRevertStillActive,
     };
   }
   return out;

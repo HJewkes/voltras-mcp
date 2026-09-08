@@ -2668,7 +2668,7 @@ describe('wireEventBridge', () => {
       freshClient.fire.settingsUpdate({ mode: 1 });
 
       expect(slot.modeRevertGuard.isAborted()).toBe(true);
-      const abort = slot.modeRevertGuard.consumeAbort();
+      const abort = slot.modeRevertGuard.peekAbort();
       expect(abort).not.toBeNull();
       expect(abort!.requested).toBe(3);
       expect(abort!.actual).toBe(1);

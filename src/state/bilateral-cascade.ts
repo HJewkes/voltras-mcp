@@ -8,13 +8,23 @@
 // device-tools registration table readable.
 //
 // Concurrency model:
-//   * `abortOnFirstFailure: false` (default) — within a slot, the requested
-//     setters fire concurrently via `Promise.all`. None of the four cover
-//     the same SDK opcode and there's no documented ordering dependency
-//     between them. Across slots, each slot's local fan-out runs in its own
-//     `Promise.all` so a thrown setter on slot A never prevents slot B from
-//     being attempted (per-setter rejection is captured into the result
-//     before the outer `Promise.all` sees it).
+//   * VW-162 — the MODE write is never part of the fan-out. When the plan
+//     changes the slot's mode, the mode setter goes first on its own, the
+//     slot's mode-revert guard is armed for it (exactly as `device.set_mode`
+//     does), and we wait for the device's cmd=0x10 echo before any other
+//     setter fires. This header used to claim there was "no documented
+//     ordering dependency" between the four setters; hardware falsified that
+//     on 2026-09-07 — a `{mode: Isokinetic, ...}` cascade left the right unit
+//     in WeightTraining and the left in Idle within ~1s, twice, while
+//     `device.set_mode` alone stuck. The weight/eccentric/chains writes
+//     racing the mode write make the firmware fall back. When the mode is
+//     already the live one, there is nothing to wait for and the wait is
+//     skipped. Slots still run concurrently with each other.
+//   * `abortOnFirstFailure: false` (default) — within a slot, the remaining
+//     setters fire concurrently via `Promise.all`. Across slots, each slot's
+//     local fan-out runs in its own `Promise.all` so a thrown setter on slot
+//     A never prevents slot B from being attempted (per-setter rejection is
+//     captured into the result before the outer `Promise.all` sees it).
 //   * `abortOnFirstFailure: true` — setters within a slot run SEQUENTIALLY
 //     (so the next setter can observe the previous one's failure and skip),
 //     and the slot fan-out across slots still happens concurrently but each
@@ -22,7 +32,8 @@
 //     write. The first setter to reject anywhere flips the flag; every
 //     subsequent setter (in the same slot or in another slot's pipeline)
 //     short-circuits without firing. Setters that were never attempted are
-//     absent from the `applied` map.
+//     absent from the `applied` map — including every setter behind a mode
+//     write whose echo timed out, in either branch.
 //
 // The helper does NOT validate slots — the caller is expected to verify each
 // slot id is bound BEFORE entering this function (so unbound-slot errors
@@ -32,6 +43,30 @@
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
 import type { CoercionWatch } from './coercion-watch.js';
+import { MODE_REVERT_WINDOW_MS, type ModeRevertGuard } from './mode-revert-guard.js';
+
+/**
+ * How often the post-mode-write wait re-reads the guard's last echo. The
+ * echo arrives on the bridge's settings_update callback, so polling is only
+ * the observation mechanism — 25ms keeps the added latency under a typical
+ * BLE round-trip without spinning.
+ */
+const MODE_ECHO_POLL_MS = 25;
+
+/** Outcome of the VW-162 pre-fan-out wait for the device's mode echo. */
+export type ModeEchoStatus = 'confirmed' | 'timeout' | 'skipped';
+
+/** Tunable bounds for the mode-echo wait. Defaults are the production values. */
+export interface CascadeOptions {
+  /**
+   * Bound on the wait for the device to echo the requested mode. Defaults to
+   * `MODE_REVERT_WINDOW_MS`: past that the mode-revert guard has stopped
+   * evaluating divergence for this write, so a longer wait would report a
+   * confirmation the safety guard no longer stands behind.
+   */
+  modeEchoTimeoutMs?: number;
+  modeEchoPollMs?: number;
+}
 
 /**
  * Per-setter outcome shape. `value` echoes the requested value back so the
@@ -60,6 +95,15 @@ export interface SlotResult {
     eccentricPercent?: SetterOutcome;
     chainsLbs?: SetterOutcome;
   };
+  /**
+   * VW-162: how the pre-fan-out mode wait resolved. `skipped` covers both
+   * "no mode requested" and "the device already sits in that mode", so it is
+   * only meaningful alongside `applied.mode`. Absent when the slot has no
+   * mode-revert guard to observe the echo through (test fixtures).
+   */
+  modeEcho?: ModeEchoStatus;
+  /** Milliseconds between the mode write resolving and the echo landing. */
+  echoedAfterMs?: number;
 }
 
 /**
@@ -86,6 +130,14 @@ export interface SlotTarget {
    * a silent passthrough on the coercion path.
    */
   coercionWatch?: CoercionWatch;
+  /**
+   * VW-162: the slot's mode-revert guard, armed for the requested mode and
+   * then read for the device's echo before the other setters fan out.
+   * Optional for the same forward-compatibility reason as `coercionWatch` —
+   * without it there is no echo to observe, so the mode write still goes
+   * first but nothing waits on it.
+   */
+  modeRevertGuard?: Pick<ModeRevertGuard, 'arm' | 'echoedMode'>;
 }
 
 /**
@@ -104,6 +156,7 @@ export async function cascadeAcrossSlots(
   targets: SlotTarget[],
   plan: CascadePlan,
   abortOnFirstFailure: boolean,
+  options: CascadeOptions = {},
 ): Promise<SlotResult[]> {
   // Shared abort flag — flipped by the first failing setter when
   // `abortOnFirstFailure` is true. Callbacks check it BEFORE invoking the
@@ -112,7 +165,7 @@ export async function cascadeAcrossSlots(
   const abortFlag = { aborted: false };
 
   const slotPromises = targets.map((target) =>
-    runSlotPlan(target, plan, abortFlag, abortOnFirstFailure),
+    runSlotPlan(target, plan, abortFlag, abortOnFirstFailure, options),
   );
   const results = await Promise.all(slotPromises);
   return results;
@@ -122,37 +175,74 @@ interface AbortFlag {
   aborted: boolean;
 }
 
+/**
+ * Typed step descriptor. Keeping the setters as data lets us run the
+ * sequential and concurrent paths without duplicating the branch ladder.
+ * Each step also carries an optional `coercionField` + `coercionRequested`
+ * pair so a successful setter registers a pending F2/F3 coercion check
+ * against the slot's watch. The `mode` setter has no coercion correlation
+ * today (the device's training-mode echo doesn't route through
+ * CoercionWatch) — VW-162 gates on it directly instead.
+ */
+interface CascadeStep {
+  key: keyof SlotResult['applied'];
+  invoke: () => Promise<void>;
+  value: number | string;
+  coercionField?: string;
+  coercionRequested?: number;
+}
+
 async function runSlotPlan(
   target: SlotTarget,
   plan: CascadePlan,
   abortFlag: AbortFlag,
   abortOnFirstFailure: boolean,
+  options: CascadeOptions,
 ): Promise<SlotResult> {
   const applied: SlotResult['applied'] = {};
+  const result: SlotResult = { slot: target.slotId, applied };
 
-  // Build typed step descriptors. Keeping them as data lets us run the
-  // sequential and concurrent paths without duplicating the branch ladder.
-  // Each step also carries an optional `coercionField` + `coercionRequested`
-  // pair so a successful setter registers a pending F2/F3 coercion check
-  // against the slot's watch. The string-valued `mode` setter has no
-  // coercion correlation today (the device's training-mode echo doesn't
-  // route through CoercionWatch).
-  interface CascadeStep {
-    key: keyof SlotResult['applied'];
-    invoke: () => Promise<void>;
-    value: number | string;
-    coercionField?: string;
-    coercionRequested?: number;
-  }
-  const steps: CascadeStep[] = [];
+  // VW-162: the mode write runs alone and its echo is waited for before
+  // anything else touches the slot, so the other setters cannot race it into
+  // a firmware fallback.
   if (plan.mode !== undefined) {
-    const modeValue = plan.mode;
-    steps.push({
-      key: 'mode',
-      invoke: () => target.client.setMode(modeValue),
-      value: modeValue,
-    });
+    const gate = await runModeStep(target, plan.mode, abortFlag, abortOnFirstFailure, options);
+    applied.mode = gate.outcome;
+    result.modeEcho = gate.echo;
+    if (gate.echoedAfterMs !== undefined) result.echoedAfterMs = gate.echoedAfterMs;
+    if (!gate.proceed) return result;
   }
+
+  const steps = buildFanOutSteps(target, plan);
+  if (abortOnFirstFailure) {
+    // Sequential within a slot so the next setter can observe the prior
+    // one's failure and skip — concurrency would defeat the abort
+    // semantic since every setter would already be in-flight by the
+    // time the first rejection settles.
+    for (const step of steps) {
+      if (abortFlag.aborted) break;
+      const outcome = await runSetter(step.invoke, step.value, true, abortFlag);
+      applied[step.key] = outcome;
+      maybeRegisterCoercion(target.coercionWatch, step, outcome);
+    }
+  } else {
+    // Concurrent within a slot — `runSetter` converts rejections into
+    // SetterOutcome records, so the wrapping `Promise.all` cannot itself
+    // reject.
+    await Promise.all(
+      steps.map(async (step) => {
+        const outcome = await runSetter(step.invoke, step.value, false, abortFlag);
+        applied[step.key] = outcome;
+        maybeRegisterCoercion(target.coercionWatch, step, outcome);
+      }),
+    );
+  }
+  return result;
+}
+
+/** The weight/eccentric/chains steps — everything that fans out after mode. */
+function buildFanOutSteps(target: SlotTarget, plan: CascadePlan): CascadeStep[] {
+  const steps: CascadeStep[] = [];
   if (plan.weightLbs !== undefined) {
     const weightValue = plan.weightLbs;
     steps.push({
@@ -190,31 +280,91 @@ async function runSlotPlan(
       coercionRequested: chainsValue,
     });
   }
+  return steps;
+}
 
-  if (abortOnFirstFailure) {
-    // Sequential within a slot so the next setter can observe the prior
-    // one's failure and skip — concurrency would defeat the abort
-    // semantic since every setter would already be in-flight by the
-    // time the first rejection settles.
-    for (const step of steps) {
-      if (abortFlag.aborted) break;
-      const outcome = await runSetter(step.invoke, step.value, true, abortFlag);
-      applied[step.key] = outcome;
-      maybeRegisterCoercion(target.coercionWatch, step, outcome);
-    }
-  } else {
-    // Concurrent within a slot — `runSetter` converts rejections into
-    // SetterOutcome records, so the wrapping `Promise.all` cannot itself
-    // reject.
-    await Promise.all(
-      steps.map(async (step) => {
-        const outcome = await runSetter(step.invoke, step.value, false, abortFlag);
-        applied[step.key] = outcome;
-        maybeRegisterCoercion(target.coercionWatch, step, outcome);
-      }),
-    );
+/** Outcome of the mode write plus its echo wait. */
+interface ModeGate {
+  outcome: SetterOutcome;
+  echo: ModeEchoStatus;
+  echoedAfterMs?: number;
+  /** False when the slot's remaining setters must NOT be issued. */
+  proceed: boolean;
+}
+
+/**
+ * VW-162: write the mode, arm the slot's mode-revert guard for it, and hold
+ * the rest of the slot's cascade until the device echoes it back.
+ *
+ * A timeout fails the slot rather than proceeding: the whole point of the
+ * ordering is that weight/eccentric/chains must not be written against an
+ * unconfirmed mode. A rejected mode write is different — the mode never
+ * changed, so there is no race, and the pre-existing `abortOnFirstFailure`
+ * semantics decide whether the rest still fires.
+ */
+async function runModeStep(
+  target: SlotTarget,
+  mode: TrainingMode,
+  abortFlag: AbortFlag,
+  abortOnFirstFailure: boolean,
+  options: CascadeOptions,
+): Promise<ModeGate> {
+  const guard = target.modeRevertGuard;
+  const alreadyLive = guard !== undefined && guard.echoedMode() === mode;
+  const outcome = await runSetter(
+    () => target.client.setMode(mode),
+    mode,
+    abortOnFirstFailure,
+    abortFlag,
+  );
+  if (!outcome.ok) return { outcome, echo: 'skipped', proceed: !abortOnFirstFailure };
+  // Arm even when the mode is unchanged: it is the same user request
+  // `device.set_mode` makes, and arming for a mode the device already echoes
+  // is what clears a stale revert latch (VW-163).
+  guard?.arm(mode);
+  if (guard === undefined || alreadyLive) return { outcome, echo: 'skipped', proceed: true };
+
+  const echoedAfterMs = await waitForModeEcho(guard, mode, options);
+  if (echoedAfterMs === null) {
+    if (abortOnFirstFailure) abortFlag.aborted = true;
+    return {
+      outcome: { ok: false, value: mode, error: modeEchoTimeoutMessage(options) },
+      echo: 'timeout',
+      proceed: false,
+    };
   }
-  return { slot: target.slotId, applied };
+  return { outcome, echo: 'confirmed', echoedAfterMs, proceed: true };
+}
+
+/**
+ * Poll the guard's last echo until it reports `mode`. Returns the elapsed
+ * milliseconds, or `null` on timeout. The guard is left armed either way, so
+ * an echo that lands after we gave up still clears its latch.
+ */
+async function waitForModeEcho(
+  guard: NonNullable<SlotTarget['modeRevertGuard']>,
+  mode: TrainingMode,
+  options: CascadeOptions,
+): Promise<number | null> {
+  const timeoutMs = options.modeEchoTimeoutMs ?? MODE_REVERT_WINDOW_MS;
+  const pollMs = options.modeEchoPollMs ?? MODE_ECHO_POLL_MS;
+  const startedAt = Date.now();
+  for (;;) {
+    if (guard.echoedMode() === mode) return Date.now() - startedAt;
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= timeoutMs) return null;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, timeoutMs - elapsed)));
+  }
+}
+
+function modeEchoTimeoutMessage(options: CascadeOptions): string {
+  const timeoutMs = options.modeEchoTimeoutMs ?? MODE_REVERT_WINDOW_MS;
+  return (
+    `The device did not echo the requested training mode within ${timeoutMs}ms, ` +
+    `so the remaining setters on this slot were not issued (they would have raced ` +
+    `the unconfirmed mode write). Re-issue device.set_mode for this slot and check ` +
+    `device.get_state before retrying the cascade.`
+  );
 }
 
 /**
