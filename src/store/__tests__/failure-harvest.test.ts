@@ -118,6 +118,24 @@ describe('evaluateFailureCandidate — criterion v1', () => {
     expect(evaluateFailureCandidate(warmup).verdict).toBe('not_candidate');
   });
 
+  // VMCP-02.84 — a probe is one deliberate heavy effort, not evidence of
+  // reaching failure. Its velocity decay looks identical to a real grind, so
+  // without the purpose gate it would become an anchor.
+  it('is not a candidate for a probe set, however it ended', () => {
+    const probe = setOf([0.6, 0.62, 0.55, 0.48, 0.4], FULL_ROM, { setPurpose: 'probe' });
+
+    expect(evaluateFailureCandidate(probe)).toMatchObject({
+      verdict: 'not_candidate',
+      inputs: { reason: 'probe set, not working', setPurpose: 'probe', isWarmup: false },
+    });
+  });
+
+  it('is not a candidate for a technique set', () => {
+    const technique = setOf([0.6, 0.62, 0.55, 0.48, 0.4], FULL_ROM, { setPurpose: 'technique' });
+
+    expect(evaluateFailureCandidate(technique).verdict).toBe('not_candidate');
+  });
+
   it('is not a candidate below the four-rep floor', () => {
     const short = setOf([0.6, 0.62, 0.4], [0.5, 0.5, 0.5]);
 

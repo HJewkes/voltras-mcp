@@ -26,6 +26,8 @@ const CATALOG: Record<string, { id: string; name: string; muscleGroups: string[]
   'chest-press': { id: 'chest-press', name: 'Chest Press', muscleGroups: ['chest', 'triceps'] },
   'chest-fly': { id: 'chest-fly', name: 'Chest Fly', muscleGroups: ['chest'] },
   'seated-row': { id: 'seated-row', name: 'Seated Row', muscleGroups: ['back', 'biceps'] },
+  // A catalog entry with no muscle mapping — nothing can warm it.
+  'cable-carry': { id: 'cable-carry', name: 'Cable Carry', muscleGroups: [] },
 };
 
 interface Fixture {
@@ -156,6 +158,19 @@ describe('plan.warmup_ramp', () => {
 
     expect(ramp.rows).toHaveLength(4);
     expect(ramp.reason).toContain('beginner');
+  });
+
+  it('gives the full ramp for an exercise with no muscle groups, without throwing', async () => {
+    const state = makeState({ sets: [priorSet('s1', 'chest-fly')] });
+
+    const ramp = await buildWarmupRamp(state, {
+      exerciseId: 'cable-carry',
+      workingWeightLbs: 100,
+    });
+
+    expect(ramp.feelSetOnly).toBe(false);
+    expect(ramp.rows).toHaveLength(3);
+    expect(ramp.reason).toContain('this session');
   });
 
   it('rejects an exercise the catalog does not know', async () => {

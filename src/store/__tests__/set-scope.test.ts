@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isEligibleForComparison,
   scopeSessionSetsToExercise,
   scopeSessionSetsToExerciseId,
   scopeSetsToExercise,
@@ -149,5 +150,34 @@ describe('scopeSessionSetsToExercise', () => {
     ];
     const kept = scopeSessionSetsToExercise(rows, (id) => id === 'cable-chest-press');
     expect(kept.map((r) => r.id)).toEqual(['a']);
+  });
+});
+
+// The gate the drift guard and the MRV detector share (drift-guard.ts,
+// mrv-guard.ts both filter on it). VMCP-02.84: it reads the set's PURPOSE, so
+// a probe or a technique rung never enters a comparison window — comparing
+// either against a working set measures the intent, not the drift.
+describe('isEligibleForComparison', () => {
+  const KEY = { exerciseId: 'bench-press' };
+
+  it('keeps a working set and one with no stated purpose', () => {
+    expect(isEligibleForComparison({ setPurpose: 'working' }, KEY)).toBe(true);
+    expect(isEligibleForComparison({}, KEY)).toBe(true);
+  });
+
+  it('excludes a technique set from the drift/MRV comparison window', () => {
+    expect(isEligibleForComparison({ setPurpose: 'technique' }, KEY)).toBe(false);
+  });
+
+  it('excludes a probe set, and still excludes a warm-up', () => {
+    expect(isEligibleForComparison({ setPurpose: 'probe' }, KEY)).toBe(false);
+    expect(isEligibleForComparison({ setPurpose: 'warmup', isWarmup: true }, KEY)).toBe(false);
+    expect(isEligibleForComparison({ isWarmup: true }, KEY)).toBe(false);
+  });
+
+  it('still applies the side predicate to a working set', () => {
+    const key = { exerciseId: 'bench-press', side: 'left' };
+    expect(isEligibleForComparison({ side: 'left' }, key)).toBe(true);
+    expect(isEligibleForComparison({ side: 'right' }, key)).toBe(false);
   });
 });

@@ -90,10 +90,17 @@ export const PLAN_WARMUP_RAMP_DESCRIPTION =
   'carries its OWN coaching focus — cadence, then position, then bracing and eccentric ' +
   'control — rather than generic "warming up" copy. Loads are derived from ' +
   '`workingWeightLbs` via the e1RM helpers, rounded DOWN to the device load step and never ' +
-  'above the working load. `feelSetOnly: true` means the muscle was already warmed by an ' +
+  'above the working load. THE LOADS ARE A POPULATION ESTIMATE, NOT PERSONALISED: you give a ' +
+  'load but not the reps the lifter gets on it, so the ramp assumes the working load is about ' +
+  "a 5RM and derives the 30/20/10RM rungs from that — roughly 58/70/88% of the day's working " +
+  'load. That reads deliberately light, which is the safe direction for a warm-up; if the ' +
+  'lifter says a rung felt too easy or too heavy, believe them over these numbers. ' +
+  '`feelSetOnly: true` means the muscle was already warmed by an ' +
   'earlier exercise in the active session, and `reason` says which. The experience tier ' +
   'changes only the set COUNT (a beginner gets one extra practice rung, an advanced lifter ' +
-  'drops the 12-rep rung); the percentages are tier-invariant. Per-lifter, per-exercise ' +
+  'drops the 12-rep rung); the percentages are tier-invariant. NOTE the tier signal cannot ' +
+  "report `advanced` yet — its derived ceiling stops at `intermediate` — so today you'll see " +
+  'the 3-rung or 4-rung shape only. Per-lifter, per-exercise ' +
   'deviations are NOT modelled yet — that needs the exercise baseline at PROVISIONAL — so ' +
   'treat the count as a population starting point and adjust on what the lifter tells you.';
 

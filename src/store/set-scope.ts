@@ -11,6 +11,8 @@
 // This module is the one place that narrows a session's sets down to a single
 // exercise, reading each set's OWN `exerciseId` rather than its session's.
 
+import { setPurposeOf, type PurposeBearing } from './set-purpose.js';
+
 /** The only field scoping reads. Structural, so both `StoredSet` and the
  *  dashboard's `HistorySet`-shaped rows pass without a conversion. */
 export interface ExerciseScopedSet {
@@ -156,10 +158,18 @@ export function scopeSetsToLifter<T extends { lifter?: string | undefined }>(
   return sets.filter((set) => set.lifter === lifter);
 }
 
+/**
+ * Whether a set may enter a cross-session comparison window (drift guard,
+ * MRV guard).
+ *
+ * VMCP-02.84: the gate is the set's PURPOSE, not the warm-up boolean. A probe
+ * is one deliberate heavy effort and a technique rung is light practice —
+ * comparing either against a working set measures the intent, not the drift.
+ */
 export function isEligibleForComparison(
-  set: { isWarmup?: boolean | undefined; side?: string | undefined },
+  set: PurposeBearing & { side?: string | undefined },
   key: { side?: string | undefined },
 ): boolean {
-  if (set.isWarmup === true) return false;
+  if (setPurposeOf(set) !== 'working') return false;
   return key.side === undefined || set.side === key.side;
 }
