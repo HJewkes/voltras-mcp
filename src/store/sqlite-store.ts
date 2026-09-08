@@ -19,7 +19,7 @@
 // disconnect followed by an explicit re-end) never leave stale reps behind.
 
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
 import {
@@ -50,6 +50,10 @@ import {
   type StoredIsometricMeasurement,
   type StoredIsometricSideMeasurement,
   type StoredIsometricTrial,
+  type PlanImportCounts,
+  type PlanImportExercise,
+  type PlanImportResult,
+  type PlanImportTemplate,
   type StoredPlannedExercise,
   type StoredExerciseBaseline,
   type StoredFailureAnchor,
@@ -65,7 +69,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -300,7 +304,12 @@ const SCHEMA_SQL = `
     day_label TEXT,
     name TEXT NOT NULL,
     notes TEXT,
-    order_index INTEGER NOT NULL DEFAULT 0
+    order_index INTEGER NOT NULL DEFAULT 0,
+    -- v14. Stable key from whatever system authored the row (tc:workout:<id>
+    -- for a TrueCoach import). NULL for anything created locally, and SQLite
+    -- treats NULLs as distinct in a UNIQUE index, so the uniqueness constraint
+    -- costs locally-authored rows nothing. The index lives in migrateV13ToV14.
+    external_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_workout_templates_week
     ON workout_templates(week_id, order_index);
@@ -324,7 +333,9 @@ const SCHEMA_SQL = `
     -- A named object cannot be silently mis-ordered by a consumer; a tuple can.
     target_tempo_json TEXT,
     target_rom_m REAL,
-    target_rir REAL
+    target_rir REAL,
+    -- v14. tc:item:<id> for a TrueCoach import; see workout_templates above.
+    external_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_planned_exercises_template
     ON planned_exercises(workout_template_id, order_index);
@@ -1031,6 +1042,36 @@ function migrateV12ToV13(db: DatabaseSync): void {
 }
 
 /**
+ * v13→v14 (TrueCoach pull): give a planned row a stable key from the system
+ * that authored it, so a re-import updates in place instead of duplicating.
+ *
+ * ADDITIVE ONLY, in the shape v10→v11 through v12→v13 took. Nothing is
+ * backfilled: every existing planning row was authored locally and genuinely
+ * has no external id, which is what NULL says.
+ *
+ * The two UNIQUE indexes live here rather than in `SCHEMA_SQL` because that is
+ * where the v11→v12 unique index went, and `applyMigrations` runs on fresh DBs
+ * too — so a brand-new file gets them from this body.
+ *
+ * Probed with `columnNames` because `applyMigrations` also runs on fresh DBs
+ * whose `SCHEMA_SQL` already declares both columns.
+ */
+function migrateV13ToV14(db: DatabaseSync): void {
+  if (!columnNames(db, 'workout_templates').has('external_id')) {
+    db.exec(`ALTER TABLE workout_templates ADD COLUMN external_id TEXT`);
+  }
+  if (!columnNames(db, 'planned_exercises').has('external_id')) {
+    db.exec(`ALTER TABLE planned_exercises ADD COLUMN external_id TEXT`);
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workout_templates_external
+      ON workout_templates(external_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_planned_exercises_external
+      ON planned_exercises(external_id);
+  `);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1371,6 +1412,42 @@ interface TrainingWeekRow {
   name: string | null;
 }
 
+/**
+ * Shared by `putWorkoutTemplate` and the transactional plan import, so the two
+ * write paths cannot drift into disagreeing about which columns an upsert
+ * touches. Upsert in place rather than `INSERT OR REPLACE`: `planned_exercises`
+ * and `program_assignments` are FK children of `workout_templates`, and a
+ * delete-then-insert would cascade them away on every re-import.
+ */
+const WORKOUT_TEMPLATE_UPSERT_SQL = `INSERT INTO workout_templates
+   (id, week_id, day_label, name, notes, order_index, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?)
+ ON CONFLICT(id) DO UPDATE SET
+   week_id = excluded.week_id,
+   day_label = excluded.day_label,
+   name = excluded.name,
+   notes = excluded.notes,
+   order_index = excluded.order_index,
+   external_id = excluded.external_id`;
+
+const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
+   (id, workout_template_id, exercise_id, order_index, target_sets,
+    target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
+    rest_sec, notes, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ ON CONFLICT(id) DO UPDATE SET
+   workout_template_id = excluded.workout_template_id,
+   exercise_id = excluded.exercise_id,
+   order_index = excluded.order_index,
+   target_sets = excluded.target_sets,
+   target_reps_low = excluded.target_reps_low,
+   target_reps_high = excluded.target_reps_high,
+   target_weight_lbs = excluded.target_weight_lbs,
+   target_rpe = excluded.target_rpe,
+   rest_sec = excluded.rest_sec,
+   notes = excluded.notes,
+   external_id = excluded.external_id`;
+
 interface WorkoutTemplateRow {
   id: string;
   week_id: string;
@@ -1378,6 +1455,7 @@ interface WorkoutTemplateRow {
   name: string;
   notes: string | null;
   order_index: number;
+  external_id: string | null;
 }
 
 interface PlannedExerciseRow {
@@ -1392,6 +1470,7 @@ interface PlannedExerciseRow {
   target_rpe: number | null;
   rest_sec: number | null;
   notes: string | null;
+  external_id: string | null;
 }
 
 interface ProgramAssignmentRow {
@@ -2104,18 +2183,16 @@ export class SqliteSessionStore implements SessionStore {
 
   async putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void> {
     this.db
-      .prepare(
-        `INSERT INTO workout_templates
-           (id, week_id, day_label, name, notes, order_index)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           week_id = excluded.week_id,
-           day_label = excluded.day_label,
-           name = excluded.name,
-           notes = excluded.notes,
-           order_index = excluded.order_index`,
-      )
-      .run(t.id, t.weekId, t.dayLabel ?? null, t.name, t.notes ?? null, t.orderIndex);
+      .prepare(WORKOUT_TEMPLATE_UPSERT_SQL)
+      .run(
+        t.id,
+        t.weekId,
+        t.dayLabel ?? null,
+        t.name,
+        t.notes ?? null,
+        t.orderIndex,
+        t.externalId ?? null,
+      );
     return Promise.resolve();
   }
 
@@ -2135,24 +2212,7 @@ export class SqliteSessionStore implements SessionStore {
 
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
     this.db
-      .prepare(
-        `INSERT INTO planned_exercises
-           (id, workout_template_id, exercise_id, order_index, target_sets,
-            target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
-            rest_sec, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           workout_template_id = excluded.workout_template_id,
-           exercise_id = excluded.exercise_id,
-           order_index = excluded.order_index,
-           target_sets = excluded.target_sets,
-           target_reps_low = excluded.target_reps_low,
-           target_reps_high = excluded.target_reps_high,
-           target_weight_lbs = excluded.target_weight_lbs,
-           target_rpe = excluded.target_rpe,
-           rest_sec = excluded.rest_sec,
-           notes = excluded.notes`,
-      )
+      .prepare(PLANNED_EXERCISE_UPSERT_SQL)
       .run(
         e.id,
         e.workoutTemplateId,
@@ -2165,6 +2225,7 @@ export class SqliteSessionStore implements SessionStore {
         e.targetRpe ?? null,
         e.restSec ?? null,
         e.notes ?? null,
+        e.externalId ?? null,
       );
     return Promise.resolve();
   }
@@ -2183,6 +2244,102 @@ export class SqliteSessionStore implements SessionStore {
       )
       .all(templateId) as unknown as PlannedExerciseRow[];
     return Promise.resolve(rows.map(rowToPlannedExercise));
+  }
+
+  async getWorkoutTemplateByExternalId(
+    externalId: string,
+  ): Promise<StoredWorkoutTemplate | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM workout_templates WHERE external_id = ?`)
+      .get(externalId) as WorkoutTemplateRow | undefined;
+    return Promise.resolve(row ? rowToWorkoutTemplate(row) : undefined);
+  }
+
+  async getPlannedExerciseByExternalId(
+    externalId: string,
+  ): Promise<StoredPlannedExercise | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM planned_exercises WHERE external_id = ?`)
+      .get(externalId) as PlannedExerciseRow | undefined;
+    return Promise.resolve(row ? rowToPlannedExercise(row) : undefined);
+  }
+
+  /**
+   * The whole import, in one transaction. Reads and writes are interleaved
+   * inside it on purpose: the "does this external id already exist" lookup has
+   * to see the same snapshot the write lands in, or a re-import could mint a
+   * second row for a key that was inserted a moment earlier.
+   */
+  async importPlanTree(templates: readonly PlanImportTemplate[]): Promise<PlanImportResult> {
+    const result = emptyPlanImportResult();
+    const upsertTemplate = this.db.prepare(WORKOUT_TEMPLATE_UPSERT_SQL);
+    const upsertExercise = this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL);
+    this.db.exec('BEGIN');
+    try {
+      for (const template of templates) {
+        const id = this.#applyImportTemplate(template, upsertTemplate, result);
+        for (const exercise of template.exercises) {
+          this.#applyImportExercise(exercise, id, upsertExercise, result);
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return Promise.resolve(result);
+  }
+
+  #applyImportTemplate(
+    template: PlanImportTemplate,
+    upsert: StatementSync,
+    result: PlanImportResult,
+  ): string {
+    const existing = this.db
+      .prepare(`SELECT * FROM workout_templates WHERE external_id = ?`)
+      .get(template.externalId) as WorkoutTemplateRow | undefined;
+    const id = existing?.id ?? randomUUID();
+    const next: StoredWorkoutTemplate = { ...template, id, externalId: template.externalId };
+    bump(result, existing === undefined, sameTemplate(existing, next), 'templates');
+    upsert.run(
+      id,
+      next.weekId,
+      next.dayLabel ?? null,
+      next.name,
+      next.notes ?? null,
+      next.orderIndex,
+      next.externalId ?? null,
+    );
+    return id;
+  }
+
+  #applyImportExercise(
+    exercise: PlanImportExercise,
+    templateId: string,
+    upsert: StatementSync,
+    result: PlanImportResult,
+  ): void {
+    const existing = this.db
+      .prepare(`SELECT * FROM planned_exercises WHERE external_id = ?`)
+      .get(exercise.externalId) as PlannedExerciseRow | undefined;
+    const id = existing?.id ?? randomUUID();
+    const next: StoredPlannedExercise = { ...exercise, id, workoutTemplateId: templateId };
+    bump(result, existing === undefined, sameExercise(existing, next), 'exercises');
+    upsert.run(
+      id,
+      templateId,
+      next.exerciseId,
+      next.orderIndex,
+      next.targetSets,
+      next.targetRepsLow ?? null,
+      next.targetRepsHigh ?? null,
+      next.targetWeightLbs ?? null,
+      // TrueCoach carries no RPE field; keep whatever a local edit put there.
+      existing?.target_rpe ?? null,
+      next.restSec ?? null,
+      next.notes ?? null,
+      next.externalId ?? null,
+    );
   }
 
   /**
@@ -2624,6 +2781,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   //     additive index + column, nothing rewritten.
   // 12 = v12 schema; v13 adds `sets.auto_created_by` / `sets.upgraded`
   //     (VW-180) — additive columns, nothing backfilled.
+  // 13 = v13 schema; v14 adds `workout_templates.external_id` /
+  //     `planned_exercises.external_id` plus their unique indexes (TrueCoach
+  //     pull) — additive columns + indexes, nothing backfilled.
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2640,6 +2800,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 10 &&
     found !== 11 &&
     found !== 12 &&
+    found !== 13 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2690,6 +2851,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 12) {
     migrateV12ToV13(db);
+  }
+  if (current <= 13) {
+    migrateV13ToV14(db);
   }
 }
 
@@ -3067,6 +3231,56 @@ function rowToTrainingWeek(row: TrainingWeekRow): StoredTrainingWeek {
   return out;
 }
 
+function emptyPlanImportResult(): PlanImportResult {
+  return {
+    imported: { templates: 0, exercises: 0 },
+    updated: { templates: 0, exercises: 0 },
+    unchanged: { templates: 0, exercises: 0 },
+  };
+}
+
+/** Route one row into exactly one of the three counters. */
+function bump(
+  result: PlanImportResult,
+  isNew: boolean,
+  isSame: boolean,
+  key: keyof PlanImportCounts,
+): void {
+  const bucket = isNew ? result.imported : isSame ? result.unchanged : result.updated;
+  bucket[key] += 1;
+}
+
+/**
+ * Compared field by field rather than by a serialized blob: the stored row and
+ * the incoming one differ in shape (null vs absent) even when they carry the
+ * same values, and a blob comparison would report every re-import as an update.
+ */
+function sameTemplate(row: WorkoutTemplateRow | undefined, next: StoredWorkoutTemplate): boolean {
+  if (row === undefined) return false;
+  return (
+    row.week_id === next.weekId &&
+    row.name === next.name &&
+    (row.day_label ?? undefined) === next.dayLabel &&
+    (row.notes ?? undefined) === next.notes &&
+    row.order_index === next.orderIndex
+  );
+}
+
+function sameExercise(row: PlannedExerciseRow | undefined, next: StoredPlannedExercise): boolean {
+  if (row === undefined) return false;
+  return (
+    row.workout_template_id === next.workoutTemplateId &&
+    row.exercise_id === next.exerciseId &&
+    row.order_index === next.orderIndex &&
+    row.target_sets === next.targetSets &&
+    (row.target_reps_low ?? undefined) === next.targetRepsLow &&
+    (row.target_reps_high ?? undefined) === next.targetRepsHigh &&
+    (row.target_weight_lbs ?? undefined) === next.targetWeightLbs &&
+    (row.rest_sec ?? undefined) === next.restSec &&
+    (row.notes ?? undefined) === next.notes
+  );
+}
+
 function rowToWorkoutTemplate(row: WorkoutTemplateRow): StoredWorkoutTemplate {
   const out: StoredWorkoutTemplate = {
     id: row.id,
@@ -3076,6 +3290,7 @@ function rowToWorkoutTemplate(row: WorkoutTemplateRow): StoredWorkoutTemplate {
   };
   if (row.day_label !== null) out.dayLabel = row.day_label;
   if (row.notes !== null) out.notes = row.notes;
+  if (row.external_id !== null) out.externalId = row.external_id;
   return out;
 }
 
@@ -3093,6 +3308,7 @@ function rowToPlannedExercise(row: PlannedExerciseRow): StoredPlannedExercise {
   if (row.target_rpe !== null) out.targetRpe = row.target_rpe;
   if (row.rest_sec !== null) out.restSec = row.rest_sec;
   if (row.notes !== null) out.notes = row.notes;
+  if (row.external_id !== null) out.externalId = row.external_id;
   return out;
 }
 

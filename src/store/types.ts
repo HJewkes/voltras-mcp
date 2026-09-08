@@ -683,6 +683,13 @@ export interface StoredWorkoutTemplate {
   name: string;
   notes?: string;
   orderIndex: number;
+  /**
+   * Stable key from the system that authored this row (`tc:workout:<id>` for a
+   * TrueCoach import), UNIQUE where present. Absent on anything created
+   * locally, which is what lets a re-import update in place without ever
+   * touching a hand-built template.
+   */
+  externalId?: string;
 }
 
 /** A planned exercise within a workout template (sets/reps/weight prescription). */
@@ -698,6 +705,48 @@ export interface StoredPlannedExercise {
   targetRpe?: number;
   restSec?: number;
   notes?: string;
+  /** Stable authoring key (`tc:item:<id>`), UNIQUE where present. See `StoredWorkoutTemplate`. */
+  externalId?: string;
+}
+
+/**
+ * One template plus its exercises, as an importer hands them to the store.
+ * `templateId` / `id` are absent for a row the importer has not seen before —
+ * the store resolves an existing row by `externalId` and only mints a UUID
+ * when there is none, which is what keeps a re-import idempotent.
+ */
+export interface PlanImportTemplate {
+  externalId: string;
+  weekId: string;
+  dayLabel?: string;
+  name: string;
+  notes?: string;
+  orderIndex: number;
+  exercises: PlanImportExercise[];
+}
+
+export interface PlanImportExercise {
+  externalId: string;
+  exerciseId: string;
+  orderIndex: number;
+  targetSets: number;
+  targetRepsLow?: number;
+  targetRepsHigh?: number;
+  targetWeightLbs?: number;
+  restSec?: number;
+  notes?: string;
+}
+
+/** Row counts per outcome. `unchanged` is a row whose stored values already matched. */
+export interface PlanImportCounts {
+  templates: number;
+  exercises: number;
+}
+
+export interface PlanImportResult {
+  imported: PlanImportCounts;
+  updated: PlanImportCounts;
+  unchanged: PlanImportCounts;
 }
 
 /** Links a completed session to a planned exercise / workout template. */
@@ -1046,6 +1095,19 @@ export interface SessionStore {
   getPlannedExercise(id: string): Promise<StoredPlannedExercise | undefined>;
   /** Return every planned exercise in a template, ordered by `orderIndex` ascending. */
   getPlannedExercisesForTemplate(templateId: string): Promise<StoredPlannedExercise[]>;
+
+  /** Fetch a planning row by its authoring key, or `undefined` when nothing carries it. */
+  getWorkoutTemplateByExternalId(externalId: string): Promise<StoredWorkoutTemplate | undefined>;
+
+  getPlannedExerciseByExternalId(externalId: string): Promise<StoredPlannedExercise | undefined>;
+
+  /**
+   * Upsert a batch of externally-authored templates and their exercises in ONE
+   * transaction, keyed by `externalId`. All-or-nothing: a partially-written
+   * plan tree is worse than no plan tree, because the model would read it as
+   * the coach's complete prescription.
+   */
+  importPlanTree(templates: readonly PlanImportTemplate[]): Promise<PlanImportResult>;
   /**
    * Remove one planned exercise. Resolves `true` when a row was removed and
    * `false` when no row matched, so a caller can 404 rather than report a
