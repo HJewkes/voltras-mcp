@@ -1,107 +1,57 @@
 /**
  * Data contract for the live "fatigue card" and the diverging dual-Voltra
- * velocity hero (PROVISIONAL — see the DoD note below).
+ * velocity hero.
  *
- * These are the read-models the two in-flight titan components will consume. The
- * components are being hardened in PARALLEL and are NOT merged, so we cannot
- * import their final prop types; instead this module DEFINES the shape the
- * data-path must produce, so the titan prop API can be reconciled against a
- * concrete, well-commented contract rather than a sketch. The mapper in
- * `panels/fatigue-view.ts` projects the store/snapshot onto these types.
+ * The fatigue card's model IS titan's — imported and re-exported below, not
+ * mirrored (VMCP-03.06). It used to be a hand-written copy of titan's exported
+ * `LiveFatigueModel`, written when the components were still in flight. Required
+ * fields drift loudly under that arrangement (tsc catches them); OPTIONAL fields
+ * drift in TOTAL SILENCE, because nothing type-checks a prop allowed to be absent
+ * and passing a typed VARIABLE (not an object literal) skips excess-property checks
+ * too. `plannedReps` did exactly that: titan shipped it in 0.12.0 to drive
+ * `RomProgressionChart`'s dashed to-do slots, the copy never grew it, and every set
+ * rendered as complete through clean lint, clean tsc on both configs, and a green
+ * suite. Importing removes the copy; `__tests__/fatigue-model-contract.test.ts` is
+ * the mechanical guard for what importing alone cannot catch.
  *
- * PROVISIONAL / pre-Gate-2 (titan DoD): the mapper is wired only as a labeled
- * provisional path that validates the data-path — it does not claim "done" and no
- * component renders it yet. Every field is now sourced from real WA analytics
- * (`@voltras/workout-analytics` 1.7.0, incl. `getSetFatigueVerdict` /
- * `getSetWorkingROM`); `verdict` is `null` only for a cold-start set (< 2 reps).
+ * STAYS LOCAL — the SPA-only sub-models titan does not export: the diverging
+ * dual-Voltra hero ({@link DivergingHeroModel} / {@link DivergingHeroSide}), the
+ * {@link LimbAsymmetry} callout, and the two dual-Voltra fields the card carries
+ * beyond titan's shape (see {@link LiveFatigueModel}).
  *
- * Units: every velocity here is m/s and every distance is metres — converted
- * from WA's native mm/s & mm at the mapper boundary, exactly as the existing
- * live-view mapping does. WA-side `load` is 0 (the bridge never populates it), so
- * there is deliberately NO force/impulse/power dimension on this contract.
+ * The mapper in `panels/fatigue-view.ts` projects the store/snapshot onto these
+ * types. Every field is sourced from real WA analytics (`@voltras/workout-analytics`,
+ * incl. `getSetFatigueVerdict` / `getSetWorkingROM`); `verdict` is `null` only for a
+ * cold-start set (< 2 reps).
  *
- * Tone/state vocabularies mirror WA's `DimensionTone` / `FatigueVerdictState`
- * one-for-one, so the eventual WA verdict drops straight in.
+ * Units: every velocity here is m/s and every distance is metres — converted from
+ * WA's native mm/s & mm at the mapper boundary, exactly as the existing live-view
+ * mapping does. WA-side `load` is 0 (the bridge never populates it), so there is
+ * deliberately NO force/impulse/power dimension on this contract.
  */
-
-/** Per-dimension status light. Mirrors WA's `DimensionTone`. */
-export type DimensionTone = 'ok' | 'warn' | 'alarm';
-
-/** Aggregated verdict state (drives the label). Mirrors WA's `FatigueVerdictState`. */
-export type FatigueVerdictState = 'good' | 'slowing' | 'grinding' | 'form-breakdown';
+import type {
+  LiveFatigueModel as TitanLiveFatigueModel,
+  RepVelocityCurve,
+} from '@titan-design/react-ui';
 
 /**
- * Movement phase of one per-sample point — colors the ghost-spark zero-axis.
+ * titan's fatigue sub-models, re-exported so SPA modules keep importing the whole
+ * contract from here. Previously mirrored one-for-one; see the module note.
  *
- * `hold` is a DELIBERATE pause under load (WA's `MovementPhase.HOLD`) — the bottom/top
- * holds a tempo prescription asks for. `idle` is undirected dead time. Mirrors titan's
- * `SamplePhase`; its `PHASE_AXIS_COLOR` gives them distinct greys, so folding them together
- * (as this boundary used to) makes a held bottom indistinguishable from nothing happening.
+ * `SamplePhase` keeps `hold` distinct from `idle` (#211): titan's `PHASE_AXIS_COLOR`
+ * gives them different greys, so folding them together (as this boundary once did)
+ * makes a held bottom indistinguishable from nothing happening.
  */
-export type SamplePhase = 'concentric' | 'eccentric' | 'hold' | 'idle';
-
-/** One per-sample point of a rep's velocity-time curve. */
-export interface VelocitySample {
-  /** Milliseconds since this rep's first sample. */
-  tMs: number;
-  /** Instantaneous velocity magnitude, m/s (converted from native mm/s). */
-  velocityMps: number;
-  /** Movement phase at this sample — drives the phase-colored zero-axis segment. */
-  phase: SamplePhase;
-}
-
-/** A contiguous same-phase run within a rep's sample stream — one zero-axis segment. */
-export interface PhaseSegment {
-  phase: SamplePhase;
-  /** Start offset, ms since the rep's first sample. */
-  startMs: number;
-  /** End offset, ms since the rep's first sample. */
-  endMs: number;
-}
-
-/**
- * One rep's velocity-time curve for the ghost-spark (current rep drawn solid,
- * prior reps faded).
- *
- * The line color is driven by TWO normalized per-rep signals (the "green-intensity
- * control-aware" rule). The mapper provides the numbers; the color MAPPING lives in
- * the ghost-spark component. Component logic (for reference, not this layer's code):
- * `grindSignature < ~0.35` → stay green, intensity by `tempoDeviation` (brightest at
- * 0 → deepest green at 1, hue held); otherwise → warm hue amber (at 0.35) → red (at
- * 1.0) by `grindSignature`. So a slow-but-smooth rep stays green (just deeper); only
- * a stalling/collapsing rep warms.
- */
-export interface RepVelocityCurve {
-  /** 1-based rep number. */
-  repNumber: number;
-  /** Per-sample velocity-time points (concentric then eccentric, in stream order). */
-  samples: VelocitySample[];
-  /** Contiguous phase runs, for the phase-colored zero-axis. */
-  phaseSegments: PhaseSegment[];
-  /**
-   * Normalized concentric-duration deviation from the prescribed tempo, 0..1
-   * (0 = on-tempo, 1 = well off). Drives GREEN INTENSITY when the rep is controlled.
-   * `null` when there is no prescribed tempo to deviate from (nothing to compare to).
-   */
-  tempoDeviation: number | null;
-  /**
-   * Normalized velocity COLLAPSE within the concentric, 0..1 (0 = smooth, 1 = full
-   * collapse) — the peak → mid-concentric-trough drop, ignoring the natural lockout
-   * taper (the `getPhaseVelocityDropPct` concept, measured over a window that drops
-   * the ramp-up and the lockout tail so a smooth rep reads ~0). Warms the line hue
-   * amber→red past the control threshold. Always computed per rep (no prescription
-   * needed); a rep with too few concentric samples reads `0`.
-   */
-  grindSignature: number;
-}
-
-/** One per-rep point of the ROM-progression mini-chart. */
-export interface RepRomPoint {
-  /** 1-based rep number. */
-  repNumber: number;
-  /** Concentric range of motion, metres. */
-  romM: number;
-}
+export type {
+  DimensionTone,
+  FatigueVerdict,
+  FatigueVerdictState,
+  PhaseSegment,
+  RepRomPoint,
+  RepVelocityCurve,
+  SamplePhase,
+  VelocitySample,
+} from '@titan-design/react-ui';
 
 /**
  * The left/right performance imbalance callout on the (single, shared) dual-Voltra
@@ -126,11 +76,22 @@ export interface LimbAsymmetry {
 }
 
 /**
- * The always-on live fatigue card model for the current set.
+ * The always-on live fatigue card model for the current set — titan's exported
+ * `LiveFatigueModel` plus the two dual-Voltra fields the SPA adds.
+ *
+ * IMPORTED, not mirrored (VMCP-03.06). Every field titan declares — including any
+ * OPTIONAL one it adds in a future release — arrives here for free, so the mapper
+ * can no longer silently omit one the way it omitted `plannedReps`. See the module
+ * note and `__tests__/fatigue-model-contract.test.ts`.
+ *
+ * The intersection is the SPA's own extension, not a mirror: `contributingLimbCount`
+ * and {@link asymmetry} are dual-Voltra facts titan's card does not model. Object
+ * literals typed as this intersection still get excess-property checking, which is
+ * what the guard relies on.
  *
  * A `null` return from the mapper means "no set to show". A present model with a
- * `null` `verdict` means the set is warming up (cold start, < 2 reps) OR the WA
- * verdict function is not yet available — the card renders a neutral "warming up".
+ * `null` `verdict` means the set is warming up (cold start, < 2 reps) — the card
+ * renders a neutral "warming up".
  *
  * DUAL-VOLTRA: there is exactly ONE of these cards even when two devices are live.
  * Its verdict, RPE and three dimension lights describe the ATHLETE AS A WHOLE (see
@@ -138,65 +99,7 @@ export interface LimbAsymmetry {
  * the only per-limb thing on it is {@link asymmetry}. Per-limb detail belongs to the
  * diverging hero and the ghost-spark, not here.
  */
-export interface LiveFatigueModel {
-  /**
-   * Estimated RPE (exact, unrounded — the consumer rounds to the conventional
-   * 0.5). `null` when there is not enough signal (< 2 reps).
-   */
-  rpe: number | null;
-  /** Reps in reserve = 10 − RPE. `null` when `rpe` is `null`. */
-  repsInReserve: number | null;
-  /**
-   * The aggregated verdict + the three per-dimension lights, from WA
-   * `getSetFatigueVerdict` (velocity/ROM/tempo with strict precedence so a
-   * clean-looking velocity cannot mask a cheat rep). `null` = warming up (a
-   * cold-start set, < 2 reps). The shape is WA's `FatigueVerdict` verbatim.
-   */
-  verdict: {
-    state: FatigueVerdictState;
-    tone: DimensionTone;
-    dimensions: {
-      velocityLoss: DimensionTone;
-      rom: DimensionTone;
-      tempo: DimensionTone;
-    };
-  } | null;
-  /** ROM progression: per-rep ROM points (metres), ordered by rep. */
-  romProgression: RepRomPoint[];
-  /**
-   * Planned rep count from the prescription — the ROM chart draws the remainder as
-   * dashed to-do placeholders (the "N of M done" read). `undefined` when no plan is
-   * attached: there is genuinely no target then, and the gap must read as a gap.
-   *
-   * NEVER default this to the rep count so far, or every set renders as complete.
-   * It is OPTIONAL on titan's matching prop, so omitting it is silent — the chart
-   * simply loses the to-do read with no type error anywhere.
-   */
-  plannedReps?: number;
-  /**
-   * The working-range standard the ROM chart draws its reference line at (metres),
-   * from WA `getSetWorkingROM` (trimmed peak: drop rep 1 + the in-progress rep).
-   * `null` until a standard is established (needs ≥ 3 reps).
-   */
-  romWorkingStandardM: number | null;
-  /**
-   * The short-threshold line the ROM chart draws (metres) = 0.75 × working
-   * standard. `null` until the standard is established.
-   */
-  romShortThresholdM: number | null;
-  /** Ghost-spark: per-rep velocity-time curves, oldest first (last = current rep). */
-  velocityCurves: RepVelocityCurve[];
-  /**
-   * Current-rep tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]`
-   * seconds — from WA `getSetTempoSeconds` (raw durations; NOT `formatTempo`,
-   * whose ordering is a known footgun). `null` when no rep carries timing yet.
-   */
-  tempoSeconds: [number, number, number, number] | null;
-  /**
-   * Target tempo tuple, same `[ecc, pauseBottom, con, pauseTop]` ordering, from
-   * the prescription. `null` when the plan prescribes none.
-   */
-  targetTempoSeconds: [number, number, number, number] | null;
+export type LiveFatigueModel = TitanLiveFatigueModel & {
   /**
    * How many devices contributed reps to this card (0, 1, or 2+). The card uses it
    * to tell "single Voltra — imbalance is not a thing here" (`< 2`) apart from "two
@@ -211,7 +114,7 @@ export interface LiveFatigueModel {
    * usable mean velocity. A gap beats a guess.
    */
   asymmetry: LimbAsymmetry | null;
-}
+};
 
 /**
  * One side (limb) of the diverging dual-Voltra velocity hero.
