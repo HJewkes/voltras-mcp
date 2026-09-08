@@ -64,13 +64,14 @@ import {
   type StoredSet,
   type StoredSide,
   type StoredTrainingBlock,
+  type EffortTolerance,
   type StoredTrainingProfile,
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -428,6 +429,12 @@ const SCHEMA_SQL = `
     days_available INTEGER,
     days_reliable INTEGER,
     onboarded_at TEXT,
+    -- v16 (VMCP-06.04): the three things RP keeps distinct and intake used to
+    -- collapse into one goal string — where the lifter is now, how hard they
+    -- are willing to be pushed, and where they want to end up.
+    current_baseline TEXT,
+    effort_tolerance TEXT,
+    target TEXT,
     -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
     -- actually gave and which we assumed on their behalf.
     provenance_json TEXT,
@@ -1102,6 +1109,22 @@ function migrateV14ToV15(db: DatabaseSync): void {
 }
 
 /**
+ * v15→v16 (VMCP-06.04): split intake's conflated `goal` into the three things
+ * RP keeps distinct — current baseline, effort tolerance, and target.
+ *
+ * ADDITIVE ONLY, and NOTHING IS BACK-FILLED. `goal` stays exactly where it is:
+ * an existing free-text goal may be any of the three, and guessing which would
+ * manufacture a self-report the lifter never gave.
+ */
+function migrateV15ToV16(db: DatabaseSync): void {
+  const existing = columnNames(db, 'training_profile');
+  for (const column of ['current_baseline', 'effort_tolerance', 'target']) {
+    if (existing.has(column)) continue;
+    db.exec(`ALTER TABLE training_profile ADD COLUMN ${column} TEXT`);
+  }
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1397,6 +1420,9 @@ interface TrainingProfileRow {
   days_available: number | null;
   days_reliable: number | null;
   onboarded_at: string | null;
+  current_baseline: string | null;
+  effort_tolerance: string | null;
+  target: string | null;
   provenance_json: string | null;
   updated_at: string;
 }
@@ -2491,8 +2517,9 @@ export class SqliteSessionStore implements SessionStore {
         `INSERT INTO training_profile
            (user_id, declared_tier, declared_at, years_training, history_consistent,
             ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
-            days_available, days_reliable, onboarded_at, provenance_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            days_available, days_reliable, onboarded_at, current_baseline,
+            effort_tolerance, target, provenance_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            declared_tier = excluded.declared_tier,
            declared_at = excluded.declared_at,
@@ -2505,6 +2532,9 @@ export class SqliteSessionStore implements SessionStore {
            days_available = excluded.days_available,
            days_reliable = excluded.days_reliable,
            onboarded_at = excluded.onboarded_at,
+           current_baseline = excluded.current_baseline,
+           effort_tolerance = excluded.effort_tolerance,
+           target = excluded.target,
            provenance_json = excluded.provenance_json,
            updated_at = excluded.updated_at`,
       )
@@ -2521,6 +2551,9 @@ export class SqliteSessionStore implements SessionStore {
         p.daysAvailable ?? null,
         p.daysReliable ?? null,
         p.onboardedAt ?? null,
+        p.currentBaseline ?? null,
+        p.effortTolerance ?? null,
+        p.target ?? null,
         p.provenance === undefined ? null : JSON.stringify(p.provenance),
         p.updatedAt,
       );
@@ -2881,6 +2914,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 14 = v14 schema; v15 adds `sets.lifter` / `sessions.lifter` /
   //     `failure_anchors.lifter` (VW-169) — additive columns, nothing
   //     backfilled (NULL = the owner).
+  // 15 = v15 schema; v16 adds `training_profile.current_baseline` /
+  //     `.effort_tolerance` / `.target` (VMCP-06.04) — additive columns,
+  //     nothing backfilled (`goal` is left exactly as written).
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2899,6 +2935,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 12 &&
     found !== 13 &&
     found !== 14 &&
+    found !== 15 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2955,6 +2992,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 14) {
     migrateV14ToV15(db);
+  }
+  if (current <= 15) {
+    migrateV15ToV16(db);
   }
 }
 
@@ -3215,6 +3255,14 @@ function rowToTrainingProgram(row: TrainingProgramRow): StoredTrainingProgram {
   return out;
 }
 
+/**
+ * The column is a bare TEXT with no CHECK, so a row hand-edited to something
+ * outside the enum reads back as absent rather than as a bad tolerance.
+ */
+function isEffortTolerance(value: string | null): value is EffortTolerance {
+  return value === 'low' || value === 'moderate' || value === 'high';
+}
+
 function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   const out: StoredTrainingProfile = {
     userId: row.user_id,
@@ -3233,6 +3281,9 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   if (row.days_available !== null) out.daysAvailable = row.days_available;
   if (row.days_reliable !== null) out.daysReliable = row.days_reliable;
   if (row.onboarded_at !== null) out.onboardedAt = row.onboarded_at;
+  if (row.current_baseline !== null) out.currentBaseline = row.current_baseline;
+  if (isEffortTolerance(row.effort_tolerance)) out.effortTolerance = row.effort_tolerance;
+  if (row.target !== null) out.target = row.target;
   if (row.provenance_json !== null) {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }

@@ -119,7 +119,7 @@ describe('v13 -> v14 migration', () => {
       expect(columns(db, 'workout_templates').has('external_id')).toBe(true);
       expect(columns(db, 'planned_exercises').has('external_id')).toBe(true);
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(15);
+      expect(version.user_version).toBe(16);
     } finally {
       db.close();
       store.close();
@@ -165,7 +165,7 @@ describe('v13 -> v14 migration', () => {
     const db = new DatabaseSync(path);
     try {
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(15);
+      expect(version.user_version).toBe(16);
     } finally {
       db.close();
       store.close();

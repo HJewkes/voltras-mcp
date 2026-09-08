@@ -306,6 +306,7 @@ const PROFILE_TOOLS = [
   'profile.set_training_background',
   'profile.get_training_background',
   'profile.get_tier_signal',
+  'profile.get_starting_prescription',
 ];
 
 interface FakeTool {
