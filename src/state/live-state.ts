@@ -1159,6 +1159,35 @@ export class LiveState {
   }
 
   /**
+   * The last `count` CLOSED reps of the idle window, oldest first (VW-181).
+   *
+   * The final rep of the idle analytics set is always the in-progress one —
+   * `addSampleToSet` opens it on the eccentric→concentric edge that closed its
+   * predecessor — and at a rep boundary it carries a single sample, so it is
+   * excluded here. Auto-arm judges the closed reps; they are the only ones
+   * with enough data to be judged.
+   */
+  idleTailClosedReps(count: number): Rep[] {
+    if (this._idleAnalyticsSet === undefined) {
+      return [];
+    }
+    return this._idleAnalyticsSet.reps.slice(0, -1).slice(-count);
+  }
+
+  /**
+   * Drop the last `count` entries from the idle-rep ledger (VW-181). Called
+   * when auto-arm adopts reps that were already reported as idle, so the
+   * `idle_rep_summary` for the window doesn't claim work that ended up inside
+   * the set after all.
+   */
+  forgetIdleReps(count: number): void {
+    if (count <= 0) return;
+    const kept = Math.max(0, this.idleReps.length - count);
+    this.idleReps = this.idleReps.slice(0, kept);
+    this.idleRepCount = Math.max(0, this.idleRepCount - count);
+  }
+
+  /**
    * Reset the idle-rep counters and ring buffer. Called by `session.start`
    * so the PT skill starts each session from a clean slate. Also clears
    * the idle analytics set so stale phase state from a prior idle window

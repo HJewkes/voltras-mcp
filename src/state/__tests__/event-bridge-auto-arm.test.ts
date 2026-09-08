@@ -122,13 +122,19 @@ function makeHarness(opts: { autoArm?: 'on' | 'off' } = {}) {
   return { live, client, channels, state };
 }
 
-function feedFrame(client: FakeClient, seq: number, phase: number): void {
+function feedFrame(
+  client: FakeClient,
+  seq: number,
+  phase: number,
+  positionMm = 0.1 * seq,
+  velocityMms = 500,
+): void {
   client.fire.frame({
     sequence: seq,
-    timestamp: 1000 + seq,
+    timestamp: 1000 + seq * 100,
     phase,
-    position: 0.1 * seq,
-    velocity: 0.5,
+    position: positionMm,
+    velocity: velocityMms,
     force: 50,
   });
 }
@@ -140,6 +146,41 @@ function feedRepCycle(client: FakeClient, startSeq: number): void {
   feedFrame(client, startSeq + 2, 1);
 }
 
+// Frame units are device-native: position in mm of cable extension, velocity in
+// mm/s. The bridge converts both once (VW-160 / WA 2.0.0), so a 500 mm / 850
+// mm/s rep reaches the eligibility rule as 0.5 m at 0.85 m/s — the 2026-09-07
+// working-rep shape. The pull ran twice the cable at twice the speed.
+const WORKING_SHAPE = { romMm: 500, velocityMms: 850 };
+const PULL_SHAPE = { romMm: 1000, velocityMms: 1600 };
+
+const SAMPLES_PER_PHASE = 3;
+
+/**
+ * Feed one complete rep (concentric out, eccentric back) and return the next
+ * free sequence number. The rep does not CLOSE until the following rep's first
+ * concentric sample arrives — that is the boundary the idle pipeline reports.
+ */
+function feedShapedRep(
+  client: FakeClient,
+  startSeq: number,
+  shape: { romMm: number; velocityMms: number },
+): number {
+  const step = shape.romMm / (SAMPLES_PER_PHASE - 1);
+  for (let i = 0; i < SAMPLES_PER_PHASE; i++) {
+    feedFrame(client, startSeq + i, 1, step * i, shape.velocityMms);
+  }
+  for (let i = 0; i < SAMPLES_PER_PHASE; i++) {
+    feedFrame(
+      client,
+      startSeq + SAMPLES_PER_PHASE + i,
+      3,
+      shape.romMm - step * i,
+      shape.velocityMms * 0.6,
+    );
+  }
+  return startSeq + SAMPLES_PER_PHASE * 2;
+}
+
 function startSession(live: LiveStateT): void {
   live.startSession({
     sessionId: 'sess-1',
@@ -149,23 +190,31 @@ function startSession(live: LiveStateT): void {
   });
 }
 
-describe('auto-arm on the first idle rep (VW-164)', () => {
+describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
   let h: ReturnType<typeof makeHarness>;
+
+  /** Two working reps, then the frame that closes the second one and arms. */
+  function feedTwoWorkingReps(): void {
+    const next = feedShapedRep(h.client, 1, WORKING_SHAPE);
+    const after = feedShapedRep(h.client, next, WORKING_SHAPE);
+    feedFrame(h.client, after, 1, 0, WORKING_SHAPE.velocityMms);
+  }
 
   beforeEach(() => {
     h = makeHarness();
   });
 
-  it('opens a set and counts the triggering rep into it', () => {
+  it('opens a set and counts both performed reps into it', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
 
-    feedRepCycle(h.client, 1);
+    feedTwoWorkingReps();
 
     expect(h.live.set).toBeDefined();
     expect(h.live.set?.autoCreatedBy).toBe('idle_rep');
-    // The rep that triggered the arm belongs to the set, not to the idle ledger.
-    expect(h.live.set!.reps.length).toBeGreaterThanOrEqual(1);
+    // Both performed reps plus the in-progress one belong to the set, and
+    // neither is left claimed by the idle ledger.
+    expect(h.live.set!.reps.length).toBe(3);
     expect(h.live.idleRepCount).toBe(0);
     expect(h.live.idleReps).toEqual([]);
   });
@@ -174,7 +223,7 @@ describe('auto-arm on the first idle rep (VW-164)', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
 
-    feedRepCycle(h.client, 1);
+    feedTwoWorkingReps();
 
     const started = h.channels.publish.mock.calls
       .map((c) => c[0])
@@ -189,7 +238,7 @@ describe('auto-arm on the first idle rep (VW-164)', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
 
-    feedRepCycle(h.client, 1);
+    feedTwoWorkingReps();
 
     const setId = h.live.set!.setId;
     expect(h.state.setStartDeviceSnapshots.get(setId)).toMatchObject({ weightLbs: 170 });
@@ -197,15 +246,25 @@ describe('auto-arm on the first idle rep (VW-164)', () => {
 
   it('continues to count reps into the auto-armed set', () => {
     startSession(h.live);
-    feedRepCycle(h.client, 1);
+    feedTwoWorkingReps();
     const setId = h.live.set!.setId;
-    const afterFirst = h.live.set!.reps.length;
+    const afterArm = h.live.set!.reps.length;
 
-    feedFrame(h.client, 10, 3);
-    feedFrame(h.client, 11, 1);
+    feedFrame(h.client, 40, 3);
+    feedFrame(h.client, 41, 1);
 
     expect(h.live.set!.setId).toBe(setId);
-    expect(h.live.set!.reps.length).toBeGreaterThan(afterFirst);
+    expect(h.live.set!.reps.length).toBeGreaterThan(afterArm);
+  });
+
+  it('holds off on the first closed rep — one rep says nothing about itself', () => {
+    startSession(h.live);
+
+    const next = feedShapedRep(h.client, 1, WORKING_SHAPE);
+    feedFrame(h.client, next, 1, 0, WORKING_SHAPE.velocityMms);
+
+    expect(h.live.set).toBeUndefined();
+    expect(h.live.idleRepCount).toBe(1);
   });
 
   it('reports idle reps as before when no session is open', () => {
@@ -219,10 +278,60 @@ describe('auto-arm on the first idle rep (VW-164)', () => {
     h = makeHarness({ autoArm: 'off' });
     startSession(h.live);
 
-    feedRepCycle(h.client, 1);
+    feedTwoWorkingReps();
 
     expect(h.live.set).toBeUndefined();
+    expect(h.live.idleRepCount).toBe(2);
+  });
+});
+
+describe('a rope-positioning pull does not arm the set (VW-181)', () => {
+  let h: ReturnType<typeof makeHarness>;
+
+  beforeEach(() => {
+    h = makeHarness();
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 40, trainingMode: 'Weight Training' });
+  });
+
+  /** The 2026-09-07 shape: a positioning pull, then the lifter's first rep. */
+  function feedPullThenWorkingRep(): void {
+    const next = feedShapedRep(h.client, 1, PULL_SHAPE);
+    const after = feedShapedRep(h.client, next, WORKING_SHAPE);
+    feedFrame(h.client, after, 1, 0, WORKING_SHAPE.velocityMms);
+  }
+
+  it('arms on the working rep and leaves the pull out of the set', () => {
+    feedPullThenWorkingRep();
+
+    expect(h.live.set).toBeDefined();
+    // The working rep and the in-progress rep behind it — not the pull.
+    expect(h.live.set!.reps).toHaveLength(2);
+    const firstRom = h.live.set!.reps[0].concentric.endPosition;
+    expect(firstRom).toBeCloseTo(WORKING_SHAPE.romMm / 1000, 3);
+  });
+
+  it('still reports the pull as an idle rep, so nothing is lost', () => {
+    feedPullThenWorkingRep();
+
     expect(h.live.idleRepCount).toBe(1);
+    expect(h.live.idleReps).toHaveLength(1);
+  });
+
+  it('does not cancel the rest timer on the pull', () => {
+    const cancel = vi.spyOn(h.state.restTimers, 'cancel');
+
+    const next = feedShapedRep(h.client, 1, PULL_SHAPE);
+    feedFrame(h.client, next, 1, 0, WORKING_SHAPE.velocityMms); // closes the pull
+
+    expect(cancel).not.toHaveBeenCalled();
+
+    // The rest timer is cancelled only once a real rep actually arms the set.
+    const after = feedShapedRep(h.client, next + 1, WORKING_SHAPE);
+    feedFrame(h.client, after, 1, 0, WORKING_SHAPE.velocityMms);
+
+    expect(h.live.set).toBeDefined();
+    expect(cancel).toHaveBeenCalledWith('primary', 'next_set');
   });
 });
 

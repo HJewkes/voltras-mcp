@@ -645,10 +645,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       if (live.set === undefined) {
         const idleRep = live.processIdleSample(sample);
         if (idleRep !== null) {
-          // VW-164: with a session open, the first idle rep means the lifter
-          // started before `set.start` could land. Open the set here and
-          // adopt this rep into it rather than reporting it as lost work.
-          if (autoArmSet(state, slotId)) {
+          // VW-164: with a session open, an idle rep means the lifter started
+          // before `set.start` could land. Open the set here and adopt this
+          // rep into it rather than reporting it as lost work. VW-181: reps
+          // the set adopts retroactively leave the pending summary batch, so
+          // the window never reports work that ended up inside the set.
+          const armed = autoArmSet(state, slotId);
+          if (armed.armed) {
+            idleRepBatch.count = Math.max(0, idleRepBatch.count - armed.reclaimedIdleReps);
             notifySlot(server, slotId, SET_URI, setUriForSlot);
             return;
           }

@@ -95,14 +95,19 @@ export function selectEligibleReps(reps: readonly Rep[]): readonly Rep[] {
 /**
  * Are two adjacent closed reps consistent with each other (VW-181)?
  *
- * Used by auto-arm to decide whether the rep it is about to open a set on is
- * work or a positioning pull. Order matters: when the two disagree, the LATER
- * rep is the reference and the earlier one is the outlier. A positioning
+ * Used by auto-arm to decide whether the rep before the one it is arming on
+ * was work or a positioning pull. Order matters: when the two disagree, the
+ * LATER rep is the reference and the earlier one is the outlier. A positioning
  * artifact happens at the head of a window — you pull the cable out, then you
  * lift — never after real work has started.
+ *
+ * A pair that cannot be judged (either rep carries too little movement to
+ * measure) is CONSISTENT. Only positive evidence excludes a rep; "we couldn't
+ * tell" must not cost the lifter a rep.
  */
 export function isTailPairConsistent(earlier: Rep, later: Rep): boolean {
-  return isRepEligible(earlier, { priorReps: [later] }).eligible;
+  const verdict = isRepEligible(earlier, { priorReps: [later] });
+  return verdict.eligible || verdict.reason === 'first_rep_unconfirmed';
 }
 
 /** Every rep in `reps` except the one at `index`. */
