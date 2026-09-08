@@ -87,11 +87,11 @@ function fixtureReps(): Rep[] {
   return [...set.reps];
 }
 
-function fixtureSources(): LiveViewSources {
+function withReps(reps: Rep[]): LiveViewSources {
   const snapshot: Snapshot = {
     session: { sessionId: 's1', exerciseName: 'Cable Row' },
     devices: [],
-    sets: { active: { reps: fixtureReps() }, completed: [] },
+    sets: { active: { reps }, completed: [] },
   };
   return {
     snapshot,
@@ -99,6 +99,30 @@ function fixtureSources(): LiveViewSources {
     live: null,
     prescription: { sets: 3, repsLow: 8, repsHigh: 12, tempo: [3, 0, 1, 0] },
   };
+}
+
+function fixtureSources(): LiveViewSources {
+  return withReps(fixtureReps());
+}
+
+/**
+ * ONE rep carrying every phase in turn: concentric, a deliberate HOLD under load, undirected
+ * IDLE dead time, then the eccentric. Feeds the #211 assertions below.
+ */
+function heldRep(): Rep[] {
+  let set = createSet();
+  const phases: Array<[MovementPhase, number, number, number]> = [
+    [MovementPhase.CONCENTRIC, 1000, 0, 0.5],
+    [MovementPhase.CONCENTRIC, 1500, 0.4, 0.5],
+    [MovementPhase.HOLD, 1600, 0.4, 0],
+    [MovementPhase.IDLE, 2000, 0.4, 0],
+    [MovementPhase.ECCENTRIC, 2100, 0.4, 0.2],
+    [MovementPhase.ECCENTRIC, 2600, 0, 0.2],
+  ];
+  phases.forEach(([phase, timestamp, position, velocity], sequence) => {
+    set = addSampleToSet(set, { sequence, timestamp, phase, position, velocity, force: 90 });
+  });
+  return [...set.reps];
 }
 
 describe('the fatigue mapper against titan’s LiveFatigueModel (VMCP-03.06)', () => {
@@ -169,13 +193,21 @@ describe('the fatigue mapper against titan’s LiveFatigueModel (VMCP-03.06)', (
 
   it('keeps the HOLD phase distinct from idle at this boundary (#211)', () => {
     // #211 widened `SamplePhase` to carry `hold`; importing titan's type must not lose it.
-    const curve = mapStoreToFatigueModel(fixtureSources())!.velocityCurves[0];
-    const phases: LiveFatigueModel['velocityCurves'][number]['phaseSegments'][number]['phase'][] = [
+    // Assert on the phase of the samples that CARRY each value, so folding HOLD back into
+    // 'idle' (the pre-#211 behaviour) fails here rather than reading as "still in the union".
+    const reps = heldRep();
+    const model = mapStoreToFatigueModel(withReps(reps))!;
+    const samples = model.velocityCurves[0].samples;
+
+    // Sample 3 is the deliberate hold under load; sample 4 is undirected dead time. They are
+    // different facts and the ghost-spark's zero-axis gives them different greys.
+    expect(samples[2].phase).toBe('hold');
+    expect(samples[3].phase).toBe('idle');
+    expect(model.velocityCurves[0].phaseSegments.map((s) => s.phase)).toEqual([
       'concentric',
-      'eccentric',
       'hold',
       'idle',
-    ];
-    expect(phases).toContain(curve.phaseSegments[0].phase);
+      'eccentric',
+    ]);
   });
 });
