@@ -28,6 +28,12 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# TrueCoach pull: the cached access token (mode 0600) and the raw response
+# cache. Both live under $HOME by default; these entries cover a run that
+# points VMCP_TRUECOACH_TOKEN_PATH / VMCP_TRUECOACH_CACHE_DIR into the repo.
+truecoach-token.json
+truecoach-cache/
 .worktrees/
 
 # Cross-session working notes (kept on disk, not tracked)

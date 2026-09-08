@@ -1,0 +1,87 @@
+{
+  "_fixture": "Hand-written from the field names documented by the OSS TrueCoach clients. No real account data.",
+  "workouts": [
+    {
+      "id": 900001,
+      "title": "Upper A",
+      "due": "2026-09-07",
+      "state": "assigned",
+      "warmup": "5 min bike, band pull-aparts",
+      "cooldown": null,
+      "created_at": "2026-09-01T12:00:00Z"
+    },
+    {
+      "id": 900002,
+      "title": "Lower A",
+      "due": "2026-09-09",
+      "state": "assigned",
+      "warmup": null,
+      "cooldown": "Easy walk, 10 min",
+      "created_at": "2026-09-01T12:00:00Z"
+    }
+  ],
+  "workout_items": [
+    {
+      "id": 700001,
+      "workout_id": 900001,
+      "name": "Cable Chest Press",
+      "info": "3 x 8-10 @ 135lb, rest 90s",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 1
+    },
+    {
+      "id": 700002,
+      "workout_id": 900001,
+      "name": "Cable Row",
+      "info": "4 sets of 12, rest 2 min",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 2
+    },
+    {
+      "id": 700003,
+      "workout_id": 900001,
+      "name": "Cable Tricep Pushdown",
+      "info": "50lbs x AMRAP x 4 sets",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 3
+    },
+    {
+      "id": 700004,
+      "workout_id": 900002,
+      "name": "Cable Squat",
+      "info": "5 x 5 @ 225lb",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 1
+    },
+    {
+      "id": 700005,
+      "workout_id": 900002,
+      "name": "Cable Romanian Deadlift",
+      "info": "3 x 10",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 2
+    },
+    {
+      "id": 700006,
+      "workout_id": 900002,
+      "name": "Cable Pull-Through",
+      "info": "3 sets of 15",
+      "result": null,
+      "state": "pending",
+      "is_circuit": false,
+      "position": 3
+    }
+  ],
+  "comments": [],
+  "meta": { "page": 1, "total_pages": 1, "per_page": 50, "total_count": 2 }
+}
