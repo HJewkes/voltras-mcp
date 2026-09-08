@@ -86,13 +86,17 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
     status: 'active',
     autoCreatedBy: 'idle_rep',
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+    // VW-169: an auto-armed set inherits the session's lifter default. The
+    // whole point of the default is that the reps a guest starts before
+    // anyone can call a tool are still attributed to the guest.
+    ...(session.lifter !== undefined ? { lifter: session.lifter } : {}),
   });
   slot.live.adoptIdleTail(adopt);
   const reclaimedIdleReps = adopt - ADOPTED_WITHOUT_CORROBORATION;
   slot.live.forgetIdleReps(reclaimedIdleReps);
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
-  publishAutoArmed(state, slotId, setId, startedAt, session.sessionId);
+  publishAutoArmed(state, slotId, setId, startedAt, session.sessionId, session.lifter);
   return { armed: true, reclaimedIdleReps };
 }
 
@@ -127,10 +131,18 @@ function publishAutoArmed(
   setId: string,
   startedAt: string,
   sessionId: string,
+  lifter: string | undefined,
 ): void {
   const slot = getSlot(state, slotId);
   const ordinal = (slot.live.snapshotSession()?.setIds.length ?? 0) + 1;
-  const activeSet: ActiveSet = { setId, sessionId, startedAt, reps: [], status: 'active' };
+  const activeSet: ActiveSet = {
+    setId,
+    sessionId,
+    startedAt,
+    reps: [],
+    status: 'active',
+    ...(lifter !== undefined ? { lifter } : {}),
+  };
   const payload = buildSetStartedPayload(activeSet, slot.live.snapshotDevice(), ordinal, null, {
     autoArmed: true,
   });

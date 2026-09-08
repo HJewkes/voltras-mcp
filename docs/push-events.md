@@ -181,6 +181,24 @@ nothing about itself. When the two reps agree both are adopted and nothing is lo
 they disagree only the later one is, and the pull stays in the idle ledger where
 `idle_rep_summary` reports it.
 
+## Who is lifting (`lifter`)
+
+`set_started` and `set_ended` carry a `lifter` key — in `meta` and in the `set` block —
+ONLY when someone other than the owner performed the set. Its absence means the owner, so
+a consumer reads "no key" as "the usual person" without a second lookup. On `set_started`
+the `set` block always carries the field, `null` for the owner; the `meta` key is omitted
+entirely in that case, because `meta` values are strings and `"null"` reads as a name.
+
+The label comes from `session.set_lifter {slot, lifter}` (or `session.start {lifter}`) and
+is snapshotted when the set starts, so relabelling mid-set never reattributes reps already
+performed. An auto-armed set inherits it too — the reps a guest starts before anyone can
+call a tool are still the guest's — and a `set.start {lifter}` on that set rewrites the
+label as part of the upgrade.
+
+A labelled set contributes nothing to the owner's baselines, failure anchors, progression
+or session history. To relabel a set that already ran under the wrong name, call
+`set.update {setId, lifter}`.
+
 ## Which reps set the velocity baseline
 
 The `velocity_loss_exceeded` baseline is the highest peak concentric velocity among the

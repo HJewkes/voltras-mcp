@@ -37,7 +37,7 @@ import {
 } from '../schemas/plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
-import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
+import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
@@ -684,7 +684,13 @@ async function suggestProgression(
   // movement in the basis session and keep only the session's heaviest — a
   // 135 lb bench alongside a 315 lb squat would be discarded as warm-ups and
   // the delta computed from the squat.
-  const sessionSets = await state.store.getSetsForSession(basisSessionId);
+  // VW-169: drop the sets a guest did in this session before scoping to the
+  // exercise — one session can hold both, and a guest's heavier top set would
+  // otherwise set the owner's next load.
+  const sessionSets = scopeSetsToLifter(
+    await state.store.getSetsForSession(basisSessionId),
+    input.lifter,
+  );
   const sets = scopeSessionSetsToExerciseId(sessionSets, input.exerciseId);
   const suggestion = computeProgressionDelta(planned, sets, basisSessionId);
   return { plannedExercise: planned, suggestion };
@@ -719,9 +725,14 @@ async function resolveBasisSession(
   // `getMostRecentSessionIdForExercise` answers the actual question — "what
   // session was this exercise last trained in?" — with a single indexed
   // `ORDER BY started_at DESC LIMIT 1`, no reps loaded.
+  //
+  // VW-169: owner-only unless a lifter is named (the store applies the
+  // default), so a guest's set — by definition the most recent one on a
+  // shared rig — cannot become the owner's progression basis.
   return state.store.getMostRecentSessionIdForExercise({
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
+    ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
   });
 }
 

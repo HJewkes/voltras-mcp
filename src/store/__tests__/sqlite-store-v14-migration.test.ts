@@ -110,14 +110,16 @@ afterEach(() => {
 });
 
 describe('v13 -> v14 migration', () => {
-  it('adds external_id to both planning tables and stamps user_version 14', () => {
+  // The version assertion is SCHEMA_VERSION, not 14: opening a v13 file runs
+  // every later migration too, so this test moves with the head version.
+  it('adds external_id to both planning tables and stamps the current user_version', () => {
     const store = SqliteSessionStore.open(path);
     const db = new DatabaseSync(path);
     try {
       expect(columns(db, 'workout_templates').has('external_id')).toBe(true);
       expect(columns(db, 'planned_exercises').has('external_id')).toBe(true);
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(14);
+      expect(version.user_version).toBe(15);
     } finally {
       db.close();
       store.close();
@@ -163,7 +165,7 @@ describe('v13 -> v14 migration', () => {
     const db = new DatabaseSync(path);
     try {
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(14);
+      expect(version.user_version).toBe(15);
     } finally {
       db.close();
       store.close();

@@ -234,6 +234,29 @@ describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
     expect(JSON.parse(started!.content).set.auto_armed).toBe(true);
   });
 
+  // VW-169 — the reps a guest starts before anyone can call a tool are still
+  // the guest's, so the arm has to inherit the session's lifter default.
+  it('inherits the session lifter onto the auto-armed set', () => {
+    startSession(h.live);
+    h.live.setSessionLifter('Jordan');
+
+    feedTwoWorkingReps();
+
+    expect(h.live.set?.lifter).toBe('Jordan');
+    const started = h.channels.publish.mock.calls
+      .map((c) => c[0])
+      .find((e) => e.meta.event_type === 'set_started');
+    expect(started!.meta.lifter).toBe('Jordan');
+  });
+
+  it('leaves the auto-armed set unlabelled when the owner is lifting', () => {
+    startSession(h.live);
+
+    feedTwoWorkingReps();
+
+    expect(h.live.set?.lifter).toBeUndefined();
+  });
+
   it('records the start device snapshot so the set persists a header weight', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });

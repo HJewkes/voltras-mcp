@@ -139,6 +139,23 @@ export function scopeSessionSetsToExerciseId<T extends ExerciseScopedSet>(
  * An absent `key.side` is the side-agnostic view: pool every set, matching
  * `recalcBaseline`, which only adds a `side` predicate when the key names one.
  */
+/**
+ * Keep only the sets one lifter performed (VW-169). `lifter: undefined` is the
+ * OWNER's view and keeps the unlabelled sets, mirroring the store's
+ * `lifter IS NULL` default.
+ *
+ * The store applies that predicate in SQL wherever it can. This is for the
+ * paths that legitimately read a whole session — `getSetsForSession` — and
+ * then have to drop the sets a guest did while working in: one session can
+ * hold both, which is exactly the shape the 2026-09-07 dogfood produced.
+ */
+export function scopeSetsToLifter<T extends { lifter?: string | undefined }>(
+  sets: readonly T[],
+  lifter: string | undefined,
+): T[] {
+  return sets.filter((set) => set.lifter === lifter);
+}
+
 export function isEligibleForComparison(
   set: { isWarmup?: boolean | undefined; side?: string | undefined },
   key: { side?: string | undefined },

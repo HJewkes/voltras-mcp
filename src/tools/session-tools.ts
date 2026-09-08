@@ -36,6 +36,7 @@ import {
   SessionGetInput,
   SessionListInput,
   SessionSetExerciseInput,
+  SessionSetLifterInput,
   SessionStartInput,
 } from '../schemas/session.js';
 import type { StoredSession, StoredSet } from '../store/types.js';
@@ -102,6 +103,14 @@ const SESSION_SET_EXERCISE_DESCRIPTION =
   'session moving to its next movement. Exercise-name resolution is exact-match; prefer ' +
   '`exerciseId` from `exercise.search`/`exercise.get` when you have it.';
 
+const SESSION_SET_LIFTER_DESCRIPTION =
+  'Name who is on the cable for the sets that follow, so a second person working in never ' +
+  "pollutes the owner's baselines, anchors, progression or history. Call it with a label " +
+  "(`{ lifter: 'Jordan' }`) before the guest lifts and with `{ lifter: null }` when the owner " +
+  'takes the rig back. Affects sets started AFTER the call — a set already in progress keeps ' +
+  'the label it started under; use `set.update` to relabel one that already ran. The label is ' +
+  'free text, not an account: guests have no profile, no tier and no baselines of their own.';
+
 const SESSION_LIST_DESCRIPTION =
   'List past sessions, optionally filtered by date range (`from`/`to`) and/or `exerciseId`, ' +
   'with `sort`/`limit`/`offset` pagination. `detail` controls whether each entry is a summary ' +
@@ -139,6 +148,13 @@ export function registerSessionTools(
     SessionSetExerciseInput,
     wrapHandler(SessionSetExerciseInput, (input) => setSessionExercise(state, input)),
     SESSION_SET_EXERCISE_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'session.set_lifter',
+    SessionSetLifterInput,
+    wrapHandler(SessionSetLifterInput, (input) => setSessionLifter(state, input)),
+    SESSION_SET_LIFTER_DESCRIPTION,
   );
   install(
     placeholders,
@@ -215,6 +231,7 @@ async function startSession(
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.verboseIdleReps === true ? { verboseIdleReps: true } : {}),
+    ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
   };
   slot.live.startSession(active);
   // Clear idle-rep accumulators so the PT skill starts each session from a
@@ -227,6 +244,7 @@ async function startSession(
     startedAt,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
+    ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
   };
   await state.store.putSession(stored);
 
@@ -397,6 +415,42 @@ async function setSessionExercise(
 }
 
 /**
+ * Set or clear the active session's default lifter (VW-169) so a second
+ * person can work in without a session of their own.
+ *
+ * A set already open is deliberately left alone: it snapshotted the label at
+ * start, exactly as it snapshots `exerciseId`, so relabelling never rewrites
+ * reps that have already been performed. `set.update` is the tool for a set
+ * that ran under the wrong label.
+ *
+ * Persisted immediately, unlike `session.set_exercise`'s deferred write: the
+ * session row's own label is what `session.list` filters on, so leaving it
+ * until `session.end` would show a guest's in-progress session in the owner's
+ * history for the length of the workout.
+ */
+async function setSessionLifter(
+  state: ServerState,
+  input: z.infer<typeof SessionSetLifterInput>,
+): Promise<{ sessionId: string; lifter: string | null }> {
+  const slot = getSlot(state, input.slot);
+  const active = slot.live.session;
+  if (active === undefined) {
+    throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
+  }
+  const lifter = input.lifter ?? undefined;
+  slot.live.setSessionLifter(lifter);
+
+  const stored = await state.store.getSession(active.sessionId);
+  if (stored !== undefined) {
+    const next = { ...stored };
+    if (lifter !== undefined) next.lifter = lifter;
+    else delete next.lifter;
+    await state.store.putSession(next);
+  }
+  return { sessionId: active.sessionId, lifter: input.lifter };
+}
+
+/**
  * Reverse-lookup a `TrainingMode` enum value from a `TrainingModeName`
  * string (the form `DeviceSnapshot.trainingMode` carries). Returns
  * `undefined` when the snapshot has no recognised mode (`'Unknown'` or
@@ -462,6 +516,7 @@ async function endSession(state: ServerState, slotId: string | undefined): Promi
     endedAt,
     ...(active.exerciseId !== undefined ? { exerciseId: active.exerciseId } : {}),
     ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
+    ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
   };
   await state.store.putSession(stored);
   void finalizedSession; // referenced via `active` snapshot for upsert payload
@@ -479,6 +534,10 @@ async function listSessions(
     ...(input.from !== undefined ? { from: input.from } : {}),
     ...(input.to !== undefined ? { to: input.to } : {}),
     ...(input.exerciseId !== undefined ? { exerciseId: input.exerciseId } : {}),
+    // VW-169: omitted ⇒ owner-only, applied in the store. Passed through
+    // rather than defaulted here so there is one place that decides what
+    // "no lifter named" means.
+    ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
     sort: (input.sort ?? 'startedAt:desc') as 'startedAt:desc' | 'startedAt:asc',
     limit: input.limit ?? 50,
     offset: input.offset ?? 0,

@@ -132,6 +132,12 @@ export interface SessionModel {
    * bare em-dash. `N` is the active exercise's 1-based position in the plan (1 with no plan).
    */
   exerciseName: string;
+  /**
+   * Who is on the cable, when it is NOT the owner (VW-169). Null for the
+   * owner's own work, which is the overwhelmingly common case — the wall shows
+   * a name only when showing one changes what the numbers mean.
+   */
+  lifter: string | null;
   /** Human session-block title. Null until composable from the plan (VW-43). */
   title: string | null;
   /** Null when the settings cascade has not reported a weight (e.g. mock adapter). */

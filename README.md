@@ -174,6 +174,12 @@ tool calls are what Claude issues underneath.
    non-blocking and fires an event when it elapses.
 7. **"That's the workout."** → `session.end`. Any set left open is closed as partial.
 
+**Someone working in?** → `session.set_lifter {lifter: 'Jordan'}` before they lift, and
+`session.set_lifter {lifter: null}` when you take the rig back. Their sets are recorded in
+full but contribute nothing to your baselines, failure anchors, progression or session
+history. If a set already ran under the wrong name, `set.update {setId, lifter}` moves it
+and re-derives your baseline for that exercise.
+
 Afterwards: `session.list` / `session.get` for history, `set.get` for one set's full rep
 detail, `metrics.compute` for the analytics pipelines.
 
@@ -298,7 +304,7 @@ roughly one to two seconds in node mode while BLE comes up.
 
 ## Tool catalog
 
-90 tools in mock mode; 88 with the real adapter (`mock.*` is registered only when
+92 tools in mock mode; 90 with the real adapter (`mock.*` is registered only when
 `VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
@@ -308,8 +314,8 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `plan.*`        | 17    | Training-plan hierarchy: programs → blocks → weeks → templates → exercises, plus `next_workout`, `complete_workout`, `suggest_progression`, and `attach_to_session`.                                                  |
 | `debug.*`       | 6     | Diagnostic ring buffers, rep-stream parity comparison, flight-recorder status, and the channel-delivery round-trip probe.                                                                                             |
 | `slot.*`        | 5     | Bind, identify, swap, list, and unbind the device ↔ physical-side (left/right) mapping used for bilateral work.                                                                                                       |
-| `session.*`     | 5     | `start`, `end`, `set_exercise`, `list`, `get`.                                                                                                                                                                        |
-| `set.*`         | 4     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `get`.                                                                                                                                    |
+| `session.*`     | 6     | `start`, `end`, `set_exercise`, `set_lifter` (name a guest working in, or `null` to hand the rig back), `list`, `get`.                                                                                                |
+| `set.*`         | 5     | `start` (with the optional auto-stop `watch` block), `end`, `live_metrics`, `update` (retro-tag a stored set's lifter), `get`.                                                                                        |
 | `timer.*`       | 3     | `start` (non-blocking, push-completed — preferred for rest), `wait` (blocking, singleton), `cancel`.                                                                                                                  |
 | `system.*`      | 7     | `speak` (macOS `say`), start/stop for the local voice listener — an in-process Silero VAD + whisper.cpp over the mic; no audio leaves the machine — plus `set_cues` (runtime cue toggles) and the device write-lease. |
 | `profile.*`     | 3     | Self-reported training background (get/set) and the derived tier signal.                                                                                                                                              |
@@ -321,6 +327,8 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `driftguard.*`  | 1     | `check` — is rep execution (tempo, ROM) comparable across two sessions of one exercise? Diagnostic read over the in-process gate every cross-session comparison must pass first.                                      |
 | `metrics.*`     | 1     | `compute` — runs an analytics pipeline over a session, a set, or a set-id array. Dispatches to `@voltras/workout-analytics`; no analytics logic is reimplemented here.                                                |
 | `progression.*` | 1     | Progression history for one exercise.                                                                                                                                                                                 |
+| `mrvguard.*`    | 1     | `check` — diagnostic read over the maximum-recoverable-volume guard.                                                                                                                                                  |
+| `coaching.*`    | 1     | `explain` — RP-derived coaching knowledge by topic, always tier-qualified and cited.                                                                                                                                  |
 | `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                                                                   |
 | `truecoach.*`   | 1     | `import_week` — read-only pull of coach-assigned programming into `plan.*`. Off unless credentials are set; see [TrueCoach (read-only pull)](#truecoach-read-only-pull).                                              |
 
