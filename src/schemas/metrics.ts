@@ -88,4 +88,14 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Strength estimate from session data.
   // Analytics: computeStrengthEstimate(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.strength'), sessionId: IdSchema }),
+
+  // Per-exercise first-vs-last working-set decay — B02's strength-loss half
+  // (VMCP-06.10). `exerciseId` narrows the readout to one exercise; omitted →
+  // every exercise the session recorded work for. A DISPLAYED metric: every
+  // field is a ratio or a count, and nothing here is ever applied.
+  z.object({
+    pipeline: z.literal('session.perturbation'),
+    sessionId: IdSchema,
+    exerciseId: IdSchema.optional(),
+  }),
 ]);

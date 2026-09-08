@@ -1,7 +1,7 @@
 // `metrics.compute` — Wave 3C dispatcher (Task 12).
 //
-// One MCP tool, one zod discriminated union, nine pipelines, nine distinct
-// `@voltras/workout-analytics` functions. The handler's only jobs are:
+// One MCP tool, one zod discriminated union, one pipeline per readout. The
+// handler's only jobs are:
 //
 //   1. Fetch the targeted persistence rows (`getSet`, `getSetsForSession`).
 //   2. Adapt the storage shape to the analytics function's input shape
@@ -20,7 +20,14 @@
 // at. The schema's `PENDING` comment is satisfied by binding `vbt.set` to
 // `getSetVelocitySummary`. No schema change required.
 //
-// ── Status of all 9 pipelines ──────────────────────────────────────────────
+// ── The RP-derived readouts (wave 2) ───────────────────────────────────────
+//
+// `session.perturbation` (VMCP-06.10 / B02) is a DISPLAYED metric, and the
+// distinction is load-bearing: RP's perturbation concept is a coaching model,
+// not a validated dose-response, so the pipeline reports first-vs-last
+// working-set decay and refuses to label it. It is not an input to anything.
+//
+// ── Status of the original 9 pipelines ─────────────────────────────────────
 //
 // All 9 pipelines below are fully implemented and merged (`quality.rep`,
 // `session.readiness` and `vbt.rir` included) — see the `compute()` switch
@@ -78,6 +85,7 @@ import {
   deriveFeatureGate,
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
+import { selectWorkingSets } from '../store/working-sets.js';
 import {
   RIR_MODEL_CALIBRATION_CONFIDENCE,
   rirInputDomainConfidence,
@@ -273,7 +281,154 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       };
       return result;
     }
+
+    case 'session.perturbation': {
+      const sets = await state.store.getSetsForSession(input.sessionId);
+      if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
+      const groups = workingSetsByExercise(sets, input.exerciseId);
+      const exercises = await Promise.all(
+        [...groups].map(([id, working]) => perturbationForExercise(state, id, working)),
+      );
+      return { exercises };
+    }
   }
+}
+
+/** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
+const UNKNOWN_KEY = 'unknown';
+
+/**
+ * A session's OWNER working sets, grouped by the exercise each set names.
+ *
+ * Guest sets (VW-169) are dropped before grouping: a set someone else
+ * performed is not evidence about this lifter, so it must not reach a decay
+ * comparison or a set count. Warm-ups are dropped by `selectWorkingSets`,
+ * which is applied per group because its top-load rank is only meaningful
+ * within one movement.
+ *
+ * `only` narrows to a single exercise; `undefined` keeps every group.
+ */
+function workingSetsByExercise(
+  sets: readonly StoredSet[],
+  only: string | undefined,
+): Map<string, StoredSet[]> {
+  const grouped = new Map<string, StoredSet[]>();
+  for (const set of sets) {
+    if (set.lifter !== undefined) continue;
+    const key = set.exerciseId ?? UNKNOWN_KEY;
+    if (only !== undefined && key !== only) continue;
+    const group = grouped.get(key);
+    if (group) group.push(set);
+    else grouped.set(key, [set]);
+  }
+  return new Map([...grouped].map(([key, group]) => [key, selectWorkingSets(group)]));
+}
+
+/** The band a perturbation readout would carry once a threshold is citable. */
+type PerturbationBand = 'low' | 'moderate' | 'high';
+
+/**
+ * Why `interpretation` is ALWAYS null today (VMCP-06.10 / B02).
+ *
+ * B02's own risk note records that the RP source material "says nothing about
+ * what threshold separates 'well perturbed' from 'under-stimulated' on our
+ * hardware, and RP gives no numbers". The nearest published figures — the
+ * 10/20/30% velocity-loss cuts in `vbt-rir-research-and-protocol.md` §1.3 —
+ * are WITHIN-set study-design conventions measured on a different quantity,
+ * not first-vs-last-set drops, and that doc says in as many words they are
+ * "not derived optima". Inventing a cut here would dress a guess as a
+ * citation, so the drops ship as displayed numbers and are never labelled.
+ * B02's rule: ship it as a displayed metric before it drives a prescription.
+ */
+const PERTURBATION_INTERPRETATION_NOTE =
+  'no citable threshold separates a well-perturbed exercise from an under-stimulated one on ' +
+  'cable hardware, so these drops are displayed and never labelled';
+
+/**
+ * One exercise's first-vs-last working-set decay across a session.
+ *
+ * Every field is a RATIO or a COUNT — never an absolute velocity — so a row
+ * captured in device-native units and its normalised twin read identically
+ * (VW-160). `null` means "not measurable from what was recorded", never a
+ * derived stand-in: `peakForceDropPct` in particular comes from firmware's own
+ * per-set peak and is null unless BOTH ends carry one.
+ */
+interface ExercisePerturbation {
+  exerciseId: string;
+  workingSets: number;
+  /** Mean concentric velocity of the last working set below the first, as a %. */
+  meanVelocityDropPct: number | null;
+  /** Firmware peak force of the last working set below the first, as a %. */
+  peakForceDropPct: number | null;
+  /** Reps on the first working set minus reps on the last. */
+  repDrop: number | null;
+  gate: FeatureGateVerdict;
+  interpretation: PerturbationBand | null;
+  interpretationNote: string;
+}
+
+/**
+ * Decay for one exercise's working sets. Fewer than two working sets leaves
+ * every drop null — first and last would be the same set, and reporting 0
+ * there would read as "no fatigue" rather than "nothing to compare".
+ */
+async function perturbationForExercise(
+  state: ServerState,
+  exerciseId: string,
+  working: readonly StoredSet[],
+): Promise<ExercisePerturbation> {
+  const base: ExercisePerturbation = {
+    exerciseId,
+    workingSets: working.length,
+    meanVelocityDropPct: null,
+    peakForceDropPct: null,
+    repDrop: null,
+    gate: await relativeSignalGate(state, exerciseId, working),
+    interpretation: null,
+    interpretationNote: PERTURBATION_INTERPRETATION_NOTE,
+  };
+  const first = working[0];
+  const last = working[working.length - 1];
+  if (working.length < 2 || first === undefined || last === undefined) return base;
+  return {
+    ...base,
+    meanVelocityDropPct: dropPct(
+      getSetMeanVelocity(toAnalyticsSet(first)),
+      getSetMeanVelocity(toAnalyticsSet(last)),
+    ),
+    peakForceDropPct: dropPct(first.firmwarePeakForceLbs, last.firmwarePeakForceLbs),
+    repDrop: first.reps.length - last.reps.length,
+  };
+}
+
+/**
+ * How far `to` fell below `from`, as a percentage. Signed on purpose: a last
+ * set FASTER than the first is a real observation, and clamping it to 0 would
+ * hide the sessions where nothing was perturbed at all.
+ */
+function dropPct(from: number | undefined, to: number | undefined): number | null {
+  if (from === undefined || to === undefined || from <= 0) return null;
+  return ((from - to) / from) * 100;
+}
+
+/**
+ * B57's verdict for a within-exercise decay readout. `relative-signal` is the
+ * right feature: these numbers compare an exercise's sets to each other, never
+ * to a failure anchor. A group with no recorded exercise has no baseline key,
+ * which is `evaluable: false` ("we never looked"), not a failed gate.
+ */
+async function relativeSignalGate(
+  state: ServerState,
+  exerciseId: string,
+  sets: readonly StoredSet[],
+): Promise<FeatureGateVerdict> {
+  if (exerciseId === UNKNOWN_KEY) return deriveFeatureGate(undefined, 'relative-signal');
+  const side = resolveKeySide(sets);
+  return checkFeatureGate(
+    state.store,
+    { userId: LOCAL_USER_ID, exerciseId, ...(side !== undefined ? { side } : {}) },
+    'relative-signal',
+  );
 }
 
 function mean(xs: number[]): number {
@@ -560,6 +715,11 @@ const METRICS_COMPUTE_DESCRIPTION =
   '`session.readiness` (sessionId, baselineSessionId) — compares first-rep velocity between two ' +
   'sessions of the same exercise; treat the result as provisional unless the exercise baseline ' +
   'is CALIBRATED (see `baselines.get`). ' +
+  '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
+  'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
+  'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
+  'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
+  'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';
 
 export function registerMetricsTools(
@@ -591,6 +751,7 @@ export function registerMetricsTools(
     sessionId: z.string().optional(),
     baselineSetId: z.string().optional(),
     baselineSessionId: z.string().optional(),
+    exerciseId: z.string().optional(),
   };
   placeholder.update({
     paramsSchema: looseShape,
