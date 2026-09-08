@@ -428,6 +428,8 @@ describe('buildSetStartedPayload', () => {
       training_mode: 'WeightTraining',
       started_at: '2025-01-01T00:05:00.000Z',
       auto_armed: false,
+      // VW-169: null is the owner, which is who every unlabelled set is.
+      lifter: null,
     });
     expect(parsed.previous_set_summary).toBeNull();
   });

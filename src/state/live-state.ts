@@ -192,6 +192,16 @@ export interface ActiveSession {
    * gets a fresh default. VMCP-02.11.
    */
   verboseIdleReps?: boolean;
+  /**
+   * The session's DEFAULT lifter label (VW-169). Sets started on this session
+   * inherit it; `set.start`'s own `lifter` overrides it for one set. Absent
+   * means the owner, and `session.set_lifter { lifter: null }` puts it back.
+   *
+   * Mutable mid-session on purpose — a guest works in for one exercise and
+   * hands the rig back — and, like `exerciseId`, it is snapshotted at set
+   * start so relabelling never rewrites a set already under way.
+   */
+  lifter?: string;
 }
 
 /** Active set with its live rep buffer. `endedAt`/`partialReason` set on close. */
@@ -276,6 +286,15 @@ export interface ActiveSet {
    * real advisory display name.
    */
   exerciseId?: string;
+  /**
+   * Who is performing this set, when it is not the owner (VW-169).
+   * SNAPSHOTTED from the session's lifter default at set-start time, for the
+   * same reason `exerciseId` is: a `session.set_lifter` call mid-set must not
+   * retroactively reattribute the reps already in the buffer.
+   *
+   * Absent means the owner. Carried onto {@link StoredSet.lifter} at close.
+   */
+  lifter?: string;
   /**
    * Trigger DSL config registered at `set.start` time. The bridge evaluates
    * triggers against finalized reps; the watchdog (sprint 2 commit 2) wires
@@ -647,6 +666,29 @@ export class LiveState {
   }
 
   /**
+   * Set (or, with `undefined`, clear) the active session's default lifter
+   * label (VW-169). No-op when no session is active — the tool layer enforces
+   * `NO_ACTIVE_SESSION` before this is reached.
+   *
+   * Deliberately allowed while a set is open, and deliberately without effect
+   * on it: `startSet` snapshots the label, so only sets started AFTER this
+   * call inherit the new one. Relabelling reps the lifter has already
+   * performed is what `set.update` is for.
+   */
+  setSessionLifter(lifter: string | undefined): void {
+    if (this.session === undefined) {
+      return;
+    }
+    const next = { ...this.session };
+    if (lifter !== undefined) {
+      next.lifter = lifter;
+    } else {
+      delete next.lifter;
+    }
+    this.session = next;
+  }
+
+  /**
    * Close out the active session. Returns the prior session (status set to
    * `'ended'`) for the caller to persist, or `undefined` when no session was
    * active.
@@ -690,13 +732,14 @@ export class LiveState {
    * `setId`, `startedAt` and the reps adopted from the idle window are
    * PRESERVED: the lifter is mid-set and those reps are the set. Only the
    * caller intent auto-arm could not know — warm-up, the watch config, the
-   * exercise pointer — is written on. Returns the upgraded set, or `undefined`
-   * when no set is active.
+   * exercise pointer, who is lifting — is written on. Returns the upgraded
+   * set, or `undefined` when no set is active.
    */
   upgradeActiveSet(patch: {
     isWarmup?: boolean;
     watch?: WatchConfig;
     exerciseId?: string;
+    lifter?: string;
     upgradedAt: string;
   }): ActiveSet | undefined {
     if (this.set === undefined) {
@@ -707,6 +750,10 @@ export class LiveState {
       upgradedAt: patch.upgradedAt,
       ...(patch.isWarmup === true ? { isWarmup: true } : {}),
       ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
+      // VW-169: the upgrade is the operator's chance to say "that was Jordan"
+      // about a set the server auto-armed, so a lifter here REWRITES the
+      // label rather than deferring to the one auto-arm inherited.
+      ...(patch.lifter !== undefined ? { lifter: patch.lifter } : {}),
       ...(patch.watch !== undefined
         ? { watch: patch.watch, firedTriggers: new Set<string>() }
         : {}),

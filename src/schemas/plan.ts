@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import { IdSchema } from './common.js';
+import { LifterLabel } from './session.js';
 
 // --- programs ---
 
@@ -186,5 +187,11 @@ export const PlanSuggestProgressionInput = z
     programId: IdSchema.optional(),
     exerciseId: IdSchema,
     completedSessionId: IdSchema.optional(),
+    /**
+     * Whose sets the delta is computed from (VW-169). Omitted means the
+     * owner's, so a guest working in on the same exercise never becomes the
+     * basis for the owner's next load.
+     */
+    lifter: LifterLabel.optional(),
   })
   .strict();

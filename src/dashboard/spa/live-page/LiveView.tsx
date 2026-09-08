@@ -282,6 +282,9 @@ export function ExerciseHeader({
   // Hoisted above the early return so the hook count stays stable (rules of hooks). On-surface
   // primary text from the Surface context — see the note at the heading below.
   const nameColor = useOnSurfaceColor('primary');
+  // Secondary, not primary: the lifter's name qualifies the exercise rather
+  // than competing with it for the wall read.
+  const lifterColor = useOnSurfaceColor('secondary');
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
   const { session } = model;
   const targets = derivePrescription(session, displayUnit);
@@ -329,6 +332,21 @@ export function ExerciseHeader({
         >
           {session.exerciseName}
         </Text>
+        {/* VW-169: whose set this is, shown ONLY for a guest working in — the wall is the
+            owner's by default, and a name on every set would be noise that stops being read
+            by the time it matters. */}
+        {session.lifter !== null && (
+          <Text
+            style={{
+              color: lifterColor,
+              fontSize: Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO),
+              fontFamily: '"Space Grotesk", sans-serif',
+              fontWeight: '600',
+            }}
+          >
+            {session.lifter}
+          </Text>
+        )}
         {/* targets: pinned right when inline, tucked under the name (smaller) when wrapped. */}
         {targets && (
           <SetsRepsLoad

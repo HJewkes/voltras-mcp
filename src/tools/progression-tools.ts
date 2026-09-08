@@ -30,7 +30,7 @@ import type { z } from 'zod';
 import { type ServerState } from '../state/server-state.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
-import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
+import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSession, type StoredSet } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
@@ -115,6 +115,9 @@ async function getProgressionForExercise(
     exerciseId: input.exerciseId,
     from: windowStartedAt,
     to: windowEndedAt,
+    // VW-169: omitted ⇒ the owner's sets only. A guest working in on a shared
+    // rig would otherwise land in the owner's top-weight and volume trends.
+    ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
   });
   // Ascending (matches getSetsForExercise's ORDER BY started_at ASC); dedupe
   // to distinct sessions, then keep the most-recent `limit` — this is also
@@ -148,7 +151,13 @@ async function getProgressionForExercise(
   // whether an unattributed set is safe to keep.
   const setsBySessionId = new Map<string, StoredSet[]>();
   for (const id of limitedSessionIds) {
-    const allSetsInSession = await state.store.getSetsForSession(id);
+    // VW-169: the lifter scope comes FIRST. `getSetsForSession` returns the
+    // whole session, and one session can hold both the owner's sets and a
+    // guest's — the exercise scoping below cannot tell them apart.
+    const allSetsInSession = scopeSetsToLifter(
+      await state.store.getSetsForSession(id),
+      input.lifter,
+    );
     setsBySessionId.set(id, scopeSessionSetsToExerciseId(allSetsInSession, input.exerciseId));
   }
 

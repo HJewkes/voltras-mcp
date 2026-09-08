@@ -167,6 +167,18 @@ export interface StoredSet {
    */
   upgraded?: boolean;
   /**
+   * Who performed this set, when it was NOT the owner (VW-169). A short
+   * free-text label ('Jordan'), not an identity: there is no per-lifter row,
+   * profile or tier, and `userId` stays `LOCAL_USER_ID` on a guest's set.
+   *
+   * ABSENT MEANS THE OWNER. Every owner-scoped read (`getSetsForExercise`,
+   * `listSessions`, the baseline recalc and the anchor harvest) filters
+   * `lifter IS NULL` by default, so a guest working in never contributes to
+   * the owner's baselines, anchors, progression or history. Nothing is
+   * back-filled: a row written before v14 was the owner's.
+   */
+  lifter?: string;
+  /**
    * GROUND TRUTH for per-unit identity. BLE device id of the unit that
    * performed the set, captured from the slot's connected client. The device
    * id is the stable physical identity and the only one of the three identity
@@ -533,6 +545,12 @@ export interface StoredSession {
   exerciseId?: string;
   exerciseName?: string;
   notes?: string;
+  /**
+   * The session's DEFAULT lifter label (VW-169) — the guest a whole session
+   * was run for. Sets started on this session inherit it unless `set.start`
+   * overrides them. Absent means the owner; see {@link StoredSet.lifter}.
+   */
+  lifter?: string;
 }
 
 /**
@@ -546,6 +564,12 @@ export interface SessionListFilter {
   sort?: 'startedAt:desc' | 'startedAt:asc';
   limit?: number;
   offset?: number;
+  /**
+   * Whose sessions to list (VW-169). ABSENT MEANS THE OWNER'S — the query
+   * filters `lifter IS NULL` — so a guest's session never shows up in the
+   * owner's history unless it is asked for by label.
+   */
+  lifter?: string;
 }
 
 /**
@@ -619,6 +643,13 @@ export interface ExerciseSetsFilter {
    * working sets without ever seeing an error.
    */
   purpose?: SetPurpose[];
+  /**
+   * Whose sets to read (VW-169). ABSENT MEANS THE OWNER'S — the query filters
+   * `lifter IS NULL`. This is the default that keeps a guest's working set out
+   * of the owner's baseline recalc, anchor reharvest and progression history
+   * without every caller having to remember to exclude it.
+   */
+  lifter?: string;
   /** Inclusive lower bound on `startedAt`. */
   from?: string;
   /** Inclusive upper bound on `startedAt`. */
@@ -867,6 +898,13 @@ export interface StoredFailureAnchor {
   /** Inferred physical configuration. Always absent until setup clustering ships. */
   setupId?: string;
   side?: StoredSide;
+  /**
+   * The lifter label of the set this anchor came from (VW-169). Absent means
+   * the owner, and `selectAnchors` reads owner anchors only — so a guest's
+   * stall can never move the owner's baseline even if a later reharvest pass
+   * writes one.
+   */
+  lifter?: string;
   observedAt: string;
   source: 'harvested' | 'prescribed';
   /** Final-rep concentric mean velocity, m/s. Only anchors that carry one contribute spread. */

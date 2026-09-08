@@ -226,12 +226,14 @@ const ALL_TOOL_NAMES = [
   'session.start',
   'session.end',
   'session.set_exercise',
+  'session.set_lifter',
   'session.list',
   'session.get',
   // set
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.update',
   'set.get',
   // mock
   'mock.configure',

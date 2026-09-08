@@ -209,6 +209,7 @@ const TOOL_NAMES = [
   'set.start',
   'set.end',
   'set.live_metrics',
+  'set.update',
   'set.get',
 ] as const;
 
