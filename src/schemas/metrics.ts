@@ -67,7 +67,7 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
     targetReps: z.number().int().positive().optional(),
   }),
 
-  // Total session volume (load × reps).
+  // Total session volume (load × reps) plus the B47 target-only set count.
   // Analytics: computeVolume(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.volume'), sessionId: IdSchema }),
 
@@ -88,4 +88,25 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Strength estimate from session data.
   // Analytics: computeStrengthEstimate(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.strength'), sessionId: IdSchema }),
+
+  // Per-exercise first-vs-last working-set decay — B02's strength-loss half
+  // (VMCP-06.10). `exerciseId` narrows the readout to one exercise; omitted →
+  // every exercise the session recorded work for. A DISPLAYED metric: every
+  // field is a ratio or a count, and nothing here is ever applied.
+  z.object({
+    pipeline: z.literal('session.perturbation'),
+    sessionId: IdSchema,
+    exerciseId: IdSchema.optional(),
+  }),
+
+  // Per-exercise retrospective junk-volume readout — the RETROSPECTIVE half of
+  // B03 (VMCP-06.13). Reports each working set's within-set MEAN-concentric
+  // loss beside its PEAK-based loss (the basis the live watch uses), and names
+  // the first set past the mean-based junk threshold. `exerciseId` narrows as
+  // above. Retrospective only: no push event, no watch change, no cue.
+  z.object({
+    pipeline: z.literal('session.junk_volume'),
+    sessionId: IdSchema,
+    exerciseId: IdSchema.optional(),
+  }),
 ]);
