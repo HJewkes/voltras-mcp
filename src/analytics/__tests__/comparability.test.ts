@@ -131,6 +131,43 @@ describe('isComparable', () => {
     expect(verdict.reasons.join(' ')).toContain('different load (170 vs 175 lb)');
   });
 
+  // B16 (b): the across-set profile clause never blocks, so each row asserts
+  // the note it emits and that the pair stays comparable.
+  it.each([
+    [
+      'neither side records a profile position',
+      {},
+      {},
+      'profile (note): neither set records its position in the exercise set profile, so the ' +
+        'top-set-only risk B16 (b) names is unchecked on this pair',
+    ],
+    [
+      'only one side records a profile position',
+      { setIndexInExercise: 2 },
+      {},
+      'profile (note): set profile position recorded on only one side (2 vs unrecorded), so ' +
+        'this pair cannot be placed in the across-set profile',
+    ],
+    [
+      'the two sides sit at different profile positions',
+      { setIndexInExercise: 1 },
+      { setIndexInExercise: 4 },
+      'profile (note): set 1 compared against set 4 of their exercise, so a growth claim on ' +
+        'this pair alone is a position-mismatched top-set comparison, not an across-set profile',
+    ],
+    [
+      'the two sides sit at the same profile position',
+      { setIndexInExercise: 2 },
+      { setIndexInExercise: 2 },
+      'profile (note): both sides are set 2 of their exercise, so this pair is one position of ' +
+        'the across-set profile; a confident growth claim still needs the remaining positions',
+    ],
+  ])('qualifies but never blocks the growth claim when %s', (_case, left, right, note) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons).toContain(note);
+  });
+
   it('reports every failing clause, not just the first', () => {
     const verdict = isComparable(
       makeSubject(),

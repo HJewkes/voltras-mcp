@@ -1,4 +1,4 @@
-// Like-vs-like comparability predicate — v1 of B16 (VW-94).
+// Like-vs-like comparability predicate — v2 of B16 (VW-94, VW-205).
 //
 // WHAT THIS ANSWERS
 // -----------------
@@ -38,12 +38,34 @@
 // consumer of this module may answer with silence: `chooseComparisonPartner`
 // always names the nearest candidate and the reasons it failed.
 //
-// OUT OF SCOPE FOR v1: B16's clauses (b) whole-profile comparison, (d)
-// multi-exercise corroboration, (e) exercise-swap reframing and (f) the
-// early-training strength-to-hypertrophy suppression. (f) in particular is a
-// wording problem before it is a math problem — a beginner who IS getting
-// stronger must not read its output as "you are not progressing" — and its copy
-// belongs with the surface that makes the muscle-gain claim, not here.
+// TWO KINDS OF CLAUSE (v2, VW-205)
+// --------------------------------
+// B16's remaining clauses are not all context questions, and forcing them into
+// one table would make the predicate refuse comparisons it has no business
+// refusing. So there are two tables:
+//
+// - {@link CLAUSES} — CONTEXT clauses. A failure means the pair is not
+//   like-vs-like and blocks. (e), the exercise-swap boundary, belongs here: two
+//   sets that straddle a re-introduction of the movement were performed in
+//   different contexts.
+// - {@link CLAIM_CLAUSES} — CLAIM clauses. These qualify a MUSCLE-GAIN claim
+//   built on the pair; they never block. (b) across-set profile, (d)
+//   multi-exercise corroboration and (f) the early-training neural window all
+//   answer "may a growth claim be made from this?", not "is this pair
+//   like-vs-like?". Blocking on them would make `session.readiness` refuse a
+//   beginner's comparisons outright, which is the failure (f)'s own copy exists
+//   to avoid. They emit `'<clause> (note): …'` entries like any other note, so
+//   no consumer parses anything new.
+//
+// Rule (f) is a wording problem before it is a math problem — a beginner who IS
+// getting stronger must not read the output as "you are not progressing" — so
+// the copy is {@link EARLY_TRAINING_STRENGTH_WORDING}, carried verbatim in the
+// reasons the claiming surface already renders.
+//
+// B16's clause (c) is deliberately absent: it IS B15's tempo/ROM check, whose
+// owner is `checkDriftGuard` (see above). No clause here reads a rep, so no
+// clause here reads a position and none needs `normalisePositionsToMetres`
+// (VW-203) — that normalisation lives with the modules that do read ROM.
 
 import { setPurposeOf, type PurposeBearing } from '../store/set-purpose.js';
 
@@ -83,6 +105,16 @@ export interface ComparabilitySubject extends PurposeBearing {
   setupId?: string | undefined;
   /** Training-phase tag: fat-loss / gain / maintenance. No writer yet (B34). */
   phase?: string | undefined;
+  /**
+   * 1-based position of this set within its EXERCISE's set profile (B16 b).
+   * No writer yet, so the profile clause degrades on every pair today.
+   *
+   * Deliberately not `StoredSet.setIndexInSession`: that ordinal counts across
+   * every exercise in the session, so in a multi-exercise session the first set
+   * of the second exercise is not index 1. Reading it here would compare
+   * positions that mean different things.
+   */
+  setIndexInExercise?: number | undefined;
 }
 
 /**
@@ -103,6 +135,18 @@ type ClauseResult = { ok: true; note?: string } | { ok: false; reason: string };
 interface Clause {
   name: string;
   evaluate: (a: ComparabilitySubject, b: ComparabilitySubject) => ClauseResult;
+}
+
+/**
+ * A clause that qualifies a muscle-gain claim rather than the pair's context.
+ *
+ * `evaluate` returns a note and nothing else — there is no failing branch,
+ * because a claim clause has no authority to refuse a comparison. It always has
+ * something to say, so the return is a plain string rather than an optional.
+ */
+interface ClaimClause {
+  name: string;
+  evaluate: (a: ComparabilitySubject, b: ComparabilitySubject) => string;
 }
 
 const OK: ClauseResult = { ok: true };
@@ -170,11 +214,25 @@ const CLAUSES: readonly Clause[] = [
 ];
 
 /**
+ * The claim-qualifying clauses, in B16's own order: (b) across-set profile,
+ * (d) multi-exercise corroboration, (f) the early-training neural window.
+ *
+ * Every entry emits a note on every pair. That is the point: a surface that
+ * renders `reasons` tells the user what the growth claim rests on, including
+ * the parts that could not be checked, without the predicate withholding a
+ * comparison it is not entitled to withhold.
+ */
+const CLAIM_CLAUSES: readonly ClaimClause[] = [
+  { name: 'profile', evaluate: (a, b) => profileNote(a, b) },
+];
+
+/**
  * Is this pair like-vs-like? Pure: no store read, no rep math, no clock.
  *
  * Every clause is evaluated — the predicate does not short-circuit — because a
  * caller showing a user why a comparison failed needs the whole list, not the
- * first blocker.
+ * first blocker. The claim clauses run even on an incomparable pair, so the
+ * caller sees what a growth claim would have rested on either way.
  */
 export function isComparable(
   a: ComparabilitySubject,
@@ -191,7 +249,47 @@ export function isComparable(
       reasons.push(`${clause.name} (note): ${result.note}`);
     }
   }
+  for (const clause of CLAIM_CLAUSES) {
+    reasons.push(`${clause.name} (note): ${clause.evaluate(a, b)}`);
+  }
   return { comparable, reasons };
+}
+
+/**
+ * B16 (b): a growth claim must read the whole across-set profile, not the top
+ * set of each session.
+ *
+ * A single pair can never satisfy that on its own — only the caller walking
+ * every position can — so this clause states where the pair sits in the profile
+ * and leaves the claim to the surface. B16 and the note it cites
+ * (`rp-s7-set-average-not-just-top-set`) name no threshold, so there is no
+ * constant to cite: the clause reports its raw inputs instead.
+ */
+function profileNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
+  const left = a.setIndexInExercise;
+  const right = b.setIndexInExercise;
+  if (left === undefined && right === undefined) {
+    return (
+      'neither set records its position in the exercise set profile, so the top-set-only ' +
+      'risk B16 (b) names is unchecked on this pair'
+    );
+  }
+  if (left === undefined || right === undefined) {
+    return (
+      `set profile position recorded on only one side (${numberLabel(left)} vs ` +
+      `${numberLabel(right)}), so this pair cannot be placed in the across-set profile`
+    );
+  }
+  if (left !== right) {
+    return (
+      `set ${left} compared against set ${right} of their exercise, so a growth claim on this ` +
+      'pair alone is a position-mismatched top-set comparison, not an across-set profile'
+    );
+  }
+  return (
+    `both sides are set ${left} of their exercise, so this pair is one position of the ` +
+    'across-set profile; a confident growth claim still needs the remaining positions'
+  );
 }
 
 /**
@@ -236,6 +334,10 @@ function loadsMatch(a: number, b: number): boolean {
 
 function label(value: string | undefined): string {
   return value ?? 'unrecorded';
+}
+
+function numberLabel(value: number | undefined): string {
+  return value === undefined ? 'unrecorded' : String(value);
 }
 
 function lifterLabel(subject: ComparabilitySubject): string {
