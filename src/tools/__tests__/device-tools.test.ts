@@ -56,13 +56,17 @@ const FakeTrainingMode = {
   8: 'Isometric',
 } as const;
 
+// Display names, NOT enum keys: the SDK's `TrainingModeNames` spells the
+// multi-word modes with a space, and that spelling is what reaches the device
+// snapshot. VMCP-02.90's gate compares against it, so the fixture has to carry
+// the real strings.
 const FakeTrainingModeNames: Record<number, string> = {
   0: 'Idle',
-  1: 'WeightTraining',
-  2: 'ResistanceBand',
+  1: 'Weight Training',
+  2: 'Resistance Band',
   3: 'Rowing',
   4: 'Damper',
-  6: 'CustomCurves',
+  6: 'Custom Curves',
   7: 'Isokinetic',
   8: 'Isometric',
 };
@@ -1056,7 +1060,7 @@ describe('registerDeviceTools', () => {
       slot.live = makeFakeLive({
         deviceId: 'V-1',
         weightLbs: 75,
-        trainingMode: 'WeightTraining',
+        trainingMode: 'Weight Training',
         batteryPercent: 80,
       });
       const client = primaryClient(state);
@@ -1077,7 +1081,7 @@ describe('registerDeviceTools', () => {
         connectionState: 'connected',
         deviceId: 'V-1',
         weightLbs: 75,
-        trainingMode: 'WeightTraining',
+        trainingMode: 'Weight Training',
         batteryPercent: 80,
       });
       expect(typeof payload.trainingMode).toBe('string');
@@ -1247,7 +1251,7 @@ describe('registerDeviceTools', () => {
         connected: false,
         deviceId: 'V-097082',
         weightLbs: 75,
-        trainingMode: 'WeightTraining',
+        trainingMode: 'Weight Training',
         damperLevel: 5,
         chainSettingLbs: 23,
         assistMode: 2,
@@ -1282,7 +1286,7 @@ describe('registerDeviceTools', () => {
       expect(payload).toMatchObject({
         deviceId: 'V-097082',
         weightLbs: 75,
-        trainingMode: 'WeightTraining',
+        trainingMode: 'Weight Training',
         damperLevel: 5,
         chainSettingLbs: 23,
         assistMode: 2,
@@ -1320,13 +1324,13 @@ describe('registerDeviceTools', () => {
         expect(isError).toBeUndefined();
         expect(payload.mode_revert_latched).toBeDefined();
         expect(payload.mode_revert_latched.requested_mode).toBe('Rowing');
-        expect(payload.mode_revert_latched.actual_mode).toBe('WeightTraining');
+        expect(payload.mode_revert_latched.actual_mode).toBe('Weight Training');
         expect(typeof payload.mode_revert_latched.timestamp_ms).toBe('number');
       });
 
       it('VW-178: still_active tracks whether the next set.start will refuse', async () => {
         const slot = state.slots.get('primary')!;
-        slot.live.applySettings({ trainingMode: 'WeightTraining' });
+        slot.live.applySettings({ trainingMode: 'Weight Training' });
         slot.modeRevertGuard.arm(3 /* Rowing */);
         slot.modeRevertGuard.onSettingsUpdate(1 /* WeightTraining */);
 

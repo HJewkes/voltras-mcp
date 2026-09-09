@@ -62,9 +62,15 @@ import {
   SELECTABLE_MODE_NAMES,
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
-import { type ServerState, PRIMARY_SLOT, MAX_SLOTS, getSlot } from '../state/server-state.js';
+import {
+  type ServerState,
+  type SlotState,
+  PRIMARY_SLOT,
+  MAX_SLOTS,
+  getSlot,
+} from '../state/server-state.js';
 import type { ActiveSet, DeviceSnapshot, PendingDisconnectNotice } from '../state/live-state.js';
-import type { ModeRevertAbort } from '../state/mode-revert-guard.js';
+import { MODE_REVERT_WINDOW_MS, type ModeRevertAbort } from '../state/mode-revert-guard.js';
 import type { SlotBinding } from '../state/slot-bindings.js';
 import {
   createSlot,
@@ -92,13 +98,14 @@ import {
   type PassiveScanContext,
 } from '../state/passive-scanner.js';
 import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
-import { fence } from '../state/lease-fence.js';
+import { fence, type LeaseFence } from '../state/lease-fence.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import {
   shouldPreflightWeightTraining,
   buildGuidedLoadTrackedFields,
   teardownBleResources,
   isModeRevertStillActive,
+  waitForModeEcho,
 } from './device-handler-helpers.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { log } from '../logger.js';
@@ -172,6 +179,17 @@ const DeviceGetStateInput = z
  * via `watch.inactivityTimeoutMs` and remain unaffected.
  */
 const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
+
+/**
+ * Display name of the one mode the firmware's direct-load flow is confirmed to
+ * enter from (VMCP-02.90). Read through `TrainingModeNames` — the same table
+ * that puts the mode name into `DeviceSnapshot.trainingMode`, so the gate
+ * compares like with like. A function, not a module-level const, so the lookup
+ * happens on call rather than at import.
+ */
+function weightTrainingName(): string {
+  return TrainingModeNames[TrainingMode.WeightTraining];
+}
 
 const DeviceUnloadInput = z
   .object({
@@ -1128,11 +1146,26 @@ export function registerDeviceTools(
       const requestedMode = slot.live.snapshotDevice().trainingMode;
       if (shouldPreflightWeightTraining(requestedMode)) {
         await slot.client.setMode(TrainingMode.WeightTraining);
-      } else if (input.skipUnload !== true) {
-        // VMCP-02.06: drive the cable to a mechanically-unloaded state before
-        // the trigger so the firmware emits the countdown ceremony. Caller
-        // can opt out via `skipUnload` for diagnostic flows.
-        await slot.client.unloadDevice();
+      } else {
+        // VMCP-02.90: every other non-WeightTraining mode is a refusal (or an
+        // opted-in switch) before anything is written — see the helper.
+        if (requestedMode !== undefined && requestedMode !== weightTrainingName()) {
+          await enterWeightTrainingForGuidedLoad(slot, {
+            requestedMode,
+            autoSwitch: input.autoSwitchMode === true,
+            fence: guidedFence,
+            slotId: guidedSlotId,
+          });
+        }
+        if (input.skipUnload !== true) {
+          // VMCP-02.06: drive the cable to a mechanically-unloaded state before
+          // the trigger so the firmware emits the countdown ceremony. Caller
+          // can opt out via `skipUnload` for diagnostic flows. Still runs after
+          // an auto-switch: the memory rule is Damper → WeightTraining → guided
+          // load FROM AN UNLOADED STATE, and the mode write alone leaves any
+          // residual cable tension in place.
+          await slot.client.unloadDevice();
+        }
       }
       // F3 coercion correlation: guided-load runs a firmware safety
       // sequence that can silently floor chains + eccentric to safe
@@ -1743,6 +1776,50 @@ export async function setSlotWeight(
     [{ field: 'baseWeight', requested: lbs }],
     () => slot.client.setWeight(lbs),
   );
+}
+
+/**
+ * VMCP-02.90 — the guided-load mode gate.
+ *
+ * Guided load is confirmed to enter from Weight Training and NOT from Damper:
+ * with the unit in physically-selected Damper the phase holds at `armed` until
+ * the SDK's 18s poll window expires, then reports a timeout, and the bridge
+ * closes the junk set it auto-created (2/2 hardware runs, 2026-08-11). No other
+ * mode has been tested, so the allowlist is exactly one mode wide.
+ *
+ * Default is a refusal, not a switch: a lifter who selected Damper on the unit
+ * chose it, and changing the mode out from under them is a surprise. With
+ * `autoSwitchMode` the switch is made here and the trigger waits on the
+ * device's echo — writing the trigger against an unconfirmed mode is the same
+ * race VW-162 found on the cascade. An echo that never lands fails closed.
+ */
+async function enterWeightTrainingForGuidedLoad(
+  slot: SlotState,
+  ctx: { requestedMode: string; autoSwitch: boolean; fence: LeaseFence; slotId: string },
+): Promise<void> {
+  if (!ctx.autoSwitch) {
+    throwSdkLike(
+      'GUIDED_LOAD_MODE_MISMATCH',
+      `Guided load only engages from ${weightTrainingName()}; slot \`${ctx.slotId}\` is in ` +
+        `${ctx.requestedMode}. Nothing was written. Switch the unit yourself (or call ` +
+        `device.set_mode with mode "WeightTraining"), or re-issue this call with ` +
+        `autoSwitchMode: true to have it switched for you.`,
+    );
+  }
+  await slot.client.setMode(TrainingMode.WeightTraining);
+  ctx.fence.check(ctx.slotId);
+  slot.modeRevertGuard.arm(TrainingMode.WeightTraining);
+  const echoedAfterMs = await waitForModeEcho(slot.modeRevertGuard, TrainingMode.WeightTraining);
+  ctx.fence.check(ctx.slotId);
+  if (echoedAfterMs === null) {
+    throwSdkLike(
+      'MODE_ECHO_TIMEOUT',
+      `Slot \`${ctx.slotId}\` did not echo ${weightTrainingName()} within ` +
+        `${MODE_REVERT_WINDOW_MS}ms of the auto-switch, so guided load was not triggered ` +
+        `(the trigger would have raced an unconfirmed mode write). Check device.get_state ` +
+        `and retry.`,
+    );
+  }
 }
 
 export async function unloadSlot(state: ServerState, slotId: string): Promise<void> {
