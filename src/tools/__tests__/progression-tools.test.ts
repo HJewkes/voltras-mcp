@@ -571,3 +571,65 @@ describe('progression.get_for_exercise — side (VMCP-04.09)', () => {
     expect(body.sideSplit).toBeUndefined();
   });
 });
+
+// ── like-vs-like basis (VW-94 / B16) ─────────────────────────────────────────
+
+interface ComparabilityBody {
+  comparability: {
+    basisSetId?: string;
+    comparedTo?: { setId: string; reasons: string[] };
+    noValidComparison?: true;
+    nearest?: { setId: string; reasons: string[] };
+  };
+}
+
+describe('progression.get_for_exercise — comparability basis (VW-94)', () => {
+  it('picks the most recent earlier session that is like-vs-like with the latest', async () => {
+    const sessions = [
+      makeSession('s1', recentDate(21)),
+      makeSession('s2', recentDate(14)),
+      makeSession('s3', recentDate(7)),
+    ];
+    const h = setup(sessions, {
+      s1: [makeSet('a1', 's1', 170, 8, { startedAt: recentDate(21) })],
+      s2: [makeSet('a2', 's2', 175, 8, { startedAt: recentDate(14) })],
+      s3: [makeSet('a3', 's3', 170, 10, { startedAt: recentDate(7) })],
+    });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as ComparabilityBody;
+
+    expect(body.comparability.basisSetId).toBe('a3');
+    expect(body.comparability.comparedTo?.setId).toBe('a1');
+    expect(body.comparability.noValidComparison).toBeUndefined();
+  });
+
+  it('names the nearest session and why it failed when nothing is like-vs-like', async () => {
+    const sessions = [makeSession('s1', recentDate(14)), makeSession('s2', recentDate(7))];
+    const h = setup(sessions, {
+      s1: [makeSet('a1', 's1', 140, 8, { startedAt: recentDate(14) })],
+      s2: [makeSet('a2', 's2', 170, 8, { startedAt: recentDate(7) })],
+    });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as ComparabilityBody;
+
+    expect(body.comparability.basisSetId).toBe('a2');
+    expect(body.comparability.noValidComparison).toBe(true);
+    expect(body.comparability.nearest?.setId).toBe('a1');
+    expect(body.comparability.nearest?.reasons.join(' ')).toContain(
+      'different load (170 vs 140 lb)',
+    );
+  });
+
+  it('reports no valid comparison for a single-session window', async () => {
+    const h = setup([makeSession('s1', recentDate(3))], {
+      s1: [makeSet('a1', 's1', 100, 5, { startedAt: recentDate(3) })],
+    });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as ComparabilityBody;
+
+    expect(body.comparability).toEqual({ basisSetId: 'a1', noValidComparison: true });
+  });
+});
