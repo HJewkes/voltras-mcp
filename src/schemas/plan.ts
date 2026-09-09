@@ -107,6 +107,21 @@ export const PlanTemplateListForWeekInput = z
 
 // --- planned exercises ---
 
+/**
+ * Coach-set tempo override (VW-46), seconds per phase, each >= 0. Canonical order
+ * at every MCP/store boundary is `[ecc, pauseBottom, con, pauseTop]` (matching
+ * `@voltras/workout-analytics`' `getSetTempoSeconds`) — a NAMED object, never a
+ * bare tuple, so a caller cannot silently transpose it.
+ */
+export const PlanExerciseTargetTempoInput = z
+  .object({
+    ecc: z.number().min(0),
+    pauseBottom: z.number().min(0),
+    con: z.number().min(0),
+    pauseTop: z.number().min(0),
+  })
+  .strict();
+
 export const PlanExerciseCreateInput = z
   .object({
     id: IdSchema.optional(),
@@ -120,6 +135,7 @@ export const PlanExerciseCreateInput = z
     targetRpe: z.number().min(0).max(10).optional(),
     restSec: z.number().int().min(0).optional(),
     notes: z.string().optional(),
+    targetTempo: PlanExerciseTargetTempoInput.optional(),
   })
   .strict();
 

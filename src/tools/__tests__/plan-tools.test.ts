@@ -508,6 +508,7 @@ describe('plan.exercise.create', () => {
       targetRpe: 8,
       restSec: 120,
       notes: 'Pause at chest',
+      targetTempo: { ecc: 3, pauseBottom: 1, con: 1, pauseTop: 0 },
     });
     expect(r.isError).toBeUndefined();
     const body = parseResult(r) as { plannedExercise: StoredPlannedExercise };
@@ -522,6 +523,7 @@ describe('plan.exercise.create', () => {
       targetRpe: 8,
       restSec: 120,
       notes: 'Pause at chest',
+      targetTempo: { ecc: 3, pauseBottom: 1, con: 1, pauseTop: 0 },
     });
     expect(body.plannedExercise.id).toMatch(UUID_RE);
   });
@@ -541,6 +543,18 @@ describe('plan.exercise.create', () => {
     expect(body.plannedExercise.targetRpe).toBeUndefined();
     expect(body.plannedExercise.restSec).toBeUndefined();
     expect(body.plannedExercise.notes).toBeUndefined();
+    expect(body.plannedExercise.targetTempo).toBeUndefined();
+  });
+
+  it('rejects a targetTempo with an unknown key', async () => {
+    const r = await h.invoke('plan.exercise.create', {
+      workoutTemplateId: 't1',
+      exerciseId: 'squat',
+      orderIndex: 0,
+      targetSets: 5,
+      targetTempo: { ecc: 3, pauseBottom: 1, con: 1, pauseTop: 0, extra: 1 },
+    });
+    expect(r.isError).toBe(true);
   });
 });
 
