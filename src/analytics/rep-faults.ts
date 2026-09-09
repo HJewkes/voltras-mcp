@@ -8,7 +8,7 @@
 // server's velocities carry a unit history, and a fraction is the only
 // quantity that reads the same regardless of it).
 
-import type { Rep } from '@voltras/workout-analytics';
+import { getPhaseHoldDuration, type Rep } from '@voltras/workout-analytics';
 
 /**
  * Per-fault relative margins. `romFractionMin`/`Max` bound the position
@@ -96,4 +96,68 @@ function findVelocityTroughs(phase: Rep['concentric']): HesitationCrossing[] {
     }
   }
   return troughs;
+}
+
+/**
+ * Per-rep bounce / dive-bomb readout (VMCP-06.11 / B10).
+ *
+ * `dwellLengthenedMs`/`dwellShortenedMs` classify the two turnaround pauses
+ * by POSITION, not by which phase object they live in: a pause taken after
+ * the bar stops descending (before the concentric starts moving) is still
+ * appended to the ECCENTRIC phase's samples (nothing "concentric" has
+ * happened yet), so `getPhaseHoldDuration(rep.eccentric)` is the lengthened
+ * (bottom) dwell; symmetrically `getPhaseHoldDuration(rep.concentric)` is
+ * the shortened (top) dwell. Getting this backwards silently swaps which
+ * pause the ticket rewards and which it flags — see the phase-orientation
+ * test.
+ */
+export interface RepBounceReading {
+  repNumber: number;
+  /** Hold duration (ms) attributed to the bottom/lengthened turnaround. */
+  dwellLengthenedMs: number;
+  /** Hold duration (ms) attributed to the top/shortened turnaround. */
+  dwellShortenedMs: number;
+  /**
+   * This rep's own eccentric peak velocity over its own concentric peak
+   * velocity — a bounce or dive-bomb both show up as this ratio rising, so
+   * it is reported once and shared by both flags below. 0 when the
+   * concentric phase never moved (peakVelocity 0), avoiding a
+   * divide-by-zero.
+   */
+  eccentricPeakOverConcentricPeak: number;
+  /**
+   * Always `null` (VMCP-06.11). "Near-zero" dwell and "high" velocity ratio
+   * both need a cut this feature does not invent one for — no absolute ms
+   * or ratio figure is citable from `src/tools/coaching-content.ts`'s
+   * tempo prose (rg `tempo` there finds none). Relay the raw dwell and
+   * ratio, not a verdict, per the no-invented-margins rule this module
+   * already follows for `hesitated`.
+   */
+  bounce: null;
+  /** Always `null` — see {@link RepBounceReading.bounce}. */
+  diveBomb: null;
+}
+
+/**
+ * Per-rep bounce / dive-bomb readout: the two turnaround dwell times plus
+ * the eccentric/concentric peak-velocity ratio, with both boolean verdicts
+ * withheld (see {@link RepBounceReading.bounce}).
+ */
+export function detectBounce(rep: Rep): RepBounceReading {
+  // `getPhaseHoldDuration` returns SECONDS (`_totalHoldDuration / 1000`,
+  // matching `getPhaseDuration`'s convention) despite the ms-suffixed field
+  // names this ticket asks for, so the result is converted here.
+  const dwellLengthenedMs = getPhaseHoldDuration(rep.eccentric) * 1000;
+  const dwellShortenedMs = getPhaseHoldDuration(rep.concentric) * 1000;
+  const concentricPeak = rep.concentric.peakVelocity;
+  const eccentricPeakOverConcentricPeak =
+    concentricPeak === 0 ? 0 : rep.eccentric.peakVelocity / concentricPeak;
+  return {
+    repNumber: rep.repNumber,
+    dwellLengthenedMs,
+    dwellShortenedMs,
+    eccentricPeakOverConcentricPeak,
+    bounce: null,
+    diveBomb: null,
+  };
 }
