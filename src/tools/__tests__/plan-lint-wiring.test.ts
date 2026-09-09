@@ -92,6 +92,17 @@ const CATALOG: Record<string, Exercise> = {
     cableEquivalent: true,
     qualityScore: 90,
   },
+  row: {
+    id: 'row',
+    name: 'Cable Row',
+    muscleGroups: ['back'],
+    secondaryMuscleGroups: ['biceps'],
+    movementPattern: 'pull',
+    exerciseType: 'compound',
+    equipment: [{ name: 'cable', category: 'cable' }],
+    cableEquivalent: true,
+    qualityScore: 92,
+  },
 };
 
 interface Harness {
@@ -176,6 +187,42 @@ function addExercise(
   });
 }
 
+async function makeProgram(h: Harness): Promise<string> {
+  return body<{ program: { id: string } }>(
+    await h.invoke('plan.program.create', { name: 'Return Block' }),
+  ).program.id;
+}
+
+async function makeBlock(
+  h: Harness,
+  programId: string,
+  weeksCount: number,
+  id?: string,
+): Promise<string> {
+  const block = await h.invoke('plan.block.create', {
+    ...(id !== undefined ? { id } : {}),
+    programId,
+    orderIndex: 0,
+    name: 'Block 1',
+    weeksCount,
+  });
+  return body<{ block: { id: string } }>(block).block.id;
+}
+
+async function makeWeek(h: Harness, blockId: string, orderIndex: number): Promise<string> {
+  const week = await h.invoke('plan.week.create', { blockId, orderIndex });
+  return body<{ week: { id: string } }>(week).week.id;
+}
+
+function makeTemplateAt(
+  h: Harness,
+  weekId: string,
+  orderIndex: number,
+  dayLabel: string,
+): Promise<ToolResult> {
+  return h.invoke('plan.template.create', { weekId, orderIndex, dayLabel, name: dayLabel });
+}
+
 let h: Harness;
 
 beforeEach(() => {
@@ -253,5 +300,106 @@ describe('plan.exercise.create lints', () => {
     expect(warnings.length).toBeGreaterThanOrEqual(3);
     const persisted = await h.store.getPlannedExercisesForTemplate(templateId);
     expect(persisted.map((e) => e.targetSets)).toEqual([15, 15]);
+  });
+
+  it('sums two templates in the same week into a weekly warning at 21 chest sets', async () => {
+    const programId = await makeProgram(h);
+    const blockId = await makeBlock(h, programId, 4);
+    const weekId = await makeWeek(h, blockId, 0);
+    const templateA = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 0, 'Mon'))
+      .template.id;
+    const templateB = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 1, 'Wed'))
+      .template.id;
+    await addExercise(h, templateA, 'bench-press', 11, 0);
+
+    const r = await addExercise(h, templateB, 'cable-fly', 10, 0);
+
+    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
+    const weekly = warnings.filter(
+      (w) => w.code === 'hard_sets_per_muscle_per_week_over_tier_ceiling',
+    );
+    expect(weekly).toHaveLength(1);
+    expect(weekly[0]).toMatchObject({ muscleGroup: 'chest', observed: 21, ceiling: 20 });
+  });
+
+  it('warns when the same muscle is stacked over ceiling on two consecutive templates', async () => {
+    const programId = await makeProgram(h);
+    const blockId = await makeBlock(h, programId, 4);
+    const weekId = await makeWeek(h, blockId, 0);
+    const templateA = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 0, 'Mon'))
+      .template.id;
+    const templateB = body<{ template: { id: string } }>(await makeTemplateAt(h, weekId, 1, 'Tue'))
+      .template.id;
+    await addExercise(h, templateA, 'bench-press', 9, 0);
+
+    const r = await addExercise(h, templateB, 'cable-fly', 9, 0);
+
+    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
+    const consecutive = warnings.filter(
+      (w) => w.code === 'same_muscle_high_volume_consecutive_days',
+    );
+    expect(consecutive).toHaveLength(1);
+    expect(consecutive[0]).toMatchObject({ muscleGroup: 'chest', ceiling: 8 });
+    expect(consecutive[0].message).toContain('Mon');
+    expect(consecutive[0].message).toContain('Tue');
+  });
+
+  it('warns when a later week prioritizes a different muscle than week 1', async () => {
+    const programId = await makeProgram(h);
+    const blockId = await makeBlock(h, programId, 4);
+    const week1Id = await makeWeek(h, blockId, 0);
+    const week2Id = await makeWeek(h, blockId, 1);
+    const week1Template = body<{ template: { id: string } }>(
+      await makeTemplateAt(h, week1Id, 0, 'Mon'),
+    ).template.id;
+    const week2Template = body<{ template: { id: string } }>(
+      await makeTemplateAt(h, week2Id, 0, 'Mon'),
+    ).template.id;
+    await addExercise(h, week1Template, 'bench-press', 10, 0);
+
+    const r = await addExercise(h, week2Template, 'row', 10, 0);
+
+    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
+    const priority = warnings.filter((w) => w.code === 'priority_muscle_changed_mid_block');
+    expect(priority).toHaveLength(1);
+    expect(priority[0].muscleGroup).toBe('back');
+  });
+});
+
+describe('plan.block.create lints', () => {
+  it('warns when weeksCount grows on an existing block that already has a week', async () => {
+    const programId = await makeProgram(h);
+    const blockId = await makeBlock(h, programId, 4, 'b1');
+    await makeWeek(h, blockId, 0);
+
+    const r = await h.invoke('plan.block.create', {
+      id: blockId,
+      programId,
+      orderIndex: 0,
+      name: 'Block 1',
+      weeksCount: 6,
+    });
+
+    const { warnings } = body<{ warnings: PlanWarning[] }>(r);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'meso_length_grew_mid_block',
+      observed: 6,
+      ceiling: 4,
+    });
+  });
+
+  it('says nothing when a new block is created with an id nobody has used yet', async () => {
+    const programId = await makeProgram(h);
+
+    const r = await h.invoke('plan.block.create', {
+      id: 'fresh-block',
+      programId,
+      orderIndex: 0,
+      name: 'Block 1',
+      weeksCount: 4,
+    });
+
+    expect(body<{ warnings: PlanWarning[] }>(r).warnings).toEqual([]);
   });
 });

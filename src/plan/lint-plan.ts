@@ -25,29 +25,33 @@
 // Sources: rp-s5-set-addition-not-progression-tool,
 // rp-s5-set-addition-decision-rule, rp-s6-set-progression-state-machine,
 // rp-s5-volume-err-low-first-week.
+//
+// B32 (block/week structural lints) adds three more codes. Unlike B31/the
+// weekly ceiling above, these are not RP volume numbers — they are plan-shape
+// checks (did the mesocycle's length change after weeks were already built,
+// did the priority muscle drift, is the same muscle stacked on back-to-back
+// days). `meso_length_grew_mid_block` and `priority_muscle_changed_mid_block`
+// have no ceiling to cite, so `observed`/`ceiling`/`tier` are optional on
+// `PlanWarning` to let them omit what does not apply.
 
 import type { Tier, TierConfidence } from '../tools/tier-signal.js';
 
 export type PlanWarningCode =
   | 'sets_per_exercise_over_tier_ceiling'
   | 'sets_per_muscle_per_session_over_tier_ceiling'
-  /**
-   * DECLARED BUT NOT EMITTED. The weekly ceiling (beginner 10-20 hard
-   * sets/muscle/week) needs every template in the week plus each template's
-   * planned exercises — `plan.template.list_for_week` returns the templates
-   * only, so it is one query per sibling template, not one query. The code is
-   * reserved here so the second B31/B32 PR does not have to rename anything.
-   */
-  | 'hard_sets_per_muscle_per_week_over_tier_ceiling';
+  | 'hard_sets_per_muscle_per_week_over_tier_ceiling'
+  | 'meso_length_grew_mid_block'
+  | 'priority_muscle_changed_mid_block'
+  | 'same_muscle_high_volume_consecutive_days';
 
 export interface PlanWarning {
   code: PlanWarningCode;
   message: string;
   exerciseId?: string;
   muscleGroup?: string;
-  observed: number;
-  ceiling: number;
-  tier: Tier;
+  observed?: number;
+  ceiling?: number;
+  tier?: Tier;
 }
 
 export interface LintPlanExercise {
@@ -89,6 +93,23 @@ const SETS_PER_MUSCLE_PER_SESSION_CEILING: Record<Tier, number | null> = {
 const SETS_PER_MUSCLE_RANGE_FLOOR: Record<Tier, number> = {
   beginner: 5,
   intermediate: 4,
+  advanced: 0,
+};
+
+// The same corpus line that gives the per-session 5-8/4-8 numbers also gives
+// the ONLY weekly figure in the ticket text: beginner 10-20 hard
+// sets/muscle/week (rp-s5-volume-err-low-first-week). Neither the ticket nor
+// the cited RP prose states an intermediate or advanced weekly figure, so
+// both are `null` per REVIEW FOCUS 1 — leave null, never guess.
+const HARD_SETS_PER_MUSCLE_PER_WEEK_CEILING: Record<Tier, number | null> = {
+  beginner: 20,
+  intermediate: null,
+  advanced: null,
+};
+
+const HARD_SETS_PER_MUSCLE_PER_WEEK_FLOOR: Record<Tier, number> = {
+  beginner: 10,
+  intermediate: 0,
   advanced: 0,
 };
 
@@ -200,4 +221,211 @@ function setsPerMuscleMessage(
     "number and let the next session's recovery decide, rather than planning the increase " +
     `now. ${REAL_FIX}.`
   );
+}
+
+/** Sums `targetSets` by muscle group across a flat list, ignoring `dayIndex`. */
+function totalsByMuscle(exercises: LintPlanExercise[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const e of exercises) {
+    if (e.muscleGroup === undefined) continue;
+    totals.set(e.muscleGroup, (totals.get(e.muscleGroup) ?? 0) + e.targetSets);
+  }
+  return totals;
+}
+
+// --- weekly ceiling (B31 remainder) ---
+
+export interface LintWeeklyVolumeInput {
+  /** Every exercise across every template in the week, not just one session. */
+  exercises: LintPlanExercise[];
+  tier: Tier;
+  confidence: TierConfidence;
+}
+
+/**
+ * Hard sets per muscle group for a whole week, against the beginner-only
+ * 10-20 figure. Returns `[]` for a tier with no cited weekly number.
+ */
+export function lintWeeklyVolume(input: LintWeeklyVolumeInput): PlanWarning[] {
+  const ceiling = HARD_SETS_PER_MUSCLE_PER_WEEK_CEILING[input.tier];
+  if (ceiling === null) return [];
+  const warnings = [...totalsByMuscle(input.exercises)]
+    .filter(([, sets]) => sets > ceiling)
+    .map(([muscleGroup, sets]) => ({
+      code: 'hard_sets_per_muscle_per_week_over_tier_ceiling' as const,
+      message: weeklyVolumeMessage(muscleGroup, sets, input.tier, ceiling),
+      muscleGroup,
+      observed: sets,
+      ceiling,
+      tier: input.tier,
+    }));
+  if (input.confidence !== 'provisional') return warnings;
+  return warnings.map((w) => ({ ...w, message: w.message + PROVISIONAL_SUFFIX }));
+}
+
+function weeklyVolumeMessage(
+  muscleGroup: string,
+  observed: number,
+  tier: Tier,
+  ceiling: number,
+): string {
+  const floor = HARD_SETS_PER_MUSCLE_PER_WEEK_FLOOR[tier];
+  return (
+    `${observed} hard sets for ${muscleGroup} across this week is above the ${tier} range of ` +
+    `${floor}-${ceiling} hard sets per muscle per week. ${REAL_FIX} — weekly volume is raised ` +
+    'one set at a time on recovery evidence across the mesocycle, never planned up front.'
+  );
+}
+
+// --- B32: block/week structural lints ---
+
+export interface LintMesoLengthInput {
+  previousWeeksCount: number;
+  newWeeksCount: number;
+  /** Weeks already created under this block, before this update. */
+  weeksAlreadyCreated: number;
+}
+
+/**
+ * A block's `weeksCount` grew after weeks of it were already built. Silent
+ * when nothing has been built yet — extending an empty block's planned
+ * length is just normal authoring, not a mid-block change.
+ */
+export function lintMesoLengthGrewMidBlock(input: LintMesoLengthInput): PlanWarning[] {
+  if (input.weeksAlreadyCreated === 0) return [];
+  if (input.newWeeksCount <= input.previousWeeksCount) return [];
+  const weekWord = input.weeksAlreadyCreated === 1 ? 'week' : 'weeks';
+  return [
+    {
+      code: 'meso_length_grew_mid_block',
+      message:
+        `This block's planned length grew from ${input.previousWeeksCount} to ` +
+        `${input.newWeeksCount} weeks after ${input.weeksAlreadyCreated} ${weekWord} of it had ` +
+        'already been built. Mesocycle length is normally a call made once, up front — ' +
+        'extending it mid-block usually means the original block already ran its course and ' +
+        'this is really the start of the next one.',
+      observed: input.newWeeksCount,
+      ceiling: input.previousWeeksCount,
+    },
+  ];
+}
+
+export interface LintPriorityMuscleInput {
+  week1Exercises: LintPlanExercise[];
+  laterWeekExercises: LintPlanExercise[];
+  /** 0-based `orderIndex` of the later week, for the message only. */
+  laterWeekOrderIndex: number;
+}
+
+/**
+ * The muscle group with the most planned sets in week 1 vs. a later week of
+ * the same block. Silent when either week has no resolvable muscle data, or
+ * when the top spot is tied — a tie is not a determinable priority to compare.
+ */
+export function lintPriorityMuscleChangedMidBlock(input: LintPriorityMuscleInput): PlanWarning[] {
+  const week1Top = topMuscle(input.week1Exercises);
+  const laterTop = topMuscle(input.laterWeekExercises);
+  if (week1Top === null || laterTop === null || week1Top === laterTop) return [];
+  return [
+    {
+      code: 'priority_muscle_changed_mid_block',
+      message:
+        `Week 1 of this block prioritized ${week1Top} (the most planned sets), but week ` +
+        `${input.laterWeekOrderIndex + 1} prioritizes ${laterTop} instead. A block's priority ` +
+        'muscle is normally set once for the whole mesocycle — if this shift is intentional, ' +
+        'it usually means this is really the start of a new block rather than a change inside ' +
+        'this one.',
+      muscleGroup: laterTop,
+    },
+  ];
+}
+
+/** `null` when there is nothing to compare, or the top spot is tied. */
+function topMuscle(exercises: LintPlanExercise[]): string | null {
+  let best: string | null = null;
+  let bestSets = -1;
+  let tied = false;
+  for (const [muscleGroup, sets] of totalsByMuscle(exercises)) {
+    if (sets > bestSets) {
+      best = muscleGroup;
+      bestSets = sets;
+      tied = false;
+    } else if (sets === bestSets) {
+      tied = true;
+    }
+  }
+  return tied ? null : best;
+}
+
+export interface LintConsecutiveDayTemplate {
+  dayLabel?: string;
+  exercises: LintPlanExercise[];
+}
+
+export interface LintConsecutiveDaysInput {
+  /** Templates for one week, in `orderIndex` order. */
+  templates: LintConsecutiveDayTemplate[];
+  tier: Tier;
+  confidence: TierConfidence;
+}
+
+/**
+ * Two adjacent templates (by `orderIndex`) that both exceed the tier's
+ * per-session per-muscle ceiling for the SAME muscle group. Reuses
+ * `SETS_PER_MUSCLE_PER_SESSION_CEILING` rather than a new number — the
+ * corpus does not give consecutive-day volume its own ceiling.
+ */
+export function lintSameMuscleHighVolumeConsecutiveDays(
+  input: LintConsecutiveDaysInput,
+): PlanWarning[] {
+  const ceiling = SETS_PER_MUSCLE_PER_SESSION_CEILING[input.tier];
+  if (ceiling === null) return [];
+  const warnings: PlanWarning[] = [];
+  for (let i = 0; i < input.templates.length - 1; i++) {
+    const dayA = input.templates[i]?.dayLabel;
+    const dayB = input.templates[i + 1]?.dayLabel;
+    if (dayA === undefined || dayB === undefined) continue;
+    warnings.push(
+      ...consecutiveDayWarnings(
+        dayA,
+        input.templates[i].exercises,
+        dayB,
+        input.templates[i + 1].exercises,
+        input.tier,
+        ceiling,
+      ),
+    );
+  }
+  if (input.confidence !== 'provisional') return warnings;
+  return warnings.map((w) => ({ ...w, message: w.message + PROVISIONAL_SUFFIX }));
+}
+
+function consecutiveDayWarnings(
+  dayA: string,
+  exercisesA: LintPlanExercise[],
+  dayB: string,
+  exercisesB: LintPlanExercise[],
+  tier: Tier,
+  ceiling: number,
+): PlanWarning[] {
+  const aTotals = totalsByMuscle(exercisesA);
+  const bTotals = totalsByMuscle(exercisesB);
+  const warnings: PlanWarning[] = [];
+  for (const [muscleGroup, aSets] of aTotals) {
+    const bSets = bTotals.get(muscleGroup);
+    if (bSets === undefined || aSets <= ceiling || bSets <= ceiling) continue;
+    warnings.push({
+      code: 'same_muscle_high_volume_consecutive_days',
+      message:
+        `${muscleGroup} is over the ${tier} per-session ceiling of ${ceiling} sets on both ` +
+        `${dayA} (${aSets}) and the very next day, ${dayB} (${bSets}). Back-to-back ` +
+        'high-volume days for the same muscle cut into the recovery window that ceiling is ' +
+        "built around. Consider resequencing, or lowering one day's volume toward the ceiling.",
+      muscleGroup,
+      observed: Math.max(aSets, bSets),
+      ceiling,
+      tier,
+    });
+  }
+  return warnings;
 }
