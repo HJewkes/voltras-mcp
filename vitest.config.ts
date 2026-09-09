@@ -4,6 +4,11 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Spawns a real child process and waits on a boot-readiness line; under full-suite
+// parallel load the boot can miss that wait (VW-210, two flakes on 2026-09-08).
+// Its own sequence group (below) keeps it off the CPU while the rest of the suite runs.
+const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -17,6 +22,24 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     include: ['src/**/*.{test,spec}.ts'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          exclude: [LAUNCHER_TEST_FILE],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'launcher',
+          include: [LAUNCHER_TEST_FILE],
+          // Runs after the 'unit' group (default groupOrder 0) finishes, never alongside it.
+          sequence: { groupOrder: 1 },
+        },
+      },
+    ],
     server: {
       // WA 1.0.0 ships a pure-ESM build whose namespace is sealed by Node's
       // ESM loader. Inlining lets vitest transform it into a CJS-style module
