@@ -75,8 +75,9 @@ export function resolveExerciseDefaultTempo(
  *   2. the exercise default (override → pattern);
  *   3. `null` — no target; the UI hides the tempo readout entirely.
  *
- * Pure; no I/O. `plannedTempo` is the branch-1 seam for the coach-override feature
- * (VW-41.1) — no coach data source exists yet, so callers pass `undefined` today.
+ * Pure; no I/O. `plannedTempo` is the coach-override seam (VW-41.1) — `server.ts`'s
+ * `fetchSessionPlan` fills it from the planned exercise's `targetTempo` (VW-46) when
+ * one is set, else passes `undefined`.
  */
 export function resolveTargetTempo(
   exerciseId: string,

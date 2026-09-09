@@ -881,7 +881,7 @@ interface PrescriptionView {
   restSec?: number;
   /**
    * Target tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]` (seconds),
-   * resolved from the coach override (none yet) or the exercise default. Absent when
+   * resolved from the coach override (VW-46) or the exercise default. Absent when
    * neither resolves — the live view then hides the tempo readout (VW-41).
    */
   tempo?: [number, number, number, number];
@@ -938,12 +938,16 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
     if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
     if (match.restSec !== undefined) prescription.restSec = match.restSec;
-    // No coach-set tempo source yet (VW-41.1) — resolve the exercise default only.
-    // The movement pattern, when the catalog knows it, widens coverage to the
-    // per-pattern fallback; unknown exercise/pattern → null → tempo stays absent.
+    // Coach-set tempo (VW-46), when the planned exercise carries one, wins over the
+    // exercise/movement-pattern default. The movement pattern, when the catalog
+    // knows it, widens coverage to the per-pattern fallback; unknown exercise/
+    // pattern with no coach tempo → null → tempo stays absent.
+    const coachTempo = match.targetTempo;
     const tempo = resolveTargetTempo(
       exerciseId,
-      undefined,
+      coachTempo !== undefined
+        ? [coachTempo.ecc, coachTempo.pauseBottom, coachTempo.con, coachTempo.pauseTop]
+        : undefined,
       state.exercises?.getById(exerciseId)?.movementPattern,
     );
     if (tempo !== null) prescription.tempo = tempo;
