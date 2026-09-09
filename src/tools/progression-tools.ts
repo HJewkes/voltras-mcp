@@ -28,8 +28,10 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 
 import { type ServerState } from '../state/server-state.js';
+import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
+import { setPurposeOf } from '../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import {
   LOCAL_USER_ID,
@@ -60,7 +62,11 @@ const PROGRESSION_GET_DESCRIPTION =
   '`session.get` calls yourself (a single session response can be large). `exerciseId` is not ' +
   'validated against the catalog, so historical data for a renamed/removed exercise still works. ' +
   '`side` (VMCP-04.09) narrows the same history to one arm; omitted, the response covers both ' +
-  'and adds a `sideSplit` summary when any set in range carries a side.';
+  'and adds a `sideSplit` summary when any set in range carries a side. `comparability` (VW-94) ' +
+  'names the most recent earlier session whose top set is like-vs-like with the latest one — the ' +
+  'basis a progress claim may rest on. `trend` spans the whole window regardless, so when ' +
+  '`comparability` reports `noValidComparison` say what changed (its `nearest.reasons`) rather ' +
+  'than presenting the trend delta as progress.';
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -192,10 +198,53 @@ async function getProgressionForExercise(
   return {
     ...response,
     side: input.side,
+    comparability: pickProgressionBasis(limitedSessionIds, setsBySessionId),
     ...(input.side === undefined
       ? { sideSplit: computeSideSplit(limitedSessionIds, exerciseScopedSetsBySessionId) }
       : {}),
   };
+}
+
+/** The like-vs-like basis for the window, or why the window has none. */
+type ProgressionComparability = ComparabilityReport & { basisSetId?: string };
+
+/**
+ * VW-94: name the most recent EARLIER session whose top set is like-vs-like
+ * with the latest one — the basis a "you're getting stronger" claim may rest
+ * on.
+ *
+ * `trend` above is deliberately unchanged: it still spans the window's first
+ * and last session unconditionally, because narrowing it would silently change
+ * every existing caller's numbers. This block is the honest second opinion
+ * beside it, and with no valid basis it still names the nearest session's top
+ * set and the reasons it failed.
+ */
+function pickProgressionBasis(
+  sessionIdsOldestFirst: readonly string[],
+  setsBySessionId: Map<string, StoredSet[]>,
+): ProgressionComparability {
+  const newestFirst = [...sessionIdsOldestFirst].reverse();
+  const [latestId, ...earlierIds] = newestFirst;
+  const basis = latestId === undefined ? undefined : topWorkingSet(setsBySessionId.get(latestId));
+  if (basis === undefined) return { noValidComparison: true };
+
+  const candidates = earlierIds
+    .map((id) => topWorkingSet(setsBySessionId.get(id)))
+    .filter((set): set is StoredSet => set !== undefined);
+  return { basisSetId: basis.id, ...chooseComparisonPartner(basis, candidates) };
+}
+
+/**
+ * A session's heaviest WORKING set — the one its top-weight figure comes from.
+ * Warm-ups, probes and weightless sets are excluded, matching what the
+ * aggregator counts as a top weight.
+ */
+function topWorkingSet(sets: StoredSet[] | undefined): StoredSet | undefined {
+  const working = (sets ?? []).filter(
+    (set) => setPurposeOf(set) === 'working' && set.weightLbs !== undefined,
+  );
+  if (working.length === 0) return undefined;
+  return working.reduce((top, set) => ((set.weightLbs ?? 0) > (top.weightLbs ?? 0) ? set : top));
 }
 
 function filterSetsBySide(
