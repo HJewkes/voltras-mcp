@@ -1,0 +1,17 @@
+# voltras-mcp pre-push hook (VW-7).
+#
+# Runs `prettier --check` on files changed vs origin/main only (fast), never
+# rewrites. Bypass with `git push --no-verify`. Never triggered by `npm ci`
+# in CI — this only fires on `git push`, which CI never does.
+base="$(git merge-base origin/main HEAD 2>/dev/null)"
+if [ -z "$base" ]; then
+  exit 0
+fi
+
+changed=$(git diff --name-only --diff-filter=ACMR "$base" HEAD | grep -E '^(src/.*\.(ts|tsx|js|mjs|cjs|json)|scripts/.*\.mjs)$')
+
+if [ -z "$changed" ]; then
+  exit 0
+fi
+
+echo "$changed" | tr '\n' '\0' | xargs -0 npx prettier --check
