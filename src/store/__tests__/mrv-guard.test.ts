@@ -231,6 +231,31 @@ describe('checkMrvUnderperformance', () => {
     expect(right.underperformed).toBe(false);
   });
 
+  it('reads two capture eras of the same velocity as no underperformance (VW-209)', async () => {
+    // Arrange: identical work, baseline captured in device-native velocities
+    // and current in m/s. Unnormalised this reads as a ~1000x velocity crash.
+    await store.putSet(
+      makeSet(
+        { id: 'a', sessionId: 'sess-1', velocityUnits: 'device_native' },
+        { velocityMps: 500 },
+      ),
+    );
+    await store.putSet(
+      makeSet(
+        { id: 'b', sessionId: 'sess-2', velocityUnits: 'meters_per_second' },
+        { velocityMps: 0.5 },
+      ),
+    );
+
+    // Act
+    const verdict = await check();
+
+    // Assert: same verdict as two same-era sets of matched velocity
+    expect(verdict.evaluable).toBe(true);
+    expect(verdict.underperformed).toBe(false);
+    expect(verdict.velocityDeltaPct).toBeCloseTo(0, 5);
+  });
+
   it('refuses to evaluate when the lifter simply used less weight', async () => {
     // Arrange: 100 → 80 lbs, and fewer reps besides
     await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
