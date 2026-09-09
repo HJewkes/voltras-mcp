@@ -18,6 +18,7 @@
 // stubs so the walk resolves deterministically.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ServerState, SlotState } from '../../state/server-state.js';
+import { LOCAL_USER_ID } from '../../store/types.js';
 import type {
   SessionStore,
   StoredPlannedExercise,
@@ -25,6 +26,7 @@ import type {
   StoredSession,
   StoredSet,
   StoredTrainingBlock,
+  StoredTrainingProfile,
   StoredTrainingProgram,
   StoredTrainingWeek,
   StoredWorkoutTemplate,
@@ -117,7 +119,9 @@ function makeStore(): SessionStore & {
   putTrainingProgram: ReturnType<typeof vi.fn>;
   getTrainingProgram: ReturnType<typeof vi.fn>;
   listTrainingPrograms: ReturnType<typeof vi.fn>;
+  getTrainingBlock: ReturnType<typeof vi.fn>;
   getTrainingBlocksForProgram: ReturnType<typeof vi.fn>;
+  getTrainingWeek: ReturnType<typeof vi.fn>;
   getTrainingWeeksForBlock: ReturnType<typeof vi.fn>;
   getWorkoutTemplate: ReturnType<typeof vi.fn>;
   getWorkoutTemplatesForWeek: ReturnType<typeof vi.fn>;
@@ -149,8 +153,13 @@ function makeStore(): SessionStore & {
     getTrainingProgram: vi.fn(async () => undefined),
     listTrainingPrograms: vi.fn(async () => []),
     putTrainingBlock: vi.fn(async () => {}),
+    // VMCP-06.06 (B48): resolveCompleteWorkoutBlockBoundary walks
+    // template -> week -> block by id; `undefined` here means "no boundary
+    // to report" without needing every complete_workout test to wire it up.
+    getTrainingBlock: vi.fn(async () => undefined),
     getTrainingBlocksForProgram: vi.fn(async () => []),
     putTrainingWeek: vi.fn(async () => {}),
+    getTrainingWeek: vi.fn(async () => undefined),
     getTrainingWeeksForBlock: vi.fn(async () => []),
     putWorkoutTemplate: vi.fn(async () => {}),
     getWorkoutTemplate: vi.fn(async () => undefined),
@@ -469,6 +478,215 @@ describe('plan.complete_workout', () => {
     expect(secondBody.assignment).toEqual(firstBody.assignment);
     // No second write — the count is unchanged.
     expect(h.store.putProgramAssignment).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── blockBoundary (VMCP-06.06 / B48) ──────────────────────────────────────
+const BLOCK_2: StoredTrainingBlock = {
+  id: 'block-2',
+  programId: 'prog-a',
+  orderIndex: 1,
+  name: 'Block 2',
+  focus: 'strength',
+  weeksCount: 1,
+};
+const WEEK_2: StoredTrainingWeek = { id: 'week-2', blockId: 'block-2', orderIndex: 0 };
+const TMPL_3: StoredWorkoutTemplate = {
+  id: 'tmpl-3',
+  weekId: 'week-2',
+  name: 'Lower A',
+  orderIndex: 0,
+};
+
+const BLOCK_SOLO: StoredTrainingBlock = {
+  id: 'block-solo',
+  programId: 'prog-solo',
+  orderIndex: 0,
+  name: 'Only Block',
+  weeksCount: 1,
+};
+const WEEK_SOLO: StoredTrainingWeek = { id: 'week-solo', blockId: 'block-solo', orderIndex: 0 };
+const TMPL_SOLO: StoredWorkoutTemplate = {
+  id: 'tmpl-solo',
+  weekId: 'week-solo',
+  name: 'Solo Day',
+  orderIndex: 0,
+};
+
+interface BlockBoundaryBody {
+  blockBoundary: {
+    crossed: boolean;
+    finishedBlock: { id: string; name: string; focus?: string };
+    nextBlock: { id: string; name: string; focus?: string } | null;
+    currentGoal: string | null;
+    prompt: string;
+  } | null;
+}
+
+describe('plan.complete_workout blockBoundary', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+    h.store.getSession.mockResolvedValue({
+      id: 'sess-1',
+      startedAt: '2025-02-10T00:00:00.000Z',
+    } as StoredSession);
+  });
+
+  it('reports crossed: true with the next block named when the last template of a block is completed', async () => {
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_2);
+    h.store.getTrainingWeek.mockResolvedValueOnce(WEEK_1);
+    h.store.getTrainingBlock.mockResolvedValueOnce(BLOCK_1);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1, TMPL_2]);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1, BLOCK_2]);
+    h.store.getTrainingProfile.mockResolvedValueOnce({
+      userId: LOCAL_USER_ID,
+      goal: 'Bench 225',
+      updatedAt: '2025-02-01T00:00:00.000Z',
+    } as StoredTrainingProfile);
+
+    const r = await h.invoke('plan.complete_workout', {
+      workoutTemplateId: 'tmpl-2',
+      sessionId: 'sess-1',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody;
+    expect(body.blockBoundary).not.toBeNull();
+    expect(body.blockBoundary?.crossed).toBe(true);
+    expect(body.blockBoundary?.finishedBlock).toEqual({ id: 'block-1', name: 'Block 1' });
+    expect(body.blockBoundary?.nextBlock).toEqual({
+      id: 'block-2',
+      name: 'Block 2',
+      focus: 'strength',
+    });
+    expect(body.blockBoundary?.currentGoal).toBe('Bench 225');
+    expect(body.blockBoundary?.prompt).toContain('Block 1 is done');
+    expect(body.blockBoundary?.prompt).toContain('Bench 225');
+    expect(body.blockBoundary?.prompt).toContain('Block 2');
+  });
+
+  it('reports blockBoundary: null when a middle template is completed', async () => {
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_1);
+    h.store.getTrainingWeek.mockResolvedValueOnce(WEEK_1);
+    h.store.getTrainingBlock.mockResolvedValueOnce(BLOCK_1);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1, TMPL_2]);
+
+    const r = await h.invoke('plan.complete_workout', {
+      workoutTemplateId: 'tmpl-1',
+      sessionId: 'sess-1',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody;
+    expect(body.blockBoundary).toBeNull();
+    expect(h.store.getTrainingProfile).not.toHaveBeenCalled();
+  });
+
+  it('reports nextBlock: null when the completed block is the only block in its program', async () => {
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_SOLO);
+    h.store.getTrainingWeek.mockResolvedValueOnce(WEEK_SOLO);
+    h.store.getTrainingBlock.mockResolvedValueOnce(BLOCK_SOLO);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_SOLO]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_SOLO]);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_SOLO]);
+
+    const r = await h.invoke('plan.complete_workout', {
+      workoutTemplateId: 'tmpl-solo',
+      sessionId: 'sess-1',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody;
+    expect(body.blockBoundary?.crossed).toBe(true);
+    expect(body.blockBoundary?.nextBlock).toBeNull();
+  });
+
+  it('reports currentGoal: null and a prompt asking for one when no goal is on file', async () => {
+    h.store.getWorkoutTemplate.mockResolvedValueOnce(TMPL_SOLO);
+    h.store.getTrainingWeek.mockResolvedValueOnce(WEEK_SOLO);
+    h.store.getTrainingBlock.mockResolvedValueOnce(BLOCK_SOLO);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_SOLO]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_SOLO]);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_SOLO]);
+    // Default getTrainingProfile resolves undefined — no goal on file.
+
+    const r = await h.invoke('plan.complete_workout', {
+      workoutTemplateId: 'tmpl-solo',
+      sessionId: 'sess-1',
+    });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody;
+    expect(body.blockBoundary?.currentGoal).toBeNull();
+    expect(body.blockBoundary?.prompt).toMatch(/state one/i);
+  });
+});
+
+describe('plan.next_workout blockBoundary', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('reports crossed: true when the returned template is the first of a new block', async () => {
+    h.store.getTrainingProgram.mockResolvedValueOnce(PROGRAM_A);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1, BLOCK_2]);
+    h.store.getTrainingWeeksForBlock
+      .mockResolvedValueOnce([WEEK_1]) // block-1
+      .mockResolvedValueOnce([WEEK_2]); // block-2
+    h.store.getWorkoutTemplatesForWeek
+      .mockResolvedValueOnce([TMPL_1, TMPL_2]) // week-1, all assigned
+      .mockResolvedValueOnce([TMPL_3]); // week-2, open
+    h.store.getAssignmentsForTemplate.mockImplementation(async (id: string) =>
+      id === 'tmpl-3'
+        ? []
+        : [
+            {
+              id: `a-${id}`,
+              sessionId: 'sess-x',
+              workoutTemplateId: id,
+              assignedAt: '2025-02-10T00:00:00.000Z',
+            } as StoredProgramAssignment,
+          ],
+    );
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([]);
+
+    const r = await h.invoke('plan.next_workout', { programId: 'prog-a' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody & { template: StoredWorkoutTemplate };
+    expect(body.template.id).toBe('tmpl-3');
+    expect(body.blockBoundary?.crossed).toBe(true);
+    expect(body.blockBoundary?.finishedBlock).toEqual({ id: 'block-1', name: 'Block 1' });
+    expect(body.blockBoundary?.nextBlock).toEqual({
+      id: 'block-2',
+      name: 'Block 2',
+      focus: 'strength',
+    });
+  });
+
+  it('reports blockBoundary: null when the returned template is not the first of its block', async () => {
+    h.store.getTrainingProgram.mockResolvedValueOnce(PROGRAM_A);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1]);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1, TMPL_2]);
+    h.store.getAssignmentsForTemplate.mockImplementation(async (id: string) =>
+      id === 'tmpl-1'
+        ? [
+            {
+              id: 'a1',
+              sessionId: 'sess-x',
+              workoutTemplateId: 'tmpl-1',
+              assignedAt: '2025-02-10T00:00:00.000Z',
+            } as StoredProgramAssignment,
+          ]
+        : [],
+    );
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([]);
+
+    const r = await h.invoke('plan.next_workout', { programId: 'prog-a' });
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as BlockBoundaryBody & { template: StoredWorkoutTemplate };
+    expect(body.template.id).toBe('tmpl-2');
+    expect(body.blockBoundary).toBeNull();
   });
 });
 
