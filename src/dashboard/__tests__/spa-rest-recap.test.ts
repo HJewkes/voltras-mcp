@@ -27,6 +27,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: null,
+    lifter: null,
     weightLbs: null,
     unit: 'lbs',
     completedSets: [],
