@@ -610,9 +610,20 @@ export interface ProgressionSuggestion {
 export interface ProgressionContext {
   tier: Tier;
   technique?: TechniqueGate;
+  /**
+   * B23 (VMCP-06.09) override for the percent-of-load increment. Omitted
+   * (not just `undefined`-valued) falls back to the production
+   * `PROGRESSION_INCREMENT_PERCENT` constant, which is `null` until a source
+   * cites a real number — see that constant's doc comment. Not on any tool
+   * input schema; test-only injection point.
+   */
+  incrementPercent?: number | null;
 }
 
-const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = { tier: 'intermediate' };
+export const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = {
+  tier: 'intermediate',
+  incrementPercent: PROGRESSION_INCREMENT_PERCENT,
+};
 
 /** The slice of `getTierSignal` the suggestion carries back to the caller. */
 export interface SuggestionTier {
@@ -946,7 +957,7 @@ export function computeProgressionDelta(
   const workingSets = selectWorkingSets(sets);
   const tally = tallyRepBand(workingSets, planned.targetRepsLow, planned.targetRepsHigh);
   const gates = computeGates(workingSets, tally, context);
-  const routed = routeSuggestion(tally, gates);
+  const routed = routeSuggestion(tally, gates, context);
   return { ...enforceTechniqueGate(routed, gates), basedOnSessionId: basisSessionId, gates };
 }
 
@@ -1050,9 +1061,13 @@ function effortGate(workingSets: StoredSet[], maxLossPct: number): EffortGate {
 
 type RoutedSuggestion = Pick<ProgressionSuggestion, 'delta' | 'repDelta' | 'reasoning' | 'basis'>;
 
-function routeSuggestion(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+function routeSuggestion(
+  tally: RepBandTally,
+  gates: ProgressionGates,
+  context: ProgressionContext,
+): RoutedSuggestion {
   const { hitHigh, missed, setsCompleted, majority, repsLow, bandLabel } = tally;
-  if (hitHigh >= majority) return routeHitHigh(tally, gates);
+  if (hitHigh >= majority) return routeHitHigh(tally, gates, context);
   if (missed >= majority) {
     return {
       delta: PROGRESSION_DECREMENT_LBS,
@@ -1074,7 +1089,11 @@ function routeSuggestion(tally: RepBandTally, gates: ProgressionGates): RoutedSu
  * near failure; otherwise B24 routes by range — load below the ceiling, reps
  * at or above it.
  */
-function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+function routeHitHigh(
+  tally: RepBandTally,
+  gates: ProgressionGates,
+  context: ProgressionContext,
+): RoutedSuggestion {
   const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
   const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
@@ -1089,7 +1108,7 @@ function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSugge
     };
   }
   if (repsHigh < REP_RANGE_LOAD_CEILING) {
-    return loadIncrement(hit, tally.topLoadLbs);
+    return loadIncrement(hit, tally.topLoadLbs, context);
   }
   return {
     delta: PROGRESSION_HOLD_LBS,
@@ -1100,12 +1119,20 @@ function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSugge
 }
 
 /**
- * B23: percent-of-load when a percent is cited, else the fixed step. Falls
- * back to fixed when the exercise carries no recorded load (a Damper/Band/
+ * B23: percent-of-load when a percent is cited, else the fixed step. Reads
+ * the percent from `context.incrementPercent`, falling back to the
+ * production constant when the caller's context didn't set the field at all
+ * (same `?? `-on-omission pattern as `context.technique` below). Falls back
+ * to fixed when the exercise carries no recorded load (a Damper/Band/
  * Isokinetic set) — there is no `topLoadLbs` to take a percent of.
  */
-function loadIncrement(hit: string, topLoadLbs: number | undefined): RoutedSuggestion {
-  if (PROGRESSION_INCREMENT_PERCENT === null || topLoadLbs === undefined) {
+function loadIncrement(
+  hit: string,
+  topLoadLbs: number | undefined,
+  context: ProgressionContext,
+): RoutedSuggestion {
+  const percent = context.incrementPercent ?? PROGRESSION_INCREMENT_PERCENT;
+  if (percent === null || topLoadLbs === undefined) {
     return {
       delta: PROGRESSION_INCREMENT_LBS,
       repDelta: 0,
@@ -1113,11 +1140,11 @@ function loadIncrement(hit: string, topLoadLbs: number | undefined): RoutedSugge
       basis: 'fixed',
     };
   }
-  const delta = computePercentIncrement(topLoadLbs, PROGRESSION_INCREMENT_PERCENT);
+  const delta = computePercentIncrement(topLoadLbs, percent);
   return {
     delta,
     repDelta: 0,
-    reasoning: `${hit}; add ${PROGRESSION_INCREMENT_PERCENT}% of ${topLoadLbs} lb = ${delta} lb.`,
+    reasoning: `${hit}; add ${percent}% of ${topLoadLbs} lb = ${delta} lb.`,
     basis: 'percent',
   };
 }

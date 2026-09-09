@@ -30,8 +30,12 @@ vi.mock('@voltras/node-sdk', () => {
   return { VoltraSDKError: FakeVoltraSDKError, TrainingMode: {}, TrainingModeNames: {} };
 });
 
-const { computeProgressionDelta, computePercentIncrement, registerPlanTools } =
-  await import('../plan-tools.js');
+const {
+  computeProgressionDelta,
+  computePercentIncrement,
+  DEFAULT_PROGRESSION_CONTEXT,
+  registerPlanTools,
+} = await import('../plan-tools.js');
 const { registerProfileTools } = await import('../profile-tools.js');
 
 const EMPTY_PHASE: Phase = {
@@ -238,6 +242,41 @@ describe('computeProgressionDelta — B23 percent-of-load (null constant)', () =
     expect(suggestion.delta).toBe(0);
     expect(suggestion.repDelta).toBe(1);
     expect(suggestion.basis).toBe('fixed');
+  });
+
+  it('yields the fixed +5 lb step and basis "fixed" for the explicit default context', () => {
+    // Arrange: same as above, but passing DEFAULT_PROGRESSION_CONTEXT explicitly
+    // rather than relying on the parameter default.
+    const sets = [1, 2, 3].map((n) => ({ ...setWithReps(`e${String(n)}`, 12), weightLbs: 200 }));
+
+    // Act.
+    const suggestion = computeProgressionDelta(
+      plannedBand(8, 12),
+      sets,
+      BASIS,
+      DEFAULT_PROGRESSION_CONTEXT,
+    );
+
+    // Assert.
+    expect(suggestion.delta).toBe(5);
+    expect(suggestion.basis).toBe('fixed');
+  });
+
+  it('applies a percent-of-load increment when context.incrementPercent overrides the null default', () => {
+    // Arrange: 8-12 band topped out at 200 lb. 12% is illustrative — proving
+    // the injection path works, not a stand-in for a real cited B23 value.
+    const sets = [1, 2, 3].map((n) => ({ ...setWithReps(`o${String(n)}`, 12), weightLbs: 200 }));
+
+    // Act.
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS, {
+      ...DEFAULT_PROGRESSION_CONTEXT,
+      incrementPercent: 12,
+    });
+
+    // Assert: 200 lb * 12% = 24 lb, already on the 1 lb device step.
+    expect(suggestion.basis).toBe('percent');
+    expect(suggestion.delta).toBe(24);
+    expect(suggestion.reasoning).toContain('12% of 200 lb = 24 lb');
   });
 });
 
