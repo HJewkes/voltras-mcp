@@ -92,9 +92,10 @@ vi.mock('../../state/event-bridge.js', () => ({
 }));
 
 const { registerDeviceTools } = await import('../device-tools.js');
+const { MODE_ECHO_POLL_MS } = await import('../device-handler-helpers.js');
 const { CoercionWatch } = await import('../../state/coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
-const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
+const { ModeRevertGuard, MODE_REVERT_WINDOW_MS } = await import('../../state/mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
 const { makeFakeLease, makeRecordingChannels } =
   await import('../../state/__tests__/fixtures/lease-fence.js');
@@ -1951,6 +1952,106 @@ describe('registerDeviceTools', () => {
       expect(isError).toBe(true);
       expect(payload.code).toBe('COMMAND_FAILED');
       expect(client.startGuidedLoad).not.toHaveBeenCalled();
+    });
+
+    // ── VMCP-02.90: the Weight Training gate ───────────────────────────
+    //
+    // Guided load enters from Weight Training and NOT from Damper (2/2 runs on
+    // hardware, VMCP-02.61): the phase holds at `armed` for the SDK's 18s poll
+    // window, times out, and the bridge closes the junk set it auto-created.
+    // The gate refuses before any of that is written.
+    describe('VMCP-02.90 — the Weight Training gate', () => {
+      it('Damper + default: refuses with GUIDED_LOAD_MODE_MISMATCH, nothing written', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ trainingMode: 'Damper' });
+        const client = primaryClient(state);
+        const reg = placeholders.get('device.start_guided_load')!;
+        const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('GUIDED_LOAD_MODE_MISMATCH');
+        expect(payload.message).toContain('Damper');
+        expect(client.setMode).not.toHaveBeenCalled();
+        expect(client.unloadDevice).not.toHaveBeenCalled();
+        expect(client.startGuidedLoad).not.toHaveBeenCalled();
+      });
+
+      // Only Weight Training is confirmed to work, so an untested mode is
+      // refused rather than assumed to behave like one of the two known ones.
+      it('refuses from Isokinetic too — the allowlist is one mode wide', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ trainingMode: 'Isokinetic' });
+        const reg = placeholders.get('device.start_guided_load')!;
+        const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('GUIDED_LOAD_MODE_MISMATCH');
+        expect(primaryClient(state).startGuidedLoad).not.toHaveBeenCalled();
+      });
+
+      // The memory rule: Damper → WeightTraining → guided load FROM AN
+      // UNLOADED STATE. The mode write alone does not slacken the cable, so
+      // the pre-trigger unload must still run on the auto-switch path.
+      it('Damper + autoSwitchMode: switches, unloads, then triggers', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ trainingMode: 'Damper' });
+        const client = primaryClient(state);
+        const callOrder: string[] = [];
+        client.setMode.mockImplementationOnce(async (mode) => {
+          callOrder.push('setMode');
+          slot.modeRevertGuard.onSettingsUpdate(mode);
+        });
+        client.unloadDevice.mockImplementationOnce(async () => {
+          callOrder.push('unloadDevice');
+        });
+        client.startGuidedLoad.mockImplementationOnce(async () => {
+          callOrder.push('startGuidedLoad');
+        });
+        const reg = placeholders.get('device.start_guided_load')!;
+        const { isError } = await invoke(reg, { targetWeightLbs: 50, autoSwitchMode: true });
+        expect(isError).toBeUndefined();
+        expect(client.setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
+        expect(callOrder).toEqual(['setMode', 'unloadDevice', 'startGuidedLoad']);
+      });
+
+      it('autoSwitchMode + skipUnload: still switches, and skips only the unload', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ trainingMode: 'Damper' });
+        const client = primaryClient(state);
+        client.setMode.mockImplementationOnce(async (mode) => {
+          slot.modeRevertGuard.onSettingsUpdate(mode);
+        });
+        const reg = placeholders.get('device.start_guided_load')!;
+        const { isError } = await invoke(reg, {
+          targetWeightLbs: 50,
+          autoSwitchMode: true,
+          skipUnload: true,
+        });
+        expect(isError).toBeUndefined();
+        expect(client.setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
+        expect(client.unloadDevice).not.toHaveBeenCalled();
+        expect(client.startGuidedLoad).toHaveBeenCalled();
+      });
+
+      // Fails closed: triggering against a mode the device never confirmed is
+      // the same race VW-162 found on the cascade.
+      it('autoSwitchMode with no echo: MODE_ECHO_TIMEOUT and no trigger', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.live = makeFakeLive({ trainingMode: 'Damper' });
+        const client = primaryClient(state);
+        const reg = placeholders.get('device.start_guided_load')!;
+        vi.useFakeTimers();
+        try {
+          const call = invoke(reg, { targetWeightLbs: 50, autoSwitchMode: true });
+          await vi.advanceTimersByTimeAsync(MODE_REVERT_WINDOW_MS + MODE_ECHO_POLL_MS);
+          const { isError, payload } = await call;
+          expect(isError).toBe(true);
+          expect(payload.code).toBe('MODE_ECHO_TIMEOUT');
+        } finally {
+          vi.useRealTimers();
+        }
+        expect(client.setMode).toHaveBeenCalledWith(FakeTrainingMode.WeightTraining);
+        expect(client.unloadDevice).not.toHaveBeenCalled();
+        expect(client.startGuidedLoad).not.toHaveBeenCalled();
+      });
     });
 
     it('forwards optional pollIntervalMs and pollDurationMs when supplied', async () => {
