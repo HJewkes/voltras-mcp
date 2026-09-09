@@ -1,6 +1,7 @@
-// Rep-range routing (VMCP-06.01 / B24) and the progression gates block
-// (VMCP-06.07 / B07 v1) in `computeProgressionDelta`, plus the tier read that
-// `plan.suggest_progression` performs on its behalf (VW-92 consumer 1 of 3).
+// Rep-range routing (VMCP-06.01 / B24), the percent-of-load increment
+// (VMCP-06.09 / B23) and the progression gates block (VMCP-06.07 / B07 v1) in
+// `computeProgressionDelta`, plus the tier read that `plan.suggest_progression`
+// performs on its behalf (VW-92 consumer 1 of 3).
 //
 // The routing and gate cases drive the exported pure function directly: it is
 // store-free by design (VW-120), and `getTierSignal`'s ceiling cannot produce
@@ -29,7 +30,8 @@ vi.mock('@voltras/node-sdk', () => {
   return { VoltraSDKError: FakeVoltraSDKError, TrainingMode: {}, TrainingModeNames: {} };
 });
 
-const { computeProgressionDelta, registerPlanTools } = await import('../plan-tools.js');
+const { computeProgressionDelta, computePercentIncrement, registerPlanTools } =
+  await import('../plan-tools.js');
 const { registerProfileTools } = await import('../profile-tools.js');
 
 const EMPTY_PHASE: Phase = {
@@ -167,6 +169,75 @@ describe('computeProgressionDelta — B24 rep-range routing', () => {
     // Assert.
     expect(missedSuggestion).toMatchObject({ delta: -5, repDelta: 0 });
     expect(inBandSuggestion).toMatchObject({ delta: 0, repDelta: 0 });
+  });
+});
+
+// B23 (VMCP-06.09): `sources/mined/rp-university-idea-backlog.md` "### 14. B23"
+// proposes replacing the fixed +5 lb step with a percent-of-load rule but
+// states no percent (it explicitly discards RP's own sex-keyed default rather
+// than quoting it), so the production constant is null and the fixed step is
+// the only load-increment path today. `computePercentIncrement` tests below
+// use an illustrative percent to exercise the rounding/floor/cap arithmetic in
+// isolation — not a stand-in for a real cited value.
+describe('computePercentIncrement — B23 arithmetic', () => {
+  it('rounds a percent-of-load increment down to the device step', () => {
+    // Arrange/Act: 200 lb top load at an illustrative 12%.
+    const delta = computePercentIncrement(200, 12);
+
+    // Assert: 200 * 0.12 = 24, already on the 1 lb device step.
+    expect(delta).toBe(24);
+  });
+
+  it('floors the increment at the fixed step when the percent rounds below it', () => {
+    // Arrange/Act: 20 lb top load at the same illustrative 12% -> 2.4 lb.
+    const delta = computePercentIncrement(20, 12);
+
+    // Assert: floored to the fixed +5 lb step.
+    expect(delta).toBe(5);
+  });
+
+  it('caps the increment when a cap is supplied', () => {
+    const delta = computePercentIncrement(500, 12, 5, 10);
+    expect(delta).toBe(10);
+  });
+});
+
+describe('computeProgressionDelta — B23 percent-of-load (null constant)', () => {
+  it('stays on the fixed step and reports basis "fixed" for a heavy top load', () => {
+    // Arrange: 8-12 band topped out at 200 lb, flat velocity.
+    const sets = [1, 2, 3].map((n) => ({ ...setWithReps(`p${String(n)}`, 12), weightLbs: 200 }));
+
+    // Act.
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
+
+    // Assert: the percent path never engages while the constant is null.
+    expect(suggestion.delta).toBe(5);
+    expect(suggestion.basis).toBe('fixed');
+  });
+
+  it('stays on the fixed step and reports basis "fixed" for a light top load', () => {
+    // Arrange: same band, 20 lb top load.
+    const sets = [1, 2, 3].map((n) => ({ ...setWithReps(`l${String(n)}`, 12), weightLbs: 20 }));
+
+    // Act.
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
+
+    // Assert.
+    expect(suggestion.delta).toBe(5);
+    expect(suggestion.basis).toBe('fixed');
+  });
+
+  it('leaves the B24 rep branch unchanged at 15+ reps: no load increment applies', () => {
+    // Arrange: 15-20 band topped out — B24 routes to +1 rep, not load.
+    const sets = [1, 2, 3].map((n) => setWithReps(`r${String(n)}`, 20));
+
+    // Act.
+    const suggestion = computeProgressionDelta(plannedBand(15, 20), sets, BASIS);
+
+    // Assert.
+    expect(suggestion.delta).toBe(0);
+    expect(suggestion.repDelta).toBe(1);
+    expect(suggestion.basis).toBe('fixed');
   });
 });
 

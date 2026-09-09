@@ -36,7 +36,7 @@ import { wrapHandler } from './helpers.js';
  * `getAvailableWeights()` enumerates the same integer ladder, so 1 lb is the
  * real step rather than a fallback.
  */
-const DEVICE_LOAD_STEP_LBS = 1;
+export const DEVICE_LOAD_STEP_LBS = 1;
 
 /** `device.set_weight`'s own floor. A rung below it is not settable. */
 const DEVICE_MIN_LOAD_LBS = 5;
