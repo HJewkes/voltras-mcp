@@ -8,7 +8,8 @@ if [ -z "$base" ]; then
   exit 0
 fi
 
-changed=$(git diff --name-only --diff-filter=ACMR "$base" HEAD | grep -E '^(src/.*\.(ts|tsx|js|mjs|cjs|json)|scripts/.*\.mjs)$')
+# `|| true`: husky runs hooks under `sh -e`, and grep exits 1 on no match.
+changed=$(git diff --name-only --diff-filter=ACMR "$base" HEAD | grep -E '^(src/.*\.(ts|tsx|js|mjs|cjs|json)|scripts/.*\.mjs)$' || true)
 
 if [ -z "$changed" ]; then
   exit 0
