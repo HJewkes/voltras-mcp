@@ -65,6 +65,7 @@ distinct from any event-specific `started_at` / `ended_at` a payload already car
 | `voice_command_applied`          | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).                                                                                        | —                         |
 | `voice_command_rejected`         | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                                                                                                        | —                         |
 | `isometric_phase`                | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                                                                                                    | —                         |
+| `lease_lost`                     | A multi-step device write stopped partway because another client took the lease. See [below](#lease_lost).                                                                                      | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
@@ -336,3 +337,29 @@ Consequences:
 If you want cues that don't depend on the model reacting to these events at all, see
 `VMCP_CUES` in the [main README](../README.md#environment-variables). Both cue switches are
 runtime-togglable via `system.set_cues` and reported by `server.health`.
+
+## `lease_lost`
+
+Exactly one client may drive the device at a time (`system.lease_*`). A tool that writes in
+several steps — `bilateral.cascade`, `device.start_guided_load`,
+`device.configure_isokinetic`, and the local voice weight fast-path — re-reads the lease
+after every await and stops if the device changed hands in the meantime:
+
+```jsonc
+{
+  "summary": "bilateral.cascade stopped partway on slot left: another client took the device write-lease. The remaining device writes were NOT issued.",
+  "tool": "bilateral.cascade",
+  "slot": "left",
+}
+```
+
+`meta` carries `event_type: lease_lost` and `tool`, plus the usual `slot` and `at`.
+
+The tool call itself fails with the `LEASE_LOST` error code; the voice fast-path has no
+tool result, so there this event is the only signal. Settings that landed before the steal
+are NOT rolled back — the other client unloaded the device as part of taking it, and a
+rollback would be one more write from a session that no longer holds the lease. To carry
+on, call `system.lease_acquire` and re-issue the whole call.
+
+`system.lease_status` reports the same epoch as `generation`: two reads with an unchanged
+value prove the device never left you in between.

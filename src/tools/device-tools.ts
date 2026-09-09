@@ -92,6 +92,7 @@ import {
   type PassiveScanContext,
 } from '../state/passive-scanner.js';
 import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
+import { fence } from '../state/lease-fence.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import {
   shouldPreflightWeightTraining,
@@ -970,20 +971,31 @@ export function registerDeviceTools(
           requested: input.eccOverloadWeightLbs * 10,
         });
       }
+      // VMCP-01.65: up to five sequential BLE writes, each one an await the
+      // next write resumes after. Re-check the lease between them so a steal
+      // leaves the device partly configured rather than fully reconfigured by
+      // a session that no longer holds it.
+      const isoFence = fence(state, 'device.configure_isokinetic');
+      const slotId = input.slot ?? PRIMARY_SLOT;
       await trackedSetterCall(
         slot.coercionWatch,
         'device.configure_isokinetic',
         fields,
         async () => {
+          isoFence.check(slotId);
           await slot.client.setIsokineticTargetSpeed(input.targetSpeedMmPerSec);
+          isoFence.check(slotId);
           await slot.client.setIsokineticEccMode(input.eccMode);
           if (typeof input.eccSpeedLimitMmPerSec === 'number') {
+            isoFence.check(slotId);
             await slot.client.setIsokineticEccSpeedLimit(input.eccSpeedLimitMmPerSec);
           }
           if (typeof input.eccConstWeightLbs === 'number') {
+            isoFence.check(slotId);
             await slot.client.setIsokineticEccConstWeight(input.eccConstWeightLbs);
           }
           if (typeof input.eccOverloadWeightLbs === 'number') {
+            isoFence.check(slotId);
             await slot.client.setIsokineticEccOverloadWeight(input.eccOverloadWeightLbs);
           }
         },
@@ -1105,6 +1117,14 @@ export function registerDeviceTools(
       // been observed yet, so treat that unknown/absent requested mode the same
       // as explicit Idle: drive WeightTraining and skip the unload. (Requested
       // intent only; do NOT consult the applied-mode `trainingModeRaw` here.)
+      // VMCP-01.65: the preflight below is a full BLE round-trip, and the
+      // trigger that follows it starts the firmware's engagement ceremony —
+      // the worst write to issue on a device another session just took. Fence
+      // before the preflight and again before the trigger. The SDK's own
+      // guided-load poll runs past this handler and is not fenced.
+      const guidedFence = fence(state, 'device.start_guided_load');
+      const guidedSlotId = input.slot ?? PRIMARY_SLOT;
+      guidedFence.check(guidedSlotId);
       const requestedMode = slot.live.snapshotDevice().trainingMode;
       if (shouldPreflightWeightTraining(requestedMode)) {
         await slot.client.setMode(TrainingMode.WeightTraining);
@@ -1141,6 +1161,7 @@ export function registerDeviceTools(
       // (handles the documented 80→320→0 transient burst) until a separate
       // pass routes it through cmd=0x10 too.
       const fields = buildGuidedLoadTrackedFields(input.targetWeightLbs, preDevice);
+      guidedFence.check(guidedSlotId);
       await trackedSetterCall(
         slot.coercionWatch,
         'device.start_guided_load',
@@ -1382,7 +1403,13 @@ export function registerDeviceTools(
           modeRevertGuard: slot.modeRevertGuard,
         };
       });
-      const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure);
+      // VMCP-01.65: one fence for the whole cascade, taken before the first
+      // BLE write. Every slot re-checks it after the mode-echo wait and before
+      // each setter, so a steal mid-cascade stops the writes that have not
+      // fired instead of driving a device this session no longer owns.
+      const results = await cascadeAcrossSlots(targets, plan, input.abortOnFirstFailure, {
+        fence: fence(state, 'bilateral.cascade'),
+      });
       const out: Record<string, unknown> = { ok: cascadeAllOk(results), results };
       // VMCP-02.32: drain any delayed disconnect advisory for each target slot
       // (a slot that dropped mid-lull and reconnected still carries an

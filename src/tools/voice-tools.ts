@@ -39,6 +39,7 @@ import {
 } from '../voice/voice-listener.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 import { createWeightFastPath, type VoiceWeightContext } from './voice-weight.js';
+import { fence, type FenceableLease } from '../state/lease-fence.js';
 
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
@@ -48,6 +49,12 @@ interface PlaceholderTools {
 export interface VoiceToolState {
   channels: ChannelPublisher;
   voice: VoiceListenerHolder;
+  /**
+   * VMCP-01.65: the write-lease the weight fast-path fences on. Optional so
+   * the many fixtures that build a bare voice state keep working — without it
+   * the fast-path simply is not fenced, which is the pre-VMCP-01.65 behaviour.
+   */
+  lease?: FenceableLease;
 }
 
 /**
@@ -412,7 +419,12 @@ async function armListener(
   const deps = state.voice.__deps !== null ? state.voice.__deps : buildProductionDeps();
   const channels = state.channels;
   // Per-arming so the one-deep undo ledger never outlives the mic session.
-  const applyWeightCommand = createWeightFastPath(channels, weight);
+  // The fence is per-arming for the same reason: `system.listen_start` is a
+  // lease-gated write, so arming is the moment this session last proved it
+  // holds the device, and every later spoken write is checked against it.
+  const leaseFence =
+    state.lease === undefined ? null : fence({ lease: state.lease, channels }, 'voice.weight');
+  const applyWeightCommand = createWeightFastPath(channels, weight, leaseFence);
   const listener = new VoiceListener(deps, {
     onVoiceInput: ({ transcript, latencyMs, sttModel, audioDurationMs }) => {
       channels.publish(buildVoiceInputPayload(transcript, latencyMs, sttModel, audioDurationMs));
