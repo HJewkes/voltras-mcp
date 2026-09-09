@@ -76,11 +76,17 @@ import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveTargetTempo } from './tempo-defaults.js';
 import {
+  buildHistoryView,
+  buildSessionPlanView,
+  buildSessionSummary,
   buildSnapshotView,
   composeSessionTitle,
+  resolveSummarySessionId,
+  type DashboardSessionStore,
   type DeviceEntry,
+  type PrescriptionView,
+  type SessionPlanRows,
   type SnapshotResponse,
 } from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
@@ -95,11 +101,6 @@ import {
   updatePlannedExercise,
   type DashboardPlanStore,
 } from './plan-api.js';
-import {
-  buildSessionSummary,
-  resolveSummarySessionId,
-  type DashboardSessionStore,
-} from './session-summary.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -844,59 +845,12 @@ async function fetchHistory(
   url: URL,
 ): Promise<readonly StoredSession[]> {
   const limit = parseLimit(url.searchParams.get('limit'));
-  return state.store.listSessions({
+  const sessions = await state.store.listSessions({
     sort: 'startedAt:desc',
     limit,
     offset: 0,
   });
-}
-
-/**
- * One entry in the session's ordered planned-exercise list (VW-49). Mirrors the
- * client's `PlannedExerciseView` in `spa/adapter.ts` — the two must stay identical.
- */
-interface PlannedExerciseView {
-  /** Display name, or the exercise id when the catalog carries no name. Never invented. */
-  name: string;
-  /** 0-based position within the workout template. */
-  order: number;
-  /** Prescribed set count. */
-  sets: number;
-  repsLow?: number;
-  repsHigh?: number;
-  weightLbs?: number;
-  /** True for the exercise the live session is currently on. */
-  active: boolean;
-}
-
-/** Prescribed targets for the active exercise, from its attached plan template. */
-interface PrescriptionView {
-  /** Prescribed set count. Always present — `targetSets` is required on a planned exercise. */
-  sets: number;
-  repsLow?: number;
-  repsHigh?: number;
-  weightLbs?: number;
-  rpe?: number;
-  /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
-  restSec?: number;
-  /**
-   * Target tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]` (seconds),
-   * resolved from the coach override (VW-46) or the exercise default. Absent when
-   * neither resolves — the live view then hides the tempo readout (VW-41).
-   */
-  tempo?: [number, number, number, number];
-  /**
-   * The session's FULL ordered planned-exercise list (VW-49) from the matched
-   * template, so the rail can render `upcoming` rows beyond the active exercise.
-   * Present whenever the prescription is; only real planned exercises, never invented.
-   */
-  exercises?: PlannedExerciseView[];
-  /**
-   * The session-block title (VW-43), composed from the attached template's name and
-   * its block's focus/name, e.g. `"Push A · Hypertrophy"`. Absent when the store can't
-   * resolve the full template → week → block chain (each hop optional, never invented).
-   */
-  title?: string;
+  return buildHistoryView({ sessions });
 }
 
 /**
@@ -932,29 +886,9 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     const planned = await store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
     const match = planned.find((p) => p.exerciseId === exerciseId);
     if (match === undefined) continue;
-    const prescription: PrescriptionView = { sets: match.targetSets };
-    if (match.targetRepsLow !== undefined) prescription.repsLow = match.targetRepsLow;
-    if (match.targetRepsHigh !== undefined) prescription.repsHigh = match.targetRepsHigh;
-    if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
-    if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
-    if (match.restSec !== undefined) prescription.restSec = match.restSec;
-    // Coach-set tempo (VW-46), when the planned exercise carries one, wins over the
-    // exercise/movement-pattern default. The movement pattern, when the catalog
-    // knows it, widens coverage to the per-pattern fallback; unknown exercise/
-    // pattern with no coach tempo → null → tempo stays absent.
-    const coachTempo = match.targetTempo;
-    const tempo = resolveTargetTempo(
-      exerciseId,
-      coachTempo !== undefined
-        ? [coachTempo.ecc, coachTempo.pauseBottom, coachTempo.con, coachTempo.pauseTop]
-        : undefined,
-      state.exercises?.getById(exerciseId)?.movementPattern,
-    );
-    if (tempo !== null) prescription.tempo = tempo;
-    prescription.exercises = buildPlannedExerciseList(planned, exerciseId, state.exercises);
     const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
-    if (title !== null) prescription.title = title;
-    return prescription;
+    const rows: SessionPlanRows = { activeExerciseId: exerciseId, match, planned, title };
+    return buildSessionPlanView(rows, state.exercises);
   }
   return null;
 }
@@ -984,33 +918,6 @@ async function resolveSessionTitle(
     blockName: block?.name,
     focus: block?.focus,
   });
-}
-
-/**
- * The template's planned exercises as an ordered `PlannedExerciseView[]` (VW-49):
- * sorted by `orderIndex`, named from the exercise catalog (falling back to the raw
- * exercise id — a real identifier, never an invented label), with the active exercise
- * flagged. Only real planned rows; an empty template yields an empty list.
- */
-function buildPlannedExerciseList(
-  planned: StoredPlannedExercise[],
-  activeExerciseId: string,
-  catalog: DashboardServerState['exercises'],
-): PlannedExerciseView[] {
-  return [...planned]
-    .sort((a, b) => a.orderIndex - b.orderIndex)
-    .map((p) => {
-      const entry: PlannedExerciseView = {
-        name: catalog?.getById(p.exerciseId)?.name ?? p.exerciseId,
-        order: p.orderIndex,
-        sets: p.targetSets,
-        active: p.exerciseId === activeExerciseId,
-      };
-      if (p.targetRepsLow !== undefined) entry.repsLow = p.targetRepsLow;
-      if (p.targetRepsHigh !== undefined) entry.repsHigh = p.targetRepsHigh;
-      if (p.targetWeightLbs !== undefined) entry.weightLbs = p.targetWeightLbs;
-      return entry;
-    });
 }
 
 function parseLimit(raw: string | null): number {

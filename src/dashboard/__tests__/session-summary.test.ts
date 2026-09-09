@@ -19,9 +19,9 @@ import {
   type WorkoutSample,
 } from '@voltras/workout-analytics';
 
-import { buildSessionSummary, resolveSummarySessionId } from '../session-summary.js';
+import { buildSessionSummary, resolveSummarySessionId } from '../read-models/session-summary.js';
 import type { DashboardPlanStore } from '../plan-api.js';
-import type { DashboardSessionStore } from '../session-summary.js';
+import type { DashboardSessionStore } from '../read-models/session-summary.js';
 import type {
   StoredPlannedExercise,
   StoredSession,
