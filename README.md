@@ -360,7 +360,10 @@ roughly one to two seconds in node mode while BLE comes up.
 ## Tool catalog
 
 95 tools in mock mode; 93 with the real adapter (`mock.*` is registered only when
-`VOLTRA_ADAPTER=mock`). Full names and schemas are discoverable from any MCP client —
+`VOLTRA_ADAPTER=mock`). "Load" means at least three different things across this
+catalog — see [docs/vocabulary.md](docs/vocabulary.md) for the settings / mode /
+engagement / lifecycle layers before reading too much into any one of them. Full names
+and schemas are discoverable from any MCP client —
 ask Claude to list them, or run `tools/list` against the stdio transport.
 
 | Namespace       | Count | What it covers                                                                                                                                                                                                                                                                                                                                                    |

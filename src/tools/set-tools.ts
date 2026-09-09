@@ -125,7 +125,7 @@ interface PlaceholderTools {
  * completed set straight from the store and is unaffected by live state.
  */
 const SET_START_DESCRIPTION =
-  "Start recording a new set on the given slot's active session. If the lifter already " +
+  "RECORDING LIFECYCLE layer (see docs/vocabulary.md). Start recording a new set on the given slot's active session. If the lifter already " +
   'started and the server auto-armed a set (you saw `set_started {auto_armed: true}`), this ' +
   'call UPGRADES that set in place instead of failing: your `setPurpose` and `watch` are ' +
   'applied to the set already running, its reps and start time are kept, the motor is not ' +
