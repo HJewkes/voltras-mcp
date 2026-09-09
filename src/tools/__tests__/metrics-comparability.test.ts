@@ -26,6 +26,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredRep, StoredSession, StoredSet } from '../../store/types.js';
 import type { ComparabilityReport } from '../../analytics/comparability.js';
+import { setupRowId } from '../../store/exercise-setups.js';
 import type { ToolResult } from '../helpers.js';
 
 const EMPTY_PHASE: Phase = {
@@ -232,5 +233,23 @@ describe('session.strength comparability (VW-94)', () => {
 
     expect(payload.comparability.anchorSetId).toBe('s1');
     expect(payload.comparability.comparedTo?.setId).toBe('s2');
+  });
+
+  it('reads the VW-119 setup stamp off the stored set and splits on it', async () => {
+    const key = { userId: 'local', exerciseId: 'bench-press', side: 'right' } as const;
+    const state = makeState({
+      'sess-S': [
+        makeSet('s1', 'sess-S', { setupId: setupRowId(key, 0) }),
+        makeSet('s2', 'sess-S', { setupId: setupRowId(key, 1) }),
+      ],
+    });
+
+    const payload = (await compute(state, {
+      pipeline: 'session.strength',
+      sessionId: 'sess-S',
+    })) as StrengthPayload;
+
+    expect(payload.comparability.noValidComparison).toBe(true);
+    expect(payload.comparability.nearest?.reasons.join(' ')).toContain('different physical setup');
   });
 });

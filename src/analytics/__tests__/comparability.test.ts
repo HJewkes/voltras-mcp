@@ -12,6 +12,7 @@ import {
   LOAD_TOLERANCE_PCT,
   type ComparabilitySubject,
 } from '../comparability.js';
+import { setupRowId } from '../../store/exercise-setups.js';
 
 function makeSubject(overrides: Partial<ComparabilitySubject> = {}): ComparabilitySubject {
   return {
@@ -62,6 +63,38 @@ describe('isComparable', () => {
     );
     expect(verdict.reasons).toContain(
       'setup (note): neither set records a physical setup, so this clause passes unchecked',
+    );
+  });
+
+  // The ids come from the real writer (`setupRowId`, VW-119) rather than
+  // hand-written strings, so a change to that format fails here instead of
+  // leaving the clause passing against ids nothing produces.
+  const SETUP_A = setupRowId({ userId: 'local', exerciseId: 'bench-press', side: 'right' }, 0);
+  const SETUP_B = setupRowId({ userId: 'local', exerciseId: 'bench-press', side: 'right' }, 1);
+
+  it('compares two sets stamped with the same inferred setup', () => {
+    const verdict = isComparable(
+      makeSubject({ setupId: SETUP_A }),
+      makeSubject({ id: 'set-b', setupId: SETUP_A }),
+    );
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons.some((r) => r.startsWith('setup'))).toBe(false);
+  });
+
+  it('blocks two sets clustered into different physical setups', () => {
+    const verdict = isComparable(
+      makeSubject({ setupId: SETUP_A }),
+      makeSubject({ id: 'set-b', setupId: SETUP_B }),
+    );
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.reasons).toContain(`setup: different physical setup (${SETUP_A} vs ${SETUP_B})`);
+  });
+
+  it('blocks when only one side has been clustered — absent is not a match', () => {
+    const verdict = isComparable(makeSubject({ setupId: SETUP_A }), makeSubject({ id: 'set-b' }));
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.reasons).toContain(
+      `setup: physical setup recorded on only one side (${SETUP_A} vs unrecorded)`,
     );
   });
 
