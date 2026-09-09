@@ -38,6 +38,8 @@ vi.mock('../tts-tools.js', () => ({
 }));
 
 const { makeVoiceSafety } = await import('../voice-safety.js');
+const { pickSafetyAck, SAFETY_ACK_PHRASES } = await import('../voice-tools.js');
+const { routeTranscript } = await import('../../voice/transcript-router.js');
 
 interface FakeSlot {
   slotId: string;
@@ -119,11 +121,11 @@ describe('makeVoiceSafety — evaluate / unload routing', () => {
   it('speakAck sends an interrupting, non-blocking cue', async () => {
     const { state } = makeState([{ slotId: 'right', activeSetId: 'set-9' }]);
     speakCalls.length = 0;
-    makeVoiceSafety(state as never).speakAck('Stopping. Weight off.');
+    makeVoiceSafety(state as never).speakAck(SAFETY_ACK_PHRASES[0]);
     await Promise.resolve();
-    expect(speakCalls).toEqual([
-      { text: 'Stopping. Weight off.', interrupt: true, blocking: false },
-    ]);
+    expect(speakCalls).toHaveLength(1);
+    expect(speakCalls[0].text.startsWith('Stopping')).toBe(true);
+    expect(speakCalls[0]).toMatchObject({ interrupt: true, blocking: false });
   });
 
   it('unloads the cable on the slot it is handed, not the primary one', async () => {
@@ -134,5 +136,34 @@ describe('makeVoiceSafety — evaluate / unload routing', () => {
     await makeVoiceSafety(state as never).unload('right');
     expect(slots.get('right')?.client.unloadDevice).toHaveBeenCalledTimes(1);
     expect(slots.get('left')?.client.unloadDevice).not.toHaveBeenCalled();
+  });
+});
+
+describe('SAFETY_ACK_PHRASES pool (VW-157)', () => {
+  it('has 5 to 10 entries, each starting with "Stopping" and naming the weight state, at most 6 words', () => {
+    expect(SAFETY_ACK_PHRASES.length).toBeGreaterThanOrEqual(5);
+    expect(SAFETY_ACK_PHRASES.length).toBeLessThanOrEqual(10);
+    for (const phrase of SAFETY_ACK_PHRASES) {
+      expect(phrase.startsWith('Stopping')).toBe(true);
+      expect(/weight off|unloaded/i.test(phrase)).toBe(true);
+      expect(phrase.split(' ').length).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it('keeps the original ack as the first entry', () => {
+    expect(SAFETY_ACK_PHRASES[0]).toBe('Stopping. Weight off.');
+  });
+
+  it('never matches the transcript-router safety matcher, so the ack cannot echo back as a stop command', () => {
+    for (const phrase of SAFETY_ACK_PHRASES) {
+      expect(routeTranscript(phrase).tier).not.toBe('safety');
+    }
+  });
+});
+
+describe('pickSafetyAck', () => {
+  it('is index-based and deterministic given a fixed pick function', () => {
+    expect(pickSafetyAck(() => 0)).toBe(SAFETY_ACK_PHRASES[0]);
+    expect(pickSafetyAck((n) => n - 1)).toBe(SAFETY_ACK_PHRASES[SAFETY_ACK_PHRASES.length - 1]);
   });
 });
