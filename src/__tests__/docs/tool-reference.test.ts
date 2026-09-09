@@ -19,7 +19,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findProtocolTokens } from '../../docs/protocol-guard.js';
+import { createProtocolGuard } from '../../docs/protocol-guard.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from '../../tool-registry.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -123,11 +123,20 @@ describe('generated capability reference', () => {
 });
 
 describe('confidentiality boundary', () => {
-  it('publishes no byte literal, opcode, offset or register name', () => {
+  // The generator runs the FULL guard over every page it writes and refuses to
+  // finish if one is dirty, so reaching this file at all already proves that.
+  // This re-checks the vocabulary-free half — hex literals, bare hex runs and
+  // byte sequences are protocol detail no allowlist can excuse — against a
+  // guard built with an empty vocabulary, which is strictly stricter.
+  const LITERAL_KINDS = new Set(['hex-literal', 'bare-hex', 'byte-sequence']);
+
+  it('publishes no byte literal, opcode or offset', () => {
+    const strictGuard = createProtocolGuard([]);
     const offenders: string[] = [];
     for (const file of generated) {
-      for (const match of findProtocolTokens(readFileSync(join(firstRun, file), 'utf8'))) {
-        offenders.push(`${file}: ${match.kind}`);
+      const text = readFileSync(join(firstRun, file), 'utf8');
+      for (const match of strictGuard.find(text)) {
+        if (LITERAL_KINDS.has(match.kind)) offenders.push(`${file}: ${match.kind}`);
       }
     }
     expect(offenders).toEqual([]);

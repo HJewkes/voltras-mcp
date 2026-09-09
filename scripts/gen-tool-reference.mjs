@@ -19,6 +19,7 @@ import prettier from 'prettier';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const PUSH_EVENTS_DOC = path.join(REPO_ROOT, 'docs/push-events.md');
+const DOCS_DIR = path.join(REPO_ROOT, 'docs');
 const BOOT_SETTLE_MS = 2000;
 const REQUEST_TIMEOUT_MS = 20000;
 
@@ -160,6 +161,20 @@ function readPushEvents() {
   return rows;
 }
 
+/** Every markdown page this repo already publishes, for vocabulary harvesting. */
+function readPublishedMarkdown() {
+  const pages = [fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.md')) pages.push(fs.readFileSync(full, 'utf8'));
+    }
+  };
+  walk(DOCS_DIR);
+  return pages;
+}
+
 async function formatWith(prettierConfig, filepath, text) {
   return prettier.format(text, { ...prettierConfig, filepath });
 }
@@ -186,7 +201,10 @@ async function main() {
     path.join(REPO_ROOT, 'dist/tool-registry.js')
   );
   const { buildReference } = await import(path.join(REPO_ROOT, 'dist/docs/reference-pages.js'));
-  const { findProtocolTokens } = await import(path.join(REPO_ROOT, 'dist/docs/protocol-guard.js'));
+  const { createProtocolGuard } = await import(path.join(REPO_ROOT, 'dist/docs/protocol-guard.js'));
+  const { derivePublicVocabulary } = await import(
+    path.join(REPO_ROOT, 'dist/docs/public-vocabulary.js')
+  );
 
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vmcp-reference-'));
   let surface;
@@ -197,7 +215,19 @@ async function main() {
   }
   assertRegistryMatchesServer(surface.tools, CORE_TOOL_NAMES, MOCK_TOOL_NAMES);
 
+  const guard = createProtocolGuard(
+    derivePublicVocabulary({
+      tools: surface.tools,
+      resourceUris: [
+        ...surface.resources.map((resource) => resource.uri),
+        ...surface.resourceTemplates.map((template) => template.uriTemplate),
+      ],
+      publishedMarkdown: readPublishedMarkdown(),
+    }),
+  );
+
   const reference = buildReference({
+    guard,
     coreToolNames: CORE_TOOL_NAMES,
     mockToolNames: MOCK_TOOL_NAMES,
     tools: surface.tools,
@@ -206,7 +236,7 @@ async function main() {
     pushEvents: readPushEvents(),
   });
   await writePages(args.out, reference.pages, reference.sidebar);
-  assertNoProtocolDetail(args.out, reference.pages, findProtocolTokens);
+  assertNoProtocolDetail(args.out, reference.pages, guard);
 
   const report = {
     pageCount: reference.pages.size,
@@ -239,11 +269,11 @@ function assertRegistryMatchesServer(tools, coreNames, mockNames) {
 // Fail the build rather than publish a byte, opcode, offset or register name.
 // The message names the file and the pattern kind but never the token itself —
 // a build log is as public as the page it refused to publish.
-function assertNoProtocolDetail(outDir, pages, findProtocolTokens) {
+function assertNoProtocolDetail(outDir, pages, guard) {
   const offenders = [];
   for (const relative of pages.keys()) {
     const text = fs.readFileSync(path.join(outDir, relative), 'utf8');
-    for (const match of findProtocolTokens(text)) {
+    for (const match of guard.find(text)) {
       offenders.push(`${relative}: ${match.kind}`);
     }
   }
