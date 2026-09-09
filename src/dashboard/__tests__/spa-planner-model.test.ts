@@ -8,6 +8,7 @@ import {
   e1rmSeries,
   flattenTemplates,
   formatNumber,
+  formatWeightLbs,
   isRealSummarySet,
   nextTargetWeightLbs,
   prescriptionLine,
@@ -151,6 +152,10 @@ describe('prescriptionLine', () => {
     expect(repRange(5, undefined)).toBe('5');
     expect(repRange(undefined, 8)).toBeNull();
   });
+
+  it('converts the load to kg with the toggle on (VW-196)', () => {
+    expect(prescriptionLine(exerciseView({ targetWeightLbs: 100 }), 'kg')).toBe('3 sets · @ 45 kg');
+  });
 });
 
 function progression(
@@ -197,6 +202,11 @@ describe('progression readouts', () => {
     expect(progressionLabel(null)).toBe('—');
   });
 
+  it('converts a non-zero delta to kg with the toggle on, but hold stays hold (VW-196)', () => {
+    expect(progressionLabel(progression({ delta: 20 }), 'kg')).toBe('+9 kg');
+    expect(progressionLabel(progression({ delta: 0 }), 'kg')).toBe('hold');
+  });
+
   it('adds the delta to the load actually lifted, not the plan target', () => {
     // Top load (145) has outgrown the plan's 135 — progress from what was lifted.
     expect(nextTargetWeightLbs(summaryExercise({ topWeightLbs: 145 }))).toBe(150);
@@ -235,6 +245,19 @@ describe('progression readouts', () => {
     });
     expect(setsAgainstPlan(over)).toBe('3 sets · target 2');
     expect(setsAgainstPlan(over)).not.toContain('/');
+  });
+});
+
+describe('formatWeightLbs (VW-196)', () => {
+  it('renders lbs by default and converts to kg with the toggle on', () => {
+    expect(formatWeightLbs(100)).toBe('100 lb');
+    expect(formatWeightLbs(100, 'kg')).toBe('45 kg');
+  });
+
+  it('renders a gap, never a zero, for an absent load', () => {
+    expect(formatWeightLbs(null)).toBe('—');
+    expect(formatWeightLbs(undefined)).toBe('—');
+    expect(formatWeightLbs(null, 'kg')).toBe('—');
   });
 });
 
@@ -364,14 +387,24 @@ describe('sessionRollup', () => {
 });
 
 describe('setLine', () => {
-  it('renders reps × the server-computed load label', () => {
+  it('renders reps × the numeric load, formatted through formatMass', () => {
     expect(setLine(summarySet())).toBe('10 × 135 lb');
-    expect(setLine(summarySet({ loadLabel: '—' }))).toBe('10 × —');
+    expect(setLine(summarySet({ weightLbs: null, loadLabel: '—' }))).toBe('10 × —');
   });
 
   it('renders a Damper or Band set by its own setting, not a missing weight (VMCP-02.74)', () => {
-    expect(setLine(summarySet({ loadLabel: 'damper 6' }))).toBe('10 × damper 6');
-    expect(setLine(summarySet({ loadLabel: 'band' }))).toBe('10 × band');
+    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }))).toBe('10 × damper 6');
+    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'band' }))).toBe('10 × band');
+  });
+
+  it('converts a numeric load to kg with the toggle on (VW-196)', () => {
+    expect(setLine(summarySet({ weightLbs: 100 }), 'kg')).toBe('10 × 45 kg');
+  });
+
+  it('never converts a label with no number, even with the toggle on (VW-196)', () => {
+    expect(setLine(summarySet({ weightLbs: null, loadLabel: 'damper 6' }), 'kg')).toBe(
+      '10 × damper 6',
+    );
   });
 });
 

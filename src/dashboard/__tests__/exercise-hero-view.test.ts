@@ -125,6 +125,28 @@ describe('toSetRowProps', () => {
     expect(props.reps).toBe(1);
     expect(props.target).toEqual({ reps: 1, weight: 135 }); // fallback: reps-done + weight
   });
+
+  it('rescales weight (and the target weight) to kg without pre-rounding (VW-196)', () => {
+    const view = completedView([], { weightLbs: 100 });
+    const props = toSetRowProps(view, 'kg');
+    expect(props.unit).toBe('kg');
+    if (props.state !== 'done') throw new Error('expected a done row');
+    // 100 lb × 0.45359237 — unrounded, since SetRow itself rounds for display.
+    expect(props.weight).toBeCloseTo(45.359237);
+
+    const active: WorkoutSetView = {
+      setNumber: 1,
+      kind: 'active',
+      reps: [],
+      weightLbs: 100,
+      targetReps: 8,
+      targetWeightLbs: 100,
+      previous: null,
+    };
+    const activeProps = toSetRowProps(active, 'kg');
+    if (activeProps.state !== 'live') throw new Error('expected a live row');
+    expect(activeProps.target.weight).toBeCloseTo(45.359237);
+  });
 });
 
 describe('toExerciseSummary', () => {
@@ -160,6 +182,15 @@ describe('toExerciseSummary', () => {
 
   it('is zeroed when there are no sets', () => {
     expect(toExerciseSummary([], null)).toEqual({ sets: 0, reps: 0, weight: 0, unit: 'lbs' });
+  });
+
+  it('rescales the last set weight to kg without pre-rounding (VW-196)', () => {
+    const views: WorkoutSetView[] = [
+      completedView([rep(1, 800)], { setNumber: 1, weightLbs: 100 }),
+    ];
+    const summary = toExerciseSummary(views, null, 'kg');
+    expect(summary.unit).toBe('kg');
+    expect(summary.weight).toBeCloseTo(45.359237);
   });
 });
 

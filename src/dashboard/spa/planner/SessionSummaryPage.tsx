@@ -57,11 +57,13 @@ import {
 } from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
+import { convertMass, type MassUnit } from '../live-page/mass';
 import { fetchSessionSummary } from './planner-client';
 import {
   e1rmChangePct,
   e1rmSeries,
   formatNumber,
+  formatWeightLbs,
   nextTargetWeightLbs,
   progressionLabel,
   sessionRollup,
@@ -81,6 +83,7 @@ const CHART_HEIGHT = 150;
 export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Element {
   const summary = useStore(dashboardStore, (s) => s.sessionSummary);
   const error = useStore(dashboardStore, (s) => s.plannerError);
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +130,7 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
     { label: 'Exercises', value: `${rollup.exerciseCount}` },
     { label: 'Sets', value: `${rollup.setCount}` },
     { label: 'Reps', value: `${rollup.totalReps}` },
-    { label: 'Volume', value: formatNumber(rollup.volumeLbs, 'lb') },
+    { label: 'Volume', value: formatWeightLbs(rollup.volumeLbs, displayUnit) },
     {
       label: 'Duration',
       value: rollup.durationMin === null ? 'in progress' : `${rollup.durationMin} min`,
@@ -155,22 +158,29 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
         />
       ) : (
         summary.exercises.map((exercise) => (
-          <ExerciseCard key={exercise.exerciseId ?? 'unattributed'} exercise={exercise} />
+          <ExerciseCard
+            key={exercise.exerciseId ?? 'unattributed'}
+            exercise={exercise}
+            displayUnit={displayUnit}
+          />
         ))
       )}
     </Surface>
   );
 }
 
-function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
-  const { exercise } = props;
+function ExerciseCard(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
+  const { exercise, displayUnit } = props;
   const series = e1rmSeries(exercise);
   const changePct = e1rmChangePct(series);
   const tiles: MetricTileData[] = [
     { label: 'Sets', value: setsAgainstPlan(exercise) },
     { label: 'Reps', value: `${exercise.totalReps}` },
-    { label: 'Top load', value: formatNumber(exercise.topWeightLbs, 'lb') },
-    { label: 'Volume', value: formatNumber(exercise.volumeLbs, 'lb') },
+    { label: 'Top load', value: formatWeightLbs(exercise.topWeightLbs, displayUnit) },
+    { label: 'Volume', value: formatWeightLbs(exercise.volumeLbs, displayUnit) },
     { label: 'Best velocity', value: formatNumber(exercise.bestRepVelocity) },
   ];
 
@@ -201,7 +211,7 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
           <MetricTiles metrics={tiles} gap={2} />
         </div>
         <div style={{ marginTop: SPACE.md }}>
-          <E1RMTrend series={series} changePct={changePct} />
+          <E1RMTrend series={series} changePct={changePct} displayUnit={displayUnit} />
         </div>
         <div style={{ marginTop: SPACE.md }}>
           <Overline color="tertiary">Worst within-set velocity loss</Overline>
@@ -216,9 +226,9 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
           </Caption>
         </div>
         <Divider />
-        <ProgressionBlock exercise={exercise} />
+        <ProgressionBlock exercise={exercise} displayUnit={displayUnit} />
         <Divider />
-        <SetTable exercise={exercise} />
+        <SetTable exercise={exercise} displayUnit={displayUnit} />
       </>
     </PanelCard>
   );
@@ -230,10 +240,16 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
  * Fewer than two points is NOT a chart — one working set has no trend, and
  * `StrengthTrendChart` would draw a lone dot that reads like a flat line. Say so
  * instead.
+ *
+ * `e1rmSeries` computes exact e1RM in lbs; `changePct` is a ratio and so is
+ * unit-invariant, but the chart's own `data`/`unit` props (VW-196) need the
+ * points rescaled via `convertMass` — never a literal factor — to the store's
+ * display unit.
  */
-function E1RMTrend(props: {
+export function E1RMTrend(props: {
   series: ReturnType<typeof e1rmSeries>;
   changePct: number | null;
+  displayUnit: MassUnit;
 }): React.JSX.Element {
   if (props.series.length < 2) {
     return (
@@ -242,15 +258,19 @@ function E1RMTrend(props: {
       </Caption>
     );
   }
-  const { changePct } = props;
+  const { changePct, displayUnit } = props;
+  const data = props.series.map((point) => ({
+    ...point,
+    e1rm: convertMass(point.e1rm, displayUnit),
+  }));
   return (
     <div>
       <Overline color="tertiary">Estimated 1RM across this session</Overline>
       <StrengthTrendChart
-        data={props.series}
+        data={data}
         width={CHART_WIDTH}
         height={CHART_HEIGHT}
-        unit="lbs"
+        unit={displayUnit}
         animateOnMount={false}
       />
       {changePct !== null && (
@@ -268,8 +288,12 @@ function E1RMTrend(props: {
   );
 }
 
-function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
+function ProgressionBlock(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
   const { progression, progressionNote } = props.exercise;
+  const { displayUnit } = props;
   if (progression === null) {
     return (
       <div style={{ marginTop: SPACE.sm }}>
@@ -290,8 +314,15 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
       <MetricTiles
         gap={2}
         metrics={[
-          { label: 'Recommendation', value: progressionLabel(progression), valueColor: tone },
-          { label: 'Target load', value: formatNumber(nextTargetWeightLbs(props.exercise), 'lb') },
+          {
+            label: 'Recommendation',
+            value: progressionLabel(progression, displayUnit),
+            valueColor: tone,
+          },
+          {
+            label: 'Target load',
+            value: formatWeightLbs(nextTargetWeightLbs(props.exercise), displayUnit),
+          },
         ]}
       />
       <Caption color="tertiary">{progression.reasoning}</Caption>
@@ -299,7 +330,10 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
   );
 }
 
-function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
+function SetTable(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
   return (
     <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Sets</Overline>
@@ -318,7 +352,7 @@ function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Elemen
             <Caption color="tertiary">#{set.index}</Caption>
           </div>
           <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="body2">{setLine(set)}</Typography>
+            <Typography variant="body2">{setLine(set, props.displayUnit)}</Typography>
           </div>
           {set.isWarmup && <Caption color="tertiary">warm-up</Caption>}
           <div style={{ width: 110 }}>
