@@ -13,7 +13,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLiveStreamController, type LiveModel } from '../spa/live-stream.js';
-import type { LivePhaseSignal, LiveRepSignal, LiveSetSignal } from '../../state/live-signal.js';
+import type {
+  LiveIsometricSignal,
+  LivePhaseSignal,
+  LiveRepSignal,
+  LiveSetSignal,
+} from '../../state/live-signal.js';
 
 /** A single captured-handler EventSource stand-in (one listener per event type). */
 class MockEventSource {
@@ -132,6 +137,45 @@ describe('createLiveStreamController — live.peakForce (VW-45)', () => {
     es.emit('phase', phaseFrame());
     expect(models.at(-1)!.peakForce).toBe(0);
     expect(models.at(-1)!.lastRep).toBeNull();
+    dispose();
+  });
+});
+
+describe('createLiveStreamController — isometric echo (VW-198)', () => {
+  function isometricSignal(over: Partial<LiveIsometricSignal> = {}): LiveIsometricSignal {
+    return { slot: 'primary', phase: 'ready', trial: 1, holdMs: 5000, side: null, ...over };
+  }
+
+  it('forwards each isometric_phase echo verbatim, with its originating slot', () => {
+    const signals: Array<{ signal: LiveIsometricSignal; slot: string }> = [];
+    const dispose = createLiveStreamController(
+      () => {},
+      undefined,
+      (signal, slot) => signals.push({ signal, slot }),
+    );
+    const es = MockEventSource.instances.at(-1)!;
+    es.emit('isometric', isometricSignal({ phase: 'go' }));
+    expect(signals).toEqual([{ signal: isometricSignal({ phase: 'go' }), slot: 'primary' }]);
+    dispose();
+  });
+
+  it('falls back to the primary slot when the payload carries none', () => {
+    const signals: LiveIsometricSignal[] = [];
+    const dispose = createLiveStreamController(
+      () => {},
+      undefined,
+      (signal) => signals.push(signal),
+    );
+    const es = MockEventSource.instances.at(-1)!;
+    es.emit('isometric', { phase: 'hold', trial: 1, holdMs: 5000, side: null });
+    expect(signals).toHaveLength(1);
+    dispose();
+  });
+
+  it('never calls onIsometric when the controller is started without one', () => {
+    const dispose = createLiveStreamController(() => {});
+    const es = MockEventSource.instances.at(-1)!;
+    expect(() => es.emit('isometric', isometricSignal())).not.toThrow();
     dispose();
   });
 });
