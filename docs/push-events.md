@@ -41,22 +41,42 @@ Every event carries an `at` meta key: an ISO-8601 UTC timestamp of when the serv
 emitted the push, distinct from any event-specific `started_at` / `ended_at` a payload
 already carries.
 
-Slot-scoped events (anything sent through `channels.forSlot(slotId).publish(...)`) also
-carry a `slot` meta key naming which slot fired it: `primary` for single-device flows,
-`left` / `right` when two units are connected. Coaching surfaces filter on `slot` to keep
-parallel rep streams apart.
+Most events also carry a `slot` meta key naming which slot fired it: `primary` for
+single-device flows, `left` / `right` when two units are connected. Coaching surfaces
+filter on `slot` to keep parallel rep streams apart. Some of those get `slot` injected by
+`channels.forSlot(slotId).publish(...)`; others (`voice_command_applied`,
+`voice_command_rejected` when a slot resolved, `deterministic_stop_triggered`,
+`deterministic_stop_unavailable` when exactly one slot was evaluated) have it embedded
+directly in the event's own payload instead — either way a consumer just reads `slot`.
 
-A small, named set of events is not tied to any slot and therefore carries no `slot` key
-at all — never a fabricated `primary` filler, because a wrong slot would route a
-bilateral consumer to the wrong arm, which is worse than an absent one:
+The following events reach a consumer with no `slot` key at all — never a fabricated
+`primary` filler, because a wrong slot would route a bilateral consumer to the wrong arm,
+which is worse than an absent one:
 
 - `timer_complete` — `timer.start` takes no slot argument and is not tied to any armed
   set, so the timer it fires from is genuinely global.
-- `voice_input_failed` — `system.listen_start` runs one mic per process, not per slot, so
-  a listener error has no slot to attribute it to.
+- `voice_input_failed`, when raised from the listener's own error handler (a mic, VAD, or
+  STT failure) — `system.listen_start` runs one mic per process, not per slot, so there
+  is no slot to attribute the error to. The same event type published from a safety-unload
+  failure DOES carry `slot` (the slot that failed to unload); the two are distinguished by
+  `error_code`, not by event type alone.
+- `voice_input` — the general conversational-utterance event never resolves a slot; it
+  isn't about a specific device.
+- `voltras_available` — fires while scanning, before any device is bound to a slot.
 - `debug.push_test_channel`'s probe — a diagnostic round-trip that echoes back exactly
-  the caller's own `meta` plus a `nonce`; it still gets `at`, but never a synthesized
-  `slot`.
+  the caller's own `meta` plus a `nonce`; it gets `at`, but never a synthesized `slot`.
+
+Two more events carry slot information, but not under the `slot` key, so a consumer
+filtering on `slot` silently drops them even though each one knows exactly which
+device(s) it concerns:
+
+- `bilateral_divergence` — `slot_id` and `partner_slot_id` name the two slots being
+  compared.
+- `weight_implied_mismatch` — `slot_id` names the one slot involved.
+
+This is a known inconsistency, not addressed by this change — it is tracked as a
+follow-up to reconcile `slot_id` / `partner_slot_id` with the `slot` key everything else
+filters on.
 
 ## Events
 
