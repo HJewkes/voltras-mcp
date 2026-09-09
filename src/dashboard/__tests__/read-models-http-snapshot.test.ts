@@ -213,9 +213,12 @@ const SUMMARY_SETS: StoredSet[] = [
   makeSet('s3', 'row', 10, { weightLbs: 90 }),
 ];
 
-const CATALOG_NAMES: Record<string, { name: string; movementPattern?: string }> = {
-  squat: { name: 'Back Squat', movementPattern: 'squat' },
-  bench: { name: 'Bench Press', movementPattern: 'push' },
+const CATALOG_NAMES: Record<
+  string,
+  { name: string; muscleGroups: string[]; movementPattern?: string }
+> = {
+  squat: { name: 'Back Squat', muscleGroups: ['quads'], movementPattern: 'squat' },
+  bench: { name: 'Bench Press', muscleGroups: ['chest'], movementPattern: 'push' },
 };
 
 function buildFixtureState(): DashboardServerState {

@@ -40,3 +40,9 @@ export {
   type PlanTreeView,
   type PlanWeekView,
 } from './plan-tree.js';
+
+export {
+  buildSessionSummary,
+  resolveSummarySessionId,
+  type DashboardSessionStore,
+} from './session-summary.js';
