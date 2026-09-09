@@ -92,6 +92,10 @@ const { CoercionWatch } = await import('../../state/coercion-watch.js');
 type CoercionWatchT = InstanceType<typeof CoercionWatch>;
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 type ModeRevertGuardT = InstanceType<typeof ModeRevertGuard>;
+const { makeFakeLease, makeRecordingChannels } =
+  await import('../../state/__tests__/fixtures/lease-fence.js');
+type FakeLease = ReturnType<typeof makeFakeLease>;
+type RecordingChannels = ReturnType<typeof makeRecordingChannels>;
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -365,6 +369,9 @@ interface State {
   manager: FakeManager;
   slots: Map<string, FakeSlot>;
   slotBindings: FakeSlotBindings;
+  // VMCP-01.65: the multi-step writers take a lease fence, which reads both.
+  lease: FakeLease;
+  channels: RecordingChannels;
 }
 
 function makeFakeSlotBindings(): FakeSlotBindings {
@@ -400,6 +407,8 @@ function makeState(): State {
     manager: makeFakeManager(),
     slots,
     slotBindings: makeFakeSlotBindings(),
+    lease: makeFakeLease(),
+    channels: makeRecordingChannels(),
   };
 }
 
