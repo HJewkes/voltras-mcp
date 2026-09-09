@@ -40,6 +40,7 @@ import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { selectWorkingSets } from '../store/working-sets.js';
+import { DEVICE_LOAD_STEP_LBS } from './warmup-ramp-tools.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
@@ -514,6 +515,42 @@ const PROGRESSION_DECREMENT_LBS = -5;
 const PROGRESSION_HOLD_LBS = 0;
 
 /**
+ * B23 (VMCP-06.09): percent-of-load load increment, meant to replace the fixed
+ * +5 lb step above with a jump scaled to the lifter's own working load.
+ * `sources/mined/rp-university-idea-backlog.md` "### 14. B23" is the only note
+ * that proposes this rule, and it states no percent — it explicitly discards
+ * RP's own (sex-keyed) default rather than quoting it, so there is nothing to
+ * cite. Null until a cited note states a number; the fixed step stays the only
+ * load-increment path.
+ */
+const PROGRESSION_INCREMENT_PERCENT: number | null = null;
+
+/**
+ * Ceiling on the percent-derived increment, same citation gap as
+ * `PROGRESSION_INCREMENT_PERCENT`: no cap value is stated either, so null
+ * means uncapped (beyond the device-step rounding below).
+ */
+const PROGRESSION_INCREMENT_CAP_LBS: number | null = null;
+
+/**
+ * B23's arithmetic, kept pure and exported so it's testable independent of
+ * the (currently null) production percent: `topLoadLbs * percent`, rounded
+ * down to the device's load step, floored at the fixed increment, and capped
+ * when a cap is cited.
+ */
+export function computePercentIncrement(
+  topLoadLbs: number,
+  percent: number,
+  floorLbs: number = PROGRESSION_INCREMENT_LBS,
+  capLbs: number | null = PROGRESSION_INCREMENT_CAP_LBS,
+): number {
+  const raw = topLoadLbs * (percent / 100);
+  const stepped = Math.floor(raw / DEVICE_LOAD_STEP_LBS) * DEVICE_LOAD_STEP_LBS;
+  const floored = Math.max(floorLbs, stepped);
+  return capLbs === null ? floored : Math.min(floored, capLbs);
+}
+
+/**
  * VMCP-02.25: velocity-loss ceiling above which a set that *hit its rep target*
  * is treated as taken to/near functional failure — so the heuristic holds the
  * load instead of adding weight. VBT autoregulation commonly reads ~20% loss as
@@ -560,6 +597,8 @@ export interface ProgressionSuggestion {
   reasoning: string;
   basedOnSessionId: string | null;
   gates: ProgressionGates;
+  /** Which load-increment rule produced `delta`; 'percent' only when B23's cited percent is set. */
+  basis: 'percent' | 'fixed';
 }
 
 /**
@@ -571,9 +610,20 @@ export interface ProgressionSuggestion {
 export interface ProgressionContext {
   tier: Tier;
   technique?: TechniqueGate;
+  /**
+   * B23 (VMCP-06.09) override for the percent-of-load increment. Omitted
+   * (not just `undefined`-valued) falls back to the production
+   * `PROGRESSION_INCREMENT_PERCENT` constant, which is `null` until a source
+   * cites a real number — see that constant's doc comment. Not on any tool
+   * input schema; test-only injection point.
+   */
+  incrementPercent?: number | null;
 }
 
-const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = { tier: 'intermediate' };
+export const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = {
+  tier: 'intermediate',
+  incrementPercent: PROGRESSION_INCREMENT_PERCENT,
+};
 
 /** The slice of `getTierSignal` the suggestion carries back to the caller. */
 export interface SuggestionTier {
@@ -805,6 +855,7 @@ async function suggestProgression(
         reasoning: 'No prior session for this exercise; no progression suggestion.',
         basedOnSessionId: null,
         gates: { technique: 'unknown', effort: 'unknown', setsUnlocked: false },
+        basis: 'fixed',
         tier,
       },
     };
@@ -906,7 +957,7 @@ export function computeProgressionDelta(
   const workingSets = selectWorkingSets(sets);
   const tally = tallyRepBand(workingSets, planned.targetRepsLow, planned.targetRepsHigh);
   const gates = computeGates(workingSets, tally, context);
-  const routed = routeSuggestion(tally, gates);
+  const routed = routeSuggestion(tally, gates, context);
   return { ...enforceTechniqueGate(routed, gates), basedOnSessionId: basisSessionId, gates };
 }
 
@@ -923,6 +974,7 @@ function ungatedSuggestion(
     reasoning,
     basedOnSessionId: basisSessionId,
     gates: { technique: context.technique ?? 'unknown', effort: 'unknown', setsUnlocked: false },
+    basis: 'fixed',
   };
 }
 
@@ -937,6 +989,8 @@ interface RepBandTally {
   repsHigh: number;
   bandLabel: string;
   maxLossPct: number;
+  /** The load `workingSets` were taken at; undefined for an unweighted exercise. */
+  topLoadLbs: number | undefined;
 }
 
 function tallyRepBand(
@@ -965,7 +1019,18 @@ function tallyRepBand(
     bandLabel:
       targetRepsLow === repsHigh ? `${targetRepsLow} reps` : `${targetRepsLow}-${repsHigh} reps`,
     maxLossPct: Math.max(0, ...workingSets.map(setVelocityLossPct)),
+    topLoadLbs: topLoadOf(workingSets),
   };
+}
+
+/**
+ * `selectWorkingSets` already narrowed `workingSets` to the session's top
+ * load (or left every weight undefined when none was recorded) — this just
+ * reads that load back out for the B23 percent calculation.
+ */
+function topLoadOf(workingSets: StoredSet[]): number | undefined {
+  const loads = workingSets.map((set) => set.weightLbs).filter((w): w is number => w !== undefined);
+  return loads.length > 0 ? Math.max(...loads) : undefined;
 }
 
 /**
@@ -994,22 +1059,28 @@ function effortGate(workingSets: StoredSet[], maxLossPct: number): EffortGate {
   return 'unknown';
 }
 
-type RoutedSuggestion = Pick<ProgressionSuggestion, 'delta' | 'repDelta' | 'reasoning'>;
+type RoutedSuggestion = Pick<ProgressionSuggestion, 'delta' | 'repDelta' | 'reasoning' | 'basis'>;
 
-function routeSuggestion(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+function routeSuggestion(
+  tally: RepBandTally,
+  gates: ProgressionGates,
+  context: ProgressionContext,
+): RoutedSuggestion {
   const { hitHigh, missed, setsCompleted, majority, repsLow, bandLabel } = tally;
-  if (hitHigh >= majority) return routeHitHigh(tally, gates);
+  if (hitHigh >= majority) return routeHitHigh(tally, gates, context);
   if (missed >= majority) {
     return {
       delta: PROGRESSION_DECREMENT_LBS,
       repDelta: 0,
       reasoning: `${missed}/${setsCompleted} sets missed ${repsLow} reps (target ${bandLabel}); back off ${Math.abs(PROGRESSION_DECREMENT_LBS)} lb.`,
+      basis: 'fixed',
     };
   }
   return {
     delta: PROGRESSION_HOLD_LBS,
     repDelta: 0,
     reasoning: `${tally.inBand}/${setsCompleted} sets landed in band (target ${bandLabel}); maintain load.`,
+    basis: 'fixed',
   };
 }
 
@@ -1018,7 +1089,11 @@ function routeSuggestion(tally: RepBandTally, gates: ProgressionGates): RoutedSu
  * near failure; otherwise B24 routes by range — load below the ceiling, reps
  * at or above it.
  */
-function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSuggestion {
+function routeHitHigh(
+  tally: RepBandTally,
+  gates: ProgressionGates,
+  context: ProgressionContext,
+): RoutedSuggestion {
   const { hitHigh, setsCompleted, repsHigh, bandLabel, maxLossPct } = tally;
   const hit = `${hitHigh}/${setsCompleted} sets hit ${repsHigh}+ reps (target ${bandLabel})`;
   if (maxLossPct >= PROGRESSION_VELOCITY_LOSS_HOLD_PCT) {
@@ -1029,19 +1104,48 @@ function routeHitHigh(tally: RepBandTally, gates: ProgressionGates): RoutedSugge
       reasoning:
         `${hit}, but velocity dropped ${Math.round(maxLossPct)}% within a set ` +
         `(>= ${PROGRESSION_VELOCITY_LOSS_HOLD_PCT}% near-failure) — hold the load, don't add${unlock}.`,
+      basis: 'fixed',
     };
   }
   if (repsHigh < REP_RANGE_LOAD_CEILING) {
-    return {
-      delta: PROGRESSION_INCREMENT_LBS,
-      repDelta: 0,
-      reasoning: `${hit}; add ${PROGRESSION_INCREMENT_LBS} lb.`,
-    };
+    return loadIncrement(hit, tally.topLoadLbs, context);
   }
   return {
     delta: PROGRESSION_HOLD_LBS,
     repDelta: 1,
     reasoning: `${hit}; at ${REP_RANGE_LOAD_CEILING}+ reps the rep is the finer dial — hold the load and add 1 rep.`,
+    basis: 'fixed',
+  };
+}
+
+/**
+ * B23: percent-of-load when a percent is cited, else the fixed step. Reads
+ * the percent from `context.incrementPercent`, falling back to the
+ * production constant when the caller's context didn't set the field at all
+ * (same `?? `-on-omission pattern as `context.technique` below). Falls back
+ * to fixed when the exercise carries no recorded load (a Damper/Band/
+ * Isokinetic set) — there is no `topLoadLbs` to take a percent of.
+ */
+function loadIncrement(
+  hit: string,
+  topLoadLbs: number | undefined,
+  context: ProgressionContext,
+): RoutedSuggestion {
+  const percent = context.incrementPercent ?? PROGRESSION_INCREMENT_PERCENT;
+  if (percent === null || topLoadLbs === undefined) {
+    return {
+      delta: PROGRESSION_INCREMENT_LBS,
+      repDelta: 0,
+      reasoning: `${hit}; add ${PROGRESSION_INCREMENT_LBS} lb.`,
+      basis: 'fixed',
+    };
+  }
+  const delta = computePercentIncrement(topLoadLbs, percent);
+  return {
+    delta,
+    repDelta: 0,
+    reasoning: `${hit}; add ${percent}% of ${topLoadLbs} lb = ${delta} lb.`,
+    basis: 'percent',
   };
 }
 
@@ -1053,6 +1157,7 @@ function enforceTechniqueGate(routed: RoutedSuggestion, gates: ProgressionGates)
     delta: Math.min(routed.delta, PROGRESSION_HOLD_LBS),
     repDelta: 0,
     reasoning: `${routed.reasoning} Technique is unstable — hold load and reps until it stabilises.`,
+    basis: 'fixed',
   };
 }
 
