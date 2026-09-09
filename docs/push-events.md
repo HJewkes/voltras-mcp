@@ -41,6 +41,10 @@ Every event carries a `slot` meta key naming which slot fired it: `primary` for
 single-device flows, `left` / `right` when two units are connected. Coaching surfaces
 filter on `slot` to keep parallel rep streams apart.
 
+Slot-scoped events (anything sent through `channels.forSlot(slotId).publish(...)`) also
+carry an `at` meta key: an ISO-8601 UTC timestamp of when the server emitted the push,
+distinct from any event-specific `started_at` / `ended_at` a payload already carries.
+
 ## Events
 
 | Event                    | Fires when                                                                                                      | Auto-stops the set?       |
