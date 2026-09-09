@@ -37,16 +37,15 @@
  * resolved side via `../limb`, never by slot position.
  */
 import {
-  estimateSetRpe,
   getRepConcentricTime,
   getRepRangeOfMotion,
   getSetFatigueVerdict,
-  getSetTempoSeconds,
   getSetVelocityLossPct,
   getSetWorkingROM,
   MovementPhase,
   type Rep,
 } from '@voltras/workout-analytics';
+import { estimateSetRpe, getSetTempoSeconds } from '@voltras/workout-analytics/view';
 import { repMeanVelocityMps, roundMps, type Snapshot, type SnapshotDeviceEntry } from '../adapter';
 import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';

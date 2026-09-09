@@ -6,12 +6,8 @@
 // resolution branches: coach override → exercise default → none.
 
 import { describe, expect, it, beforeAll } from 'vitest';
-import {
-  setCatalog,
-  getExerciseById,
-  getSetTempoSeconds,
-  type Rep,
-} from '@voltras/workout-analytics';
+import { setCatalog, getExerciseById, type Rep } from '@voltras/workout-analytics';
+import { getSetTempoSeconds } from '@voltras/workout-analytics/view';
 
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import { ExerciseService } from '../../exercises/exercise-service.js';

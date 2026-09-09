@@ -247,7 +247,9 @@ export function meanVelocity(reps: number[]): number {
  * velocity loss as a configurable fatigue proxy (its moderate-fatigue zone is 20–30%),
  * so it does not mandate exact productive/threshold/stop cutpoints — 20/30 is the
  * dashboard default the rest of the surface already names.
- * TODO(VW-64): consume WA `velocityLossVerdict` once published (the eventual SSOT).
+ * TODO(VW-64): decide whether to adopt WA's now-published `velocityLossVerdict`
+ * (the eventual SSOT) in place of this local banding — a wiring choice, not a
+ * blocked dependency.
  */
 export function verdictFromLoss(lossPct: number | null): 'productive' | 'threshold' | 'stop' {
   if (lossPct === null) return 'productive';
