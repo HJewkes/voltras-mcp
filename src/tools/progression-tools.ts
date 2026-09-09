@@ -29,6 +29,10 @@ import type { z } from 'zod';
 
 import { type ServerState } from '../state/server-state.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
+import {
+  buildComparabilitySubjectGroups,
+  type ComparabilitySubjectFetchers,
+} from '../analytics/comparability-subject.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
 import { setPurposeOf } from '../store/set-purpose.js';
@@ -198,7 +202,7 @@ async function getProgressionForExercise(
   return {
     ...response,
     side: input.side,
-    comparability: pickProgressionBasis(limitedSessionIds, setsBySessionId),
+    comparability: await pickProgressionBasis(state, limitedSessionIds, setsBySessionId),
     ...(input.side === undefined
       ? { sideSplit: computeSideSplit(limitedSessionIds, exerciseScopedSetsBySessionId) }
       : {}),
@@ -219,19 +223,55 @@ type ProgressionComparability = ComparabilityReport & { basisSetId?: string };
  * beside it, and with no valid basis it still names the nearest session's top
  * set and the reasons it failed.
  */
-function pickProgressionBasis(
+async function pickProgressionBasis(
+  state: ServerState,
   sessionIdsOldestFirst: readonly string[],
   setsBySessionId: Map<string, StoredSet[]>,
-): ProgressionComparability {
+): Promise<ProgressionComparability> {
   const newestFirst = [...sessionIdsOldestFirst].reverse();
   const [latestId, ...earlierIds] = newestFirst;
-  const basis = latestId === undefined ? undefined : topWorkingSet(setsBySessionId.get(latestId));
+  if (latestId === undefined) return { noValidComparison: true };
+
+  // VW-211: every session here is already scoped to ONE exercise
+  // (`setsBySessionId`), so each is its own group for `setIndexInExercise`.
+  const relevantIds = [latestId, ...earlierIds];
+  const enrichedGroups = await buildComparabilitySubjectGroups(
+    relevantIds.map((id) => setsBySessionId.get(id) ?? []),
+    comparabilitySubjectFetchers(state),
+  );
+  const enrichedBySessionId = new Map(relevantIds.map((id, i) => [id, enrichedGroups[i]!]));
+
+  const basis = topWorkingSet(enrichedBySessionId.get(latestId));
   if (basis === undefined) return { noValidComparison: true };
 
   const candidates = earlierIds
-    .map((id) => topWorkingSet(setsBySessionId.get(id)))
-    .filter((set): set is StoredSet => set !== undefined);
+    .map((id) => topWorkingSet(enrichedBySessionId.get(id)))
+    .filter((set): set is NonNullable<typeof set> => set !== undefined);
   return { basisSetId: basis.id, ...chooseComparisonPartner(basis, candidates) };
+}
+
+/**
+ * VW-211: wires the comparability v2 subject fields' store reads to this
+ * server's store and exercise catalog — same wiring as
+ * `metrics-tools.ts`'s `comparabilitySubjectFetchers`, duplicated rather than
+ * shared so this file's store access stays self-contained.
+ */
+function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectFetchers {
+  return {
+    getSetsForExercise: (exerciseId, lifter) =>
+      state.store.getSetsForExercise({
+        userId: LOCAL_USER_ID,
+        exerciseId,
+        ...(lifter !== undefined ? { lifter } : {}),
+      }),
+    getFirstSessionStartedAt: async (lifter) =>
+      (await state.store.getSessionDateSpan(lifter !== undefined ? { lifter } : {})).first,
+    getLifterSessionExerciseIds: async (lifter) =>
+      (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
+        (s) => s.exerciseId,
+      ),
+    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+  };
 }
 
 /**
@@ -239,7 +279,7 @@ function pickProgressionBasis(
  * Warm-ups, probes and weightless sets are excluded, matching what the
  * aggregator counts as a top weight.
  */
-function topWorkingSet(sets: StoredSet[] | undefined): StoredSet | undefined {
+function topWorkingSet<T extends StoredSet>(sets: readonly T[] | undefined): T | undefined {
   const working = (sets ?? []).filter(
     (set) => setPurposeOf(set) === 'working' && set.weightLbs !== undefined,
   );

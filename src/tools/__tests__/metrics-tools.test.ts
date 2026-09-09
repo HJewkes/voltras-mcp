@@ -168,6 +168,8 @@ interface StoreStub {
   getSession: ReturnType<typeof vi.fn>;
   getBaseline: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
+  getSetsForExercise: ReturnType<typeof vi.fn>;
+  getSessionDateSpan: ReturnType<typeof vi.fn>;
   putSession: ReturnType<typeof vi.fn>;
   putSet: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -185,6 +187,11 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
     // answer for a store that was never recalculated.
     getBaseline: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
+    // VW-211: the comparability v2 subject writers read these two for
+    // `exerciseIntroducedAt`/`trackedTrainingMonths`. Empty/null are the
+    // honest defaults for a fixture that names no history.
+    getSetsForExercise: vi.fn(async () => []),
+    getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),

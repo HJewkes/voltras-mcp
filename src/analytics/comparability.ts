@@ -179,7 +179,8 @@ export interface ComparabilitySubject extends PurposeBearing {
   phase?: string | undefined;
   /**
    * 1-based position of this set within its EXERCISE's set profile (B16 b).
-   * No writer yet, so the profile clause degrades on every pair today.
+   * Written by `deriveSetIndexInExercise` (VW-211, `comparability-subject.ts`)
+   * from the exercise's other sets in the SAME session.
    *
    * Deliberately not `StoredSet.setIndexInSession`: that ordinal counts across
    * every exercise in the session, so in a multi-exercise session the first set
@@ -189,21 +190,27 @@ export interface ComparabilitySubject extends PurposeBearing {
   setIndexInExercise?: number | undefined;
   /**
    * How many distinct exercises for the same target muscle back the claim
-   * window this set belongs to (B16 d), counting this set's own exercise. No
-   * writer yet, so the corroboration clause degrades on every pair today.
+   * window this set belongs to (B16 d), counting this set's own exercise.
+   * Written by `deriveCorroboratingExerciseCount` (VW-211,
+   * `comparability-subject.ts`) — the "claim window" is the lifter's entire
+   * stored history, since no clause here names a shorter one.
    */
   corroboratingExerciseCount?: number | undefined;
   /**
    * When this exercise entered the programme, as an ISO timestamp (B16 e). Two
    * sets of the same movement carrying DIFFERENT stamps straddle a swap: the
-   * movement was dropped and later re-introduced. No writer yet, so the swap
-   * clause degrades on every pair today.
+   * movement was dropped and later re-introduced. Written by
+   * `deriveExerciseIntroducedAt` (VW-211, `comparability-subject.ts`) as the
+   * lifter's first-ever stored set of the exercise — a simple stand-in for a
+   * real programme-entry date, which would need plan/program linkage this
+   * writer does not have.
    */
   exerciseIntroducedAt?: string | undefined;
   /**
    * Months of TRACKED training behind this set (B16 f) — how long there has
-   * been a record, not how long the lifter has trained. No writer yet, so the
-   * training-age clause degrades on every pair today.
+   * been a record, not how long the lifter has trained. Written by
+   * `deriveTrackedTrainingMonths` (VW-211, `comparability-subject.ts`) from
+   * the lifter's first stored session.
    */
   trackedTrainingMonths?: number | undefined;
 }

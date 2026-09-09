@@ -204,6 +204,10 @@ function makeStore(
           .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
       },
     ),
+    // VW-211: the comparability v2 subject writers read the lifter's overall
+    // date span for `trackedTrainingMonths`. `null`/`null` is the honest
+    // default — no test here asserts a training-age reading.
+    getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     close: vi.fn(async () => {}),
   };
 }
@@ -221,7 +225,10 @@ function setup(sessions: StoredSession[], setMap: Record<string, StoredSet[]>): 
     config: {} as never,
     slots: new Map(),
     store,
-    exercises: {} as never,
+    // VW-211: the comparability v2 subject writers look up each exercise's
+    // primary muscle for the corroboration count. No fixture exercise is
+    // seeded, so `undefined` here is the honest "not in the catalog" answer.
+    exercises: { getById: vi.fn(() => undefined) },
     manager: {} as never,
   } as unknown as ServerState;
 
