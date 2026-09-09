@@ -225,6 +225,22 @@ describe('inferExerciseSetups over the store', () => {
     expect(await stampedSetupIds()).toEqual([first.id, first.id, second.id]);
   });
 
+  it('keeps two capture eras of one bench as ONE setup (VW-203)', async () => {
+    // The same 0.3 m bench, recorded either side of the position conversion.
+    // Unnormalised the device-native set is 1000x the other and opens a second
+    // setup — an inferred bench change that never happened.
+    await seed([
+      makeSet('set-1', 300, { sessionId: 'sess-1', positionUnits: 'device_native' }),
+      makeSet('set-2', 0.3, { sessionId: 'sess-2', positionUnits: 'meters' }),
+    ]);
+
+    const summary = await inferExerciseSetups(store, key);
+
+    expect(summary.setups).toHaveLength(1);
+    expect(summary.setups[0].centreRomM).toBeCloseTo(0.3, 5);
+    expect(summary.setsStamped).toBe(2);
+  });
+
   it('leaves a set with no measurable ROM unstamped rather than guessing', async () => {
     await seed([
       makeSet('set-1', 0.3, { sessionId: 'sess-1' }),

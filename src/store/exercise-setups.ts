@@ -30,6 +30,7 @@
 import { getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
 import { selectEligibleReps } from '../state/rep-eligibility.js';
+import { normalisePositionsToMetres, type PositionScaledSet } from './position-units.js';
 import type { ExerciseSetupStore, StoredExerciseSetup, StoredSet, StoredSide } from './types.js';
 
 /**
@@ -121,9 +122,13 @@ export interface SetupInferenceSummary {
  *
  * `undefined` when no rep carries a measurable travel — such a set is not
  * evidence about geometry and is left unstamped rather than dragged to zero.
+ *
+ * METRES, AS THE NAME SAYS (VW-203). Clustering compares these medians against
+ * each other, so a set captured in device-native positions would otherwise open
+ * its own setup — an inferred bench change that is really a capture-era change.
  */
-export function setMedianRomM(set: Pick<StoredSet, 'reps'>): number | undefined {
-  const roms = selectEligibleReps(set.reps)
+export function setMedianRomM(set: PositionScaledSet): number | undefined {
+  const roms = selectEligibleReps(normalisePositionsToMetres(set).reps)
     .map((rep: Rep) => getRepRangeOfMotion(rep))
     .filter((rom) => rom > 0);
   return roms.length === 0 ? undefined : median(roms);

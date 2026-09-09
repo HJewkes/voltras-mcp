@@ -31,6 +31,7 @@ import {
   type DriftSummary,
 } from '@voltras/workout-analytics';
 
+import { normalisePositionsToMetres } from './position-units.js';
 import { isEligibleForComparison, scopeSessionSetsToExerciseId } from './set-scope.js';
 import type { SessionStore } from './types.js';
 
@@ -78,6 +79,11 @@ export async function checkDriftGuard(
  * only percentages. Reaching for `summarizeSetsForDrift` directly instead
  * would put a second warm-up/side filter in the tree, and the gate and the
  * number it gates would be free to disagree about which sets they read.
+ *
+ * Positions are normalised to metres first (VW-203). `DriftSummary.medianRomM`
+ * is an ABSOLUTE length, and `romDriftPct` divides one session's by another's,
+ * so a capture-era difference between the two sessions would otherwise read as
+ * a drift verdict rather than as the unit mismatch it is.
  */
 export async function summarizeSessionForDrift(
   store: Pick<SessionStore, 'getSetsForSession'>,
@@ -85,9 +91,9 @@ export async function summarizeSessionForDrift(
   key: BaselineKey,
 ): Promise<DriftSummary | undefined> {
   const allSets = await store.getSetsForSession(sessionId);
-  const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId).filter((set) =>
-    isEligibleForComparison(set, key),
-  );
+  const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId)
+    .filter((set) => isEligibleForComparison(set, key))
+    .map(normalisePositionsToMetres);
   return summarizeSetsForDrift(scoped);
 }
 

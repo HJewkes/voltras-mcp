@@ -140,7 +140,7 @@ import {
 } from '../store/processed-session-mapper.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
-import { CURRENT_POSITION_UNITS } from '../state/set-capture.js';
+import { normalisePositionsToMetres } from '../store/position-units.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
@@ -155,13 +155,19 @@ const TOOL_NAME = 'metrics.compute';
  * intentionally omitted because session-level callers pass weights as a
  * parallel array argument.
  *
- * Velocities are normalised to m/s first (VW-160) so a row captured before the
- * bridge conversion and one captured after produce the same absolute numbers.
- * EVERY pipeline below routes through this function, which is why the
- * normalisation lives here rather than at each pipeline.
+ * Velocities are normalised to m/s (VW-160) and positions to metres (VW-203)
+ * first, so a row captured before either bridge conversion and one captured
+ * after produce the same absolute numbers. EVERY pipeline below routes through
+ * this function, which is why the normalisation lives here rather than at each
+ * pipeline.
  */
 function toAnalyticsSet(stored: StoredSet): AnalyticsSet {
-  return { reps: normaliseVelocityToMps(stored).reps };
+  return { reps: normalisedReps(stored) };
+}
+
+/** The set's reps on the current scale for both absolute quantities. */
+function normalisedReps(stored: StoredSet): AnalyticsRep[] {
+  return normalisePositionsToMetres(normaliseVelocityToMps(stored)).reps;
 }
 
 /**
@@ -302,17 +308,22 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // velocity across the baseline set's reps. The handler is the policy
       // layer that turns "a set" into a TechniqueBaseline; the analytics
       // package owns the per-rep comparison logic.
-      const baselineRom = mean(baseline.reps.map((r) => getPhaseRangeOfMotion(r.concentric)));
-      const baselineEccTime = mean(baseline.reps.map((r) => getPhaseDuration(r.eccentric)));
-      const baselineConcTime = mean(baseline.reps.map((r) => getPhaseDuration(r.concentric)));
-      const baselineMeanVel = mean(baseline.reps.map((r) => getRepMeanVelocity(r)));
+      //
+      // Both sides are normalised (VW-160, VW-203): this compares one set's
+      // ABSOLUTE ROM and velocity against another's, so two capture eras would
+      // otherwise grade every rep as a partial.
+      const baselineReps = normalisedReps(baseline);
+      const baselineRom = mean(baselineReps.map((r) => getPhaseRangeOfMotion(r.concentric)));
+      const baselineEccTime = mean(baselineReps.map((r) => getPhaseDuration(r.eccentric)));
+      const baselineConcTime = mean(baselineReps.map((r) => getPhaseDuration(r.concentric)));
+      const baselineMeanVel = mean(baselineReps.map((r) => getRepMeanVelocity(r)));
       const technique = createTechniqueBaseline({
         rom: baselineRom,
         eccentricTime: baselineEccTime,
         concentricTime: baselineConcTime,
         meanVelocity: baselineMeanVel,
       });
-      return target.reps.map((rep) => assessRepQuality(rep, technique));
+      return normalisedReps(target).map((rep) => assessRepQuality(rep, technique));
     }
 
     case 'session.readiness': {
@@ -606,12 +617,13 @@ async function romIntegrityForSet(state: ServerState, set: StoredSet): Promise<R
 }
 
 /**
- * The set's reps, velocity-normalised. `reps` degrades to `any[]` through the
- * package's `.d.ts` here (see `rirForSet`'s note on the same pattern), so the
- * element type is annotated explicitly rather than inferred.
+ * The set's reps, velocity- and position-normalised. `reps` degrades to
+ * `any[]` through the package's `.d.ts` here (see `rirForSet`'s note on the
+ * same pattern), so the element type is annotated explicitly rather than
+ * inferred.
  */
 function repsOf(set: StoredSet): AnalyticsRep[] {
-  return normaliseVelocityToMps(set).reps;
+  return normalisedReps(set);
 }
 
 /**
@@ -687,14 +699,12 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
  * is the strictest reference for a setup change: whatever moved the seat or
  * the attachment happened after it.
  *
- * THE SCALE FILTER IS NOT PARANOIA, and it is not eligibility either.
- * `StoredSet.positionUnits` records whether a row's samples are in
- * device-native units or metres, and the store keeps each row in the scale it
- * was captured at rather than rewriting history. Within one set that cancels —
- * every ratio in `rom-integrity.ts` is scale-free — but ACROSS sets it does
- * not: one row of each kind would make a normal set read as a 100,000% ROM
- * change. Absent reads as the current scale, the same convention
- * `normaliseVelocityToMps` uses for velocity.
+ * NO POSITION-SCALE FILTER (VW-203). A capture-era difference between the two
+ * rows used to disqualify the reference outright, because comparing one row of
+ * each kind reads as a ~100,000% ROM change. Both sides now come back in
+ * metres — `medianEligibleRom` through `repsOf`, the denominator through
+ * `summarizeSessionForDrift` — so the mismatch has nothing left to corrupt and
+ * a lifter's history before the conversion is a usable reference again.
  */
 async function referenceSessionFor(
   state: ServerState,
@@ -702,14 +712,13 @@ async function referenceSessionFor(
   key: BaselineKey,
 ): Promise<{ sessionId: string; summary: DriftSummary } | undefined> {
   if (key.exerciseId === UNKNOWN_KEY) return undefined;
-  const scale = positionScaleOf(set);
   const rows = (
     await state.store.getSetsForExercise({
       userId: LOCAL_USER_ID,
       exerciseId: key.exerciseId,
       ...(key.side !== undefined ? { side: key.side } : {}),
     })
-  ).filter((s) => s.sessionId !== set.sessionId && positionScaleOf(s) === scale);
+  ).filter((s) => s.sessionId !== set.sessionId);
   for (const sessionId of sessionIdsNewestFirst(rows)) {
     // Sequential on purpose: the newest readable session wins, and the common
     // case answers on the first iteration.
@@ -727,10 +736,6 @@ function sessionIdsNewestFirst(rows: readonly StoredSet[]): string[] {
     if (seen === undefined || row.startedAt > seen) startedAt.set(row.sessionId, row.startedAt);
   }
   return [...startedAt.entries()].sort(([, a], [, b]) => b.localeCompare(a)).map(([id]) => id);
-}
-
-function positionScaleOf(set: StoredSet): NonNullable<StoredSet['positionUnits']> {
-  return set.positionUnits ?? CURRENT_POSITION_UNITS;
 }
 
 /**
