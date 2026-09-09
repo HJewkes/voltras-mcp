@@ -122,6 +122,40 @@ export const EXERCISE_SWAP_REFRAME =
   'the drop across a swap is the expected cost of re-learning the movement, not lost progress';
 
 /**
+ * The window in which a strength gain is not yet evidence of muscle gained.
+ *
+ * QUOTED FROM B16 clause (f): "suppresses strength→muscle-gain inference in a
+ * user's first ~6-12 months of tracked training, when gains are largely neural"
+ * (`sources/mined/rp-university-idea-backlog.md`, evidence
+ * `rp-s7-early-strength-gains-not-pure-muscle-signal`). The source gives a
+ * range, so both ends are kept: `max` is the gate, because the clause withholds
+ * a claim and the conservative end of a quoted range is the one that keeps a
+ * wrong claim from shipping, and `min` is quoted back in the wording.
+ */
+export const NEURAL_GAIN_WINDOW_MONTHS = { min: 6, max: 12 } as const;
+
+/**
+ * What a lifter inside {@link NEURAL_GAIN_WINDOW_MONTHS} is told, verbatim.
+ *
+ * B16 (f) names this the copy problem it is: "Rule (f) will feel wrong to a
+ * beginner who *is* getting stronger; that is a copy problem, not a reason to
+ * drop it." So the wording leads with the strength being real, then says what
+ * is withheld and why — a beginner must never read a withheld muscle-gain claim
+ * as "you are not progressing".
+ *
+ * It is a constant, not a template built at the call site, so the surface that
+ * makes the muscle-gain claim carries these exact words and a test can assert
+ * them. The months come from the constant above so a threshold change cannot
+ * leave the copy quoting a number the code no longer uses.
+ */
+export const EARLY_TRAINING_STRENGTH_WORDING =
+  'you are getting stronger and that strength is real; in the first ' +
+  `${NEURAL_GAIN_WINDOW_MONTHS.min} to ${NEURAL_GAIN_WINDOW_MONTHS.max} months of tracked ` +
+  'training most of it comes from your nervous system learning the movement rather than from ' +
+  'new muscle, so the muscle-gain claim is held back until there is more history behind it — ' +
+  'not because the progress has stopped';
+
+/**
  * A set as far as comparability is concerned. Structural, so a `StoredSet`
  * passes without conversion.
  *
@@ -166,6 +200,12 @@ export interface ComparabilitySubject extends PurposeBearing {
    * clause degrades on every pair today.
    */
   exerciseIntroducedAt?: string | undefined;
+  /**
+   * Months of TRACKED training behind this set (B16 f) — how long there has
+   * been a record, not how long the lifter has trained. No writer yet, so the
+   * training-age clause degrades on every pair today.
+   */
+  trackedTrainingMonths?: number | undefined;
 }
 
 /**
@@ -277,6 +317,7 @@ const CLAUSES: readonly Clause[] = [
 const CLAIM_CLAUSES: readonly ClaimClause[] = [
   { name: 'profile', evaluate: (a, b) => profileNote(a, b) },
   { name: 'corroboration', evaluate: (a, b) => corroborationNote(a, b) },
+  { name: 'trainingAge', evaluate: (a, b) => trainingAgeNote(a, b) },
 ];
 
 /**
@@ -396,6 +437,38 @@ function corroborationNote(a: ComparabilitySubject, b: ComparabilitySubject): st
     );
   }
   return `${corroborationLabel(weakest)} for this muscle (${sides}) meets B16 (d)'s ${min}-${max} gate`;
+}
+
+/**
+ * B16 (f): inside the neural window a strength gain does not support a
+ * muscle-gain claim, and the lifter is told that in words rather than refused.
+ *
+ * The youngest recorded side governs: a claim spanning the pair is only as old
+ * as its newer end. A one-sided absence does NOT block here, unlike the context
+ * clauses — this clause never blocks at all — and a recorded side that clears
+ * the window still says the other end is unknown.
+ */
+function trainingAgeNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
+  const { min, max } = NEURAL_GAIN_WINDOW_MONTHS;
+  const sides = `${numberLabel(a.trackedTrainingMonths)} vs ${numberLabel(b.trackedTrainingMonths)}`;
+  const months = [a.trackedTrainingMonths, b.trackedTrainingMonths].filter(
+    (value): value is number => value !== undefined,
+  );
+  if (months.length === 0) {
+    return (
+      `neither set records how many months of training are tracked behind it, so B16 (f)'s ` +
+      `${min}-${max} month neural-gain window is unchecked and a muscle-gain claim on this pair ` +
+      'is unqualified'
+    );
+  }
+  const youngest = Math.min(...months);
+  if (youngest < max) {
+    return `${EARLY_TRAINING_STRENGTH_WORDING} (tracked training in months: ${sides})`;
+  }
+  return (
+    `${youngest} months of tracked training is past B16 (f)'s ${min}-${max} month neural-gain ` +
+    `window (${sides}), so a strength gain here may be read as muscle gained`
+  );
 }
 
 function corroborationLabel(count: number): string {

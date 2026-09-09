@@ -602,6 +602,8 @@ describe('progression.get_for_exercise — comparability basis (VW-94)', () => {
     expect(body.comparability.basisSetId).toBe('a3');
     expect(body.comparability.comparedTo?.setId).toBe('a1');
     expect(body.comparability.noValidComparison).toBeUndefined();
+    // VW-205: the B16 v2 clauses ride out through the unchanged signature.
+    expect(body.comparability.comparedTo?.reasons.join(' ')).toContain('trainingAge (note):');
   });
 
   it('names the nearest session and why it failed when nothing is like-vs-like', async () => {

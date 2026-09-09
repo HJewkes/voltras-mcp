@@ -1,18 +1,24 @@
-// Table tests for the like-vs-like predicate (VW-94 / B16 v1).
+// Table tests for the like-vs-like predicate (VW-94 / B16 v2, VW-205).
 //
 // The table covers one clause per row: each case changes exactly ONE field
 // away from a comparable pair, so a clause that stops being evaluated fails
 // its own row and nothing else.
+//
+// The claim clauses — (b) profile, (d) corroboration, (f) trainingAge — assert
+// `comparable === true` on every row on purpose. A claim clause that starts
+// blocking is a regression, not a stricter predicate.
 
 import { describe, expect, it } from 'vitest';
 
 import {
   chooseComparisonPartner,
   CORROBORATING_EXERCISES,
+  EARLY_TRAINING_STRENGTH_WORDING,
   EXERCISE_SWAP_REFRAME,
   EXERCISE_SWAP_SETTLING_SESSIONS,
   isComparable,
   LOAD_TOLERANCE_PCT,
+  NEURAL_GAIN_WINDOW_MONTHS,
   type ComparabilitySubject,
 } from '../comparability.js';
 import { setupRowId } from '../../store/exercise-setups.js';
@@ -266,6 +272,56 @@ describe('isComparable', () => {
   it('states that no post-swap settling window is sourced', () => {
     expect(EXERCISE_SWAP_SETTLING_SESSIONS).toBeNull();
   });
+
+  // B16 (f): the whole point of the clause is what the beginner READS, so the
+  // wording is asserted verbatim here and not merely matched loosely.
+  it('tells a beginner who is getting stronger why the muscle claim is held back', () => {
+    expect(EARLY_TRAINING_STRENGTH_WORDING).toBe(
+      'you are getting stronger and that strength is real; in the first 6 to 12 months of ' +
+        'tracked training most of it comes from your nervous system learning the movement ' +
+        'rather than from new muscle, so the muscle-gain claim is held back until there is ' +
+        'more history behind it — not because the progress has stopped',
+    );
+    expect(NEURAL_GAIN_WINDOW_MONTHS).toEqual({ min: 6, max: 12 });
+  });
+
+  it.each([
+    [
+      'neither side records a tracked training age',
+      {},
+      {},
+      'trainingAge (note): neither set records how many months of training are tracked behind ' +
+        "it, so B16 (f)'s 6-12 month neural-gain window is unchecked and a muscle-gain claim on " +
+        'this pair is unqualified',
+    ],
+    [
+      'the younger side is inside the neural window',
+      { trackedTrainingMonths: 4 },
+      { trackedTrainingMonths: 20 },
+      `trainingAge (note): ${EARLY_TRAINING_STRENGTH_WORDING} (tracked training in months: 4 vs 20)`,
+    ],
+    [
+      'a side sits at the top of the window and the other is unrecorded',
+      { trackedTrainingMonths: 11 },
+      {},
+      `trainingAge (note): ${EARLY_TRAINING_STRENGTH_WORDING} ` +
+        '(tracked training in months: 11 vs unrecorded)',
+    ],
+    [
+      'both sides are past the window',
+      { trackedTrainingMonths: 12 },
+      { trackedTrainingMonths: 30 },
+      "trainingAge (note): 12 months of tracked training is past B16 (f)'s 6-12 month " +
+        'neural-gain window (12 vs 30), so a strength gain here may be read as muscle gained',
+    ],
+  ])(
+    'qualifies the muscle-gain claim without refusing the pair when %s',
+    (_case, left, right, note) => {
+      const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+      expect(verdict.comparable).toBe(true);
+      expect(verdict.reasons).toContain(note);
+    },
+  );
 
   it('reports every failing clause, not just the first', () => {
     const verdict = isComparable(
