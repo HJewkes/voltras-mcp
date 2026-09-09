@@ -51,6 +51,10 @@ export const CORE_TOOL_NAMES = [
   'metrics.compute',
   'exercise.search',
   'exercise.get',
+  // Name an inferred physical setup (VW-119). The ROM clustering derives which
+  // sets share a bench height; only a human knows what the grouping IS, and
+  // this is the only writer of that name. See src/tools/exercise-tools.ts.
+  'exercise.confirm_setup',
   'timer.wait',
   'timer.start',
   'timer.cancel',
@@ -229,6 +233,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'exercise.search': 'read',
   'exercise.get': 'read',
+  // Writes a row in SQLite: two sessions naming the same setup race each other.
+  'exercise.confirm_setup': 'write',
 
   // POLICY. `timer.wait` mutates no state — its in-flight flag is a bare
   // module-level `let` in timer-tools.ts:67, shared process-wide with no slot
