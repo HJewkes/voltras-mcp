@@ -22,11 +22,17 @@
 //
 // DEGRADE, NEVER REFUSE SILENTLY
 // ------------------------------
-// Two clauses (training phase, physical setup) have no writer on this schema —
-// the phase tag is a pending human decision (B34 / VW-149) and `setupId` is
-// being built separately. Absent on BOTH sides passes with a note rather than
+// A clause whose value is absent on BOTH sides passes with a note rather than
 // blocking, per the backlog's own instruction to degrade rather than refuse.
 // The predicate says what it could not check instead of pretending it checked.
+//
+// The training-phase tag still has no writer at all — it is a pending human
+// decision (B34 / VW-149) — so that clause is unchecked on every pair today.
+// `setupId` DOES have one as of VW-119 (`store/exercise-setups.ts`, stamped by
+// `stampSetSetup` on `set.end` and by `baselines.recalc { inferSetups: true }`),
+// so the setup clause is live on any set that has been clustered. Absent there
+// means "not clustered yet", never "the default setup" — which is why a stamp
+// on only ONE side blocks: an unclustered set is not evidence of a match.
 //
 // Strict matching also means few valid pairs for an irregular lifter, so no
 // consumer of this module may answer with silence: `chooseComparisonPartner`
@@ -59,9 +65,9 @@ export const LOAD_TOLERANCE_PCT: number | null = null;
  * A set as far as comparability is concerned. Structural, so a `StoredSet`
  * passes without conversion.
  *
- * `setupId` and `phase` have NO WRITER on this schema (see the header). They
- * are declared because the clauses that read them are part of v1 and must
- * degrade visibly rather than be silently missing from the predicate.
+ * `setupId` is populated by the VW-119 clustering (see the header). `phase` has
+ * no writer yet and is declared so its clause degrades visibly rather than
+ * being silently missing from the predicate.
  */
 export interface ComparabilitySubject extends PurposeBearing {
   id: string;
@@ -73,7 +79,7 @@ export interface ComparabilitySubject extends PurposeBearing {
   side?: string | undefined;
   weightLbs?: number | undefined;
   startedAt?: string | undefined;
-  /** Inferred physical configuration. No writer yet (w3-31 is building one). */
+  /** Inferred physical configuration (VW-119). Absent ⇒ not clustered yet. */
   setupId?: string | undefined;
   /** Training-phase tag: fat-loss / gain / maintenance. No writer yet (B34). */
   phase?: string | undefined;
@@ -108,7 +114,7 @@ function bothAbsent(note: string): ClauseResult {
 
 /**
  * Clause order is the backlog's own: exercise, lifter, purpose, training mode,
- * device settings, side, load, then the two clauses that have no writer yet.
+ * device settings, side, load, training phase, physical setup.
  */
 const CLAUSES: readonly Clause[] = [
   {
