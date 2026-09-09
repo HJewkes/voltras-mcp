@@ -35,6 +35,17 @@ fail() {
   exit 1
 }
 
+# VW-183: a plugin-registered channel can auto-start this server for ANY
+# Claude Code session that has voltras-channel installed, not just a PT
+# session (scripts/voltra-pt). Default the dashboard sidecar off so those
+# sessions don't bind a stray HTTP port; scripts/voltra-pt sets VOLTRA_PT=1
+# to opt back into the default port. An explicit VMCP_DASHBOARD_PORT
+# (from the caller's environment or .launch.env below) always wins. Runs
+# before entry resolution so it also covers the PATH-installed fallback.
+if [ -z "${VMCP_DASHBOARD_PORT:-}" ] && [ "${VOLTRA_PT:-0}" != "1" ]; then
+  export VMCP_DASHBOARD_PORT=off
+fi
+
 repo_root=""
 entry=""
 

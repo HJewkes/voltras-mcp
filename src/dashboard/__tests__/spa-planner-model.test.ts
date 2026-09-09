@@ -8,6 +8,7 @@ import {
   e1rmSeries,
   flattenTemplates,
   formatNumber,
+  isRealSummarySet,
   nextTargetWeightLbs,
   prescriptionLine,
   progressionLabel,
@@ -16,6 +17,7 @@ import {
   sessionRollup,
   setLine,
   setsAgainstPlan,
+  visibleSets,
   type FlatTemplate,
 } from '../spa/planner/planner-model.js';
 import type { PlanExerciseView, PlanTreeView } from '../read-models/plan-tree.js';
@@ -370,5 +372,22 @@ describe('setLine', () => {
   it('renders a Damper or Band set by its own setting, not a missing weight (VMCP-02.74)', () => {
     expect(setLine(summarySet({ loadLabel: 'damper 6' }))).toBe('10 × damper 6');
     expect(setLine(summarySet({ loadLabel: 'band' }))).toBe('10 × band');
+  });
+});
+
+describe('visibleSets (VMCP-02.83)', () => {
+  it('drops a 0-rep set — the only way one closes is an inactivity timeout with nothing to recap', () => {
+    expect(isRealSummarySet(summarySet({ repCount: 0 }))).toBe(false);
+    expect(isRealSummarySet(summarySet({ repCount: 1 }))).toBe(true);
+  });
+
+  it("excludes a 0-rep timed-out set from the completion screen's set list", () => {
+    const exercise = summaryExercise({
+      sets: [
+        summarySet({ id: 'timed-out', index: 1, repCount: 0 }),
+        summarySet({ id: 'real', index: 2, repCount: 8 }),
+      ],
+    });
+    expect(visibleSets(exercise).map((s) => s.id)).toEqual(['real']);
   });
 });

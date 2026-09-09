@@ -247,3 +247,18 @@ function sessionDurationMin(summary: SessionSummaryView): number | null {
 export function setLine(set: SessionSummarySet): string {
   return `${set.repCount} × ${set.loadLabel}`;
 }
+
+/**
+ * True for a set worth listing on the completion screen — one that recorded at
+ * least one rep (VMCP-02.83). Mirrors `isRealCompletedSet` in `live-page/model.ts`:
+ * the only path that closes a set with zero reps is the inactivity force-close, and
+ * a lifter who walked away leaving nothing recorded has nothing here to recap.
+ */
+export function isRealSummarySet(set: SessionSummarySet): boolean {
+  return set.repCount > 0;
+}
+
+/** The exercise's sets worth listing — see {@link isRealSummarySet}. */
+export function visibleSets(exercise: SessionSummaryExercise): SessionSummarySet[] {
+  return exercise.sets.filter(isRealSummarySet);
+}

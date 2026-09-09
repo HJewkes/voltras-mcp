@@ -175,7 +175,7 @@ vi.mock('../state/server-state.js', () => ({
   },
 }));
 
-const { runServer, dashboardUrlFor } = await import('../server.js');
+const { runServer, dashboardUrlFor, resolveDashboardPort } = await import('../server.js');
 
 beforeEach(() => {
   bootstrapMock.mockReset();
@@ -336,6 +336,32 @@ describe('runServer startup race', () => {
     expect(exitCallOrder).toBeDefined();
 
     exitSpy.mockRestore();
+  });
+});
+
+describe('resolveDashboardPort — VMCP_DASHBOARD_PORT parsing (VW-183)', () => {
+  it('disables the sidecar on the exact word "off"', () => {
+    expect(resolveDashboardPort({ VMCP_DASHBOARD_PORT: 'off' })).toBeNull();
+  });
+
+  it('disables the sidecar on "0" (existing #250 fallback, untouched)', () => {
+    expect(resolveDashboardPort({ VMCP_DASHBOARD_PORT: '0' })).toBeNull();
+  });
+
+  it('defaults when unset', () => {
+    expect(resolveDashboardPort({})).toBe(7723);
+  });
+
+  it('defaults on an empty string', () => {
+    expect(resolveDashboardPort({ VMCP_DASHBOARD_PORT: '' })).toBe(7723);
+  });
+
+  it('parses a valid port number', () => {
+    expect(resolveDashboardPort({ VMCP_DASHBOARD_PORT: '9000' })).toBe(9000);
+  });
+
+  it('falls back to the default on garbage rather than silently disabling', () => {
+    expect(resolveDashboardPort({ VMCP_DASHBOARD_PORT: 'banana' })).toBe(7723);
   });
 });
 
