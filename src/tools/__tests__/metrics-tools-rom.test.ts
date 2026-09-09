@@ -170,7 +170,7 @@ interface RomPayload {
   baseline: {
     gate: { observedState: string | null; userMessage: string };
     romVsBaselinePct: number | null;
-    comparability: { comparable: boolean; romDriftPct: number } | null;
+    driftGuard: { comparable: boolean; romDriftPct: number } | null;
     note?: string;
   };
 }
@@ -238,7 +238,7 @@ describe('metrics.compute — quality.rom baseline gating', () => {
     });
 
     expect(payload.baseline.romVsBaselinePct).toBeNull();
-    expect(payload.baseline.comparability).toBeNull();
+    expect(payload.baseline.driftGuard).toBeNull();
     expect(payload.baseline.note).toContain(payload.baseline.gate.userMessage);
     // The within-set numbers are measurements and ship at every tier.
     expect(payload.decay.lastOverFirstEligible).toBeCloseTo(1, 10);
@@ -251,7 +251,7 @@ describe('metrics.compute — quality.rom baseline gating', () => {
       baseline: makeBaseline('PROVISIONAL'),
     });
 
-    expect(payload.baseline.comparability?.comparable).toBe(true);
+    expect(payload.baseline.driftGuard?.comparable).toBe(true);
     expect(payload.baseline.romVsBaselinePct).toBeCloseTo(-10, 10);
   });
 
@@ -285,7 +285,7 @@ describe('metrics.compute — quality.rom baseline gating', () => {
       baseline: makeBaseline('CALIBRATED'),
     });
 
-    expect(payload.baseline.comparability?.comparable).toBe(false);
+    expect(payload.baseline.driftGuard?.comparable).toBe(false);
     expect(payload.baseline.romVsBaselinePct).toBeNull();
     expect(payload.baseline.note).toContain('too different to compare');
   });
