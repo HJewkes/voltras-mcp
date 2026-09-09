@@ -46,3 +46,14 @@ export {
   resolveSummarySessionId,
   type DashboardSessionStore,
 } from './session-summary.js';
+
+export {
+  buildPlannedExerciseList,
+  buildSessionPlanView,
+  type ExerciseCatalogLookup,
+  type PlannedExerciseView,
+  type PrescriptionView,
+  type SessionPlanRows,
+} from './session-plan.js';
+
+export { buildHistoryView, type HistoryRows } from './history.js';
