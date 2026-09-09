@@ -63,9 +63,12 @@
 // does not empty the response. See `store/baseline-gate.ts`'s header.
 
 import {
+  analyzeTrend,
   assessRepQuality,
   buildProfile,
+  buildTimeSeries,
   computeReadiness,
+  detectPlateau,
   estimateLoad,
   type LoadVelocityProfile,
   computeSessionFatigue,
@@ -87,9 +90,14 @@ import {
   getSetVelocitySummary,
   type E1RMEstimate,
   type LoadVelocityDataPoint,
+  type MetricTimeSeriesPoint,
+  type PlateauDetection,
+  type ProcessedSession,
   type ReadinessEstimate,
   type Rep as AnalyticsRep,
   type Set as AnalyticsSet,
+  type TimeSeries,
+  type TrendAnalysis,
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -114,6 +122,11 @@ import {
   type ConfidenceIndicator,
 } from '../store/confidence-indicator.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
+import {
+  groupBySessionId,
+  toProcessedSessions,
+  type ProcessedSessionSource,
+} from '../store/processed-session-mapper.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
@@ -356,7 +369,117 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
 
     case 'strength.e1rm':
       return computeE1RM(state, input);
+
+    case 'history.trend':
+      return computeHistoryTrend(state, input);
   }
+}
+
+/**
+ * Default lookback window for `history.trend`, matching WA's own
+ * `getWeeklySummaries` default (`n = 12`, time-series.ts:400-403) — kept here
+ * even though that function isn't wired yet (see the schema's `history.trend`
+ * comment) so the two land on the same number once it is.
+ */
+const HISTORY_DEFAULT_WEEKS = 12;
+
+/** `2026-09-08` -> `2026-06-16`-style cutoff, `weeks` weeks before now. */
+function weeksAgoIso(weeks: number): string {
+  return new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+type HistoryTrendInput = Extract<MetricsComputeInputType, { pipeline: 'history.trend' }>;
+
+/**
+ * `history.trend`'s `metric` literal to WA's own `MetricKey` string. `MetricKey`
+ * itself isn't importable — `@voltras/workout-analytics@2.2.0`'s published
+ * root doesn't re-export it (only `buildTimeSeries` itself) — so the three
+ * values this pipeline uses are spelled out inline; they type-check
+ * structurally against `buildTimeSeries`'s parameter without the name.
+ */
+const HISTORY_TREND_METRIC: Record<
+  NonNullable<HistoryTrendInput['metric']>,
+  'top_weight' | 'estimated_1rm' | 'volume'
+> = {
+  topLoad: 'top_weight',
+  e1rm: 'estimated_1rm',
+  volume: 'volume',
+};
+
+/** `history.trend`'s response (VW-144/VW-145). */
+interface HistoryTrendResult {
+  series: TimeSeries;
+  trend: TrendAnalysis;
+  plateau: PlateauDetection & { phase: 'unknown' };
+}
+
+/**
+ * This exercise's own working, owner-only sets over the lookback window, as
+ * `ProcessedSession`s. Grouped by `sessionId` rather than read via
+ * `getSession` per group: these sets are already scoped to `exerciseId` by
+ * `getSetsForExercise`'s own set-level filter, and a session's own
+ * `exercise_id` column can be stale once it holds more than one exercise
+ * (VMCP-01.72b) — the earliest set's own `startedAt` is the trustworthy proxy
+ * for "when this session-bucket happened" here, not the session row.
+ */
+async function historyTrendSessions(
+  state: ServerState,
+  exerciseId: string,
+  fromIso: string,
+): Promise<ProcessedSession[]> {
+  const sets = await state.store.getSetsForExercise({
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    from: fromIso,
+  });
+  const bySession = groupBySessionId(sets);
+  const sources: ProcessedSessionSource[] = [...bySession.entries()].map(([id, group]) => ({
+    id,
+    startedAt: earliestStartedAt(group),
+    exerciseId,
+  }));
+  return toProcessedSessions(sources, bySession);
+}
+
+function earliestStartedAt(sets: readonly StoredSet[]): string {
+  return sets.reduce((min, s) => (s.startedAt < min ? s.startedAt : min), sets[0]!.startedAt);
+}
+
+async function computeHistoryTrend(
+  state: ServerState,
+  input: HistoryTrendInput,
+): Promise<HistoryTrendResult> {
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const fromIso = weeksAgoIso(weeks);
+  const sessions = await historyTrendSessions(state, input.exerciseId, fromIso);
+  if (sessions.length === 0) {
+    throw notFound(`exercise '${input.exerciseId}' has no working sets in the last ${weeks} weeks`);
+  }
+  const metric = HISTORY_TREND_METRIC[input.metric ?? 'topLoad'];
+  const built = buildTimeSeries(sessions, {
+    metric,
+    exerciseId: input.exerciseId,
+    bucketBy: 'week',
+    fromTs: fromIso,
+  });
+  // `points` degrades to `any[]` through the package's .d.ts here (same
+  // NodeNext-resolution note as `rirForSet`'s), so the element type is
+  // annotated explicitly rather than inferred.
+  const series: TimeSeries = built.points.map((p: MetricTimeSeriesPoint) => ({
+    ts: p.timestamp,
+    value: p.value,
+  }));
+  const trend = analyzeTrend(series);
+  // Omitted thresholdPct/minDays pass through as `undefined`, which is WA's
+  // own signal to use its defaults (5, 14) — never redeclared here.
+  const plateau = detectPlateau(series, input.thresholdPct, input.minDays);
+  return {
+    series,
+    trend,
+    // VW-149: diet-phase tagging is undecided, so every verdict says so —
+    // a fat-loss phase can look identical to a true plateau (B34).
+    plateau: { ...plateau, phase: 'unknown' },
+  };
 }
 
 /**
@@ -1059,7 +1182,7 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 11 literals) to a single analytics function; each pipeline takes different ' +
+  'field (one of 15 literals) to a single analytics function; each pipeline takes different ' +
   'input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
@@ -1121,6 +1244,17 @@ const METRICS_COMPUTE_DESCRIPTION =
   '`estimate` is null only when a `profile`/`hybrid` read is gated `withheld` — `gate` still ' +
   "carries the reason. This answers VW-135's MCP-agent-parity question for e1RM: yes, via this " +
   'pipeline. ' +
+  '`history.trend` (VW-144/VW-145) (exerciseId, optional weeks [default 12], metric ' +
+  "[`topLoad`|`e1rm`|`volume`, default `topLoad`], thresholdPct, minDays) — this exercise's " +
+  'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +
+  "trend, plateau }`. `trend`/`plateau` are WA's own `analyzeTrend`/`detectPlateau`; omitted " +
+  "`thresholdPct`/`minDays` use WA's OWN defaults (5%, 14 days — never redeclared here), not " +
+  "this server's. `plateau.phase` is always `'unknown'` — diet-phase tagging (VW-149) is " +
+  'undecided, and a fat-loss phase can look identical to a true plateau. A window with no ' +
+  'working sets is NOT_FOUND. A weekly-volume/muscle-group companion pipeline is NOT yet ' +
+  'available: `@voltras/workout-analytics@2.2.0` does not re-export `getWeeklySummaries` / ' +
+  "`getVolumeByMuscleGroup` from its published root, so it isn't wired here — it follows once " +
+  'that package republishes with them public. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';
@@ -1157,6 +1291,10 @@ export function registerMetricsTools(
     exerciseId: z.string().optional(),
     load: z.number().optional(),
     reps: z.number().optional(),
+    weeks: z.number().optional(),
+    metric: z.string().optional(),
+    thresholdPct: z.number().optional(),
+    minDays: z.number().optional(),
   };
   placeholder.update({
     paramsSchema: looseShape,

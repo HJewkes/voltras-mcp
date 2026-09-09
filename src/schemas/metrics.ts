@@ -121,6 +121,31 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // readout only: no push event, no watch, no cue (see B14/VW-140-141).
   z.object({ pipeline: z.literal('quality.bounce'), setId: IdSchema }),
 
+  // Cross-session trend + plateau for one exercise (VW-144/VW-145). Analytics:
+  // buildTimeSeries + analyzeTrend + detectPlateau from @voltras/workout-analytics
+  // over a ProcessedSession[] built from this exercise's own working,
+  // owner-only sets (see `store/processed-session-mapper.ts`). `thresholdPct`/
+  // `minDays`, when omitted, fall through to WA's OWN defaults (5, 14 —
+  // trend.ts:202-206) — never redeclared here. Every plateau verdict carries
+  // `phase: 'unknown'` until VW-150 decides diet-phase tagging: a fat-loss
+  // phase can look like a plateau (B34).
+  //
+  // `history.weekly_volume` (VW-144's other half) does NOT exist yet:
+  // `@voltras/workout-analytics@2.2.0`'s published root does not re-export
+  // `getWeeklySummaries` / `getVolumeByMuscleGroup` (nor their `WeeklySummary`
+  // / `VolumeByMuscleGroup` / `MetricKey` types) — only `buildTimeSeries` /
+  // `analyzeTrend` / `detectPlateau` / `ProcessedSession` are public. It
+  // follows once WA republishes with those exported; no local reimplementation
+  // of WA's own aggregation logic in the meantime.
+  z.object({
+    pipeline: z.literal('history.trend'),
+    exerciseId: IdSchema,
+    weeks: z.number().int().positive().optional(),
+    metric: z.enum(['topLoad', 'e1rm', 'volume']).optional(),
+    thresholdPct: z.number().positive().optional(),
+    minDays: z.number().int().positive().optional(),
+  }),
+
   // Estimated 1RM (VW-142): three input shapes on one literal, all fields
   // optional at the schema level because which combination is valid is a
   // handler-level decision (see `metrics-tools.ts`'s `computeE1RM`):
