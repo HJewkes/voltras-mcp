@@ -282,6 +282,10 @@ export interface StoredSet {
    * conversion: it records which scale the samples are already in so existing
    * rows stay interpretable when the bridge conversion lands, rather than
    * being silently rescaled.
+   *
+   * Read through `normalisePositionsToMetres` rather than branching on this
+   * field at each call site (VW-203), exactly as {@link velocityUnits} is read
+   * through `normaliseVelocityToMps`. Absent reads as the current scale.
    */
   positionUnits?: 'device_native' | 'meters';
   /**
