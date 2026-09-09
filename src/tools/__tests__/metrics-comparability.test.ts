@@ -165,6 +165,11 @@ describe('session.readiness comparability (VW-94)', () => {
 
     expect(payload.comparability.comparedTo?.setId).toBe('base-working');
     expect(payload.observed.baselineVelocityMps).toBe(0.9);
+    // VW-205: the B16 v2 claim clauses reach the surface through `reasons`,
+    // and none of them withheld a comparison this pipeline is entitled to.
+    expect(payload.comparability.comparedTo?.reasons.join(' ')).toContain('profile (note):');
+    expect(payload.comparability.comparedTo?.reasons.join(' ')).toContain('corroboration (note):');
+    expect(payload.comparability.comparedTo?.reasons.join(' ')).toContain('trainingAge (note):');
   });
 
   it('reports noValidComparison with the nearest candidate rather than staying silent', async () => {
@@ -191,6 +196,7 @@ describe('session.readiness comparability (VW-94)', () => {
     expect(payload.comparability.nearest?.reasons.join(' ')).toContain(
       'different load (170 vs 175 lb)',
     );
+    expect(payload.comparability.nearest?.reasons.join(' ')).toContain('trainingAge (note):');
     // The pipeline still answered — the fallback baseline set was used.
     expect(payload.observed.baselineVelocityMps).toBe(0.4);
   });
@@ -233,6 +239,9 @@ describe('session.strength comparability (VW-94)', () => {
 
     expect(payload.comparability.anchorSetId).toBe('s1');
     expect(payload.comparability.comparedTo?.setId).toBe('s2');
+    // VW-205: `session.strength` is the surface closest to a growth claim, so
+    // the B16 v2 notes must reach it unchanged.
+    expect(payload.comparability.comparedTo?.reasons.join(' ')).toContain('trainingAge (note):');
   });
 
   it('reads the VW-119 setup stamp off the stored set and splits on it', async () => {
