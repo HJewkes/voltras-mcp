@@ -182,10 +182,15 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       if (missingIdx >= 0) {
         throw notFound(`set '${input.setIds[missingIdx]}' not found`);
       }
-      const points: LoadVelocityDataPoint[] = (sets as StoredSet[]).map((s) => ({
-        load: s.weightLbs,
-        velocity: getSetMeanVelocity(toAnalyticsSet(s)),
-      }));
+      // A weightless set (e.g. Damper/Band mode, which has no weightLbs) has no real
+      // load to regress on — including it as 0 would corrupt the load-velocity fit,
+      // so it drops out of the profile input rather than being coerced.
+      const points: LoadVelocityDataPoint[] = (sets as StoredSet[])
+        .filter((s) => Number.isFinite(s.weightLbs))
+        .map((s) => ({
+          load: s.weightLbs as number,
+          velocity: getSetMeanVelocity(toAnalyticsSet(s)),
+        }));
       const profile = buildProfile(points);
       if (input.targetVelocity === undefined) return profile;
       return { ...profile, recommendation: recommendLoad(profile, input.targetVelocity) };

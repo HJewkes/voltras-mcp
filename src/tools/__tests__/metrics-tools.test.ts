@@ -89,6 +89,19 @@ function makeSet(id: string, sessionId = 'sess-1', weight = 100): StoredSet {
   };
 }
 
+/** A set with no `weightLbs` — e.g. Damper/Band mode, which has no headline weight. */
+function makeWeightlessSet(id: string, sessionId = 'sess-1'): StoredSet {
+  return {
+    id,
+    sessionId,
+    startedAt: '2025-01-01T00:00:00.000Z',
+    endedAt: '2025-01-01T00:00:30.000Z',
+    partial: false,
+    trainingMode: 'Damper',
+    reps: [makeRep(id, 0), makeRep(id, 1), makeRep(id, 2)],
+  };
+}
+
 /** `null` means a session that names NO exercise — not the same as omitting
  *  the argument, which yields the ordinary named-exercise session. */
 function makeSession(id: string, exerciseId: string | null = 'bench-press'): StoredSession {
@@ -320,6 +333,32 @@ describe('metrics.compute — vbt.profile', () => {
     expect(args[1]).toMatchObject({ load: 150, velocity: 0.5 });
     expect(result.isError).toBeUndefined();
     expect((parsePayload(result) as { estimated1RM: number }).estimated1RM).toBe(200);
+  });
+
+  it('drops weightless sets (Damper/Band, no weightLbs) from the profile input rather than defaulting to 0', async () => {
+    const setA = makeSet('s-a', 'sess-1', 100);
+    const setB = makeSet('s-b', 'sess-1', 150);
+    const setC = makeWeightlessSet('s-c', 'sess-1');
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) =>
+        ({ 's-a': setA, 's-b': setB, 's-c': setC })[id] ?? undefined,
+      ),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, {
+      pipeline: 'vbt.profile',
+      setIds: ['s-a', 's-b', 's-c'],
+    });
+
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    const args = buildSpy.mock.calls[0]?.[0] as Array<{ load: number; velocity: number }>;
+    expect(args).toHaveLength(2);
+    expect(args[0]).toMatchObject({ load: 100, velocity: 0.5 });
+    expect(args[1]).toMatchObject({ load: 150, velocity: 0.5 });
+    expect(result.isError).toBeUndefined();
   });
 
   it('EC-07: any missing set id → NOT_FOUND, buildProfile NOT called', async () => {
