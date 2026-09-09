@@ -1,7 +1,13 @@
 // Unit tests for the deterministic cue-template catalog and selector
-// (VMCP-02.79, PR2). Pure module — imported directly, no vi.mock needed.
+// (VMCP-02.79, PR2), plus the safety-word guard the VMCP-05.20 doc relies on.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// voice-tools reaches the SDK through the server-state graph; the ack pool
+// itself needs none of it.
+vi.mock('@voltras/node-sdk', () => ({}));
+
+const { SAFETY_ACK_PHRASES } = await import('../../tools/voice-tools.js');
 
 import {
   CUE_CATALOG,
@@ -10,6 +16,7 @@ import {
   templateSlots,
   type CueCategory,
 } from '../cue-templates.js';
+import { findSafetyPhraseIn } from '../transcript-router.js';
 
 // The fixed slot contract per category — the guard test asserts no template
 // references a slot outside its category's allowed set.
@@ -118,5 +125,60 @@ describe('CUE_CATALOG slot contract', () => {
   it('set_intro offers at least one ordinal-only-or-simpler option', () => {
     const playable = CUE_CATALOG.set_intro.filter((t) => !templateSlots(t).includes('weight'));
     expect(playable.length).toBeGreaterThan(0);
+  });
+});
+
+// The VMCP-05.20 doc bounds the self-trigger risk with "no cue template contains
+// a safety word". That claim was unenforced until this block. It runs the REAL
+// matcher (`findSafetyPhraseIn`, the one routeTranscript uses) over every
+// rendered template, and deliberately skips routeTranscript's <6-word gate: a
+// safety word must not appear at all, however long the cue is.
+describe('spoken text contains no safety phrase', () => {
+  // Representative renderings. Two value sets so a worded slot ("three") and a
+  // numeric one are both covered.
+  const SLOT_VALUES: Record<string, string | number>[] = [
+    {
+      weight: 185,
+      ordinal: 3,
+      target: 8,
+      actual: 10,
+      pct: 15,
+      rep: 7,
+      reps: 12,
+      seconds: 42,
+      loss: 20,
+    },
+    {
+      weight: 'one hundred and five',
+      ordinal: 'three',
+      target: 'eight',
+      actual: 'ten',
+      pct: 'twelve',
+      rep: 'seven',
+      reps: 'twelve',
+      seconds: 'forty two',
+      loss: 'twenty',
+    },
+  ];
+
+  it('renders every CUE_CATALOG template without producing a safety phrase', () => {
+    for (const category of CATEGORIES) {
+      for (const template of CUE_CATALOG[category]) {
+        for (const values of SLOT_VALUES) {
+          const spoken = slotFill(template, values);
+          expect([spoken, findSafetyPhraseIn(spoken)]).toEqual([spoken, undefined]);
+        }
+      }
+    }
+  });
+
+  it('no unload ack in the rotating pool matches a safety phrase', () => {
+    for (const ack of SAFETY_ACK_PHRASES) {
+      expect([ack, findSafetyPhraseIn(ack)]).toEqual([ack, undefined]);
+    }
+  });
+
+  it('the matcher used here does find a safety phrase in ordinary speech', () => {
+    expect(findSafetyPhraseIn('Stop the set right there please')).toBe('stop');
   });
 });

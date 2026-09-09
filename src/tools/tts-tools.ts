@@ -34,6 +34,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 
 import { log } from '../logger.js';
 import { SystemSpeakInput, type SystemSpeakInputType } from '../schemas/system.js';
+import type { MuteHandle } from '../voice/voice-listener.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 
 interface PlaceholderTools {
@@ -46,15 +47,19 @@ type SpawnFn = (
   options?: SpawnOptions,
 ) => ChildProcess;
 
-/** Minimal surface we need from VoiceListener — avoids a circular import. */
+/**
+ * Minimal surface we need from VoiceListener — only the handle type is shared,
+ * and as a type-only import, so there is no runtime edge back into the listener.
+ */
 export interface MutableVoiceListener {
   /**
    * `spokenText` is what is about to be read aloud. The listener keeps routing
    * safety phrases through the mute window (VMCP-05.20) and uses this to tell
-   * the lifter's voice apart from its own.
+   * the lifter's voice apart from its own. The returned handle is what releases
+   * THIS call's text — cues and model speech overlap (VW-176).
    */
-  mute(spokenText?: string): void;
-  unmute(): void;
+  mute(spokenText?: string): MuteHandle;
+  unmute(handle: MuteHandle): void;
 }
 
 /**
@@ -97,28 +102,28 @@ const MUTE_FAILSAFE_MS = 8000;
 /**
  * Mute now, and guarantee a matching unmute fires exactly once — either from
  * the caller-driven path (child exit/error, or the blocking `finally`) or,
- * failing that, from a hard timeout. Guards against double-unmute (which
- * would under-count VoiceListener's refcount) if both paths fire.
+ * failing that, from a hard timeout. Both paths release the SAME handle, so
+ * whichever wins frees this call's text and never a concurrent speaker's.
  *
  * `text` is handed to the listener so it can drop its own audio while still
  * hearing a safety phrase spoken over the cue (VMCP-05.20).
  */
 function muteWithFailsafe(voiceListener: MutableVoiceListener | null, text: string): () => void {
   if (voiceListener === null) return () => {};
-  voiceListener.mute(text);
+  const handle = voiceListener.mute(text);
   let unmuted = false;
   const timer = setTimeout(() => {
     if (unmuted) return;
     unmuted = true;
     log.warn(`speak(): mute failsafe fired after ${MUTE_FAILSAFE_MS}ms — forcing unmute`);
-    voiceListener.unmute();
+    voiceListener.unmute(handle);
   }, MUTE_FAILSAFE_MS);
   timer.unref?.();
   return () => {
     if (unmuted) return;
     unmuted = true;
     clearTimeout(timer);
-    voiceListener.unmute();
+    voiceListener.unmute(handle);
   };
 }
 
