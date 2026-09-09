@@ -129,6 +129,24 @@ Plugin mode refuses to launch if a standalone `voltras` server is **also** regis
 collide on `~/.voltras/vmcp.sqlite` and port 7723. Under plugin mode, run
 `claude mcp remove voltras`.
 
+## Dashboard sidecar is off by default for non-PT sessions (VW-183)
+
+`plugin.json` registers the channel for **any** Claude Code session that loads
+`voltras-channel`, not just one started through `scripts/voltra-pt`. A plain coding
+session that happens to have the plugin installed would otherwise auto-start a dashboard
+HTTP sidecar it never asked for. `voltras-mcp-launch.sh` now sets `VMCP_DASHBOARD_PORT=off`
+by default; `scripts/voltra-pt` exports `VOLTRA_PT=1` to opt back into the default port
+(7723) for real PT sessions. An explicit `VMCP_DASHBOARD_PORT` in the environment or
+`.launch.env` always wins over this default. `server.health`'s `dashboardDisabledReason`
+reads `"disabled"` when the sidecar was turned off this way.
+
+After pulling this change, refresh the cached plugin copy so the updated launcher and
+manifest version take effect:
+
+```bash
+claude plugin marketplace update voltras-local
+```
+
 ## Verification status
 
 Confirmed working:

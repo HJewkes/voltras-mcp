@@ -400,8 +400,12 @@ export interface ServerState {
    * even attempted to bind. `server.health` reads this live at call time
    * instead, which is always after bootstrap has settled it. Never
    * re-attempted — a fixed VMCP_DASHBOARD_PORT config is the escape hatch.
+   * `disabledReason` is `'disabled'` when `VMCP_DASHBOARD_PORT` explicitly
+   * turned the sidecar off (`off`/`0`), and `null` for every other
+   * unavailable case (bind failure, or bootstrap hasn't resolved yet) so a
+   * transient port conflict doesn't read the same as an intentional opt-out.
    */
-  dashboard?: { available: boolean; url: string | null };
+  dashboard?: { available: boolean; url: string | null; disabledReason: 'disabled' | null };
 }
 
 /**

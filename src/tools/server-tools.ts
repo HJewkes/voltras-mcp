@@ -249,7 +249,9 @@ export function registerServerTools(
       'its own; when available, suggest the URL to the user rather than relaying it silently. ' +
       '`dashboardUrl` is the full SPA address (it ends in `/app`) and names the port THIS ' +
       'session actually bound — not always the default, since a port already held by another ' +
-      'session falls back to an OS-assigned one. Give it to the user verbatim.',
+      'session falls back to an OS-assigned one. Give it to the user verbatim. ' +
+      '`dashboardDisabledReason` is `"disabled"` when `VMCP_DASHBOARD_PORT=off` turned the ' +
+      'sidecar off on purpose, and `null` for every other unavailable case (e.g. a port conflict).',
     callback: wrapHandler(ServerHealthInput, () =>
       Promise.resolve({
         version: VMCP_VERSION,
@@ -264,6 +266,7 @@ export function registerServerTools(
         voiceReady: VOICE_READY,
         dashboardAvailable: state.dashboard?.available ?? false,
         dashboardUrl: state.dashboard?.url ?? null,
+        dashboardDisabledReason: state.dashboard?.disabledReason ?? null,
         ...resolveChannelStatus(state),
         ...resolveLeaseStatus(state),
       }),
