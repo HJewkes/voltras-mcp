@@ -38,6 +38,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: null,
+    lifter: null,
     weightLbs: 140,
     unit: 'lbs',
     completedSets: [],
@@ -78,7 +79,14 @@ function liveWithRep(rom: number, peakForce = 0): StoreLiveModel {
     position: 120,
     force: 480,
     repInProgress: 2,
-    lastRep: { repIndex: 1, vCon: 0.41, rom, peakVelocity: 0.6, peakForceSoFar: peakForce },
+    lastRep: {
+      slot: 'primary',
+      repIndex: 1,
+      vCon: 0.41,
+      rom,
+      peakVelocity: 0.6,
+      peakForceSoFar: peakForce,
+    },
     peakForce,
   };
 }
@@ -655,11 +663,9 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
   function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
     return {
       live: {
-        connected: true,
-        phase: 'con',
+        phase: 'concentric',
         phaseElapsedMs: 0,
         velocity: 0.5,
-        position: 0,
         force: 0,
         repVelocities: [0.6, 0.5],
         velocityLossPct: null,

@@ -20,7 +20,7 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run typecheck:spa",
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
     "start": "node ./dist/bin.js",
     "dashboard:sim": "node scripts/dashboard-sim.mjs",
@@ -31,8 +31,9 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "typecheck": "tsc --noEmit && npm run typecheck:spa",
+    "typecheck": "tsc --noEmit && npm run typecheck:spa && npm run typecheck:tests",
     "typecheck:spa": "tsc -p src/dashboard/spa/tsconfig.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
     "prepare": "husky"

@@ -10,12 +10,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dashboardStore, STALE_THRESHOLD_MS } from '../spa/store';
 import {
   initialAccumulatorState,
-  type Rep,
   type Snapshot,
   type SnapshotActiveSet,
   type SnapshotDevice,
 } from '../spa/adapter';
 import type { LiveModel } from '../spa/live-stream';
+import type { Rep } from '@voltras/workout-analytics';
 
 function rep(repNumber: number, peakMms: number): Rep {
   return {

@@ -180,7 +180,9 @@ function makeStore(
     listSessions: async () => [SESSION],
     listTrainingPrograms: async () => opts.programs ?? [PROGRAM],
     getTrainingProgram: async () => PROGRAM,
+    getTrainingBlock: async () => undefined,
     getTrainingBlocksForProgram: async () => [BLOCK],
+    getTrainingWeek: async () => undefined,
     getTrainingWeeksForBlock: async () => [WEEK],
     getWorkoutTemplatesForWeek: async () => [TEMPLATE],
     getWorkoutTemplate: async () => TEMPLATE,
@@ -193,6 +195,7 @@ function makeStore(
     putTrainingWeek: noop,
     putWorkoutTemplate: noop,
     putPlannedExercise: noop,
+    deletePlannedExercise: async () => true,
   };
 }
 
