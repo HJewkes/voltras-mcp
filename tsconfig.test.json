@@ -1,0 +1,4 @@
+{
+  "extends": "./src/dashboard/spa/tsconfig.json",
+  "include": ["src/dashboard/__tests__/**/*", "src/dashboard/spa/env.d.ts"]
+}
