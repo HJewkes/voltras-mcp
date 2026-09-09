@@ -186,15 +186,58 @@ describe('metrics.compute — history.weekly_volume', () => {
     expect((parsePayload(result) as { code: string }).code).toBe('NOT_FOUND');
   });
 
-  it("B47 agreement: muscle-group attribution matches session.volume's target-only rule", async () => {
-    // An exercise with a PRIMARY and a SECONDARY muscle group — B47 credits
-    // the primary only, at any weight. If weekly_volume's byMuscleGroup ever
-    // fractions across both, this catches it.
-    const set = makeSet('s1', { exerciseId: 'bench-press', weightLbs: 100 });
-    const session = makeSession('sess-s1', weekStart(0), 'bench-press');
-    const state = makeState([session], new Map([['sess-s1', [set]]]), {
+  it("B47 agreement: weekly_volume's muscle attribution matches session.volume's target-only counting", async () => {
+    // Unit sets (weight=1lb, 1 rep) make a SET COUNT and a weight×reps
+    // VOLUME the same number for any count — the only way to compare
+    // `session.volume`'s `setsByMuscle` (a count) against `weekly_volume`'s
+    // `byMuscleGroup` (a volume) for literal equality without hardcoding
+    // either pipeline's expected output. The exercise carries a SECONDARY
+    // muscle group too, so a fraction-across-all-groups bug or a
+    // wrong-index bug on EITHER side shows up as a mismatch.
+    const set1 = makeSet('s1', {
+      exerciseId: 'bench-press',
+      weightLbs: 1,
+      reps: [makeRep('s1', 0)],
+    });
+    const set2 = makeSet('s2', {
+      exerciseId: 'bench-press',
+      weightLbs: 1,
+      reps: [makeRep('s2', 0)],
+    });
+    const session = makeSession('sess-a', weekStart(0), 'bench-press');
+    const state = makeState([session], new Map([['sess-a', [set1, set2]]]), {
+      catalog: { 'bench-press': { muscleGroups: ['chest', 'triceps'] } },
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const weeklyResult = await callTool(tools, { pipeline: 'history.weekly_volume' });
+    const volumeResult = await callTool(tools, {
+      pipeline: 'session.volume',
+      sessionId: 'sess-a',
+    });
+
+    const weeklyBody = parsePayload(weeklyResult) as WeeklyVolumeBody;
+    const volumeBody = parsePayload(volumeResult) as { setsByMuscle: Record<string, number> };
+
+    expect(weeklyBody.byMuscleGroup.byMuscleGroup).toEqual(volumeBody.setsByMuscle);
+    // Confirms the comparison actually exercises something rather than two
+    // empty objects trivially equalling each other.
+    expect(Object.keys(volumeBody.setsByMuscle)).toEqual(['chest']);
+  });
+
+  it('sums two same-muscle exercises within one session without double-counting or inflating sessionCount', async () => {
+    // ONE physical session training two DIFFERENT exercises whose primary
+    // muscle is the SAME — guards the per-(session, exercise) split from
+    // silently double-counting if it were ever collapsed back to one
+    // `ProcessedSession` per session.
+    const press = makeSet('s-press', { exerciseId: 'chest-press', weightLbs: 100 });
+    const fly = makeSet('s-fly', { exerciseId: 'cable-fly', weightLbs: 50 });
+    const session = makeSession('sess-chest-day', weekStart(0), 'chest-press');
+    const state = makeState([session], new Map([['sess-chest-day', [press, fly]]]), {
       catalog: {
-        'bench-press': { muscleGroups: ['chest', 'triceps'] },
+        'chest-press': { muscleGroups: ['chest'] },
+        'cable-fly': { muscleGroups: ['chest'] },
       },
     });
     const { server, tools } = makeFakeServer();
@@ -203,24 +246,17 @@ describe('metrics.compute — history.weekly_volume', () => {
     const result = await callTool(tools, { pipeline: 'history.weekly_volume' });
 
     const body = parsePayload(result) as WeeklyVolumeBody;
-    // All volume (100×2 = 200) lands on the primary muscle group only —
-    // the same exerciseId->muscleGroups[0] rule `setsByTargetMuscle` uses.
-    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 200 });
-    expect(body.byMuscleGroup.byMuscleGroup.triceps).toBeUndefined();
+    // 100×2 (press) + 50×2 (fly) = 300 — summed, not double-counted.
+    expect(body.byMuscleGroup.byMuscleGroup).toEqual({ chest: 300 });
+    expect(body.weekly).toHaveLength(1);
+    expect(body.weekly[0]?.sessionCount).toBe(1);
   });
 
-  it("excludes a guest lifter's set", async () => {
+  it("excludes a guest lifter's set worked in during the owner's own session", async () => {
     const owner = makeSet('s-owner', { weightLbs: 100 });
     const guest: StoredSet = makeSet('s-guest', { weightLbs: 999, lifter: 'Jordan' });
-    const session = makeSession('sess-s-owner', weekStart(0));
-    const guestSession = makeSession('sess-s-guest', weekStart(0));
-    const state = makeState(
-      [session, guestSession],
-      new Map([
-        ['sess-s-owner', [owner]],
-        ['sess-s-guest', [guest]],
-      ]),
-    );
+    const session = makeSession('sess-shared', weekStart(0));
+    const state = makeState([session], new Map([['sess-shared', [owner, guest]]]));
     const { server, tools } = makeFakeServer();
     registerMetricsTools(server, state, makePlaceholders(server));
 
