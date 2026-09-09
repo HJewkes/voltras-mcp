@@ -120,4 +120,20 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: `detectBounce(rep)` from `src/analytics/rep-faults.ts`. A
   // readout only: no push event, no watch, no cue (see B14/VW-140-141).
   z.object({ pipeline: z.literal('quality.bounce'), setId: IdSchema }),
+
+  // Estimated 1RM (VW-142): three input shapes on one literal, all fields
+  // optional at the schema level because which combination is valid is a
+  // handler-level decision (see `metrics-tools.ts`'s `computeE1RM`):
+  //   `{ load, reps }` — Epley formula, no baseline gate.
+  //   `{ exerciseId }` — profile-based, built the same way `vbt.profile`
+  //     builds its points, gated on `relative-signal` (the same gate
+  //     `session.perturbation` / `session.junk_volume` use).
+  //   both — hybrid, confidence-weighted combination of the two.
+  // A lone `load` or a lone `reps`, or neither field present, is refused.
+  z.object({
+    pipeline: z.literal('strength.e1rm'),
+    load: z.number().positive().optional(),
+    reps: z.number().int().positive().optional(),
+    exerciseId: IdSchema.optional(),
+  }),
 ]);
