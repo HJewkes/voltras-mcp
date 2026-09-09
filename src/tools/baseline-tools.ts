@@ -22,6 +22,7 @@ import {
   type FeatureGateVerdict,
   type GatedFeature,
 } from '../store/baseline-gate.js';
+import { inferExerciseSetups, type SetupInferenceSummary } from '../store/exercise-setups.js';
 import {
   LOCAL_USER_ID,
   type FailureHarvestCounts,
@@ -51,7 +52,10 @@ const GET_BASELINE_DESCRIPTION =
   "its qualifier — the confidence `state` above, and the lifter's experience tier where the " +
   'interpretation is tier-split (RIR self-report, for instance, is off by 5–10 reps for a ' +
   'beginner but ~1–2 for an intermediate/advanced lifter, so the same raw number means ' +
-  'different things). Hand baseline numbers to the user tier-qualified, or not at all.';
+  'different things). Hand baseline numbers to the user tier-qualified, or not at all. ' +
+  'Pass `setupId` to read the baseline for ONE inferred physical setup (bench height, ' +
+  'attachment, stance) rather than the pooled row across all of them; ids come back from ' +
+  '`baselines.recalc { inferSetups: true }` and cannot be invented.';
 
 const RECALC_BASELINE_DESCRIPTION =
   'Force a baseline recalculation for one (exercise, side) key. Set-close already recalculates ' +
@@ -62,7 +66,13 @@ const RECALC_BASELINE_DESCRIPTION =
   "filter over the key's stored working sets and returns the verdict tally — a retrospective " +
   'back-fill over history already recorded. It never asks anyone to train to failure, and a ' +
   'harvested anchor is a measurement, not a goal: do not report it as an achievement or ' +
-  'encourage the user to produce more.';
+  'encourage the user to produce more. `inferSetups: true` additionally re-clusters the ' +
+  "exercise's working sets by median range of motion (VW-119) and stamps each one with the " +
+  'physical setup it was performed at, returning the setups it found. The labels it generates ' +
+  'are neutral ordinals ("setup 1") — it can tell that two groups of sets used different cable ' +
+  'geometry, NOT what the difference was, so do not describe a setup as a bench angle or an ' +
+  'attachment. Ask the user what a setup is and record their answer with ' +
+  '`exercise.confirm_setup`.';
 
 export function registerBaselineTools(
   _server: McpServer,
@@ -129,6 +139,7 @@ async function getBaseline(
   const baseline = await state.store.getBaseline({
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
+    ...(input.setupId !== undefined ? { setupId: input.setupId } : {}),
     ...(input.side !== undefined ? { side: input.side } : {}),
   });
   return {
@@ -147,15 +158,31 @@ async function getBaseline(
 async function recalcBaseline(
   state: ServerState,
   input: z.infer<typeof BaselinesRecalcInput>,
-): Promise<{ baseline: StoredExerciseBaseline; harvest?: FailureHarvestCounts }> {
+): Promise<{
+  baseline: StoredExerciseBaseline;
+  harvest?: FailureHarvestCounts;
+  setups?: SetupInferenceSummary;
+}> {
   const key = {
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
+    ...(input.setupId !== undefined ? { setupId: input.setupId } : {}),
     ...(input.side !== undefined ? { side: input.side } : {}),
   };
+  // INFER FIRST. The clustering is what stamps `setup_id`, and a setup-keyed
+  // recalc filters on it — so running it after would derive the requested key
+  // from the corpus as it stood before the stamps landed.
+  const setups =
+    input.inferSetups === true
+      ? await inferExerciseSetups(state.store, { userId: key.userId, exerciseId: key.exerciseId })
+      : undefined;
   // Harvest BEFORE deriving, so the recalc that follows reads the anchors this
   // pass just wrote rather than the corpus as it stood a call ago.
   const harvest = input.reharvest === true ? await state.store.reharvestExercise(key) : undefined;
   const baseline = await state.store.recalcBaseline(key);
-  return harvest === undefined ? { baseline } : { baseline, harvest };
+  return {
+    baseline,
+    ...(harvest !== undefined ? { harvest } : {}),
+    ...(setups !== undefined ? { setups } : {}),
+  };
 }
