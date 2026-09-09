@@ -42,6 +42,7 @@ import { log } from '../logger.js';
 import type { StoredIsometricMeasurement, StoredIsometricSideMeasurement } from '../store/types.js';
 
 import {
+  IsometricMeasureHoldInput,
   IsometricMeasureMaxInput,
   IsometricMeasureImbalanceInput,
   IsometricMeasureImbalanceInputRefined,
@@ -71,6 +72,25 @@ class ToolError extends Error {
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
 }
+
+const MEASURE_HOLD_DESCRIPTION = [
+  'Measure ONE isometric hold on a device slot and return immediately.',
+  'Runs a single max-effort hold (default 5s) — no trial loop, no rest wait —',
+  'so a coach can pace the assessment turn by turn instead of blocking through',
+  'a whole protocol. Call it again for the next hold when the athlete is ready.',
+  '',
+  'Caller must pre-configure the device into Isometric mode and set resistance',
+  'to a low value before invoking; this tool does NOT change device settings.',
+  '',
+  'Returns the per-hold analysis (peak and plateau force, plateau window, the',
+  'validity flags) plus peakForceLbs at the top level, which is readable even',
+  'when the hold fails a validity gate. Phase pushes (isometric_phase: ready,',
+  'go, hold, stop) are emitted on the channel so a dashboard or cue surface can',
+  'signal the athlete while the hold runs.',
+  '',
+  'For the full 3-trial protocol with rests and best-2-of-N aggregation, use',
+  'isometric.measure_max; for bilateral asymmetry, isometric.measure_imbalance.',
+].join(' ');
 
 const MEASURE_MAX_DESCRIPTION = [
   'Run the isometric maximum-force assessment protocol on one device slot.',
@@ -122,6 +142,13 @@ export function registerIsometricTools(
 ): void {
   install(
     placeholders,
+    'isometric.measure_hold',
+    IsometricMeasureHoldInput,
+    wrapHandler(IsometricMeasureHoldInput, (input) => measureHold(state, input)),
+    MEASURE_HOLD_DESCRIPTION,
+  );
+  install(
+    placeholders,
     'isometric.measure_max',
     IsometricMeasureMaxInput,
     wrapHandler(IsometricMeasureMaxInput, (input) => measureMax(state, input)),
@@ -156,6 +183,13 @@ function install<S extends z.ZodObject>(
   tool.update(updates as never);
 }
 
+interface MeasureHoldInput {
+  slot?: string | undefined;
+  side?: 'left' | 'right' | undefined;
+  holdMs: number;
+  label?: string | undefined;
+}
+
 interface MeasureMaxInput {
   slot?: string | undefined;
   durationMs: number;
@@ -173,6 +207,24 @@ interface MeasureImbalanceInput {
   betweenSidesRestMs: number;
   testNonDominantFirst: boolean;
   dominantSide: 'left' | 'right' | 'unknown';
+}
+
+interface MeasureHoldResult {
+  ok: true;
+  slot: string;
+  /** Limb the caller declared for this hold; null when unstated. */
+  side: 'left' | 'right' | null;
+  /** Caller's free-text tag for the hold; null when unstated. */
+  label: string | null;
+  holdMs: number;
+  trial: TrialAnalysis;
+  /**
+   * Highest instantaneous force in the hold. Echoes `trial.peakForceLbs` at
+   * the top level because it is the number worth reading when the hold fails
+   * a validity gate — a coach still wants to know what the athlete pulled.
+   */
+  peakForceLbs: number;
+  totalElapsedMs: number;
 }
 
 interface MeasureMaxResult {
@@ -225,6 +277,46 @@ interface MeasureImbalanceResult {
  * them apart.
  */
 const ISOMETRIC_ANALYSIS_VERSION = 1;
+
+/**
+ * Trial index reported for a one-hold run. `analyzeTrial` numbers trials
+ * from 1 within a side, and a single hold is trial 1 of its own run — the
+ * caller sequences the holds, so the server has no run to count within.
+ */
+const SINGLE_HOLD_TRIAL_INDEX = 1;
+
+/**
+ * One hold, then return (VW-154). The 2026-08-01 bench found the multi-trial
+ * tools unusable for a human-paced sitting: the call blocks through both the
+ * holds and the 90s rests, so permission prompts land mid-hold and the athlete
+ * gets no go/stop signal. This runs exactly one capture and hands pacing back
+ * to the caller between holds.
+ *
+ * Nothing is persisted: a single hold is not an assessment. The trend series
+ * comes from `isometric.measure_imbalance`, which aggregates over its trials
+ * before it writes.
+ */
+async function measureHold(
+  state: ServerState,
+  input: MeasureHoldInput,
+): Promise<MeasureHoldResult> {
+  const slotId = input.slot ?? PRIMARY_SLOT;
+  const startedAt = Date.now();
+  const trial = await captureSingleHold(state, slotId, {
+    holdMs: input.holdMs,
+    trial: SINGLE_HOLD_TRIAL_INDEX,
+  });
+  return {
+    ok: true,
+    slot: slotId,
+    side: input.side ?? null,
+    label: input.label ?? null,
+    holdMs: input.holdMs,
+    trial,
+    peakForceLbs: trial.peakForceLbs,
+    totalElapsedMs: Date.now() - startedAt,
+  };
+}
 
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;

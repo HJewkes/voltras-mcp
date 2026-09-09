@@ -187,7 +187,11 @@ async function pumpTrialFrames(
   }
 }
 
-const TOOL_NAMES = ['isometric.measure_max', 'isometric.measure_imbalance'] as const;
+const TOOL_NAMES = [
+  'isometric.measure_hold',
+  'isometric.measure_max',
+  'isometric.measure_imbalance',
+] as const;
 
 describe('isometric.measure_max', () => {
   let measureMaxCb: Callback;

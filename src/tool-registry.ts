@@ -75,6 +75,7 @@ export const CORE_TOOL_NAMES = [
   'slot.bindings_list',
   'slot.unbind',
   'progression.get_for_exercise',
+  'isometric.measure_hold',
   'isometric.measure_max',
   'isometric.measure_imbalance',
   // Block-periodization plan CRUD (v3 schema). See src/tools/plan-tools.ts.
@@ -277,6 +278,10 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // the caller has the device configured for an isometric hold, i.e. it assumes
   // device control. Running it from an observer session would report numbers
   // for whatever the lease holder happens to be doing. `write`.
+  // `measure_hold` is one capture and returns in seconds, but it makes the same
+  // assumption the multi-trial tools do — the caller has the device configured
+  // for an isometric hold — so it carries the same class.
+  'isometric.measure_hold': 'write',
   'isometric.measure_max': 'write',
   'isometric.measure_imbalance': 'write',
 
