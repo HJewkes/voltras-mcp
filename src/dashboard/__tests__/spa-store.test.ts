@@ -294,3 +294,33 @@ describe('dashboardStore — ui slice (route, VMCP-03.02 part 1)', () => {
     expect(after.snapshot).toBe(before.snapshot);
   });
 });
+
+describe('dashboardStore — planner slice (plannerBusy, VMCP-03.02 part 2)', () => {
+  afterEach(() => {
+    dashboardStore.getState().setPlannerBusy(false);
+  });
+
+  it('defaults to not busy', () => {
+    expect(dashboardStore.getState().plannerBusy).toBe(false);
+  });
+
+  it('setPlannerBusy updates the slice, and two independent readers see the same value', () => {
+    dashboardStore.getState().setPlannerBusy(true);
+    // Stands in for `PlannedExerciseRow` and `ProgramBar` — plain siblings under
+    // `PlanBuilderPage` that used to get `busy` drilled down as a prop (through
+    // `WorkoutEditor`, which had no other use for it) and now each pull their own
+    // snapshot straight off the store.
+    const rowRead = dashboardStore.getState().plannerBusy;
+    const programBarRead = dashboardStore.getState().plannerBusy;
+    expect(rowRead).toBe(true);
+    expect(programBarRead).toBe(rowRead);
+  });
+
+  it('setPlannerBusy does not touch other slices', () => {
+    dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);
+    const before = dashboardStore.getState();
+    dashboardStore.getState().setPlannerBusy(true);
+    const after = dashboardStore.getState();
+    expect(after.snapshot).toBe(before.snapshot);
+  });
+});

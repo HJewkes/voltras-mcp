@@ -11,7 +11,10 @@
  *   - **planner** (VW-120) — the plan-builder tree + exercise catalog and the
  *     session-completion summary, written by `applyPlanner` from the planner
  *     pages' own polls. Plan writes have no SSE channel, so this slice is
- *     poll-only; see `planner/planner-client.ts`.
+ *     poll-only; see `planner/planner-client.ts`. Also carries `plannerBusy`
+ *     (VMCP-03.02 part 2), the mutation-in-flight flag every plan-builder
+ *     control disables on — written via the dedicated `setPlannerBusy` action,
+ *     not `applyPlanner`, since it comes from the mutation latch, not a fetch.
  *   - **live** — the ~20 Hz `/api/stream` SSE overlay (driven by
  *     `createLiveStreamController`, written via `setLive`), demultiplexed per Voltra
  *     slot into `liveBySlot` (VW-48 P2) with `live` kept as the derived single-slot view.
@@ -100,6 +103,14 @@ interface PlannerSlice {
   /** The loaded session-completion summary. */
   sessionSummary: SessionSummaryView | null;
   plannerError: string | null;
+  /**
+   * True while a plan-builder mutation is in flight (VMCP-03.02 part 2). Read
+   * directly by every plan-builder control that disables during a write
+   * (`ProgramBar`, `WorkoutList`, `PlannedExerciseRow`) — moved here because
+   * `WorkoutEditor` was carrying a `busy` prop solely to forward it to
+   * `PlannedExerciseRow`, not because it needed the value itself.
+   */
+  plannerBusy: boolean;
 }
 
 /** A best-effort batch of planner results (any subset), mirroring {@link HistoricalPatch}. */
@@ -175,6 +186,8 @@ interface DashboardActions {
   setDisplayUnit(unit: MassUnit): void;
   /** Record a parsed hash route — called from the shell's `hashchange` listener. */
   setRoute(route: Route): void;
+  /** Toggle the plan-builder mutation-in-flight flag (VMCP-03.02 part 2). */
+  setPlannerBusy(busy: boolean): void;
 }
 
 export type DashboardState = SnapshotSlice &
@@ -203,6 +216,7 @@ const initialPlanner: PlannerSlice = {
   catalog: [],
   sessionSummary: null,
   plannerError: null,
+  plannerBusy: false,
 };
 
 export const dashboardStore = createStore<DashboardState>((set) => ({
@@ -270,4 +284,6 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
     }),
 
   setRoute: (route) => set({ route }),
+
+  setPlannerBusy: (busy) => set({ plannerBusy: busy }),
 }));

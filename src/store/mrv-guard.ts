@@ -42,6 +42,7 @@ import {
 import { checkDriftGuard } from './drift-guard.js';
 import { isEligibleForComparison, scopeSessionSetsToExerciseId } from './set-scope.js';
 import type { SessionStore } from './types.js';
+import { normaliseVelocityToMps } from './velocity-units.js';
 
 export interface MrvGuardInput {
   /** Identity of the thing being compared. `setupId` has no writer yet. */
@@ -83,6 +84,12 @@ export async function checkMrvUnderperformance(
  * session, reduced to what they achieved. Warm-up and side scoping is
  * `isEligibleForComparison` — the same filter `checkDriftGuard` applies, so the
  * gate and the judgement can never disagree about which sets are the work.
+ *
+ * Velocities are normalised to m/s first (VW-209), mirroring the drift guard's
+ * position normalisation (VW-203): `PerformanceSummary`'s velocity is an
+ * ABSOLUTE reading, and `velocityDeltaPct` divides one session's by another's,
+ * so a capture-era difference between the two sessions would otherwise read as
+ * underperformance rather than as the unit mismatch it is.
  */
 async function summarizeSession(
   store: SessionStore,
@@ -90,9 +97,9 @@ async function summarizeSession(
   key: BaselineKey,
 ): Promise<PerformanceSummary | undefined> {
   const allSets = await store.getSetsForSession(sessionId);
-  const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId).filter((set) =>
-    isEligibleForComparison(set, key),
-  );
+  const scoped = scopeSessionSetsToExerciseId(allSets, key.exerciseId)
+    .filter((set) => isEligibleForComparison(set, key))
+    .map(normaliseVelocityToMps);
   return summarizeSetsForPerformance(scoped);
 }
 
