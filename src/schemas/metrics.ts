@@ -116,6 +116,16 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // only: no push event, no watch, no cue (see B14/VW-140-141).
   z.object({ pipeline: z.literal('quality.hesitation'), setId: IdSchema }),
 
+  // Within-set ROM integrity readout (VW-93 / B09). Analytics:
+  // `readRomIntegrity(reps)` from `src/analytics/rom-integrity.ts` — per-rep
+  // ROM as a fraction of the set's own eligible median, first-to-last decay,
+  // and a rep-to-rep coefficient of variation. The cross-session half
+  // (`baseline.romVsBaselinePct`) is refused below a PROVISIONAL B57 baseline
+  // and again when B15's drift guard says the two are not comparable, because
+  // a seat or attachment change reads exactly like a ROM change. A readout
+  // only: no push event, no watch, no cue.
+  z.object({ pipeline: z.literal('quality.rom'), setId: IdSchema }),
+
   // Per-rep turnaround-dwell / eccentric-speed readout (VMCP-06.11 / B10).
   // Analytics: `detectBounce(rep)` from `src/analytics/rep-faults.ts`. A
   // readout only: no push event, no watch, no cue (see B14/VW-140-141).
