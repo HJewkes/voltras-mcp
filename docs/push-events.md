@@ -37,13 +37,26 @@ Scalars go on `meta` (rendered as XML attributes, so they're cheap to filter on)
 structured detail goes in `content` as a JSON object whose first key is always `summary` —
 a human-readable line, so the model knows what happened without parsing the rest.
 
-Every event carries a `slot` meta key naming which slot fired it: `primary` for
-single-device flows, `left` / `right` when two units are connected. Coaching surfaces
-filter on `slot` to keep parallel rep streams apart.
+Every event carries an `at` meta key: an ISO-8601 UTC timestamp of when the server
+emitted the push, distinct from any event-specific `started_at` / `ended_at` a payload
+already carries.
 
 Slot-scoped events (anything sent through `channels.forSlot(slotId).publish(...)`) also
-carry an `at` meta key: an ISO-8601 UTC timestamp of when the server emitted the push,
-distinct from any event-specific `started_at` / `ended_at` a payload already carries.
+carry a `slot` meta key naming which slot fired it: `primary` for single-device flows,
+`left` / `right` when two units are connected. Coaching surfaces filter on `slot` to keep
+parallel rep streams apart.
+
+A small, named set of events is not tied to any slot and therefore carries no `slot` key
+at all — never a fabricated `primary` filler, because a wrong slot would route a
+bilateral consumer to the wrong arm, which is worse than an absent one:
+
+- `timer_complete` — `timer.start` takes no slot argument and is not tied to any armed
+  set, so the timer it fires from is genuinely global.
+- `voice_input_failed` — `system.listen_start` runs one mic per process, not per slot, so
+  a listener error has no slot to attribute it to.
+- `debug.push_test_channel`'s probe — a diagnostic round-trip that echoes back exactly
+  the caller's own `meta` plus a `nonce`; it still gets `at`, but never a synthesized
+  `slot`.
 
 ## Events
 

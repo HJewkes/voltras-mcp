@@ -24,10 +24,11 @@ function makeFakeServer(notificationImpl?: () => Promise<void>): FakeServer {
 }
 
 describe('McpChannelPublisher', () => {
-  it('forwards content and meta as notifications/claude/channel params', () => {
+  it('forwards content and meta as notifications/claude/channel params, stamped with at', () => {
     const server = makeFakeServer();
     const publisher = new McpChannelPublisher(
       server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
     );
 
     publisher.publish({
@@ -40,8 +41,73 @@ describe('McpChannelPublisher', () => {
       method: 'notifications/claude/channel',
       params: {
         content: 'Rep 3 complete on set abc.',
-        meta: { source: 'voltras', event_type: 'rep_finalized', rep_count: '3' },
+        meta: {
+          at: '2026-09-08T12:00:00.000Z',
+          source: 'voltras',
+          event_type: 'rep_finalized',
+          rep_count: '3',
+        },
       },
+    });
+  });
+
+  it('stamps at on an unscoped publish without injecting a slot (VW-195)', () => {
+    // `timer_complete` and `voice_input_failed` publish on the base
+    // publisher directly — no `.forSlot(...)` call, because neither event
+    // is tied to a device slot. They still need `at`.
+    const server = makeFakeServer();
+    const publisher = new McpChannelPublisher(
+      server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
+    );
+
+    publisher.publish({
+      content: 'Timer "rest" complete.',
+      meta: { source: 'voltras', event_type: 'timer_complete', timer_id: 'abc' },
+    });
+
+    const [[call]] = server.server.notification.mock.calls;
+    expect(call.params.meta).toStrictEqual({
+      at: '2026-09-08T12:00:00.000Z',
+      source: 'voltras',
+      event_type: 'timer_complete',
+      timer_id: 'abc',
+    });
+    expect(call.params.meta.slot).toBeUndefined();
+  });
+
+  it('does not overwrite an explicit at set by the caller', () => {
+    const server = makeFakeServer();
+    const publisher = new McpChannelPublisher(
+      server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
+    );
+
+    publisher.publish({
+      content: 'debug probe',
+      meta: { at: 'caller-supplied', nonce: 'n1' },
+    });
+
+    expect(server.server.notification).toHaveBeenCalledWith({
+      method: 'notifications/claude/channel',
+      params: { content: 'debug probe', meta: { at: 'caller-supplied', nonce: 'n1' } },
+    });
+  });
+
+  it('round-trips debug.push_test_channel-style meta (nonce, no slot) with only at added', () => {
+    // Mirrors what `debug.push_test_channel` does: spread the caller's own
+    // meta and add a nonce, with no slot synthesised.
+    const server = makeFakeServer();
+    const publisher = new McpChannelPublisher(
+      server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
+    );
+
+    publisher.publish({ content: 'probe', meta: { nonce: 'abc-123' } });
+
+    expect(server.server.notification).toHaveBeenCalledWith({
+      method: 'notifications/claude/channel',
+      params: { content: 'probe', meta: { at: '2026-09-08T12:00:00.000Z', nonce: 'abc-123' } },
     });
   });
 
