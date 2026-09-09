@@ -89,7 +89,12 @@ import {
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { detectHesitation, type RepHesitationReading } from '../analytics/rep-faults.js';
+import {
+  detectBounce,
+  detectHesitation,
+  type RepBounceReading,
+  type RepHesitationReading,
+} from '../analytics/rep-faults.js';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import {
@@ -334,6 +339,16 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       const reps = toAnalyticsSet(set).reps.map((rep: AnalyticsRep) => detectHesitation(rep));
       return hesitationSetSummary(reps);
     }
+
+    case 'quality.bounce': {
+      const set = await state.store.getSet(input.setId);
+      if (!set) throw notFound(`set '${input.setId}' not found`);
+      // See `quality.hesitation`'s note above: `reps` degrades to `any[]`
+      // through the package's .d.ts here, so the element type is annotated
+      // explicitly rather than inferred.
+      const reps = toAnalyticsSet(set).reps.map((rep: AnalyticsRep) => detectBounce(rep));
+      return bounceSetSummary(reps);
+    }
   }
 }
 
@@ -350,6 +365,22 @@ function hesitationSetSummary(reps: RepHesitationReading[]): {
   hesitatedCount: number | null;
 } {
   return { reps, hesitatedCount: null };
+}
+
+/**
+ * `quality.bounce`'s set-level summary (VMCP-06.11 / B10).
+ *
+ * `bounceCount`/`diveBombCount` are always `null`: each would be a count of
+ * `true` verdicts, and {@link RepBounceReading.bounce}/`diveBomb` are always
+ * `null` (no baseline gate applies here either — the verdict withheld is a
+ * margin decision, not a baseline-maturity one).
+ */
+function bounceSetSummary(reps: RepBounceReading[]): {
+  reps: RepBounceReading[];
+  bounceCount: number | null;
+  diveBombCount: number | null;
+} {
+  return { reps, bounceCount: null, diveBombCount: null };
 }
 
 /** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
@@ -967,6 +998,13 @@ const METRICS_COMPUTE_DESCRIPTION =
   'depth cutoff this feature does not invent one for; relay the raw crossings, not a verdict. Set ' +
   'summary `hesitatedCount` is null for the same reason. Concentric only, post-set only, never a ' +
   'live cue (gated on B14/VW-140-141). ' +
+  '`quality.bounce` (setId) — per rep, the two turnaround dwell times (`dwellLengthenedMs` at ' +
+  "the bottom, `dwellShortenedMs` at the top) plus `eccentricPeakOverConcentricPeak`, this rep's " +
+  'own eccentric peak velocity over its own concentric peak. `bounce` and `diveBomb` are always ' +
+  'null — no citable absolute ms or ratio threshold exists for "near-zero dwell" or "fast ' +
+  'eccentric" in this codebase, so the raw dwell times and ratio are relayed instead of a ' +
+  'verdict. Set summary `bounceCount`/`diveBombCount` are null for the same reason. Post-set ' +
+  'only, never a live cue (gated on B14/VW-140-141). ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';
