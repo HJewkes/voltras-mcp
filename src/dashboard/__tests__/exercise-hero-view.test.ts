@@ -5,12 +5,12 @@
 // wraps a WA derivation we assert it equals that derivation exactly.
 
 import { describe, expect, it } from 'vitest';
+import { type Rep } from '@voltras/workout-analytics';
 import {
   bestE1RMAcrossSets,
   estimateSetRpe,
   getSetTempoSeconds,
-  type Rep,
-} from '@voltras/workout-analytics';
+} from '@voltras/workout-analytics/view';
 
 import {
   toAutoRegStatus,

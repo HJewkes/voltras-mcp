@@ -6,6 +6,11 @@
 // - `no-restricted-syntax` (NF-07): tool handler functions (any function whose
 //   identifier ends with `Handler`) must not reference `Buffer.*` directly.
 //   Tool handler returns are JSON-typed; raw bytes never cross the MCP boundary.
+// - VW-64: derived view-model metrics must come from
+//   `@voltras/workout-analytics/view`, not the package root (a `no-restricted-syntax`
+//   selector on named import specifiers) or a `dist/**` deep import
+//   (`no-restricted-imports`). Root-only exports (types, rep/phase/set primitives,
+//   non-view-model analytics functions) are unaffected.
 
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
@@ -47,6 +52,12 @@ export default tseslint.config(
       ],
       // NF-07: ban Buffer.* references inside any function whose identifier
       // ends with `Handler`. Handler returns must be JSON-typed.
+      // VW-64: restrict only the named view-model exports the root re-exports
+      // during the WA 2.x deprecation window. A selector (not `no-restricted-imports`
+      // `importNames`) so a bare `import * as analytics from '@voltras/workout-analytics'`
+      // (several test files, none of which touch these names) is not flagged —
+      // `importNames` cannot statically tell what a namespace import accesses and
+      // would flag every one of them regardless of use.
       'no-restricted-syntax': [
         'error',
         {
@@ -54,6 +65,24 @@ export default tseslint.config(
             ':matches(FunctionDeclaration[id.name=/Handler$/], VariableDeclarator[id.name=/Handler$/]) MemberExpression[object.name="Buffer"]',
           message:
             'Tool handler functions must not reference Buffer directly (NF-07). Return JSON-typed values via textResult().',
+        },
+        {
+          selector:
+            'ImportDeclaration[source.value="@voltras/workout-analytics"] > ImportSpecifier[imported.name=/^(estimateSetRpe|velocityLossVerdict|getSetRepPeakVelocities|getSetRepMeanVelocities|getSetTempoSeconds|bestE1RMAcrossSets|isNewE1RM|weightDeviationRatio|classifyWeeklyVolume|E1RMSetInput|VolumeLandmarks|VolumeStatusName|VelocityLossVerdict)$/]',
+          message:
+            'Import view-model metrics from "@voltras/workout-analytics/view", not the package root (VW-64).',
+        },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@voltras/workout-analytics/dist/*', '@voltras/workout-analytics/dist/**'],
+              message:
+                'Do not deep-import into @voltras/workout-analytics/dist; use "@voltras/workout-analytics/view" instead (VW-64).',
+            },
+          ],
         },
       ],
     },

@@ -17,7 +17,7 @@ import {
   getSetRepPeakVelocities,
   getSetTempoSeconds,
   isNewE1RM,
-} from '@voltras/workout-analytics';
+} from '@voltras/workout-analytics/view';
 import type {
   ExerciseCardProps,
   SetRowProps,
@@ -65,7 +65,9 @@ export type HeroSetRowProps = HeroDoneRow | HeroLiveRow;
  * CANONICAL BANDS: 20/30 — identical to the rest view's `verdictFromLoss`
  * (`live-page/model.ts`), so the live StatusPill and the rest-view aura never
  * disagree (they previously split at 28 vs 30).
- * TODO(VW-64): consume WA `velocityLossVerdict` once published (the eventual SSOT).
+ * TODO(VW-64): decide whether to adopt WA's now-published `velocityLossVerdict`
+ * (the eventual SSOT) in place of this local banding — a wiring choice, not a
+ * blocked dependency.
  */
 export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null {
   if (lossPct === null) return null;
@@ -88,10 +90,11 @@ export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null
  * contract above still holds, so this never pre-rounds; SetRow does.
  */
 export function toSetRowProps(view: HeroSetView, unit: MassUnit = 'lbs'): HeroSetRowProps {
-  // TODO(VW-62): swap to the set-level MEAN sibling once WA publishes
-  // `getSetRepMeanVelocities` (WA 1.5.0 exports only the peak fold). The per-rep
-  // strips already moved to mean (`panels/live-view.ts`); this set-level path stays
-  // peak until the sibling ships, so the hero's SetRow reads optimistic vs the recap.
+  // TODO(VW-62): decide whether to swap to the now-published set-level MEAN
+  // sibling `getSetRepMeanVelocities` — a wiring choice, not a blocked
+  // dependency. The per-rep strips already moved to mean (`panels/live-view.ts`);
+  // this set-level path stays peak until that choice is made, so the hero's
+  // SetRow reads optimistic vs the recap.
   // A rep with no derivable peak velocity is omitted, not fabricated as 0.
   const velocities = getSetRepPeakVelocities({ reps: view.reps }).filter(
     (mps): mps is number => mps != null,
