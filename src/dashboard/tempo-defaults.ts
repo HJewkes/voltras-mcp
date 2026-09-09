@@ -41,14 +41,14 @@ export const byPattern: Readonly<Record<string, TempoTuple>> = {
 
 /**
  * Per-exercise overrides, applied where the pattern default misleads. Keyed on the
- * cable exercise ids the plan store uses. Anything absent falls back to `byPattern`.
+ * `ExerciseService.getById` catalog slugs (src/exercises/seed-catalog.ts), not the
+ * mobile-style underscored ids these used to carry (VW-56) — anything absent falls
+ * back to `byPattern`.
  */
 export const byExercise: Readonly<Record<string, TempoTuple>> = {
-  cable_fly: [3, 1, 1, 1],
-  cable_crossover: [3, 1, 1, 1],
-  cable_lateral_raise: [3, 0, 1, 1],
-  cable_crunch: [2, 0, 2, 1],
-  cable_hip_thrust: [2, 1, 1, 2],
+  'cable-chest-fly': [3, 1, 1, 1],
+  'cable-lateral-raise': [3, 0, 1, 1],
+  'cable-crunch': [2, 0, 2, 1],
 };
 
 /**
