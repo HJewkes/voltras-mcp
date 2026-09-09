@@ -2350,3 +2350,33 @@ export function buildIsometricPhasePayload(input: IsometricPhasePayloadInput): {
   });
   return { meta, content };
 }
+
+/**
+ * Build the meta + content for a `lease_lost` channel event (VMCP-01.65).
+ *
+ * Fired when a multi-step device write re-checked the write-lease after an
+ * await and found the epoch had moved — another client took the device. The
+ * writes that had not been issued yet never fire, and this is what tells the
+ * losing session why its call stopped partway.
+ *
+ * `slot` and `at` are NOT set here — the slot-scoped publisher injects both
+ * into meta on publish, as it does for every slot-scoped event.
+ */
+export function buildLeaseLostPayload(input: { tool: string; slot: string }): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'lease_lost',
+    tool: input.tool,
+  };
+  const content = JSON.stringify({
+    summary:
+      `${input.tool} stopped partway on slot ${input.slot}: another client took the device ` +
+      'write-lease. The remaining device writes were NOT issued.',
+    tool: input.tool,
+    slot: input.slot,
+  });
+  return { meta, content };
+}

@@ -732,6 +732,19 @@ export interface StoredWorkoutTemplate {
   externalId?: string;
 }
 
+/**
+ * Coach-set tempo override on a planned exercise (VW-46), seconds per phase.
+ * Canonical order at every MCP/store boundary is `[ecc, pauseBottom, con, pauseTop]`
+ * (matching `@voltras/workout-analytics`' `getSetTempoSeconds`) — a NAMED object here
+ * so a consumer can never silently transpose it the way a bare tuple could be.
+ */
+export interface StoredTargetTempo {
+  ecc: number;
+  pauseBottom: number;
+  con: number;
+  pauseTop: number;
+}
+
 /** A planned exercise within a workout template (sets/reps/weight prescription). */
 export interface StoredPlannedExercise {
   id: string;
@@ -745,6 +758,8 @@ export interface StoredPlannedExercise {
   targetRpe?: number;
   restSec?: number;
   notes?: string;
+  /** Coach-set tempo override; absent when the coach left it unset (VW-46). */
+  targetTempo?: StoredTargetTempo;
   /** Stable authoring key (`tc:item:<id>`), UNIQUE where present. See `StoredWorkoutTemplate`. */
   externalId?: string;
 }
@@ -775,6 +790,8 @@ export interface PlanImportExercise {
   targetWeightLbs?: number;
   restSec?: number;
   notes?: string;
+  // No targetTempo here (VW-46): the TrueCoach parser is not a source of coach
+  // tempo data yet, so an import never carries one.
 }
 
 /** Row counts per outcome. `unchanged` is a row whose stored values already matched. */

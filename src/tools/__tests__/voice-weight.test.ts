@@ -29,6 +29,9 @@ vi.mock('../../state/event-bridge.js', () => ({
 
 const { createWeightFastPath, planWeight, resolveTargetSlot } = await import('../voice-weight.js');
 const { makeVoiceWeight } = await import('../voice-weight-context.js');
+const { fence } = await import('../../state/lease-fence.js');
+const { makeFakeLease, makeRecordingChannels } =
+  await import('../../state/__tests__/fixtures/lease-fence.js');
 
 type Published = { meta: Record<string, string>; content: string };
 
@@ -351,5 +354,63 @@ describe('makeVoiceWeight', () => {
   it('reports a null weight when the slot has never published one', () => {
     const state = fakeState([{ slotId: 'right' }]);
     expect(makeVoiceWeight(state as never).slots()[0].currentWeightLbs).toBeNull();
+  });
+});
+
+// VMCP-01.65: the fence is taken when the mic arms, which is the last moment
+// this session proved it held the device. A spoken command that arrives after
+// a steal must not reach the cable.
+describe('createWeightFastPath — lease fence', () => {
+  function fencedHarness(): {
+    lease: ReturnType<typeof makeFakeLease>;
+    channels: ReturnType<typeof makeRecordingChannels>;
+    setWeight: Mock<(slot: string, lbs: number) => Promise<void>>;
+    handle: (transcript: string, command: unknown) => Promise<void>;
+  } {
+    const lease = makeFakeLease();
+    const channels = makeRecordingChannels();
+    const setWeight = vi.fn(async () => undefined);
+    const handler = createWeightFastPath(
+      channels as never,
+      { slots: () => [slotSpec('primary')], setWeight } as never,
+      fence({ lease, channels }, 'voice.weight'),
+    );
+    return {
+      lease,
+      channels,
+      setWeight,
+      handle: (transcript, command) =>
+        handler({
+          command: command as never,
+          transcript,
+          sttModel: 'tiny.en',
+          latencyMs: 120,
+          audioDurationMs: 900,
+        }),
+    };
+  }
+
+  it('does not write, and says why, once the device changed hands', async () => {
+    const h = fencedHarness();
+    h.lease.steal();
+
+    await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
+
+    expect(h.setWeight).not.toHaveBeenCalled();
+    expect(h.channels.events).toHaveLength(1);
+    expect(h.channels.events[0].meta.event_type).toBe('lease_lost');
+    expect(h.channels.events[0].meta.tool).toBe('voice.weight');
+    expect(h.channels.events[0].slot).toBe('primary');
+  });
+
+  it('writes as usual while the lease is untouched', async () => {
+    const h = fencedHarness();
+
+    await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
+
+    expect(h.setWeight).toHaveBeenCalledWith('primary', 70);
+    expect(h.channels.events.map((event) => event.meta.event_type)).toEqual([
+      'voice_command_applied',
+    ]);
   });
 });

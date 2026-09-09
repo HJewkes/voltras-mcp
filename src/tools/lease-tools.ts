@@ -29,6 +29,10 @@ function leaseView(state: ServerState, self: ClientId): unknown {
   return {
     self,
     heldByYou: holder?.clientId === self,
+    // VMCP-01.65: the epoch multi-step writers fence on. A changed value
+    // between two calls means the device changed hands in between, even when
+    // the holder name reads the same.
+    generation: state.lease.generation(),
     holder:
       holder === null
         ? null
@@ -166,7 +170,9 @@ async function release(state: ServerState, self: ClientId): Promise<unknown> {
 const LEASE_STATUS_DESCRIPTION =
   'Read who currently holds the single-writer device lease, and whether that is you. ' +
   'Ordinary use never needs this — the lease is acquired implicitly on your first write ' +
-  'call. Use it to diagnose a contended device (another client already connected).';
+  'call. Use it to diagnose a contended device (another client already connected). ' +
+  '`generation` is a counter that increases every time the lease changes hands or is ' +
+  'released, so two reads with the same value prove the device never left you in between.';
 
 const LEASE_ACQUIRE_DESCRIPTION =
   'Take the device lease. Only needed for the contended case — normally the first write ' +

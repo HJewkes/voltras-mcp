@@ -182,6 +182,22 @@ describe('the lease tools themselves', () => {
     );
   });
 
+  // VMCP-01.65: the epoch multi-step writers fence on. A holder name is not
+  // enough to compare on — a release and a re-acquire by the same client is a
+  // different device epoch.
+  it('report a generation that moves when the device changes hands', async () => {
+    await call(a, 'timer.start', { durationMs: 60000, label: 'rest' });
+    const held = (await call(a, 'system.lease_status')).payload.generation as number;
+
+    await call(a, 'timer.start', { durationMs: 60000, label: 'rest' });
+    const stillHeld = (await call(a, 'system.lease_status')).payload.generation as number;
+    await call(b, 'system.lease_acquire', { force: true });
+    const stolen = (await call(b, 'system.lease_status')).payload.generation as number;
+
+    expect(stillHeld).toBe(held);
+    expect(stolen).toBeGreaterThan(held);
+  });
+
   it('release, freeing the device for the other client', async () => {
     await call(a, 'timer.start', { durationMs: 60000, label: 'rest' });
 
