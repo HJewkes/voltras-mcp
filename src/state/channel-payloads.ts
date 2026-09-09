@@ -1952,6 +1952,49 @@ export function buildIdleRepSummaryPayload(args: {
 }
 
 /**
+ * Build the meta + content for an `idle_rep_reclaimed` channel event (VW-185).
+ *
+ * Auto-arm adopts the reps that triggered it, which retroactively makes them
+ * set work rather than idle work. When their `idle_rep_summary` (or verbose
+ * `idle_rep`) has NOT gone out yet the bridge simply drops them from the
+ * pending batch and the consumer never hears about them. When it has, the
+ * count on the wire is already wrong and only a correcting event can fix it.
+ *
+ * `count` is how many previously-reported idle reps set `setId` adopted; the
+ * consumer subtracts it from the idle total it accumulated for this session.
+ * `idleRepCount` is the session-monotonic total AFTER the reclaim, so a
+ * consumer can also just resynchronize to it.
+ */
+export function buildIdleRepReclaimedPayload(args: {
+  slot: string;
+  count: number;
+  setId: string;
+  idleRepCount: number;
+}): { meta: Record<string, string>; content: string } {
+  const { slot, count, setId, idleRepCount } = args;
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'idle_rep_reclaimed',
+    slot,
+    set_id: setId,
+    count: String(count),
+    idle_rep_count: String(idleRepCount),
+  };
+  const reps = `${count} idle rep${count === 1 ? '' : 's'}`;
+  const summary = `${reps} already reported as idle now belong${count === 1 ? 's' : ''} to set ${setId.slice(0, 8)} (auto-armed). Session total idle: ${idleRepCount}.`;
+  const content = JSON.stringify({
+    summary,
+    idle_rep_reclaimed: {
+      count,
+      set_id: setId,
+      slot,
+    },
+    idle_rep_count: idleRepCount,
+  });
+  return { meta, content };
+}
+
+/**
  * Build the meta + content for a passive `rest_status` channel event
  * (VMCP-02.08). Emitted on a 15s cadence after `set_ended` (capped at
  * 5 minutes) so the PT skill can observe elapsed rest time without

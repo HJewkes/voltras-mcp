@@ -47,21 +47,22 @@ distinct from any event-specific `started_at` / `ended_at` a payload already car
 
 ## Events
 
-| Event                    | Fires when                                                                                                   | Auto-stops the set?       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                | —                         |
-| `set_started`            | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                 | —                         |
-| `set_updated`            | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets). | —                         |
-| `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.              | —                         |
-| `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                             | implicit (device stopped) |
-| `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                                     | —                         |
-| `timer_complete`         | A `timer.start` duration elapses.                                                                            | —                         |
-| `set_target_reached`     | A `rep_count_reached` trigger matches.                                                                       | optional, via `stopOn`    |
-| `velocity_loss_exceeded` | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).       | optional, via `stopOn`    |
-| `idle_timeout`           | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                            | optional, via `stopOn`    |
-| `rest_status`            | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.        | —                         |
-| `voice_command_applied`  | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).     | —                         |
-| `voice_command_rejected` | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                     | —                         |
+| Event                    | Fires when                                                                                                      | Auto-stops the set?       |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                   | —                         |
+| `set_started`            | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                    | —                         |
+| `set_updated`            | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets).    | —                         |
+| `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.                 | —                         |
+| `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                                | implicit (device stopped) |
+| `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                                        | —                         |
+| `timer_complete`         | A `timer.start` duration elapses.                                                                               | —                         |
+| `set_target_reached`     | A `rep_count_reached` trigger matches.                                                                          | optional, via `stopOn`    |
+| `velocity_loss_exceeded` | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).          | optional, via `stopOn`    |
+| `idle_timeout`           | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                               | optional, via `stopOn`    |
+| `rest_status`            | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.           | —                         |
+| `idle_rep_reclaimed`     | An auto-armed set adopted reps a previous idle report already counted. See [auto-armed sets](#auto-armed-sets). | —                         |
+| `voice_command_applied`  | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).        | —                         |
+| `voice_command_rejected` | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                        | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
@@ -184,6 +185,26 @@ sets — a metre of cable, fast, unloaded — looks exactly like a rep, and one 
 nothing about itself. When the two reps agree both are adopted and nothing is lost; when
 they disagree only the later one is, and the pull stays in the idle ledger where
 `idle_rep_summary` reports it.
+
+Because the arm waits, a rep it later adopts may already have been reported as idle. Idle
+reps are batched into one `idle_rep_summary` every 5s, and a pause longer than that window
+between the two reps flushes the first one before the second arrives. When the summary is
+still pending the adopted rep quietly leaves the batch and you never hear about it; when it
+has already gone out, `idle_rep_reclaimed` follows:
+
+```jsonc
+{
+  "summary": "1 idle rep already reported as idle now belongs to set 3f2a1b04 (auto-armed). Session total idle: 0.",
+  "idle_rep_reclaimed": { "count": 1, "set_id": "3f2a1b04-…", "slot": "primary" },
+  "idle_rep_count": 0,
+}
+```
+
+Subtract `count` from the idle total you accumulated for this session, or just resynchronize
+to `idle_rep_count` (the session-monotonic total after the reclaim). The reps themselves are
+not lost — they are the opening reps of `set_id`. In verbose mode
+(`session.start {verboseIdleReps: true}`), where each idle rep went out as its own
+`idle_rep`, this is the only correction you get.
 
 ## Who is lifting (`lifter`)
 

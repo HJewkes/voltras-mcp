@@ -940,3 +940,72 @@ describe('applySetSummary / consumeLatestSetSummary — firmware peaks', () => {
     expect(consumed?.peakPowerRaw).toBe(0);
   });
 });
+
+// VW-185 — the idle ledger remembers which entries a channel event already
+// reported, so a later auto-arm reclaim knows whether it can withdraw them
+// from the pending batch or has to correct them on the wire.
+describe('idle-rep ledger publish state (VW-185)', () => {
+  function withIdleReps(count: number): LiveState {
+    const live = new LiveState();
+    for (let i = 0; i < count; i++) {
+      live.recordIdleRep(makeRep(i + 1), 'primary');
+    }
+    return live;
+  }
+
+  it('records new idle reps as unreported', () => {
+    const live = withIdleReps(2);
+
+    expect(live.idleReps.map((entry) => entry.published)).toEqual([false, false]);
+  });
+
+  it('reports a reclaim of unreported reps as pending', () => {
+    const live = withIdleReps(2);
+
+    expect(live.forgetIdleReps(1)).toEqual({ pending: 1, published: 0 });
+    expect(live.idleRepCount).toBe(1);
+  });
+
+  it('reports a reclaim of reported reps as published', () => {
+    const live = withIdleReps(2);
+    live.markIdleRepsPublished();
+
+    expect(live.forgetIdleReps(1)).toEqual({ pending: 0, published: 1 });
+  });
+
+  it('splits a reclaim that spans the reporting boundary', () => {
+    const live = withIdleReps(1);
+    live.markIdleRepsPublished();
+    live.recordIdleRep(makeRep(2), 'primary');
+
+    expect(live.forgetIdleReps(2)).toEqual({ pending: 1, published: 1 });
+    expect(live.idleReps).toEqual([]);
+  });
+
+  it('leaves already-reported entries alone on a later flush', () => {
+    const live = withIdleReps(1);
+    live.markIdleRepsPublished();
+    const first = live.idleReps[0];
+    live.recordIdleRep(makeRep(2), 'primary');
+    live.markIdleRepsPublished();
+
+    expect(live.idleReps[0]).toBe(first);
+    expect(live.idleReps[1].published).toBe(true);
+  });
+
+  it('reclaims nothing for a zero count', () => {
+    const live = withIdleReps(1);
+
+    expect(live.forgetIdleReps(0)).toEqual({ pending: 0, published: 0 });
+    expect(live.idleRepCount).toBe(1);
+  });
+
+  it('clears the publish state with the ledger', () => {
+    const live = withIdleReps(1);
+    live.markIdleRepsPublished();
+    live.clearIdleReps();
+    live.recordIdleRep(makeRep(1), 'primary');
+
+    expect(live.idleReps[0].published).toBe(false);
+  });
+});
