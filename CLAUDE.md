@@ -41,6 +41,7 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/resources/` — `voltra://device/current`, `voltra://session/active`, `voltra://set/active`
 - `src/state/` — in-process `LiveState` collector + SDK `event-bridge`
 - `src/store/` — `node:sqlite`-backed `SessionStore`
+- `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `src/types/` — non-test type-only modules (excluded from coverage)
 

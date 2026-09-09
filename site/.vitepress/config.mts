@@ -1,4 +1,7 @@
 import { defineConfig } from 'vitepress';
+// Emitted by `npm run docs:reference` alongside the reference pages themselves,
+// so a new tool namespace never needs a hand edit here.
+import referenceSidebar from './reference-sidebar.json';
 
 // GitHub Pages serves this as a project site under /voltras-mcp/, not the
 // repo root, so every asset/link needs that prefix baked in.
@@ -13,7 +16,7 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Install and run', link: '/install-and-run' },
-      { text: 'Capability reference', link: '/capability-reference' },
+      { text: 'Capability reference', link: '/reference/' },
       { text: 'Guides', link: '/guides/' },
       { text: 'Planned', link: '/planned' },
       { text: 'Changelog', link: '/changelog' },
@@ -24,12 +27,12 @@ export default defineConfig({
         text: 'Docs',
         items: [
           { text: 'Install and run', link: '/install-and-run' },
-          { text: 'Capability reference', link: '/capability-reference' },
           { text: 'Guides', link: '/guides/' },
           { text: 'Planned', link: '/planned' },
           { text: 'Changelog', link: '/changelog' },
         ],
       },
+      { text: 'Capability reference', collapsed: false, items: referenceSidebar },
     ],
 
     socialLinks: [{ icon: 'github', link: 'https://github.com/HJewkes/voltras-mcp' }],
