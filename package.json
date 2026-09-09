@@ -38,7 +38,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
     "prepare": "husky",
     "docs:dev": "vitepress dev site",
-    "docs:build": "vitepress build site"
+    "docs:build": "vitepress build site",
+    "docs:reference": "node scripts/gen-tool-reference.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

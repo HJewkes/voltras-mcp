@@ -21,7 +21,7 @@ It speaks stdio only — one server process per Claude Code session.
 
 - **[Install and run](/install-and-run)** — clone, build, and register the server with
   Claude Code.
-- **[Capability reference](/capability-reference)** — the tools and resources the server
-  exposes.
+- **[Capability reference](/reference/)** — the tools, resources and push events the
+  server exposes, generated from the registry itself.
 - **[The repository](https://github.com/HJewkes/voltras-mcp)** — source, issues, and the
   full [README](https://github.com/HJewkes/voltras-mcp/blob/main/README.md).

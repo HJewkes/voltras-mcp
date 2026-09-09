@@ -1,0 +1,102 @@
+[
+  {
+    "text": "Overview",
+    "link": "/reference/"
+  },
+  {
+    "text": "device.*",
+    "link": "/reference/device"
+  },
+  {
+    "text": "bilateral.*",
+    "link": "/reference/bilateral"
+  },
+  {
+    "text": "slot.*",
+    "link": "/reference/slot"
+  },
+  {
+    "text": "session.*",
+    "link": "/reference/session"
+  },
+  {
+    "text": "set.*",
+    "link": "/reference/set"
+  },
+  {
+    "text": "metrics.*",
+    "link": "/reference/metrics"
+  },
+  {
+    "text": "exercise.*",
+    "link": "/reference/exercise"
+  },
+  {
+    "text": "timer.*",
+    "link": "/reference/timer"
+  },
+  {
+    "text": "server.*",
+    "link": "/reference/server"
+  },
+  {
+    "text": "debug.*",
+    "link": "/reference/debug"
+  },
+  {
+    "text": "system.*",
+    "link": "/reference/system"
+  },
+  {
+    "text": "progression.*",
+    "link": "/reference/progression"
+  },
+  {
+    "text": "isometric.*",
+    "link": "/reference/isometric"
+  },
+  {
+    "text": "plan.*",
+    "link": "/reference/plan"
+  },
+  {
+    "text": "profile.*",
+    "link": "/reference/profile"
+  },
+  {
+    "text": "baselines.*",
+    "link": "/reference/baselines"
+  },
+  {
+    "text": "driftguard.*",
+    "link": "/reference/driftguard"
+  },
+  {
+    "text": "mrvguard.*",
+    "link": "/reference/mrvguard"
+  },
+  {
+    "text": "coaching.*",
+    "link": "/reference/coaching"
+  },
+  {
+    "text": "truecoach.*",
+    "link": "/reference/truecoach"
+  },
+  {
+    "text": "report.*",
+    "link": "/reference/report"
+  },
+  {
+    "text": "mock.*",
+    "link": "/reference/mock"
+  },
+  {
+    "text": "Resources",
+    "link": "/reference/resources"
+  },
+  {
+    "text": "Push events",
+    "link": "/reference/push-events"
+  }
+]
