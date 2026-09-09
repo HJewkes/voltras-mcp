@@ -65,13 +65,14 @@ import {
   type StoredSide,
   type StoredTrainingBlock,
   type EffortTolerance,
+  type StoredInjury,
   type StoredTrainingProfile,
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -435,6 +436,12 @@ const SCHEMA_SQL = `
     current_baseline TEXT,
     effort_tolerance TEXT,
     target TEXT,
+    -- v17 (VW-148): the two session-0 answers intake had nowhere to put — the
+    -- injury/limitation list (B42) and the named program the reported set
+    -- count came from (B36). injuries_json is a JSON array; the whole list is
+    -- replaced on write, because a merge cannot express a removal.
+    injuries_json TEXT,
+    named_program_history TEXT,
     -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
     -- actually gave and which we assumed on their behalf.
     provenance_json TEXT,
@@ -1125,6 +1132,22 @@ function migrateV15ToV16(db: DatabaseSync): void {
 }
 
 /**
+ * v16→v17 (VW-148): the injury/limitation list (B42) and the named program the
+ * reported set count came from (B36).
+ *
+ * ADDITIVE ONLY, and NOTHING IS BACK-FILLED. An absent `injuries_json` means
+ * "never asked", not "no injuries" — the two are different answers and
+ * `profile.get_onboarding_gaps` reports the first as a gap.
+ */
+function migrateV16ToV17(db: DatabaseSync): void {
+  const existing = columnNames(db, 'training_profile');
+  for (const column of ['injuries_json', 'named_program_history']) {
+    if (existing.has(column)) continue;
+    db.exec(`ALTER TABLE training_profile ADD COLUMN ${column} TEXT`);
+  }
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1423,6 +1446,8 @@ interface TrainingProfileRow {
   current_baseline: string | null;
   effort_tolerance: string | null;
   target: string | null;
+  injuries_json: string | null;
+  named_program_history: string | null;
   provenance_json: string | null;
   updated_at: string;
 }
@@ -2518,8 +2543,9 @@ export class SqliteSessionStore implements SessionStore {
            (user_id, declared_tier, declared_at, years_training, history_consistent,
             ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
             days_available, days_reliable, onboarded_at, current_baseline,
-            effort_tolerance, target, provenance_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            effort_tolerance, target, injuries_json, named_program_history,
+            provenance_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            declared_tier = excluded.declared_tier,
            declared_at = excluded.declared_at,
@@ -2535,6 +2561,8 @@ export class SqliteSessionStore implements SessionStore {
            current_baseline = excluded.current_baseline,
            effort_tolerance = excluded.effort_tolerance,
            target = excluded.target,
+           injuries_json = excluded.injuries_json,
+           named_program_history = excluded.named_program_history,
            provenance_json = excluded.provenance_json,
            updated_at = excluded.updated_at`,
       )
@@ -2554,6 +2582,8 @@ export class SqliteSessionStore implements SessionStore {
         p.currentBaseline ?? null,
         p.effortTolerance ?? null,
         p.target ?? null,
+        p.injuries === undefined ? null : JSON.stringify(p.injuries),
+        p.namedProgramHistory ?? null,
         p.provenance === undefined ? null : JSON.stringify(p.provenance),
         p.updatedAt,
       );
@@ -2917,6 +2947,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 15 = v15 schema; v16 adds `training_profile.current_baseline` /
   //     `.effort_tolerance` / `.target` (VMCP-06.04) — additive columns,
   //     nothing backfilled (`goal` is left exactly as written).
+  // 16 = v16 schema; v17 adds `training_profile.injuries_json` /
+  //     `.named_program_history` (VW-148) — additive columns, nothing
+  //     backfilled (absent injuries means "never asked", not "none").
   // SCHEMA_VERSION = current. Anything else is an unknown future version
   // and we refuse to touch it.
   if (
@@ -2936,6 +2969,7 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
     found !== 13 &&
     found !== 14 &&
     found !== 15 &&
+    found !== 16 &&
     found !== SCHEMA_VERSION
   ) {
     throw createSchemaIncompatibleError(path, found);
@@ -2995,6 +3029,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 15) {
     migrateV15ToV16(db);
+  }
+  if (current <= 16) {
+    migrateV16ToV17(db);
   }
 }
 
@@ -3284,6 +3321,8 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   if (row.current_baseline !== null) out.currentBaseline = row.current_baseline;
   if (isEffortTolerance(row.effort_tolerance)) out.effortTolerance = row.effort_tolerance;
   if (row.target !== null) out.target = row.target;
+  if (row.injuries_json !== null) out.injuries = JSON.parse(row.injuries_json) as StoredInjury[];
+  if (row.named_program_history !== null) out.namedProgramHistory = row.named_program_history;
   if (row.provenance_json !== null) {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }

@@ -109,4 +109,10 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
     sessionId: IdSchema,
     exerciseId: IdSchema.optional(),
   }),
+
+  // Per-rep mid-rep hesitation readout (VMCP-06.02 / B12). Analytics:
+  // `detectHesitation(rep)` from `src/analytics/rep-faults.ts` — a velocity
+  // trough strictly inside the concentric phase's own ROM window. A readout
+  // only: no push event, no watch, no cue (see B14/VW-140-141).
+  z.object({ pipeline: z.literal('quality.hesitation'), setId: IdSchema }),
 ]);

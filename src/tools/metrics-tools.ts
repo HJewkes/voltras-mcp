@@ -89,6 +89,7 @@ import {
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { detectHesitation, type RepHesitationReading } from '../analytics/rep-faults.js';
 import { MetricsComputeInput } from '../schemas/metrics.js';
 import type { ServerState } from '../state/server-state.js';
 import {
@@ -323,7 +324,32 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       );
       return { exercises };
     }
+
+    case 'quality.hesitation': {
+      const set = await state.store.getSet(input.setId);
+      if (!set) throw notFound(`set '${input.setId}' not found`);
+      // `reps` degrades to `any[]` through the package's .d.ts here (see
+      // `rirForSet`'s note on the same pattern), so the element type is
+      // annotated explicitly rather than inferred.
+      const reps = toAnalyticsSet(set).reps.map((rep: AnalyticsRep) => detectHesitation(rep));
+      return hesitationSetSummary(reps);
+    }
   }
+}
+
+/**
+ * `quality.hesitation`'s set-level summary (VMCP-06.02 / B12).
+ *
+ * `hesitatedCount` is always `null`: it would be a count of `true` verdicts,
+ * and {@link RepHesitationReading.hesitated} is always `null` (no baseline
+ * gate applies here either — the verdict withheld is a margin decision, not
+ * a baseline-maturity one, so `checkFeatureGate` has nothing to contribute).
+ */
+function hesitationSetSummary(reps: RepHesitationReading[]): {
+  reps: RepHesitationReading[];
+  hesitatedCount: number | null;
+} {
+  return { reps, hesitatedCount: null };
 }
 
 /** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
@@ -897,8 +923,8 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 9 literals) to a single `@voltras/workout-analytics` function; each pipeline ' +
-  'takes different input fields, all optional at the schema level but required per-pipeline: ' +
+  'field (one of 10 literals) to a single analytics function; each pipeline takes different ' +
+  'input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
   'and, if targetVelocity is given, inverts it to a recommended load + confidence (null if the ' +
@@ -935,6 +961,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   '`retrospective` is null below a PROVISIONAL baseline — the losses still ship, only the verdict ' +
   'is withheld. `movementClassKnown` is always false: the signal is not valid for ballistic ' +
   'pulls and nothing here can tell a pull from a press, so relay that caveat. ' +
+  '`quality.hesitation` (setId) — per rep, every velocity trough strictly inside the CONCENTRIC ' +
+  "phase's own ROM window (15-85%, per the ticket): `{ atRomFraction, velocityFractionOfPeak }`. " +
+  '`hesitated` is always null — calling a trough a real hesitation vs. measurement noise needs a ' +
+  'depth cutoff this feature does not invent one for; relay the raw crossings, not a verdict. Set ' +
+  'summary `hesitatedCount` is null for the same reason. Concentric only, post-set only, never a ' +
+  'live cue (gated on B14/VW-140-141). ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';

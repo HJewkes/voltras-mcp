@@ -812,6 +812,18 @@ export interface StoredProgramAssignment {
  */
 export type EffortTolerance = 'low' | 'moderate' | 'high';
 
+/**
+ * A self-reported injury or limitation (VW-148 / B42). Verbatim self-report:
+ * nothing here is a diagnosis and nothing downstream interprets it clinically.
+ */
+export interface StoredInjury {
+  area: string;
+  kind: 'sharp_in_set' | 'lingering_joint' | 'other';
+  note?: string;
+  /** The hard gate. `true` means defer to a doctor; never interpreted further. */
+  cardioLimitation?: boolean;
+}
+
 export interface StoredTrainingProfile {
   userId: string;
   /** 'beginner' | 'intermediate' | 'advanced', as declared by the user. */
@@ -832,6 +844,10 @@ export interface StoredTrainingProfile {
   effortTolerance?: EffortTolerance;
   /** Where the lifter wants to END UP, free text. Never merged into `goal`. */
   target?: string;
+  /** Self-reported injuries/limitations (VW-148 / B42). Replaced wholesale. */
+  injuries?: StoredInjury[];
+  /** The named program `reportedSetsPerMuscle` came from (VW-148 / B36). */
+  namedProgramHistory?: string;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */
