@@ -213,6 +213,19 @@ Conversation about weight ("how much should I use", "that was seventy pounds las
 time", "don't set it to 70") never reaches the fast-path — it routes to `voice_input`
 as before.
 
+### While a cue is speaking
+
+`system.speak` and the automatic cue emitter duck the mic for the length of each cue.
+Ducked is not deaf: safety phrases are still transcribed and still unload, so a "stop"
+shouted over a cue fires the same `deterministic_stop_triggered` it would in silence
+(VMCP-05.20). The wake phrase and weight commands are suppressed for that window —
+repeat them once the cue ends.
+
+A transcript made mostly of the words being spoken aloud is dropped as the machine
+hearing itself. The trade that buys: a lifter shouting a safety word that also appears
+in the cue text is dropped with the echo. No shipped cue template contains a safety
+word. Full design and residual risk: [docs/vmcp-05.20-safety-during-cues.md](vmcp-05.20-safety-during-cues.md).
+
 ## The trigger DSL
 
 `set.start({ watch: { stopOn[], notifyOn[] } })` registers triggers the server evaluates

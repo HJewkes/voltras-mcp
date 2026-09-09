@@ -20,10 +20,11 @@ import { CueSelector, slotFill } from './cue-templates.js';
 /**
  * Cue categories that can fire while the lifter is still under load, mid-set
  * (VMCP-05.01) — unlike `set_intro`/`set_complete`, which only fire at set
- * boundaries. Every cue mutes (and discards frames from) the mic for its
- * `say` duration, so the ungated voice "stop" fast-path is unavailable for
- * that window; these are gated off by default to keep that blind spot out of
- * the riskiest part of a set. See `CuesMidSetMode` in config.ts.
+ * boundaries. Every cue ducks the mic for its `say` duration: since VMCP-05.20
+ * the ungated voice "stop" fast-path stays live through that window, but the
+ * wake phrase and weight commands do not, and a stop worded like the cue is
+ * dropped as echo. These stay gated off by default until the exemption has
+ * been verified on hardware. See `CuesMidSetMode` in config.ts.
  */
 const MID_SET_CATEGORIES: ReadonlySet<CueDecision['category']> = new Set([
   'target_hit',
