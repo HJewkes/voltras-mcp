@@ -38,6 +38,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     hasSession: true,
     exerciseName: 'Cable Chest Press',
     title: null,
+    lifter: null,
     weightLbs: 140,
     unit: 'lbs',
     completedSets: [],
@@ -78,7 +79,14 @@ function liveWithRep(rom: number, peakForce = 0): StoreLiveModel {
     position: 120,
     force: 480,
     repInProgress: 2,
-    lastRep: { repIndex: 1, vCon: 0.41, rom, peakVelocity: 0.6, peakForceSoFar: peakForce },
+    lastRep: {
+      slot: 'primary',
+      repIndex: 1,
+      vCon: 0.41,
+      rom,
+      peakVelocity: 0.6,
+      peakForceSoFar: peakForce,
+    },
     peakForce,
   };
 }
@@ -147,6 +155,24 @@ describe('mapStoreToDashboardModel', () => {
     it('leaves the tempo undefined when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.tempo).toBeUndefined();
+    });
+  });
+
+  describe('session.title (VW-43)', () => {
+    it('carries the composed prescription title onto the session model', () => {
+      const prescription: PrescriptionView = { sets: 4, title: 'Push A · Hypertrophy' };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.title).toBe('Push A · Hypertrophy');
+    });
+
+    it('leaves the title null when the prescription carries none', () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
+      expect(model?.session.title).toBeNull();
+    });
+
+    it('leaves the title null when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.title).toBeNull();
     });
   });
 
@@ -637,11 +663,9 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
   function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
     return {
       live: {
-        connected: true,
-        phase: 'con',
+        phase: 'concentric',
         phaseElapsedMs: 0,
         velocity: 0.5,
-        position: 0,
         force: 0,
         repVelocities: [0.6, 0.5],
         velocityLossPct: null,
