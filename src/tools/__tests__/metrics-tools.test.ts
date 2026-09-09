@@ -13,6 +13,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 import * as analytics from '@voltras/workout-analytics';
+import { detectBounce, detectHesitation } from '../../analytics/rep-faults.js';
+import { readRomIntegrity } from '../../analytics/rom-integrity.js';
 
 // Stub the SDK so the static import chain (helpers -> errors -> SDK)
 // does not pull in optional native peers.
@@ -210,7 +212,15 @@ function parsePayload(result: ToolResult): unknown {
 // the symbols here in one place lets a single test assert the
 // distinct-symbol invariant up front.
 
-const PIPELINE_TO_ANALYTICS_FN: Record<string, keyof typeof analytics | null> = {
+// Local detectors (`src/analytics/`) have no `@voltras/workout-analytics`
+// symbol of their own — LOCAL_ANALYTICS_FNS lets the map name them by the
+// same by-name convention as a WA-bound pipeline.
+const LOCAL_ANALYTICS_FNS = { detectHesitation, detectBounce, readRomIntegrity };
+
+const PIPELINE_TO_ANALYTICS_FN: Record<
+  string,
+  keyof typeof analytics | keyof typeof LOCAL_ANALYTICS_FNS | null
+> = {
   'vbt.set': 'getSetVelocitySummary',
   'vbt.profile': 'buildProfile',
   'fatigue.set': 'getSetFatigueIndex',
@@ -221,16 +231,22 @@ const PIPELINE_TO_ANALYTICS_FN: Record<string, keyof typeof analytics | null> = 
   // `quality.rep` and `session.readiness` are NOT_IMPLEMENTED in this wave.
   'quality.rep': null,
   'session.readiness': null,
+  'quality.hesitation': 'detectHesitation',
+  'quality.bounce': 'detectBounce',
+  'quality.rom': 'readRomIntegrity',
+  'history.trend': 'analyzeTrend',
+  'strength.e1rm': 'estimateE1RMFromReps',
 };
 
 describe('AC-20 — distinct analytics function per pipeline', () => {
   it('every dispatched pipeline targets a unique analytics function symbol', () => {
     const symbols = Object.values(PIPELINE_TO_ANALYTICS_FN).filter(
-      (s): s is keyof typeof analytics => s !== null,
+      (s): s is keyof typeof analytics | keyof typeof LOCAL_ANALYTICS_FNS => s !== null,
     );
     expect(new Set(symbols).size).toBe(symbols.length);
+    const allAnalyticsFns: Record<string, unknown> = { ...analytics, ...LOCAL_ANALYTICS_FNS };
     for (const sym of symbols) {
-      expect(typeof analytics[sym]).toBe('function');
+      expect(typeof allAnalyticsFns[sym]).toBe('function');
     }
   });
 });
