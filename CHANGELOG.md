@@ -76,6 +76,11 @@ numbers with a `null` verdict when no threshold could be cited.
   (`#294`).
 - Failure anchors harvested from naturally-occurring stall sets (`#252`); sets labelled
   with a lifter so a guest working in never pollutes the owner's data (`#257`).
+- Firmware-reported peak force and peak power are persisted onto the set and surfaced by
+  `set.get`, `session.get`, and the `set_ended` event. Peak power is recorded as an
+  unverified raw value and is deliberately not labelled in watts (`#254`).
+- `progression.get_for_exercise` takes an optional `side`, and returns a per-arm
+  `sideSplit` summary when the filter is omitted (`#270`).
 - A local voice fast-path for weight commands (`#244`) and a rotating stop
   acknowledgement phrase pool (`#268`).
 
@@ -91,6 +96,8 @@ numbers with a `null` verdict when no threshold could be cited.
 - A `justfile` and an environment-driven plugin launcher (`#265`), a pre-push
   format-check guard (`#280`), and `docs/vocabulary.md` plus
   `docs/dashboard-drivers.md` (`#274`).
+- `whisper-cli` is rebuilt on install, and a loud bench pre-flight runs before a session
+  (`#245`).
 
 ### Changed
 
@@ -122,6 +129,10 @@ numbers with a `null` verdict when no threshold could be cited.
 - The recap card, the session-completion list, and the exercise hero view stopped
   fabricating zeros for weights and velocities they did not have (`#258`, `#276`,
   `#302`).
+- The fatigue view divided a distance already in metres by 1000, so a 0.45 m range of
+  motion displayed as 0.00045. Training modes were also labelled with names that did not
+  match what the device was doing, and ten tools shipped with no description at all
+  (`#248`).
 - The grind signature measured the acceleration ramp at the start of a rep, so every
   normal rep read as a full grind. It now measures the dip after the peak (`#277`).
 - Per-exercise tempo overrides were keyed on identifiers the catalog does not use, so
