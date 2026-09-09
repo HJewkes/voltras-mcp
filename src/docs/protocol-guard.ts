@@ -12,11 +12,14 @@
 //
 // What is deliberately NOT covered, and why:
 //
-//   - All-lowercase and sentence-capitalised HYPHENATED tokens ("back-fill",
-//     "Read-only", "self-report"). In English prose `-` is the compound-modifier
-//     hyphen: it occurs 236 times across these pages as ordinary language, and
-//     no rule separates `back-fill` from a hypothetical `bp-base-weight`. An
-//     ALL-CAPS hyphenated token is still flagged, because prose does not shout.
+//   - HYPHENATED tokens, unless every segment is uppercase and at least two
+//     characters long. So `XR-PROBE-LATCH` is flagged, and `xr-probe-latch`,
+//     `Xr-Probe-Latch` and `xr-Probe-LATCH` are all missed — lowercase,
+//     sentence-case and mixed-case alike, not just the first two. In English
+//     prose `-` is the compound-modifier hyphen: it occurs 236 times across
+//     these pages as ordinary language, and no rule separates `back-fill` from
+//     a hyphen-cased register. ALL-CAPS is the one case prose does not produce.
+//     This gap is known and accepted; do not read it as narrower than it is.
 //   - Bare hex runs shorter than 4 characters. `\b[0-9a-f]{2}\b` matches "a1",
 //     "42" and every two-digit number in the corpus. Short runs are caught by
 //     the byte-sequence rule instead, which needs three of them in a row.

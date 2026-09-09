@@ -74,6 +74,13 @@ export interface ReferenceOutput {
   readonly sidebar: readonly SidebarItem[];
   /** Protocol tokens redacted per tool name; a tool with none is absent. */
   readonly redactions: Readonly<Record<string, number>>;
+  /**
+   * Rows of `docs/push-events.md` that needed redacting, named by position and
+   * pattern kind rather than by token. Tool descriptions carry protocol detail
+   * today (VW-213) so theirs is tolerated and counted; that doc carries none,
+   * so anything here is a regression the caller should fail the build on.
+   */
+  readonly docRedactions: readonly string[];
 }
 
 const DEPRECATED_TAG = '@deprecated';
@@ -312,10 +319,22 @@ function renderResourcesPage(input: ReferenceInput): string {
   ].join('\n');
 }
 
-function renderPushEventsPage(rows: readonly PushEventRow[]): string {
-  const linked = rows.map((row) => ({
-    ...row,
-    firesWhen: row.firesWhen.replace(/\]\(#/g, `](${PUSH_EVENTS_DOC_URL}#`),
+// Every cell goes through the guard. This text is copied out of a file the
+// generator does not own, so it gets exactly the same treatment as a server
+// description — nothing reaches a page unredacted.
+function renderPushEventsPage(
+  rows: readonly PushEventRow[],
+  guard: ProtocolGuard,
+  findings: string[],
+): string {
+  const clean = (cell: string, row: number): string => {
+    for (const match of guard.find(cell)) findings.push(`row ${row + 1}: ${match.kind}`);
+    return guard.redact(cell).text;
+  };
+  const linked = rows.map((row, index) => ({
+    event: clean(row.event, index),
+    autoStops: clean(row.autoStops, index),
+    firesWhen: clean(row.firesWhen, index).replace(/\]\(#/g, `](${PUSH_EVENTS_DOC_URL}#`),
   }));
   return [
     GENERATED_BANNER,
@@ -355,11 +374,15 @@ export function buildReference(input: ReferenceInput): ReferenceOutput {
   }
   pages.set('reference/index.md', renderIndexPage(input, groups));
   pages.set('reference/resources.md', renderResourcesPage(input));
-  pages.set('reference/push-events.md', renderPushEventsPage(input.pushEvents));
+  const docRedactions: string[] = [];
+  pages.set(
+    'reference/push-events.md',
+    renderPushEventsPage(input.pushEvents, input.guard, docRedactions),
+  );
   sidebar.unshift({ text: 'Overview', link: '/reference/' });
   sidebar.push(
     { text: 'Resources', link: '/reference/resources' },
     { text: 'Push events', link: '/reference/push-events' },
   );
-  return { pages, sidebar, redactions };
+  return { pages, sidebar, redactions, docRedactions };
 }

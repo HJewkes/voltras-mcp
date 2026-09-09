@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProtocolGuard } from '../../docs/protocol-guard.js';
+import { buildReference } from '../../docs/reference-pages.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from '../../tool-registry.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -35,6 +36,7 @@ interface GeneratorReport {
   readonly coreToolCount: number;
   readonly mockToolCount: number;
   readonly redactions: Record<string, number>;
+  readonly docRedactions: string[];
   readonly isolation: Record<string, string>;
 }
 
@@ -159,6 +161,42 @@ describe('confidentiality boundary', () => {
     expect(report.isolation.VMCP_DASHBOARD_PORT).toBe('off');
     expect(report.isolation.VMCP_DB_PATH).not.toContain('.voltras');
     expect(report.isolation.VMCP_SLOT_BINDINGS_PATH).not.toContain('.voltras');
+  });
+});
+
+// docs/push-events.md is the one file whose text this generator copies onto a
+// page. It used to also feed the vocabulary that tells the guard what is
+// public, so a single edit could leak a token AND allowlist it — the final
+// sweep saw it as known and passed. The doc is out of the harvest now, and its
+// cells go through the guard like any server prose.
+describe('the push-event table is treated as untrusted input', () => {
+  const poisoned = () =>
+    buildReference({
+      guard: createProtocolGuard(['device.set_weight', 'rep_finalized']),
+      coreToolNames: [],
+      mockToolNames: [],
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+      pushEvents: [
+        { event: '`rep_finalized`', firesWhen: 'A rep boundary closes.', autoStops: '—' },
+        { event: '`xr_probe_latch`', firesWhen: 'Writes a9c7 first.', autoStops: '—' },
+      ],
+    });
+
+  it('reports every redaction it had to make, by row and pattern kind', () => {
+    expect(poisoned().docRedactions).toEqual(['row 2: register-name', 'row 2: bare-hex']);
+  });
+
+  it('renders no unredacted token onto the page', () => {
+    const page = poisoned().pages.get('reference/push-events.md') ?? '';
+    expect(page).not.toContain('xr_probe_latch');
+    expect(page).not.toContain('a9c7');
+    expect(page).toContain('rep_finalized');
+  });
+
+  it('reports nothing for a clean table', () => {
+    expect(report.docRedactions).toEqual([]);
   });
 });
 

@@ -20,6 +20,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
 const PUSH_EVENTS_DOC = path.join(REPO_ROOT, 'docs/push-events.md');
 const DOCS_DIR = path.join(REPO_ROOT, 'docs');
+/** Files this generator copies text out of, and so must never harvest. */
+const RENDERED_SOURCES = new Set([PUSH_EVENTS_DOC]);
 const BOOT_SETTLE_MS = 2000;
 const REQUEST_TIMEOUT_MS = 20000;
 
@@ -161,18 +163,47 @@ function readPushEvents() {
   return rows;
 }
 
-/** Every markdown page this repo already publishes, for vocabulary harvesting. */
+// Every markdown page this repo already publishes, for vocabulary harvesting —
+// EXCEPT any file this generator also renders into a page.
+//
+// A file that is both a vocabulary source and rendered output can be poisoned
+// and leaked by ONE edit: the token is copied verbatim onto the public page and
+// simultaneously teaches the guard that it is public, so the final sweep passes
+// it. That is worse than the generic "someone put a register in the README"
+// exposure, because there is no review gate between the two halves.
 function readPublishedMarkdown() {
   const pages = [fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.md')) pages.push(fs.readFileSync(full, 'utf8'));
+      else if (entry.name.endsWith('.md') && !RENDERED_SOURCES.has(full)) {
+        pages.push(fs.readFileSync(full, 'utf8'));
+      }
     }
   };
   walk(DOCS_DIR);
   return pages;
+}
+
+// The push-event names, read from their publish sites — `docs/push-events.md`
+// names this the authoritative list, and it is a source the rendered doc cannot
+// poison.
+function readPublishedEventNames() {
+  const names = new Set();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts')) {
+        const source = fs.readFileSync(full, 'utf8');
+        for (const match of source.matchAll(/event_type:\s*'([a-z_]+)'/g)) names.add(match[1]);
+      }
+    }
+  };
+  walk(path.join(REPO_ROOT, 'src/state'));
+  if (names.size === 0) throw new Error('no push-event publish sites found under src/state');
+  return [...names];
 }
 
 async function formatWith(prettierConfig, filepath, text) {
@@ -222,6 +253,7 @@ async function main() {
         ...surface.resources.map((resource) => resource.uri),
         ...surface.resourceTemplates.map((template) => template.uriTemplate),
       ],
+      publishedEventNames: readPublishedEventNames(),
       publishedMarkdown: readPublishedMarkdown(),
     }),
   );
@@ -235,6 +267,7 @@ async function main() {
     resourceTemplates: surface.resourceTemplates,
     pushEvents: readPushEvents(),
   });
+  assertPushEventsDocIsClean(reference.docRedactions);
   await writePages(args.out, reference.pages, reference.sidebar);
   assertNoProtocolDetail(args.out, reference.pages, guard);
 
@@ -243,6 +276,7 @@ async function main() {
     coreToolCount: CORE_TOOL_NAMES.length,
     mockToolCount: MOCK_TOOL_NAMES.length,
     redactions: reference.redactions,
+    docRedactions: reference.docRedactions,
     isolation: isolatedEnv('<scratch>'),
   };
   if (args.report) fs.writeFileSync(args.report, `${JSON.stringify(report, null, 2)}\n`);
@@ -264,6 +298,16 @@ function assertRegistryMatchesServer(tools, coreNames, mockNames) {
         `unregistered: ${extra.join(', ') || 'none'}`,
     );
   }
+}
+
+// docs/push-events.md carries no protocol detail today, unlike the tool
+// descriptions (VW-213), so a redaction in it is a regression rather than the
+// status quo. Redacting alone would publish a clean page and say nothing.
+function assertPushEventsDocIsClean(findings) {
+  if (findings.length === 0) return;
+  throw new Error(
+    `protocol detail in docs/push-events.md (${findings.length} hits) — ${findings.join('; ')}`,
+  );
 }
 
 // Fail the build rather than publish a byte, opcode, offset or register name.

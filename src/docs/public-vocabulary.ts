@@ -10,6 +10,26 @@
 // vocabulary is public by definition. A register name written into one of them
 // would be allowlisted here, but it would also already be published; that is a
 // source problem (VW-213), not something a site generator can repair.
+//
+// A source that is ALSO rendered into a page is a different and worse problem:
+// one edit both copies the token onto the public page and tells the guard the
+// token is public, with no review gate in between. Every source below was
+// audited against that:
+//
+//   - tool names, schema property names, enum members — rendered, but they are
+//     the call contract. `tools/list` hands them to every client whatever this
+//     site does, and a page that redacted them could not be used to call the
+//     tool. Schema `description` prose, which is where a register would
+//     realistically be written, is NOT harvested and IS redacted.
+//   - resource URIs — rendered, same reasoning: the URI is the contract.
+//   - push-event names — harvested from `event_type` literals under
+//     `src/state/`, not from the doc that renders them. Poisoning this needs a
+//     second edit, in code, through review.
+//   - published markdown — `docs/push-events.md` is excluded by the generator
+//     because it is the one file whose text is rendered. README.md and every
+//     other `docs/*.md` are harvest-only; the generator reads no text from them.
+//   - the explicit lists below — not rendered, and editing one is itself the
+//     review gate.
 
 import { normalizeIdentifier } from './protocol-guard.js';
 
@@ -24,7 +44,15 @@ export interface ToolLike {
 export interface VocabularySources {
   readonly tools: readonly ToolLike[];
   readonly resourceUris: readonly string[];
-  /** Raw markdown of every page this repo already publishes. */
+  /**
+   * Push-event names read from their publish sites in `src/state/`. This is the
+   * list `docs/push-events.md` itself calls authoritative, and taking it from
+   * code rather than from that doc is the point: the doc is rendered into a
+   * page, so harvesting it would let one edit both leak a token and allowlist
+   * it. An event named in the table with no publish site stays flagged.
+   */
+  readonly publishedEventNames: readonly string[];
+  /** Raw markdown of pages this repo publishes and this generator does not render. */
   readonly publishedMarkdown: readonly string[];
 }
 
@@ -106,6 +134,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',
+  'idle_timeout_ms',
   'inactivityTimeoutMs',
   'inactivity_timeout',
   'lastOverFirstEligible',
@@ -126,6 +155,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'perRep',
   'pauseBottom',
   'pauseTop',
+  'peakForceLbs',
   'pre_summary',
   'priorPair',
   'raw_frame',
@@ -143,6 +173,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setsPerExercise',
   'setsUnlocked',
   'set_boundary',
+  // A documented variant of the `set_ended` event, distinguished by a
+  // `meta.closed_by` discriminator rather than by its own `event_type`, so the
+  // publish-site scan does not reach it.
+  'set_ended_by_device',
   'setting_coerced',
   'settings_update',
   'sideSplit',
@@ -166,6 +200,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'voiceReady.model',
   'voiceReady.whisperCli',
   'watch.inactivityTimeoutMs',
+  'watch.velocityLoss.force',
 ];
 
 /**
@@ -213,6 +248,7 @@ export function derivePublicVocabulary(sources: VocabularySources): Set<string> 
   const vocabulary = new Set<string>();
   for (const tool of sources.tools) addToolVocabulary(tool, vocabulary);
   for (const uri of sources.resourceUris) harvest(uri, vocabulary);
+  for (const name of sources.publishedEventNames) vocabulary.add(normalizeIdentifier(name));
   for (const markdown of sources.publishedMarkdown) harvest(markdown, vocabulary);
   for (const name of DOCUMENTED_RESULT_FIELDS) vocabulary.add(normalizeIdentifier(name));
   for (const name of ANALYTICS_PIPELINE_IDS) vocabulary.add(normalizeIdentifier(name));
