@@ -38,7 +38,7 @@ that session used the default `primary` slot.
    `not_warranted`, and the per-slot verdicts) alongside the conversational
    `voice_input`. The conversational forward is kept deliberately — "stop" with
    nothing loaded is a legitimate thing to say to a coach — but it is no longer
-   the *only* thing on the wire.
+   the _only_ thing on the wire.
 5. **Per-slot reporting.** One `deterministic_stop_triggered` per unloaded slot,
    each with its own `slot` meta key (matching the push-event convention), plus a
    `trigger` of `warranted` or `bilateral_sweep`. A per-slot unload failure
@@ -47,7 +47,7 @@ that session used the default `primary` slot.
 
 ## The bilateral decision: "stop" cuts BOTH cables
 
-**Decided: sweep both.** The predicate decides *whether* the stop fires; once it
+**Decided: sweep both.** The predicate decides _whether_ the stop fires; once it
 fires, every connected slot is cut.
 
 Reasoning:
@@ -113,9 +113,10 @@ New/changed tests:
    skewed) one `bilateral_sweep`. Watch for whether the two `unloadDevice` BLE
    writes in parallel are well-behaved on the adapter — they are issued
    concurrently via `Promise.all`, which the mock cannot exercise.
-3. **Ack timing.** The spoken "Stopping. Weight off." now fires once after the
-   first successful unload rather than after the single unload; confirm it still
-   lands promptly and still ducks the mic.
+3. **Ack timing.** The spoken ack — "Stopping. Weight off." is one of the pool
+   (VW-157) — now fires once after the first successful unload rather than
+   after the single unload; confirm it still lands promptly and still ducks
+   the mic.
 4. **The unavailable event in practice.** Say a stop phrase with the device
    connected but idle (no set, no load) and confirm the
    `deterministic_stop_unavailable` event actually surfaces inline rather than
@@ -124,5 +125,5 @@ New/changed tests:
    walks up to two slots before unloading; confirm the added work is noise.
 
 Not touched, deliberately: the cue/deaf-window defect (VMCP-05.01) is separate —
-it drops the utterance *before* routing, this bug dropped it *after*. Both must
+it drops the utterance _before_ routing, this bug dropped it _after_. Both must
 be fixed for the voice stop to be trustworthy end to end.

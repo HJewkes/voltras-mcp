@@ -92,8 +92,27 @@ export interface VoiceSafetyContext {
   speakAck(text: string): void;
 }
 
-/** Deterministic ack spoken the instant the cable is cut. */
-const SAFETY_ACK_TEXT = 'Stopping. Weight off.';
+/**
+ * Rotating pool of acks spoken the instant the cable is cut (VW-157). Every
+ * phrase starts with "Stopping" and names the weight state, so a listener
+ * catches the safety confirmation over gym noise even off a fragment. Index 0
+ * is the original single-phrase ack, kept first for continuity.
+ */
+export const SAFETY_ACK_PHRASES: readonly string[] = [
+  'Stopping. Weight off.',
+  'Stopping now. Weight off.',
+  'Stopping. All weight off.',
+  'Stopping right away. Weight off.',
+];
+
+/** Picks a pool phrase via an injected index function — fixed in tests, random in production. */
+export function pickSafetyAck(pick: (n: number) => number): string {
+  return SAFETY_ACK_PHRASES[pick(SAFETY_ACK_PHRASES.length)];
+}
+
+function randomIndex(n: number): number {
+  return Math.floor(Math.random() * n);
+}
 
 interface SlotVerdict {
   slot: string;
@@ -167,7 +186,7 @@ async function executeStop(
     for (const f of failed) channels.publish(safetyUnloadFailedPayload(f.error, f.verdict.slot));
     return;
   }
-  safety.speakAck(SAFETY_ACK_TEXT);
+  safety.speakAck(pickSafetyAck(randomIndex));
   for (const { verdict } of cut) {
     channels.publish(
       buildDeterministicStopTriggeredPayload({
