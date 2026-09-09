@@ -449,11 +449,14 @@ function weeksAgoIso(weeks: number): string {
 type HistoryTrendInput = Extract<MetricsComputeInputType, { pipeline: 'history.trend' }>;
 
 /**
- * `history.trend`'s `metric` literal to WA's own `MetricKey` string. `MetricKey`
- * itself isn't importable — `@voltras/workout-analytics@2.2.0`'s published
- * root doesn't re-export it (only `buildTimeSeries` itself) — so the three
+ * `history.trend`'s `metric` literal to WA's own `MetricKey` string. The three
  * values this pipeline uses are spelled out inline; they type-check
  * structurally against `buildTimeSeries`'s parameter without the name.
+ *
+ * `MetricKey` became importable from the package root in
+ * `@voltras/workout-analytics@2.3.0` (VW-201), alongside `getWeeklySummaries`
+ * and `getVolumeByMuscleGroup`. Naming it here is a tidy-up for whoever builds
+ * `history.weekly_volume`, which is the reason those exports were added.
  */
 const HISTORY_TREND_METRIC: Record<
   NonNullable<HistoryTrendInput['metric']>,
