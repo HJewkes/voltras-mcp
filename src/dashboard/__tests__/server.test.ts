@@ -471,8 +471,8 @@ describe('GET /api/history', () => {
     const session: ActiveSession = {
       sessionId: 'sess-T',
       startedAt: '2026-05-09T12:00:00.000Z',
-      exerciseId: 'cable_hip_thrust',
-      exerciseName: 'Cable Hip Thrust',
+      exerciseId: 'cable-lateral-raise',
+      exerciseName: 'Cable Lateral Raise',
       setIds: [],
       status: 'active',
     };
@@ -490,7 +490,7 @@ describe('GET /api/history', () => {
             {
               id: 'pe1',
               workoutTemplateId: 't1',
-              exerciseId: 'cable_hip_thrust',
+              exerciseId: 'cable-lateral-raise',
               orderIndex: 0,
               targetSets: 3,
             },
@@ -500,8 +500,8 @@ describe('GET /api/history', () => {
     const handle = await startWithFake(state);
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
     const body = JSON.parse(res.body) as { plan: { tempo?: number[] } };
-    // [ecc, pauseBottom, con, pauseTop] — the cable_hip_thrust override.
-    expect(body.plan.tempo).toEqual([2, 1, 1, 2]);
+    // [ecc, pauseBottom, con, pauseTop] — the cable-lateral-raise override.
+    expect(body.plan.tempo).toEqual([3, 0, 1, 1]);
   });
 
   it('surfaces the movement-pattern default tempo from the exercise catalog (VW-41)', async () => {
