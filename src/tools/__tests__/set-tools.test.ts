@@ -67,6 +67,8 @@ const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 const { RestTimerRegistry } = await import('../../state/rest-timer.js');
 const { BilateralReconciler } = await import('../../state/bilateral-reconciler.js');
 const { SlotBindingsStore } = await import('../../state/slot-bindings.js');
+const { CoercionWatch } = await import('../../state/coercion-watch.js');
+const { wireBridgeForSlot } = await import('../../state/event-bridge.js');
 
 // Every harness gets a real `SlotBindingsStore` over a throwaway file rather
 // than a hand-stubbed lookup, so the write-time side resolution under test
@@ -2537,5 +2539,258 @@ describe('set.start — movement-class gate wiring', () => {
     await h.invoke('set.start', { watch: WATCH });
     expect(h.live.set?.movementClass).toBe('unknown');
     expect(suppressionEvents()).toHaveLength(0);
+  });
+});
+
+// VW-199: #288's once-per-set claim was verified structurally (three mutually
+// exclusive creation sites) and by the harness above, but nothing drove a
+// real `set.start`-created set through the event bridge's frame pipeline to
+// prove the suppression event doesn't re-fire per rep. This harness wires
+// `wireBridgeForSlot` onto the same slot `registerSetTools` uses, so frames
+// fed through the fake client's `onFrame` listener flow through the real
+// rep-finalize -> trigger-evaluation path, not a bridge-only stand-in.
+describe('set.start -> event bridge — velocity_loss_watch_suppressed fires once (VW-199)', () => {
+  interface BridgeFakeClient {
+    startRecording: ReturnType<typeof vi.fn>;
+    endSet: ReturnType<typeof vi.fn>;
+    isRowingActive: boolean;
+    connectedDeviceId: string;
+    settings: null;
+    onPerRep: ReturnType<typeof vi.fn>;
+    onInProgress: ReturnType<typeof vi.fn>;
+    onSummary: ReturnType<typeof vi.fn>;
+    onSetSummary: ReturnType<typeof vi.fn>;
+    onSettingsUpdate: ReturnType<typeof vi.fn>;
+    onConnectionStateChange: ReturnType<typeof vi.fn>;
+    onStateDump: ReturnType<typeof vi.fn>;
+    onFrame: ReturnType<typeof vi.fn>;
+    fire: {
+      frame: (frame: {
+        sequence: number;
+        timestamp: number;
+        phase: number;
+        position: number;
+        velocity: number;
+        force: number;
+      }) => void;
+    };
+  }
+
+  function makeBridgeFakeClient(): BridgeFakeClient {
+    let frameCb: (frame: unknown) => void = () => undefined;
+    return {
+      startRecording: vi.fn().mockResolvedValue(undefined),
+      endSet: vi.fn().mockResolvedValue(undefined),
+      isRowingActive: false,
+      connectedDeviceId: 'AA:BB:CC:DD:EE:02',
+      settings: null,
+      onPerRep: vi.fn(() => () => undefined),
+      onInProgress: vi.fn(() => () => undefined),
+      onSummary: vi.fn(() => () => undefined),
+      onSetSummary: vi.fn(() => () => undefined),
+      onSettingsUpdate: vi.fn(() => () => undefined),
+      onConnectionStateChange: vi.fn(() => () => undefined),
+      onStateDump: vi.fn(() => () => undefined),
+      onFrame: vi.fn((l: (f: unknown) => void) => {
+        frameCb = l;
+        return () => undefined;
+      }),
+      fire: {
+        frame: (f) => frameCb(f),
+      },
+    };
+  }
+
+  function setupWithBridge(): Harness & { client: BridgeFakeClient } {
+    const live = new LiveState();
+    const store = makeStore();
+    const client = makeBridgeFakeClient();
+    const channels: {
+      publish: ReturnType<typeof vi.fn>;
+      forSlot: (slotId: string) => {
+        publish: (e: unknown) => void;
+        forSlot: typeof channels.forSlot;
+      };
+    } = {
+      publish: vi.fn(),
+      forSlot: (slotId: string) => ({
+        publish: (event: unknown) => {
+          const e = event as { content: string; meta: Record<string, string> };
+          channels.publish({ content: e.content, meta: { slot: slotId, ...e.meta } });
+        },
+        forSlot: channels.forSlot,
+      }),
+    };
+    const slot = {
+      slotId: 'primary',
+      client,
+      live,
+      modeRevertGuard: new ModeRevertGuard(),
+      coercionWatch: new CoercionWatch(),
+    };
+    const slots = new Map();
+    slots.set('primary', slot);
+    const bindingDir = mkdtempSync(join(tmpdir(), 'vmcp-set-tools-vw199-bindings-'));
+    bindingDirs.push(bindingDir);
+    const slotBindings = SlotBindingsStore.open(join(bindingDir, 'slot-bindings.json'));
+    const state = {
+      config: { restTimer: 'off' } as never,
+      manager: {} as never,
+      slots,
+      store,
+      exercises: {} as never,
+      channels,
+      setStartDeviceSnapshots: new Map(),
+      lastSetEndedAtMs: new Map(),
+      setWatchdog: new SetWatchdog(),
+      restTimers: new RestTimerRegistry(),
+      bilateralReconciler: new BilateralReconciler(),
+      slotBindings,
+    } as unknown as ServerState;
+    wireBridgeForSlot(state, slot as unknown as Parameters<typeof wireBridgeForSlot>[1]);
+    const { placeholders, invokers } = makeFakePlaceholders(TOOL_NAMES);
+    const server = { tool: vi.fn() } as unknown as FakeServer;
+    registerSetTools(
+      server as unknown as Parameters<typeof registerSetTools>[0],
+      state,
+      placeholders as unknown as Parameters<typeof registerSetTools>[2],
+    );
+    return {
+      state,
+      invoke: (name, args) => invokers[name](args),
+      store,
+      live,
+      channels,
+      client,
+    };
+  }
+
+  function frameVelocity(mps: number): number {
+    return mps * 1000;
+  }
+
+  /** Rep N finalizes when the next CONCENTRIC frame opens rep N+1. */
+  function driveRep(client: BridgeFakeClient, seq: number, velocity: number): void {
+    client.fire.frame({
+      sequence: seq * 10,
+      timestamp: 1000 + seq * 100,
+      phase: 1, // CONCENTRIC
+      position: seq * 0.1,
+      velocity: frameVelocity(velocity),
+      force: 50,
+    });
+    client.fire.frame({
+      sequence: seq * 10 + 1,
+      timestamp: 1000 + seq * 100 + 50,
+      phase: 3, // ECCENTRIC
+      position: seq * 0.1 + 0.1,
+      velocity: frameVelocity(velocity),
+      force: 50,
+    });
+  }
+
+  function startNextRep(client: BridgeFakeClient, seq: number, velocity: number): void {
+    client.fire.frame({
+      sequence: seq * 10,
+      timestamp: 1000 + seq * 100,
+      phase: 1,
+      position: seq * 0.1,
+      velocity: frameVelocity(velocity),
+      force: 50,
+    });
+  }
+
+  /** Rep 1 at 1.0 m/s, rep 2 at 0.6 ⇒ a 40% peak-velocity loss on rep 2's close. */
+  function driveFortyPercentLossAcrossThreeReps(client: BridgeFakeClient): void {
+    driveRep(client, 1, 1.0);
+    startNextRep(client, 2, 0.6);
+    client.fire.frame({
+      sequence: 25,
+      timestamp: 1400,
+      phase: 3, // ECCENTRIC
+      position: 0.3,
+      velocity: frameVelocity(0.6),
+      force: 50,
+    });
+    startNextRep(client, 3, 0.6);
+  }
+
+  function flushMicrotasks(): Promise<void> {
+    return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+  }
+
+  function publishedEventTypes(h: Harness): string[] {
+    return h.channels.publish.mock.calls.map(
+      (c) => (c[0] as { meta: Record<string, string> }).meta.event_type,
+    );
+  }
+
+  const WATCH = { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] };
+
+  beforeEach(() => {
+    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(
+      SEED_CABLE_EXERCISES,
+    );
+  });
+
+  function startSessionOn(h: Harness, exerciseId: string): void {
+    h.live.startSession({
+      sessionId: 'sess-vw199',
+      startedAt: '2026-09-08T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseId,
+    });
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+  }
+
+  it('a pull set publishes the suppression exactly once and never fires the watch across multiple reps', async () => {
+    const h = setupWithBridge();
+    startSessionOn(h, 'cable-row');
+
+    const started = await h.invoke('set.start', { watch: WATCH });
+    expect(started.isError).toBeUndefined();
+    expect(h.live.set?.movementClass).toBe('pull');
+
+    driveFortyPercentLossAcrossThreeReps(h.client);
+    await flushMicrotasks();
+
+    const types = publishedEventTypes(h);
+    expect(types.filter((t) => t === 'velocity_loss_watch_suppressed')).toHaveLength(1);
+    expect(types).not.toContain('velocity_loss_exceeded');
+  });
+
+  it('watch.velocityLoss.force restores the watch on a pull set and publishes no suppression event', async () => {
+    const h = setupWithBridge();
+    startSessionOn(h, 'cable-row');
+
+    const started = await h.invoke('set.start', {
+      watch: { ...WATCH, velocityLoss: { force: true } },
+    });
+    expect(started.isError).toBeUndefined();
+    expect(h.live.set?.movementClass).toBe('pull');
+
+    driveFortyPercentLossAcrossThreeReps(h.client);
+    await flushMicrotasks();
+
+    const types = publishedEventTypes(h);
+    expect(types).not.toContain('velocity_loss_watch_suppressed');
+    expect(types.filter((t) => t === 'velocity_loss_exceeded')).toHaveLength(1);
+  });
+
+  it('a push set publishes no suppression event and the watch fires', async () => {
+    const h = setupWithBridge();
+    startSessionOn(h, 'cable-chest-press');
+
+    const started = await h.invoke('set.start', { watch: WATCH });
+    expect(started.isError).toBeUndefined();
+    expect(h.live.set?.movementClass).toBe('push');
+
+    driveFortyPercentLossAcrossThreeReps(h.client);
+    await flushMicrotasks();
+
+    const types = publishedEventTypes(h);
+    expect(types).not.toContain('velocity_loss_watch_suppressed');
+    expect(types.filter((t) => t === 'velocity_loss_exceeded')).toHaveLength(1);
   });
 });
