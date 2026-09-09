@@ -111,6 +111,11 @@ export const CORE_TOOL_NAMES = [
   // over the tier signal plus the stored self-report; advisory, applies
   // nothing. See src/profile/starting-prescription.ts.
   'profile.get_starting_prescription',
+  // Session-0 completeness read (VW-148 / B42, B35, B36). Lists unanswered
+  // intake fields in RP's own asking order and carries the cardiovascular
+  // hard gate. Read-only, and every sentence it returns is quoted from the
+  // coaching corpus. See src/profile/onboarding-gaps.ts.
+  'profile.get_onboarding_gaps',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -298,6 +303,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'profile.get_training_background': 'read',
   'profile.get_tier_signal': 'read',
   'profile.get_starting_prescription': 'read',
+  'profile.get_onboarding_gaps': 'read',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',
