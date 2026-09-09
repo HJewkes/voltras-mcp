@@ -57,7 +57,8 @@ later** (see [push events](docs/push-events.md)).
 ## Quickstart
 
 The package is **not published to npm**. Older instructions that say `npx voltras-mcp` do
-not work — clone and build it.
+not work — clone and build it. What changed between versions is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ```bash
 git clone <this-repo> voltras-mcp
