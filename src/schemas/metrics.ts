@@ -140,14 +140,6 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // trend.ts:202-206) — never redeclared here. Every plateau verdict carries
   // `phase: 'unknown'` until VW-150 decides diet-phase tagging: a fat-loss
   // phase can look like a plateau (B34).
-  //
-  // `history.weekly_volume` (VW-144's other half) does NOT exist yet:
-  // `@voltras/workout-analytics@2.2.0`'s published root does not re-export
-  // `getWeeklySummaries` / `getVolumeByMuscleGroup` (nor their `WeeklySummary`
-  // / `VolumeByMuscleGroup` / `MetricKey` types) — only `buildTimeSeries` /
-  // `analyzeTrend` / `detectPlateau` / `ProcessedSession` are public. It
-  // follows once WA republishes with those exported; no local reimplementation
-  // of WA's own aggregation logic in the meantime.
   z.object({
     pipeline: z.literal('history.trend'),
     exerciseId: IdSchema,
@@ -155,6 +147,28 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
     metric: z.enum(['topLoad', 'e1rm', 'volume']).optional(),
     thresholdPct: z.number().positive().optional(),
     minDays: z.number().int().positive().optional(),
+  }),
+
+  // Weekly volume + muscle-group breakdown across ALL exercises over a
+  // lookback window (VW-144's other half, VW-201/VW-145). Analytics:
+  // getWeeklySummaries + getVolumeByMuscleGroup from
+  // @voltras/workout-analytics (package ROOT — the `/view` subpath is w4-21's
+  // migration, not this one), over the owner's own working, non-mock,
+  // real-rep sets — see `metrics-tools.ts`'s `computeHistoryWeeklyVolume`.
+  // A SEPARATE pipeline from `history.trend` rather than folded into it:
+  // `history.trend` is inherently single-exercise (`exerciseId` is required
+  // and scopes `buildTimeSeries`), while the weekly summaries and the
+  // muscle-group split are inherently cross-exercise rollups — see the PR
+  // description for the full reasoning.
+  //
+  // THRESHOLDS LEAVE NULL: `verdict` is always `null` here.
+  // `classifyWeeklyVolume` exists in WA but takes caller-supplied
+  // `VolumeLandmarks`, and no source in this repo states per-muscle landmark
+  // values for this athlete — wiring a verdict without one would be a made-up
+  // number, not a readout.
+  z.object({
+    pipeline: z.literal('history.weekly_volume'),
+    weeks: z.number().int().positive().optional(),
   }),
 
   // Estimated 1RM (VW-142): three input shapes on one literal, all fields

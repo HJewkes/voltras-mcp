@@ -3,9 +3,8 @@
 //
 // This is the ONLY new analytics-adjacent logic this feature adds — every
 // downstream consumer of a `ProcessedSession` (`buildTimeSeries`,
-// `analyzeTrend`, `detectPlateau`, and WA's own `getWeeklySummaries` /
-// `getVolumeByMuscleGroup` once they are reachable — see the w3-29 BLOCKED
-// report) is `@voltras/workout-analytics`, untouched.
+// `analyzeTrend`, `detectPlateau`, `getWeeklySummaries`,
+// `getVolumeByMuscleGroup`) is `@voltras/workout-analytics`, untouched.
 
 import {
   estimateE1RMFromReps,
