@@ -26,6 +26,7 @@
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
 import {
+  type LiveIsometricSignal,
   type LivePhase,
   type LivePhaseFlip,
   type LivePhaseSignal,
@@ -117,12 +118,17 @@ function createSlotState(): SlotState {
  * every set-lifecycle boundary — wire it to the store's `applySnapshot` so structure
  * updates immediately instead of waiting for the slow reconciliation poll.
  *
+ * `onIsometric` (VW-198) receives each `isometric_phase` echo verbatim — discrete, not
+ * interpolated like the phase/rep/set signals above, so it is forwarded as-is rather than
+ * held in per-slot anchor state.
+ *
  * `onModel`'s second argument is the originating slot ({@link PRIMARY_SLOT} for a
  * single-Voltra stream). Slot-blind consumers may ignore it and behave exactly as before.
  */
 export function createLiveStreamController(
   onModel: (model: LiveModel, slot: string) => void,
   onSnapshot?: (snapshot: Snapshot) => void,
+  onIsometric?: (signal: LiveIsometricSignal, slot: string) => void,
 ): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
   // poll-only silently rather than throwing.
@@ -270,12 +276,22 @@ export function createLiveStreamController(
     onSnapshot?.(JSON.parse(e.data) as Snapshot);
   };
 
+  // Discrete echo — no anchor/interpolation, no per-slot commit throttling: just decode
+  // and forward. Still touches liveness so an isometric-only quiet spell doesn't flip
+  // `connected` to false.
+  const onIsometricEvent = (e: MessageEvent<string>): void => {
+    const data = JSON.parse(e.data) as LiveIsometricSignal;
+    touchAll(Date.now());
+    onIsometric?.(data, slotOf(data));
+  };
+
   source.addEventListener('phase', onPhase);
   source.addEventListener('phaseflip', onFlip);
   source.addEventListener('rep', onRep);
   source.addEventListener('set', onSet);
   source.addEventListener('hb', onHb);
   source.addEventListener('snapshot', onSnapshotEvent);
+  source.addEventListener('isometric', onIsometricEvent);
   // EventSource auto-reconnects honoring the server's `retry:` hint; we just
   // let the staleness clock flip `connected` to false in the meantime.
   source.onerror = (): void => commitAll(true);
@@ -299,6 +315,7 @@ export function createLiveStreamController(
     source.removeEventListener('set', onSet);
     source.removeEventListener('hb', onHb);
     source.removeEventListener('snapshot', onSnapshotEvent);
+    source.removeEventListener('isometric', onIsometricEvent);
     source.close();
   };
 }

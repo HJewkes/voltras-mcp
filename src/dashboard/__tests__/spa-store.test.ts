@@ -15,6 +15,7 @@ import {
   type SnapshotDevice,
 } from '../spa/adapter';
 import type { LiveModel } from '../spa/live-stream';
+import type { LiveIsometricSignal } from '../../state/live-signal';
 import type { Rep } from '@voltras/workout-analytics';
 
 function rep(repNumber: number, peakMms: number): Rep {
@@ -262,6 +263,53 @@ describe('dashboardStore — live slice isolation', () => {
     expect(after.snapshot).toBe(before.snapshot);
     expect(after.accumulator).toBe(before.accumulator);
     expect(after.prescription).toBe(before.prescription);
+  });
+});
+
+describe('dashboardStore — isometric slice (VW-198)', () => {
+  afterEach(() => {
+    dashboardStore.setState({ isometricBySlot: {}, isometric: null });
+  });
+
+  function signal(over: Partial<LiveIsometricSignal> = {}): LiveIsometricSignal {
+    return { slot: 'primary', phase: 'ready', trial: 1, holdMs: 5000, side: null, ...over };
+  }
+
+  it('setIsometric stores a non-stop signal and derives the single-slot view', () => {
+    dashboardStore.getState().setIsometric(signal({ phase: 'go' }));
+    expect(dashboardStore.getState().isometric).toEqual(signal({ phase: 'go' }));
+  });
+
+  it('a `stop` phase clears the slot instead of storing it', () => {
+    dashboardStore.getState().setIsometric(signal({ phase: 'hold' }));
+    expect(dashboardStore.getState().isometric).not.toBeNull();
+    dashboardStore.getState().setIsometric(signal({ phase: 'stop' }));
+    expect(dashboardStore.getState().isometric).toBeNull();
+    expect(dashboardStore.getState().isometricBySlot).toEqual({});
+  });
+
+  it('passing null clears the slot directly', () => {
+    dashboardStore.getState().setIsometric(signal());
+    dashboardStore.getState().setIsometric(null);
+    expect(dashboardStore.getState().isometric).toBeNull();
+  });
+
+  it('keeps two slots independent, falling back to the first when primary is absent', () => {
+    dashboardStore.getState().setIsometric(signal({ slot: 'left', phase: 'go' }), 'left');
+    dashboardStore.getState().setIsometric(signal({ slot: 'right', phase: 'hold' }), 'right');
+    expect(dashboardStore.getState().isometric).toEqual(signal({ slot: 'left', phase: 'go' }));
+
+    dashboardStore.getState().setIsometric(signal({ slot: 'left', phase: 'stop' }), 'left');
+    expect(dashboardStore.getState().isometric).toEqual(signal({ slot: 'right', phase: 'hold' }));
+  });
+
+  it('setIsometric does not touch other slices', () => {
+    dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);
+    const before = dashboardStore.getState();
+    dashboardStore.getState().setIsometric(signal());
+    const after = dashboardStore.getState();
+    expect(after.snapshot).toBe(before.snapshot);
+    expect(after.accumulator).toBe(before.accumulator);
   });
 });
 

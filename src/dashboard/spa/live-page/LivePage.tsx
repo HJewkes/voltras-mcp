@@ -15,6 +15,7 @@ import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
 import { EmptyLiveView } from './EmptyLiveView';
+import { IsometricWalkthrough } from './IsometricWalkthrough';
 import {
   deriveRailExercises,
   deriveRailMetrics,
@@ -202,6 +203,9 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
   // (`store.ts`'s `setDisplayUnit`); never mutates the model, only how it's read.
   const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
   const setDisplayUnit = useStore(dashboardStore, (s) => s.setDisplayUnit);
+  // The isometric walkthrough is SSE-fed independently of `model` (VW-198) — it hides
+  // itself when no hold is in progress, so it's safe to always mount here.
+  const isometric = useStore(dashboardStore, (s) => s.isometric);
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
   const completedSets = model.session.completedSets.length;
@@ -282,6 +286,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
       </View>
       {/* Subtle wall-corner unit toggle — overlays the stage, out of the reading path. */}
       <UnitToggle unit={displayUnit} onChange={setDisplayUnit} />
+      <IsometricWalkthrough signal={isometric} />
     </Surface>
   );
 }
