@@ -33,6 +33,7 @@ const { ExerciseService } = await import('../../exercises/exercise-service.js');
 
 import type { Exercise } from '../../exercises/exercise-service.js';
 import type { ServerState } from '../../state/server-state.js';
+import type { StoredExerciseSetup } from '../../store/types.js';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 const benchPress: Exercise = {
@@ -67,23 +68,32 @@ interface ToolResultShape {
   isError?: boolean;
 }
 
-/** Build a minimal ServerState with a stubbed `exercises` service. */
+type ToolName = 'exercise.search' | 'exercise.get' | 'exercise.confirm_setup';
+
+/** Build a minimal ServerState with a stubbed `exercises` service and store. */
 function buildHarness(): {
   search: ReturnType<typeof vi.fn>;
   getById: ReturnType<typeof vi.fn>;
+  getExerciseSetup: ReturnType<typeof vi.fn>;
+  putExerciseSetup: ReturnType<typeof vi.fn>;
   state: ServerState;
   placeholders: Map<string, RegisteredTool>;
-  invoke: (name: 'exercise.search' | 'exercise.get', args: unknown) => Promise<ToolResultShape>;
+  invoke: (name: ToolName, args: unknown) => Promise<ToolResultShape>;
 } {
   const search = vi.fn();
   const getById = vi.fn();
   const exercises = new ExerciseService();
   exercises.search = search as unknown as ExerciseService['search'];
   exercises.getById = getById as unknown as ExerciseService['getById'];
+  const getExerciseSetup = vi.fn(async () => undefined);
+  const putExerciseSetup = vi.fn(async () => undefined);
 
-  const state = { exercises } as unknown as ServerState;
+  const state = {
+    exercises,
+    store: { getExerciseSetup, putExerciseSetup },
+  } as unknown as ServerState;
   const placeholders = new Map<string, FakePlaceholder>();
-  for (const name of ['exercise.search', 'exercise.get']) {
+  for (const name of ['exercise.search', 'exercise.get', 'exercise.confirm_setup']) {
     const ph: FakePlaceholder = {
       update({ callback }): void {
         if (callback) ph.callback = callback;
@@ -100,16 +110,21 @@ function buildHarness(): {
 
   registerExerciseTools(fakeServer, state, typedPlaceholders);
 
-  const invoke = async (
-    name: 'exercise.search' | 'exercise.get',
-    args: unknown,
-  ): Promise<ToolResultShape> => {
+  const invoke = async (name: ToolName, args: unknown): Promise<ToolResultShape> => {
     const ph = placeholders.get(name);
     if (!ph?.callback) throw new Error(`No callback registered for ${name}`);
     return (await ph.callback(args)) as ToolResultShape;
   };
 
-  return { search, getById, state, placeholders: typedPlaceholders, invoke };
+  return {
+    search,
+    getById,
+    getExerciseSetup,
+    putExerciseSetup,
+    state,
+    placeholders: typedPlaceholders,
+    invoke,
+  };
 }
 
 describe('registerExerciseTools', () => {
@@ -230,16 +245,77 @@ describe('registerExerciseTools', () => {
     });
   });
 
+  describe('exercise.confirm_setup', () => {
+    let harness: ReturnType<typeof buildHarness>;
+    const detected: StoredExerciseSetup = {
+      id: 'setup@1.0.0:local/bench-press/both#0',
+      userId: 'local',
+      exerciseId: 'bench-press',
+      label: 'setup 1',
+      detectedAt: '2026-09-01T00:00:00.000Z',
+      clusterVersion: 'setup@1.0.0',
+    };
+    beforeEach(() => {
+      harness = buildHarness();
+    });
+
+    it('replaces the generated label with the human one and stamps confirmed_at', async () => {
+      harness.getExerciseSetup.mockResolvedValue(detected);
+
+      const result = await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: 'bench at 30 degrees',
+      });
+
+      const written = harness.putExerciseSetup.mock.calls[0][0] as StoredExerciseSetup;
+      expect(written.label).toBe('bench at 30 degrees');
+      expect(written.confirmedAt).toBeDefined();
+      // Everything the clustering derived is carried through untouched — the
+      // tool names a setup, it does not re-derive one.
+      expect(written.id).toBe(detected.id);
+      expect(written.detectedAt).toBe(detected.detectedAt);
+      expect(written.clusterVersion).toBe(detected.clusterVersion);
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual(written);
+    });
+
+    it('returns NOT_FOUND for a setup id no clustering run produced', async () => {
+      harness.getExerciseSetup.mockResolvedValue(undefined);
+
+      const result = await harness.invoke('exercise.confirm_setup', {
+        setupId: 'invented',
+        label: 'bench at 30 degrees',
+      });
+
+      expect(harness.putExerciseSetup).not.toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text) as { code: string; message: string };
+      expect(parsed.code).toBe('NOT_FOUND');
+      expect(parsed.message).toContain('invented');
+    });
+
+    it('returns INVALID_INPUT for an empty label', async () => {
+      const result = await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: '',
+      });
+
+      expect(harness.getExerciseSetup).not.toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).code).toBe('INVALID_INPUT');
+    });
+  });
+
   describe('registration wiring', () => {
-    it('attaches handlers to both placeholder slots via update()', () => {
+    it('attaches handlers to every placeholder slot via update()', () => {
       const harness = buildHarness();
-      // Both handlers are reachable via `invoke` only after registerExerciseTools
+      // The handlers are reachable via `invoke` only after registerExerciseTools
       // wires them into the placeholders Map. Cast back to FakePlaceholder to
       // observe the swapped-in callback.
-      const search = harness.placeholders.get('exercise.search') as unknown as FakePlaceholder;
-      const get = harness.placeholders.get('exercise.get') as unknown as FakePlaceholder;
-      expect(typeof search.callback).toBe('function');
-      expect(typeof get.callback).toBe('function');
+      for (const name of ['exercise.search', 'exercise.get', 'exercise.confirm_setup']) {
+        const ph = harness.placeholders.get(name) as unknown as FakePlaceholder;
+        expect(typeof ph.callback).toBe('function');
+      }
     });
   });
 });

@@ -38,6 +38,7 @@ import {
   SetUpdateInput,
   type WatchConfig,
 } from '../schemas/set.js';
+import { inferExerciseSetups } from '../store/exercise-setups.js';
 import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
 import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
 import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
@@ -988,6 +989,7 @@ export async function finalizeSet(
     await stampPartnerGroup(state, match.b.setId, match.groupId);
   }
   await recalcBaselineForSet(state, stored);
+  await inferSetupForSet(state, stored);
   // Record this close so the NEXT set on this slot can measure its achieved
   // rest. In-memory on purpose: after a restart the previous close time is
   // genuinely unknown, and an absent rest beats one computed across a gap of
@@ -1179,6 +1181,37 @@ async function recalcBaselineForSet(state: ServerState, stored: StoredSet): Prom
     });
   } catch (err) {
     log.warn(`baseline harvest/recalc failed for exercise ${stored.exerciseId}`, err);
+  }
+}
+
+/**
+ * Assign the just-closed set to a physical setup, or open a new one (VW-119).
+ *
+ * Runs AFTER the set is finalized, persisted and the motor released — nothing
+ * here may delay or reorder either. The clustering pass is append-only, so
+ * re-running it over the whole exercise is exactly "assign the newest set to
+ * the nearest cluster or open a new one" and leaves every earlier assignment
+ * untouched; one algorithm rather than two that have to be kept agreeing.
+ *
+ * BEST EFFORT, on the same reasoning as `recalcBaselineForSet`: a setup is
+ * derived and fully re-derivable (`baselines.recalc { inferSetups: true }`),
+ * the durable record is the set row, and a clustering failure must never
+ * surface to `set.end`'s caller as a failed close.
+ *
+ * A guest's set is skipped for the same reason the baseline recalc skips it
+ * (VW-169): the owner's setups are the owner's, and a guest's cable geometry
+ * would open one that no owner set will ever join.
+ */
+async function inferSetupForSet(state: ServerState, stored: StoredSet): Promise<void> {
+  if (stored.exerciseId === undefined || stored.userId === undefined) return;
+  if (stored.lifter !== undefined) return;
+  try {
+    await inferExerciseSetups(state.store, {
+      userId: stored.userId,
+      exerciseId: stored.exerciseId,
+    });
+  } catch (err) {
+    log.warn(`setup inference failed for exercise ${stored.exerciseId}`, err);
   }
 }
 

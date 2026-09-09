@@ -247,6 +247,17 @@ export interface StoredSet {
    * multi-exercise, and per-exercise analysis has no key without it.
    */
   exerciseId?: string;
+  /**
+   * Inferred physical configuration — bench height, attachment, stance (VW-119).
+   * Distinct from the settings context below, which is readable device config.
+   *
+   * NOT written by `putSet`. It is stamped by `stampSetSetup` after the set is
+   * persisted, from the ROM clustering in `store/exercise-setups.ts`, so a
+   * re-put of the same row (a force-end followed by an explicit re-end) leaves
+   * the stamp alone rather than clearing it. Absent means the set has not been
+   * clustered yet — never "the default setup".
+   */
+  setupId?: string;
   /** Ordinal within the owning session, 1-based, in start-time order. */
   setIndexInSession?: number;
   /**
@@ -873,6 +884,55 @@ export interface StoredTrainingProfile {
 }
 
 /**
+ * A persisted `exercise_setups` row — one inferred physical configuration
+ * (bench height, attachment, stance) for one (user, exercise, side) (VW-119).
+ *
+ * INFERRED, NOT DECLARED. `label` is a neutral generated ordinal ("setup 1")
+ * until a human names it through `exercise.confirm_setup`, which is also the
+ * only writer of `confirmedAt`. Re-running the inference re-derives which sets
+ * belong together and never overwrites either.
+ *
+ * There is no `side` column, deliberately: the side is one of the dimensions
+ * `setupRowId` encodes, so the id IS the key and a row cannot disagree with it.
+ */
+export interface StoredExerciseSetup {
+  /** `setupRowId(key, index)` from `store/exercise-setups.ts` — never hand-rolled. */
+  id: string;
+  userId: string;
+  exerciseId: string;
+  /** Generated ordinal, or the name a human confirmed. */
+  label?: string;
+  /** When this cluster was FIRST inferred, not when the job last ran. */
+  detectedAt?: string;
+  /** Set only by `exercise.confirm_setup`. Absent ⇒ nobody has vouched for the name. */
+  confirmedAt?: string;
+  /** Which rule set produced the cluster. A bump re-clusters; see SETUP_CLUSTER_VERSION. */
+  clusterVersion?: string;
+  /** No longer inferred (a version bump, or its sets moved). Never deleted — it is an FK parent. */
+  retiredAt?: string;
+}
+
+/** Key for `listExerciseSetups`: the dimensions a setup row is filed under. */
+export interface ExerciseSetupFilter {
+  userId: string;
+  exerciseId: string;
+}
+
+/**
+ * The slice of the store the ROM-clustering job in `store/exercise-setups.ts`
+ * needs. Split out so the job is testable against a fake without standing up
+ * the whole {@link SessionStore}.
+ */
+export interface ExerciseSetupStore {
+  getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
+  getExerciseSetup(id: string): Promise<StoredExerciseSetup | undefined>;
+  /** Live rows only — a retired setup is history, not a clustering candidate. */
+  listExerciseSetups(filter: ExerciseSetupFilter): Promise<StoredExerciseSetup[]>;
+  putExerciseSetup(setup: StoredExerciseSetup): Promise<void>;
+  stampSetSetup(setId: string, setupId: string | null): Promise<void>;
+}
+
+/**
  * Confidence tier of a per-(user, exercise, setup, side) baseline. See
  * `store/exercise-baselines.ts` for the thresholds each transition needs.
  *
@@ -891,16 +951,17 @@ export type BaselineState = 'COLD' | 'SHAPE_ONLY' | 'PROVISIONAL' | 'CALIBRATED'
  * lie (data-layer-migration-plan.md §2 C2). What this row carries is history
  * about our own confidence, which no amount of rep data reproduces.
  *
- * `setupId` is absent on every row written today — the setup dimension is
- * inferred by ROM clustering and that writer does not exist yet, so a baseline
- * with no setup means "the one default setup for this exercise".
+ * `setupId` is absent unless the caller asked for a setup-keyed row. A baseline
+ * with no setup pools every set for the key, which is what "the one default
+ * setup for this exercise" means and what every row written before VW-119
+ * shipped is.
  */
 export interface StoredExerciseBaseline {
   /** `baselineKeyId(key)` from `@voltras/workout-analytics` — never a hand-rolled id. */
   id: string;
   userId: string;
   exerciseId: string;
-  /** Inferred physical configuration. Always absent until setup clustering ships. */
+  /** Inferred physical configuration. Absent ⇒ the pooled, setup-agnostic row. */
   setupId?: string;
   /** Absent means the side-agnostic view, not "unknown side". */
   side?: StoredSide;
@@ -949,7 +1010,14 @@ export interface StoredFailureAnchor {
   /** The set this verdict is about. */
   setId: string;
   exerciseId: string;
-  /** Inferred physical configuration. Always absent until setup clustering ships. */
+  /**
+   * Inferred physical configuration. STILL ALWAYS ABSENT, even now that
+   * `exercise_setups` has a writer (VW-119): stamping a setup here and then
+   * filtering `selectAnchors` by it would silently drop every anchor harvested
+   * before clustering shipped, demoting CALIBRATED baselines to SHAPE_ONLY.
+   * Anchors stay pooled across an exercise's setups until that back-fill is a
+   * task of its own.
+   */
   setupId?: string;
   side?: StoredSide;
   /**
@@ -989,7 +1057,7 @@ export interface FailureHarvestCounts {
  * `src/store/sqlite-store.ts` opens a `node:sqlite` database; consumers depend
  * only on this interface.
  */
-export interface SessionStore {
+export interface SessionStore extends ExerciseSetupStore {
   /**
    * Upsert via `ON CONFLICT(id) DO UPDATE` (see the SqliteSessionStore
    * implementation). Called twice per session — once at `session.start`
@@ -1236,8 +1304,10 @@ export interface SessionStore {
    * has never been recalculated. Never returns baseline values — those are
    * derived from stored reps by the analytics layer, on demand.
    *
-   * `key.setupId` must be absent: the setup dimension has no writer yet, so
-   * the only baseline that exists is the pooled, default-setup one.
+   * `key.setupId`, when present, must name a setup row that exists — the ids
+   * are generated by the ROM clustering (VW-119), so a caller inventing one is
+   * working from a wrong mental model and would silently get a row that means
+   * something else. Absent ⇒ the pooled, setup-agnostic baseline.
    */
   getBaseline(key: BaselineKey): Promise<StoredExerciseBaseline | undefined>;
 
