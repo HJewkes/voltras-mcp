@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   chooseComparisonPartner,
+  CORROBORATING_EXERCISES,
   isComparable,
   LOAD_TOLERANCE_PCT,
   type ComparabilitySubject,
@@ -166,6 +167,48 @@ describe('isComparable', () => {
     const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
     expect(verdict.comparable).toBe(true);
     expect(verdict.reasons).toContain(note);
+  });
+
+  // B16 (d): the gate is the low end of the source's own 2-3 range, quoted
+  // from the constant so a change to it fails here rather than drifting.
+  it.each([
+    [
+      'neither side records a corroborating count',
+      {},
+      {},
+      'corroboration (note): neither set records how many exercises for the same muscle back ' +
+        "it, so B16 (d)'s 2-3 exercise corroboration is unchecked and a per-muscle growth claim " +
+        'on this pair is uncorroborated',
+    ],
+    [
+      'the weakest side is below the gate',
+      { corroboratingExerciseCount: 1 },
+      { corroboratingExerciseCount: 3 },
+      "corroboration (note): 1 corroborating exercise for this muscle (1 vs 3), below B16 (d)'s " +
+        '2-3, so a confident per-muscle growth claim is withheld until another exercise agrees',
+    ],
+    [
+      'only one side records a count and it clears the gate',
+      { corroboratingExerciseCount: 2 },
+      {},
+      'corroboration (note): 2 corroborating exercises for this muscle (2 vs unrecorded) meets ' +
+        "B16 (d)'s 2-3 gate",
+    ],
+    [
+      'both sides clear the gate',
+      { corroboratingExerciseCount: 3 },
+      { corroboratingExerciseCount: 2 },
+      'corroboration (note): 2 corroborating exercises for this muscle (3 vs 2) meets B16 (d)' +
+        "'s 2-3 gate",
+    ],
+  ])('qualifies the per-muscle claim when %s', (_case, left, right, note) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons).toContain(note);
+  });
+
+  it("quotes B16 (d)'s own range rather than a chosen number", () => {
+    expect(CORROBORATING_EXERCISES).toEqual({ min: 2, max: 3 });
   });
 
   it('reports every failing clause, not just the first', () => {

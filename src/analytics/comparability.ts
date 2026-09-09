@@ -84,6 +84,20 @@ import { setPurposeOf, type PurposeBearing } from '../store/set-purpose.js';
 export const LOAD_TOLERANCE_PCT: number | null = null;
 
 /**
+ * How many distinct exercises for the same muscle must agree before a confident
+ * per-muscle growth claim is made.
+ *
+ * QUOTED FROM B16 clause (d): "requires corroboration across 2-3 exercises for
+ * the same muscle before making a confident per-muscle growth claim"
+ * (`sources/mined/rp-university-idea-backlog.md`, evidence
+ * `rp-s7-multi-exercise-confirmation-for-muscle-gain`). Both ends of the range
+ * are kept because the source gives a range: `min` is the gate the clause
+ * applies, `max` is quoted back in the note so the reader sees the whole rule
+ * rather than a number this module chose.
+ */
+export const CORROBORATING_EXERCISES = { min: 2, max: 3 } as const;
+
+/**
  * A set as far as comparability is concerned. Structural, so a `StoredSet`
  * passes without conversion.
  *
@@ -115,6 +129,12 @@ export interface ComparabilitySubject extends PurposeBearing {
    * positions that mean different things.
    */
   setIndexInExercise?: number | undefined;
+  /**
+   * How many distinct exercises for the same target muscle back the claim
+   * window this set belongs to (B16 d), counting this set's own exercise. No
+   * writer yet, so the corroboration clause degrades on every pair today.
+   */
+  corroboratingExerciseCount?: number | undefined;
 }
 
 /**
@@ -224,6 +244,7 @@ const CLAUSES: readonly Clause[] = [
  */
 const CLAIM_CLAUSES: readonly ClaimClause[] = [
   { name: 'profile', evaluate: (a, b) => profileNote(a, b) },
+  { name: 'corroboration', evaluate: (a, b) => corroborationNote(a, b) },
 ];
 
 /**
@@ -290,6 +311,41 @@ function profileNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
     `both sides are set ${left} of their exercise, so this pair is one position of the ` +
     'across-set profile; a confident growth claim still needs the remaining positions'
   );
+}
+
+/**
+ * B16 (d): a confident per-muscle growth claim needs 2-3 exercises for that
+ * muscle to agree, so a pair drawn from one exercise never carries it alone.
+ *
+ * The weakest recorded side governs — a claim leaning on this pair is only as
+ * corroborated as its worse-supported end — and both sides' raw counts are
+ * quoted so a caller can see which end is thin.
+ */
+function corroborationNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
+  const { min, max } = CORROBORATING_EXERCISES;
+  const sides = `${numberLabel(a.corroboratingExerciseCount)} vs ${numberLabel(b.corroboratingExerciseCount)}`;
+  const counts = [a.corroboratingExerciseCount, b.corroboratingExerciseCount].filter(
+    (count): count is number => count !== undefined,
+  );
+  if (counts.length === 0) {
+    return (
+      "neither set records how many exercises for the same muscle back it, so B16 (d)'s " +
+      `${min}-${max} exercise corroboration is unchecked and a per-muscle growth claim on this ` +
+      'pair is uncorroborated'
+    );
+  }
+  const weakest = Math.min(...counts);
+  if (weakest < min) {
+    return (
+      `${corroborationLabel(weakest)} for this muscle (${sides}), below B16 (d)'s ${min}-${max}, ` +
+      'so a confident per-muscle growth claim is withheld until another exercise agrees'
+    );
+  }
+  return `${corroborationLabel(weakest)} for this muscle (${sides}) meets B16 (d)'s ${min}-${max} gate`;
+}
+
+function corroborationLabel(count: number): string {
+  return `${count} corroborating exercise${count === 1 ? '' : 's'}`;
 }
 
 /**
