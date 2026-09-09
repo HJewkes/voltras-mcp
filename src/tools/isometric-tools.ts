@@ -1,11 +1,16 @@
-// `isometric.measure_max` and `isometric.measure_imbalance` tools.
+// `isometric.measure_hold`, `isometric.measure_max` and
+// `isometric.measure_imbalance` tools.
 //
-// These tools drive a multi-trial isometric assessment protocol against a
-// connected Voltra device (or pair of devices for the bilateral imbalance
-// flow). The pure analysis math lives in `src/state/isometric-protocol.ts`;
-// this module owns the protocol orchestration: subscribe to the SDK's
-// `onFrame` telemetry stream for each trial window, accumulate samples,
-// rest between trials, and assemble the response.
+// These tools drive the isometric assessment protocol against a connected
+// Voltra device (or pair of devices for the bilateral imbalance flow). The
+// pure analysis math lives in `src/state/isometric-protocol.ts`; this module
+// owns the protocol orchestration: subscribe to the SDK's `onFrame` telemetry
+// stream for each hold window, accumulate samples, rest between trials, and
+// assemble the response.
+//
+// `captureSingleHold` is the one unit all three share: one hold, one analysis,
+// four `isometric_phase` pushes. `measure_hold` calls it once and returns;
+// `measure_max` and `measure_imbalance` loop it with the protocol rests.
 //
 // Telemetry subscription pattern:
 //
@@ -54,10 +59,12 @@ import {
   analyzeTrial,
   computeImbalance,
   decideTestOrder,
+  PEAK_AFTER_MS,
   type ForceSample,
   type SideAnalysis,
   type TrialAnalysis,
 } from '../state/isometric-protocol.js';
+import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channel-payloads.js';
 import { wrapHandler } from './helpers.js';
 
 class ToolError extends Error {
@@ -305,6 +312,8 @@ async function measureHold(
   const trial = await captureSingleHold(state, slotId, {
     holdMs: input.holdMs,
     trial: SINGLE_HOLD_TRIAL_INDEX,
+    ...(input.side !== undefined ? { side: input.side } : {}),
+    ...(input.label !== undefined ? { label: input.label } : {}),
   });
   return {
     ok: true,
@@ -487,6 +496,14 @@ interface RunSideResult {
   analysis: SideAnalysis;
 }
 
+/** What one hold needs: how long, which hold of the run, and how to name it. */
+interface SingleHoldOptions {
+  holdMs: number;
+  trial: number;
+  side?: 'left' | 'right' | undefined;
+  label?: string | undefined;
+}
+
 async function runSideProtocol(
   state: ServerState,
   slotId: string,
@@ -519,20 +536,64 @@ async function runSideProtocol(
 async function captureSingleHold(
   state: ServerState,
   slotId: string,
-  opts: { holdMs: number; trial: number },
+  opts: SingleHoldOptions,
 ): Promise<TrialAnalysis> {
   const slot = getSlot(state, slotId);
   ensureSlotConnected(slotId, slot);
+  const publishPhase = phasePublisher(state, slotId, opts);
+
+  publishPhase('ready');
   const samples: ForceSample[] = [];
   const unsubscribe = subscribeForceSamples(slot.client, samples);
+  publishPhase('go');
   try {
-    await sleep(opts.holdMs);
+    await waitHoldWindow(opts.holdMs, () => publishPhase('hold'));
   } finally {
     if (typeof unsubscribe === 'function') {
       unsubscribe();
     }
   }
+  publishPhase('stop');
   return analyzeTrial(samples, opts.trial);
+}
+
+/**
+ * Wait out the hold, calling `onHold` once the ramp-up is over. Splitting the
+ * wait at `PEAK_AFTER_MS` — the point at which a peak starts counting toward
+ * validity — is what gives the `hold` phase its meaning: before it the athlete
+ * is still building force, after it they are holding the plateau the analysis
+ * measures. The two sleeps sum to `holdMs`, so the capture window is unchanged.
+ */
+async function waitHoldWindow(holdMs: number, onHold: () => void): Promise<void> {
+  const rampMs = Math.min(PEAK_AFTER_MS, holdMs);
+  await sleep(rampMs);
+  onHold();
+  await sleep(holdMs - rampMs);
+}
+
+/**
+ * Bind a phase-push emitter for one hold. Publishing through
+ * `channels.forSlot` tags every push with the originating slot (and the
+ * emit-time `at`), which is what lets a bilateral surface tell a left-arm
+ * hold from a right-arm one.
+ */
+function phasePublisher(
+  state: ServerState,
+  slotId: string,
+  opts: SingleHoldOptions,
+): (phase: IsometricPhase) => void {
+  const channels = state.channels.forSlot(slotId);
+  return (phase: IsometricPhase): void => {
+    channels.publish(
+      buildIsometricPhasePayload({
+        phase,
+        trial: opts.trial,
+        holdMs: opts.holdMs,
+        ...(opts.side !== undefined ? { side: opts.side } : {}),
+        ...(opts.label !== undefined ? { label: opts.label } : {}),
+      }),
+    );
+  };
 }
 
 /**

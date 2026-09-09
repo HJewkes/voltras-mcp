@@ -37,6 +37,7 @@ import type { TelemetryFrame } from '@voltras/node-sdk';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
 import type { StoredIsometricMeasurement } from '../../store/types.js';
+import { noopChannelPublisher, type ChannelPublisher } from '../../state/channel-publisher.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -137,7 +138,11 @@ function makeFakeStore(): FakeStore {
 
 function makeState(
   slots: Record<string, FakeClient>,
-  opts: { store?: FakeStore; deviceIds?: Record<string, string | null> } = {},
+  opts: {
+    store?: FakeStore;
+    deviceIds?: Record<string, string | null>;
+    channels?: ChannelPublisher;
+  } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
   for (const [slotId, client] of Object.entries(slots)) {
@@ -147,7 +152,11 @@ function makeState(
       opts.deviceIds?.[slotId] ?? null;
     slotMap.set(slotId, { slotId, client });
   }
-  return { slots: slotMap, store: opts.store } as unknown as ServerState;
+  return {
+    slots: slotMap,
+    store: opts.store,
+    channels: opts.channels ?? noopChannelPublisher,
+  } as unknown as ServerState;
 }
 
 /**
