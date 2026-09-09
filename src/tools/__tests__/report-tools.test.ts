@@ -119,6 +119,25 @@ describe('report.session_results', () => {
     expect(results.exercises[0]?.result).toBe('170 lb x 12\n170 lb x 10\nwarm-up: 2 sets');
   });
 
+  // VMCP-02.74: a Band set never carries `weightLbs`, so it used to render as
+  // a bare `12 reps` — indistinguishable from a set nobody recorded any
+  // configuration for at all.
+  it('labels a Band set by its own setting, not a missing weight', async () => {
+    const state = makeState({
+      sets: [
+        makeSet({
+          id: 's1',
+          trainingMode: 'Resistance Band',
+          firmwareRepCount: 12,
+        }),
+      ],
+    });
+
+    const results = await buildSessionResults(state, SESSION_ID);
+
+    expect(results.exercises[0]?.result).toBe('band x 12');
+  });
+
   it('keeps only the top-load sets when the ramp-up was never flagged', async () => {
     // Arrange: the same ramp-up as above, with nobody having set `isWarmup`.
     const state = makeState({

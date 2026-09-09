@@ -33,6 +33,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import { computeProgressionDelta } from '../tools/plan-tools.js';
+import { describeLoad } from '../state/set-capture.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import type { DashboardPlanStore } from './plan-api.js';
@@ -287,6 +288,7 @@ function toSetView(set: StoredSet, index: number): SessionSummarySet {
     startedAt: set.startedAt,
     endedAt: set.endedAt,
     weightLbs: set.weightLbs ?? null,
+    loadLabel: describeLoad(set),
     repCount: set.reps.length,
     isWarmup: set.isWarmup === true,
     velocityLossPct: velocity.lossPct ?? null,

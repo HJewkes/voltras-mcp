@@ -239,8 +239,11 @@ function sessionDurationMin(summary: SessionSummaryView): number | null {
   return Math.round(ms / 60_000);
 }
 
-/** `4 × 8 @ 135 lb`-style one-liner for a completed set. */
+/**
+ * `10 × 135 lb`-style one-liner for a completed set. `loadLabel` (VMCP-02.74)
+ * is computed server-side by `describeLoad` — this stays a plain wire-type
+ * read so the SPA bundle never needs the server's `state/` module.
+ */
 export function setLine(set: SessionSummarySet): string {
-  const load = set.weightLbs === null ? '—' : `${set.weightLbs} lb`;
-  return `${set.repCount} × ${load}`;
+  return `${set.repCount} × ${set.loadLabel}`;
 }
