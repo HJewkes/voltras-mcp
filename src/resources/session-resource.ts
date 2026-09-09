@@ -38,8 +38,11 @@ function sessionUriForSlot(slotId: string): string {
  * NO UNIT CONVERSION HAPPENS HERE ANY MORE. `vCon` is m/s and `rom` is metres
  * on the stored entry, because the bridge converts `WorkoutSample.velocity`
  * (VW-160) and `.position` (WA 2.0.0) once before analytics sees them.
+ *
+ * `published` stays off the wire: it is the bridge's own bookkeeping for
+ * reconciling reclaims (VW-185), not a coaching signal.
  */
-function serializeIdleRep(entry: IdleRep): IdleRep {
+function serializeIdleRep(entry: IdleRep): Omit<IdleRep, 'published'> {
   return {
     ts: entry.ts,
     vCon: entry.vCon !== null ? Number(entry.vCon.toFixed(3)) : null,
