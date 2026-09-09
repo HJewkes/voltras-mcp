@@ -84,7 +84,7 @@ describe('v15 -> v16 migration', () => {
       expect(cols.has('effort_tolerance')).toBe(true);
       expect(cols.has('target')).toBe(true);
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(16);
+      expect(version.user_version).toBe(17);
     } finally {
       db.close();
       store.close();
@@ -155,7 +155,7 @@ describe('v15 -> v16 migration', () => {
     const db = new DatabaseSync(path);
     try {
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(16);
+      expect(version.user_version).toBe(17);
     } finally {
       db.close();
       store.close();

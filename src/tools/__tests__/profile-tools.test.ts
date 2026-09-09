@@ -25,6 +25,7 @@ const TOOL_NAMES = [
   'profile.get_training_background',
   'profile.get_tier_signal',
   'profile.get_starting_prescription',
+  'profile.get_onboarding_gaps',
 ];
 
 function makeFakePlaceholders(): {
