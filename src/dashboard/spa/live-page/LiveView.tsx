@@ -310,6 +310,22 @@ export function ExerciseHeader({
         gap: 10,
       }}
     >
+      {/* The session-block title (VW-43) — only when the plan chain resolves one; no
+          placeholder when it doesn't, so an ad-hoc/freestyle session shows no caption
+          rather than an invented or generic label. */}
+      {session.title !== null && (
+        <Text
+          testID="session-title"
+          style={{
+            color: lifterColor,
+            fontSize: Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO),
+            fontFamily: '"Space Grotesk", sans-serif',
+            fontWeight: '600',
+          }}
+        >
+          {session.title}
+        </Text>
+      )}
       <View
         style={{
           flexDirection: wrap ? 'column' : 'row',

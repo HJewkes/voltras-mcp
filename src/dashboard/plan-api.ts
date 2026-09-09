@@ -59,7 +59,9 @@ export interface DashboardPlanStore {
   putTrainingBlock(b: StoredTrainingBlock): Promise<void>;
   getTrainingBlocksForProgram(programId: string): Promise<StoredTrainingBlock[]>;
   putTrainingWeek(w: StoredTrainingWeek): Promise<void>;
+  getTrainingWeek(id: string): Promise<StoredTrainingWeek | undefined>;
   getTrainingWeeksForBlock(blockId: string): Promise<StoredTrainingWeek[]>;
+  getTrainingBlock(id: string): Promise<StoredTrainingBlock | undefined>;
   putWorkoutTemplate(t: StoredWorkoutTemplate): Promise<void>;
   getWorkoutTemplate(id: string): Promise<StoredWorkoutTemplate | undefined>;
   getWorkoutTemplatesForWeek(weekId: string): Promise<StoredWorkoutTemplate[]>;

@@ -408,6 +408,92 @@ describe('GET /api/history', () => {
     });
   });
 
+  it('composes the session title from the attached template and block (VW-43)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-T',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-T', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+        getWorkoutTemplate: () =>
+          Promise.resolve({ id: 't1', weekId: 'w1', name: 'Push A', orderIndex: 0 }),
+        getTrainingWeek: () => Promise.resolve({ id: 'w1', blockId: 'b1', orderIndex: 0 }),
+        getTrainingBlock: () =>
+          Promise.resolve({
+            id: 'b1',
+            programId: 'p1',
+            orderIndex: 0,
+            name: 'Hypertrophy Block 1',
+            focus: 'hypertrophy',
+            weeksCount: 4,
+          }),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { title?: string } | null };
+    expect(body.plan?.title).toBe('Push A · Hypertrophy');
+  });
+
+  it('omits the title when the store cannot resolve the template → block chain (VW-43)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-U',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'bench',
+      exerciseName: 'Bench',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-U', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'bench',
+              orderIndex: 0,
+              targetSets: 3,
+            },
+          ]),
+        // No getWorkoutTemplate/getTrainingWeek/getTrainingBlock — same as a store build
+        // without the planning surface at all.
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { title?: string } | null };
+    expect(body.plan?.title).toBeUndefined();
+  });
+
   it('names the ordered planned list from the catalog and flags the active one (VW-49)', async () => {
     const session: ActiveSession = {
       sessionId: 'sess-L',
