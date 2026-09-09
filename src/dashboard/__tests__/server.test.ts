@@ -856,7 +856,14 @@ describe('GET /api/stream (SSE)', () => {
       });
       hub.emit({
         type: 'rep',
-        data: { slot: 'primary', repIndex: 3, vCon: 0.41, rom: 0.52, peakVelocity: 0.63 },
+        data: {
+          slot: 'primary',
+          repIndex: 3,
+          vCon: 0.41,
+          rom: 0.52,
+          peakVelocity: 0.63,
+          peakForceSoFar: 74,
+        },
       });
 
       await waitFor(() => body.includes('event: rep'));
