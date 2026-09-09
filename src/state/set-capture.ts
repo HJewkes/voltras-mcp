@@ -153,6 +153,51 @@ export function measureSampleRateHz(reps: readonly Rep[]): number | undefined {
 }
 
 /**
+ * Turn a stored set's own configuration into a truthful load label
+ * (VMCP-02.74), rather than reading `weightLbs` — which is meaningful only in
+ * WeightTraining and reads as an honest gap (`—`) for every Damper or Band
+ * set, even though the device told us exactly what it was configured to.
+ *
+ * The single place this decision is made: `setLine` (SPA), `toSetView`
+ * (session-summary) and `report.session_results` all render this same string
+ * so the three surfaces cannot drift apart on the same set.
+ *
+ * Band max force is NOT part of the label: the SDK does not echo it back in
+ * settings-update or state-dump frames (see the `device.set_band_max_force`
+ * handler), so there is nothing observed to report — labelling from
+ * `trainingMode` alone here is a deliberate choice, not a gap to fill in
+ * later. Isokinetic has the same story for its target speed.
+ */
+export function describeLoad(
+  set: Pick<StoredSet, 'trainingMode' | 'weightLbs' | 'chainsLbs' | 'damperLevel'>,
+): string {
+  switch (set.trainingMode) {
+    case 'Weight Training':
+      return describeWeightTraining(set);
+    case 'Damper':
+      return set.damperLevel === undefined ? '—' : `damper ${set.damperLevel}`;
+    case 'Resistance Band':
+      return 'band';
+    case 'Isokinetic':
+      return 'iso';
+    default:
+      return set.weightLbs === undefined ? '—' : `${formatLbs(set.weightLbs)} lb`;
+  }
+}
+
+/** `170 lb`, or `170 lb +20 chains` when a chains setting was also observed. */
+function describeWeightTraining(set: Pick<StoredSet, 'weightLbs' | 'chainsLbs'>): string {
+  if (set.weightLbs === undefined) return '—';
+  const base = `${formatLbs(set.weightLbs)} lb`;
+  return set.chainsLbs === undefined ? base : `${base} +${formatLbs(set.chainsLbs)} chains`;
+}
+
+/** Whole loads render whole; a half-pound step keeps its decimal. */
+function formatLbs(lbs: number): string {
+  return Number.isInteger(lbs) ? String(lbs) : String(Number(lbs.toFixed(1)));
+}
+
+/**
  * Scale of `WorkoutSample.position` on newly-written sets.
  *
  * `'meters'` as of WA 2.0.0 (VMCP-05.19): `event-bridge.ts` now converts

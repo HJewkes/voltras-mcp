@@ -270,6 +270,21 @@ describe('buildSessionSummary', () => {
     expect(summary?.exercises[0]?.volumeLbs).toBeNull();
   });
 
+  it('labels a Damper set by its own setting, not a missing weight (VMCP-02.74)', async () => {
+    const store = makeStore(
+      [
+        makeSet('s1', 'cable-row', 10, {
+          weightLbs: undefined,
+          trainingMode: 'Damper',
+          damperLevel: 6,
+        }),
+      ],
+      [],
+    );
+    const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
+    expect(summary?.exercises[0]?.sets[0]?.loadLabel).toBe('damper 6');
+  });
+
   it('explains a missing recommendation instead of inventing one', async () => {
     const notPrescribed = makeStore([makeSet('s1', 'cable-row', 10)], []);
     const noPlan = (await buildSessionSummary({ store: notPrescribed, nameOf }, 'sess-1'))

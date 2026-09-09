@@ -38,4 +38,12 @@ export const ProgressionGetInput = z.object({
     "Whose history to read (VW-169). Omitted means the owner's — a guest working in is " +
       'excluded by default and returned only when named.',
   ),
+  side: z
+    .enum(['left', 'right'])
+    .optional()
+    .describe(
+      'Limit history to one physical limb (VMCP-04.09). Omitted means both sides, matching ' +
+        "metrics.compute's default, and the response adds a sideSplit summary when any set " +
+        'in range carries a side.',
+    ),
 });

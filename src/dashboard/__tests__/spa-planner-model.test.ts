@@ -256,6 +256,7 @@ function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummaryS
     startedAt: '2026-07-30T10:00:00.000Z',
     endedAt: '2026-07-30T10:00:40.000Z',
     weightLbs: 135,
+    loadLabel: '135 lb',
     repCount: 10,
     isWarmup: false,
     velocityLossPct: 12,
@@ -361,8 +362,13 @@ describe('sessionRollup', () => {
 });
 
 describe('setLine', () => {
-  it('renders reps × load, and a gap for an unrecorded load', () => {
+  it('renders reps × the server-computed load label', () => {
     expect(setLine(summarySet())).toBe('10 × 135 lb');
-    expect(setLine(summarySet({ weightLbs: null }))).toBe('10 × —');
+    expect(setLine(summarySet({ loadLabel: '—' }))).toBe('10 × —');
+  });
+
+  it('renders a Damper or Band set by its own setting, not a missing weight (VMCP-02.74)', () => {
+    expect(setLine(summarySet({ loadLabel: 'damper 6' }))).toBe('10 × damper 6');
+    expect(setLine(summarySet({ loadLabel: 'band' }))).toBe('10 × band');
   });
 });

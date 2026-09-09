@@ -381,7 +381,7 @@ ask Claude to list them, or run `tools/list` against the stdio transport.
 | `bilateral.*`   | 1     | Apply mode + weight + eccentric + chains across multiple bound slots in one call.                                                                                                                                                                                                                                                                                 |
 | `driftguard.*`  | 1     | `check` — is rep execution (tempo, ROM) comparable across two sessions of one exercise? Diagnostic read over the in-process gate every cross-session comparison must pass first.                                                                                                                                                                                  |
 | `metrics.*`     | 1     | `compute` — runs an analytics pipeline over a session, a set, or a set-id array. Dispatches to `@voltras/workout-analytics`; no analytics logic is reimplemented here.                                                                                                                                                                                            |
-| `progression.*` | 1     | Progression history for one exercise.                                                                                                                                                                                                                                                                                                                             |
+| `progression.*` | 1     | Progression history for one exercise, optionally filtered to one `side` (VMCP-04.09) — omitted adds a `sideSplit` per-arm summary instead.                                                                                                                                                                                                                        |
 | `mrvguard.*`    | 1     | `check` — diagnostic read over the maximum-recoverable-volume guard.                                                                                                                                                                                                                                                                                              |
 | `coaching.*`    | 1     | `explain` — RP-derived coaching knowledge by topic, always tier-qualified and cited.                                                                                                                                                                                                                                                                              |
 | `server.*`      | 1     | `health` — build metadata, SDK and analytics versions, uptime, connection state. Good first call after registering.                                                                                                                                                                                                                                               |
@@ -509,6 +509,13 @@ missed: 1 of 3 sets below 8 reps
 A bilateral effort renders as `L 30 lb x 13` / `R 30 lb x 12`. The `missed:` line appears
 only when the session had a plan attached (`plan.complete_workout` /
 `plan.attach_to_session`) and a working set fell below its `targetRepsLow`.
+
+A Damper, Band or Isokinetic set has no `weightLbs` to report, so it labels itself by its
+own setting instead of showing a missing weight (VMCP-02.74): `damper 6 x 10`, `band x 10`,
+`iso x 10`. Band max force is never part of the label — the device does not echo it back in
+any settings-update or state-dump frame, so there is nothing observed to report. `describeLoad`
+in `src/state/set-capture.ts` is the one place this decision is made; the dashboard's session
+summary and set list render the same string.
 
 Which sets count is decided the same way `plan.suggest_progression` decides it: flagged
 warm-ups are excluded, then the sets at the top load are kept. A guest lifter's sets

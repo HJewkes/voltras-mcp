@@ -17,6 +17,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { z } from 'zod';
 
 import { ReportSessionResultsInput } from '../schemas/report.js';
+import { describeLoad } from '../state/set-capture.js';
 import type { ServerState } from '../state/server-state.js';
 import { scopeSetsToLifter } from '../store/set-scope.js';
 import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
@@ -192,16 +193,14 @@ function renderSidedLine(set: StoredSet): string {
   return `${label}${renderLoadAndReps(set)}`;
 }
 
-/** `170 lb x 12`, or a bare `12 reps` for a set that recorded no load. */
+/**
+ * `170 lb x 12`, `damper 6 x 12` (VMCP-02.74), or a bare `12 reps` for a set
+ * whose mode and weight are both unknown.
+ */
 function renderLoadAndReps(set: StoredSet): string {
   const reps = repCount(set);
-  if (set.weightLbs === undefined) return `${reps} reps`;
-  return `${formatLoad(set.weightLbs)} lb x ${reps}`;
-}
-
-/** Whole loads render whole; a half-pound step keeps its decimal. */
-function formatLoad(lbs: number): string {
-  return Number.isInteger(lbs) ? String(lbs) : String(Number(lbs.toFixed(1)));
+  const load = describeLoad(set);
+  return load === '—' ? `${reps} reps` : `${load} x ${reps}`;
 }
 
 /**
