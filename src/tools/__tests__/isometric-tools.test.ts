@@ -1,5 +1,5 @@
-// Tool-layer integration tests for isometric.measure_max and
-// isometric.measure_imbalance.
+// Tool-layer integration tests for isometric.measure_hold,
+// isometric.measure_max and isometric.measure_imbalance.
 //
 // Strategy: drive the registered tool callbacks with a fake VoltraClient
 // that exposes only the surface the tool consumes (`isConnected`, `onFrame`).
@@ -37,6 +37,12 @@ import type { TelemetryFrame } from '@voltras/node-sdk';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
 import type { StoredIsometricMeasurement } from '../../store/types.js';
+import {
+  McpChannelPublisher,
+  noopChannelPublisher,
+  type ChannelPublisher,
+} from '../../state/channel-publisher.js';
+import { DEFAULT_DURATION_MS } from '../../schemas/isometric.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -135,9 +141,35 @@ function makeFakeStore(): FakeStore {
   return store;
 }
 
+interface PublishedEvent {
+  content: string;
+  meta: Record<string, string>;
+}
+
+/**
+ * A real `McpChannelPublisher` over a fake notification sink, so the phase
+ * assertions see the same envelope production does — including the `slot` and
+ * `at` meta keys `forSlot` injects, which no payload builder sets itself.
+ */
+function makeChannels(published: PublishedEvent[]): ChannelPublisher {
+  const server = {
+    server: {
+      notification: (n: { params: PublishedEvent }): Promise<void> => {
+        published.push(n.params);
+        return Promise.resolve();
+      },
+    },
+  } as unknown as McpServer;
+  return new McpChannelPublisher(server);
+}
+
 function makeState(
   slots: Record<string, FakeClient>,
-  opts: { store?: FakeStore; deviceIds?: Record<string, string | null> } = {},
+  opts: {
+    store?: FakeStore;
+    deviceIds?: Record<string, string | null>;
+    channels?: ChannelPublisher;
+  } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
   for (const [slotId, client] of Object.entries(slots)) {
@@ -147,7 +179,11 @@ function makeState(
       opts.deviceIds?.[slotId] ?? null;
     slotMap.set(slotId, { slotId, client });
   }
-  return { slots: slotMap, store: opts.store } as unknown as ServerState;
+  return {
+    slots: slotMap,
+    store: opts.store,
+    channels: opts.channels ?? noopChannelPublisher,
+  } as unknown as ServerState;
 }
 
 /**
@@ -187,16 +223,152 @@ async function pumpTrialFrames(
   }
 }
 
-const TOOL_NAMES = ['isometric.measure_max', 'isometric.measure_imbalance'] as const;
+const TOOL_NAMES = [
+  'isometric.measure_hold',
+  'isometric.measure_max',
+  'isometric.measure_imbalance',
+] as const;
 
-describe('isometric.measure_max', () => {
-  let measureMaxCb: Callback;
+/** Phase names, in publish order, from the recorded `isometric_phase` events. */
+function phasesOf(published: PublishedEvent[]): string[] {
+  return published.filter((e) => e.meta.event_type === 'isometric_phase').map((e) => e.meta.phase);
+}
+
+interface MeasureHoldBody {
+  ok: boolean;
+  slot: string;
+  side: string | null;
+  label: string | null;
+  holdMs: number;
+  trial: { index: number; valid: boolean; peakForceLbs: number };
+  peakForceLbs: number;
+}
+
+describe('isometric.measure_hold', () => {
+  let measureHoldCb: Callback;
   let client: FakeClient;
+  let published: PublishedEvent[];
 
   beforeEach(() => {
     vi.useFakeTimers();
     client = makeFakeClient();
-    const state = makeState({ primary: client });
+    published = [];
+    const state = makeState({ primary: client }, { channels: makeChannels(published) });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureHoldCb = slots.get('isometric.measure_hold')!.callback;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('captures exactly one hold and returns its analysis', async () => {
+    const promise = measureHoldCb({ holdMs: 3000 });
+    await pumpTrialFrames(client, 3000, 200);
+
+    const body = payload(await promise) as MeasureHoldBody;
+    expect(body.ok).toBe(true);
+    expect(body.slot).toBe('primary');
+    expect(body.trial.index).toBe(1);
+    expect(body.trial.valid).toBe(true);
+    // The top-level peak echoes the analysis, so a hold that fails a gate
+    // still reports what the athlete pulled.
+    expect(body.peakForceLbs).toBe(body.trial.peakForceLbs);
+    expect(body.peakForceLbs).toBeGreaterThan(190);
+    // One subscription, one detach: no trial loop, no listener left behind.
+    expect(client.subscribeCount).toBe(1);
+    expect(client.unsubscribeCount).toBe(1);
+  });
+
+  it('returns at the end of the hold, with no rest wait', async () => {
+    const promise = measureHoldCb({ holdMs: 3000 });
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await promise;
+    expect(settled).toBe(true);
+  });
+
+  it('publishes ready → go → hold → stop, slot-scoped and stamped', async () => {
+    const promise = measureHoldCb({ holdMs: 3000, side: 'left', label: 'left knee ext' });
+    await pumpTrialFrames(client, 3000, 200);
+    await promise;
+
+    expect(phasesOf(published)).toEqual(['ready', 'go', 'hold', 'stop']);
+    for (const event of published) {
+      expect(event.meta.slot).toBe('primary');
+      expect(Date.parse(event.meta.at)).not.toBeNaN();
+      expect(event.meta.trial).toBe('1');
+      expect(event.meta.hold_ms).toBe('3000');
+      expect(event.meta.side).toBe('left');
+    }
+    const go = JSON.parse(published[1].content) as {
+      summary: string;
+      isometric: Record<string, unknown>;
+    };
+    expect(go.isometric).toEqual({
+      phase: 'go',
+      trial: 1,
+      hold_ms: 3000,
+      side: 'left',
+      label: 'left knee ext',
+    });
+    expect(go.summary).toContain('left knee ext');
+  });
+
+  it('leaves side and label out of the pushes when the caller states neither', async () => {
+    const promise = measureHoldCb({ holdMs: 3000 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody;
+
+    expect(body.side).toBeNull();
+    expect(body.label).toBeNull();
+    expect(published[0].meta).not.toHaveProperty('side');
+    const ready = JSON.parse(published[0].content) as { isometric: Record<string, unknown> };
+    expect(ready.isometric).toMatchObject({ side: null, label: null });
+  });
+
+  it('holds for the protocol default duration when holdMs is omitted', async () => {
+    const promise = measureHoldCb({});
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULT_DURATION_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const body = payload(await promise) as MeasureHoldBody;
+    expect(body.holdMs).toBe(DEFAULT_DURATION_MS);
+    expect(published[0].meta.hold_ms).toBe(String(DEFAULT_DURATION_MS));
+  });
+
+  it('returns SLOT_NOT_BOUND, and pushes nothing, when the slot is not connected', async () => {
+    client.isConnected = false;
+    const result = await measureHoldCb({ holdMs: 3000 });
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'SLOT_NOT_BOUND' });
+    // A `ready` push for a hold that can never happen would signal the athlete
+    // to get set for nothing.
+    expect(published).toEqual([]);
+  });
+});
+
+describe('isometric.measure_max', () => {
+  let measureMaxCb: Callback;
+  let client: FakeClient;
+  let published: PublishedEvent[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    client = makeFakeClient();
+    published = [];
+    const state = makeState({ primary: client }, { channels: makeChannels(published) });
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
     measureMaxCb = slots.get('isometric.measure_max')!.callback;
@@ -245,6 +417,29 @@ describe('isometric.measure_max', () => {
     // Two onFrame subscriptions, two unsubscribe calls — no listener leak.
     expect(client.subscribeCount).toBe(2);
     expect(client.unsubscribeCount).toBe(2);
+  });
+
+  it('runs N holds over the same primitive, one phase cycle per trial', async () => {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    const body = payload(await promise) as { trials: unknown[] };
+
+    expect(body.trials).toHaveLength(2);
+    // The multi-trial path is the single-hold path, twice — and the trial
+    // number on the pushes is what tells the two cycles apart.
+    expect(phasesOf(published)).toEqual([
+      'ready',
+      'go',
+      'hold',
+      'stop',
+      'ready',
+      'go',
+      'hold',
+      'stop',
+    ]);
+    expect(published.map((e) => e.meta.trial)).toEqual(['1', '1', '1', '1', '2', '2', '2', '2']);
   });
 
   it('returns null mean when fewer than 2 trials are valid', async () => {
