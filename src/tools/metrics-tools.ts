@@ -76,9 +76,9 @@ import {
   computeVBTSetFatigueIndex,
   computeVolume,
   createTechniqueBaseline,
-  evaluateDriftGuard,
-  summarizeSetsForDrift,
+  type BaselineKey,
   type DriftGuardVerdict,
+  type DriftSummary,
   estimateE1RMFromProfile,
   estimateE1RMFromReps,
   estimateHybridE1RM,
@@ -124,6 +124,7 @@ import {
   deriveFeatureGate,
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
+import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.js';
 import { selectWorkingSets } from '../store/working-sets.js';
 import {
   RIR_MODEL_CALIBRATION_CONFIDENCE,
@@ -543,13 +544,14 @@ function bounceSetSummary(reps: RepBounceReading[]): {
 interface RomBaselineReading {
   gate: FeatureGateVerdict;
   /**
-   * This set's median eligible-rep ROM against the exercise baseline's, as a
+   * This set's median eligible-rep ROM against the reference session's, as a
    * signed percentage. Negative means this set was shorter than history.
    */
   romVsBaselinePct: number | null;
   /**
-   * B15's execution-comparability verdict for this set against the pooled
-   * baseline. `null` when the comparison never got far enough to run one.
+   * B15's execution-comparability verdict for this set's session against the
+   * reference session `romVsBaselinePct` divides by. `null` when the
+   * comparison never got far enough to run one.
    */
   comparability: DriftGuardVerdict | null;
   /** Why the comparison was refused, or the caveat riding along with a number. */
@@ -618,55 +620,91 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
   const observed = medianEligibleRom(repsOf(set));
   if (observed === null) return refuse('this set carries no measurable ROM to compare');
 
-  const prior = await priorComparableSets(state, set, exerciseId);
-  // `summarizeSetsForDrift` returns `undefined` rather than a zero median when
-  // no rep qualifies, so a positive `medianRomM` is guaranteed past this point.
-  const baseline = summarizeSetsForDrift(prior.map(toAnalyticsSet));
-  const current = summarizeSetsForDrift([toAnalyticsSet(set)]);
-  if (baseline === undefined || current === undefined) {
+  const key: BaselineKey = {
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    ...(set.side !== undefined ? { side: set.side } : {}),
+  };
+  const reference = await referenceSessionFor(state, set, key);
+  if (reference === undefined) {
     return refuse('no prior working set of this exercise carries a comparable ROM read');
   }
-
+  // ONE eligibility filter for the gate and the number it gates: both go
+  // through `store/drift-guard.ts`, which owns the warm-up/side rule
+  // (`isEligibleForComparison`). `summarizeSessionForDrift` supplies the
+  // reference ROM only because a `DriftGuardVerdict` carries percentages, not
+  // the denominator `romVsBaselinePct` divides by.
+  const comparability = await checkDriftGuard(state.store, {
+    key,
+    baselineSessionId: reference.sessionId,
+    currentSessionId: set.sessionId,
+  });
   // B15's consumer contract: SKIP the comparison when it is not comparable,
   // PROPAGATE `reasoning` as a caveat when it is merely flagged.
-  const comparability = evaluateDriftGuard(baseline, current);
   if (!comparability.comparable) {
     return { gate, romVsBaselinePct: null, comparability, note: comparability.reasoning };
   }
   return {
     gate,
-    romVsBaselinePct: ((observed - baseline.medianRomM) / baseline.medianRomM) * 100,
+    romVsBaselinePct:
+      ((observed - reference.summary.medianRomM) / reference.summary.medianRomM) * 100,
     comparability,
     ...(comparability.flagged ? { note: comparability.reasoning } : {}),
   };
 }
 
 /**
- * This exercise's own prior working sets, on the same side and the same
- * position scale as `set`.
+ * The prior session `set` is judged against, with its execution shape: this
+ * exercise's most recent earlier session that the drift guard can read, on the
+ * same position scale.
  *
- * THE SCALE FILTER IS NOT PARANOIA. `StoredSet.positionUnits` records whether
- * a row's samples are in device-native units or metres, and the store keeps
- * each row in the scale it was captured at rather than rewriting history.
- * Within one set that cancels — every ratio in `rom-integrity.ts` is
- * scale-free — but ACROSS sets it does not: one row of each kind would make a
- * normal set read as a 100,000% ROM change. Absent reads as the current scale,
- * the same convention `normaliseVelocityToMps` uses for velocity.
+ * SELECTION, NOT ELIGIBILITY. Which sets inside a session count is
+ * `store/drift-guard.ts`'s call, not this function's — all this does is name a
+ * session, and it walks newest-first until that module reports a shape rather
+ * than second-guessing which sessions have one. The most RECENT prior session
+ * is the strictest reference for a setup change: whatever moved the seat or
+ * the attachment happened after it.
+ *
+ * THE SCALE FILTER IS NOT PARANOIA, and it is not eligibility either.
+ * `StoredSet.positionUnits` records whether a row's samples are in
+ * device-native units or metres, and the store keeps each row in the scale it
+ * was captured at rather than rewriting history. Within one set that cancels —
+ * every ratio in `rom-integrity.ts` is scale-free — but ACROSS sets it does
+ * not: one row of each kind would make a normal set read as a 100,000% ROM
+ * change. Absent reads as the current scale, the same convention
+ * `normaliseVelocityToMps` uses for velocity.
  */
-async function priorComparableSets(
+async function referenceSessionFor(
   state: ServerState,
   set: StoredSet,
-  exerciseId: string,
-): Promise<StoredSet[]> {
-  if (exerciseId === UNKNOWN_KEY) return [];
-  const sets = await state.store.getSetsForExercise({
-    userId: LOCAL_USER_ID,
-    exerciseId,
-    purpose: ['working'],
-    ...(set.side !== undefined ? { side: set.side } : {}),
-  });
+  key: BaselineKey,
+): Promise<{ sessionId: string; summary: DriftSummary } | undefined> {
+  if (key.exerciseId === UNKNOWN_KEY) return undefined;
   const scale = positionScaleOf(set);
-  return sets.filter((s) => s.sessionId !== set.sessionId && positionScaleOf(s) === scale);
+  const rows = (
+    await state.store.getSetsForExercise({
+      userId: LOCAL_USER_ID,
+      exerciseId: key.exerciseId,
+      ...(key.side !== undefined ? { side: key.side } : {}),
+    })
+  ).filter((s) => s.sessionId !== set.sessionId && positionScaleOf(s) === scale);
+  for (const sessionId of sessionIdsNewestFirst(rows)) {
+    // Sequential on purpose: the newest readable session wins, and the common
+    // case answers on the first iteration.
+    const summary = await summarizeSessionForDrift(state.store, sessionId, key);
+    if (summary !== undefined) return { sessionId, summary };
+  }
+  return undefined;
+}
+
+/** Session ids in `rows`, most recently started first. */
+function sessionIdsNewestFirst(rows: readonly StoredSet[]): string[] {
+  const startedAt = new Map<string, string>();
+  for (const row of rows) {
+    const seen = startedAt.get(row.sessionId);
+    if (seen === undefined || row.startedAt > seen) startedAt.set(row.sessionId, row.startedAt);
+  }
+  return [...startedAt.entries()].sort(([, a], [, b]) => b.localeCompare(a)).map(([id]) => id);
 }
 
 function positionScaleOf(set: StoredSet): NonNullable<StoredSet['positionUnits']> {
@@ -1403,9 +1441,11 @@ const METRICS_COMPUTE_DESCRIPTION =
   'No population or absolute ROM figure is involved anywhere — anthropometry means there is no ' +
   'population-correct ROM. `baseline.romVsBaselinePct` is the ONLY cross-session number and is ' +
   'null unless three things hold: the B57 baseline is at least PROVISIONAL, B15’s drift guard ' +
-  'calls this set comparable to the exercise’s history (a seat or attachment change reads ' +
-  'exactly like a ROM change, and setup clustering is not built yet), and the compared rows ' +
-  'share a position scale. `baseline.note` always says which one refused. `movementClass` is ' +
+  '(`store/drift-guard.ts`, the same path `driftguard.check` reads) calls this set’s session ' +
+  'comparable to the reference session — the most recent earlier one for this exercise, since ' +
+  'a seat or attachment change reads exactly like a ROM change and setup clustering is not ' +
+  'built yet — and the two share a position scale. `baseline.note` always says which one ' +
+  'refused, and `baseline.comparability` carries the guard’s own verdict. `movementClass` is ' +
   'reported, never gated on. A readout only: no cue, no watch, no push event. ' +
   '`strength.e1rm` (VW-142) — estimated 1RM, one of THREE input shapes on this one literal: ' +
   '`{ load, reps }` (Epley formula — `e1RM = load * (1 + reps / 30)`, no baseline gate), ' +

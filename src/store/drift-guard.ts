@@ -56,8 +56,8 @@ export async function checkDriftGuard(
   input: DriftGuardInput,
 ): Promise<DriftGuardVerdict> {
   const [baseline, current] = await Promise.all([
-    summarizeSession(store, input.baselineSessionId, input.key),
-    summarizeSession(store, input.currentSessionId, input.key),
+    summarizeSessionForDrift(store, input.baselineSessionId, input.key),
+    summarizeSessionForDrift(store, input.currentSessionId, input.key),
   ]);
 
   if (baseline === undefined || current === undefined) {
@@ -71,9 +71,16 @@ export async function checkDriftGuard(
  * session, reduced to their execution shape. Warm-up and side scoping is
  * `isEligibleForComparison`, shared with the MRV detector so the gate and the
  * thing it gates always read the same sets.
+ *
+ * Exported alongside {@link checkDriftGuard} because a caller that needs the
+ * reference session's ROM as a DENOMINATOR — `metrics.compute quality.rom`'s
+ * `romVsBaselinePct` — cannot get it from a `DriftGuardVerdict`, which carries
+ * only percentages. Reaching for `summarizeSetsForDrift` directly instead
+ * would put a second warm-up/side filter in the tree, and the gate and the
+ * number it gates would be free to disagree about which sets they read.
  */
-async function summarizeSession(
-  store: SessionStore,
+export async function summarizeSessionForDrift(
+  store: Pick<SessionStore, 'getSetsForSession'>,
   sessionId: string,
   key: BaselineKey,
 ): Promise<DriftSummary | undefined> {

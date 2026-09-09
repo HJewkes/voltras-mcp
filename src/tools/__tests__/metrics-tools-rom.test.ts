@@ -142,9 +142,13 @@ interface StoreFixture {
 }
 
 function makeState({ target, history = [], baseline }: StoreFixture): ServerState {
+  const all = target === undefined ? history : [target, ...history];
   const store = {
     getSet: vi.fn(async (id: string) => (target?.id === id ? target : undefined)),
     getSetsForExercise: vi.fn(async (_filter: ExerciseSetsFilter) => history),
+    // `checkDriftGuard` and `summarizeSessionForDrift` read whole sessions and
+    // apply the repo's own warm-up/side eligibility to what comes back.
+    getSetsForSession: vi.fn(async (id: string) => all.filter((s) => s.sessionId === id)),
     getBaseline: vi.fn(async () => baseline),
   };
   return { store, exercises: { getById: vi.fn(() => undefined) } } as unknown as ServerState;
@@ -222,8 +226,8 @@ describe('metrics.compute — quality.rom baseline gating', () => {
   // flags but never blocks, which would mask the refusals under test.
   const STEADY = [0.5, 0.5, 0.5, 0.5];
   const history = [
-    makeSet('hist-1', STEADY, { sessionId: 'sess-old-1' }),
-    makeSet('hist-2', STEADY, { sessionId: 'sess-old-2' }),
+    makeSet('hist-1', STEADY, { sessionId: 'sess-old-1', startedAt: '2026-01-01T00:00:00.000Z' }),
+    makeSet('hist-2', STEADY, { sessionId: 'sess-old-2', startedAt: '2026-02-01T00:00:00.000Z' }),
   ];
 
   it('withholds the comparison with the gate message below PROVISIONAL', async () => {
@@ -249,6 +253,27 @@ describe('metrics.compute — quality.rom baseline gating', () => {
 
     expect(payload.baseline.comparability?.comparable).toBe(true);
     expect(payload.baseline.romVsBaselinePct).toBeCloseTo(-10, 10);
+  });
+
+  it('takes the most recent prior session as the reference, not an older one', async () => {
+    const payload = await readRom({
+      target: makeSet('set-1', STEADY, { startedAt: '2026-03-01T00:00:00.000Z' }),
+      history: [
+        makeSet('hist-old', [0.4, 0.4, 0.4, 0.4], {
+          sessionId: 'sess-old-1',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        makeSet('hist-recent', STEADY, {
+          sessionId: 'sess-old-2',
+          startedAt: '2026-02-01T00:00:00.000Z',
+        }),
+      ],
+      baseline: makeBaseline('CALIBRATED'),
+    });
+
+    // Against the recent session (0.5) this set is unchanged; against the older
+    // one (0.4) it would read +25%.
+    expect(payload.baseline.romVsBaselinePct).toBeCloseTo(0, 10);
   });
 
   it('refuses the comparison when B15 calls the two incomparable', async () => {

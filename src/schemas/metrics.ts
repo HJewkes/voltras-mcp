@@ -121,9 +121,10 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // ROM as a fraction of the set's own eligible median, first-to-last decay,
   // and a rep-to-rep coefficient of variation. The cross-session half
   // (`baseline.romVsBaselinePct`) is refused below a PROVISIONAL B57 baseline
-  // and again when B15's drift guard says the two are not comparable, because
-  // a seat or attachment change reads exactly like a ROM change. A readout
-  // only: no push event, no watch, no cue.
+  // and again when B15's `checkDriftGuard` says this set's session and the
+  // reference session are not comparable, because a seat or attachment change
+  // reads exactly like a ROM change. A readout only: no push event, no watch,
+  // no cue.
   z.object({ pipeline: z.literal('quality.rom'), setId: IdSchema }),
 
   // Per-rep turnaround-dwell / eccentric-speed readout (VMCP-06.11 / B10).
