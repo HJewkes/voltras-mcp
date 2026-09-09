@@ -8,10 +8,11 @@
  * component imports — `main.tsx` owns the store reads and passes the result down.
  *
  * GAP fields (no store source yet) are left `null`/omitted rather than invented, so
- * the page hides them exactly as titan's `LiveNoTempo` story does. Each is ticketed:
- *   - `session.title`      → VW-43 (compose from WorkoutTemplate + TrainingBlock)
- * `session.tempo` is now wired: the prescription carries the resolved target tempo
+ * the page hides them exactly as titan's `LiveNoTempo` story does.
+ * `session.tempo` is wired: the prescription carries the resolved target tempo
  * (VW-41; coach override still pending, VW-46), hidden when the prescription has none.
+ * `session.title` is wired too (VW-43): the prescription carries the composed
+ * template · block title, null when no plan is attached or the block can't resolve.
  * Wiring each is additive here — no consumer change.
  */
 import { type Rep } from '@voltras/workout-analytics';
@@ -250,7 +251,9 @@ function mapSession(
     // who is lifting RIGHT NOW, and the default only says who the next set
     // will be attributed to. Null (the owner) renders nothing.
     lifter: snapshot.sets.active?.lifter ?? snapshot.session?.lifter ?? null,
-    title: null,
+    // Composed template · block title (VW-43); null when no plan is attached or the
+    // block can't resolve — never a fabricated title.
+    title: prescription?.title ?? null,
     weightLbs,
     unit: 'lbs',
     // Target tempo tuple [ecc, pauseBottom, con, pauseTop], resolved server-side
