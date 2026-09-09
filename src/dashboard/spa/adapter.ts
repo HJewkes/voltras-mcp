@@ -27,6 +27,8 @@ import type { Device, DeviceRowState, SessionState } from '@titan-design/react-u
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
+// The DISPLAY-only unit conversion (VW-63); the store stays lbs — see mass.ts.
+import { convertMass, type MassUnit } from './live-page/mass';
 
 /** Peak concentric velocity (m/s) for a rep, via WA. Null when unavailable. */
 export function repPeakVelocityMps(rep: Rep): number | null {
@@ -241,10 +243,14 @@ export function fmtVelocity(mps: number | null | undefined): string {
   return `${mps.toFixed(2)} m/s`;
 }
 
-/** Format a pounds value as `"135.0 lbs"`, or the em-dash placeholder. */
-export function fmtWeight(lbs: number | null | undefined): string {
+/**
+ * Format a pounds value in `unit` as `"135.0 lbs"` / `"61.2 kg"`, or the em-dash
+ * placeholder. The source value is always lbs (VW-63); `unit` only picks the
+ * DISPLAY conversion (via `mass.ts`) — nothing here is written back to the store.
+ */
+export function fmtWeight(lbs: number | null | undefined, unit: MassUnit = 'lbs'): string {
   if (lbs == null || !Number.isFinite(lbs)) return '—';
-  return `${lbs.toFixed(1)} lbs`;
+  return `${convertMass(lbs, unit).toFixed(1)} ${unit}`;
 }
 
 /** camelCase / PascalCase training mode → spaced words (`weightTraining`→`weight Training`). */
@@ -352,7 +358,7 @@ function resolveWeightLbs(device: SnapshotDevice | null, set: SnapshotActiveSet)
   return tenths != null ? tenths / TENTHS_PER_LB : null;
 }
 
-export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
+export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs'): CurrentSetView {
   const set = snapshot.sets.active;
   if (!set) {
     return {
@@ -386,7 +392,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
 
   return {
     active: true,
-    weight: fmtWeight(resolveWeightLbs(device, set)),
+    weight: fmtWeight(resolveWeightLbs(device, set), displayUnit),
     mode: fmtMode(device?.trainingMode),
     reps: reps.length,
     repTarget,
@@ -394,7 +400,7 @@ export function buildCurrentSet(snapshot: Snapshot): CurrentSetView {
     velocityLoss: fmtVelocityLoss(reps),
     velocityLossPct: computeVelocityLossPct(reps),
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
-    targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB) : '—',
+    targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB, displayUnit) : '—',
     velocitiesMps,
   };
 }

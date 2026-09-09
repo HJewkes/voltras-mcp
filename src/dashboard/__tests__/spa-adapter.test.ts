@@ -103,6 +103,13 @@ describe('formatters (legacy parity)', () => {
     expect(fmtWeight(null)).toBe('—');
   });
 
+  it('fmtWeight converts to kg when the display unit is kg (VW-63)', () => {
+    // 100 lb × 0.45359237 = 45.359237 → "45.4 kg".
+    expect(fmtWeight(100, 'kg')).toBe('45.4 kg');
+    expect(fmtWeight(135, 'lbs')).toBe('135.0 lbs');
+    expect(fmtWeight(null, 'kg')).toBe('—');
+  });
+
   it('fmtMode spaces camelCase modes', () => {
     expect(fmtMode('weightTraining')).toBe('weight Training');
     expect(fmtMode(null)).toBe('—');
@@ -145,6 +152,19 @@ describe('buildCurrentSet', () => {
     expect(view.targetWeight).toBe('140.0 lbs'); // tenths/10
     // VelocityStrip bars are MEAN concentric (mm/s→m/s), NOT the peaks above.
     expect(view.velocitiesMps).toEqual([0.8, 0.7, 0.65]);
+  });
+
+  it('converts weight/targetWeight to kg when the display unit is kg (VW-63)', () => {
+    const view = buildCurrentSet(
+      snapshot({
+        sessionId: 's1',
+        device: { connected: true, weightLbs: 100, trainingMode: 'weight' },
+        activeSet: { reps: [], latestInProgress: { targetWeightTenths: 1000 } },
+      }),
+      'kg',
+    );
+    expect(view.weight).toBe('45.4 kg');
+    expect(view.targetWeight).toBe('45.4 kg');
   });
 
   it('falls back to target weight when device weight is absent', () => {
