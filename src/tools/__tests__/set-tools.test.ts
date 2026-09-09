@@ -11,7 +11,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Rep } from '@voltras/workout-analytics';
+import * as analytics from '@voltras/workout-analytics';
 import { getPhaseMeanVelocity, getRepRangeOfMotion } from '@voltras/workout-analytics';
+
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import {
   LiveSignalHub,
   mmsToMps,
@@ -2467,5 +2470,72 @@ describe('bilateral group id at finalize', () => {
       (c: unknown[]) => (c[0] as { meta: Record<string, string> }).meta.event_type === 'set_ended',
     );
     expect(setEnded).toHaveLength(1);
+  });
+});
+
+// VMCP-02.63: `set.start` stamps the session's movement class on the set and,
+// when the class gate will silence a registered velocity-loss trigger, says so
+// once instead of leaving the coach to infer it from an absence of events.
+describe('set.start — movement-class gate wiring', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = setup();
+    // The catalog is module-global state the server seeds at bootstrap.
+    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(
+      SEED_CABLE_EXERCISES,
+    );
+  });
+
+  function startSessionOn(exerciseId?: string): void {
+    h.live.startSession({
+      sessionId: 'sess-mc',
+      startedAt: '2026-09-08T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      ...(exerciseId !== undefined ? { exerciseId } : {}),
+    });
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+  }
+
+  function suppressionEvents(): { meta: Record<string, string> }[] {
+    return h.channels.publish.mock.calls
+      .map((c) => c[0] as { meta: Record<string, string> })
+      .filter((e) => e.meta.event_type === 'velocity_loss_watch_suppressed');
+  }
+
+  const WATCH = { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] };
+
+  it('stamps the class and publishes exactly one suppression on a pull set', async () => {
+    startSessionOn('cable-row');
+
+    await h.invoke('set.start', { watch: WATCH });
+
+    expect(h.live.set?.movementClass).toBe('pull');
+    const events = suppressionEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].meta.reason).toBe('ballistic_pull');
+    expect(events[0].meta.slot).toBe('primary');
+  });
+
+  it('publishes nothing on a pull set that forced the watch back on', async () => {
+    startSessionOn('cable-row');
+
+    await h.invoke('set.start', { watch: { ...WATCH, velocityLoss: { force: true } } });
+
+    expect(suppressionEvents()).toHaveLength(0);
+  });
+
+  it('publishes nothing on a push set or an unidentified session', async () => {
+    startSessionOn('cable-chest-press');
+    await h.invoke('set.start', { watch: WATCH });
+    expect(h.live.set?.movementClass).toBe('push');
+    expect(suppressionEvents()).toHaveLength(0);
+
+    await h.invoke('set.end', {});
+    h.live.setSessionExercise(undefined, undefined);
+    await h.invoke('set.start', { watch: WATCH });
+    expect(h.live.set?.movementClass).toBe('unknown');
+    expect(suppressionEvents()).toHaveLength(0);
   });
 });

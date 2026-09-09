@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto';
 import type { Rep } from '@voltras/workout-analytics';
 
 import { buildSetStartedPayload } from './channel-payloads.js';
+import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import type { ActiveSet, IdleRepReclaim } from './live-state.js';
 import { isTailPairConsistent } from './rep-eligibility.js';
 import { getSlot, type ServerState } from './server-state.js';
@@ -87,6 +88,8 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
     status: 'active',
     autoCreatedBy: 'idle_rep',
     ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+    // VMCP-02.63: stamped from the same pointer, in the same tick.
+    movementClass: movementClassForExerciseId(session.exerciseId),
     // VW-169: an auto-armed set inherits the session's lifter default. The
     // whole point of the default is that the reps a guest starts before
     // anyone can call a tool are still attributed to the guest.

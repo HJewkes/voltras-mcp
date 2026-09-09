@@ -47,23 +47,24 @@ distinct from any event-specific `started_at` / `ended_at` a payload already car
 
 ## Events
 
-| Event                    | Fires when                                                                                                      | Auto-stops the set?       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `rep_finalized`          | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                   | —                         |
-| `set_started`            | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                    | —                         |
-| `set_updated`            | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets).    | —                         |
-| `set_ended`              | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.                 | —                         |
-| `set_ended_by_device`    | The user pressed Stop on the Voltra itself while a set was open.                                                | implicit (device stopped) |
-| `connection_changed`     | Any connection-state transition. Disconnects include active-set context.                                        | —                         |
-| `timer_complete`         | A `timer.start` duration elapses.                                                                               | —                         |
-| `set_target_reached`     | A `rep_count_reached` trigger matches.                                                                          | optional, via `stopOn`    |
-| `velocity_loss_exceeded` | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).          | optional, via `stopOn`    |
-| `idle_timeout`           | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                               | optional, via `stopOn`    |
-| `rest_status`            | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.           | —                         |
-| `idle_rep_reclaimed`     | An auto-armed set adopted reps a previous idle report already counted. See [auto-armed sets](#auto-armed-sets). | —                         |
-| `voice_command_applied`  | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).        | —                         |
-| `voice_command_rejected` | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                        | —                         |
-| `isometric_phase`        | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                    | —                         |
+| Event                            | Fires when                                                                                                                                                                                      | Auto-stops the set?       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `rep_finalized`                  | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                                                                                                   | —                         |
+| `set_started`                    | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                                                                                                    | —                         |
+| `set_updated`                    | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets).                                                                                    | —                         |
+| `set_ended`                      | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.                                                                                                 | —                         |
+| `set_ended_by_device`            | The user pressed Stop on the Voltra itself while a set was open.                                                                                                                                | implicit (device stopped) |
+| `connection_changed`             | Any connection-state transition. Disconnects include active-set context.                                                                                                                        | —                         |
+| `timer_complete`                 | A `timer.start` duration elapses.                                                                                                                                                               | —                         |
+| `set_target_reached`             | A `rep_count_reached` trigger matches.                                                                                                                                                          | optional, via `stopOn`    |
+| `velocity_loss_exceeded`         | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).                                                                                          | optional, via `stopOn`    |
+| `velocity_loss_watch_suppressed` | At set start, a registered `velocity_loss_exceeded` trigger will never fire because the set's movement class makes the signal invalid. See [the movement-class gate](#the-movement-class-gate). | —                         |
+| `idle_timeout`                   | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                                                                                                               | optional, via `stopOn`    |
+| `rest_status`                    | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.                                                                                           | —                         |
+| `idle_rep_reclaimed`             | An auto-armed set adopted reps a previous idle report already counted. See [auto-armed sets](#auto-armed-sets).                                                                                 | —                         |
+| `voice_command_applied`          | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).                                                                                        | —                         |
+| `voice_command_rejected`         | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                                                                                                        | —                         |
+| `isometric_phase`                | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                                                                                                    | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
@@ -283,6 +284,40 @@ positioning pull and a half-rep partial are both excluded. With nothing to compa
 same window, and so does `metrics.compute {pipeline: 'vbt.rir'}`, so the trigger, the
 summary and the RIR estimate always agree about which reps were work. `last_rep_v` is
 always the set's actual final rep: a short or slow last rep is the fatigue signal itself.
+
+## The movement-class gate
+
+`set_started` and `velocity_loss_exceeded` both carry a `movement_class` meta key: the
+catalog `movementPattern` of the set's exercise (`push`, `pull`, `isolation`, `squat`,
+`hinge`, `rotation`), or `unknown` when the set carries no identified exercise. It is
+snapshotted at set start alongside `exercise_id` and never re-read mid-set.
+
+On a `pull` set the `velocity_loss_exceeded` trigger does not fire. Peak concentric
+velocity does not decay with fatigue on a ballistic pull — a 2026-07-05 cable-row capture
+held 1.8-2.4 m/s across 50/80/115 lb with the highest peak on the LAST rep, while the same
+lifter's chest press decayed 40% and predicted failure exactly. The figure is invalid there,
+not merely noisy, so the set publishes one `velocity_loss_watch_suppressed` event at start
+rather than going quiet for its whole duration:
+
+```jsonc
+{
+  "suppression": {
+    "reason": "ballistic_pull",
+    "movement_class": "pull",
+    "suppressed_thresholds_pct": [25],
+    "override": "watch.velocityLoss.force",
+  },
+}
+```
+
+Judge effort on a pull by load, full-ROM failure and RPE. Pass
+`watch: { velocityLoss: { force: true } }` at `set.start` to re-enable the trigger for one
+set; the configured `pct` still decides when it fires. No threshold changes either way, and
+every other movement class — including `unknown` — behaves exactly as before.
+
+The same gate applies to `plan.suggest_progression`: a pull session never triggers the 25%
+velocity-loss hold, and its `gates.effort` reads `unknown` rather than a verdict the signal
+cannot support.
 
 ## The `rep_finalized` timing quirk
 

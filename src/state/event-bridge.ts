@@ -161,6 +161,11 @@ import {
   type SettingsUpdateField,
 } from './channel-payloads.js';
 import type { CoercionWatch } from './coercion-watch.js';
+import {
+  publishVelocityLossSuppression,
+  velocityLossWatchSuppressed,
+} from './velocity-loss-gate.js';
+import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import type { ServerState, SlotState } from './server-state.js';
 import { armIdleWatchdog, finalizeSet, resetIdleWatchdog } from '../tools/set-tools.js';
 import { reapGuidedLoadScaffold } from './guided-load-reap.js';
@@ -1501,6 +1506,11 @@ function evaluateRepTriggers(
     }
 
     if (spec.type === 'velocity_loss_exceeded') {
+      // VMCP-02.63: on a ballistic pull the loss figure is not a fatigue signal,
+      // so the trigger is not evaluated at all unless the caller opted back in.
+      // The set announced this once at set start; firing nothing here is the
+      // whole behaviour change, and no threshold moved to get it.
+      if (velocityLossWatchSuppressed(set)) continue;
       // baseline must be a real positive velocity for loss% to be defined.
       // current >= baseline ⇒ loss <= 0 ⇒ no fire (covers the just-set-a-
       // new-max case explicitly).
@@ -1689,7 +1699,17 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
       // sessions by their sets' exerciseId, made guided-load sessions
       // invisible to progression.get_for_exercise entirely.
       ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+      // VMCP-02.63: stamped from the same pointer, in the same tick.
+      movementClass: movementClassForExerciseId(session.exerciseId),
     });
+    const armedSet = slot.live.snapshotSet();
+    if (armedSet !== undefined) {
+      publishVelocityLossSuppression(
+        state.channels.forSlot(slotId),
+        armedSet,
+        slot.live.snapshotDevice(),
+      );
+    }
     // F4 (VMCP-01.19): the start-snapshot is captured here but the
     // device's `weightLbs` hasn't yet propagated from the guided-load
     // target write — settings_update lands a tick or two later. The
