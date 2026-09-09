@@ -40,6 +40,7 @@ import {
 import {
   LOCAL_USER_ID,
   type BaselineState,
+  type DeclareDietPhaseInput,
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
@@ -58,6 +59,7 @@ import {
   type PlanImportTemplate,
   type StoredPlannedExercise,
   type StoredTargetTempo,
+  type StoredDietPhase,
   type StoredExerciseBaseline,
   type StoredExerciseSetup,
   type StoredFailureAnchor,
@@ -1334,6 +1336,16 @@ interface SessionRow {
   exercise_name: string | null;
   notes: string | null;
   lifter: string | null;
+  diet_phase: string | null;
+}
+
+interface DietPhaseRow {
+  id: string;
+  user_id: string;
+  phase: string;
+  started_at: string;
+  ended_at: string | null;
+  declared_at: string;
 }
 
 interface SetRow {
@@ -1642,15 +1654,16 @@ export class SqliteSessionStore implements SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions
-           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
            exercise_id = excluded.exercise_id,
            exercise_name = excluded.exercise_name,
            notes = excluded.notes,
-           lifter = excluded.lifter`,
+           lifter = excluded.lifter,
+           diet_phase = excluded.diet_phase`,
       )
       .run(
         s.id,
@@ -1660,8 +1673,22 @@ export class SqliteSessionStore implements SessionStore {
         s.exerciseName ?? null,
         s.notes ?? null,
         s.lifter ?? null,
+        // Derived here, never taken from the caller: the stamp's whole job is
+        // to agree with the table for a session written now, and a tool that
+        // could pass its own value would be a second, disagreeing writer.
+        this.stampableDietPhase(s),
       );
     return Promise.resolve();
+  }
+
+  /**
+   * The phase to stamp on `s`, or `null`. Both `session.start` and
+   * `session.end` re-put the row, so this is recomputed on each — a
+   * correction declared mid-session is picked up rather than frozen.
+   */
+  private stampableDietPhase(s: StoredSession): string | null {
+    if (s.lifter !== undefined) return null;
+    return this.findDietPhaseCovering(LOCAL_USER_ID, s.startedAt, s.startedAt)?.phase ?? null;
   }
 
   async putSet(s: StoredSet): Promise<void> {
@@ -2617,6 +2644,96 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(row ? rowToTrainingProfile(row) : undefined);
   }
 
+  // --- Observed diet phase (VW-149 / VW-150) ---
+
+  async declareDietPhase(input: DeclareDietPhaseInput): Promise<StoredDietPhase> {
+    const declared: StoredDietPhase = {
+      id: randomUUID(),
+      userId: input.userId,
+      phase: input.phase,
+      startedAt: input.startedAt,
+      declaredAt: input.declaredAt,
+    };
+    // One transaction, three statements. Halfway through, the timeline either
+    // has two open ranges or a hole — both are states a reader would report
+    // as fact, so the window in which they exist must not be observable.
+    this.db.exec('BEGIN');
+    try {
+      // Fully superseded by the new open range, so a DELETE rather than a
+      // truncation: shortening them to zero length would leave rows that
+      // cover no instant and answer no question.
+      this.db
+        .prepare(`DELETE FROM diet_phases WHERE user_id = ? AND started_at >= ?`)
+        .run(input.userId, input.startedAt);
+      this.db
+        .prepare(
+          `UPDATE diet_phases SET ended_at = ?
+             WHERE user_id = ? AND started_at < ?
+               AND (ended_at IS NULL OR ended_at > ?)`,
+        )
+        .run(input.startedAt, input.userId, input.startedAt, input.startedAt);
+      this.db
+        .prepare(
+          `INSERT INTO diet_phases (id, user_id, phase, started_at, ended_at, declared_at)
+           VALUES (?, ?, ?, ?, NULL, ?)`,
+        )
+        .run(declared.id, declared.userId, declared.phase, declared.startedAt, declared.declaredAt);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return Promise.resolve(declared);
+  }
+
+  async listDietPhases(userId: string): Promise<StoredDietPhase[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM diet_phases WHERE user_id = ? ORDER BY started_at ASC`)
+      .all(userId) as unknown as DietPhaseRow[];
+    return Promise.resolve(rows.map(rowToDietPhase));
+  }
+
+  async getDietPhaseCovering(
+    userId: string,
+    from: string,
+    to: string,
+  ): Promise<StoredDietPhase | undefined> {
+    return Promise.resolve(this.findDietPhaseCovering(userId, from, to));
+  }
+
+  async getSessionDietPhase(sessionId: string): Promise<string | undefined> {
+    const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
+      | SessionRow
+      | undefined;
+    if (row === undefined || row.lifter !== null) return Promise.resolve(undefined);
+    const covering = this.findDietPhaseCovering(LOCAL_USER_ID, row.started_at, row.started_at);
+    return Promise.resolve(covering?.phase ?? row.diet_phase ?? undefined);
+  }
+
+  /**
+   * Half-open at the end (`ended_at > to`) so the instant two adjacent ranges
+   * meet at belongs to the later one only — the SQL half of `covers()` in
+   * `diet-phase.ts`. `declareDietPhase` guarantees at most one match; `LIMIT 1`
+   * on the newest declaration makes a hand-edited database degrade to a
+   * deterministic answer rather than an arbitrary one.
+   */
+  private findDietPhaseCovering(
+    userId: string,
+    from: string,
+    to: string,
+  ): StoredDietPhase | undefined {
+    if (from > to) return undefined;
+    const row = this.db
+      .prepare(
+        `SELECT * FROM diet_phases
+           WHERE user_id = ? AND started_at <= ?
+             AND (ended_at IS NULL OR ended_at > ?)
+           ORDER BY declared_at DESC LIMIT 1`,
+      )
+      .get(userId, from, to) as DietPhaseRow | undefined;
+    return row === undefined ? undefined : rowToDietPhase(row);
+  }
+
   // --- Exercise setups (VW-119) ---
 
   /**
@@ -3238,6 +3355,20 @@ function rowToSession(row: SessionRow): StoredSession {
   if (row.notes !== null) out.notes = row.notes;
   // Absent = the owner (VW-169), which is what every pre-v14 row is.
   if (row.lifter !== null) out.lifter = row.lifter;
+  // The stamp verbatim, never the resolved phase — see `getSessionDietPhase`.
+  if (row.diet_phase !== null) out.dietPhase = row.diet_phase;
+  return out;
+}
+
+function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {
+  const out: StoredDietPhase = {
+    id: row.id,
+    userId: row.user_id,
+    phase: row.phase,
+    startedAt: row.started_at,
+    declaredAt: row.declared_at,
+  };
+  if (row.ended_at !== null) out.endedAt = row.ended_at;
   return out;
 }
 

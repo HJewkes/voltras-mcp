@@ -121,6 +121,11 @@ export const CORE_TOOL_NAMES = [
   // hard gate. Read-only, and every sentence it returns is quoted from the
   // coaching corpus. See src/profile/onboarding-gaps.ts.
   'profile.get_onboarding_gaps',
+  // Observed diet phase (VW-149 / VW-150) — the first writer of `diet_phases`,
+  // whose DDL and comparability clause both predate it. Self-report storage:
+  // it suppresses no plateau and weights no comparison. See
+  // src/tools/profile-tools.ts.
+  'profile.set_diet_phase',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -315,6 +320,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'profile.get_tier_signal': 'read',
   'profile.get_starting_prescription': 'read',
   'profile.get_onboarding_gaps': 'read',
+  // Writes a row in SQLite and rewrites the timeline around it: two sessions
+  // declaring different phases race each other.
+  'profile.set_diet_phase': 'write',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',

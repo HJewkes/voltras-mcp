@@ -116,6 +116,8 @@ function makeState(setsBySession: Record<string, StoredSet[]>): ServerState {
     // honest defaults — no test here asserts on those two fields' content.
     getSetsForExercise: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
+    // VW-150: no phase declared, which is what every pair here compares under.
+    getSessionDietPhase: vi.fn(async () => undefined),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),

@@ -29,10 +29,11 @@ import {
   ProfileGetStartingPrescriptionInput,
   ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
+  ProfileSetDietPhaseInput,
   ProfileSetTrainingBackgroundInput,
 } from '../schemas/profile.js';
 import type { ServerState } from '../state/server-state.js';
-import { LOCAL_USER_ID, type StoredTrainingProfile } from '../store/types.js';
+import { LOCAL_USER_ID, type StoredDietPhase, type StoredTrainingProfile } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
@@ -105,6 +106,20 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
   'goal or target has been captured yet.';
 
+const SET_DIET_PHASE_DESCRIPTION =
+  'Record the ACTUAL diet phase the lifter is in — fat-loss, gain or maintenance — as a ' +
+  'time range starting now, or at `startedAt` for a phase that began earlier. Declaring a ' +
+  'phase closes the previous one at the same instant, so the timeline never has two phases ' +
+  'covering one day; a `startedAt` in the past REWRITES the timeline from there forward, ' +
+  'which is the supported way to correct a phase you logged late or mislabelled. Returns the ' +
+  'declared range plus the whole timeline, oldest-first — read it back to the lifter to ' +
+  'confirm the correction landed where they meant. This is the OBSERVED phase (what they ' +
+  'actually ate), which is a different claim from the prescribed phase_type on a plan week, ' +
+  'and this tool never touches that. Recording a phase changes NO analysis: it does not ' +
+  'suppress a plateau verdict, weight a comparison or move any threshold. It makes the phase ' +
+  'visible so a reader can discount a flat stretch themselves — a fat-loss phase can look ' +
+  'identical to a real plateau, and only the reader can tell which they are looking at.';
+
 export function registerProfileTools(
   _server: McpServer,
   state: ServerState,
@@ -144,6 +159,13 @@ export function registerProfileTools(
     ProfileGetOnboardingGapsInput,
     wrapHandler(ProfileGetOnboardingGapsInput, () => getOnboardingGaps(state)),
     GET_ONBOARDING_GAPS_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.set_diet_phase',
+    ProfileSetDietPhaseInput,
+    wrapHandler(ProfileSetDietPhaseInput, (input) => setDietPhase(state, input)),
+    SET_DIET_PHASE_DESCRIPTION,
   );
 }
 
@@ -284,4 +306,29 @@ async function getStartingPrescription(
 async function getOnboardingGaps(state: ServerState): Promise<{ gaps: OnboardingGaps }> {
   const profile = await state.store.getTrainingProfile(LOCAL_USER_ID);
   return { gaps: onboardingGaps(profile) };
+}
+
+/**
+ * `profile.set_diet_phase` (VW-149 / VW-150) — the first writer of
+ * `diet_phases`. Storage only, in the same posture as the rest of this module:
+ * it records what the lifter says they are doing and derives nothing from it.
+ *
+ * The whole timeline comes back with the declaration because the correction
+ * path is the reason this tool takes a `startedAt` at all — a caller fixing a
+ * mislabelled phase needs to see where the boundaries actually landed, not
+ * just that a write succeeded. Overlap-freedom is the store's guarantee (see
+ * `declareDietPhase`), so the timeline is a readout, never a re-check.
+ */
+async function setDietPhase(
+  state: ServerState,
+  input: z.infer<typeof ProfileSetDietPhaseInput>,
+): Promise<{ declared: StoredDietPhase; timeline: StoredDietPhase[] }> {
+  const now = new Date().toISOString();
+  const declared = await state.store.declareDietPhase({
+    userId: LOCAL_USER_ID,
+    phase: input.phase,
+    startedAt: input.startedAt ?? now,
+    declaredAt: now,
+  });
+  return { declared, timeline: await state.store.listDietPhases(LOCAL_USER_ID) };
 }

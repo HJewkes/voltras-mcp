@@ -138,8 +138,10 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // owner-only sets (see `store/processed-session-mapper.ts`). `thresholdPct`/
   // `minDays`, when omitted, fall through to WA's OWN defaults (5, 14 —
   // trend.ts:202-206) — never redeclared here. Every plateau verdict carries
-  // `phase: 'unknown'` until VW-150 decides diet-phase tagging: a fat-loss
-  // phase can look like a plateau (B34).
+  // the OBSERVED `phase` covering its window (VW-150), or `'unknown'` when no
+  // single declared phase does. It QUALIFIES the verdict and never changes it:
+  // a fat-loss phase looks like a plateau (B34), and B34 states no correction,
+  // so none is applied.
   z.object({
     pipeline: z.literal('history.trend'),
     exerciseId: IdSchema,

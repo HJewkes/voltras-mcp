@@ -14,6 +14,26 @@ Entries name the pull request that shipped them. Anything not listed did not cha
 
 ## [Unreleased]
 
+### Added
+
+- `profile.set_diet_phase` — the first writer of `diet_phases`, which had DDL and a
+  comparability clause but nothing to fill it (VW-149 / VW-150). It records the OBSERVED
+  phase (fat-loss / gain / maintenance) as a time range, closes the previous range at the
+  new start, and accepts a past `startedAt` to correct history. Sessions are stamped with
+  the covering phase at write; the table stays the source of truth on read. Distinct from
+  a plan week's PRESCRIBED `phase_type`, which nothing here touches.
+
+### Changed
+
+- The comparability predicate's training-phase clause is live: it reads the observed phase
+  of each set's session instead of being unchecked on every pair. A pair with no phase on
+  either side still passes with a note, so pre-existing history compares as before.
+- `metrics.compute history.trend` reports the observed phase covering the plateau window
+  in `plateau.phase` instead of a hardcoded `'unknown'`, which it still returns when no
+  single declared phase covers the window. The plateau verdict itself is unchanged: a
+  fat-loss phase looks like a plateau (B34), and B34 states no correction, so none is
+  applied — the phase is there for a reader to discount by hand.
+
 ## [0.5.0] - 2026-09-08
 
 Two waves of work, `#244` through `#310`. The device and recording paths gained real

@@ -170,6 +170,7 @@ interface StoreStub {
   listSessions: ReturnType<typeof vi.fn>;
   getSetsForExercise: ReturnType<typeof vi.fn>;
   getSessionDateSpan: ReturnType<typeof vi.fn>;
+  getSessionDietPhase: ReturnType<typeof vi.fn>;
   putSession: ReturnType<typeof vi.fn>;
   putSet: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -192,6 +193,8 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
     // honest defaults for a fixture that names no history.
     getSetsForExercise: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
+    // VW-150: no declared phase, so the phase clause stays unchecked here.
+    getSessionDietPhase: vi.fn(async () => undefined),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
