@@ -21,6 +21,8 @@ class FakeVoltraSDKError extends Error {
 vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerTimerTools, __resetTimerState, formatDuration } = await import('../timer-tools.js');
+const { makeFakeLease } = await import('../../state/__tests__/fixtures/lease-fence.js');
+type FakeLease = ReturnType<typeof makeFakeLease>;
 
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -58,13 +60,16 @@ function buildPlaceholders(): {
 
 interface FakeChannels {
   publish: ReturnType<typeof vi.fn>;
+  /** `lease_lost` is slot-scoped, so the fence publishes through `forSlot`. */
+  forSlot: () => FakeChannels;
 }
 
-function makeFakeState(): { state: ServerState; channels: FakeChannels } {
-  const channels: FakeChannels = { publish: vi.fn() };
+function makeFakeState(): { state: ServerState; channels: FakeChannels; lease: FakeLease } {
+  const channels: FakeChannels = { publish: vi.fn(), forSlot: () => channels };
   const timers = new Map<string, PushTimer>();
-  const state = { channels, timers } as unknown as ServerState;
-  return { state, channels };
+  const lease = makeFakeLease();
+  const state = { channels, timers, lease } as unknown as ServerState;
+  return { state, channels, lease };
 }
 
 function payload(result: ToolResult): unknown {

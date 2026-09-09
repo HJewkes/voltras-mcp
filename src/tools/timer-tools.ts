@@ -35,11 +35,16 @@
 //   `setTimeout` so the `timer_complete` event never fires. The cancel path
 //   uses the same `Promise<TimerOutcome>` resolver the timeout would use, so
 //   there's no race between expiry and cancel.
+//
+//   A lease steal cancels it too (VW-200): `timer.wait` runs under a lease
+//   fence and fails with `LEASE_LOST` if the device changes hands mid-rest.
+//   `timer.start` is untouched — it returns immediately and holds nothing.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { TimerCancelInput, TimerStartInput, TimerWaitInput } from '../schemas/timer.js';
-import type { ServerState } from '../state/server-state.js';
+import { PRIMARY_SLOT, type ServerState } from '../state/server-state.js';
+import { fence, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 
 interface TimerOutcome {
@@ -146,7 +151,7 @@ export function registerTimerTools(
   placeholders.get('timer.wait')?.update({
     description: WAIT_TOOL_DESCRIPTION,
     paramsSchema: TimerWaitInput.shape,
-    callback: makeWaitCallback(),
+    callback: makeWaitCallback(state),
   });
   placeholders.get('timer.start')?.update({
     description: START_TOOL_DESCRIPTION,
@@ -160,7 +165,9 @@ export function registerTimerTools(
   });
 }
 
-function makeWaitCallback(): (args: unknown, extra?: unknown) => Promise<ToolResult> {
+function makeWaitCallback(
+  state: ServerState,
+): (args: unknown, extra?: unknown) => Promise<ToolResult> {
   return async (args: unknown, _extra?: unknown): Promise<ToolResult> => {
     const parsed = TimerWaitInput.safeParse(args);
     if (!parsed.success) {
@@ -173,22 +180,70 @@ function makeWaitCallback(): (args: unknown, extra?: unknown) => Promise<ToolRes
       });
     }
     const { durationMs, label } = parsed.data;
-    const startedAt = Date.now();
-    const id = randomUUID();
-    const outcome = await new Promise<TimerOutcome>((resolve) => {
-      const timeout = setTimeout(() => {
-        blocking = null;
-        resolve({
-          status: 'completed',
-          elapsedMs: Date.now() - startedAt,
-          requestedMs: durationMs,
-          label,
-        });
-      }, durationMs);
-      blocking = { id, resolve, timeout, startedAt, requestedMs: durationMs, label };
-    });
-    return textResult(outcome);
+    const leaseFence = fence(state, 'timer.wait');
+    try {
+      return textResult(await runBlockingTimer(durationMs, label, leaseFence));
+    } catch (err) {
+      if (err instanceof LeaseLostError) {
+        return errorResult({ code: err.code, message: err.message });
+      }
+      throw err;
+    } finally {
+      leaseFence.dispose();
+    }
   };
+}
+
+/**
+ * Park for `durationMs`, resolving early on `timer.cancel` and rejecting with
+ * `LEASE_LOST` if the device changes hands first (VW-200).
+ *
+ * A rest timer is the longest a session sits still while holding the device,
+ * so it is the likeliest call to be running when another client takes over.
+ * Aborting frees the singleton immediately, which matters twice over: the
+ * caller learns the rest is void, and the next holder's own `timer.wait` is
+ * not answered `BUSY` by a timer belonging to a session that no longer owns
+ * the machine.
+ *
+ * `timer.wait` takes no slot, so the `lease_lost` push is scoped to the
+ * primary slot — the same default every slotless device tool uses.
+ */
+function runBlockingTimer(
+  durationMs: number,
+  label: string | undefined,
+  leaseFence: LeaseFence,
+): Promise<TimerOutcome> {
+  const startedAt = Date.now();
+  const id = randomUUID();
+  return new Promise<TimerOutcome>((resolve, reject) => {
+    const signal = leaseFence.signal();
+    const onAbort = (): void => {
+      if (blocking?.id === id) {
+        clearTimeout(blocking.timeout);
+        blocking = null;
+      }
+      reject(leaseFence.lost(PRIMARY_SLOT));
+    };
+    const settle = (outcome: TimerOutcome): void => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(outcome);
+    };
+    const timeout = setTimeout(() => {
+      blocking = null;
+      settle({
+        status: 'completed',
+        elapsedMs: Date.now() - startedAt,
+        requestedMs: durationMs,
+        label,
+      });
+    }, durationMs);
+    blocking = { id, resolve: settle, timeout, startedAt, requestedMs: durationMs, label };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort);
+  });
 }
 
 function makeStartCallback(

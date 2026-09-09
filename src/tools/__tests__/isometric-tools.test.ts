@@ -29,6 +29,8 @@ vi.mock('@voltras/node-sdk', () => ({
 }));
 
 const { registerIsometricTools } = await import('../isometric-tools.js');
+const { makeFakeLease } = await import('../../state/__tests__/fixtures/lease-fence.js');
+type FakeLease = ReturnType<typeof makeFakeLease>;
 
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -84,6 +86,12 @@ interface FrameListener {
 interface FakeClient {
   isConnected: boolean;
   onFrame: Mock<(cb: (frame: TelemetryFrame) => void) => () => void>;
+  /** VW-200: the abort path drops the load through `unloadSlot`. */
+  unloadDevice: Mock<() => Promise<void>>;
+  exitGuidedLoad: Mock<() => Promise<void>>;
+  guidedLoadState: { phase: string };
+  /** Every device write this client was asked to make, in order. */
+  writes: string[];
   /** Active frame listeners, in subscription order. */
   listeners: FrameListener[];
   /** Lifetime count of calls to onFrame (subscription count). */
@@ -94,9 +102,18 @@ interface FakeClient {
 
 function makeFakeClient(opts: { isConnected: boolean } = { isConnected: true }): FakeClient {
   const listeners: FrameListener[] = [];
+  const writes: string[] = [];
   const fc = {
     isConnected: opts.isConnected,
     listeners,
+    writes,
+    guidedLoadState: { phase: 'idle' },
+    unloadDevice: vi.fn(async (): Promise<void> => {
+      writes.push('unloadDevice');
+    }),
+    exitGuidedLoad: vi.fn(async (): Promise<void> => {
+      writes.push('exitGuidedLoad');
+    }),
     subscribeCount: 0,
     unsubscribeCount: 0,
     onFrame: vi.fn((cb: (frame: TelemetryFrame) => void): (() => void) => {
@@ -169,6 +186,7 @@ function makeState(
     store?: FakeStore;
     deviceIds?: Record<string, string | null>;
     channels?: ChannelPublisher;
+    lease?: FakeLease;
   } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
@@ -183,6 +201,7 @@ function makeState(
     slots: slotMap,
     store: opts.store,
     channels: opts.channels ?? noopChannelPublisher,
+    lease: opts.lease ?? makeFakeLease(),
   } as unknown as ServerState;
 }
 
