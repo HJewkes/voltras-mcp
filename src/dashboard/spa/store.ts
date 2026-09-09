@@ -19,6 +19,11 @@
  *     `setDisplayUnit` and mirrored to `localStorage` so it survives a reload. Never
  *     converts anything itself — every other slice above stays in lbs, and `mass.ts`
  *     is the only place a value is actually rescaled for display.
+ *   - **ui** — shell-level state that used to live in `main.tsx`'s own `useState`:
+ *     currently just the parsed hash `route`, written via `setRoute` on every
+ *     `hashchange`. A store slice rather than a local hook because it is genuinely
+ *     shared (the shell chrome and the routed page both need it), not because
+ *     anything here polls or streams.
  *
  * The store is framework-agnostic (`zustand/vanilla`) so it is unit-testable headlessly
  * and the I/O orchestration lives in effects that call these actions — no fetch/interval
@@ -42,6 +47,7 @@ import {
 } from './adapter';
 import { type LiveModel } from './live-stream';
 import { type MassUnit } from './live-page/mass';
+import { parseRoute, type Route } from './routing';
 import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
 import type { PlanTreeView } from '../read-models/plan-tree';
 import type { SessionSummaryView } from '../read-models/session-summary-view';
@@ -116,6 +122,19 @@ function readStoredDisplayUnit(): MassUnit {
   return window.localStorage.getItem(DISPLAY_UNIT_KEY) === 'kg' ? 'kg' : 'lbs';
 }
 
+/**
+ * Shell-level UI state (VMCP-03.02 part 1) — currently just the hash route.
+ * SSR/test envs with no `window` fall back to the live route (same default
+ * {@link parseRoute} gives an empty/unrecognised hash).
+ */
+interface UiSlice {
+  route: Route;
+}
+
+function readInitialRoute(): Route {
+  return parseRoute(typeof window === 'undefined' ? '' : (window.location?.hash ?? ''));
+}
+
 interface LiveSlice {
   /**
    * Per-slot live overlays, keyed by the slot the SSE payload was stamped with
@@ -154,6 +173,8 @@ interface DashboardActions {
   applyPlanner(patch: PlannerPatch): void;
   /** Choose the display unit (VW-63) and persist it to `localStorage`. */
   setDisplayUnit(unit: MassUnit): void;
+  /** Record a parsed hash route — called from the shell's `hashchange` listener. */
+  setRoute(route: Route): void;
 }
 
 export type DashboardState = SnapshotSlice &
@@ -161,6 +182,7 @@ export type DashboardState = SnapshotSlice &
   LiveSlice &
   PlannerSlice &
   DisplayUnitSlice &
+  UiSlice &
   DashboardActions;
 
 const initialSnapshot: SnapshotSlice = {
@@ -190,6 +212,7 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   liveBySlot: {},
   live: null,
   displayUnit: readStoredDisplayUnit(),
+  route: readInitialRoute(),
 
   applySnapshot: (data, now) =>
     set((state) => {
@@ -245,4 +268,6 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
       if (typeof window !== 'undefined') window.localStorage.setItem(DISPLAY_UNIT_KEY, unit);
       return { displayUnit: unit };
     }),
+
+  setRoute: (route) => set({ route }),
 }));
