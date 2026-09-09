@@ -76,11 +76,14 @@ export const LEASE_EXEMPT_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
 // `voice-weight.ts`. `set.start` is handled separately, because
 // `surrenderDevice` waits on its `setStartInFlight` latch.
 //
-// KNOWN LIMITATION (remaining): the long-blocking tools that are not multi-step
-// device writers — `isometric.*` runs for minutes, `timer.wait` blocks — still
-// run to completion after a steal, and a write already handed to the SDK cannot
-// be un-sent. Both need per-tool abort support (an `AbortSignal` threaded into
-// the handlers), which they do not have yet.
+// VW-200 closes the blocking half: `isometric.*` and `timer.wait` take the same
+// fence and wait on an `AbortSignal` derived from it, so a steal cuts them short
+// with LEASE_LOST, and `device.start_guided_load` keeps its fence armed until
+// the SDK's poll window ends.
+//
+// KNOWN LIMITATION (remaining): a write already handed to the SDK cannot be
+// un-sent, so a fence bounds the damage to the step already in flight rather
+// than eliminating it.
 
 type ToolHandler = (args: unknown, extra?: unknown) => Promise<ToolResult> | ToolResult;
 

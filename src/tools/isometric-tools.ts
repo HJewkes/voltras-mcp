@@ -12,6 +12,10 @@
 // four `isometric_phase` pushes. `measure_hold` calls it once and returns;
 // `measure_max` and `measure_imbalance` loop it with the protocol rests.
 //
+// Every wait — the hold window, the between-trial rest, the between-sides rest
+// — runs under a lease fence (VW-200), so a steal aborts the assessment with
+// `LEASE_LOST` instead of measuring on through it. See `withLeaseFence`.
+//
 // Telemetry subscription pattern:
 //
 // For each trial we call `client.onFrame(listener)`, which returns an
@@ -65,6 +69,8 @@ import {
   type TrialAnalysis,
 } from '../state/isometric-protocol.js';
 import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channel-payloads.js';
+import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
+import { unloadSlot } from './device-exit.js';
 import { wrapHandler } from './helpers.js';
 
 class ToolError extends Error {
@@ -309,12 +315,19 @@ async function measureHold(
 ): Promise<MeasureHoldResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
   const startedAt = Date.now();
-  const trial = await captureSingleHold(state, slotId, {
-    holdMs: input.holdMs,
-    trial: SINGLE_HOLD_TRIAL_INDEX,
-    ...(input.side !== undefined ? { side: input.side } : {}),
-    ...(input.label !== undefined ? { label: input.label } : {}),
-  });
+  const trial = await withLeaseFence(state, 'isometric.measure_hold', [slotId], (leaseFence) =>
+    captureSingleHold(
+      state,
+      slotId,
+      {
+        holdMs: input.holdMs,
+        trial: SINGLE_HOLD_TRIAL_INDEX,
+        ...(input.side !== undefined ? { side: input.side } : {}),
+        ...(input.label !== undefined ? { label: input.label } : {}),
+      },
+      leaseFence,
+    ),
+  );
   return {
     ok: true,
     slot: slotId,
@@ -330,7 +343,9 @@ async function measureHold(
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
   const startedAt = Date.now();
-  const result = await runSideProtocol(state, slotId, input);
+  const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
+    runSideProtocol(state, slotId, input, leaseFence),
+  );
   return {
     ok: true,
     slot: slotId,
@@ -370,15 +385,22 @@ async function measureImbalance(
   const startedAt = Date.now();
   const sideResults = new Map<'left' | 'right', SideAnalysis>();
 
-  for (let i = 0; i < order.length; i++) {
-    const sideLabel = order[i];
-    const slotId = slotForSide[sideLabel];
-    const sideResult = await runSideProtocol(state, slotId, input);
-    sideResults.set(sideLabel, sideResult.analysis);
-    if (i < order.length - 1) {
-      await sleep(input.betweenSidesRestMs);
-    }
-  }
+  await withLeaseFence(
+    state,
+    'isometric.measure_imbalance',
+    [input.primarySlot, input.secondarySlot],
+    async (leaseFence) => {
+      for (let i = 0; i < order.length; i++) {
+        const sideLabel = order[i];
+        const slotId = slotForSide[sideLabel];
+        const sideResult = await runSideProtocol(state, slotId, input, leaseFence);
+        sideResults.set(sideLabel, sideResult.analysis);
+        if (i < order.length - 1) {
+          await waitFenced(input.betweenSidesRestMs, leaseFence, slotId);
+        }
+      }
+    },
+  );
 
   const leftAnalysis = sideResults.get('left');
   const rightAnalysis = sideResults.get('right');
@@ -508,6 +530,7 @@ async function runSideProtocol(
   state: ServerState,
   slotId: string,
   opts: { durationMs: number; trials: number; restMs: number },
+  leaseFence: LeaseFence,
 ): Promise<RunSideResult> {
   const slot = getSlot(state, slotId);
   ensureSlotConnected(slotId, slot);
@@ -515,13 +538,60 @@ async function runSideProtocol(
   const trialAnalyses: TrialAnalysis[] = [];
   for (let i = 0; i < opts.trials; i++) {
     trialAnalyses.push(
-      await captureSingleHold(state, slotId, { holdMs: opts.durationMs, trial: i + 1 }),
+      await captureSingleHold(state, slotId, { holdMs: opts.durationMs, trial: i + 1 }, leaseFence),
     );
     if (i < opts.trials - 1) {
-      await sleep(opts.restMs);
+      await waitFenced(opts.restMs, leaseFence, slotId);
     }
   }
   return { analysis: aggregateSide(trialAnalyses) };
+}
+
+/**
+ * Run an isometric flow under a lease fence (VW-200).
+ *
+ * These tools issue no BLE command of their own, but they BLOCK — a single
+ * hold for seconds, the full protocol for minutes — and until this landed a
+ * steal could not interrupt them: the assessment kept measuring, and kept
+ * publishing `isometric_phase` cues at an athlete whose device another session
+ * now owned. The fence turns every wait inside into an abortable one.
+ *
+ * On an abort the device is left UNLOADED through `unloadSlot`, the same exit
+ * path `surrenderDevice` and the voice stop-phrase use. The caller was told to
+ * pre-configure the cable for the hold, so the athlete may be pulling against
+ * real resistance at the moment the lease goes; dropping that load is the one
+ * write worth making, and it is load-REDUCING, which `lease-guard.ts` keeps
+ * ungated for exactly this reason. Best-effort: a failed unload must not
+ * replace `LEASE_LOST` with a less useful error.
+ */
+async function withLeaseFence<T>(
+  state: ServerState,
+  tool: string,
+  slotIds: readonly string[],
+  body: (leaseFence: LeaseFence) => Promise<T>,
+): Promise<T> {
+  const leaseFence = fence(state, tool);
+  try {
+    return await body(leaseFence);
+  } catch (err) {
+    if (err instanceof LeaseLostError) {
+      await unloadAfterAbort(state, slotIds);
+    }
+    throw err;
+  } finally {
+    leaseFence.dispose();
+  }
+}
+
+async function unloadAfterAbort(state: ServerState, slotIds: readonly string[]): Promise<void> {
+  for (const slotId of slotIds) {
+    if (!getSlot(state, slotId).client.isConnected) continue;
+    try {
+      await unloadSlot(state, slotId);
+    } catch (err) {
+      log.warn(`isometric: could not unload slot ${slotId} after a lease steal`, err);
+    }
+  }
 }
 
 /**
@@ -537,6 +607,7 @@ async function captureSingleHold(
   state: ServerState,
   slotId: string,
   opts: SingleHoldOptions,
+  leaseFence: LeaseFence,
 ): Promise<TrialAnalysis> {
   const slot = getSlot(state, slotId);
   ensureSlotConnected(slotId, slot);
@@ -547,13 +618,16 @@ async function captureSingleHold(
   const unsubscribe = subscribeForceSamples(slot.client, samples);
   publishPhase('go');
   try {
-    await waitHoldWindow(opts.holdMs, () => publishPhase('hold'));
+    await waitHoldWindow(opts.holdMs, () => publishPhase('hold'), leaseFence, slotId);
   } finally {
     if (typeof unsubscribe === 'function') {
       unsubscribe();
     }
+    // `stop` on the way out however the hold ends. An athlete pulling maximally
+    // is owed the stop cue even when the hold was cut short by a lease steal —
+    // more so, because the device is about to be unloaded underneath them.
+    publishPhase('stop');
   }
-  publishPhase('stop');
   return analyzeTrial(samples, opts.trial);
 }
 
@@ -564,11 +638,16 @@ async function captureSingleHold(
  * is still building force, after it they are holding the plateau the analysis
  * measures. The two sleeps sum to `holdMs`, so the capture window is unchanged.
  */
-async function waitHoldWindow(holdMs: number, onHold: () => void): Promise<void> {
+async function waitHoldWindow(
+  holdMs: number,
+  onHold: () => void,
+  leaseFence: LeaseFence,
+  slotId: string,
+): Promise<void> {
   const rampMs = Math.min(PEAK_AFTER_MS, holdMs);
-  await sleep(rampMs);
+  await waitFenced(rampMs, leaseFence, slotId);
   onHold();
-  await sleep(holdMs - rampMs);
+  await waitFenced(holdMs - rampMs, leaseFence, slotId);
 }
 
 /**
@@ -647,13 +726,4 @@ function sideAsSummary(slotId: string, analysis: SideAnalysis | undefined): Side
     cvPct: analysis.cvPct,
     validTrialCount: analysis.validTrialCount,
   };
-}
-
-/**
- * Promise-based sleep that uses `setTimeout`. Tests use vitest fake
- * timers (`vi.useFakeTimers()`) and `vi.advanceTimersByTimeAsync(...)` to
- * drive the rest periods deterministically.
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

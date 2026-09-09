@@ -110,6 +110,18 @@ export class WriteLease {
    * land.
    */
   private generationCounter = 0;
+  /**
+   * Listeners notified whenever the epoch moves or the transfer flag flips
+   * (VW-200).
+   *
+   * A blocking tool cannot poll the epoch — it is parked on a timer for
+   * seconds or minutes. Rather than give it a second clock to tick against,
+   * the lease tells it. The listener carries no arguments on purpose: it is a
+   * "look again" nudge, and the fence re-reads {@link generation} and
+   * {@link isTransferring} itself, so there is still exactly one source of
+   * truth for whether a write is authorised.
+   */
+  private readonly watchers = new Set<() => void>();
   private readonly now: () => number;
   private readonly idleTimeoutMs: number;
   private readonly isPinned: () => boolean;
@@ -153,6 +165,30 @@ export class WriteLease {
    */
   generation(): number {
     return this.generationCounter;
+  }
+
+  /**
+   * Subscribe to lease changes; returns the unsubscribe handle.
+   *
+   * Fires on every grant, every release, and both edges of a transfer — i.e.
+   * every event that can make a fence stop being intact. Listeners must not
+   * throw: one bad subscriber would strand the rest.
+   */
+  onChange(listener: () => void): () => void {
+    this.watchers.add(listener);
+    return (): void => {
+      this.watchers.delete(listener);
+    };
+  }
+
+  private notifyWatchers(): void {
+    for (const watcher of [...this.watchers]) {
+      try {
+        watcher();
+      } catch {
+        // A listener that throws must not stop the lease from changing hands.
+      }
+    }
   }
 
   /** Whether the holder is past the idle window and unpinned — no mutation. */
@@ -235,11 +271,13 @@ export class WriteLease {
   beginTransfer(): void {
     if (this.transferring) throw new TransferInProgressError();
     this.transferring = true;
+    this.notifyWatchers();
   }
 
   /** Abandon a transfer, leaving the previous holder in place. */
   abortTransfer(): void {
     this.transferring = false;
+    this.notifyWatchers();
   }
 
   /** Whether a handover is currently in flight. */
@@ -274,6 +312,7 @@ export class WriteLease {
     const at = this.now();
     this.holder = { clientId, acquiredAt: at, lastActivityAt: at };
     this.generationCounter += 1;
+    this.notifyWatchers();
     return { ...this.holder };
   }
 
@@ -281,6 +320,7 @@ export class WriteLease {
   private clearHolder(): void {
     this.holder = null;
     this.generationCounter += 1;
+    this.notifyWatchers();
   }
 
   /**

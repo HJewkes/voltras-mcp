@@ -3,9 +3,9 @@
 // The fence itself is two comparisons; what matters is WHICH conditions count
 // as a lost lease and that the `lease_lost` push says so exactly once.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { fence, LeaseLostError } from '../lease-fence.js';
+import { fence, waitFenced, LeaseLostError } from '../lease-fence.js';
 import { makeFakeLease, makeRecordingChannels } from './fixtures/lease-fence.js';
 
 function setup(): {
@@ -84,5 +84,123 @@ describe('a lost fence', () => {
     guard.report('left');
 
     expect(channels.events).toHaveLength(1);
+  });
+});
+
+// VW-200: the blocking half. A tool parked on a timer has no await to
+// re-check at, so the fence hands it a signal the lease itself drives.
+describe('the fence signal', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('stays unaborted while the lease sits still', () => {
+    const { guard } = setup();
+
+    expect(guard.signal().aborted).toBe(false);
+  });
+
+  it('aborts the moment the device changes hands', () => {
+    const { lease, guard } = setup();
+    const signal = guard.signal();
+
+    lease.steal();
+
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('aborts on the handover freeze, before the steal completes', () => {
+    const { lease, guard } = setup();
+    const signal = guard.signal();
+
+    lease.beginTransfer();
+
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('ignores a notification that left the generation where it was', () => {
+    // A holder refreshing its own lease notifies watchers without opening a
+    // new epoch. Nothing may abort on that — the device never left.
+    const { lease, guard } = setup();
+    const signal = guard.signal();
+
+    lease.touch();
+
+    expect(signal.aborted).toBe(false);
+  });
+
+  it('hands back the same signal on every call', () => {
+    const { guard } = setup();
+
+    expect(guard.signal()).toBe(guard.signal());
+  });
+
+  it('is already aborted when the fence was lost before anyone asked', () => {
+    const { lease, guard } = setup();
+    lease.steal();
+
+    expect(guard.signal().aborted).toBe(true);
+  });
+
+  it('stops watching the lease once disposed', () => {
+    const { lease, guard } = setup();
+    const signal = guard.signal();
+
+    guard.dispose();
+    lease.steal();
+
+    expect(signal.aborted).toBe(false);
+  });
+});
+
+describe('waitFenced', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves after the requested delay when the lease holds', async () => {
+    vi.useFakeTimers();
+    const { guard, channels } = setup();
+    let resolved = false;
+
+    const wait = waitFenced(5000, guard, 'left').then(() => {
+      resolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(resolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await wait;
+
+    expect(resolved).toBe(true);
+    expect(channels.events).toHaveLength(0);
+  });
+
+  it('rejects with LEASE_LOST and publishes once when the lease is stolen', async () => {
+    vi.useFakeTimers();
+    const { lease, guard, channels } = setup();
+
+    const wait = waitFenced(90_000, guard, 'left');
+    lease.steal();
+
+    await expect(wait).rejects.toThrow(LeaseLostError);
+    expect(channels.events).toHaveLength(1);
+    expect(channels.events[0].meta.event_type).toBe('lease_lost');
+    expect(channels.events[0].slot).toBe('left');
+  });
+
+  it('does not fire its timer after aborting', async () => {
+    vi.useFakeTimers();
+    const { lease, guard } = setup();
+    const settled: string[] = [];
+
+    const wait = waitFenced(1000, guard, 'left').then(
+      () => settled.push('resolved'),
+      () => settled.push('rejected'),
+    );
+    lease.steal();
+    await wait;
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(settled).toEqual(['rejected']);
   });
 });

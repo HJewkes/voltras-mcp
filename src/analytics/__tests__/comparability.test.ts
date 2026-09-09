@@ -1,15 +1,24 @@
-// Table tests for the like-vs-like predicate (VW-94 / B16 v1).
+// Table tests for the like-vs-like predicate (VW-94 / B16 v2, VW-205).
 //
 // The table covers one clause per row: each case changes exactly ONE field
 // away from a comparable pair, so a clause that stops being evaluated fails
 // its own row and nothing else.
+//
+// The claim clauses — (b) profile, (d) corroboration, (f) trainingAge — assert
+// `comparable === true` on every row on purpose. A claim clause that starts
+// blocking is a regression, not a stricter predicate.
 
 import { describe, expect, it } from 'vitest';
 
 import {
   chooseComparisonPartner,
+  CORROBORATING_EXERCISES,
+  EARLY_TRAINING_STRENGTH_WORDING,
+  EXERCISE_SWAP_REFRAME,
+  EXERCISE_SWAP_SETTLING_SESSIONS,
   isComparable,
   LOAD_TOLERANCE_PCT,
+  NEURAL_GAIN_WINDOW_MONTHS,
   type ComparabilitySubject,
 } from '../comparability.js';
 import { setupRowId } from '../../store/exercise-setups.js';
@@ -130,6 +139,189 @@ describe('isComparable', () => {
     expect(verdict.comparable).toBe(false);
     expect(verdict.reasons.join(' ')).toContain('different load (170 vs 175 lb)');
   });
+
+  // B16 (b): the across-set profile clause never blocks, so each row asserts
+  // the note it emits and that the pair stays comparable.
+  it.each([
+    [
+      'neither side records a profile position',
+      {},
+      {},
+      'profile (note): neither set records its position in the exercise set profile, so the ' +
+        'top-set-only risk B16 (b) names is unchecked on this pair',
+    ],
+    [
+      'only one side records a profile position',
+      { setIndexInExercise: 2 },
+      {},
+      'profile (note): set profile position recorded on only one side (2 vs unrecorded), so ' +
+        'this pair cannot be placed in the across-set profile',
+    ],
+    [
+      'the two sides sit at different profile positions',
+      { setIndexInExercise: 1 },
+      { setIndexInExercise: 4 },
+      'profile (note): set 1 compared against set 4 of their exercise, so a growth claim on ' +
+        'this pair alone is a position-mismatched top-set comparison, not an across-set profile',
+    ],
+    [
+      'the two sides sit at the same profile position',
+      { setIndexInExercise: 2 },
+      { setIndexInExercise: 2 },
+      'profile (note): both sides are set 2 of their exercise, so this pair is one position of ' +
+        'the across-set profile; a confident growth claim still needs the remaining positions',
+    ],
+  ])('qualifies but never blocks the growth claim when %s', (_case, left, right, note) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons).toContain(note);
+  });
+
+  // B16 (d): the gate is the low end of the source's own 2-3 range, quoted
+  // from the constant so a change to it fails here rather than drifting.
+  it.each([
+    [
+      'neither side records a corroborating count',
+      {},
+      {},
+      'corroboration (note): neither set records how many exercises for the same muscle back ' +
+        "it, so B16 (d)'s 2-3 exercise corroboration is unchecked and a per-muscle growth claim " +
+        'on this pair is uncorroborated',
+    ],
+    [
+      'the weakest side is below the gate',
+      { corroboratingExerciseCount: 1 },
+      { corroboratingExerciseCount: 3 },
+      "corroboration (note): 1 corroborating exercise for this muscle (1 vs 3), below B16 (d)'s " +
+        '2-3, so a confident per-muscle growth claim is withheld until another exercise agrees',
+    ],
+    [
+      'only one side records a count and it clears the gate',
+      { corroboratingExerciseCount: 2 },
+      {},
+      'corroboration (note): 2 corroborating exercises for this muscle (2 vs unrecorded) meets ' +
+        "B16 (d)'s 2-3 gate",
+    ],
+    [
+      'both sides clear the gate',
+      { corroboratingExerciseCount: 3 },
+      { corroboratingExerciseCount: 2 },
+      'corroboration (note): 2 corroborating exercises for this muscle (3 vs 2) meets B16 (d)' +
+        "'s 2-3 gate",
+    ],
+  ])('qualifies the per-muscle claim when %s', (_case, left, right, note) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons).toContain(note);
+  });
+
+  it("quotes B16 (d)'s own range rather than a chosen number", () => {
+    expect(CORROBORATING_EXERCISES).toEqual({ min: 2, max: 3 });
+  });
+
+  // B16 (e): the swap boundary IS a context change, so unlike the claim
+  // clauses this one blocks — and carries the reframe while it does.
+  const INTRODUCED_FIRST = '2026-01-05T00:00:00.000Z';
+  const INTRODUCED_AGAIN = '2026-06-01T00:00:00.000Z';
+  const SWAP_TAIL =
+    ` — ${EXERCISE_SWAP_REFRAME}, and no settling window is sourced, so the clause names the ` +
+    'boundary rather than timing it';
+
+  it.each([
+    [
+      'neither side records a programme entry date',
+      {},
+      {},
+      true,
+      'swap (note): neither set records a programme entry date for this exercise, so this clause ' +
+        'passes unchecked',
+    ],
+    [
+      'the pair straddles a re-introduction of the movement',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      { exerciseIntroducedAt: INTRODUCED_AGAIN },
+      false,
+      'swap: different programme entry date for this exercise ' +
+        `(${INTRODUCED_FIRST} vs ${INTRODUCED_AGAIN})${SWAP_TAIL}`,
+    ],
+    [
+      'only one side records a programme entry date',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      {},
+      false,
+      'swap: programme entry date for this exercise recorded on only one side ' +
+        `(${INTRODUCED_FIRST} vs unrecorded)${SWAP_TAIL}`,
+    ],
+    [
+      'both sides entered the programme at the same time',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      true,
+      undefined,
+    ],
+  ])('handles the exercise swap when %s', (_case, left, right, comparable, reason) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(comparable);
+    if (reason === undefined) {
+      expect(verdict.reasons.some((r) => r.startsWith('swap'))).toBe(false);
+    } else {
+      expect(verdict.reasons).toContain(reason);
+    }
+  });
+
+  it('states that no post-swap settling window is sourced', () => {
+    expect(EXERCISE_SWAP_SETTLING_SESSIONS).toBeNull();
+  });
+
+  // B16 (f): the whole point of the clause is what the beginner READS, so the
+  // wording is asserted verbatim here and not merely matched loosely.
+  it('tells a beginner who is getting stronger why the muscle claim is held back', () => {
+    expect(EARLY_TRAINING_STRENGTH_WORDING).toBe(
+      'you are getting stronger and that strength is real; in the first 6 to 12 months of ' +
+        'tracked training most of it comes from your nervous system learning the movement ' +
+        'rather than from new muscle, so the muscle-gain claim is held back until there is ' +
+        'more history behind it — not because the progress has stopped',
+    );
+    expect(NEURAL_GAIN_WINDOW_MONTHS).toEqual({ min: 6, max: 12 });
+  });
+
+  it.each([
+    [
+      'neither side records a tracked training age',
+      {},
+      {},
+      'trainingAge (note): neither set records how many months of training are tracked behind ' +
+        "it, so B16 (f)'s 6-12 month neural-gain window is unchecked and a muscle-gain claim on " +
+        'this pair is unqualified',
+    ],
+    [
+      'the younger side is inside the neural window',
+      { trackedTrainingMonths: 4 },
+      { trackedTrainingMonths: 20 },
+      `trainingAge (note): ${EARLY_TRAINING_STRENGTH_WORDING} (tracked training in months: 4 vs 20)`,
+    ],
+    [
+      'a side sits at the top of the window and the other is unrecorded',
+      { trackedTrainingMonths: 11 },
+      {},
+      `trainingAge (note): ${EARLY_TRAINING_STRENGTH_WORDING} ` +
+        '(tracked training in months: 11 vs unrecorded)',
+    ],
+    [
+      'both sides are past the window',
+      { trackedTrainingMonths: 12 },
+      { trackedTrainingMonths: 30 },
+      "trainingAge (note): 12 months of tracked training is past B16 (f)'s 6-12 month " +
+        'neural-gain window (12 vs 30), so a strength gain here may be read as muscle gained',
+    ],
+  ])(
+    'qualifies the muscle-gain claim without refusing the pair when %s',
+    (_case, left, right, note) => {
+      const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+      expect(verdict.comparable).toBe(true);
+      expect(verdict.reasons).toContain(note);
+    },
+  );
 
   it('reports every failing clause, not just the first', () => {
     const verdict = isComparable(
