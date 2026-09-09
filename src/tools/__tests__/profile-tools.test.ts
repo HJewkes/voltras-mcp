@@ -285,3 +285,207 @@ describe('profile.get_starting_prescription', () => {
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });
+
+describe('profile.set_training_background - injuries and program history', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  it('round-trips an injury list and a named program through the store', async () => {
+    await h.invoke('profile.set_training_background', {
+      namedProgramHistory: '5/3/1',
+      injuries: [
+        { area: 'left shoulder', kind: 'lingering_joint', note: 'aches on overhead press' },
+        { area: 'heart', kind: 'other', cardioLimitation: true },
+      ],
+    });
+
+    const r = await h.invoke('profile.get_training_background', {});
+
+    const { profile } = parseResult(r) as { profile: StoredTrainingProfile };
+    expect(profile.namedProgramHistory).toBe('5/3/1');
+    expect(profile.injuries).toEqual([
+      { area: 'left shoulder', kind: 'lingering_joint', note: 'aches on overhead press' },
+      { area: 'heart', kind: 'other', cardioLimitation: true },
+    ]);
+    expect(profile.provenance).toMatchObject({
+      namedProgramHistory: 'user',
+      injuries: 'user',
+    });
+  });
+
+  it('replaces the injury list rather than merging, so a resolved injury can go', async () => {
+    await h.invoke('profile.set_training_background', {
+      injuries: [
+        { area: 'left shoulder', kind: 'lingering_joint' },
+        { area: 'right knee', kind: 'sharp_in_set' },
+      ],
+    });
+
+    await h.invoke('profile.set_training_background', {
+      injuries: [{ area: 'right knee', kind: 'sharp_in_set' }],
+    });
+
+    const r = await h.invoke('profile.get_training_background', {});
+    const { profile } = parseResult(r) as { profile: StoredTrainingProfile };
+    expect(profile.injuries).toEqual([{ area: 'right knee', kind: 'sharp_in_set' }]);
+  });
+
+  it('leaves the injury list alone on a call that does not mention it', async () => {
+    await h.invoke('profile.set_training_background', {
+      injuries: [{ area: 'right knee', kind: 'sharp_in_set' }],
+    });
+
+    await h.invoke('profile.set_training_background', { goal: 'hypertrophy' });
+
+    const r = await h.invoke('profile.get_training_background', {});
+    const { profile } = parseResult(r) as { profile: StoredTrainingProfile };
+    expect(profile.injuries).toEqual([{ area: 'right knee', kind: 'sharp_in_set' }]);
+  });
+
+  it('rejects an injury kind outside the enum', async () => {
+    const r = await h.invoke('profile.set_training_background', {
+      injuries: [{ area: 'lower back', kind: 'twinge' }],
+    });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('profile.get_onboarding_gaps', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface GapsBody {
+    gaps: {
+      missing: string[];
+      medicalClearanceRequired: boolean;
+      medicalClearanceNote: string | null;
+      goalRealism: { goal: string | null; target: string | null; note: string } | null;
+    };
+  }
+
+  function gaps(r: { content: { text: string }[] }): GapsBody['gaps'] {
+    return (parseResult(r) as GapsBody).gaps;
+  }
+
+  it('lists every field in the RP session-0 asking order before anything is captured', async () => {
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    // Order is the contract: an agent walks this list top to bottom to pick
+    // the next question. §1a intake first, then §1b tier, §1c volume history,
+    // §1j injuries (sources/mined/mcp-audit-rp-docs.md).
+    expect(gaps(r).missing).toEqual([
+      'goal',
+      'daysAvailable',
+      'daysReliable',
+      'currentBaseline',
+      'effortTolerance',
+      'target',
+      'declaredTier',
+      'yearsTraining',
+      'historyConsistent',
+      'everPlateaued',
+      'reportedSetsPerMuscle',
+      'namedProgramHistory',
+      'injuries',
+    ]);
+  });
+
+  it('drops answered fields and keeps the rest in order', async () => {
+    await h.invoke('profile.set_training_background', {
+      goal: 'add visible arm size',
+      daysReliable: 3,
+      namedProgramHistory: 'German Volume Training',
+    });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(gaps(r).missing).toEqual([
+      'daysAvailable',
+      'currentBaseline',
+      'effortTolerance',
+      'target',
+      'declaredTier',
+      'yearsTraining',
+      'historyConsistent',
+      'everPlateaued',
+      'reportedSetsPerMuscle',
+      'injuries',
+    ]);
+  });
+
+  it('treats an empty injury list as answered, not as a gap', async () => {
+    await h.invoke('profile.set_training_background', { injuries: [] });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(gaps(r).missing).not.toContain('injuries');
+    expect(gaps(r).medicalClearanceRequired).toBe(false);
+    expect(gaps(r).medicalClearanceNote).toBeNull();
+  });
+
+  it('requires medical clearance and quotes the gate when a cardio limitation is reported', async () => {
+    await h.invoke('profile.set_training_background', {
+      injuries: [{ area: 'heart', kind: 'other', cardioLimitation: true }],
+    });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(gaps(r).medicalClearanceRequired).toBe(true);
+    expect(gaps(r).medicalClearanceNote).toBe(
+      "Cardiovascular limitations of any kind — ALWAYS defer to a doctor's clearance; never " +
+        'interpret these as a non-clinically-trained coach. This is a liability boundary, not a ' +
+        'feature flag.',
+    );
+  });
+
+  it('does not gate on a non-cardiovascular injury', async () => {
+    await h.invoke('profile.set_training_background', {
+      injuries: [
+        { area: 'lower back', kind: 'lingering_joint', note: 'stiff most mornings' },
+        { area: 'right knee', kind: 'sharp_in_set' },
+      ],
+    });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(gaps(r).medicalClearanceRequired).toBe(false);
+    expect(gaps(r).medicalClearanceNote).toBeNull();
+  });
+
+  it('returns no goal realism until a goal or target exists', async () => {
+    await h.invoke('profile.set_training_background', { daysReliable: 3 });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(gaps(r).goalRealism).toBeNull();
+  });
+
+  it('returns the stored goal and target with the corpus note, not a verdict', async () => {
+    await h.invoke('profile.set_training_background', {
+      goal: 'lose fat',
+      target: 'visible abs by June',
+    });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    const realism = gaps(r).goalRealism;
+    expect(realism?.goal).toBe('lose fat');
+    expect(realism?.target).toBe('visible abs by June');
+    // Prose to apply WITH the lifter. Nothing here says achievable or not.
+    expect(realism?.note).toContain('mathematically sufficient for the');
+    expect(realism?.note).toContain('Never proceed on a silent mismatch');
+  });
+
+  it('rejects unknown keys with INVALID_INPUT', async () => {
+    const r = await h.invoke('profile.get_onboarding_gaps', { userId: 'someone' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
