@@ -48,6 +48,7 @@ import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { selectWorkingSets } from '../store/working-sets.js';
+import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises/movement-class.js';
 import { DEVICE_LOAD_STEP_LBS } from './warmup-ramp-tools.js';
 import {
   LOCAL_USER_ID,
@@ -792,8 +793,15 @@ function setVelocityLossPct(set: StoredSet): number {
  * Whether a set can be judged for fatigue at all. `setVelocityLossPct` reports
  * 0 both for "no loss" and "nothing to measure"; the B07 effort gate has to
  * tell those apart, since only the first means the set was easy.
+ *
+ * VMCP-02.63: a ballistic pull answers no. Its telemetry is present and its
+ * loss figure computes fine — it just isn't a fatigue signal, so treating a
+ * row's 2% loss as "easy, add load" is the same mistake as treating it as
+ * "hard, hold". The 25% hold therefore never triggers on a pull, and the
+ * effort gate reports `unknown` rather than a verdict it cannot support.
  */
 function setCarriesVelocity(set: StoredSet): boolean {
+  if (!velocityLossIsValidFor(movementClassForExerciseId(set.exerciseId))) return false;
   return set.reps.length >= 2 && peakConcentricBaseline(set.reps) > 0;
 }
 

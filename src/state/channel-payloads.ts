@@ -35,6 +35,7 @@ import {
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
 import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
+import type { MovementClass } from '../exercises/movement-class.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
@@ -324,6 +325,14 @@ export function summarizePreviousSet(prev: StoredSet): PreviousSetSummary {
 }
 
 /**
+ * The set's stamped movement class, or `'unknown'` for a set that carries none
+ * (unidentified exercise, or a set opened before VMCP-02.63 stamped one).
+ */
+function movementClassOfSet(set: ActiveSet): MovementClass {
+  return set.movementClass ?? 'unknown';
+}
+
+/**
  * Build the meta + content for a `set_started` channel event. `ordinal` is
  * 1-indexed (this is set N of the session). `previous` is the most recent
  * persisted set in the session, or null when this is the session's first
@@ -351,6 +360,10 @@ export function buildSetStartedPayload(
     // an existing consumer keeps reading the boolean it already reads.
     set_purpose: setPurposeOf(set),
     is_warmup: String(set.isWarmup === true),
+    // VMCP-02.63: the catalog movement class stamped at set start. Always
+    // present, `unknown` when the set carries no identified exercise, so a
+    // consumer never has to distinguish an absent key from an unclassified set.
+    movement_class: movementClassOfSet(set),
     // VW-169: present ONLY when someone other than the owner is lifting, so a
     // consumer can read its absence as "the owner" without a second lookup.
     ...(set.lifter !== undefined ? { lifter: set.lifter } : {}),
@@ -385,6 +398,7 @@ export function buildSetStartedPayload(
       auto_armed: autoArmed,
       set_purpose: setPurposeOf(set),
       is_warmup: set.isWarmup === true,
+      movement_class: movementClassOfSet(set),
       lifter: set.lifter ?? null,
     },
     previous_set_summary: previous,
@@ -1019,6 +1033,10 @@ export function buildVelocityLossExceededPayload(
     baseline_velocity: baselineMps.toFixed(3),
     current_velocity: currentMps.toFixed(3),
     rep_count_at_threshold: String(actualReps),
+    // VMCP-02.63: the class the gate let through. A consumer reading
+    // `movement_class: 'pull'` here is looking at a set that opted back in via
+    // `watch.velocityLoss.force`.
+    movement_class: movementClassOfSet(set),
   };
   const summary =
     `Velocity dropped ${pct.toFixed(1)}% (${baselineMps.toFixed(2)} -> ` +
@@ -1034,6 +1052,55 @@ export function buildVelocityLossExceededPayload(
       baseline_rep_number: baselineRepNumber,
     },
     set_so_far: summarizeSetForTrigger(set, device),
+  });
+  return { meta, content };
+}
+
+/**
+ * Build the meta + content for a `velocity_loss_watch_suppressed` channel event
+ * (VMCP-02.63). Published ONCE, at set start, on a set that registered a
+ * `velocity_loss_exceeded` trigger the movement-class gate will never let fire.
+ *
+ * Advisory and informational only: it reports that one inference is unavailable
+ * for this movement, and names the opt-in that restores it. It carries no
+ * threshold, no verdict about the set, and never precedes a stop.
+ */
+export function buildVelocityLossWatchSuppressedPayload(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  reason: 'ballistic_pull',
+): { meta: Record<string, string>; content: string } {
+  const thresholds = (set.watch?.notifyOn ?? [])
+    .filter((spec) => spec.type === 'velocity_loss_exceeded')
+    .map((spec) => spec.pct);
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'velocity_loss_watch_suppressed',
+    set_id: set.setId,
+    session_id: set.sessionId,
+    reason,
+    movement_class: movementClassOfSet(set),
+  };
+  const summary =
+    'Velocity-loss watch is off for this set: peak concentric velocity does not ' +
+    'decay with fatigue on a ballistic pull, so the loss figure is not a fatigue ' +
+    'signal here. Judge effort by load, full-ROM failure and RPE instead. Pass ' +
+    'watch.velocityLoss.force to re-enable it.';
+  const content = JSON.stringify({
+    summary,
+    suppression: {
+      reason,
+      movement_class: movementClassOfSet(set),
+      suppressed_thresholds_pct: thresholds,
+      override: 'watch.velocityLoss.force',
+    },
+    set: {
+      set_id: set.setId,
+      session_id: set.sessionId,
+      exercise_id: set.exerciseId ?? null,
+      weight_lbs: device.weightLbs ?? null,
+      started_at: set.startedAt,
+    },
   });
   return { meta, content };
 }

@@ -35,6 +35,7 @@ import {
 } from '@voltras/workout-analytics';
 
 import type { RepSource } from '../config.js';
+import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { WatchConfig } from '../schemas/set.js';
 import { setPurposeFields } from '../store/set-purpose.js';
@@ -295,6 +296,15 @@ export interface ActiveSet {
    * real advisory display name.
    */
   exerciseId?: string;
+  /**
+   * Catalog movement class of {@link exerciseId}, SNAPSHOTTED alongside it at
+   * set-start time (VMCP-02.63) and never re-read mid-set, for the same reason
+   * the exercise pointer is not: the class must describe the reps that were
+   * actually performed. Absent, or `'unknown'`, means the set carries no
+   * identified exercise — every class-gated behaviour then leaves the set
+   * exactly as it was before the gate existed.
+   */
+  movementClass?: MovementClass;
   /**
    * Who is performing this set, when it is not the owner (VW-169).
    * SNAPSHOTTED from the session's lifter default at set-start time, for the
@@ -770,6 +780,7 @@ export class LiveState {
     setPurpose?: SetPurpose;
     watch?: WatchConfig;
     exerciseId?: string;
+    movementClass?: MovementClass;
     lifter?: string;
     upgradedAt: string;
   }): ActiveSet | undefined {
@@ -781,6 +792,7 @@ export class LiveState {
       upgradedAt: patch.upgradedAt,
       ...setPurposeFields(patch.setPurpose),
       ...(patch.exerciseId !== undefined ? { exerciseId: patch.exerciseId } : {}),
+      ...(patch.movementClass !== undefined ? { movementClass: patch.movementClass } : {}),
       // VW-169: the upgrade is the operator's chance to say "that was Jordan"
       // about a set the server auto-armed, so a lifter here REWRITES the
       // label rather than deferring to the one auto-arm inherited.

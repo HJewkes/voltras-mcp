@@ -73,6 +73,9 @@ import {
   computeVBTSetFatigueIndex,
   computeVolume,
   createTechniqueBaseline,
+  estimateE1RMFromProfile,
+  estimateE1RMFromReps,
+  estimateHybridE1RM,
   estimateRIRWithProfile,
   getPhaseDuration,
   getPhaseRangeOfMotion,
@@ -82,6 +85,7 @@ import {
   getSetFirstRepVelocity,
   getSetMeanVelocity,
   getSetVelocitySummary,
+  type E1RMEstimate,
   type LoadVelocityDataPoint,
   type ReadinessEstimate,
   type Rep as AnalyticsRep,
@@ -349,6 +353,9 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       const reps = toAnalyticsSet(set).reps.map((rep: AnalyticsRep) => detectBounce(rep));
       return bounceSetSummary(reps);
     }
+
+    case 'strength.e1rm':
+      return computeE1RM(state, input);
   }
 }
 
@@ -381,6 +388,104 @@ function bounceSetSummary(reps: RepBounceReading[]): {
   diveBombCount: number | null;
 } {
   return { reps, bounceCount: null, diveBombCount: null };
+}
+
+/**
+ * `strength.e1rm`'s response (VW-142). `estimate` is WA's own `E1RMEstimate`,
+ * unchanged; `null` only when a `profile`/`hybrid` read is gated `withheld`
+ * (`reps` never gates — the Epley formula needs no baseline evidence).
+ */
+interface E1RMResult {
+  method: 'reps' | 'profile' | 'hybrid';
+  estimate: E1RMEstimate | null;
+  gate: FeatureGateVerdict | null;
+}
+
+type E1RMInput = Extract<MetricsComputeInputType, { pipeline: 'strength.e1rm' }>;
+
+/** The one of three valid `strength.e1rm` input shapes a request names. */
+type E1RMShape =
+  | { kind: 'reps'; load: number; reps: number }
+  | { kind: 'profile'; exerciseId: string }
+  | { kind: 'hybrid'; load: number; reps: number; exerciseId: string };
+
+/**
+ * Which shape a request names, or a thrown `INVALID_INPUT` for the two ways
+ * it can name none: a lone `load`/`reps` (the pair travels together — the
+ * Epley formula needs both), or no fields at all.
+ */
+function e1rmShape(input: E1RMInput): E1RMShape {
+  const { load, reps, exerciseId } = input;
+  if ((load === undefined) !== (reps === undefined)) {
+    throw new CodedError(
+      'INVALID_INPUT',
+      'strength.e1rm needs `load` and `reps` together, not one alone',
+    );
+  }
+  if (load !== undefined && reps !== undefined) {
+    return exerciseId === undefined
+      ? { kind: 'reps', load, reps }
+      : { kind: 'hybrid', load, reps, exerciseId };
+  }
+  if (exerciseId !== undefined) return { kind: 'profile', exerciseId };
+  throw new CodedError(
+    'INVALID_INPUT',
+    'strength.e1rm needs `{ load, reps }`, `{ exerciseId }`, or both',
+  );
+}
+
+/**
+ * The profile-based half of `strength.e1rm`. Builds the load-velocity
+ * profile the same way `vbt.profile` does — same weightless-set exclusion
+ * (#273) — from this exercise's own working sets, then grades it on
+ * `relative-signal`: the same gate `session.perturbation` and
+ * `session.junk_volume` use for a within-exercise derived stat.
+ */
+async function profileE1RM(
+  state: ServerState,
+  exerciseId: string,
+): Promise<{ profile: LoadVelocityProfile; gate: FeatureGateVerdict }> {
+  const sets = await state.store.getSetsForExercise({
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    purpose: ['working'],
+  });
+  const points: LoadVelocityDataPoint[] = sets
+    .filter((s) => Number.isFinite(s.weightLbs))
+    .map((s) => ({
+      load: s.weightLbs as number,
+      velocity: getSetMeanVelocity(toAnalyticsSet(s)),
+    }));
+  if (points.length < 2) {
+    throw notFound(
+      `exercise '${exerciseId}' has fewer than 2 weighted working sets to build a profile`,
+    );
+  }
+  const gate = await relativeSignalGate(state, exerciseId, sets);
+  return { profile: buildProfile(points), gate };
+}
+
+/**
+ * Dispatch core for `strength.e1rm` — see `e1rmShape` for the three input
+ * shapes. Mirrors `session.readiness`'s gate discipline: the profile is
+ * always built (it is what the gate itself grades), but `estimateE1RMFromProfile`
+ * — the assertion — is skipped entirely when the gate withholds, not just
+ * discarded after the fact.
+ */
+async function computeE1RM(state: ServerState, input: E1RMInput): Promise<E1RMResult> {
+  const shape = e1rmShape(input);
+  if (shape.kind === 'reps') {
+    return { method: 'reps', estimate: estimateE1RMFromReps(shape.load, shape.reps), gate: null };
+  }
+  const { profile, gate } = await profileE1RM(state, shape.exerciseId);
+  const profileEstimate = gate.activation === 'withheld' ? null : estimateE1RMFromProfile(profile);
+  if (shape.kind === 'profile') {
+    return { method: 'profile', estimate: profileEstimate, gate };
+  }
+  const repsEstimate = estimateE1RMFromReps(shape.load, shape.reps);
+  const estimate =
+    profileEstimate === null ? null : estimateHybridE1RM(profileEstimate, repsEstimate);
+  return { method: 'hybrid', estimate, gate };
 }
 
 /** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
@@ -954,7 +1059,7 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 10 literals) to a single analytics function; each pipeline takes different ' +
+  'field (one of 11 literals) to a single analytics function; each pipeline takes different ' +
   'input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
@@ -1005,6 +1110,17 @@ const METRICS_COMPUTE_DESCRIPTION =
   'eccentric" in this codebase, so the raw dwell times and ratio are relayed instead of a ' +
   'verdict. Set summary `bounceCount`/`diveBombCount` are null for the same reason. Post-set ' +
   'only, never a live cue (gated on B14/VW-140-141). ' +
+  '`strength.e1rm` (VW-142) — estimated 1RM, one of THREE input shapes on this one literal: ' +
+  '`{ load, reps }` (Epley formula — `e1RM = load * (1 + reps / 30)`, no baseline gate), ' +
+  "`{ exerciseId }` (fits a load-velocity profile over that exercise's own working sets the " +
+  'same way `vbt.profile` does, then solves for the load at MVT — gated on `relative-signal`, ' +
+  'the same gate `session.perturbation`/`session.junk_volume` use), or both (hybrid — a ' +
+  'confidence-weighted combination of the two). A lone `load` or a lone `reps`, or neither ' +
+  "field, is refused with INVALID_INPUT. The response echoes WA's own `E1RMEstimate` verbatim " +
+  'as `estimate` (`e1RM`, `confidence`, `method`) alongside the top-level `method` and `gate`; ' +
+  '`estimate` is null only when a `profile`/`hybrid` read is gated `withheld` — `gate` still ' +
+  "carries the reason. This answers VW-135's MCP-agent-parity question for e1RM: yes, via this " +
+  'pipeline. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';
@@ -1039,6 +1155,8 @@ export function registerMetricsTools(
     baselineSetId: z.string().optional(),
     baselineSessionId: z.string().optional(),
     exerciseId: z.string().optional(),
+    load: z.number().optional(),
+    reps: z.number().optional(),
   };
   placeholder.update({
     paramsSchema: looseShape,
