@@ -46,6 +46,10 @@ export function LivePagePanel({
   // between sets. During a live set the `live` slice already re-renders this at ~20 Hz,
   // so the extra subscription only adds ticks while resting, which is when they matter.
   const nowMs = useStore(dashboardStore, (s) => s.nowMs);
+  // The wall's chosen weight/force display unit (VW-63) — read here so the mapper can
+  // label `SessionModel.unit` correctly; `LivePage` reads the same slice again for the
+  // corner toggle and its own direct `displayUnit`-taking consumers.
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
 
   // Which stage this frame shows. Derived from the SAME snapshot every model below reads,
   // so a variant swap and the data that justifies it land in one render — the dual stage
@@ -53,7 +57,15 @@ export function LivePagePanel({
   // back to renders the surviving slot's set rather than a blank frame.
   const variant = selectLiveVariant(snapshot, variantOverride);
 
-  const sources = { snapshot, accumulator, live, prescription, nowMs, pollStatus: status };
+  const sources = {
+    snapshot,
+    accumulator,
+    live,
+    prescription,
+    nowMs,
+    pollStatus: status,
+    displayUnit,
+  };
   const model = mapStoreToDashboardModel(sources);
   // The diverging dual hero (VMCP-04.05) + the L/R callout, from the same store slices.
   // Only built when the dual variant is mounted. A null SIDE is an unbound slot, so the
