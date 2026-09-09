@@ -134,7 +134,11 @@ export const PlanExerciseListForTemplateInput = z
 /**
  * Walk a program's tree and return the first un-completed workout template.
  * `programId` is optional — when omitted the handler picks the most-recent
- * non-archived program from the store.
+ * non-archived program from the store. Response carries `blockBoundary`
+ * (VMCP-06.06 / B48): `null` unless the returned template is the first of a
+ * new block, in which case it reports the finished block, the new block, the
+ * goal on file, and an advisory realignment prompt — the goal is never
+ * written by this tool.
  */
 export const PlanNextWorkoutInput = z
   .object({
@@ -145,7 +149,12 @@ export const PlanNextWorkoutInput = z
 /**
  * Mark a workout template as completed by writing a ProgramAssignment row
  * linking the given session to the template. `sessionId` is optional — when
- * omitted the handler uses the active session on the primary slot.
+ * omitted the handler uses the active session on the primary slot. Response
+ * carries `blockBoundary` (VMCP-06.06 / B48): `null` unless the completed
+ * template is the last template of the last week in its block, in which case
+ * it reports the finished block, the next block (or `null` if none), the
+ * goal on file, and an advisory realignment prompt — the goal is never
+ * written by this tool.
  */
 export const PlanCompleteWorkoutInput = z
   .object({
