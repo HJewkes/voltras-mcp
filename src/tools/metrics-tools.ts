@@ -110,6 +110,7 @@ import {
   type RepBounceReading,
   type RepHesitationReading,
 } from '../analytics/rep-faults.js';
+import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import {
   medianEligibleRom,
   readRomIntegrity,
@@ -281,7 +282,12 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     case 'session.strength': {
       const sets = await setsForSessionExercise(state, input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
-      return computeStrengthEstimate(sets.map(toAnalyticsSet), weightsOf(sets));
+      const estimate = computeStrengthEstimate(sets.map(toAnalyticsSet), weightsOf(sets));
+      // VW-94: the estimate pools every set of the session's exercise, so it is
+      // only a like-vs-like reading while those sets share a context. The
+      // estimate is unchanged; `comparability` says whether it should be
+      // trusted as one movement's number or read as a blend.
+      return { ...estimate, comparability: strengthComparability(sets) };
     }
 
     case 'quality.rep': {
@@ -321,8 +327,17 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // baselineVelocity = the same metric from the baseline session. This pins
       // both values to a directly comparable measurement (the first rep is
       // canonical for "fresh" velocity).
+      //
+      // VW-94: WHICH baseline set is now the predicate's call — the first set
+      // of that session in the order it was performed that is like-vs-like with
+      // the target anchor, rather than its first set unconditionally. With none
+      // comparable the first set is still used and the response says so; a
+      // readiness pipeline that answered with silence would be a worse product
+      // than one that answers with a caveat.
+      const comparability = chooseComparisonPartner(target[0]!, baseline);
+      const baselineSet = partnerOrFirst(comparability, baseline);
       const actualVel = getSetFirstRepVelocity(toAnalyticsSet(target[0]!));
-      const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baseline[0]!));
+      const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baselineSet));
       const observed = { actualVelocityMps: actualVel, baselineVelocityMps: baselineVel };
 
       // B57: a readiness ZONE is an assertion about where this lifter sits
@@ -334,6 +349,7 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
         readiness: gate.activation === 'withheld' ? null : computeReadiness(actualVel, baselineVel),
         observed,
         gate,
+        comparability,
       };
       return result;
     }
@@ -537,7 +553,7 @@ function bounceSetSummary(reps: RepBounceReading[]): {
  * THREE GUARDS, ALL POINTING THE SAME WAY. A wrong "your technique is
  * degrading" costs more than silence, and cross-session ROM has three ways to
  * lie: a baseline too thin to mean anything (B57, handled by `gate`), a setup
- * that moved between then and now (B15, handled by `comparability`), and a
+ * that moved between then and now (B15, handled by `driftGuard`), and a
  * position scale that changed under the rows (handled by
  * `priorComparableSets`). Any one of them nulls the number and says why.
  */
@@ -549,11 +565,17 @@ interface RomBaselineReading {
    */
   romVsBaselinePct: number | null;
   /**
-   * B15's execution-comparability verdict for this set's session against the
+   * B15's execution-drift verdict for this set's session against the
    * reference session `romVsBaselinePct` divides by. `null` when the
    * comparison never got far enough to run one.
+   *
+   * NAMED FOR ITS OWNER, not for the question. `driftGuard` rather than
+   * `comparability` because VW-94's context predicate answers a different
+   * question under that word (same exercise, lifter, settings, load) and ships
+   * a different shape on other pipelines — one name for two verdicts is a trap
+   * for anyone reading a response.
    */
-  comparability: DriftGuardVerdict | null;
+  driftGuard: DriftGuardVerdict | null;
   /** Why the comparison was refused, or the caveat riding along with a number. */
   note?: string;
 }
@@ -608,7 +630,7 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
   const refuse = (note: string): RomBaselineReading => ({
     gate,
     romVsBaselinePct: null,
-    comparability: null,
+    driftGuard: null,
     note,
   });
   // VW-169: a guest's set is not evidence about the owner, and the owner's
@@ -634,22 +656,22 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
   // (`isEligibleForComparison`). `summarizeSessionForDrift` supplies the
   // reference ROM only because a `DriftGuardVerdict` carries percentages, not
   // the denominator `romVsBaselinePct` divides by.
-  const comparability = await checkDriftGuard(state.store, {
+  const driftGuard = await checkDriftGuard(state.store, {
     key,
     baselineSessionId: reference.sessionId,
     currentSessionId: set.sessionId,
   });
   // B15's consumer contract: SKIP the comparison when it is not comparable,
   // PROPAGATE `reasoning` as a caveat when it is merely flagged.
-  if (!comparability.comparable) {
-    return { gate, romVsBaselinePct: null, comparability, note: comparability.reasoning };
+  if (!driftGuard.comparable) {
+    return { gate, romVsBaselinePct: null, driftGuard, note: driftGuard.reasoning };
   }
   return {
     gate,
     romVsBaselinePct:
       ((observed - reference.summary.medianRomM) / reference.summary.medianRomM) * 100,
-    comparability,
-    ...(comparability.flagged ? { note: comparability.reasoning } : {}),
+    driftGuard,
+    ...(driftGuard.flagged ? { note: driftGuard.reasoning } : {}),
   };
 }
 
@@ -1138,6 +1160,35 @@ interface GatedReadinessResult {
   readiness: ReadinessEstimate | null;
   observed: { actualVelocityMps: number; baselineVelocityMps: number };
   gate: FeatureGateVerdict;
+  /** VW-94: which baseline set was compared, or why none was like-vs-like. */
+  comparability: ComparabilityReport;
+}
+
+/**
+ * The candidate the predicate chose, or the first one when none was comparable.
+ *
+ * The fallback is deliberate (VW-94): strict like-vs-like matching leaves an
+ * irregular lifter with few valid pairs, and a pipeline that returns nothing
+ * teaches the user it is broken. The comparison still happens; the response
+ * carries the failing reasons so nothing is asserted silently.
+ */
+function partnerOrFirst(report: ComparabilityReport, candidates: StoredSet[]): StoredSet {
+  const chosen = candidates.find((set) => set.id === report.comparedTo?.setId);
+  return chosen ?? candidates[0]!;
+}
+
+/**
+ * `session.strength`'s comparability block: is the rest of the session
+ * like-vs-like with its heaviest set, which is the set the 1RM estimate leans
+ * on hardest?
+ */
+function strengthComparability(
+  sets: readonly StoredSet[],
+): ComparabilityReport & { anchorSetId: string } {
+  const anchor = sets.reduce((top, set) =>
+    (set.weightLbs ?? 0) > (top.weightLbs ?? 0) ? set : top,
+  );
+  return { anchorSetId: anchor.id, ...chooseComparisonPartner(anchor, sets) };
 }
 
 /**
@@ -1402,12 +1453,16 @@ const METRICS_COMPUTE_DESCRIPTION =
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
   'folded with within-set fatigue so a single hard set still reads as fatigued. ' +
   "`session.strength` (sessionId) — session-level strength estimate for the session's own " +
-  'exercise. ' +
+  'exercise, plus a `comparability` block (VW-94) naming the heaviest set the estimate leans on ' +
+  'and whether the rest of the session is like-vs-like with it. ' +
   '`quality.rep` (setId, baselineSetId) — per-rep technique quality against a caller-supplied ' +
   'baseline set (a real prior set, not an invented target). ' +
   '`session.readiness` (sessionId, baselineSessionId) — compares first-rep velocity between two ' +
   'sessions of the same exercise; treat the result as provisional unless the exercise baseline ' +
-  'is CALIBRATED (see `baselines.get`). ' +
+  'is CALIBRATED (see `baselines.get`). The baseline set is picked by the like-vs-like predicate ' +
+  '(VW-94) and reported in `comparability`: `comparedTo` names the set used, while ' +
+  '`noValidComparison` with a `nearest` candidate means the comparison still ran against a set ' +
+  'that is NOT like-for-like — relay those reasons rather than the zone alone. ' +
   '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
   'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
   'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
@@ -1445,7 +1500,7 @@ const METRICS_COMPUTE_DESCRIPTION =
   'comparable to the reference session — the most recent earlier one for this exercise, since ' +
   'a seat or attachment change reads exactly like a ROM change and setup clustering is not ' +
   'built yet — and the two share a position scale. `baseline.note` always says which one ' +
-  'refused, and `baseline.comparability` carries the guard’s own verdict. `movementClass` is ' +
+  'refused, and `baseline.driftGuard` carries the guard’s own verdict. `movementClass` is ' +
   'reported, never gated on. A readout only: no cue, no watch, no push event. ' +
   '`strength.e1rm` (VW-142) — estimated 1RM, one of THREE input shapes on this one literal: ' +
   '`{ load, reps }` (Epley formula — `e1RM = load * (1 + reps / 30)`, no baseline gate), ' +
