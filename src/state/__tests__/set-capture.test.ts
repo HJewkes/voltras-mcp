@@ -10,6 +10,7 @@ import type { Phase, Rep } from '@voltras/workout-analytics';
 import type { DeviceSnapshot } from '../live-state.js';
 import {
   CURRENT_POSITION_UNITS,
+  describeLoad,
   hashSettingsContext,
   measureSampleRateHz,
   readSettingsContext,
@@ -186,6 +187,43 @@ describe('measureSampleRateHz', () => {
   it('ignores non-advancing timestamps rather than dividing by zero', () => {
     const ts = [1000, 1000, 1100, 1200, 1300];
     expect(measureSampleRateHz([repWithTimestamps(ts)])).toBe(10);
+  });
+});
+
+describe('describeLoad', () => {
+  // VMCP-02.74: a Damper or Band set has no `weightLbs` to fall back on, so
+  // the old weight-only render showed `—` for every one of them even though
+  // the device told us exactly what it was configured to.
+  it.each([
+    ['Weight Training', { weightLbs: 170 }, '170 lb'],
+    ['Damper', { damperLevel: 6 }, 'damper 6'],
+    ['Resistance Band', {}, 'band'],
+    ['Isokinetic', {}, 'iso'],
+    ['Rowing', {}, '—'],
+  ] as const)('labels a %s set as %s', (trainingMode, rest, expected) => {
+    expect(describeLoad({ trainingMode, ...rest })).toBe(expected);
+  });
+
+  it('appends the chains setting to a WeightTraining label', () => {
+    expect(describeLoad({ trainingMode: 'Weight Training', weightLbs: 170, chainsLbs: 20 })).toBe(
+      '170 lb +20 chains',
+    );
+  });
+
+  it('renders a Damper set with no weightLbs by its damper level, not a gap', () => {
+    expect(describeLoad({ trainingMode: 'Damper', weightLbs: undefined, damperLevel: 6 })).toBe(
+      'damper 6',
+    );
+  });
+
+  it('does not fabricate a number for a Band or unset Damper set', () => {
+    expect(describeLoad({ trainingMode: 'Resistance Band' })).toBe('band');
+    expect(describeLoad({ trainingMode: 'Damper' })).toBe('—');
+  });
+
+  it('falls back to weightLbs, and then to a gap, when trainingMode is unknown', () => {
+    expect(describeLoad({ weightLbs: 100 })).toBe('100 lb');
+    expect(describeLoad({})).toBe('—');
   });
 });
 

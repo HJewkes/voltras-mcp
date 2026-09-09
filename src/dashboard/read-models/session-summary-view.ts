@@ -19,6 +19,13 @@ export interface SessionSummarySet {
   startedAt: string;
   endedAt: string;
   weightLbs: number | null;
+  /**
+   * Truthful load label for the set, by its own `trainingMode` setting
+   * (VMCP-02.74) — `damper 6` / `band` / `iso` for a Damper, Band or
+   * Isokinetic set that has no `weightLbs` to fall back on. See
+   * `describeLoad` in `state/set-capture.ts`, the one place this is decided.
+   */
+  loadLabel: string;
   repCount: number;
   isWarmup: boolean;
   /** Peak-to-last concentric velocity loss within the set, %. Null with no velocity telemetry. */
