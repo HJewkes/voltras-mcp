@@ -47,17 +47,23 @@ export interface ChannelPublisher {
 
 /**
  * Build a slot-scoped publisher around an existing one. The wrapper passes
- * every publish through to `inner`, but spreads `slot: slotId` into the meta
- * first so explicit `slot` keys on the event still win (defensive — no caller
- * should set `slot` directly, but the merge order means a hand-set value
- * overrides the slot-scope tag rather than silently colliding).
+ * every publish through to `inner`, but spreads `slot: slotId` and an
+ * emit-time `at` into the meta first so explicit keys on the event still win
+ * (defensive — no caller should set `slot`/`at` directly, but the merge order
+ * means a hand-set value overrides the injected tag rather than silently
+ * colliding). `at` is a generic emit-time stamp distinct from any
+ * event-specific `started_at`/`ended_at` the builder already set.
  */
-function slotScopedPublisher(inner: ChannelPublisher, slotId: string): ChannelPublisher {
+function slotScopedPublisher(
+  inner: ChannelPublisher,
+  slotId: string,
+  nowIso: () => string = () => new Date().toISOString(),
+): ChannelPublisher {
   return {
     publish(event: ChannelEvent): void {
       inner.publish({
         content: event.content,
-        meta: { slot: slotId, ...event.meta },
+        meta: { slot: slotId, at: nowIso(), ...event.meta },
       });
     },
     forSlot(nextSlotId: string): ChannelPublisher {
@@ -66,7 +72,7 @@ function slotScopedPublisher(inner: ChannelPublisher, slotId: string): ChannelPu
       // this rebase the merge above would let the outer slot win (`{slot: 'a',
       // ...{slot: 'b'}}` = 'b' — fine in this direction, but the explicit
       // rebase keeps the contract obvious).
-      return slotScopedPublisher(inner, nextSlotId);
+      return slotScopedPublisher(inner, nextSlotId, nowIso);
     },
   };
 }
@@ -79,7 +85,10 @@ function slotScopedPublisher(inner: ChannelPublisher, slotId: string): ChannelPu
  * sendResourceUpdated in event-bridge.ts.
  */
 export class McpChannelPublisher implements ChannelPublisher {
-  constructor(private readonly server: McpServer) {}
+  constructor(
+    private readonly server: McpServer,
+    private readonly nowIso: () => string = () => new Date().toISOString(),
+  ) {}
 
   publish(event: ChannelEvent): void {
     void this.server.server.notification({
@@ -89,7 +98,7 @@ export class McpChannelPublisher implements ChannelPublisher {
   }
 
   forSlot(slotId: string): ChannelPublisher {
-    return slotScopedPublisher(this, slotId);
+    return slotScopedPublisher(this, slotId, this.nowIso);
   }
 }
 
