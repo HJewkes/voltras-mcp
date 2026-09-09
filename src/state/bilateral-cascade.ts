@@ -46,17 +46,10 @@
 
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
+import { waitForModeEcho } from '../tools/device-handler-helpers.js';
 import type { CoercionWatch } from './coercion-watch.js';
 import type { LeaseFence } from './lease-fence.js';
 import { MODE_REVERT_WINDOW_MS, type ModeRevertGuard } from './mode-revert-guard.js';
-
-/**
- * How often the post-mode-write wait re-reads the guard's last echo. The
- * echo arrives on the bridge's settings_update callback, so polling is only
- * the observation mechanism — 25ms keeps the added latency under a typical
- * BLE round-trip without spinning.
- */
-const MODE_ECHO_POLL_MS = 25;
 
 /** Outcome of the VW-162 pre-fan-out wait for the device's mode echo. */
 export type ModeEchoStatus = 'confirmed' | 'timeout' | 'skipped';
@@ -369,7 +362,10 @@ async function runModeStep(
   guard?.arm(mode);
   if (guard === undefined || alreadyLive) return { outcome, echo: 'skipped', proceed: true };
 
-  const echoedAfterMs = await waitForModeEcho(guard, mode, options);
+  const echoedAfterMs = await waitForModeEcho(guard, mode, {
+    timeoutMs: options.modeEchoTimeoutMs,
+    pollMs: options.modeEchoPollMs,
+  });
   if (echoedAfterMs === null) {
     if (abortOnFirstFailure) abortFlag.aborted = true;
     return {
@@ -379,27 +375,6 @@ async function runModeStep(
     };
   }
   return { outcome, echo: 'confirmed', echoedAfterMs, proceed: true };
-}
-
-/**
- * Poll the guard's last echo until it reports `mode`. Returns the elapsed
- * milliseconds, or `null` on timeout. The guard is left armed either way, so
- * an echo that lands after we gave up still clears its latch.
- */
-async function waitForModeEcho(
-  guard: NonNullable<SlotTarget['modeRevertGuard']>,
-  mode: TrainingMode,
-  options: CascadeOptions,
-): Promise<number | null> {
-  const timeoutMs = options.modeEchoTimeoutMs ?? MODE_REVERT_WINDOW_MS;
-  const pollMs = options.modeEchoPollMs ?? MODE_ECHO_POLL_MS;
-  const startedAt = Date.now();
-  for (;;) {
-    if (guard.echoedMode() === mode) return Date.now() - startedAt;
-    const elapsed = Date.now() - startedAt;
-    if (elapsed >= timeoutMs) return null;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, timeoutMs - elapsed)));
-  }
 }
 
 function modeEchoTimeoutMessage(options: CascadeOptions): string {
