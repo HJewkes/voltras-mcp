@@ -18,6 +18,7 @@ import {
   toExerciseSummary,
   toLiveTempoSeconds,
   toSetRowProps,
+  type HeroSetView,
 } from '../spa/panels/exercise-hero-view.js';
 import type { WorkoutSetView } from '../spa/adapter.js';
 import { mmsToMps } from '../../state/live-signal.js';
@@ -60,7 +61,16 @@ function repWithMean(repNumber: number, peakMms: number, meanMms: number): Rep {
   } as unknown as Rep;
 }
 
-function completedView(reps: Rep[], over: Partial<WorkoutSetView> = {}): WorkoutSetView {
+/** A Rep with no concentric peak velocity signal — WA derives `null` for it. */
+function repWithoutVelocity(repNumber: number): Rep {
+  return {
+    repNumber,
+    concentric: {},
+    eccentric: {},
+  } as unknown as Rep;
+}
+
+function completedView(reps: Rep[], over: Partial<HeroSetView> = {}): HeroSetView {
   return {
     setNumber: 1,
     kind: 'completed',
@@ -147,6 +157,26 @@ describe('toSetRowProps', () => {
     if (activeProps.state !== 'live') throw new Error('expected a live row');
     expect(activeProps.target.weight).toBeCloseTo(45.359237);
   });
+
+  it('carries a Damper set loadLabel instead of a fabricated 0 weight', () => {
+    const view: HeroSetView = completedView([rep(1, 800)], {
+      weightLbs: null,
+      loadLabel: 'damper 6',
+    });
+    const props = toSetRowProps(view);
+
+    expect(props.weight).toBeUndefined();
+    expect(props.loadLabel).toBe('damper 6');
+    expect(JSON.stringify(props)).not.toMatch(/"weight":0/);
+  });
+
+  it('omits a rep with no derivable peak velocity instead of writing it as 0', () => {
+    const view = completedView([rep(1, 800), repWithoutVelocity(2), rep(3, 700)]);
+    const props = toSetRowProps(view);
+
+    expect(props.velocities).toEqual([0.8, 0.7]);
+    expect(props.velocities).not.toContain(0);
+  });
 });
 
 describe('toExerciseSummary', () => {
@@ -180,8 +210,14 @@ describe('toExerciseSummary', () => {
     });
   });
 
-  it('is zeroed when there are no sets', () => {
-    expect(toExerciseSummary([], null)).toEqual({ sets: 0, reps: 0, weight: 0, unit: 'lbs' });
+  it('carries no fabricated weight when there are no sets', () => {
+    expect(toExerciseSummary([], null)).toEqual({
+      sets: 0,
+      reps: 0,
+      weight: undefined,
+      loadLabel: '—',
+      unit: 'lbs',
+    });
   });
 
   it('rescales the last set weight to kg without pre-rounding (VW-196)', () => {
