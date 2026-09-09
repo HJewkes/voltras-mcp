@@ -28,6 +28,8 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+.launch.env
+!.launch.env.example
 
 # TrueCoach pull: the cached access token (mode 0600) and the raw response
 # cache. Both live under $HOME by default; these entries cover a run that

@@ -145,6 +145,58 @@ installed.
 
 ---
 
+## Launching
+
+There is one launcher script for the server, regardless of how you invoke it:
+`plugins/voltras-channel/bin/voltras-mcp-launch.sh`. It builds the dashboard SPA when
+missing or stale, sources `.launch.env` from the repo root when present, then execs the
+built server. `scripts/voltra-pt` and the `justfile` recipes below both call it — nothing
+duplicates its resolution or build logic.
+
+### `.launch.env`
+
+Copy `.launch.env.example` to `.launch.env` (gitignored) to set defaults for every launch
+without exporting them in your shell:
+
+```bash
+cp .launch.env.example .launch.env
+```
+
+### `just` recipes
+
+`just` is optional — each recipe is a one-line wrapper you can run directly instead:
+
+| Recipe           | Plain command                                                |
+| ---------------- | ------------------------------------------------------------ |
+| `just build`     | `npm run build`                                              |
+| `just dashboard` | `npm run build:dashboard`                                    |
+| `just test`      | `npm test`                                                   |
+| `just typecheck` | `npm run typecheck`                                          |
+| `just lint`      | `npm run lint`                                               |
+| `just sim`       | mock adapter + dashboard on an OS-assigned port, isolated DB |
+| `just bench`     | `node scripts/preflight.mjs`, then the plugin launcher       |
+
+### Registering directly via `~/.claude.json`
+
+To point Claude Code at the plugin's launcher script without installing it as a plugin
+(no push events this way — see the caveat below), add it to the `mcpServers` map in
+`~/.claude.json`:
+
+```json
+"voltras": {
+  "command": "/absolute/path/to/voltras-mcp/plugins/voltras-channel/bin/voltras-mcp-launch.sh",
+  "env": { "VOLTRAS_MCP_HOME": "/absolute/path/to/voltras-mcp" }
+}
+```
+
+This is described here rather than performed for you — edit your own `~/.claude.json`.
+A `server:<name>` entry registered this way can never be allowlisted for the experimental
+push channel, so events fall back to polling. For push events (and the reinstall step
+after pulling script changes), install it as the `voltras-channel` plugin instead — see
+**[docs/channel-plugin-packaging.md](docs/channel-plugin-packaging.md)**.
+
+---
+
 ## Your first workout
 
 ### Option A: with a Voltra
