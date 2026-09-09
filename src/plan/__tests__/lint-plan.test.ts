@@ -7,7 +7,14 @@
 // one seam that can express them.
 
 import { describe, it, expect } from 'vitest';
-import { lintPlan, type LintPlanExercise } from '../lint-plan.js';
+import {
+  lintMesoLengthGrewMidBlock,
+  lintPlan,
+  lintPriorityMuscleChangedMidBlock,
+  lintSameMuscleHighVolumeConsecutiveDays,
+  lintWeeklyVolume,
+  type LintPlanExercise,
+} from '../lint-plan.js';
 
 const CONFIDENT = 'confident' as const;
 
@@ -195,5 +202,213 @@ describe('provisional tier', () => {
     for (const warning of warnings) {
       expect(warning.message).not.toContain('provisional');
     }
+  });
+});
+
+describe('weekly hard sets per muscle', () => {
+  it('warns a beginner at 21 sets for a muscle across the week', () => {
+    const exercises = [
+      exercise({ exerciseId: 'bench-press', targetSets: 11, dayIndex: 0 }),
+      exercise({ exerciseId: 'cable-fly', targetSets: 10, dayIndex: 1 }),
+    ];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'hard_sets_per_muscle_per_week_over_tier_ceiling',
+      muscleGroup: 'chest',
+      observed: 21,
+      ceiling: 20,
+      tier: 'beginner',
+    });
+  });
+
+  it('leaves a beginner at exactly 20 weekly sets for a muscle alone', () => {
+    const exercises = [exercise({ targetSets: 20 })];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'beginner', confidence: CONFIDENT });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('never warns at the advanced tier, which has no cited weekly figure', () => {
+    const exercises = [exercise({ targetSets: 40 })];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'advanced', confidence: CONFIDENT });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('never warns at the intermediate tier, which has no cited weekly figure', () => {
+    const exercises = [exercise({ targetSets: 40 })];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'intermediate', confidence: CONFIDENT });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('marks a provisional-tier weekly warning as provisional', () => {
+    const exercises = [exercise({ targetSets: 21 })];
+
+    const warnings = lintWeeklyVolume({ exercises, tier: 'beginner', confidence: 'provisional' });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('tier is provisional');
+  });
+});
+
+describe('meso_length_grew_mid_block', () => {
+  it('warns when weeksCount grew after a week was already built', () => {
+    const warnings = lintMesoLengthGrewMidBlock({
+      previousWeeksCount: 4,
+      newWeeksCount: 6,
+      weeksAlreadyCreated: 1,
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'meso_length_grew_mid_block',
+      observed: 6,
+      ceiling: 4,
+    });
+  });
+
+  it('says nothing when no week has been built yet', () => {
+    const warnings = lintMesoLengthGrewMidBlock({
+      previousWeeksCount: 4,
+      newWeeksCount: 6,
+      weeksAlreadyCreated: 0,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('says nothing when weeksCount did not increase', () => {
+    const warnings = lintMesoLengthGrewMidBlock({
+      previousWeeksCount: 6,
+      newWeeksCount: 4,
+      weeksAlreadyCreated: 2,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe('priority_muscle_changed_mid_block', () => {
+  it('warns when the top-set muscle differs between week 1 and a later week', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [exercise({ muscleGroup: 'chest', targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroup: 'back', targetSets: 10 })],
+      laterWeekOrderIndex: 2,
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'priority_muscle_changed_mid_block',
+      muscleGroup: 'back',
+    });
+    expect(warnings[0].message).toContain('Week 1');
+    expect(warnings[0].message).toContain('week 3');
+  });
+
+  it('says nothing when the priority muscle is unchanged', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [exercise({ muscleGroup: 'chest', targetSets: 10 })],
+      laterWeekExercises: [exercise({ muscleGroup: 'chest', targetSets: 6 })],
+      laterWeekOrderIndex: 1,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('says nothing when either week has a tie for the top muscle', () => {
+    const warnings = lintPriorityMuscleChangedMidBlock({
+      week1Exercises: [
+        exercise({ muscleGroup: 'chest', targetSets: 5 }),
+        exercise({ muscleGroup: 'back', targetSets: 5 }),
+      ],
+      laterWeekExercises: [exercise({ muscleGroup: 'back', targetSets: 10 })],
+      laterWeekOrderIndex: 1,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe('same_muscle_high_volume_consecutive_days', () => {
+  it('warns when the same muscle is over the session ceiling on two consecutive templates', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+      ],
+      tier: 'beginner',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      code: 'same_muscle_high_volume_consecutive_days',
+      muscleGroup: 'chest',
+      observed: 9,
+      ceiling: 8,
+      tier: 'beginner',
+    });
+    expect(warnings[0].message).toContain('Mon');
+    expect(warnings[0].message).toContain('Tue');
+  });
+
+  it('says nothing when only one of the two consecutive templates is over ceiling', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 3 })] },
+      ],
+      tier: 'beginner',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('says nothing for non-consecutive templates separated by a day with no overlap check', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'back', targetSets: 9 })] },
+        { dayLabel: 'Wed', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+      ],
+      tier: 'beginner',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('skips a pair where one template has no dayLabel', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 9 })] },
+      ],
+      tier: 'beginner',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('never warns at the advanced tier, which has no per-session ceiling', () => {
+    const warnings = lintSameMuscleHighVolumeConsecutiveDays({
+      templates: [
+        { dayLabel: 'Mon', exercises: [exercise({ muscleGroup: 'chest', targetSets: 20 })] },
+        { dayLabel: 'Tue', exercises: [exercise({ muscleGroup: 'chest', targetSets: 20 })] },
+      ],
+      tier: 'advanced',
+      confidence: CONFIDENT,
+    });
+
+    expect(warnings).toEqual([]);
   });
 });
