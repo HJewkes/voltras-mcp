@@ -208,6 +208,24 @@ describe('checkDriftGuard', () => {
     expect(verdict.reasoning).toContain('insufficient reps');
   });
 
+  it('reads two capture eras of the same movement as no drift (VW-203)', async () => {
+    // Arrange: identical work, one session captured in device-native positions
+    // and one in metres. Unnormalised this is a ~100,000% ROM change.
+    await store.putSet(
+      makeSet({ id: 'a', sessionId: 'sess-1', positionUnits: 'device_native' }, { romM: 500 }),
+    );
+    await store.putSet(
+      makeSet({ id: 'b', sessionId: 'sess-2', positionUnits: 'meters' }, { romM: 0.5 }),
+    );
+
+    // Act
+    const verdict = await check();
+
+    // Assert
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.romDriftPct).toBeCloseTo(0, 5);
+  });
+
   it('refuses the comparison when a session has no qualifying reps at all', async () => {
     // Arrange: sess-2 recorded nothing for this exercise
     await store.putSet(makeSet({ id: 'a', sessionId: 'sess-1' }));
