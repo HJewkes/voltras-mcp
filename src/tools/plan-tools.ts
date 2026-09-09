@@ -50,6 +50,7 @@ import {
   type StoredTrainingProgram,
   type StoredTrainingWeek,
   type StoredWorkoutTemplate,
+  type TrainingFocus,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
@@ -119,10 +120,18 @@ const PLAN_EXERCISE_LIST_DESCRIPTION =
 
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'Get the next un-completed workout template for a program (or the active/default program if ' +
-  'programId is omitted). Use this to answer "what should the user do today per their plan?"';
+  'programId is omitted). Use this to answer "what should the user do today per their plan?" ' +
+  'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
+  '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
+  'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
+  'written by this tool.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
-  '(sessionId). Advances what `plan.next_workout` returns next.';
+  '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
+  'the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in ' +
+  'which case it carries the finished block, the next block (or null if none), the current goal on ' +
+  'file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never ' +
+  'written by this tool.';
 const PLAN_ATTACH_TO_SESSION_DESCRIPTION =
   'Link a live/real session to a plan entity — either a specific plannedExerciseId or a whole ' +
   'workoutTemplateId (exactly one of the two). Use this to connect what the user is actually ' +
@@ -688,6 +697,119 @@ export async function resolveDefaultProgram(
   return latest;
 }
 
+/** The block-tree reference `blockBoundary.finishedBlock`/`nextBlock` carry (VMCP-06.06 / B48). */
+export interface BlockBoundaryRef {
+  id: string;
+  name: string;
+  focus?: TrainingFocus;
+}
+
+/**
+ * Reported on `plan.next_workout`/`plan.complete_workout` only when the call
+ * actually lands on a block edge — never when mid-block. A pure advisory: it
+ * never writes the goal (Addendum 4.2 — accept/decline wording, never
+ * re-applied after a decline).
+ */
+export interface BlockBoundary {
+  crossed: true;
+  finishedBlock: BlockBoundaryRef;
+  nextBlock: BlockBoundaryRef | null;
+  currentGoal: string | null;
+  prompt: string;
+}
+
+function toBlockBoundaryRef(block: StoredTrainingBlock): BlockBoundaryRef {
+  return {
+    id: block.id,
+    name: block.name,
+    ...(block.focus !== undefined ? { focus: block.focus } : {}),
+  };
+}
+
+function buildGoalRealignmentPrompt(
+  finishedBlock: BlockBoundaryRef,
+  nextBlock: BlockBoundaryRef | null,
+  currentGoal: string | null,
+): string {
+  const beforeNext =
+    nextBlock !== null ? `before ${nextBlock.name} starts` : 'before your next block';
+  if (currentGoal === null) {
+    return `Block ${finishedBlock.name} is done. You don't have a goal on file. State one ${beforeNext}.`;
+  }
+  return (
+    `Block ${finishedBlock.name} is done. Your goal on file is '${currentGoal}'. ` +
+    `Keep it, or restate it ${beforeNext}.`
+  );
+}
+
+/**
+ * `finishedBlockIndex` picks the pivot: the block AT that index is
+ * `finishedBlock`, the one right after it is `nextBlock`. Callers choose
+ * which index that is — `completeWorkout` passes the completed template's own
+ * block, `nextWorkout` passes the block BEFORE the one it is returning — so
+ * this one function computes the reported pair for both directions without
+ * ever comparing block/template names.
+ */
+function buildBlockBoundary(
+  orderedBlocks: StoredTrainingBlock[],
+  finishedBlockIndex: number,
+  currentGoal: string | null,
+): BlockBoundary {
+  const finishedBlock = toBlockBoundaryRef(orderedBlocks[finishedBlockIndex]);
+  const nextBlockRow = orderedBlocks[finishedBlockIndex + 1];
+  const nextBlock = nextBlockRow !== undefined ? toBlockBoundaryRef(nextBlockRow) : null;
+  return {
+    crossed: true,
+    finishedBlock,
+    nextBlock,
+    currentGoal,
+    prompt: buildGoalRealignmentPrompt(finishedBlock, nextBlock, currentGoal),
+  };
+}
+
+async function readCurrentGoal(state: ServerState): Promise<string | null> {
+  const profile = await state.store.getTrainingProfile(LOCAL_USER_ID);
+  return profile?.goal ?? null;
+}
+
+/**
+ * `next_workout` reports a boundary only when the template it is about to
+ * hand back is the first of its block AND a prior block actually exists —
+ * the very first workout of a brand-new program hasn't crossed anything.
+ */
+async function resolveNextWorkoutBlockBoundary(
+  state: ServerState,
+  orderedBlocks: StoredTrainingBlock[],
+  blockIndex: number,
+  isFirstOfBlock: boolean,
+): Promise<BlockBoundary | null> {
+  if (!isFirstOfBlock || blockIndex === 0) return null;
+  return buildBlockBoundary(orderedBlocks, blockIndex - 1, await readCurrentGoal(state));
+}
+
+/**
+ * `complete_workout` reports a boundary only when the just-completed
+ * template is the last template of the last week in its block.
+ */
+async function resolveCompleteWorkoutBlockBoundary(
+  state: ServerState,
+  template: StoredWorkoutTemplate,
+): Promise<BlockBoundary | null> {
+  const week = await state.store.getTrainingWeek(template.weekId);
+  if (week === undefined) return null;
+  const block = await state.store.getTrainingBlock(week.blockId);
+  if (block === undefined) return null;
+  const weeksInBlock = await state.store.getTrainingWeeksForBlock(block.id);
+  const templatesInWeek = await state.store.getWorkoutTemplatesForWeek(week.id);
+  const isLastWeek = weeksInBlock[weeksInBlock.length - 1]?.id === week.id;
+  const isLastTemplate = templatesInWeek[templatesInWeek.length - 1]?.id === template.id;
+  if (!isLastWeek || !isLastTemplate) return null;
+  const orderedBlocks = await state.store.getTrainingBlocksForProgram(block.programId);
+  const blockIndex = orderedBlocks.findIndex((b) => b.id === block.id);
+  if (blockIndex === -1) return null;
+  return buildBlockBoundary(orderedBlocks, blockIndex, await readCurrentGoal(state));
+}
+
 async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
@@ -697,20 +819,30 @@ async function nextWorkout(
       plannedExercises: StoredPlannedExercise[];
       block: StoredTrainingBlock;
       week: StoredTrainingWeek;
+      blockBoundary: BlockBoundary | null;
     }
   | { ok: true; completed: true }
 > {
   const program = await resolveDefaultProgram(state, input.programId);
   const blocks = await state.store.getTrainingBlocksForProgram(program.id);
-  for (const block of blocks) {
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+    const block = blocks[blockIndex];
     const weeks = await state.store.getTrainingWeeksForBlock(block.id);
-    for (const week of weeks) {
+    for (let weekIndex = 0; weekIndex < weeks.length; weekIndex++) {
+      const week = weeks[weekIndex];
       const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
-      for (const template of templates) {
+      for (let templateIndex = 0; templateIndex < templates.length; templateIndex++) {
+        const template = templates[templateIndex];
         const assignments = await state.store.getAssignmentsForTemplate(template.id);
         if (assignments.length === 0) {
           const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
-          return { template, plannedExercises, block, week };
+          const blockBoundary = await resolveNextWorkoutBlockBoundary(
+            state,
+            blocks,
+            blockIndex,
+            weekIndex === 0 && templateIndex === 0,
+          );
+          return { template, plannedExercises, block, week, blockBoundary };
         }
       }
     }
@@ -721,7 +853,7 @@ async function nextWorkout(
 async function completeWorkout(
   state: ServerState,
   input: z.infer<typeof PlanCompleteWorkoutInput>,
-): Promise<{ assignment: StoredProgramAssignment }> {
+): Promise<{ assignment: StoredProgramAssignment; blockBoundary: BlockBoundary | null }> {
   const sessionId = input.sessionId ?? resolveActiveSessionId(state);
   if (sessionId === null) {
     throw new ToolError(
@@ -740,6 +872,7 @@ async function completeWorkout(
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${sessionId}" exists.`);
   }
+  const blockBoundary = await resolveCompleteWorkoutBlockBoundary(state, template);
   // Idempotency: if an assignment already exists for this (session, template)
   // pair, return the existing row rather than writing a duplicate. The store
   // upsert is keyed on assignment.id (a UUID we'd generate), not on the
@@ -748,7 +881,7 @@ async function completeWorkout(
   const existing = await state.store.getAssignmentsForSession(sessionId);
   const prior = existing.find((a) => a.workoutTemplateId === input.workoutTemplateId);
   if (prior !== undefined) {
-    return { assignment: prior };
+    return { assignment: prior, blockBoundary };
   }
   const assignment: StoredProgramAssignment = {
     id: randomUUID(),
@@ -757,7 +890,7 @@ async function completeWorkout(
     assignedAt: new Date().toISOString(),
   };
   await state.store.putProgramAssignment(assignment);
-  return { assignment };
+  return { assignment, blockBoundary };
 }
 
 async function attachToSession(
