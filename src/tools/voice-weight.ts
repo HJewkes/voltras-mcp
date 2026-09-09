@@ -18,6 +18,7 @@ import {
   type VoiceCommandRejectReason,
 } from '../state/channel-payloads.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
+import type { LeaseFence } from '../state/lease-fence.js';
 import type { WeightCommand, WeightCommandSlot } from '../voice/weight-command.js';
 
 /** Device-allowed range, mirroring the `device.set_weight` schema. */
@@ -119,6 +120,7 @@ function inRange(lbs: number): boolean {
 export function createWeightFastPath(
   channels: ChannelPublisher,
   context: VoiceWeightContext | null,
+  leaseFence: LeaseFence | null = null,
 ): (event: VoiceCommandEvent) => Promise<void> {
   const undoLedger = new Map<string, number>();
   return async (event: VoiceCommandEvent): Promise<void> => {
@@ -127,6 +129,16 @@ export function createWeightFastPath(
     if ('reason' in choice) return reject(channels, event, choice.reason);
     const plan = planWeight(event.command, choice.slot, undoLedger.get(choice.slot.slot));
     if ('reason' in plan) return reject(channels, event, plan.reason, choice.slot.slot);
+    // VMCP-01.65: the fence was taken when the mic was armed, which is when
+    // this session last proved it held the device. Everything since — the
+    // wake phrase, the STT round-trip — happened off that proof, so re-check
+    // before writing. `lease_lost` alone here: a session that no longer holds
+    // the device cannot act on the command either, so relaying the transcript
+    // as a rejection would only invite a write that would also be refused.
+    if (leaseFence !== null && !leaseFence.intact()) {
+      leaseFence.report(choice.slot.slot);
+      return;
+    }
     await applyWeight(channels, context, undoLedger, { event, slot: choice.slot, plan });
   };
 }

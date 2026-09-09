@@ -256,3 +256,63 @@ describe('status', () => {
     expect(lease.status()!.clientId).toBe('a');
   });
 });
+
+describe('generation (VMCP-01.65)', () => {
+  it('increments on every steal', () => {
+    const { lease } = makeLease();
+    lease.tryAcquire('a');
+    const held = lease.generation();
+
+    lease.steal('b');
+    const afterFirst = lease.generation();
+    lease.steal('c');
+
+    expect(afterFirst).toBeGreaterThan(held);
+    expect(lease.generation()).toBeGreaterThan(afterFirst);
+  });
+
+  it('increments on release, so a re-acquire by the same client is a new epoch', () => {
+    // The device is surrendered on the way out, so a write in flight from
+    // before the release must not be allowed to land after it.
+    const { lease } = makeLease();
+    lease.tryAcquire('a');
+    const held = lease.generation();
+
+    lease.release('a');
+    lease.tryAcquire('a');
+
+    expect(lease.generation()).toBeGreaterThan(held);
+  });
+
+  it('holds steady while the same client keeps writing', () => {
+    const { lease } = makeLease();
+    lease.tryAcquire('a');
+    const held = lease.generation();
+
+    lease.tryAcquire('a');
+    lease.tryAcquire('a');
+
+    expect(lease.generation()).toBe(held);
+  });
+
+  it('increments when an idle holder is expired', () => {
+    const { lease, advance } = makeLease({ idleTimeoutMs: 1_000 });
+    lease.tryAcquire('a');
+    const held = lease.generation();
+
+    advance(2_000);
+    lease.tryAcquire('b');
+
+    expect(lease.generation()).toBeGreaterThan(held);
+  });
+
+  it('is not moved by a no-op release from a non-holder', () => {
+    const { lease } = makeLease();
+    lease.tryAcquire('a');
+    const held = lease.generation();
+
+    lease.release('b');
+
+    expect(lease.generation()).toBe(held);
+  });
+});

@@ -99,6 +99,17 @@ export class WriteLease {
    * unload still works while frozen.
    */
   private transferring = false;
+  /**
+   * Monotonic lease epoch (VMCP-01.65). Bumped on every grant and every clear,
+   * so a multi-step writer can capture it before its first BLE write and prove,
+   * after an await, that the device is still the one it was given.
+   *
+   * A counter rather than the holder name because a release followed by the
+   * SAME client re-acquiring is still a new epoch — the device was surrendered
+   * in between, and an in-flight write from before that surrender must not
+   * land.
+   */
+  private generationCounter = 0;
   private readonly now: () => number;
   private readonly idleTimeoutMs: number;
   private readonly isPinned: () => boolean;
@@ -134,6 +145,14 @@ export class WriteLease {
     // model relays "client-a holds the device" about a dead lease.
     if (this.wouldExpire()) return null;
     return { ...this.holder };
+  }
+
+  /**
+   * Current lease epoch. Never decreases; a change means the device changed
+   * hands (or was let go) since the value was read. See `lease-fence.ts`.
+   */
+  generation(): number {
+    return this.generationCounter;
   }
 
   /** Whether the holder is past the idle window and unpinned — no mutation. */
@@ -235,7 +254,7 @@ export class WriteLease {
    */
   release(clientId: ClientId): boolean {
     if (this.holder?.clientId !== clientId) return false;
-    this.holder = null;
+    this.clearHolder();
     return true;
   }
 
@@ -254,7 +273,14 @@ export class WriteLease {
   private grant(clientId: ClientId): LeaseHolder {
     const at = this.now();
     this.holder = { clientId, acquiredAt: at, lastActivityAt: at };
+    this.generationCounter += 1;
     return { ...this.holder };
+  }
+
+  /** Drop the holder and open a new epoch. */
+  private clearHolder(): void {
+    this.holder = null;
+    this.generationCounter += 1;
   }
 
   /**
@@ -263,6 +289,6 @@ export class WriteLease {
    * the model has not issued a tool call recently.
    */
   private expireIfIdle(): void {
-    if (this.wouldExpire()) this.holder = null;
+    if (this.wouldExpire()) this.clearHolder();
   }
 }
