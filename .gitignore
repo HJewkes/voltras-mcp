@@ -43,3 +43,7 @@ HANDOFF.md
 
 # Python venv for the voice-listener sidecar (created by scripts/setup-voice.sh)
 voice-listener/.venv/
+
+# Docs site build output (VitePress)
+site/.vitepress/dist/
+site/.vitepress/cache/

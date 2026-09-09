@@ -36,7 +36,9 @@
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.mjs\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "docs:dev": "vitepress dev site",
+    "docs:build": "vitepress build site"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -77,6 +79,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.1",
     "vite": "^6.4.3",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.5"
   },
   "lint-staged": {
