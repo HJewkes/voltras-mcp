@@ -17,7 +17,10 @@
 // able from echo and is dropped. That is a deliberate trade — a false unload
 // from our own audio is worse than a missed stop that the lifter can repeat a
 // second later, once the cue ends. No cue template in CUE_CATALOG contains a
-// safety word today; `cue-templates.test.ts` is where that stays true.
+// safety word today — cue-templates.test.ts, "spoken text contains no safety
+// phrase", renders every template and runs the real matcher over it. That bound
+// covers cues only: `system.speak` prose is unbounded and routinely contains
+// safety words, so for model speech this filter is the whole defence.
 
 /**
  * Fraction of a transcript's words that must appear in the spoken text before

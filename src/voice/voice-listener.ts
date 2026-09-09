@@ -16,7 +16,11 @@
 //
 // TTS-ducking: `mute()`/`unmute()` (refcounted) duck the mic while the speaker
 // is live so we never act on what the TTS read aloud. Entering the muted state
-// discards any in-progress utterance. The mic stream stays warm.
+// discards any in-progress utterance. The mic stream stays warm. Each mute()
+// returns a `MuteHandle` that its unmute() must pass back: two utterances can
+// overlap (a non-urgent cue does not interrupt a model `system.speak`), and
+// releasing the wrong one leaves the still-playing text out of the echo filter
+// (VW-176).
 //
 // Safety exemption (VMCP-05.20): ducking is NOT a discard. Muted frames still
 // run VAD + whisper and the transcript is routed SAFETY-ONLY — the command and
@@ -287,6 +291,14 @@ interface CaptureOrigin {
   spokenTexts: string[];
 }
 
+/**
+ * Opaque token pairing one `mute()` with its `unmute()`. Identity is what
+ * matters; `id` exists so log lines can name the entry being released.
+ */
+export interface MuteHandle {
+  readonly id: number;
+}
+
 interface PendingUtterance {
   audio: Buffer;
   closedAt: number;
@@ -305,9 +317,9 @@ export class VoiceListener {
   private audio: AudioSource | null = null;
   private vad: Vad | null = null;
   private segmenter: SpeechSegmenter | null = null;
-  private _muteDepth = 0;
-  /** Text of every cue currently being spoken, oldest first (mute is refcounted). */
-  private activeSpeech: string[] = [];
+  /** One entry per outstanding mute(), holding the text that mute is speaking. */
+  private activeSpeech = new Map<MuteHandle, string | undefined>();
+  private nextMuteId = 1;
   /** Capture origin accumulating for the utterance the segmenter is building. */
   private origin: CaptureOrigin = { muted: false, spokenTexts: [] };
 
@@ -359,7 +371,12 @@ export class VoiceListener {
 
   /** True when any TTS call is still in flight (refcount > 0). */
   get isMuted(): boolean {
-    return this._muteDepth > 0;
+    return this.muteDepth > 0;
+  }
+
+  /** Outstanding mutes. One per unreleased handle, so it is the old refcount. */
+  private get muteDepth(): number {
+    return this.activeSpeech.size;
   }
 
   /**
@@ -372,21 +389,26 @@ export class VoiceListener {
    * window stay open to safety phrases (VMCP-05.20): a transcript made mostly
    * of these words is our own voice and is dropped. Omitting it is safe but
    * blunt — the safety path stays open with no echo filter behind it.
+   *
+   * Hand the returned handle back to `unmute()`. Overlapping speech is ordinary
+   * (a non-urgent cue plays over a longer `system.speak`), and whichever ends
+   * first must release its OWN text, not the oldest (VW-176).
    */
-  mute(spokenText?: string): void {
-    this._muteDepth += 1;
-    if (spokenText !== undefined) this.activeSpeech.push(spokenText);
-    if (this._muteDepth === 1) this.segmenter?.flush();
+  mute(spokenText?: string): MuteHandle {
+    const handle: MuteHandle = { id: this.nextMuteId++ };
+    this.activeSpeech.set(handle, spokenText);
+    if (this.muteDepth === 1) this.segmenter?.flush();
     log.debug('VoiceListener: muted (TTS ducking active, safety phrases still routed)');
+    return handle;
   }
 
-  /** Resume full routing after TTS playback ends. */
-  unmute(): void {
-    this._muteDepth = Math.max(0, this._muteDepth - 1);
-    // FIFO rather than by identity: mute() is refcounted without a handle, and
-    // the per-utterance origin unions every text seen anyway.
-    this.activeSpeech.shift();
-    log.debug('VoiceListener: unmuted (TTS ducking lifted)');
+  /**
+   * Release one mute. Unknown or already-released handles are a no-op, so a
+   * failsafe timer racing the child's exit cannot free someone else's entry.
+   */
+  unmute(handle: MuteHandle): void {
+    if (!this.activeSpeech.delete(handle)) return;
+    log.debug(`VoiceListener: unmuted #${handle.id} (${this.muteDepth} still speaking)`);
   }
 
   /**
@@ -550,7 +572,7 @@ export class VoiceListener {
       while (this.pendingFrames.length > 0) {
         const frame = this.pendingFrames.shift()!;
         if (this.vad === null || this.segmenter === null) continue;
-        if (this._muteDepth > 0) this.markMutedCapture();
+        if (this.muteDepth > 0) this.markMutedCapture();
         const prob = await this.runVad(frame);
         if (prob === null) continue;
         const utterance = this.segmenter.push(prob, frame);
@@ -564,7 +586,8 @@ export class VoiceListener {
   /** Record that the utterance being built overlaps live TTS, and what it says. */
   private markMutedCapture(): void {
     this.origin.muted = true;
-    for (const text of this.activeSpeech) {
+    for (const text of this.activeSpeech.values()) {
+      if (text === undefined) continue;
       if (!this.origin.spokenTexts.includes(text)) this.origin.spokenTexts.push(text);
     }
   }
@@ -590,14 +613,27 @@ export class VoiceListener {
 
   private enqueueTranscription(audio: Buffer): void {
     if (this.transcriptionQueue.length >= TRANSCRIPTION_QUEUE_CAP) {
-      this.transcriptionQueue.shift();
-      this.emitError({
-        code: 'QUEUE_OVERFLOW',
-        message: 'Transcription queue full — oldest queued utterance dropped.',
-      });
+      this.dropOneQueued();
     }
     this.transcriptionQueue.push({ audio, closedAt: this.deps.now!(), origin: this.takeOrigin() });
     if (!this.drainingTranscriptions) void this.drainTranscriptions();
+  }
+
+  /**
+   * Make room at the cap. Cue audio competes for these slots now that muted
+   * frames are transcribed, so the oldest muted-origin utterance goes first: it
+   * is most likely our own echo, while an unmuted one may be the lifter.
+   */
+  private dropOneQueued(): void {
+    const muted = this.transcriptionQueue.findIndex((item) => item.origin.muted);
+    const index = muted === -1 ? 0 : muted;
+    const dropped = this.transcriptionQueue.splice(index, 1)[0];
+    this.emitError({
+      code: 'QUEUE_OVERFLOW',
+      message: dropped.origin.muted
+        ? 'Transcription queue full — oldest cue-overlapped utterance dropped.'
+        : 'Transcription queue full — oldest queued utterance dropped.',
+    });
   }
 
   /** Drain queued utterances one at a time through whisper, then route. */
