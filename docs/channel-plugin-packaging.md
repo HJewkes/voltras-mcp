@@ -136,9 +136,11 @@ collide on `~/.voltras/vmcp.sqlite` and port 7723. Under plugin mode, run
 session that happens to have the plugin installed would otherwise auto-start a dashboard
 HTTP sidecar it never asked for. `voltras-mcp-launch.sh` now sets `VMCP_DASHBOARD_PORT=off`
 by default; `scripts/voltra-pt` exports `VOLTRA_PT=1` to opt back into the default port
-(7723) for real PT sessions. An explicit `VMCP_DASHBOARD_PORT` in the environment or
-`.launch.env` always wins over this default. `server.health`'s `dashboardDisabledReason`
-reads `"disabled"` when the sidecar was turned off this way.
+(7723) for real PT sessions. `just bench` (also a real-hardware, pre-flighted session) sets
+`VOLTRA_PT=1` on the launcher line for the same reason; `just sim` already passes its own
+`VMCP_DASHBOARD_PORT=0` and needs nothing. An explicit `VMCP_DASHBOARD_PORT` in the
+environment or `.launch.env` always wins over this default. `server.health`'s
+`dashboardDisabledReason` reads `"disabled"` when the sidecar was turned off this way.
 
 After pulling this change, refresh the cached plugin copy so the updated launcher and
 manifest version take effect:
