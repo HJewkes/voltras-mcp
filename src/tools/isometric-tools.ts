@@ -405,8 +405,9 @@ async function runSideProtocol(
 
   const trialAnalyses: TrialAnalysis[] = [];
   for (let i = 0; i < opts.trials; i++) {
-    const samples = await captureTrial(slot.client, opts.durationMs);
-    trialAnalyses.push(analyzeTrial(samples, i + 1));
+    trialAnalyses.push(
+      await captureSingleHold(state, slotId, { holdMs: opts.durationMs, trial: i + 1 }),
+    );
     if (i < opts.trials - 1) {
       await sleep(opts.restMs);
     }
@@ -415,19 +416,45 @@ async function runSideProtocol(
 }
 
 /**
- * Subscribe to the slot client's `onFrame` for `durationMs`, accumulating
- * `{ tMs, forceLbs }` samples relative to the trial start. Always removes
- * the listener on completion (the `finally` block invokes the unsubscribe
- * handle returned by `onFrame`) so the bridge's other subscribers don't
- * compete with stale isometric listeners after the trial ends.
+ * Capture ONE hold on `slotId` and analyze it — the single unit every
+ * isometric flow is built from. Subscribes to the slot client's `onFrame`
+ * for `holdMs`, detaches, and hands the samples to `analyzeTrial`.
+ *
+ * Never rests and never loops: the multi-trial tools own the trial loop and
+ * the rest between trials, so a caller that wants one human-paced hold
+ * (`isometric.measure_hold`) gets exactly that and nothing else.
  */
-async function captureTrial(
-  client: { onFrame: (cb: (frame: TelemetryFrame) => void) => () => void },
-  durationMs: number,
-): Promise<ForceSample[]> {
+async function captureSingleHold(
+  state: ServerState,
+  slotId: string,
+  opts: { holdMs: number; trial: number },
+): Promise<TrialAnalysis> {
+  const slot = getSlot(state, slotId);
+  ensureSlotConnected(slotId, slot);
   const samples: ForceSample[] = [];
+  const unsubscribe = subscribeForceSamples(slot.client, samples);
+  try {
+    await sleep(opts.holdMs);
+  } finally {
+    if (typeof unsubscribe === 'function') {
+      unsubscribe();
+    }
+  }
+  return analyzeTrial(samples, opts.trial);
+}
+
+/**
+ * Push `{ tMs, forceLbs }` samples into `samples` for every frame the client
+ * emits, relative to subscription time. Returns the unsubscribe handle;
+ * callers invoke it in a `finally` so the bridge's other subscribers don't
+ * compete with stale isometric listeners after the hold ends.
+ */
+function subscribeForceSamples(
+  client: { onFrame: (cb: (frame: TelemetryFrame) => void) => () => void },
+  samples: ForceSample[],
+): () => void {
   const startMs = Date.now();
-  const unsubscribe = client.onFrame((frame: TelemetryFrame) => {
+  return client.onFrame((frame: TelemetryFrame) => {
     // Same tenths→lb conversion as the main telemetry bridge, applied here
     // because the isometric flow builds its own force samples and never routes
     // through event-bridge. CALIBRATION CAVEAT: the isometric assessment's
@@ -439,14 +466,6 @@ async function captureTrial(
       forceLbs: Math.abs(frame.force) / FRAME_FORCE_TENTHS_PER_LB,
     });
   });
-  try {
-    await sleep(durationMs);
-  } finally {
-    if (typeof unsubscribe === 'function') {
-      unsubscribe();
-    }
-  }
-  return samples;
 }
 
 function ensureSlotConnected(slotId: string, slot: ReturnType<typeof getSlot>): void {
