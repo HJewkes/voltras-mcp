@@ -77,7 +77,12 @@ import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveTargetTempo } from './tempo-defaults.js';
-import { buildSnapshotView, type DeviceEntry, type SnapshotResponse } from './read-models/index.js';
+import {
+  buildSnapshotView,
+  composeSessionTitle,
+  type DeviceEntry,
+  type SnapshotResponse,
+} from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
 import {
   createPlannedExercise,
@@ -886,6 +891,12 @@ interface PrescriptionView {
    * Present whenever the prescription is; only real planned exercises, never invented.
    */
   exercises?: PlannedExerciseView[];
+  /**
+   * The session-block title (VW-43), composed from the attached template's name and
+   * its block's focus/name, e.g. `"Push A · Hypertrophy"`. Absent when the store can't
+   * resolve the full template → week → block chain (each hop optional, never invented).
+   */
+  title?: string;
 }
 
 /**
@@ -937,9 +948,38 @@ async function fetchSessionPlan(state: DashboardServerState): Promise<Prescripti
     );
     if (tempo !== null) prescription.tempo = tempo;
     prescription.exercises = buildPlannedExerciseList(planned, exerciseId, state.exercises);
+    const title = await resolveSessionTitle(store, assignment.workoutTemplateId);
+    if (title !== null) prescription.title = title;
     return prescription;
   }
   return null;
+}
+
+/**
+ * Walk the template → week → block chain (VW-43) and compose the session title.
+ * Each hop is optional on the store slice and each lookup can miss — either yields
+ * null, never a fabricated title.
+ */
+async function resolveSessionTitle(
+  store: DashboardServerState['store'],
+  workoutTemplateId: string,
+): Promise<string | null> {
+  if (
+    store.getWorkoutTemplate === undefined ||
+    store.getTrainingWeek === undefined ||
+    store.getTrainingBlock === undefined
+  ) {
+    return null;
+  }
+  const template = await store.getWorkoutTemplate(workoutTemplateId);
+  if (template === undefined) return null;
+  const week = await store.getTrainingWeek(template.weekId);
+  const block = week === undefined ? undefined : await store.getTrainingBlock(week.blockId);
+  return composeSessionTitle({
+    templateName: template.name,
+    blockName: block?.name,
+    focus: block?.focus,
+  });
 }
 
 /**

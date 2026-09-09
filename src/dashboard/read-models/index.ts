@@ -18,6 +18,8 @@ export {
 
 export type { DashboardCatalogEntry } from './catalog-entry.js';
 
+export { composeSessionTitle, type SessionTitleInput } from './session-title.js';
+
 export type {
   SessionSummaryExercise,
   SessionSummaryProgression,

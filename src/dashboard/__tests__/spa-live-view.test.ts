@@ -150,6 +150,24 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
+  describe('session.title (VW-43)', () => {
+    it('carries the composed prescription title onto the session model', () => {
+      const prescription: PrescriptionView = { sets: 4, title: 'Push A · Hypertrophy' };
+      const model = mapStoreToDashboardModel(sources({ prescription }));
+      expect(model?.session.title).toBe('Push A · Hypertrophy');
+    });
+
+    it('leaves the title null when the prescription carries none', () => {
+      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
+      expect(model?.session.title).toBeNull();
+    });
+
+    it('leaves the title null when the session carries no plan', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.title).toBeNull();
+    });
+  });
+
   describe('session.restSec (VW-51)', () => {
     it('carries the prescribed inter-set rest onto the session model', () => {
       const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, restSec: 120 } }));

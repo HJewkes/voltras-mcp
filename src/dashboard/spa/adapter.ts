@@ -130,6 +130,12 @@ export interface PrescriptionView {
    * when the session carries no plan.
    */
   exercises?: PlannedExerciseView[];
+  /**
+   * The session-block title (VW-43), composed from the attached template's name and
+   * its block's focus/name, e.g. `"Push A · Hypertrophy"`. Absent when the server
+   * can't resolve the full template → week → block chain.
+   */
+  title?: string;
 }
 
 /** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
