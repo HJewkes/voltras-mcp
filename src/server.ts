@@ -28,6 +28,7 @@ import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
 import { wireEventBridge } from './state/event-bridge.js';
+import { installIsometricLiveTee } from './state/isometric-live-signal-tee.js';
 import { installCueTee } from './voice/cue-emitter.js';
 import {
   createClientConnection,
@@ -91,6 +92,11 @@ function wireProcessState(state: ServerState, connection: ClientConnection): voi
     settings: state.cueSettings,
     voiceListenerRef: state.voice,
   });
+  // Also tee isometric_phase pushes into the dashboard's live-signal hub (VW-198), so
+  // the wall SPA can drive a hold walkthrough off the SAME channel events the cue tee
+  // above already sees — no change to isometric-tools.ts. A no-op when the dashboard
+  // sidecar is disabled (`state.liveSignals` unset).
+  state.channels = installIsometricLiveTee(state.channels, state.liveSignals);
   state.server = connection.server;
   // Wire the SDK event bridge for every slot currently in the slots map.
   // Listener handles persist across `setAdapter`, so subscribing here (before

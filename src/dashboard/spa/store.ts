@@ -49,6 +49,7 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
+import type { LiveIsometricSignal } from '../../state/live-signal';
 import { type MassUnit } from './live-page/mass';
 import { parseRoute, type Route } from './routing';
 import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
@@ -166,6 +167,23 @@ function deriveLive(bySlot: Record<string, LiveModel>): LiveModel | null {
   return bySlot[PRIMARY_SLOT] ?? Object.values(bySlot)[0] ?? null;
 }
 
+/**
+ * The current isometric-hold walkthrough (VW-198): per-slot, mirroring {@link LiveSlice}.
+ * A slot holds a signal only while a hold is in progress — `stop` clears it (see
+ * {@link deriveIsometric}'s caller, `setIsometric`) rather than displaying the terminal
+ * phase, so "no panel" reliably means "no hold in progress" for the walkthrough panel.
+ */
+interface IsometricSlice {
+  isometricBySlot: Record<string, LiveIsometricSignal>;
+  /** @see LiveSlice.live — same single-slot derivation for slot-blind consumers. */
+  isometric: LiveIsometricSignal | null;
+}
+
+/** @see IsometricSlice.isometric */
+function deriveIsometric(bySlot: Record<string, LiveIsometricSignal>): LiveIsometricSignal | null {
+  return bySlot[PRIMARY_SLOT] ?? Object.values(bySlot)[0] ?? null;
+}
+
 interface DashboardActions {
   /** Apply a fresh snapshot: fold the completed-set accumulator, mark ok, stamp the clock. */
   applySnapshot(data: Snapshot, now: number): void;
@@ -180,6 +198,12 @@ interface DashboardActions {
    * `slot` defaults to {@link PRIMARY_SLOT}, so slot-blind callers are unchanged.
    */
   setLive(live: LiveModel | null, slot?: string): void;
+  /**
+   * Apply the latest isometric-hold echo for one slot (VW-198), or clear it. `slot`
+   * defaults to {@link PRIMARY_SLOT}. A `stop` phase clears the slot rather than storing
+   * it — see {@link IsometricSlice}.
+   */
+  setIsometric(signal: LiveIsometricSignal | null, slot?: string): void;
   /** Merge a batch of planner results (best-effort; partial is fine). */
   applyPlanner(patch: PlannerPatch): void;
   /** Choose the display unit (VW-63) and persist it to `localStorage`. */
@@ -193,6 +217,7 @@ interface DashboardActions {
 export type DashboardState = SnapshotSlice &
   HistoricalSlice &
   LiveSlice &
+  IsometricSlice &
   PlannerSlice &
   DisplayUnitSlice &
   UiSlice &
@@ -225,6 +250,8 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   ...initialPlanner,
   liveBySlot: {},
   live: null,
+  isometricBySlot: {},
+  isometric: null,
   displayUnit: readStoredDisplayUnit(),
   route: readInitialRoute(),
 
@@ -275,6 +302,21 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
         liveBySlot[slot] = live;
       }
       return { liveBySlot, live: deriveLive(liveBySlot) };
+    }),
+
+  setIsometric: (signal, slot = PRIMARY_SLOT) =>
+    set((state) => {
+      const isometricBySlot = { ...state.isometricBySlot };
+      // `stop` (the capture window closing) clears the slot rather than storing the
+      // terminal phase — the walkthrough panel hides the instant a hold ends instead of
+      // lingering on "stop and release" until the next hold's `ready` overwrites it.
+      if (signal === null || signal.phase === 'stop') {
+        if (!(slot in isometricBySlot)) return {};
+        delete isometricBySlot[slot];
+      } else {
+        isometricBySlot[slot] = signal;
+      }
+      return { isometricBySlot, isometric: deriveIsometric(isometricBySlot) };
     }),
 
   setDisplayUnit: (unit) =>
