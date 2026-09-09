@@ -12,6 +12,24 @@
 
 import { z } from 'zod';
 
+/**
+ * One self-reported injury or limitation (VW-148 / B42).
+ *
+ * `kind` deliberately does NOT encode the RP injury ladder's diagnosed vs.
+ * undiagnosed split as a clinical judgement — it records what the lifter said
+ * happened. `cardioLimitation` is the one hard gate: it is a flag the lifter
+ * raises, and nothing in this codebase interprets it beyond deferring to a
+ * doctor (see `onboarding.injury_intake` in `coaching-content.ts`).
+ */
+export const ProfileInjury = z
+  .object({
+    area: z.string().min(1),
+    kind: z.enum(['sharp_in_set', 'lingering_joint', 'other']),
+    note: z.string().min(1).optional(),
+    cardioLimitation: z.boolean().optional(),
+  })
+  .strict();
+
 export const ProfileSetTrainingBackgroundInput = z
   .object({
     declaredTier: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
@@ -27,10 +45,21 @@ export const ProfileSetTrainingBackgroundInput = z
     currentBaseline: z.string().min(1).optional(),
     effortTolerance: z.enum(['low', 'moderate', 'high']).optional(),
     target: z.string().min(1).optional(),
+    // VW-148 / B42. Replaces the whole list on every call, unlike the scalar
+    // fields above: a merge would make removing a resolved injury impossible.
+    injuries: z.array(ProfileInjury).optional(),
+    // VW-148 / B36. The named program `reportedSetsPerMuscle` came from —
+    // 5/3/1 and German Volume Training imply very different starting volumes
+    // for the same reported set count.
+    namedProgramHistory: z.string().min(1).optional(),
   })
   .strict();
 
 export const ProfileGetTrainingBackgroundInput = z.object({}).strict();
+
+// `profile.get_onboarding_gaps` (VW-148). Same single-user posture as the
+// other profile reads: nothing for a caller to disambiguate.
+export const ProfileGetOnboardingGapsInput = z.object({}).strict();
 
 // `profile.get_tier_signal` (VW-92 MVP). No input today; this repo is
 // effectively single-user in practice (see `tier-signal.ts`), so there is

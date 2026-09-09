@@ -19,11 +19,13 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import { onboardingGaps, type OnboardingGaps } from '../profile/onboarding-gaps.js';
 import {
   startingPrescription,
   type StartingPrescription,
 } from '../profile/starting-prescription.js';
 import {
+  ProfileGetOnboardingGapsInput,
   ProfileGetStartingPrescriptionInput,
   ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
@@ -52,10 +54,18 @@ const SET_TRAINING_BACKGROUND_DESCRIPTION =
   'effortTolerance (low/moderate/high — how hard they are willing to be pushed) and target ' +
   '(where they want to END UP, free text). Those last three stay DISTINCT from each other ' +
   'and from goal on purpose: collapsing them is how intake ends up reading a target as a ' +
-  'baseline. Call is a merge onto the existing row, not an ' +
-  'overwrite — pass only the fields you have an answer for; earlier answers are preserved ' +
-  'across multiple onboarding turns. This tool only stores verbatim self-report; it never ' +
-  'infers or computes an experience tier (see profile.get_tier_signal for that).';
+  'baseline. Also namedProgramHistory (WHICH named program reportedSetsPerMuscle came from — ' +
+  '5/3/1 and German Volume Training imply very different starting volumes for the same set ' +
+  'count, so a raw set report without it is uninterpretable) and injuries (self-reported ' +
+  'limitations: area, kind, optional note, and cardioLimitation for a CARDIOVASCULAR one). ' +
+  'Set cardioLimitation only when the lifter reports a cardiovascular limitation; it is a ' +
+  'hard gate to a doctor, not a severity marker for an ache. Call is a merge onto the ' +
+  'existing row, not an overwrite — pass only the fields you have an answer for; earlier ' +
+  'answers are preserved across multiple onboarding turns. injuries is the one exception: it ' +
+  'REPLACES the stored list, so send every injury still standing, and send [] for "asked, ' +
+  'none" (which is a different answer from never having asked). This tool only stores ' +
+  'verbatim self-report; it never infers or computes an experience tier (see ' +
+  'profile.get_tier_signal for that), and it never interprets an injury clinically.';
 
 const GET_TRAINING_BACKGROUND_DESCRIPTION =
   'Read back the stored training-background/onboarding profile for the user. Returns ' +
@@ -81,6 +91,19 @@ const GET_STARTING_PRESCRIPTION_DESCRIPTION =
   '`rirTarget: null` at the beginner tier is correct: beginners should not track RIR at all. ' +
   '`effortTolerance` moves only how aggressively the RIR note reads; it never changes a set ' +
   'count. `reasons[]` carries one line per seed — read them out, they are the argument.';
+
+const GET_ONBOARDING_GAPS_DESCRIPTION =
+  'List which session-0 onboarding answers are still missing, in the order RP asks them, so ' +
+  'the next question is the right one instead of a re-ask. Read-only; it stores nothing and ' +
+  'invents no questions — `missing[]` is exactly the unanswered ' +
+  '`profile.set_training_background` fields. `medicalClearanceRequired: true` means the lifter ' +
+  'reported a CARDIOVASCULAR limitation: read `medicalClearanceNote` out as written and route ' +
+  'them to a doctor. Do not interpret, grade or program around a cardiovascular flag — that is ' +
+  'a liability boundary, and nothing in this server reasons about it further. ' +
+  'Non-cardiovascular injuries are not a gate and never set that flag. `goalRealism` is the ' +
+  "stored goal and target plus RP's rule for checking commitment against them; it is PROSE TO " +
+  'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
+  'goal or target has been captured yet.';
 
 export function registerProfileTools(
   _server: McpServer,
@@ -114,6 +137,13 @@ export function registerProfileTools(
     ProfileGetStartingPrescriptionInput,
     wrapHandler(ProfileGetStartingPrescriptionInput, () => getStartingPrescription(state)),
     GET_STARTING_PRESCRIPTION_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.get_onboarding_gaps',
+    ProfileGetOnboardingGapsInput,
+    wrapHandler(ProfileGetOnboardingGapsInput, () => getOnboardingGaps(state)),
+    GET_ONBOARDING_GAPS_DESCRIPTION,
   );
 }
 
@@ -153,6 +183,11 @@ const PLAIN_MERGE_FIELDS = [
   'currentBaseline',
   'effortTolerance',
   'target',
+  'namedProgramHistory',
+  // `injuries` copies wholesale like the rest, but the value it copies is the
+  // WHOLE list: a caller re-sends every injury still standing, so a resolved
+  // one can actually disappear. `[]` is a real answer ("asked, none").
+  'injuries',
 ] as const satisfies ReadonlyArray<keyof z.infer<typeof ProfileSetTrainingBackgroundInput>>;
 
 /**
@@ -238,4 +273,15 @@ async function getStartingPrescription(
     ...(profile?.effortTolerance !== undefined ? { effortTolerance: profile.effortTolerance } : {}),
   });
   return { prescription };
+}
+
+/**
+ * `profile.get_onboarding_gaps` (VW-148) — which session-0 answers are still
+ * missing, plus the two pieces of RP prose that govern what to do about the
+ * cardiovascular flag and the goal/commitment check. Read-only; see
+ * `profile/onboarding-gaps.ts` for why neither piece of prose is computed.
+ */
+async function getOnboardingGaps(state: ServerState): Promise<{ gaps: OnboardingGaps }> {
+  const profile = await state.store.getTrainingProfile(LOCAL_USER_ID);
+  return { gaps: onboardingGaps(profile) };
 }
