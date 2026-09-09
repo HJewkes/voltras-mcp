@@ -63,6 +63,8 @@ import {
   type SetEndedCause,
 } from '../state/channel-payloads.js';
 import { finalizeReps } from '../state/rep-finalize.js';
+import { publishVelocityLossSuppression } from '../state/velocity-loss-gate.js';
+import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
 import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
@@ -135,7 +137,10 @@ const SET_START_DESCRIPTION =
   'otherwise. `watch` (notifyOn[], ' +
   'optional inactivityTimeoutMs) subscribes the channel event stream to specific mid-set ' +
   'signals (e.g. velocity-loss thresholds) as they fire, rather than requiring you to poll ' +
-  '`set.live_metrics`. `setPurpose` says WHY the set is being performed and decides how ' +
+  '`set.live_metrics`. On a `pull` exercise the velocity-loss watch is suppressed — peak ' +
+  'velocity does not decay with fatigue on a ballistic pull, so you get one ' +
+  '`velocity_loss_watch_suppressed` event instead and judge effort by load, ROM and RPE; pass ' +
+  '`watch.velocityLoss.force` to re-enable it unchanged. `setPurpose` says WHY the set is being performed and decides how ' +
   'progression reads it: `working` (the default) is the only value scored against the planned ' +
   'rep band and the only one that sets the top load a progression step is measured from; ' +
   '`warmup` is excluded from progression and from baseline derivation, and is counted ' +
@@ -441,7 +446,12 @@ function upgradeAutoArmedSet(
     // The session may have gained an exercise pointer between the arm and this
     // call; a set that already carries one keeps it (VMCP-01.72b).
     ...(existing?.exerciseId === undefined && sessionExerciseId !== undefined
-      ? { exerciseId: sessionExerciseId }
+      ? {
+          exerciseId: sessionExerciseId,
+          // VMCP-02.63: the class follows whichever pointer the set ends up
+          // with, so it never describes a different exercise than `exerciseId`.
+          movementClass: movementClassForExerciseId(sessionExerciseId),
+        }
       : {}),
   });
   if (upgraded === undefined) {
@@ -450,9 +460,11 @@ function upgradeAutoArmedSet(
   if (opts.watch !== undefined) {
     armIdleWatchdog(state, upgraded.setId, upgraded.startedAt, opts.watch, slotId);
   }
-  state.channels
-    .forSlot(slotId)
-    .publish(buildSetUpdatedPayload(upgraded, slot.live.snapshotDevice()));
+  const device = slot.live.snapshotDevice();
+  state.channels.forSlot(slotId).publish(buildSetUpdatedPayload(upgraded, device));
+  // VMCP-02.63: this call is where an auto-armed set first gains a watch, so
+  // it is also where a suppressed velocity-loss trigger gets announced.
+  publishVelocityLossSuppression(state.channels.forSlot(slotId), upgraded, device);
   return { setId: upgraded.setId, upgraded: true, adoptedReps: upgraded.reps.length };
 }
 
@@ -531,6 +543,9 @@ async function startSet(
       // at close. A `session.set_exercise` call after this point (mid-set)
       // must not retroactively relabel this set.
       ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+      // VMCP-02.63: stamped from the same pointer, in the same tick, so the
+      // class always describes the reps the set actually recorded.
+      movementClass: movementClassForExerciseId(session.exerciseId),
       // VW-169: this call's own lifter wins; otherwise the set inherits the
       // session default, which is normally absent (= the owner).
       ...(setLifter !== undefined ? { lifter: setLifter } : {}),
@@ -564,6 +579,7 @@ async function startSet(
     startedAt,
     reps: [],
     status: 'active',
+    movementClass: movementClassForExerciseId(session.exerciseId),
     ...(setLifter !== undefined ? { lifter: setLifter } : {}),
   };
   const payload = buildSetStartedPayload(activeSet, device, ordinal, previousSummary);
@@ -572,6 +588,13 @@ async function startSet(
   // tell left-arm from right-arm at a glance. Single-device flows still
   // see meta.slot = 'primary' (a meta-key addition, not a behavior change).
   state.channels.forSlot(slotId).publish(payload);
+  // VMCP-02.63: a `velocity_loss_exceeded` trigger the class gate will never
+  // let fire says so once here, right after the set-start event, rather than
+  // going quiet for the whole set. No-op on every other set.
+  const installedSet = slot.live.snapshotSet();
+  if (installedSet !== undefined) {
+    publishVelocityLossSuppression(state.channels.forSlot(slotId), installedSet, device);
+  }
   // VMCP-01.59: echo the set-start onto the dashboard SSE stream so the client
   // can reset its live tempo bar. Fitness-units lifecycle metadata only.
   state.liveSignals?.emit({

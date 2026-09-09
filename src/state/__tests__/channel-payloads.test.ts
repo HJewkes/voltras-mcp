@@ -413,6 +413,8 @@ describe('buildSetStartedPayload', () => {
       // VMCP-02.84: the purpose, plus the deprecated boolean alias.
       set_purpose: 'working',
       is_warmup: 'false',
+      // VMCP-02.63: unknown — this fixture carries no exercise pointer.
+      movement_class: 'unknown',
     });
   });
 
@@ -433,6 +435,7 @@ describe('buildSetStartedPayload', () => {
       auto_armed: false,
       set_purpose: 'working',
       is_warmup: false,
+      movement_class: 'unknown',
       // VW-169: null is the owner, which is who every unlabelled set is.
       lifter: null,
     });

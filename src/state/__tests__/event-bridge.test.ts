@@ -43,6 +43,7 @@ import type { Rep } from '@voltras/workout-analytics';
 // live-signal is a leaf module (no SDK/node imports — see its header), so a
 // static import is safe ahead of the SDK mock below.
 import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../live-signal.js';
+import type { MovementClass } from '../../exercises/movement-class.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -1624,9 +1625,19 @@ describe('wireEventBridge', () => {
         | { type: 'rep_count_reached'; value: number }
         | { type: 'velocity_loss_exceeded'; pct: number }
       >;
+      /** VMCP-02.63: opt a gated set back into the velocity-loss trigger. */
+      velocityLoss?: { force: boolean };
     }
 
-    function startWatchedSet(watch?: WatchSpec): void {
+    /**
+     * `opts.movementClass` stamps the set the way `set.start` does from the
+     * session's exercise pointer (VMCP-02.63). Omitted ⇒ unstamped, which is
+     * the pre-gate behaviour every other trigger test relies on.
+     */
+    function startWatchedSet(
+      watch?: WatchSpec,
+      opts: { movementClass?: MovementClass } = {},
+    ): void {
       live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
       live.startSession({
         sessionId: 'sess-trig',
@@ -1640,10 +1651,12 @@ describe('wireEventBridge', () => {
         startedAt: '2025-01-01T00:00:00.000Z',
         reps: [],
         status: 'active',
+        ...(opts.movementClass !== undefined ? { movementClass: opts.movementClass } : {}),
         ...(watch !== undefined
           ? {
               watch: {
                 notifyOn: watch.notifyOn ?? [],
+                ...(watch.velocityLoss !== undefined ? { velocityLoss: watch.velocityLoss } : {}),
               },
             }
           : {}),
@@ -1961,6 +1974,105 @@ describe('wireEventBridge', () => {
         expect(losses).toHaveLength(2);
         const thresholds = losses.map((e) => e.meta.threshold_pct).sort();
         expect(thresholds).toEqual(['15', '35']);
+      });
+    });
+
+    // VMCP-02.63. The 2026-07-05 cable-row capture held peak velocity flat
+    // across every load, so a loss figure on a pull is not a fatigue signal.
+    // Every case below drives the SAME 40% drop past a 25% threshold and only
+    // the set's stamped movement class differs.
+    describe('movement-class gate on velocity_loss_exceeded', () => {
+      /** Rep 1 at 1.0 m/s, rep 2 at 0.6 ⇒ a 40% peak-velocity loss on rep 2's close. */
+      function driveFortyPercentLoss(): void {
+        driveRep(1, 1.0);
+        startNextRep(2, 0.6);
+        client.fire.frame({
+          sequence: 25,
+          timestamp: 1400,
+          phase: 3,
+          position: 0.3,
+          velocity: frameVelocity(0.6),
+          force: 50,
+        });
+        startNextRep(3, 0.6);
+      }
+
+      function publishedTypes(): string[] {
+        return channels.publish.mock.calls.map((c) => c[0].meta.event_type);
+      }
+
+      it('a pull set never fires the watch on a 40% loss', async () => {
+        startWatchedSet(
+          { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] },
+          {
+            movementClass: 'pull',
+          },
+        );
+        driveFortyPercentLoss();
+        await flushMicrotasks();
+
+        expect(publishedTypes()).not.toContain('velocity_loss_exceeded');
+      });
+
+      it('watch.velocityLoss.force restores the watch on the same pull set', async () => {
+        startWatchedSet(
+          {
+            notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }],
+            velocityLoss: { force: true },
+          },
+          { movementClass: 'pull' },
+        );
+        driveFortyPercentLoss();
+        await flushMicrotasks();
+
+        const trigger = lastTriggerEvent();
+        expect(trigger?.meta.event_type).toBe('velocity_loss_exceeded');
+        expect(parseFloat(trigger!.meta.velocity_loss_pct)).toBeCloseTo(40.0, 1);
+        // The threshold the caller registered is untouched by the opt-in.
+        expect(trigger?.meta.threshold_pct).toBe('25');
+        expect(trigger?.meta.movement_class).toBe('pull');
+      });
+
+      it('a push set is unchanged', async () => {
+        startWatchedSet(
+          { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] },
+          {
+            movementClass: 'push',
+          },
+        );
+        driveFortyPercentLoss();
+        await flushMicrotasks();
+
+        const trigger = lastTriggerEvent();
+        expect(trigger?.meta.event_type).toBe('velocity_loss_exceeded');
+        expect(trigger?.meta.movement_class).toBe('push');
+      });
+
+      it('an unidentified exercise is unchanged', async () => {
+        startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] });
+        driveFortyPercentLoss();
+        await flushMicrotasks();
+
+        const trigger = lastTriggerEvent();
+        expect(trigger?.meta.event_type).toBe('velocity_loss_exceeded');
+        expect(trigger?.meta.movement_class).toBe('unknown');
+      });
+
+      it('leaves the rep_count_reached trigger on a pull set alone', async () => {
+        startWatchedSet(
+          {
+            notifyOn: [
+              { type: 'rep_count_reached', value: 2 },
+              { type: 'velocity_loss_exceeded', pct: 25 },
+            ],
+          },
+          { movementClass: 'pull' },
+        );
+        driveFortyPercentLoss();
+        await flushMicrotasks();
+
+        expect(publishedTypes()).toContain('set_target_reached');
+        expect(publishedTypes()).not.toContain('velocity_loss_exceeded');
       });
     });
 

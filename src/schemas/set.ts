@@ -88,6 +88,22 @@ export const WatchConfig = z.object({
    * `SET_INACTIVITY_TIMEOUT_MS`).
    */
   inactivityTimeoutMs: z.number().int().min(1000).max(600_000).optional(),
+  /**
+   * VMCP-02.63. Per-set override for the movement-class gate on the
+   * `velocity_loss_exceeded` trigger. On a `pull` set the trigger is suppressed
+   * by default — peak concentric velocity does not decay with fatigue on a
+   * ballistic pull, so the loss figure is not a fatigue signal there — and one
+   * `velocity_loss_watch_suppressed` event says so at set start.
+   *
+   * `force: true` re-enables the trigger for that set unchanged. It changes no
+   * threshold: the configured `pct` still decides when it fires. Every other
+   * movement class, and an unidentified exercise, are unaffected either way.
+   */
+  velocityLoss: z
+    .object({
+      force: z.boolean().default(false),
+    })
+    .optional(),
 });
 export type WatchConfig = z.infer<typeof WatchConfig>;
 
