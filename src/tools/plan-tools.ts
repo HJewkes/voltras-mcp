@@ -35,7 +35,15 @@ import {
   PlanWeekCreateInput,
   PlanWeekListForBlockInput,
 } from '../schemas/plan.js';
-import { lintPlan, type LintPlanExercise, type PlanWarning } from '../plan/lint-plan.js';
+import {
+  lintMesoLengthGrewMidBlock,
+  lintPlan,
+  lintPriorityMuscleChangedMidBlock,
+  lintSameMuscleHighVolumeConsecutiveDays,
+  lintWeeklyVolume,
+  type LintPlanExercise,
+  type PlanWarning,
+} from '../plan/lint-plan.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
@@ -88,7 +96,9 @@ const PLAN_PROGRAM_ARCHIVE_DESCRIPTION =
 
 const PLAN_BLOCK_CREATE_DESCRIPTION =
   'Create a training block (mesocycle) under a program — takes the parent programId. A block ' +
-  'holds one or more weeks.';
+  'holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that ' +
+  'raises `weeksCount` after weeks were already built under it, `warnings[]` carries a ' +
+  '`meso_length_grew_mid_block` advisory (VMCP-06.03 / B32). Never blocks the write.';
 const PLAN_BLOCK_LIST_DESCRIPTION = 'List the blocks belonging to one program (takes programId).';
 
 const PLAN_WEEK_CREATE_DESCRIPTION =
@@ -110,11 +120,14 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot ' +
   'in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over ' +
   'the WHOLE template after the insert (sets per exercise, and hard sets per muscle per ' +
-  "session, counted on each exercise's PRIMARY muscle group only). Each warning is a " +
-  'SUGGESTION; accept or decline it, and never re-apply it after a decline. The write ALWAYS ' +
-  'succeeds — a warning never blocks, never rolls back, and never edits the row you just ' +
-  'created. Read a warning out to the lifter and offer the fix it names; if they decline, drop ' +
-  'it and move on.';
+  "session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template " +
+  'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
+  'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
+  'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
+  'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The ' +
+  'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
+  'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
+  'decline, drop it and move on.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
@@ -359,9 +372,14 @@ async function archiveProgram(
 async function createBlock(
   state: ServerState,
   input: z.infer<typeof PlanBlockCreateInput>,
-): Promise<{ block: StoredTrainingBlock }> {
+): Promise<{ block: StoredTrainingBlock; warnings: PlanWarning[] }> {
+  const id = input.id ?? randomUUID();
+  // `putTrainingBlock` upserts by id, so a caller passing a known id is
+  // editing that block in place — this is the only seam that can tell
+  // whether `weeksCount` just changed on an existing block.
+  const previous = input.id !== undefined ? await state.store.getTrainingBlock(id) : undefined;
   const block: StoredTrainingBlock = {
-    id: input.id ?? randomUUID(),
+    id,
     programId: input.programId,
     orderIndex: input.orderIndex,
     name: input.name,
@@ -370,7 +388,30 @@ async function createBlock(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
   await state.store.putTrainingBlock(block);
-  return { block };
+  const warnings = await lintMesoLength(state, previous, block);
+  return { block, warnings };
+}
+
+/**
+ * Swallows anything that goes wrong on purpose, same as `lintTemplateVolume`
+ * below — B32 is advisory and must never cost the caller its write.
+ */
+async function lintMesoLength(
+  state: ServerState,
+  previous: StoredTrainingBlock | undefined,
+  block: StoredTrainingBlock,
+): Promise<PlanWarning[]> {
+  if (previous === undefined) return [];
+  try {
+    const weeks = await state.store.getTrainingWeeksForBlock(block.id);
+    return lintMesoLengthGrewMidBlock({
+      previousWeeksCount: previous.weeksCount,
+      newWeeksCount: block.weeksCount,
+      weeksAlreadyCreated: weeks.length,
+    });
+  } catch {
+    return [];
+  }
 }
 
 async function listBlocksForProgram(
@@ -472,11 +513,12 @@ async function createPlannedExercise(
 /**
  * Re-lint the WHOLE template after an insert — the per-muscle ceiling is a
  * property of the session, so the exercise just added is only judgeable
- * alongside its siblings.
+ * alongside its siblings. Also runs the three B32 cross-template checks over
+ * the rest of the week (VMCP-06.03).
  *
  * Swallows anything that goes wrong on purpose. The row is already committed by
- * the time this runs, and B31 is advisory: a catalog miss or a store hiccup must
- * cost the caller its warnings, never its write.
+ * the time this runs, and B31/B32 are advisory: a catalog miss or a store hiccup
+ * must cost the caller its warnings, never its write.
  */
 async function lintTemplateVolume(
   state: ServerState,
@@ -485,10 +527,96 @@ async function lintTemplateVolume(
   try {
     const siblings = await state.store.getPlannedExercisesForTemplate(workoutTemplateId);
     const { tier, confidence } = await getTierSignal(state);
-    return lintPlan({ exercises: siblings.map((e) => toLintExercise(state, e)), tier, confidence });
+    const sessionWarnings = lintPlan({
+      exercises: siblings.map((e) => toLintExercise(state, e)),
+      tier,
+      confidence,
+    });
+    const crossTemplateWarnings = await lintAcrossWeek(
+      state,
+      workoutTemplateId,
+      siblings,
+      tier,
+      confidence,
+    );
+    return [...sessionWarnings, ...crossTemplateWarnings];
   } catch {
     return [];
   }
+}
+
+interface TemplateExerciseBucket {
+  template: StoredWorkoutTemplate;
+  exercises: LintPlanExercise[];
+}
+
+/** Runs the weekly ceiling, consecutive-days, and priority-muscle B32 lints. */
+async function lintAcrossWeek(
+  state: ServerState,
+  workoutTemplateId: string,
+  ownExercises: StoredPlannedExercise[],
+  tier: Tier,
+  confidence: TierConfidence,
+): Promise<PlanWarning[]> {
+  const current = await state.store.getWorkoutTemplate(workoutTemplateId);
+  if (current === undefined) return [];
+  const weekTemplates = await state.store.getWorkoutTemplatesForWeek(current.weekId);
+  const buckets = await templateExerciseBuckets(state, weekTemplates, {
+    templateId: workoutTemplateId,
+    exercises: ownExercises,
+  });
+  const weekExercises = buckets.flatMap((b) => b.exercises);
+  const weekly = lintWeeklyVolume({ exercises: weekExercises, tier, confidence });
+  const consecutive = lintSameMuscleHighVolumeConsecutiveDays({
+    templates: buckets.map((b) => ({
+      ...(b.template.dayLabel !== undefined ? { dayLabel: b.template.dayLabel } : {}),
+      exercises: b.exercises,
+    })),
+    tier,
+    confidence,
+  });
+  const priority = await lintPriorityMuscle(state, current, weekExercises);
+  return [...weekly, ...consecutive, ...priority];
+}
+
+/** Fetches each template's planned exercises, reusing an already-known one to avoid a refetch. */
+async function templateExerciseBuckets(
+  state: ServerState,
+  templates: StoredWorkoutTemplate[],
+  known?: { templateId: string; exercises: StoredPlannedExercise[] },
+): Promise<TemplateExerciseBucket[]> {
+  return Promise.all(
+    templates.map(async (template) => {
+      const rows =
+        template.id === known?.templateId
+          ? known.exercises
+          : await state.store.getPlannedExercisesForTemplate(template.id);
+      return { template, exercises: rows.map((e) => toLintExercise(state, e)) };
+    }),
+  );
+}
+
+/**
+ * Compares the current week's priority muscle against week 1 of the same
+ * block. Silent (no extra fetch) when the current week already IS week 1.
+ */
+async function lintPriorityMuscle(
+  state: ServerState,
+  currentTemplate: StoredWorkoutTemplate,
+  currentWeekExercises: LintPlanExercise[],
+): Promise<PlanWarning[]> {
+  const week = await state.store.getTrainingWeek(currentTemplate.weekId);
+  if (week === undefined) return [];
+  const blockWeeks = await state.store.getTrainingWeeksForBlock(week.blockId);
+  const week1 = [...blockWeeks].sort((a, b) => a.orderIndex - b.orderIndex)[0];
+  if (week1 === undefined || week1.id === week.id) return [];
+  const week1Templates = await state.store.getWorkoutTemplatesForWeek(week1.id);
+  const week1Buckets = await templateExerciseBuckets(state, week1Templates);
+  return lintPriorityMuscleChangedMidBlock({
+    week1Exercises: week1Buckets.flatMap((b) => b.exercises),
+    laterWeekExercises: currentWeekExercises,
+    laterWeekOrderIndex: week.orderIndex,
+  });
 }
 
 /** Per-muscle lint is target-only (B47): `muscleGroups[0]`, never the secondaries. */
