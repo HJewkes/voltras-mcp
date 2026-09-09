@@ -2,10 +2,11 @@
 //
 // The within-set math (`readRomIntegrity`) is unit-tested in
 // `src/analytics/__tests__/rom-integrity.test.ts`; this file pins the
-// tool-layer plumbing and, above all, the three ways the CROSS-SESSION number
-// refuses to be computed: a baseline below PROVISIONAL, B15's drift guard
-// calling the comparison incomparable, and a position-scale mismatch between
-// the rows being compared.
+// tool-layer plumbing and, above all, the two ways the CROSS-SESSION number
+// refuses to be computed: a baseline below PROVISIONAL, and B15's drift guard
+// calling the comparison incomparable. A position-scale mismatch used to be a
+// third; VW-203 normalises both sides on read instead, and the test below
+// pins the comparison it made possible.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as analytics from '@voltras/workout-analytics';
@@ -290,15 +291,19 @@ describe('metrics.compute — quality.rom baseline gating', () => {
     expect(payload.baseline.note).toContain('too different to compare');
   });
 
-  it('refuses the comparison when the compared rows use different position scales', async () => {
+  it('compares across capture eras once positions are normalised (VW-203)', async () => {
+    // THE MUTATION SENTINEL for the normaliser. The target is the same 0.5 m
+    // work as `history`, recorded in device-native positions. Make
+    // `normalisePositionsToMetres` the identity and this reads as a
+    // ~100,000% change instead of ~0%.
     const payload = await readRom({
-      target: makeSet('set-1', STEADY, { positionUnits: 'device_native' }),
+      target: makeSet('set-1', [500, 500, 500, 500], { positionUnits: 'device_native' }),
       history,
       baseline: makeBaseline('CALIBRATED'),
     });
 
-    expect(payload.baseline.romVsBaselinePct).toBeNull();
-    expect(payload.baseline.note).toContain('no prior working set');
+    expect(payload.baseline.driftGuard?.comparable).toBe(true);
+    expect(payload.baseline.romVsBaselinePct).toBeCloseTo(0, 5);
   });
 
   it("refuses to grade a guest's set against the owner's history", async () => {
