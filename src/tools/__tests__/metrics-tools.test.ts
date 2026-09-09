@@ -340,8 +340,8 @@ describe('metrics.compute — vbt.profile', () => {
     const setB = makeSet('s-b', 'sess-1', 150);
     const setC = makeWeightlessSet('s-c', 'sess-1');
     const state = makeStateWithStore({
-      getSet: vi.fn(async (id: string) =>
-        ({ 's-a': setA, 's-b': setB, 's-c': setC })[id] ?? undefined,
+      getSet: vi.fn(
+        async (id: string) => ({ 's-a': setA, 's-b': setB, 's-c': setC })[id] ?? undefined,
       ),
     });
     const { server, tools } = makeFakeServer();
