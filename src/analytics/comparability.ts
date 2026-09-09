@@ -98,6 +98,30 @@ export const LOAD_TOLERANCE_PCT: number | null = null;
 export const CORROBORATING_EXERCISES = { min: 2, max: 3 } as const;
 
 /**
+ * How many sessions the expected post-swap drop takes to settle, or `null` when
+ * no duration is sourced.
+ *
+ * `null` IS THE SOURCED VALUE, like {@link LOAD_TOLERANCE_PCT}. B16 clause (e)
+ * asks only that the engine "suppresses/reframes the expected drop after an
+ * exercise swap", and the notes it cites for the effect
+ * (`rp-s7-novelty-effect-inflates-sfr-temporarily`,
+ * `rp-s2-variation-novelty-boosts-overload`) name the effect, not its length.
+ * So the swap clause names the BOUNDARY it can see and does not pretend to know
+ * when the drop has settled; a number here would put a guess between a lifter
+ * and every post-swap comparison.
+ */
+export const EXERCISE_SWAP_SETTLING_SESSIONS: number | null = null;
+
+/**
+ * The reframe B16 (e) asks for, appended to the swap clause's blocking reason.
+ *
+ * The comparison is refused because the context changed, and the sentence says
+ * why the number the lifter would have seen was going to be lower anyway.
+ */
+export const EXERCISE_SWAP_REFRAME =
+  'the drop across a swap is the expected cost of re-learning the movement, not lost progress';
+
+/**
  * A set as far as comparability is concerned. Structural, so a `StoredSet`
  * passes without conversion.
  *
@@ -135,6 +159,13 @@ export interface ComparabilitySubject extends PurposeBearing {
    * writer yet, so the corroboration clause degrades on every pair today.
    */
   corroboratingExerciseCount?: number | undefined;
+  /**
+   * When this exercise entered the programme, as an ISO timestamp (B16 e). Two
+   * sets of the same movement carrying DIFFERENT stamps straddle a swap: the
+   * movement was dropped and later re-introduced. No writer yet, so the swap
+   * clause degrades on every pair today.
+   */
+  exerciseIntroducedAt?: string | undefined;
 }
 
 /**
@@ -231,6 +262,7 @@ const CLAUSES: readonly Clause[] = [
     name: 'setup',
     evaluate: (a, b) => matchOrExplain(a.setupId, b.setupId, 'physical setup'),
   },
+  { name: 'swap', evaluate: (a, b) => swapClause(a, b) },
 ];
 
 /**
@@ -311,6 +343,28 @@ function profileNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
     `both sides are set ${left} of their exercise, so this pair is one position of the ` +
     'across-set profile; a confident growth claim still needs the remaining positions'
   );
+}
+
+/**
+ * B16 (e): two sets of the same movement that straddle its re-introduction were
+ * not performed in the same context, so the pair is refused — with the reframe
+ * attached, because the lifter's number really was going to be lower.
+ *
+ * This is a CONTEXT clause, unlike (b), (d) and (f): the swap changed what was
+ * performed, not just what may be claimed about it.
+ */
+function swapClause(a: ComparabilitySubject, b: ComparabilitySubject): ClauseResult {
+  const result = matchOrExplain(
+    a.exerciseIntroducedAt,
+    b.exerciseIntroducedAt,
+    'programme entry date for this exercise',
+  );
+  if (result.ok) return result;
+  const unsettled =
+    EXERCISE_SWAP_SETTLING_SESSIONS === null
+      ? ', and no settling window is sourced, so the clause names the boundary rather than timing it'
+      : '';
+  return { ok: false, reason: `${result.reason} — ${EXERCISE_SWAP_REFRAME}${unsettled}` };
 }
 
 /**

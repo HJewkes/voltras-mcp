@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   chooseComparisonPartner,
   CORROBORATING_EXERCISES,
+  EXERCISE_SWAP_REFRAME,
+  EXERCISE_SWAP_SETTLING_SESSIONS,
   isComparable,
   LOAD_TOLERANCE_PCT,
   type ComparabilitySubject,
@@ -209,6 +211,60 @@ describe('isComparable', () => {
 
   it("quotes B16 (d)'s own range rather than a chosen number", () => {
     expect(CORROBORATING_EXERCISES).toEqual({ min: 2, max: 3 });
+  });
+
+  // B16 (e): the swap boundary IS a context change, so unlike the claim
+  // clauses this one blocks — and carries the reframe while it does.
+  const INTRODUCED_FIRST = '2026-01-05T00:00:00.000Z';
+  const INTRODUCED_AGAIN = '2026-06-01T00:00:00.000Z';
+  const SWAP_TAIL =
+    ` — ${EXERCISE_SWAP_REFRAME}, and no settling window is sourced, so the clause names the ` +
+    'boundary rather than timing it';
+
+  it.each([
+    [
+      'neither side records a programme entry date',
+      {},
+      {},
+      true,
+      'swap (note): neither set records a programme entry date for this exercise, so this clause ' +
+        'passes unchecked',
+    ],
+    [
+      'the pair straddles a re-introduction of the movement',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      { exerciseIntroducedAt: INTRODUCED_AGAIN },
+      false,
+      'swap: different programme entry date for this exercise ' +
+        `(${INTRODUCED_FIRST} vs ${INTRODUCED_AGAIN})${SWAP_TAIL}`,
+    ],
+    [
+      'only one side records a programme entry date',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      {},
+      false,
+      'swap: programme entry date for this exercise recorded on only one side ' +
+        `(${INTRODUCED_FIRST} vs unrecorded)${SWAP_TAIL}`,
+    ],
+    [
+      'both sides entered the programme at the same time',
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      { exerciseIntroducedAt: INTRODUCED_FIRST },
+      true,
+      undefined,
+    ],
+  ])('handles the exercise swap when %s', (_case, left, right, comparable, reason) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(comparable);
+    if (reason === undefined) {
+      expect(verdict.reasons.some((r) => r.startsWith('swap'))).toBe(false);
+    } else {
+      expect(verdict.reasons).toContain(reason);
+    }
+  });
+
+  it('states that no post-swap settling window is sourced', () => {
+    expect(EXERCISE_SWAP_SETTLING_SESSIONS).toBeNull();
   });
 
   it('reports every failing clause, not just the first', () => {
