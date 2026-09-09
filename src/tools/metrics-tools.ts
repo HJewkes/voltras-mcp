@@ -133,6 +133,7 @@ import {
   deriveFeatureGate,
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
+import { isDietPhase, type DietPhase } from '../store/diet-phase.js';
 import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.js';
 import { selectWorkingSets } from '../store/working-sets.js';
 import {
@@ -477,11 +478,47 @@ const HISTORY_TREND_METRIC: Record<
   volume: 'volume',
 };
 
-/** `history.trend`'s response (VW-144/VW-145). */
+/** `history.trend`'s response (VW-144/VW-145/VW-150). */
 interface HistoryTrendResult {
   series: TimeSeries;
   trend: TrendAnalysis;
-  plateau: PlateauDetection & { phase: 'unknown' };
+  plateau: PlateauDetection & { phase: DietPhase | 'unknown' };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The observed diet phase over the plateau window, or `'unknown'` (VW-150).
+ *
+ * The window is WA's own: `detectPlateau` walks back from the most recent
+ * point, so the run it found is the `plateauDays` ending there. No plateau
+ * means `plateauDays: 0`, which collapses the window to that last point — the
+ * phase the series ends in. Nothing here invents a length.
+ *
+ * A window straddling two declared phases has no single covering phase and
+ * reports `'unknown'`: "half fat-loss" is not an answer a reader can use.
+ *
+ * REPORTED ALONGSIDE THE VERDICT, NEVER FOLDED INTO IT. `detectPlateau` has
+ * already run and its result is untouched. B34 says a fat-loss phase LOOKS
+ * like a plateau; it states no correction, so a fat-loss phase suppresses
+ * nothing, discounts nothing and moves no threshold here.
+ */
+async function plateauWindowPhase(
+  state: ServerState,
+  series: TimeSeries,
+  plateau: PlateauDetection,
+): Promise<DietPhase | 'unknown'> {
+  // `TimeSeries` degrades to `any[]` through the package's .d.ts (the same
+  // NodeNext-resolution note `computeHistoryTrend` carries), so the accumulator
+  // is annotated rather than inferred.
+  const last = series.reduce(
+    (latest: { ts: string }, p: { ts: string }) => (p.ts > latest.ts ? p : latest),
+    series[0]!,
+  );
+  const from = new Date(new Date(last.ts).getTime() - plateau.plateauDays * DAY_MS).toISOString();
+  const covering = await state.store.getDietPhaseCovering(LOCAL_USER_ID, from, last.ts);
+  if (covering === undefined || !isDietPhase(covering.phase)) return 'unknown';
+  return covering.phase;
 }
 
 /**
@@ -547,9 +584,10 @@ async function computeHistoryTrend(
   return {
     series,
     trend,
-    // VW-149: diet-phase tagging is undecided, so every verdict says so —
-    // a fat-loss phase can look identical to a true plateau (B34).
-    plateau: { ...plateau, phase: 'unknown' },
+    // VW-150: the phase the window fell in, so a reader can tell a fat-loss
+    // stretch from a true plateau (B34). It qualifies the verdict; it does
+    // not change it.
+    plateau: { ...plateau, phase: await plateauWindowPhase(state, series, plateau) },
   };
 }
 
@@ -1394,6 +1432,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
         (s) => s.exerciseId,
       ),
     primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
   };
 }
 
@@ -1724,9 +1763,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +
   "trend, plateau }`. `trend`/`plateau` are WA's own `analyzeTrend`/`detectPlateau`; omitted " +
   "`thresholdPct`/`minDays` use WA's OWN defaults (5%, 14 days — never redeclared here), not " +
-  "this server's. `plateau.phase` is always `'unknown'` — diet-phase tagging (VW-149) is " +
-  'undecided, and a fat-loss phase can look identical to a true plateau. A window with no ' +
-  'working sets is NOT_FOUND. ' +
+  "this server's. `plateau.phase` (VW-150) is the OBSERVED diet phase covering the plateau " +
+  "window, from `profile.set_diet_phase`, or `'unknown'` when no single declared phase covers " +
+  'it. Read it ALONGSIDE the verdict: a fat-loss phase can look identical to a true plateau, ' +
+  'so a flat stretch under `fat-loss` is worth discounting by hand — but the verdict itself ' +
+  'is unchanged by the phase, and no threshold moved. A window with no working sets is ' +
+  'NOT_FOUND. ' +
   '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
   "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +

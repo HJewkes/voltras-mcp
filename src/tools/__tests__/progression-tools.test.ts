@@ -208,6 +208,8 @@ function makeStore(
     // date span for `trackedTrainingMonths`. `null`/`null` is the honest
     // default — no test here asserts a training-age reading.
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
+    // VW-150: no declared phase, so the phase clause stays unchecked here.
+    getSessionDietPhase: vi.fn(async () => undefined),
     close: vi.fn(async () => {}),
   };
 }

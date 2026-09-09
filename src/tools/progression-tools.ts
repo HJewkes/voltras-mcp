@@ -271,6 +271,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
         (s) => s.exerciseId,
       ),
     primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+    getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
   };
 }
 

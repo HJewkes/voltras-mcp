@@ -8,6 +8,11 @@
 // store reads as injected async functions rather than importing `ServerState`
 // or `SessionStore`.
 //
+// VW-150 adds a fifth, `phase`, on the same terms: `diet_phases` had DDL and a
+// comparability clause but no writer, so the phase clause was unchecked on
+// every pair. It is resolved PER SESSION rather than per set — a diet phase is
+// a property of the day, not of one bout — and memoized by session id.
+//
 // "Claim window" — the scope B16 (d)'s corroboration count applies over — is
 // left UNBOUNDED. No clause in comparability.ts names a window length (the
 // corroboration THRESHOLD, `CORROBORATING_EXERCISES`, is not a duration), and
@@ -17,7 +22,7 @@
 import type { ComparabilitySubject } from './comparability.js';
 import type { StoredSet } from '../store/types.js';
 
-/** A `StoredSet` plus the four fields this file writes onto it. */
+/** A `StoredSet` plus the five fields this file writes onto it. */
 export type ComparabilityEnrichedSet = StoredSet &
   Pick<
     ComparabilitySubject,
@@ -25,6 +30,7 @@ export type ComparabilityEnrichedSet = StoredSet &
     | 'exerciseIntroducedAt'
     | 'trackedTrainingMonths'
     | 'corroboratingExerciseCount'
+    | 'phase'
   >;
 
 /** B16 (b): 1-based position of `target` among its exercise's sets in this session. */
@@ -100,9 +106,11 @@ function toComparabilityEnrichedSet(
   set: StoredSet,
   sameExerciseSetsInSession: readonly StoredSet[],
   ctx: ComparabilitySubjectContext,
+  phase: string | undefined,
 ): ComparabilityEnrichedSet {
   return {
     ...set,
+    phase,
     setIndexInExercise: deriveSetIndexInExercise(set, sameExerciseSetsInSession),
     exerciseIntroducedAt: deriveExerciseIntroducedAt(set.exerciseId, ctx.allSetsForExercise),
     trackedTrainingMonths: deriveTrackedTrainingMonths(set.startedAt, ctx.firstSessionStartedAt),
@@ -128,6 +136,13 @@ export interface ComparabilitySubjectFetchers {
     lifter: string | undefined,
   ) => Promise<readonly (string | undefined)[]>;
   primaryMuscleOf: (exerciseId: string) => string | undefined;
+  /**
+   * The OBSERVED diet phase covering one session, or `undefined` when none is
+   * declared over it (VW-150). Resolving "which phase" is the store's job —
+   * the table is retroactively correctable and wins over the denormalised
+   * stamp, and a guest lifter's session never inherits the owner's phase.
+   */
+  getSessionDietPhase: (sessionId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -146,6 +161,15 @@ export async function buildComparabilitySubjectGroups(
   fetchers: ComparabilitySubjectFetchers,
 ): Promise<ComparabilityEnrichedSet[][]> {
   const cache = new Map<string, Promise<ComparabilitySubjectContext>>();
+  const phaseCache = new Map<string, Promise<string | undefined>>();
+
+  function phaseFor(sessionId: string): Promise<string | undefined> {
+    const cached = phaseCache.get(sessionId);
+    if (cached !== undefined) return cached;
+    const built = fetchers.getSessionDietPhase(sessionId);
+    phaseCache.set(sessionId, built);
+    return built;
+  }
 
   function contextFor(
     exerciseId: string | undefined,
@@ -179,7 +203,7 @@ export async function buildComparabilitySubjectGroups(
     const enriched: ComparabilityEnrichedSet[] = [];
     for (const set of group) {
       const ctx = await contextFor(set.exerciseId, set.lifter);
-      enriched.push(toComparabilityEnrichedSet(set, group, ctx));
+      enriched.push(toComparabilityEnrichedSet(set, group, ctx, await phaseFor(set.sessionId)));
     }
     result.push(enriched);
   }

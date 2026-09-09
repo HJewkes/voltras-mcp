@@ -12,6 +12,8 @@
 
 import { z } from 'zod';
 
+import { DIET_PHASES } from '../store/diet-phase.js';
+
 /**
  * One self-reported injury or limitation (VW-148 / B42).
  *
@@ -69,3 +71,21 @@ export const ProfileGetTierSignalInput = z.object({}).strict();
 // `profile.get_starting_prescription` (VMCP-06.04). Same single-user posture as
 // the tier signal it reads: nothing to disambiguate, so nothing to pass.
 export const ProfileGetStartingPrescriptionInput = z.object({}).strict();
+
+// `profile.set_diet_phase` (VW-149 / VW-150) — the ACTUAL phase the lifter is
+// eating in, which had DDL (`diet_phases`) and a comparability clause but no
+// writer. Self-report like the rest of `profile.*`: it captures a declaration
+// and derives nothing from it.
+//
+// The enum is exactly the three values `ComparabilitySubject.phase`'s docstring
+// has named since B34. It is transcribed, not extended — a fourth value would
+// be a new claim about training, and this ticket adds no claims.
+export const ProfileSetDietPhaseInput = z
+  .object({
+    phase: z.enum(DIET_PHASES),
+    // Omitted means "as of now". A past instant is the retroactive correction
+    // the `diet_phases` DDL comment calls for, and rewrites the timeline from
+    // there forward.
+    startedAt: z.string().datetime().optional(),
+  })
+  .strict();

@@ -8,6 +8,8 @@
 //   * `declaredAt`/`goalSetAt` only refresh when that specific field is
 //     resupplied; `onboardedAt` is stamped once and never moves.
 //   * `.strict()` rejects an unknown key with INVALID_INPUT.
+//   * `profile.set_diet_phase` (VW-149/VW-150) declares an open range, closes
+//     the previous one, corrects history retroactively, and stamps a session.
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredTrainingProfile } from '../../store/types.js';
@@ -26,6 +28,7 @@ const TOOL_NAMES = [
   'profile.get_tier_signal',
   'profile.get_starting_prescription',
   'profile.get_onboarding_gaps',
+  'profile.set_diet_phase',
 ];
 
 function makeFakePlaceholders(): {
@@ -484,6 +487,79 @@ describe('profile.get_onboarding_gaps', () => {
 
   it('rejects unknown keys with INVALID_INPUT', async () => {
     const r = await h.invoke('profile.get_onboarding_gaps', { userId: 'someone' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface DietPhaseBody {
+    declared: { phase: string; startedAt: string; endedAt?: string };
+    timeline: { phase: string; startedAt: string; endedAt?: string }[];
+  }
+
+  it('declares an open range starting now and returns the timeline', async () => {
+    const before = new Date().toISOString();
+    const r = await h.invoke('profile.set_diet_phase', { phase: 'fat-loss' });
+
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as DietPhaseBody;
+    expect(body.declared.phase).toBe('fat-loss');
+    expect(body.declared.startedAt >= before).toBe(true);
+    expect(body.declared.endedAt).toBeUndefined();
+    expect(body.timeline).toHaveLength(1);
+  });
+
+  it('closes the previous phase at the new start', async () => {
+    await h.invoke('profile.set_diet_phase', {
+      phase: 'gain',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await h.invoke('profile.set_diet_phase', {
+      phase: 'maintenance',
+      startedAt: '2026-03-01T00:00:00.000Z',
+    });
+
+    const body = parseResult(
+      await h.invoke('profile.set_diet_phase', {
+        phase: 'fat-loss',
+        startedAt: '2026-02-01T00:00:00.000Z',
+      }),
+    ) as DietPhaseBody;
+
+    // The retroactive correction supersedes March entirely and leaves one
+    // covering range per instant — read back so the lifter can see it.
+    expect(body.timeline.map((p) => [p.phase, p.startedAt, p.endedAt])).toEqual([
+      ['gain', '2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z'],
+      ['fat-loss', '2026-02-01T00:00:00.000Z', undefined],
+    ]);
+  });
+
+  it('stamps a session written after the declaration', async () => {
+    await h.invoke('profile.set_diet_phase', {
+      phase: 'gain',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await h.store.putSession({ id: 'sess-1', startedAt: '2026-02-01T00:00:00.000Z' });
+
+    expect(await h.store.getSessionDietPhase('sess-1')).toBe('gain');
+  });
+
+  it('rejects a phase outside the three-value vocabulary', async () => {
+    const r = await h.invoke('profile.set_diet_phase', { phase: 'recomp' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects unknown keys with INVALID_INPUT', async () => {
+    const r = await h.invoke('profile.set_diet_phase', { phase: 'gain', lifter: 'Jordan' });
 
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');

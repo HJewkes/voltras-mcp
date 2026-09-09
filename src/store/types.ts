@@ -575,6 +575,37 @@ export interface StoredSession {
    * overrides them. Absent means the owner; see {@link StoredSet.lifter}.
    */
   lifter?: string;
+  /**
+   * The DENORMALISED observed diet phase (VW-150), stamped by `putSession`
+   * from the range covering `startedAt`. It is the cheap filter column, NOT
+   * the answer: `diet_phases` is the source of truth and is retroactively
+   * correctable, so a stored session can hold a phase the table has since
+   * moved. Read {@link SessionStore.getSessionDietPhase} for the resolved
+   * value; this member is what the row literally says.
+   */
+  dietPhase?: string;
+}
+
+/**
+ * One row of `diet_phases` — the ACTUAL (observed) phase over a time range
+ * (VW-149 / VW-150). `endedAt` absent means the range is still open.
+ */
+export interface StoredDietPhase {
+  id: string;
+  userId: string;
+  phase: string;
+  startedAt: string;
+  endedAt?: string;
+  declaredAt: string;
+}
+
+/** Arguments to {@link SessionStore.declareDietPhase}. */
+export interface DeclareDietPhaseInput {
+  userId: string;
+  phase: string;
+  /** When the phase began. May be in the past — that is the correction path. */
+  startedAt: string;
+  declaredAt: string;
 }
 
 /**
@@ -1300,6 +1331,58 @@ export interface SessionStore extends ExerciseSetupStore {
   putTrainingProfile(p: StoredTrainingProfile): Promise<void>;
   /** Look up a user's training background; `undefined` when no row exists. */
   getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined>;
+
+  // --- Observed diet phase (VW-149 / VW-150) ---
+
+  /**
+   * Declare the observed phase running from `startedAt`, and leave the user's
+   * timeline with EXACTLY ONE range covering any given instant.
+   *
+   * Atomic, because a partial application is a timeline that lies. In one
+   * transaction it truncates the range that was open across `startedAt` to end
+   * there, drops any range that started at or after `startedAt` (the new open
+   * range covers all of it, and two covering ranges is the state this method
+   * exists to make impossible), and inserts the new one.
+   *
+   * `startedAt` in the past is the RETROACTIVE CORRECTION path the
+   * `diet_phases` DDL comment calls for, not an error. It rewrites the
+   * timeline from that instant forward.
+   *
+   * Writes nothing to `training_weeks.phase_type`: that is the PRESCRIBED
+   * phase and a different claim entirely.
+   */
+  declareDietPhase(input: DeclareDietPhaseInput): Promise<StoredDietPhase>;
+
+  /** Every declared range for a user, oldest-first. */
+  listDietPhases(userId: string): Promise<StoredDietPhase[]>;
+
+  /**
+   * The single range covering every instant in `[from, to]`, or `undefined`
+   * when none does. A window straddling two phases has NO covering range and
+   * gets `undefined` — "half fat-loss" is not a phase. Pass `from === to` for
+   * a point lookup.
+   */
+  getDietPhaseCovering(
+    userId: string,
+    from: string,
+    to: string,
+  ): Promise<StoredDietPhase | undefined>;
+
+  /**
+   * The observed phase for one session, or `undefined` when none is known.
+   *
+   * THE TABLE WINS. A range covering the session's `startedAt` answers this
+   * even when `sessions.diet_phase` disagrees, because the table is the
+   * retroactively-correctable source of truth and the column is a stamp taken
+   * at write. The column is the fallback for a session whose covering range no
+   * longer exists.
+   *
+   * A guest lifter's session (VW-169) always answers `undefined`: the owner's
+   * declared phase is a claim about the OWNER's eating, and stamping it on
+   * somebody else's set would fabricate data about a person who never
+   * declared anything.
+   */
+  getSessionDietPhase(sessionId: string): Promise<string | undefined>;
 
   // --- Exercise baselines (I5 / B56, VW-116) ---
 

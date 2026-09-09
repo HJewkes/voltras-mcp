@@ -26,9 +26,11 @@
 // blocking, per the backlog's own instruction to degrade rather than refuse.
 // The predicate says what it could not check instead of pretending it checked.
 //
-// The training-phase tag still has no writer at all — it is a pending human
-// decision (B34 / VW-149) — so that clause is unchecked on every pair today.
-// `setupId` DOES have one as of VW-119 (`store/exercise-setups.ts`, stamped by
+// The training-phase tag got its writer in VW-149/VW-150
+// (`profile.set_diet_phase`), so the phase clause is live on any pair whose
+// sessions fall inside a declared range. Absent on both sides — every session
+// recorded before the first declaration — still passes with a note, which is
+// why old history keeps comparing. `setupId` DOES have one as of VW-119 (`store/exercise-setups.ts`, stamped by
 // `stampSetSetup` on `set.end` and by `baselines.recalc { inferSetups: true }`),
 // so the setup clause is live on any set that has been clustered. Absent there
 // means "not clustered yet", never "the default setup" — which is why a stamp
@@ -159,9 +161,9 @@ export const EARLY_TRAINING_STRENGTH_WORDING =
  * A set as far as comparability is concerned. Structural, so a `StoredSet`
  * passes without conversion.
  *
- * `setupId` is populated by the VW-119 clustering (see the header). `phase` has
- * no writer yet and is declared so its clause degrades visibly rather than
- * being silently missing from the predicate.
+ * `setupId` is populated by the VW-119 clustering and `phase` by the VW-150
+ * diet-phase writer (see the header); both degrade visibly when absent rather
+ * than dropping out of the predicate.
  */
 export interface ComparabilitySubject extends PurposeBearing {
   id: string;
@@ -175,7 +177,15 @@ export interface ComparabilitySubject extends PurposeBearing {
   startedAt?: string | undefined;
   /** Inferred physical configuration (VW-119). Absent ⇒ not clustered yet. */
   setupId?: string | undefined;
-  /** Training-phase tag: fat-loss / gain / maintenance. No writer yet (B34). */
+  /**
+   * Training-phase tag: fat-loss / gain / maintenance (B34). Written by
+   * `deriveDietPhase` (VW-150, `comparability-subject.ts`) from the OBSERVED
+   * phase covering the set's session — never from a plan week's PRESCRIBED
+   * `phase_type`, which is a different claim.
+   *
+   * Absent means no declared phase covers that session, which is every session
+   * recorded before the lifter first declared one.
+   */
   phase?: string | undefined;
   /**
    * 1-based position of this set within its EXERCISE's set profile (B16 b).
