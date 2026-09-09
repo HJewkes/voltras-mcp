@@ -91,6 +91,8 @@ import {
   getSetFirstRepVelocity,
   getSetMeanVelocity,
   getSetVelocitySummary,
+  getVolumeByMuscleGroup,
+  getWeeklySummaries,
   type E1RMEstimate,
   type LoadVelocityDataPoint,
   type MetricTimeSeriesPoint,
@@ -101,6 +103,8 @@ import {
   type Set as AnalyticsSet,
   type TimeSeries,
   type TrendAnalysis,
+  type VolumeByMuscleGroup,
+  type WeeklySummary,
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -143,7 +147,12 @@ import {
   type ProcessedSessionSource,
 } from '../store/processed-session-mapper.js';
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
-import { LOCAL_USER_ID, type StoredSet, type StoredSide } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type StoredSession,
+  type StoredSet,
+  type StoredSide,
+} from '../store/types.js';
 import { normalisePositionsToMetres } from '../store/position-units.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
@@ -430,14 +439,15 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
 
     case 'history.trend':
       return computeHistoryTrend(state, input);
+
+    case 'history.weekly_volume':
+      return computeHistoryWeeklyVolume(state, input);
   }
 }
 
 /**
- * Default lookback window for `history.trend`, matching WA's own
- * `getWeeklySummaries` default (`n = 12`, time-series.ts:400-403) — kept here
- * even though that function isn't wired yet (see the schema's `history.trend`
- * comment) so the two land on the same number once it is.
+ * Default lookback window shared by both `history.*` pipelines, matching
+ * WA's own `getWeeklySummaries` default (`n = 12`, time-series.ts:216).
  */
 const HISTORY_DEFAULT_WEEKS = 12;
 
@@ -455,8 +465,8 @@ type HistoryTrendInput = Extract<MetricsComputeInputType, { pipeline: 'history.t
  *
  * `MetricKey` became importable from the package root in
  * `@voltras/workout-analytics@2.3.0` (VW-201), alongside `getWeeklySummaries`
- * and `getVolumeByMuscleGroup`. Naming it here is a tidy-up for whoever builds
- * `history.weekly_volume`, which is the reason those exports were added.
+ * and `getVolumeByMuscleGroup`, which `computeHistoryWeeklyVolume` below
+ * dispatches to.
  */
 const HISTORY_TREND_METRIC: Record<
   NonNullable<HistoryTrendInput['metric']>,
@@ -541,6 +551,148 @@ async function computeHistoryTrend(
     // a fat-loss phase can look identical to a true plateau (B34).
     plateau: { ...plateau, phase: 'unknown' },
   };
+}
+
+type HistoryWeeklyVolumeInput = Extract<
+  MetricsComputeInputType,
+  { pipeline: 'history.weekly_volume' }
+>;
+
+/** `history.weekly_volume`'s response (VW-144/VW-145/VW-201). `verdict` is
+ * always `null` — see the schema's THRESHOLDS LEAVE NULL note. */
+interface HistoryWeeklyVolumeResult {
+  weekly: WeeklySummary[];
+  byMuscleGroup: VolumeByMuscleGroup;
+  verdict: null;
+}
+
+/**
+ * A generous explicit cap on `listSessions`, well above what any real
+ * `weeks` window should produce, so the store's own 50-row default never
+ * silently truncates an active lifter's history.
+ */
+const HISTORY_WEEKLY_VOLUME_SESSION_LIMIT = 500;
+
+/** The device counts; the derived rep array is the fallback when it did not. */
+function weeklyVolumeRepCount(set: StoredSet): number {
+  return set.firmwareRepCount ?? set.reps.length;
+}
+
+/**
+ * Raw session sets eligible for `history.weekly_volume`, before the mapper's
+ * own guest/warmup/weightless filters run (`toProcessedSession`). A
+ * mock-adapter row is synthetic unless the whole process is running on the
+ * mock adapter — the same rule `report-tools.ts`'s `reportableSets` uses —
+ * and a set that recorded no rep would otherwise still inflate
+ * `WeeklySummary.topWeightLbs` even though nothing was lifted.
+ */
+function weeklyVolumeEligibleSets(sets: readonly StoredSet[], adapter: string): StoredSet[] {
+  return sets.filter(
+    (set) => weeklyVolumeRepCount(set) > 0 && (adapter === 'mock' || set.source !== 'mock'),
+  );
+}
+
+/**
+ * One real session's eligible sets, split by the exercise EACH SET names
+ * (falling back to the session's own `exerciseId`, same as
+ * `report-tools.ts`'s `groupByExercise`) — a set that resolves to no exercise
+ * at all is dropped.
+ *
+ * This is the granularity `getVolumeByMuscleGroup` needs: it attributes a
+ * whole `ProcessedSession`'s volume to the ONE exercise on that session, so a
+ * real session that trained more than one exercise has to become more than
+ * one `ProcessedSession` here, or the later exercises' volume would land
+ * under the first exercise's muscle group.
+ */
+function groupByExerciseId(
+  sets: readonly StoredSet[],
+  sessionExerciseId: string | undefined,
+): Map<string, StoredSet[]> {
+  const groups = new Map<string, StoredSet[]>();
+  for (const set of sets) {
+    const exerciseId = set.exerciseId ?? sessionExerciseId;
+    if (exerciseId === undefined) continue;
+    const group = groups.get(exerciseId);
+    if (group) group.push(set);
+    else groups.set(exerciseId, [set]);
+  }
+  return groups;
+}
+
+/** One session's `ProcessedSessionSource`, dated by its own eligible sets. */
+function sessionSource(
+  session: StoredSession,
+  eligibleSets: readonly StoredSet[],
+): ProcessedSessionSource {
+  return {
+    id: session.id,
+    startedAt: earliestStartedAt(eligibleSets),
+    ...(session.exerciseId !== undefined ? { exerciseId: session.exerciseId } : {}),
+  };
+}
+
+async function computeHistoryWeeklyVolume(
+  state: ServerState,
+  input: HistoryWeeklyVolumeInput,
+): Promise<HistoryWeeklyVolumeResult> {
+  const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
+  const fromIso = weeksAgoIso(weeks);
+  const toIso = new Date().toISOString();
+  // Owner-only by default (VW-169) — `listSessions` filters `lifter IS NULL`
+  // the same way `getSetsForExercise` does. No `exerciseId` here: this
+  // pipeline rolls up EVERY exercise, unlike `history.trend`.
+  const sessions = await state.store.listSessions({
+    from: fromIso,
+    limit: HISTORY_WEEKLY_VOLUME_SESSION_LIMIT,
+  });
+  const eligibleEntries = await Promise.all(
+    sessions.map(async (session) => {
+      const raw = await state.store.getSetsForSession(session.id);
+      return [session.id, weeklyVolumeEligibleSets(raw, state.config.adapter)] as const;
+    }),
+  );
+  const eligibleBySession = new Map(eligibleEntries);
+
+  // Whole-session granularity for `getWeeklySummaries`: `sessionCount` and
+  // `topWeightLbs` are physical-session facts, not per-exercise ones.
+  const wholeSessionSources: ProcessedSessionSource[] = sessions
+    .filter((s) => (eligibleBySession.get(s.id)?.length ?? 0) > 0)
+    .map((s) => sessionSource(s, eligibleBySession.get(s.id)!));
+  const weeklySessions = toProcessedSessions(wholeSessionSources, eligibleBySession);
+  if (weeklySessions.length === 0) {
+    throw notFound(`no working sets in the last ${weeks} weeks`);
+  }
+  const weekly = getWeeklySummaries(weeklySessions, weeks);
+
+  // Per-(session, exercise) granularity for `getVolumeByMuscleGroup` — see
+  // `groupByExerciseId`'s note on why one real session can become more than
+  // one `ProcessedSession` here.
+  const exerciseGroupSources: ProcessedSessionSource[] = [];
+  const exerciseGroupSets = new Map<string, StoredSet[]>();
+  for (const session of sessions) {
+    const eligible = eligibleBySession.get(session.id) ?? [];
+    for (const [exerciseId, group] of groupByExerciseId(eligible, session.exerciseId)) {
+      const groupId = `${session.id}:${exerciseId}`;
+      exerciseGroupSources.push({ id: groupId, startedAt: earliestStartedAt(group), exerciseId });
+      exerciseGroupSets.set(groupId, group);
+    }
+  }
+  const muscleSessions = toProcessedSessions(exerciseGroupSources, exerciseGroupSets);
+  const byMuscleGroup = getVolumeByMuscleGroup(
+    muscleSessions,
+    (exerciseId: string) => {
+      // B47 (VMCP-06.05, PR #263): target-only — the PRIMARY muscle group and
+      // nothing else, matching `session.volume`'s `setsByTargetMuscle`. A
+      // single-element array degenerates WA's own even-split-across-groups
+      // math to "all of it", which IS the target-only rule.
+      const muscle = state.exercises.getById(exerciseId)?.muscleGroups[0];
+      return muscle === undefined ? undefined : { muscleGroups: [muscle] };
+    },
+    { from: fromIso, to: toIso },
+  );
+
+  // THRESHOLDS LEAVE NULL — see the schema's `history.weekly_volume` comment.
+  return { weekly, byMuscleGroup, verdict: null };
 }
 
 /**
@@ -1574,10 +1726,15 @@ const METRICS_COMPUTE_DESCRIPTION =
   "`thresholdPct`/`minDays` use WA's OWN defaults (5%, 14 days — never redeclared here), not " +
   "this server's. `plateau.phase` is always `'unknown'` — diet-phase tagging (VW-149) is " +
   'undecided, and a fat-loss phase can look identical to a true plateau. A window with no ' +
-  'working sets is NOT_FOUND. A weekly-volume/muscle-group companion pipeline is NOT yet ' +
-  'available: `@voltras/workout-analytics@2.2.0` does not re-export `getWeeklySummaries` / ' +
-  "`getVolumeByMuscleGroup` from its published root, so it isn't wired here — it follows once " +
-  'that package republishes with them public. ' +
+  'working sets is NOT_FOUND. ' +
+  '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
+  "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
+  "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +
+  "own `getWeeklySummaries`; `byMuscleGroup` is WA's `getVolumeByMuscleGroup`, attributed " +
+  "target-only to each exercise's PRIMARY muscle group only (B47, matching `session.volume`'s " +
+  '`setsByTargetMuscle`). `verdict` is always `null` — `classifyWeeklyVolume` needs ' +
+  'caller-supplied `VolumeLandmarks` that no source in this repo states for this athlete, so no ' +
+  'landmark is invented here. A window with no working sets is NOT_FOUND. ' +
   'ADVISORY POSTURE, SHARED BY EVERY PIPELINE HERE: these are readouts, never a recommendation ' +
   'and never applied. Every number is a ratio or a count — never an absolute m/s. ' +
   'A missing/nonexistent target id returns a NOT_FOUND error before any analytics runs.';

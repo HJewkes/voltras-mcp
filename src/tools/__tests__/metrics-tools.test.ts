@@ -242,6 +242,7 @@ const PIPELINE_TO_ANALYTICS_FN: Record<
   'quality.bounce': 'detectBounce',
   'quality.rom': 'readRomIntegrity',
   'history.trend': 'analyzeTrend',
+  'history.weekly_volume': 'getWeeklySummaries',
   'strength.e1rm': 'estimateE1RMFromReps',
 };
 
