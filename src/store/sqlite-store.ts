@@ -56,6 +56,7 @@ import {
   type PlanImportResult,
   type PlanImportTemplate,
   type StoredPlannedExercise,
+  type StoredTargetTempo,
   type StoredExerciseBaseline,
   type StoredFailureAnchor,
   type StoredProgramAssignment,
@@ -1516,8 +1517,8 @@ const WORKOUT_TEMPLATE_UPSERT_SQL = `INSERT INTO workout_templates
 const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    (id, workout_template_id, exercise_id, order_index, target_sets,
     target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
-    rest_sec, notes, external_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    rest_sec, notes, target_tempo_json, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(id) DO UPDATE SET
    workout_template_id = excluded.workout_template_id,
    exercise_id = excluded.exercise_id,
@@ -1529,6 +1530,7 @@ const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    target_rpe = excluded.target_rpe,
    rest_sec = excluded.rest_sec,
    notes = excluded.notes,
+   target_tempo_json = excluded.target_tempo_json,
    external_id = excluded.external_id`;
 
 interface WorkoutTemplateRow {
@@ -1553,6 +1555,7 @@ interface PlannedExerciseRow {
   target_rpe: number | null;
   rest_sec: number | null;
   notes: string | null;
+  target_tempo_json: string | null;
   external_id: string | null;
 }
 
@@ -2360,6 +2363,7 @@ export class SqliteSessionStore implements SessionStore {
         e.targetRpe ?? null,
         e.restSec ?? null,
         e.notes ?? null,
+        e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
         e.externalId ?? null,
       );
     return Promise.resolve();
@@ -2469,10 +2473,11 @@ export class SqliteSessionStore implements SessionStore {
       next.targetRepsLow ?? null,
       next.targetRepsHigh ?? null,
       next.targetWeightLbs ?? null,
-      // TrueCoach carries no RPE field; keep whatever a local edit put there.
+      // TrueCoach carries no RPE or tempo field; keep whatever a local edit put there.
       existing?.target_rpe ?? null,
       next.restSec ?? null,
       next.notes ?? null,
+      existing?.target_tempo_json ?? null,
       next.externalId ?? null,
     );
   }
@@ -3480,7 +3485,39 @@ function sameExercise(row: PlannedExerciseRow | undefined, next: StoredPlannedEx
     (row.target_weight_lbs ?? undefined) === next.targetWeightLbs &&
     (row.rest_sec ?? undefined) === next.restSec &&
     (row.notes ?? undefined) === next.notes
+    // target_rpe and target_tempo_json are deliberately excluded: TrueCoach (the
+    // only caller of sameExercise) carries neither field, and #applyImportExercise
+    // preserves whatever a local edit put there rather than overwriting it.
   );
+}
+
+/**
+ * `target_tempo_json` is a NAMED object, never a bare tuple (see the v6 note on
+ * `planned_exercises` above) — a named object cannot be silently transposed by a
+ * consumer the way an array index can.
+ */
+function tempoToJson(tempo: StoredTargetTempo): string {
+  return JSON.stringify({
+    ecc: tempo.ecc,
+    pause_bottom: tempo.pauseBottom,
+    con: tempo.con,
+    pause_top: tempo.pauseTop,
+  });
+}
+
+function tempoFromJson(json: string): StoredTargetTempo {
+  const parsed = JSON.parse(json) as {
+    ecc: number;
+    pause_bottom: number;
+    con: number;
+    pause_top: number;
+  };
+  return {
+    ecc: parsed.ecc,
+    pauseBottom: parsed.pause_bottom,
+    con: parsed.con,
+    pauseTop: parsed.pause_top,
+  };
 }
 
 function rowToWorkoutTemplate(row: WorkoutTemplateRow): StoredWorkoutTemplate {
@@ -3510,6 +3547,7 @@ function rowToPlannedExercise(row: PlannedExerciseRow): StoredPlannedExercise {
   if (row.target_rpe !== null) out.targetRpe = row.target_rpe;
   if (row.rest_sec !== null) out.restSec = row.rest_sec;
   if (row.notes !== null) out.notes = row.notes;
+  if (row.target_tempo_json !== null) out.targetTempo = tempoFromJson(row.target_tempo_json);
   if (row.external_id !== null) out.externalId = row.external_id;
   return out;
 }

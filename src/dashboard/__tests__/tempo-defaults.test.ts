@@ -6,7 +6,12 @@
 // resolution branches: coach override → exercise default → none.
 
 import { describe, expect, it, beforeAll } from 'vitest';
-import { setCatalog, getExerciseById } from '@voltras/workout-analytics';
+import {
+  setCatalog,
+  getExerciseById,
+  getSetTempoSeconds,
+  type Rep,
+} from '@voltras/workout-analytics';
 
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import { ExerciseService } from '../../exercises/exercise-service.js';
@@ -63,6 +68,36 @@ describe('resolveTargetTempo', () => {
 
   it('returns null when neither coach tempo nor any default resolves', () => {
     expect(resolveTargetTempo('mystery_lift', undefined, undefined)).toBeNull();
+  });
+});
+
+describe('coach-tempo tuple order vs getSetTempoSeconds (VW-46)', () => {
+  it('matches WA’s documented [ecc, pauseBottom, con, pauseTop] order field-for-field', () => {
+    // Every phase distinct, so a transposed order (the known footgun) fails this.
+    const coach = { ecc: 5, pauseBottom: 6, con: 7, pauseTop: 8 };
+
+    // `fetchSessionPlan`'s object → tuple conversion (server.ts), mirrored here.
+    const tuple: TempoTuple = [coach.ecc, coach.pauseBottom, coach.con, coach.pauseTop];
+
+    // Build a Rep whose phase timings encode the same four distinct values, the
+    // way `repWithTempo` does in exercise-hero-view.test.ts.
+    const rep = {
+      repNumber: 1,
+      eccentric: {
+        startTime: 0,
+        endTime: (coach.ecc + coach.pauseBottom) * 1000,
+        _totalHoldDuration: coach.pauseBottom * 1000,
+      },
+      concentric: {
+        startTime: (coach.ecc + coach.pauseBottom) * 1000,
+        endTime: (coach.ecc + coach.pauseBottom + coach.con + coach.pauseTop) * 1000,
+        _totalHoldDuration: coach.pauseTop * 1000,
+      },
+    } as unknown as Rep;
+
+    const waTuple = getSetTempoSeconds({ reps: [rep] });
+    expect(waTuple).toEqual([coach.ecc, coach.pauseBottom, coach.con, coach.pauseTop]);
+    expect(tuple).toEqual(waTuple);
   });
 });
 

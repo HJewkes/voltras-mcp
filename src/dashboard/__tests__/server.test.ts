@@ -590,6 +590,45 @@ describe('GET /api/history', () => {
     expect(body.plan.tempo).toEqual([3, 0, 1, 1]);
   });
 
+  it('surfaces the coach-set tempo override, winning over the exercise default (VW-46)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-C',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable-lateral-raise',
+      exerciseName: 'Cable Lateral Raise',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const state: DashboardServerState = {
+      slots: base.slots,
+      store: {
+        ...base.store,
+        getAssignmentsForSession: () =>
+          Promise.resolve([
+            { id: 'a1', sessionId: 'sess-C', workoutTemplateId: 't1', assignedAt: '' },
+          ]),
+        getPlannedExercisesForTemplate: () =>
+          Promise.resolve([
+            {
+              id: 'pe1',
+              workoutTemplateId: 't1',
+              exerciseId: 'cable-lateral-raise',
+              orderIndex: 0,
+              targetSets: 3,
+              // cable-lateral-raise's byExercise override is [3, 0, 1, 1] — every
+              // slot here is distinct from it, so a fallback to the default fails this.
+              targetTempo: { ecc: 4, pauseBottom: 2, con: 1, pauseTop: 0 },
+            },
+          ]),
+      },
+    };
+    const handle = await startWithFake(state);
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/session-plan');
+    const body = JSON.parse(res.body) as { plan: { tempo?: number[] } };
+    expect(body.plan.tempo).toEqual([4, 2, 1, 0]);
+  });
+
   it('surfaces the movement-pattern default tempo from the exercise catalog (VW-41)', async () => {
     const session: ActiveSession = {
       sessionId: 'sess-M',
