@@ -104,14 +104,14 @@ export function PlanBuilderPage(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [muscle, setMuscle] = useState('');
   const [allMuscles, setAllMuscles] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const busy = useStore(dashboardStore, (s) => s.plannerBusy);
   // The de-dup guard. `busy` drives the disabled styling, but a real
   // double-click lands two `onPress`es inside ONE React tick, so both would read
   // the pre-render `busy === false` — the latch is written synchronously and is
   // the only thing standing between an impatient click and a duplicate row.
   const latchRef = useRef<ReturnType<typeof createMutationLatch> | null>(null);
   latchRef.current ??= createMutationLatch({
-    onBusyChange: setBusy,
+    onBusyChange: (next) => dashboardStore.getState().setPlannerBusy(next),
     onError: (err) => dashboardStore.getState().applyPlanner({ plannerError: err.message }),
     minHoldMs: MIN_LATCH_HOLD_MS,
   });
@@ -210,7 +210,6 @@ export function PlanBuilderPage(): React.JSX.Element {
       {selected !== null && (
         <WorkoutEditor
           flat={selected}
-          busy={busy}
           displayUnit={displayUnit}
           onAddTargets={(id, patch) => mutate(() => updatePlannedExercise(id, patch))}
           onRemove={(id) => mutate(() => deletePlannedExercise(id))}
@@ -547,7 +546,6 @@ function WorkoutList(props: {
 
 function WorkoutEditor(props: {
   flat: FlatTemplate;
-  busy: boolean;
   displayUnit: MassUnit;
   onAddTargets: (plannedExerciseId: string, patch: TargetPatch) => Promise<boolean>;
   onRemove: (plannedExerciseId: string) => Promise<boolean>;
@@ -574,7 +572,6 @@ function WorkoutEditor(props: {
           <PlannedExerciseRow
             key={exercise.id}
             exercise={exercise}
-            busy={props.busy}
             displayUnit={props.displayUnit}
             onUp={index === 0 ? null : () => move(index, -1)}
             onDown={index === ids.length - 1 ? null : () => move(index, 1)}
@@ -620,7 +617,6 @@ const SAVED_FLASH_MS = 2000;
 
 function PlannedExerciseRow(props: {
   exercise: PlanExerciseView;
-  busy: boolean;
   displayUnit: MassUnit;
   onUp: (() => void) | null;
   onDown: (() => void) | null;
@@ -628,6 +624,7 @@ function PlannedExerciseRow(props: {
   onRemove: () => Promise<boolean>;
 }): React.JSX.Element {
   const { exercise } = props;
+  const busy = useStore(dashboardStore, (s) => s.plannerBusy);
   const [sets, setSets] = useState('');
   const [repsLow, setRepsLow] = useState('');
   const [repsHigh, setRepsHigh] = useState('');
@@ -701,7 +698,7 @@ function PlannedExerciseRow(props: {
             variant="ghost"
             isIconButton
             aria-label={`Move ${exercise.name} up`}
-            isDisabled={props.onUp === null || props.busy}
+            isDisabled={props.onUp === null || busy}
             onPress={() => props.onUp?.()}
           >
             <ButtonLabel>↑</ButtonLabel>
@@ -711,7 +708,7 @@ function PlannedExerciseRow(props: {
             variant="ghost"
             isIconButton
             aria-label={`Move ${exercise.name} down`}
-            isDisabled={props.onDown === null || props.busy}
+            isDisabled={props.onDown === null || busy}
             onPress={() => props.onDown?.()}
           >
             <ButtonLabel>↓</ButtonLabel>
@@ -724,7 +721,7 @@ function PlannedExerciseRow(props: {
                 color="error"
                 style={{ height: CONTROL_HEIGHT }}
                 aria-label={`Confirm removing ${exercise.name} from this workout`}
-                isDisabled={props.busy}
+                isDisabled={busy}
                 onPress={() => {
                   void (async () => {
                     await props.onRemove();
@@ -750,7 +747,7 @@ function PlannedExerciseRow(props: {
               variant="ghost"
               isIconButton
               aria-label={`Remove ${exercise.name} from this workout`}
-              isDisabled={props.busy}
+              isDisabled={busy}
               onPress={() => setConfirmingRemove(true)}
             >
               <ButtonLabel>✕</ButtonLabel>
@@ -801,7 +798,7 @@ function PlannedExerciseRow(props: {
             variant="outline"
             style={{ height: CONTROL_HEIGHT }}
             aria-label={`Save targets for ${exercise.name}`}
-            isDisabled={props.busy}
+            isDisabled={busy}
             onPress={save}
           >
             <ButtonLabel>Save targets</ButtonLabel>
