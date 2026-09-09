@@ -115,4 +115,9 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // trough strictly inside the concentric phase's own ROM window. A readout
   // only: no push event, no watch, no cue (see B14/VW-140-141).
   z.object({ pipeline: z.literal('quality.hesitation'), setId: IdSchema }),
+
+  // Per-rep turnaround-dwell / eccentric-speed readout (VMCP-06.11 / B10).
+  // Analytics: `detectBounce(rep)` from `src/analytics/rep-faults.ts`. A
+  // readout only: no push event, no watch, no cue (see B14/VW-140-141).
+  z.object({ pipeline: z.literal('quality.bounce'), setId: IdSchema }),
 ]);

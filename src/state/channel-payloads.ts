@@ -2288,3 +2288,65 @@ export function buildDeterministicStopUnavailablePayload(args: {
   });
   return { meta, content };
 }
+
+/**
+ * Phase of one isometric hold, in the order they fire: the athlete is set
+ * (`ready`), pulls (`go`), is at max and holding through the plateau window
+ * (`hold`), then releases (`stop`).
+ */
+export type IsometricPhase = 'ready' | 'go' | 'hold' | 'stop';
+
+const ISOMETRIC_PHASE_CUE: Record<IsometricPhase, string> = {
+  ready: 'get set',
+  go: 'pull now',
+  hold: 'hold max',
+  stop: 'stop and release',
+};
+
+export interface IsometricPhasePayloadInput {
+  phase: IsometricPhase;
+  /** 1-indexed hold number within the run; 1 for a single-hold call. */
+  trial: number;
+  holdMs: number;
+  side?: 'left' | 'right' | undefined;
+  label?: string | undefined;
+}
+
+/**
+ * Build the meta + content for an `isometric_phase` channel event (VW-154).
+ *
+ * An isometric hold is timed by the server but performed by a human, and the
+ * 2026-08-01 bench had no signal for when to pull and when to release — the
+ * measurement window opened and closed silently. These four pushes carry the
+ * go/stop signalling so a dashboard or a cue surface can deliver it. This
+ * builder speaks no words itself: the summary is text on the channel.
+ *
+ * `slot` and `at` are NOT set here — the slot-scoped publisher injects both
+ * into meta on publish, as it does for every slot-scoped event.
+ */
+export function buildIsometricPhasePayload(input: IsometricPhasePayloadInput): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'isometric_phase',
+    phase: input.phase,
+    trial: String(input.trial),
+    hold_ms: String(input.holdMs),
+    ...(input.side !== undefined ? { side: input.side } : {}),
+  };
+  const subject =
+    input.label !== undefined ? `${input.label}, hold ${input.trial}` : `hold ${input.trial}`;
+  const content = JSON.stringify({
+    summary: `Isometric ${subject}: ${ISOMETRIC_PHASE_CUE[input.phase]}.`,
+    isometric: {
+      phase: input.phase,
+      trial: input.trial,
+      hold_ms: input.holdMs,
+      side: input.side ?? null,
+      label: input.label ?? null,
+    },
+  });
+  return { meta, content };
+}

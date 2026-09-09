@@ -75,8 +75,12 @@ export interface ImbalanceReport {
 /** Window length (ms) used for the plateau-around-peak mean force calculation. */
 const PLATEAU_WINDOW_MS = 500;
 
-/** Trials with peak before this time fail the "peak after first second" gate. */
-const PEAK_AFTER_MS = 1000;
+/**
+ * Trials with peak before this time fail the "peak after first second" gate.
+ * Exported because it is also the ramp-up window the tool layer signals over:
+ * the `isometric_phase` `hold` push fires at the moment a peak first counts.
+ */
+export const PEAK_AFTER_MS = 1000;
 
 /** Plateau mean must be at least this fraction of instantaneous peak. */
 const PLATEAU_PEAK_RATIO = 0.9;

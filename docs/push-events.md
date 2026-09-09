@@ -64,6 +64,7 @@ distinct from any event-specific `started_at` / `ended_at` a payload already car
 | `idle_rep_reclaimed`             | An auto-armed set adopted reps a previous idle report already counted. See [auto-armed sets](#auto-armed-sets).                                                                                 | —                         |
 | `voice_command_applied`          | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).                                                                                        | —                         |
 | `voice_command_rejected`         | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                                                                                                        | —                         |
+| `isometric_phase`                | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                                                                                                    | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
@@ -100,6 +101,41 @@ peaks:
 
 Both are persisted on the stored set as `firmwarePeakForceLbs` and
 `firmwarePeakPower`, so `set.get` and `session.get` return them too.
+
+## Isometric hold phases
+
+A hold is timed by the server but performed by a human, and until VW-154 the
+measurement window opened and closed in silence — nothing told the athlete when to pull
+or when to release. Every hold now emits four `isometric_phase` events, in order:
+
+| `phase` | Fires                                      | Means            |
+| ------- | ------------------------------------------ | ---------------- |
+| `ready` | before the frame listener attaches         | get set          |
+| `go`    | the instant the capture window opens       | pull now         |
+| `hold`  | one second in, when a peak starts counting | hold max         |
+| `stop`  | the capture window closed                  | stop and release |
+
+```jsonc
+{
+  "summary": "Isometric left knee ext, hold 1: pull now.",
+  "isometric": {
+    "phase": "go",
+    "trial": 1, // 1-indexed hold within the run; always 1 for isometric.measure_hold
+    "hold_ms": 5000,
+    "side": "left", // null unless the caller declared a limb
+    "label": "left knee ext", // null unless the caller tagged the hold
+  },
+}
+```
+
+`phase`, `trial` and `hold_ms` also ride on `meta` for filtering, alongside the `slot`
+and `at` keys the slot-scoped publisher injects into every event of this kind — no
+payload sets those two itself.
+
+All three `isometric.*` tools emit these, because `measure_max` and `measure_imbalance`
+run the same single hold N times; `trial` counts the holds within a side, so a
+three-trial run emits twelve events. The events are text on the channel — voicing them
+is a cue-surface decision, not something the server does.
 
 ## The voice fast-path
 

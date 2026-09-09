@@ -18,6 +18,7 @@ import {
   buildDeterministicStopUnavailablePayload,
   buildGuidedLoadStatePayload,
   buildIdleTimeoutPayload,
+  buildIsometricPhasePayload,
   buildRepFinalizedPayload,
   buildRestStatusPayload,
   buildSetEndedPayload,
@@ -1725,5 +1726,51 @@ describe('buildDeterministicStopUnavailablePayload (VMCP-02.86)', () => {
     expect(parsed.transcript).toBe('cut the weight');
     expect(parsed.evaluated_slots).toEqual([]);
     expect(parsed.unloaded).toBe(false);
+  });
+});
+
+describe('buildIsometricPhasePayload', () => {
+  it('puts the filterable scalars on meta and leaves slot/at to the publisher', () => {
+    const { meta } = buildIsometricPhasePayload({ phase: 'go', trial: 2, holdMs: 5000 });
+    expect(meta).toEqual({
+      source: 'voltras',
+      event_type: 'isometric_phase',
+      phase: 'go',
+      trial: '2',
+      hold_ms: '5000',
+    });
+    // `slot` and `at` are injected by the slot-scoped publisher; a builder that
+    // set them itself would win the merge and pin a stale value.
+    expect(meta.slot).toBeUndefined();
+    expect(meta.at).toBeUndefined();
+  });
+
+  it('names the hold in the summary when the caller supplied a label', () => {
+    const withLabel = buildIsometricPhasePayload({
+      phase: 'stop',
+      trial: 1,
+      holdMs: 5000,
+      side: 'right',
+      label: 'right knee ext',
+    });
+    expect(withLabel.meta.side).toBe('right');
+    const parsed = JSON.parse(withLabel.content) as {
+      summary: string;
+      isometric: Record<string, unknown>;
+    };
+    expect(parsed.summary).toBe('Isometric right knee ext, hold 1: stop and release.');
+    expect(parsed.isometric).toEqual({
+      phase: 'stop',
+      trial: 1,
+      hold_ms: 5000,
+      side: 'right',
+      label: 'right knee ext',
+    });
+  });
+
+  it('falls back to the hold number when no label is supplied', () => {
+    const { content } = buildIsometricPhasePayload({ phase: 'ready', trial: 3, holdMs: 5000 });
+    const parsed = JSON.parse(content) as { summary: string };
+    expect(parsed.summary).toBe('Isometric hold 3: get set.');
   });
 });
