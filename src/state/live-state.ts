@@ -496,7 +496,27 @@ export interface IdleRep {
   /** Concentric range-of-motion in metres (WA 2.0.0). No further conversion needed downstream. */
   rom: number | null;
   slot: string;
+  /**
+   * True once a channel event has reported this rep as idle — a flushed
+   * `idle_rep_summary`, or the per-occurrence `idle_rep` of verbose mode
+   * (VW-185). A published rep can no longer be un-reported by decrementing the
+   * pending batch, so auto-arm corrects it with `idle_rep_reclaimed` instead.
+   */
+  published: boolean;
 }
+
+/**
+ * How an auto-arm reclaim split across the reported/unreported boundary
+ * (VW-185). `pending` reps were still sitting in the batch accumulator and can
+ * simply leave it; `published` reps were already counted by an event on the
+ * wire and need a correcting one. The two always sum to the requested count.
+ */
+export interface IdleRepReclaim {
+  pending: number;
+  published: number;
+}
+
+const NO_RECLAIM: IdleRepReclaim = Object.freeze({ pending: 0, published: 0 });
 
 /** Maximum entries retained in the `idleReps` ring buffer. Monotonic
  *  `idleRepCount` continues past this cap so the PT skill can distinguish
@@ -1236,6 +1256,7 @@ export class LiveState {
       vCon: hasConcentric ? Number(getPhaseMeanVelocity(rep.concentric).toFixed(3)) : null,
       rom: hasConcentric ? getPhaseRangeOfMotion(rep.concentric) : null,
       slot,
+      published: false,
     };
     this.idleRepCount += 1;
     if (this.idleReps.length >= IDLE_REP_BUFFER_CAP) {
@@ -1290,12 +1311,32 @@ export class LiveState {
    * when auto-arm adopts reps that were already reported as idle, so the
    * `idle_rep_summary` for the window doesn't claim work that ended up inside
    * the set after all.
+   *
+   * Returns how the dropped entries split across the reported boundary
+   * (VW-185) so the caller can decrement its pending batch by the unreported
+   * ones and correct the wire for the rest. Entries the ring buffer already
+   * evicted count as `pending`: they predate the buffer cap by 20 reps, and
+   * treating them as pending keeps the decrement exactly as it was before.
    */
-  forgetIdleReps(count: number): void {
-    if (count <= 0) return;
+  forgetIdleReps(count: number): IdleRepReclaim {
+    if (count <= 0) return NO_RECLAIM;
     const kept = Math.max(0, this.idleReps.length - count);
+    const dropped = this.idleReps.slice(kept);
     this.idleReps = this.idleReps.slice(0, kept);
     this.idleRepCount = Math.max(0, this.idleRepCount - count);
+    const published = dropped.filter((entry) => entry.published).length;
+    return { pending: count - published, published };
+  }
+
+  /**
+   * Mark every ledger entry a channel event has now reported (VW-185). Called
+   * right after an `idle_rep_summary` flush and after each verbose `idle_rep`
+   * publish, so a later reclaim can tell what the consumer has already counted.
+   */
+  markIdleRepsPublished(): void {
+    this.idleReps = this.idleReps.map((entry) =>
+      entry.published ? entry : { ...entry, published: true },
+    );
   }
 
   /**

@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import type { Rep } from '@voltras/workout-analytics';
 
 import { buildSetStartedPayload } from './channel-payloads.js';
-import type { ActiveSet } from './live-state.js';
+import type { ActiveSet, IdleRepReclaim } from './live-state.js';
 import { isTailPairConsistent } from './rep-eligibility.js';
 import { getSlot, type ServerState } from './server-state.js';
 
@@ -43,17 +43,18 @@ const ADOPTED_WITH_CORROBORATION = 3;
  */
 const ADOPTED_WITHOUT_CORROBORATION = 2;
 
-export interface AutoArmResult {
-  armed: boolean;
-  /**
-   * Idle-rep ledger entries the armed set adopted. The caller subtracts these
-   * from its pending `idle_rep_summary` batch so the same rep isn't reported
-   * as lost work and counted into the set.
-   */
-  reclaimedIdleReps: number;
-}
+/**
+ * Outcome of one arm attempt. When it armed, `reclaimed` describes the
+ * idle-rep ledger entries the new set adopted: the caller subtracts the
+ * `pending` ones from its `idle_rep_summary` batch so the same rep isn't
+ * reported as lost work and counted into the set, and corrects the `published`
+ * ones on the wire (VW-185) because their summary already went out.
+ */
+export type AutoArmResult =
+  | { armed: false }
+  | { armed: true; setId: string; reclaimed: IdleRepReclaim };
 
-const NOT_ARMED: AutoArmResult = { armed: false, reclaimedIdleReps: 0 };
+const NOT_ARMED: AutoArmResult = { armed: false };
 
 /**
  * Open a set on `slotId` because an idle rep landed with a session active.
@@ -92,12 +93,11 @@ export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {
     ...(session.lifter !== undefined ? { lifter: session.lifter } : {}),
   });
   slot.live.adoptIdleTail(adopt);
-  const reclaimedIdleReps = adopt - ADOPTED_WITHOUT_CORROBORATION;
-  slot.live.forgetIdleReps(reclaimedIdleReps);
+  const reclaimed = slot.live.forgetIdleReps(adopt - ADOPTED_WITHOUT_CORROBORATION);
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
   publishAutoArmed(state, slotId, setId, startedAt, session.sessionId, session.lifter);
-  return { armed: true, reclaimedIdleReps };
+  return { armed: true, setId, reclaimed };
 }
 
 /**

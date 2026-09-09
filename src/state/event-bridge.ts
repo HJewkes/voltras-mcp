@@ -123,7 +123,13 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { selectSetReps } from './live-state.js';
-import type { LiveState, DeviceSnapshot, ActiveSet, FirmwareRep } from './live-state.js';
+import type {
+  LiveState,
+  DeviceSnapshot,
+  ActiveSet,
+  FirmwareRep,
+  IdleRepReclaim,
+} from './live-state.js';
 import {
   LiveSignalEmitter,
   mapPhase,
@@ -140,6 +146,7 @@ import {
   buildPendingDisconnectNotice,
   buildGuidedLoadStatePayload,
   buildIdleRepPayload,
+  buildIdleRepReclaimedPayload,
   buildIdleRepSummaryPayload,
   buildRepFinalizedPayload,
   buildSetTargetReachedPayload,
@@ -303,6 +310,40 @@ interface BufferedSample {
  * batch entirely and emits per-occurrence `idle_rep` events as before.
  */
 const IDLE_REP_SUMMARY_WINDOW_MS = 5_000;
+
+/**
+ * Settle an auto-arm reclaim against the idle reporting already on the wire
+ * (VW-185).
+ *
+ * Reps whose `idle_rep_summary` has not been flushed yet simply leave the
+ * pending batch — the consumer never learns they were idle. Reps a published
+ * summary (or a verbose `idle_rep`) already counted cannot be withdrawn that
+ * way: decrementing for them would drive the batch below the reps it actually
+ * holds and understate the next window. Those get `idle_rep_reclaimed`, which
+ * is the only signal in verbose mode, where there is no batch at all.
+ */
+function reconcileIdleReclaim(args: {
+  reclaimed: IdleRepReclaim;
+  batch: { count: number; sinceMs: number };
+  channels: ChannelPublisher;
+  slotId: string;
+  setId: string;
+  idleRepCount: number;
+}): void {
+  const { reclaimed, batch, channels, slotId, setId, idleRepCount } = args;
+  batch.count = Math.max(0, batch.count - reclaimed.pending);
+  if (reclaimed.published === 0) {
+    return;
+  }
+  channels.publish(
+    buildIdleRepReclaimedPayload({
+      slot: slotId,
+      count: reclaimed.published,
+      setId,
+      idleRepCount,
+    }),
+  );
+}
 
 /**
  * Peak CONCENTRIC force across the reps closed so far in a set (indices 0
@@ -651,15 +692,25 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // rep into it rather than reporting it as lost work. VW-181: reps
           // the set adopts retroactively leave the pending summary batch, so
           // the window never reports work that ended up inside the set.
+          // VW-185: once their summary has been published, leaving the batch
+          // is no longer possible and the correcting event carries the fix.
           const armed = autoArmSet(state, slotId);
           if (armed.armed) {
-            idleRepBatch.count = Math.max(0, idleRepBatch.count - armed.reclaimedIdleReps);
+            reconcileIdleReclaim({
+              reclaimed: armed.reclaimed,
+              batch: idleRepBatch,
+              channels: slotChannels,
+              slotId,
+              setId: armed.setId,
+              idleRepCount: live.idleRepCount,
+            });
             notifySlot(server, slotId, SET_URI, setUriForSlot);
             return;
           }
           const entry = live.recordIdleRep(idleRep, slotId);
           if (live.session?.verboseIdleReps === true) {
             slotChannels.publish(buildIdleRepPayload(entry, live.idleRepCount));
+            live.markIdleRepsPublished();
           } else {
             if (idleRepBatch.count === 0) {
               idleRepBatch.sinceMs = Date.now();
@@ -1025,6 +1076,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       windowMs: IDLE_REP_SUMMARY_WINDOW_MS,
     });
     slotChannels.publish(payload);
+    // VW-185: the ledger entries this summary counted are now on the wire, so
+    // a later auto-arm reclaim has to correct them rather than un-count them.
+    live.markIdleRepsPublished();
     idleRepBatch.count = 0;
     idleRepBatch.sinceMs = 0;
   }, IDLE_REP_SUMMARY_WINDOW_MS);
