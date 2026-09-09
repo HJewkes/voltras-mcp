@@ -48,7 +48,7 @@ import { dashboardStore, type HistoricalPatch } from './store';
 import { createLiveStreamController } from './live-stream';
 import { LivePagePanel } from './panels/LivePagePanel';
 import { readVariantOverride } from './live-page/stage-variant';
-import { parseRoute, type Route } from './routing';
+import { parseRoute } from './routing';
 import { DashboardChrome } from './panels/DashboardChrome';
 import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
@@ -136,24 +136,31 @@ function useDashboardController(): void {
   );
 }
 
-/** Subscribe to hash changes. The route is the single source of which page shows. */
-function useHashRoute(): Route {
-  const [route, setRoute] = React.useState(() => parseRoute(window.location.hash));
+/**
+ * Subscribe to hash changes and mirror them into the store's `ui.route` slice — the
+ * single source of which page shows, shared by the shell chrome and the routed page
+ * below (see `store.ts`'s `UiSlice`). The store already seeds `route` from the hash at
+ * module load, so this only needs to fire on subsequent changes.
+ */
+function useHashRoute(): void {
   useEffect(() => {
-    const onChange = (): void => setRoute(parseRoute(window.location.hash));
+    const onChange = (): void =>
+      dashboardStore.getState().setRoute(parseRoute(window.location.hash));
     window.addEventListener('hashchange', onChange);
     return () => window.removeEventListener('hashchange', onChange);
   }, []);
-  return route;
 }
 
-/** The page a route renders inside the shared chrome. */
-function RoutePage(props: { route: Route }): React.JSX.Element | null {
-  switch (props.route.name) {
+/** The page the current route renders inside the shared chrome. Reads the route directly
+ *  off the store rather than taking it as a prop — the store is already the route's
+ *  source of truth by the time this mounts. */
+function RoutePage(): React.JSX.Element | null {
+  const route = useStore(dashboardStore, (s) => s.route);
+  switch (route.name) {
     case 'plan':
       return <PlanBuilderPage />;
     case 'summary':
-      return <SessionSummaryPage sessionId={props.route.sessionId} />;
+      return <SessionSummaryPage sessionId={route.sessionId} />;
     case 'live':
       return null;
   }
@@ -165,14 +172,15 @@ function App(): React.JSX.Element {
   // otherwise a live decision `LivePagePanel` makes from the snapshot on every
   // frame (VMCP-04.07). Read once — it cannot change without a reload.
   const [variantOverride] = React.useState(() => readVariantOverride(window.location.search));
-  const route = useHashRoute();
+  useHashRoute();
+  const route = useStore(dashboardStore, (s) => s.route);
   // The live page owns its own chrome (it needs the non-scrolling wall layout and
   // renders a ColdBootView inside the shell); the planner routes share the same
   // `DashboardChrome` with scrolling turned on.
   if (route.name === 'live') return <LivePagePanel variantOverride={variantOverride} />;
   return (
     <DashboardChrome route={route} scroll>
-      <RoutePage route={route} />
+      <RoutePage />
     </DashboardChrome>
   );
 }

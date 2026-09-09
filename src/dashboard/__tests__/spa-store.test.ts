@@ -264,3 +264,33 @@ describe('dashboardStore — live slice isolation', () => {
     expect(after.prescription).toBe(before.prescription);
   });
 });
+
+describe('dashboardStore — ui slice (route, VMCP-03.02 part 1)', () => {
+  afterEach(() => {
+    dashboardStore.getState().setRoute({ name: 'live' });
+  });
+
+  it('defaults to the live route with no window (SSR/test env)', () => {
+    expect(dashboardStore.getState().route).toEqual({ name: 'live' });
+  });
+
+  it('setRoute updates the slice, and two independent readers see the same value', () => {
+    dashboardStore.getState().setRoute({ name: 'plan' });
+    // Stands in for `main.tsx`'s two consumers (the shell chrome and the routed
+    // page) each pulling their own snapshot of the store — both must land on the
+    // same route the `hashchange` listener just wrote, not a copy each latched
+    // independently.
+    const shellRead = dashboardStore.getState().route;
+    const pageRead = dashboardStore.getState().route;
+    expect(shellRead).toEqual({ name: 'plan' });
+    expect(pageRead).toBe(shellRead);
+  });
+
+  it('setRoute does not touch other slices', () => {
+    dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);
+    const before = dashboardStore.getState();
+    dashboardStore.getState().setRoute({ name: 'summary', sessionId: 'latest' });
+    const after = dashboardStore.getState();
+    expect(after.snapshot).toBe(before.snapshot);
+  });
+});
