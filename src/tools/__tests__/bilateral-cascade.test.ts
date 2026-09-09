@@ -65,6 +65,10 @@ vi.mock('../../state/event-bridge.js', () => ({
 const { registerDeviceTools } = await import('../device-tools.js');
 const { ModeRevertGuard } = await import('../../state/mode-revert-guard.js');
 type ModeRevertGuard = InstanceType<typeof ModeRevertGuard>;
+const { makeFakeLease, makeRecordingChannels } =
+  await import('../../state/__tests__/fixtures/lease-fence.js');
+type FakeLease = ReturnType<typeof makeFakeLease>;
+type RecordingChannels = ReturnType<typeof makeRecordingChannels>;
 
 // ── Fakes ────────────────────────────────────────────────────────────────
 
@@ -209,6 +213,9 @@ function makeSlot(slotId: string, connected = true): FakeSlot {
 interface State {
   manager: { devices: unknown[]; scan: Mock; connect: Mock; disconnect: Mock; isConnected: Mock };
   slots: Map<string, FakeSlot>;
+  // VMCP-01.65: the cascade takes a lease fence, which reads both.
+  lease: FakeLease;
+  channels: RecordingChannels;
 }
 
 function makeState(slots: Array<[string, FakeSlot]>): State {
@@ -221,6 +228,8 @@ function makeState(slots: Array<[string, FakeSlot]>): State {
       isConnected: vi.fn(() => false),
     },
     slots: new Map(slots),
+    lease: makeFakeLease(),
+    channels: makeRecordingChannels(),
   };
 }
 

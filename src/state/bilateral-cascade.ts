@@ -34,6 +34,10 @@
 //     short-circuits without firing. Setters that were never attempted are
 //     absent from the `applied` map — including every setter behind a mode
 //     write whose echo timed out, in either branch.
+//   * VMCP-01.65 — an optional write-lease fence is re-checked before every
+//     setter and again after the mode-echo wait. A force-steal that lands
+//     during the wait aborts the whole cascade with LEASE_LOST, and no slot
+//     issues a setter it had not already started.
 //
 // The helper does NOT validate slots — the caller is expected to verify each
 // slot id is bound BEFORE entering this function (so unbound-slot errors
@@ -43,6 +47,7 @@
 import type { TrainingMode, VoltraClient } from '@voltras/node-sdk';
 
 import type { CoercionWatch } from './coercion-watch.js';
+import type { LeaseFence } from './lease-fence.js';
 import { MODE_REVERT_WINDOW_MS, type ModeRevertGuard } from './mode-revert-guard.js';
 
 /**
@@ -66,6 +71,15 @@ export interface CascadeOptions {
    */
   modeEchoTimeoutMs?: number;
   modeEchoPollMs?: number;
+  /**
+   * VMCP-01.65: the write-lease fence, re-checked before every setter and
+   * again after the mode-echo wait. When another client takes the device
+   * mid-cascade, the setters that have not fired yet never do — including
+   * every setter on a slot whose own pipeline had not started. Optional for
+   * the same forward-compatibility reason as `coercionWatch`: without one the
+   * cascade behaves exactly as it did before.
+   */
+  fence?: LeaseFence;
 }
 
 /**
@@ -202,6 +216,11 @@ async function runSlotPlan(
   const applied: SlotResult['applied'] = {};
   const result: SlotResult = { slot: target.slotId, applied };
 
+  // VMCP-01.65: nothing may be written on this slot if the device already
+  // changed hands. The lease guard checked at call entry; a two-slot cascade
+  // can still reach here after a steal landed while another slot awaited.
+  options.fence?.check(target.slotId);
+
   // VW-162: the mode write runs alone and its echo is waited for before
   // anything else touches the slot, so the other setters cannot race it into
   // a firmware fallback.
@@ -212,8 +231,38 @@ async function runSlotPlan(
     if (gate.echoedAfterMs !== undefined) result.echoedAfterMs = gate.echoedAfterMs;
     if (!gate.proceed) return result;
   }
+  // The echo wait above is the longest await in the cascade and the one a
+  // force-steal most often lands inside. Re-check before the fan-out.
+  options.fence?.check(target.slotId);
 
-  const steps = buildFanOutSteps(target, plan);
+  await runFanOut(target, buildFanOutSteps(target, plan), applied, {
+    abortFlag,
+    abortOnFirstFailure,
+    options,
+  });
+  return result;
+}
+
+/**
+ * Run the weight/eccentric/chains steps for one slot, sequentially under
+ * `abortOnFirstFailure` and concurrently otherwise, recording each outcome
+ * into `applied`.
+ *
+ * The fence check sits OUTSIDE `runSetter` on purpose: a lost lease must fail
+ * the whole tool with LEASE_LOST, not read as one setter that happened to
+ * reject.
+ */
+async function runFanOut(
+  target: SlotTarget,
+  steps: CascadeStep[],
+  applied: SlotResult['applied'],
+  ctx: { abortFlag: AbortFlag; abortOnFirstFailure: boolean; options: CascadeOptions },
+): Promise<void> {
+  const { abortFlag, abortOnFirstFailure, options } = ctx;
+  const record = (step: CascadeStep, outcome: SetterOutcome): void => {
+    applied[step.key] = outcome;
+    maybeRegisterCoercion(target.coercionWatch, step, outcome);
+  };
   if (abortOnFirstFailure) {
     // Sequential within a slot so the next setter can observe the prior
     // one's failure and skip — concurrency would defeat the abort
@@ -221,23 +270,19 @@ async function runSlotPlan(
     // time the first rejection settles.
     for (const step of steps) {
       if (abortFlag.aborted) break;
-      const outcome = await runSetter(step.invoke, step.value, true, abortFlag);
-      applied[step.key] = outcome;
-      maybeRegisterCoercion(target.coercionWatch, step, outcome);
+      options.fence?.check(target.slotId);
+      record(step, await runSetter(step.invoke, step.value, true, abortFlag));
     }
-  } else {
-    // Concurrent within a slot — `runSetter` converts rejections into
-    // SetterOutcome records, so the wrapping `Promise.all` cannot itself
-    // reject.
-    await Promise.all(
-      steps.map(async (step) => {
-        const outcome = await runSetter(step.invoke, step.value, false, abortFlag);
-        applied[step.key] = outcome;
-        maybeRegisterCoercion(target.coercionWatch, step, outcome);
-      }),
-    );
+    return;
   }
-  return result;
+  // Concurrent within a slot — `runSetter` converts rejections into
+  // SetterOutcome records, so the wrapping `Promise.all` cannot itself reject.
+  await Promise.all(
+    steps.map(async (step) => {
+      options.fence?.check(target.slotId);
+      record(step, await runSetter(step.invoke, step.value, false, abortFlag));
+    }),
+  );
 }
 
 /** The weight/eccentric/chains steps — everything that fans out after mode. */
