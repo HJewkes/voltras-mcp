@@ -220,6 +220,16 @@ export const DeviceStartGuidedLoadInput = z.object({
    */
   skipUnload: z.boolean().optional(),
   /**
+   * Switch the device into Weight Training as part of engaging guided load
+   * (VMCP-02.90). Default `false`: guided load only enters from Weight
+   * Training, and from any other selectable mode the tool refuses with
+   * `GUIDED_LOAD_MODE_MISMATCH` rather than change a mode the lifter chose on
+   * the unit. Set to `true` to have the tool make the switch, wait for the
+   * device to echo it, and then proceed; an echo that never lands fails with
+   * `MODE_ECHO_TIMEOUT` and no trigger is written.
+   */
+  autoSwitchMode: z.boolean().optional(),
+  /**
    * Exercise identity for the session the bridge auto-creates on `armed`
    * (VMCP-02.13). When supplied — and no session is already active on the
    * slot — the auto-session inherits this name/id instead of the generic
