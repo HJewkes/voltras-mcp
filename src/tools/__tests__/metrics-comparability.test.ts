@@ -111,6 +111,11 @@ function makeState(setsBySession: Record<string, StoredSet[]>): ServerState {
     ),
     getBaseline: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
+    // VW-211: the comparability v2 subject writers read these two for
+    // `exerciseIntroducedAt`/`trackedTrainingMonths`. Empty/null are the
+    // honest defaults — no test here asserts on those two fields' content.
+    getSetsForExercise: vi.fn(async () => []),
+    getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -200,6 +205,71 @@ describe('session.readiness comparability (VW-94)', () => {
     // The pipeline still answered — the fallback baseline set was used.
     expect(payload.observed.baselineVelocityMps).toBe(0.4);
   });
+
+  it('fills all four v2 subject fields with real readings, not "unrecorded" (VW-211)', async () => {
+    const state = makeState({
+      'sess-target': [
+        makeSet('target-1', 'sess-target', { startedAt: '2026-09-01T00:00:00.000Z' }),
+        makeSet('target-2', 'sess-target', { startedAt: '2026-09-01T00:05:00.000Z' }),
+      ],
+      'sess-baseline': [makeSet('base-1', 'sess-baseline', { lifter: 'Jordan' })],
+    });
+    // Keyed by lifter so the owner's target and Jordan's baseline set resolve
+    // DIFFERENT contexts despite sharing an exerciseId — the same way two
+    // real lifters' histories would.
+    state.store.getSetsForExercise = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? [makeSet('hist-jordan', 'sess-old-j', { startedAt: '2026-06-01T00:00:00.000Z' })]
+        : [makeSet('hist-owner', 'sess-old-o', { startedAt: '2026-01-01T00:00:00.000Z' })],
+    );
+    state.store.getSessionDateSpan = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? { first: '2026-08-01T00:00:00.000Z', last: null }
+        : { first: '2025-01-01T00:00:00.000Z', last: null },
+    );
+    state.store.listSessions = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? [{ id: 'sess-j', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' }]
+        : [
+            { id: 'sess-o1', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' },
+            { id: 'sess-o2', startedAt: '2026-08-10T00:00:00.000Z', exerciseId: 'shoulder-press' },
+          ],
+    );
+    state.exercises.getById = vi.fn((id: string) =>
+      id === 'bench-press' || id === 'incline-press'
+        ? ({ muscleGroups: ['chest'] } as never)
+        : id === 'shoulder-press'
+          ? ({ muscleGroups: ['shoulders'] } as never)
+          : undefined,
+    );
+
+    const payload = (await compute(state, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+    })) as ReadinessPayload;
+
+    const reasons = (
+      payload.comparability.comparedTo?.reasons ??
+      payload.comparability.nearest?.reasons ??
+      []
+    ).join(' ');
+
+    // profile (b): target's own first set is index 1 of 2, compared against
+    // baseline's only set (also index 1) — a real position, not "unrecorded".
+    expect(reasons).toContain('both sides are set 1 of their exercise');
+    // swap (e): owner vs Jordan resolve different programme-entry dates.
+    expect(reasons).toContain(
+      'different programme entry date for this exercise (2026-01-01T00:00:00.000Z vs 2026-06-01T00:00:00.000Z)',
+    );
+    expect(reasons).not.toContain('neither set records a programme entry date');
+    // corroboration (d): both sides see 2 chest exercises (bench + incline).
+    expect(reasons).toContain('2 corroborating exercises for this muscle (2 vs 2)');
+    expect(reasons).not.toContain('neither set records how many exercises');
+    // trainingAge (f): Jordan's 1 tracked month is inside the neural window.
+    expect(reasons).toContain('tracked training in months: 19 vs 1');
+    expect(reasons).not.toContain('neither set records how many months');
+  });
 });
 
 interface StrengthPayload {
@@ -260,5 +330,73 @@ describe('session.strength comparability (VW-94)', () => {
 
     expect(payload.comparability.noValidComparison).toBe(true);
     expect(payload.comparability.nearest?.reasons.join(' ')).toContain('different physical setup');
+  });
+
+  it('fills all four v2 subject fields with real readings, not "unrecorded" (VW-211)', async () => {
+    const state = makeState({
+      'sess-S': [
+        makeSet('s1', 'sess-S', { weightLbs: 140 }),
+        makeSet('s2', 'sess-S', {
+          weightLbs: 170,
+          startedAt: '2026-09-01T00:05:00.000Z',
+          lifter: 'Jordan',
+        }),
+      ],
+    });
+    // Keyed by lifter so the owner's s1 and Jordan's s2 resolve DIFFERENT
+    // contexts despite sharing an exerciseId — as two real lifters would.
+    state.store.getSetsForExercise = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? [makeSet('hist-jordan', 'sess-old-j', { startedAt: '2026-06-01T00:00:00.000Z' })]
+        : [makeSet('hist-owner', 'sess-old-o', { startedAt: '2026-01-01T00:00:00.000Z' })],
+    );
+    state.store.getSessionDateSpan = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? { first: '2026-08-01T00:00:00.000Z', last: null }
+        : { first: '2025-01-01T00:00:00.000Z', last: null },
+    );
+    state.store.listSessions = vi.fn(async (filter: { lifter?: string }) =>
+      filter.lifter === 'Jordan'
+        ? [{ id: 'sess-j', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' }]
+        : [
+            { id: 'sess-o1', startedAt: '2026-08-05T00:00:00.000Z', exerciseId: 'incline-press' },
+            { id: 'sess-o2', startedAt: '2026-08-10T00:00:00.000Z', exerciseId: 'shoulder-press' },
+          ],
+    );
+    state.exercises.getById = vi.fn((id: string) =>
+      id === 'bench-press' || id === 'incline-press'
+        ? ({ muscleGroups: ['chest'] } as never)
+        : id === 'shoulder-press'
+          ? ({ muscleGroups: ['shoulders'] } as never)
+          : undefined,
+    );
+
+    const payload = (await compute(state, {
+      pipeline: 'session.strength',
+      sessionId: 'sess-S',
+    })) as StrengthPayload;
+
+    expect(payload.comparability.anchorSetId).toBe('s2');
+    const reasons = (
+      payload.comparability.comparedTo?.reasons ??
+      payload.comparability.nearest?.reasons ??
+      []
+    ).join(' ');
+
+    // profile (b): the anchor (s2) is the session's SECOND set by startedAt,
+    // compared against s1's first — a real position, not "unrecorded".
+    expect(reasons).toContain('set 2 compared against set 1 of their exercise');
+    // swap (e): owner vs Jordan resolve different programme-entry dates.
+    expect(reasons).toContain(
+      'different programme entry date for this exercise (2026-06-01T00:00:00.000Z vs 2026-01-01T00:00:00.000Z)',
+    );
+    expect(reasons).not.toContain('neither set records a programme entry date');
+    // corroboration (d): Jordan's own exercise (bench-press) sees 2 chest
+    // exercises; s1's owner history sees the same 2.
+    expect(reasons).toContain('2 corroborating exercises for this muscle (2 vs 2)');
+    expect(reasons).not.toContain('neither set records how many exercises');
+    // trainingAge (f): Jordan's 1 tracked month is inside the neural window.
+    expect(reasons).toContain('tracked training in months: 1 vs 19');
+    expect(reasons).not.toContain('neither set records how many months');
   });
 });

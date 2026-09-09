@@ -112,6 +112,10 @@ import {
 } from '../analytics/rep-faults.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import {
+  buildComparabilitySubjectGroups,
+  type ComparabilitySubjectFetchers,
+} from '../analytics/comparability-subject.js';
+import {
   medianEligibleRom,
   readRomIntegrity,
   type RomIntegrityReading,
@@ -293,7 +297,7 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // only a like-vs-like reading while those sets share a context. The
       // estimate is unchanged; `comparability` says whether it should be
       // trusted as one movement's number or read as a blend.
-      return { ...estimate, comparability: strengthComparability(sets) };
+      return { ...estimate, comparability: await strengthComparability(state, sets) };
     }
 
     case 'quality.rep': {
@@ -345,9 +349,16 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // comparable the first set is still used and the response says so; a
       // readiness pipeline that answered with silence would be a worse product
       // than one that answers with a caveat.
-      const comparability = chooseComparisonPartner(target[0]!, baseline);
-      const baselineSet = partnerOrFirst(comparability, baseline);
-      const actualVel = getSetFirstRepVelocity(toAnalyticsSet(target[0]!));
+      //
+      // VW-211: `target` and `baseline` are each one exercise's sets within
+      // one session, so they enrich as two separate groups.
+      const [enrichedTarget, enrichedBaseline] = await buildComparabilitySubjectGroups(
+        [target, baseline],
+        comparabilitySubjectFetchers(state),
+      );
+      const comparability = chooseComparisonPartner(enrichedTarget[0]!, enrichedBaseline);
+      const baselineSet = partnerOrFirst(comparability, enrichedBaseline);
+      const actualVel = getSetFirstRepVelocity(toAnalyticsSet(enrichedTarget[0]!));
       const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baselineSet));
       const observed = { actualVelocityMps: actualVel, baselineVelocityMps: baselineVel };
 
@@ -355,7 +366,10 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // against their own norm, and it is only supportable once the exercise
       // baseline is calibrated. The raw velocities are measurements and always
       // ship; the interpreted estimate is what the gate withholds.
-      const gate = await readinessGate(state, input.baselineSessionId, [...target, ...baseline]);
+      const gate = await readinessGate(state, input.baselineSessionId, [
+        ...enrichedTarget,
+        ...enrichedBaseline,
+      ]);
       const result: GatedReadinessResult = {
         readiness: gate.activation === 'withheld' ? null : computeReadiness(actualVel, baselineVel),
         observed,
@@ -1187,13 +1201,45 @@ function partnerOrFirst(report: ComparabilityReport, candidates: StoredSet[]): S
  * like-vs-like with its heaviest set, which is the set the 1RM estimate leans
  * on hardest?
  */
-function strengthComparability(
+async function strengthComparability(
+  state: ServerState,
   sets: readonly StoredSet[],
-): ComparabilityReport & { anchorSetId: string } {
-  const anchor = sets.reduce((top, set) =>
+): Promise<ComparabilityReport & { anchorSetId: string }> {
+  const [subjects] = await buildComparabilitySubjectGroups(
+    [sets],
+    comparabilitySubjectFetchers(state),
+  );
+  const anchor = subjects.reduce((top, set) =>
     (set.weightLbs ?? 0) > (top.weightLbs ?? 0) ? set : top,
   );
-  return { anchorSetId: anchor.id, ...chooseComparisonPartner(anchor, sets) };
+  return { anchorSetId: anchor.id, ...chooseComparisonPartner(anchor, subjects) };
+}
+
+/**
+ * VW-211: wires the comparability v2 subject fields' store reads to this
+ * server's store and exercise catalog. `getSetsForExercise`/
+ * `getSessionDateSpan`/`listSessions` are called unbounded (no `from`/`to`)
+ * because `exerciseIntroducedAt` and `trackedTrainingMonths` name the
+ * lifter's absolute first set/session, not a windowed one — see
+ * `comparability-subject.ts`'s header for why the corroboration count is
+ * likewise unbounded.
+ */
+function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectFetchers {
+  return {
+    getSetsForExercise: (exerciseId, lifter) =>
+      state.store.getSetsForExercise({
+        userId: LOCAL_USER_ID,
+        exerciseId,
+        ...(lifter !== undefined ? { lifter } : {}),
+      }),
+    getFirstSessionStartedAt: async (lifter) =>
+      (await state.store.getSessionDateSpan(lifter !== undefined ? { lifter } : {})).first,
+    getLifterSessionExerciseIds: async (lifter) =>
+      (await state.store.listSessions(lifter !== undefined ? { lifter } : {})).map(
+        (s) => s.exerciseId,
+      ),
+    primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
+  };
 }
 
 /**
