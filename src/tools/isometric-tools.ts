@@ -1,11 +1,16 @@
-// `isometric.measure_max` and `isometric.measure_imbalance` tools.
+// `isometric.measure_hold`, `isometric.measure_max` and
+// `isometric.measure_imbalance` tools.
 //
-// These tools drive a multi-trial isometric assessment protocol against a
-// connected Voltra device (or pair of devices for the bilateral imbalance
-// flow). The pure analysis math lives in `src/state/isometric-protocol.ts`;
-// this module owns the protocol orchestration: subscribe to the SDK's
-// `onFrame` telemetry stream for each trial window, accumulate samples,
-// rest between trials, and assemble the response.
+// These tools drive the isometric assessment protocol against a connected
+// Voltra device (or pair of devices for the bilateral imbalance flow). The
+// pure analysis math lives in `src/state/isometric-protocol.ts`; this module
+// owns the protocol orchestration: subscribe to the SDK's `onFrame` telemetry
+// stream for each hold window, accumulate samples, rest between trials, and
+// assemble the response.
+//
+// `captureSingleHold` is the one unit all three share: one hold, one analysis,
+// four `isometric_phase` pushes. `measure_hold` calls it once and returns;
+// `measure_max` and `measure_imbalance` loop it with the protocol rests.
 //
 // Telemetry subscription pattern:
 //
@@ -42,6 +47,7 @@ import { log } from '../logger.js';
 import type { StoredIsometricMeasurement, StoredIsometricSideMeasurement } from '../store/types.js';
 
 import {
+  IsometricMeasureHoldInput,
   IsometricMeasureMaxInput,
   IsometricMeasureImbalanceInput,
   IsometricMeasureImbalanceInputRefined,
@@ -53,10 +59,12 @@ import {
   analyzeTrial,
   computeImbalance,
   decideTestOrder,
+  PEAK_AFTER_MS,
   type ForceSample,
   type SideAnalysis,
   type TrialAnalysis,
 } from '../state/isometric-protocol.js';
+import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channel-payloads.js';
 import { wrapHandler } from './helpers.js';
 
 class ToolError extends Error {
@@ -71,6 +79,25 @@ class ToolError extends Error {
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
 }
+
+const MEASURE_HOLD_DESCRIPTION = [
+  'Measure ONE isometric hold on a device slot and return immediately.',
+  'Runs a single max-effort hold (default 5s) — no trial loop, no rest wait —',
+  'so a coach can pace the assessment turn by turn instead of blocking through',
+  'a whole protocol. Call it again for the next hold when the athlete is ready.',
+  '',
+  'Caller must pre-configure the device into Isometric mode and set resistance',
+  'to a low value before invoking; this tool does NOT change device settings.',
+  '',
+  'Returns the per-hold analysis (peak and plateau force, plateau window, the',
+  'validity flags) plus peakForceLbs at the top level, which is readable even',
+  'when the hold fails a validity gate. Phase pushes (isometric_phase: ready,',
+  'go, hold, stop) are emitted on the channel so a dashboard or cue surface can',
+  'signal the athlete while the hold runs.',
+  '',
+  'For the full 3-trial protocol with rests and best-2-of-N aggregation, use',
+  'isometric.measure_max; for bilateral asymmetry, isometric.measure_imbalance.',
+].join(' ');
 
 const MEASURE_MAX_DESCRIPTION = [
   'Run the isometric maximum-force assessment protocol on one device slot.',
@@ -122,6 +149,13 @@ export function registerIsometricTools(
 ): void {
   install(
     placeholders,
+    'isometric.measure_hold',
+    IsometricMeasureHoldInput,
+    wrapHandler(IsometricMeasureHoldInput, (input) => measureHold(state, input)),
+    MEASURE_HOLD_DESCRIPTION,
+  );
+  install(
+    placeholders,
     'isometric.measure_max',
     IsometricMeasureMaxInput,
     wrapHandler(IsometricMeasureMaxInput, (input) => measureMax(state, input)),
@@ -156,6 +190,13 @@ function install<S extends z.ZodObject>(
   tool.update(updates as never);
 }
 
+interface MeasureHoldInput {
+  slot?: string | undefined;
+  side?: 'left' | 'right' | undefined;
+  holdMs: number;
+  label?: string | undefined;
+}
+
 interface MeasureMaxInput {
   slot?: string | undefined;
   durationMs: number;
@@ -173,6 +214,24 @@ interface MeasureImbalanceInput {
   betweenSidesRestMs: number;
   testNonDominantFirst: boolean;
   dominantSide: 'left' | 'right' | 'unknown';
+}
+
+interface MeasureHoldResult {
+  ok: true;
+  slot: string;
+  /** Limb the caller declared for this hold; null when unstated. */
+  side: 'left' | 'right' | null;
+  /** Caller's free-text tag for the hold; null when unstated. */
+  label: string | null;
+  holdMs: number;
+  trial: TrialAnalysis;
+  /**
+   * Highest instantaneous force in the hold. Echoes `trial.peakForceLbs` at
+   * the top level because it is the number worth reading when the hold fails
+   * a validity gate — a coach still wants to know what the athlete pulled.
+   */
+  peakForceLbs: number;
+  totalElapsedMs: number;
 }
 
 interface MeasureMaxResult {
@@ -225,6 +284,48 @@ interface MeasureImbalanceResult {
  * them apart.
  */
 const ISOMETRIC_ANALYSIS_VERSION = 1;
+
+/**
+ * Trial index reported for a one-hold run. `analyzeTrial` numbers trials
+ * from 1 within a side, and a single hold is trial 1 of its own run — the
+ * caller sequences the holds, so the server has no run to count within.
+ */
+const SINGLE_HOLD_TRIAL_INDEX = 1;
+
+/**
+ * One hold, then return (VW-154). The 2026-08-01 bench found the multi-trial
+ * tools unusable for a human-paced sitting: the call blocks through both the
+ * holds and the 90s rests, so permission prompts land mid-hold and the athlete
+ * gets no go/stop signal. This runs exactly one capture and hands pacing back
+ * to the caller between holds.
+ *
+ * Nothing is persisted: a single hold is not an assessment. The trend series
+ * comes from `isometric.measure_imbalance`, which aggregates over its trials
+ * before it writes.
+ */
+async function measureHold(
+  state: ServerState,
+  input: MeasureHoldInput,
+): Promise<MeasureHoldResult> {
+  const slotId = input.slot ?? PRIMARY_SLOT;
+  const startedAt = Date.now();
+  const trial = await captureSingleHold(state, slotId, {
+    holdMs: input.holdMs,
+    trial: SINGLE_HOLD_TRIAL_INDEX,
+    ...(input.side !== undefined ? { side: input.side } : {}),
+    ...(input.label !== undefined ? { label: input.label } : {}),
+  });
+  return {
+    ok: true,
+    slot: slotId,
+    side: input.side ?? null,
+    label: input.label ?? null,
+    holdMs: input.holdMs,
+    trial,
+    peakForceLbs: trial.peakForceLbs,
+    totalElapsedMs: Date.now() - startedAt,
+  };
+}
 
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
@@ -395,6 +496,14 @@ interface RunSideResult {
   analysis: SideAnalysis;
 }
 
+/** What one hold needs: how long, which hold of the run, and how to name it. */
+interface SingleHoldOptions {
+  holdMs: number;
+  trial: number;
+  side?: 'left' | 'right' | undefined;
+  label?: string | undefined;
+}
+
 async function runSideProtocol(
   state: ServerState,
   slotId: string,
@@ -405,8 +514,9 @@ async function runSideProtocol(
 
   const trialAnalyses: TrialAnalysis[] = [];
   for (let i = 0; i < opts.trials; i++) {
-    const samples = await captureTrial(slot.client, opts.durationMs);
-    trialAnalyses.push(analyzeTrial(samples, i + 1));
+    trialAnalyses.push(
+      await captureSingleHold(state, slotId, { holdMs: opts.durationMs, trial: i + 1 }),
+    );
     if (i < opts.trials - 1) {
       await sleep(opts.restMs);
     }
@@ -415,19 +525,89 @@ async function runSideProtocol(
 }
 
 /**
- * Subscribe to the slot client's `onFrame` for `durationMs`, accumulating
- * `{ tMs, forceLbs }` samples relative to the trial start. Always removes
- * the listener on completion (the `finally` block invokes the unsubscribe
- * handle returned by `onFrame`) so the bridge's other subscribers don't
- * compete with stale isometric listeners after the trial ends.
+ * Capture ONE hold on `slotId` and analyze it — the single unit every
+ * isometric flow is built from. Subscribes to the slot client's `onFrame`
+ * for `holdMs`, detaches, and hands the samples to `analyzeTrial`.
+ *
+ * Never rests and never loops: the multi-trial tools own the trial loop and
+ * the rest between trials, so a caller that wants one human-paced hold
+ * (`isometric.measure_hold`) gets exactly that and nothing else.
  */
-async function captureTrial(
-  client: { onFrame: (cb: (frame: TelemetryFrame) => void) => () => void },
-  durationMs: number,
-): Promise<ForceSample[]> {
+async function captureSingleHold(
+  state: ServerState,
+  slotId: string,
+  opts: SingleHoldOptions,
+): Promise<TrialAnalysis> {
+  const slot = getSlot(state, slotId);
+  ensureSlotConnected(slotId, slot);
+  const publishPhase = phasePublisher(state, slotId, opts);
+
+  publishPhase('ready');
   const samples: ForceSample[] = [];
+  const unsubscribe = subscribeForceSamples(slot.client, samples);
+  publishPhase('go');
+  try {
+    await waitHoldWindow(opts.holdMs, () => publishPhase('hold'));
+  } finally {
+    if (typeof unsubscribe === 'function') {
+      unsubscribe();
+    }
+  }
+  publishPhase('stop');
+  return analyzeTrial(samples, opts.trial);
+}
+
+/**
+ * Wait out the hold, calling `onHold` once the ramp-up is over. Splitting the
+ * wait at `PEAK_AFTER_MS` — the point at which a peak starts counting toward
+ * validity — is what gives the `hold` phase its meaning: before it the athlete
+ * is still building force, after it they are holding the plateau the analysis
+ * measures. The two sleeps sum to `holdMs`, so the capture window is unchanged.
+ */
+async function waitHoldWindow(holdMs: number, onHold: () => void): Promise<void> {
+  const rampMs = Math.min(PEAK_AFTER_MS, holdMs);
+  await sleep(rampMs);
+  onHold();
+  await sleep(holdMs - rampMs);
+}
+
+/**
+ * Bind a phase-push emitter for one hold. Publishing through
+ * `channels.forSlot` tags every push with the originating slot (and the
+ * emit-time `at`), which is what lets a bilateral surface tell a left-arm
+ * hold from a right-arm one.
+ */
+function phasePublisher(
+  state: ServerState,
+  slotId: string,
+  opts: SingleHoldOptions,
+): (phase: IsometricPhase) => void {
+  const channels = state.channels.forSlot(slotId);
+  return (phase: IsometricPhase): void => {
+    channels.publish(
+      buildIsometricPhasePayload({
+        phase,
+        trial: opts.trial,
+        holdMs: opts.holdMs,
+        ...(opts.side !== undefined ? { side: opts.side } : {}),
+        ...(opts.label !== undefined ? { label: opts.label } : {}),
+      }),
+    );
+  };
+}
+
+/**
+ * Push `{ tMs, forceLbs }` samples into `samples` for every frame the client
+ * emits, relative to subscription time. Returns the unsubscribe handle;
+ * callers invoke it in a `finally` so the bridge's other subscribers don't
+ * compete with stale isometric listeners after the hold ends.
+ */
+function subscribeForceSamples(
+  client: { onFrame: (cb: (frame: TelemetryFrame) => void) => () => void },
+  samples: ForceSample[],
+): () => void {
   const startMs = Date.now();
-  const unsubscribe = client.onFrame((frame: TelemetryFrame) => {
+  return client.onFrame((frame: TelemetryFrame) => {
     // Same tenths→lb conversion as the main telemetry bridge, applied here
     // because the isometric flow builds its own force samples and never routes
     // through event-bridge. CALIBRATION CAVEAT: the isometric assessment's
@@ -439,14 +619,6 @@ async function captureTrial(
       forceLbs: Math.abs(frame.force) / FRAME_FORCE_TENTHS_PER_LB,
     });
   });
-  try {
-    await sleep(durationMs);
-  } finally {
-    if (typeof unsubscribe === 'function') {
-      unsubscribe();
-    }
-  }
-  return samples;
 }
 
 function ensureSlotConnected(slotId: string, slot: ReturnType<typeof getSlot>): void {

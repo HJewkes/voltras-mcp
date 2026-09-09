@@ -20,12 +20,42 @@ export const DEFAULT_REST_MS = 90_000;
 export const DEFAULT_BETWEEN_SIDES_REST_MS = 120_000;
 
 /**
+ * Hold duration for one trial, shared by every isometric tool so a single
+ * hold is measured under the same window as a trial inside a multi-trial
+ * run. 3–10s: IMTP literature is 3–5s; allow up to 10s for
+ * strength-endurance variants.
+ */
+const HoldDurationMs = z
+  .number()
+  .int()
+  .min(3_000)
+  .max(10_000)
+  .optional()
+  .default(DEFAULT_DURATION_MS);
+
+/**
+ * Input for `isometric.measure_hold` — ONE hold, then return. No rest, no
+ * trial loop, so a human-paced session can call it per hold and keep the
+ * go/stop signalling in the coach's hands.
+ *
+ * `side` and `label` are recorded on the response and on the phase pushes
+ * only; they steer nothing. `holdMs` is the same window (and default) the
+ * multi-trial tools use, so one hold is comparable with a trial from a
+ * `measure_max` run.
+ */
+export const IsometricMeasureHoldInput = z.object({
+  slot: SlotIdSchema,
+  side: z.enum(['left', 'right']).optional(),
+  holdMs: HoldDurationMs,
+  label: z.string().min(1).optional(),
+});
+
+/**
  * Input for `isometric.measure_max` — measures one side. Caller composes
  * for bilateral via `isometric.measure_imbalance`.
  *
  * Clamps reflect published evidence:
- *   * `durationMs`: 3–10s (IMTP literature is 3–5s; allow up to 10s for
- *     strength-endurance variants).
+ *   * `durationMs`: see `HoldDurationMs`.
  *   * `trials`: 2–5 (the brief specifies 3, with up to 4 if a replacement
  *     trial is needed; cap at 5 for safety / reasonableness).
  *   * `restMs`: 30s–5min (under 30s is sub-recovery for max-force testing;
@@ -33,7 +63,7 @@ export const DEFAULT_BETWEEN_SIDES_REST_MS = 120_000;
  */
 export const IsometricMeasureMaxInput = z.object({
   slot: SlotIdSchema,
-  durationMs: z.number().int().min(3_000).max(10_000).optional().default(DEFAULT_DURATION_MS),
+  durationMs: HoldDurationMs,
   trials: z.number().int().min(2).max(5).optional().default(DEFAULT_TRIALS),
   restMs: z.number().int().min(30_000).max(300_000).optional().default(DEFAULT_REST_MS),
 });
@@ -56,7 +86,7 @@ export const IsometricMeasureImbalanceInput = z.object({
   primarySlot: SlotIdSchema.unwrap(),
   secondarySlot: SlotIdSchema.unwrap(),
   primarySide: z.enum(['left', 'right']).optional().default('left'),
-  durationMs: z.number().int().min(3_000).max(10_000).optional().default(DEFAULT_DURATION_MS),
+  durationMs: HoldDurationMs,
   trials: z.number().int().min(2).max(5).optional().default(DEFAULT_TRIALS),
   restMs: z.number().int().min(30_000).max(300_000).optional().default(DEFAULT_REST_MS),
   betweenSidesRestMs: z
@@ -81,5 +111,6 @@ export const IsometricMeasureImbalanceInputRefined = IsometricMeasureImbalanceIn
   { message: 'primarySlot and secondarySlot must be different devices', path: ['secondarySlot'] },
 );
 
+export type IsometricMeasureHoldInputType = z.infer<typeof IsometricMeasureHoldInput>;
 export type IsometricMeasureMaxInputType = z.infer<typeof IsometricMeasureMaxInput>;
 export type IsometricMeasureImbalanceInputType = z.infer<typeof IsometricMeasureImbalanceInput>;
