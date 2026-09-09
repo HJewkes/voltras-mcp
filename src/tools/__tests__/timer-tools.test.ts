@@ -79,12 +79,16 @@ function payload(result: ToolResult): unknown {
 describe('timer.wait / timer.cancel (blocking)', () => {
   let waitCb: Callback;
   let cancelCb: Callback;
+  let lease: FakeLease;
+  let channels: FakeChannels;
 
   beforeEach(() => {
     vi.useFakeTimers();
     const { placeholders, slots } = buildPlaceholders();
-    const { state } = makeFakeState();
-    registerTimerTools({} as McpServer, state, placeholders);
+    const fake = makeFakeState();
+    lease = fake.lease;
+    channels = fake.channels;
+    registerTimerTools({} as McpServer, fake.state, placeholders);
     waitCb = slots.get('timer.wait')!.callback;
     cancelCb = slots.get('timer.cancel')!.callback;
   });
@@ -152,6 +156,64 @@ describe('timer.wait / timer.cancel (blocking)', () => {
     const result = await cancelCb({ id: 'abc' });
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  // VW-200: a rest is the longest a session sits still holding the device, so
+  // it is the likeliest call to be running when another client takes over.
+  it('fails with LEASE_LOST when the device is taken mid-rest', async () => {
+    const waitPromise = waitCb({ durationMs: 90_000, label: 'rest' });
+    await vi.advanceTimersByTimeAsync(2000);
+
+    lease.steal();
+    const result = await waitPromise;
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'LEASE_LOST' });
+  });
+
+  it('publishes one lease_lost naming timer.wait when the rest is cut short', async () => {
+    const waitPromise = waitCb({ durationMs: 90_000, label: 'rest' });
+
+    lease.steal();
+    await waitPromise;
+
+    expect(channels.publish).toHaveBeenCalledTimes(1);
+    const event = channels.publish.mock.calls[0][0] as { meta: Record<string, string> };
+    expect(event.meta.event_type).toBe('lease_lost');
+    expect(event.meta.tool).toBe('timer.wait');
+  });
+
+  it('frees the singleton on a steal, so the next holder is not told BUSY', async () => {
+    const stolen = waitCb({ durationMs: 90_000 });
+    lease.steal();
+    await stolen;
+
+    const next = waitCb({ durationMs: 500 });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(payload(await next)).toMatchObject({ status: 'completed', requestedMs: 500 });
+  });
+
+  it('never fires the rest timer after a steal cut it short', async () => {
+    const waitPromise = waitCb({ durationMs: 1000 });
+    lease.steal();
+    await waitPromise;
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(channels.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs to completion when the holder keeps the lease across the rest', async () => {
+    // The sanity case: a lease that notifies without moving its generation —
+    // the holder refreshing its own claim — must not abort anything.
+    const waitPromise = waitCb({ durationMs: 5000, label: 'rest' });
+    await vi.advanceTimersByTimeAsync(2000);
+    lease.touch();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(payload(await waitPromise)).toMatchObject({ status: 'completed', label: 'rest' });
+    expect(channels.publish).not.toHaveBeenCalled();
   });
 
   it('after a wait completes, a fresh wait can start (active state cleared)', async () => {

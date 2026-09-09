@@ -17,7 +17,7 @@
 //   typo against the actual SDK shape — see report.md deviation note); the
 //   tests assert the actual SDK property.
 
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
@@ -150,6 +150,10 @@ interface FakeClient {
     countdownRemainingMs: number | null;
     fitnessModeRaw: number | null;
   };
+  // VW-200: the fence over the SDK's status poll detaches on the terminal
+  // phase, so it needs the same phase subscription the event-bridge takes.
+  onGuidedLoadState: Mock<(cb: (gls: { phase: string }) => void) => () => void>;
+  guidedLoadListeners: Array<(gls: { phase: string }) => void>;
   // <Bug-22>
   enterRowMode: Mock<() => Promise<void>>;
   startRow: Mock<(distance?: string) => Promise<void>>;
@@ -174,6 +178,7 @@ interface FakeManager {
 }
 
 function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
+  const guidedLoadListeners: Array<(gls: { phase: string }) => void> = [];
   return {
     isConnected: false,
     connectionState: 'disconnected',
@@ -207,6 +212,14 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     startGuidedLoad: vi.fn(async () => undefined),
     exitGuidedLoad: vi.fn(async () => undefined),
     guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
+    guidedLoadListeners,
+    onGuidedLoadState: vi.fn((cb: (gls: { phase: string }) => void) => {
+      guidedLoadListeners.push(cb);
+      return () => {
+        const at = guidedLoadListeners.indexOf(cb);
+        if (at >= 0) guidedLoadListeners.splice(at, 1);
+      };
+    }),
     // <Bug-22>
     enterRowMode: vi.fn(async () => undefined),
     startRow: vi.fn(async () => undefined),
@@ -2261,6 +2274,146 @@ describe('registerDeviceTools', () => {
       expect(payload.code).toBe('LEASE_LOST');
       expect(client.setIsokineticEccMode).not.toHaveBeenCalled();
       expect(client.setIsokineticEccConstWeight).not.toHaveBeenCalled();
+    });
+
+    // VW-200: `startGuidedLoad` resolves once the trigger is written and the
+    // SDK's status poll is armed — the poll then runs for the whole window,
+    // long after the handler returned. These model that poll as a repeating
+    // write and assert nothing lands after the lease goes.
+    describe('the guided-load status poll', () => {
+      const POLL_MS = 500;
+
+      /** Every device write this client made, in order. */
+      let writes: string[];
+
+      /**
+       * Stand in for the SDK's guided-load flow: the trigger arms a status
+       * poll that keeps writing until `exitGuidedLoad` stops it. Phase
+       * transitions fan out to `onGuidedLoadState` the way the SDK's do.
+       */
+      function armPoll(client: FakeClient): void {
+        let poll: ReturnType<typeof setInterval> | null = null;
+        const emit = (phase: string): void => {
+          client.guidedLoadState.phase = phase as FakeClient['guidedLoadState']['phase'];
+          for (const listener of [...client.guidedLoadListeners]) listener({ phase });
+        };
+        client.unloadDevice.mockImplementation(async () => {
+          writes.push('unloadDevice');
+        });
+        client.startGuidedLoad.mockImplementation(async () => {
+          writes.push('startGuidedLoad');
+          emit('armed');
+          poll = setInterval(() => writes.push('poll'), POLL_MS);
+        });
+        client.exitGuidedLoad.mockImplementation(async () => {
+          writes.push('exitGuidedLoad');
+          if (poll !== null) clearInterval(poll);
+          poll = null;
+          emit('exited');
+        });
+      }
+
+      beforeEach(() => {
+        writes = [];
+        vi.useFakeTimers();
+        state.slots.get('primary')!.live = makeFakeLive({ trainingMode: 'Weight Training' });
+        armPoll(primaryClient(state));
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('stops the poll and writes nothing more once the lease is stolen', async () => {
+        const { isError } = await invoke(placeholders.get('device.start_guided_load')!, {
+          targetWeightLbs: 50,
+        });
+        expect(isError).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(POLL_MS * 2);
+
+        const atSteal = writes.length;
+        state.lease.steal();
+        await vi.advanceTimersByTimeAsync(POLL_MS * 20);
+
+        // The exit IS the stop, and it is the last thing written.
+        expect(writes.slice(atSteal)).toEqual(['exitGuidedLoad']);
+        expect(primaryClient(state).exitGuidedLoad).toHaveBeenCalledTimes(1);
+      });
+
+      it('publishes lease_lost for the started flow it had to abandon', async () => {
+        await invoke(placeholders.get('device.start_guided_load')!, { targetWeightLbs: 50 });
+        state.lease.steal();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const lost = state.channels.events.filter((e) => e.meta.event_type === 'lease_lost');
+        expect(lost).toHaveLength(1);
+        expect(lost[0].meta.tool).toBe('device.start_guided_load');
+        expect(lost[0].slot).toBe('primary');
+      });
+
+      it('a steal while the trigger is in flight fails LEASE_LOST and stops the poll', async () => {
+        const client = primaryClient(state);
+        // Hold the trigger open with the poll already running: the SDK arms
+        // the poll before `startGuidedLoad` resolves, which is the window the
+        // handler used to return LEASE_LOST from with the poll left running.
+        let releaseTrigger = (): void => {};
+        const triggerHeld = new Promise<void>((resolve) => {
+          releaseTrigger = resolve;
+        });
+        let poll: ReturnType<typeof setInterval> | null = null;
+        client.startGuidedLoad.mockImplementation(async () => {
+          writes.push('startGuidedLoad');
+          client.guidedLoadState.phase = 'armed';
+          poll = setInterval(() => writes.push('poll'), POLL_MS);
+          await triggerHeld;
+        });
+        client.exitGuidedLoad.mockImplementation(async () => {
+          writes.push('exitGuidedLoad');
+          if (poll !== null) clearInterval(poll);
+          poll = null;
+          client.guidedLoadState.phase = 'exited';
+        });
+
+        const call = invoke(placeholders.get('device.start_guided_load')!, {
+          targetWeightLbs: 50,
+        });
+        await vi.advanceTimersByTimeAsync(POLL_MS);
+        state.lease.steal();
+        releaseTrigger();
+        const { isError, payload } = await call;
+        const atFailure = writes.length;
+        await vi.advanceTimersByTimeAsync(POLL_MS * 20);
+
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('LEASE_LOST');
+        expect(writes[atFailure - 1]).toBe('exitGuidedLoad');
+        expect(writes.slice(atFailure)).toEqual([]);
+      });
+
+      it('leaves the poll running while the holder keeps the lease', async () => {
+        await invoke(placeholders.get('device.start_guided_load')!, { targetWeightLbs: 50 });
+        // A notification with an unchanged generation — the holder refreshing
+        // its own claim — must not abort the flow.
+        state.lease.touch();
+        await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+
+        expect(primaryClient(state).exitGuidedLoad).not.toHaveBeenCalled();
+        expect(writes.filter((w) => w === 'poll').length).toBe(3);
+        expect(state.channels.events).toHaveLength(0);
+      });
+
+      it('detaches on the terminal phase, so a later steal stops nothing', async () => {
+        const client = primaryClient(state);
+        await invoke(placeholders.get('device.start_guided_load')!, { targetWeightLbs: 50 });
+        await client.exitGuidedLoad();
+        client.exitGuidedLoad.mockClear();
+
+        state.lease.steal();
+        await vi.advanceTimersByTimeAsync(POLL_MS * 4);
+
+        expect(client.exitGuidedLoad).not.toHaveBeenCalled();
+        expect(state.channels.events).toHaveLength(0);
+      });
     });
 
     it('leaves a READ tool alone — device.get_state still answers after a steal', async () => {
