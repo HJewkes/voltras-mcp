@@ -142,23 +142,31 @@ function tempoDeviationFor(rep: Rep, targetConcSec: number | null): number | nul
 }
 
 /**
- * Normalized velocity collapse within the concentric, 0..1 — the peak → mid-trough
- * drop, ignoring the natural lockout taper. The `getPhaseVelocityDropPct` concept
- * measured over a window that drops the first sample (ramp-up) and the trailing
- * ~20% (lockout taper), so a smooth rep (velocity holds near its own peak through
- * the middle) reads ~0 while a mid-rep stall reads high. Ratio → unit-invariant.
+ * Normalized post-peak velocity collapse within the concentric, 0..1 — a sticking
+ * point read, not the acceleration ramp (VMCP-04.14). Definition: locate the
+ * concentric's PEAK velocity sample, then take the minimum velocity among the
+ * samples AFTER that peak (excluding the trailing ~20% lockout taper); grind =
+ * (peak − trough) / peak.
+ *
+ * A bell-shaped concentric STARTS near zero velocity — the samples before the peak
+ * are the acceleration ramp, not a grind — so a trough search over the whole window
+ * (including those pre-peak samples) reads that ramp as the trough and saturates
+ * every normal rep at ~1.0. Restricting the search to AFTER the peak means a smooth
+ * rep (velocity holds near its own peak through the middle and taper) reads ~0,
+ * while a genuine mid/late-concentric stall reads high. Ratio → unit-invariant.
  */
 function grindSignatureFor(rep: Rep): number {
   const vels = samplesOf(rep.concentric)
     .map((s) => Math.abs(s.velocity))
     .filter(Number.isFinite);
   if (vels.length < 3) return 0;
-  const peak = Math.max(...vels);
+  const peakIndex = vels.indexOf(Math.max(...vels));
+  const peak = vels[peakIndex];
   if (peak <= 0) return 0;
   const tail = Math.max(1, Math.floor(vels.length * 0.2));
-  const middle = vels.slice(1, vels.length - tail);
-  if (middle.length === 0) return 0;
-  const trough = Math.min(...middle);
+  const postPeak = vels.slice(peakIndex + 1, vels.length - tail);
+  if (postPeak.length === 0) return 0;
+  const trough = Math.min(...postPeak);
   return Number(clamp01((peak - trough) / peak).toFixed(3));
 }
 

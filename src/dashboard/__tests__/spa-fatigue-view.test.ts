@@ -403,6 +403,36 @@ describe('mapStoreToFatigueModel', () => {
     // The smooth rep in the same set stays low — the signal is shape, not absolute speed.
     expect(model!.velocityCurves[0].grindSignature).toBeLessThan(0.2);
   });
+
+  // VMCP-04.14 regression: the trough search used to span the whole concentric,
+  // so the pre-peak acceleration ramp (always near-zero) read as the "trough" and
+  // saturated every normal rep at ~1.0. It must now look only AFTER the peak.
+  it.each([
+    {
+      name: 'bell: ramps to a peak then eases off — no post-peak dip',
+      concVels: [50, 200, 500, 480, 460],
+      expected: 0.04,
+    },
+    {
+      name: 'plateau: holds at the peak — no drop after it',
+      concVels: [100, 300, 500, 500, 500, 500],
+      expected: 0,
+    },
+    {
+      name: 'post-peak dip to 50% then recovery — a real sticking point',
+      concVels: [100, 300, 500, 250, 480, 480],
+      expected: 0.5,
+    },
+    {
+      name: 'post-peak stall near zero — a hard grind',
+      concVels: [100, 300, 500, 10, 480, 480],
+      expected: 0.98,
+    },
+  ])('$name → grindSignature ≈ $expected', ({ concVels, expected }) => {
+    const reps = buildDetailedReps([{ concVels, rom: 100, concMs: 600 }]);
+    const model = mapStoreToFatigueModel(sources({ snapshot: snapshotWithActive(reps) }));
+    expect(model!.velocityCurves[0].grindSignature).toBeCloseTo(expected, 3);
+  });
 });
 
 // --- regression: reps that carry no per-sample stream -------------------------
