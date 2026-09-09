@@ -57,7 +57,7 @@ import {
 } from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
-import { type MassUnit } from '../live-page/mass';
+import { convertMass, type MassUnit } from '../live-page/mass';
 import { fetchSessionSummary } from './planner-client';
 import {
   e1rmChangePct,
@@ -211,7 +211,7 @@ function ExerciseCard(props: {
           <MetricTiles metrics={tiles} gap={2} />
         </div>
         <div style={{ marginTop: SPACE.md }}>
-          <E1RMTrend series={series} changePct={changePct} />
+          <E1RMTrend series={series} changePct={changePct} displayUnit={displayUnit} />
         </div>
         <div style={{ marginTop: SPACE.md }}>
           <Overline color="tertiary">Worst within-set velocity loss</Overline>
@@ -240,10 +240,16 @@ function ExerciseCard(props: {
  * Fewer than two points is NOT a chart — one working set has no trend, and
  * `StrengthTrendChart` would draw a lone dot that reads like a flat line. Say so
  * instead.
+ *
+ * `e1rmSeries` computes exact e1RM in lbs; `changePct` is a ratio and so is
+ * unit-invariant, but the chart's own `data`/`unit` props (VW-196) need the
+ * points rescaled via `convertMass` — never a literal factor — to the store's
+ * display unit.
  */
-function E1RMTrend(props: {
+export function E1RMTrend(props: {
   series: ReturnType<typeof e1rmSeries>;
   changePct: number | null;
+  displayUnit: MassUnit;
 }): React.JSX.Element {
   if (props.series.length < 2) {
     return (
@@ -252,15 +258,19 @@ function E1RMTrend(props: {
       </Caption>
     );
   }
-  const { changePct } = props;
+  const { changePct, displayUnit } = props;
+  const data = props.series.map((point) => ({
+    ...point,
+    e1rm: convertMass(point.e1rm, displayUnit),
+  }));
   return (
     <div>
       <Overline color="tertiary">Estimated 1RM across this session</Overline>
       <StrengthTrendChart
-        data={props.series}
+        data={data}
         width={CHART_WIDTH}
         height={CHART_HEIGHT}
-        unit="lbs"
+        unit={displayUnit}
         animateOnMount={false}
       />
       {changePct !== null && (
