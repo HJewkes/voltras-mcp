@@ -156,6 +156,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'pauseBottom',
   'pauseTop',
   'peakForceLbs',
+  'phase_type',
   'pre_summary',
   'priorPair',
   'raw_frame',

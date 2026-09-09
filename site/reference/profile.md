@@ -2,7 +2,7 @@
 
 # `profile.*`
 
-5 tools in the `profile` namespace.
+6 tools in the `profile` namespace.
 
 ## `profile.set_training_background`
 
@@ -57,3 +57,14 @@ List which session-0 onboarding answers are still missing, in the order RP asks 
 Read-only; it stores nothing and invents no questions — `missing[]` is exactly the unanswered `profile.set_training_background` fields. `medicalClearanceRequired: true` means the lifter reported a CARDIOVASCULAR limitation: read `medicalClearanceNote` out as written and route them to a doctor. Do not interpret, grade or program around a cardiovascular flag — that is a liability boundary, and nothing in this server reasons about it further. Non-cardiovascular injuries are not a gate and never set that flag. `goalRealism` is the stored goal and target plus RP's rule for checking commitment against them; it is PROSE TO APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no goal or target has been captured yet.
 
 **Parameters:** none.
+
+## `profile.set_diet_phase`
+
+Record the ACTUAL diet phase the lifter is in — fat-loss, gain or maintenance — as a time range starting now, or at `startedAt` for a phase that began earlier.
+
+Declaring a phase closes the previous one at the same instant, so the timeline never has two phases covering one day; a `startedAt` in the past REWRITES the timeline from there forward, which is the supported way to correct a phase you logged late or mislabelled. Returns the declared range plus the whole timeline, oldest-first — read it back to the lifter to confirm the correction landed where they meant. This is the OBSERVED phase (what they actually ate), which is a different claim from the prescribed phase_type on a plan week, and this tool never touches that. Recording a phase changes NO analysis: it does not suppress a plateau verdict, weight a comparison or move any threshold. It makes the phase visible so a reader can discount a flat stretch themselves — a fat-loss phase can look identical to a real plateau, and only the reader can tell which they are looking at.
+
+**Parameters**
+
+- `phase` — `fat-loss` | `gain` | `maintenance`, **required**.
+- `startedAt` — `string`, optional.
