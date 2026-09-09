@@ -68,15 +68,19 @@ export const LEASE_EXEMPT_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
 // exempt, so stopping the machine never waits on arbitration — see
 // LEASE_EXEMPT_TOOLS below.
 //
-// KNOWN LIMITATION (VMCP-01.65): the lease is checked at call ENTRY only, and
-// there is no cancellation. A long-running WRITE tool — `isometric.measure_max`
-// runs for minutes, `timer.wait` blocks, `device.start_guided_load` drives a
-// state machine — keeps running after another client force-steals the lease,
-// and can still drive the device once its own await resolves. Surrender assumes
-// the victim is quiesced; nothing currently makes it so. `set.start` is the one
-// case handled, because `surrenderDevice` waits on its `setStartInFlight`
-// latch. A general fix needs per-tool abort support, which those handlers do
-// not have yet.
+// The lease is checked here at call ENTRY only, and there is no cancellation:
+// a WRITE tool that awaits mid-call keeps running after another client
+// force-steals the lease. VMCP-01.65 closes that for the multi-step DEVICE
+// writers by re-checking the lease epoch after every await — see
+// `state/lease-fence.ts` and its call sites in `device-tools.ts` and
+// `voice-weight.ts`. `set.start` is handled separately, because
+// `surrenderDevice` waits on its `setStartInFlight` latch.
+//
+// KNOWN LIMITATION (remaining): the long-blocking tools that are not multi-step
+// device writers — `isometric.*` runs for minutes, `timer.wait` blocks — still
+// run to completion after a steal, and a write already handed to the SDK cannot
+// be un-sent. Both need per-tool abort support (an `AbortSignal` threaded into
+// the handlers), which they do not have yet.
 
 type ToolHandler = (args: unknown, extra?: unknown) => Promise<ToolResult> | ToolResult;
 
