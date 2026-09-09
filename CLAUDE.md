@@ -8,7 +8,8 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run lint` — ESLint 9 flat config
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run build` — emit `dist/` (the `voltras-mcp` bin)
-- `npm run format` / `npm run format:check` — Prettier
+- `npm run format` / `npm run format:check` — Prettier (globs are `src/**` and `scripts/**` only; markdown is not format-gated)
+- `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
 
 CI gate: lint + typecheck + test + build. The pre-commit hook runs lint-staged + typecheck + `vitest related` on staged files (full suite stays in CI).
 
@@ -41,7 +42,7 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/resources/` — `voltra://device/current`, `voltra://session/active`, `voltra://set/active`
 - `src/state/` — in-process `LiveState` collector + SDK `event-bridge`
 - `src/store/` — `node:sqlite`-backed `SessionStore`
-- `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`
+- `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, and the screenshot definition behind `npm run docs:captures`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `src/types/` — non-test type-only modules (excluded from coverage)
 

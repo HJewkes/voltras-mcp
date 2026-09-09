@@ -1,0 +1,111 @@
+{
+  "definitionHash": "17e7e16155087267d85be1d7b02327f096557d0e4ec91422fb6fde2f49b9c739",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "deviceScaleFactor": 1,
+  "shots": [
+    {
+      "name": "dashboard-cold",
+      "scenario": "cold",
+      "route": "/app",
+      "caption": "The wall dashboard before a Voltra is connected.",
+      "file": "dashboard-cold.png",
+      "waitFor": {
+        "kind": "idle"
+      },
+      "assertedText": ["No Voltra connected", "VELOCITY · this set"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 43006,
+      "sha256": "d3b1a61f805662dbb6c8bacdadc889e8e104825c7dfa5379ca4230eeff49237a"
+    },
+    {
+      "name": "live-mid-set",
+      "scenario": "planned",
+      "route": "/app",
+      "caption": "The live page mid-set, with the prescribed sets, reps, load and tempo attached.",
+      "file": "live-mid-set.png",
+      "waitFor": {
+        "kind": "set-open",
+        "minReps": 3,
+        "slots": ["primary"]
+      },
+      "assertedText": [
+        "Push A · Hypertrophy",
+        "Cable Chest Press",
+        "VELOCITY · this set",
+        "FATIGUE"
+      ],
+      "width": 1440,
+      "height": 900,
+      "bytes": 564669,
+      "sha256": "ad3191ec4caa3d665f1f497c4c1ca9225c712a9588259fea0c35013f960e118d"
+    },
+    {
+      "name": "live-rest",
+      "scenario": "planned",
+      "route": "/app",
+      "caption": "The rest stage between two sets of a planned exercise.",
+      "file": "live-rest.png",
+      "waitFor": {
+        "kind": "rest"
+      },
+      "assertedText": ["TONNAGE", "Cable Chest Press", "Push A · Hypertrophy"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 94877,
+      "sha256": "1afb5b36da7d6d2cb7fab3ba0b17849d282cf9c624b946b103d212d05df6ba8a"
+    },
+    {
+      "name": "session-summary",
+      "scenario": "planned",
+      "route": "/app#/summary",
+      "caption": "The session-completion screen for the session that just ended.",
+      "file": "session-summary.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 3
+      },
+      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 73065,
+      "sha256": "548378ab1eb94624b21265ef2b0a4ea6d20df9a192183245c36576c56c50bdc3"
+    },
+    {
+      "name": "plan-builder",
+      "scenario": "planned",
+      "route": "/app#/plan",
+      "caption": "The plan builder, showing a seeded workout template and the exercise catalog.",
+      "file": "plan-builder.png",
+      "waitFor": {
+        "kind": "plan-seeded",
+        "minExercises": 3
+      },
+      "assertedText": ["Push A — planned exercises", "Cable Incline Chest Press", "Save targets"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 120687,
+      "sha256": "04c3593647b325f50f7990a1a648fb2af992fcf257ef489bf73f873125a46999"
+    },
+    {
+      "name": "live-dual-mid-set",
+      "scenario": "dual",
+      "route": "/app?variant=live-dual",
+      "caption": "The diverging stage mid-set, with two Voltras bound to the left and right slots.",
+      "file": "live-dual-mid-set.png",
+      "waitFor": {
+        "kind": "set-open",
+        "minReps": 3,
+        "slots": ["left", "right"]
+      },
+      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R"],
+      "width": 1440,
+      "height": 900,
+      "bytes": 227220,
+      "sha256": "155079259f50ddb6b01121322ba149284be24825adb1ffceff22c4b1ce0fe2ce"
+    }
+  ]
+}

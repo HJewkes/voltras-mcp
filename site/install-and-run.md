@@ -65,6 +65,11 @@ node scripts/dashboard-mock-drive.mjs   # port 7724 — boots the real MCP serve
 
 ([README.md § Your first workout, Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
+That is what the wall dashboard looks like mid-set with a plan attached — no device
+involved, every number driven through the real tool pipeline against the mock adapter:
+
+![The live page mid-set, with the prescribed sets, reps, load and tempo attached.](/captures/live-mid-set.png)
+
 ---
 
 ## Running
