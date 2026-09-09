@@ -656,7 +656,8 @@ npm start                # node ./dist/bin.js
 ```
 
 CI gates on lint + typecheck + test + build. A pre-commit hook runs lint-staged, typecheck,
-and the tests related to staged files.
+and the tests related to staged files. A pre-push hook runs `prettier --check` on files
+changed vs `origin/main`; bypass with `git push --no-verify`.
 
 Repo-specific conventions live in `CLAUDE.md`; the dashboard's architecture is documented
 in `src/dashboard/README.md`.

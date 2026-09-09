@@ -39,6 +39,7 @@ import {
   type RepModel,
   type SessionModel,
 } from '../live-page/model';
+import { type MassUnit } from '../live-page/mass';
 
 /** The store slices the live page projects from. */
 export interface LiveViewSources {
@@ -60,6 +61,12 @@ export interface LiveViewSources {
    * the hint then reflects only the device flag, which is the honest floor.
    */
   pollStatus?: 'ok' | 'stale' | 'error';
+  /**
+   * The wall's chosen weight/force DISPLAY unit (VW-63), off `dashboardStore.displayUnit`.
+   * Defaults to `lbs` when a caller has none — the model's own source values never change,
+   * only how this mapper labels/rounds them for {@link SessionModel.unit}.
+   */
+  displayUnit?: MassUnit;
 }
 
 /**
@@ -240,6 +247,7 @@ function mapSession(
   weightLbs: number | null,
   targetReps: number | null,
   prescription: PrescriptionView | null,
+  displayUnit: MassUnit,
 ): SessionModel {
   const plannedExercises = mapPlannedExercises(prescription);
   return {
@@ -255,7 +263,9 @@ function mapSession(
     // block can't resolve — never a fabricated title.
     title: prescription?.title ?? null,
     weightLbs,
-    unit: 'lbs',
+    // The wall's chosen DISPLAY unit (VW-63) — `weightLbs` above stays lbs; this only
+    // names what a consumer (e.g. EmptyLiveView's "Loaded" metric) should convert it to.
+    unit: displayUnit,
     // Target tempo tuple [ecc, pauseBottom, con, pauseTop], resolved server-side
     // from the exercise default (VW-41). Hidden when the prescription carries none.
     tempo: prescription?.tempo,
@@ -282,10 +292,18 @@ function mapSession(
  * which is exactly the rest-view case.
  */
 export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardModel | null {
-  const { snapshot, accumulator, live, prescription, nowMs = 0, pollStatus = 'ok' } = sources;
+  const {
+    snapshot,
+    accumulator,
+    live,
+    prescription,
+    nowMs = 0,
+    pollStatus = 'ok',
+    displayUnit = 'lbs',
+  } = sources;
   if (!snapshot) return null;
 
-  const currentSet = buildCurrentSet(snapshot);
+  const currentSet = buildCurrentSet(snapshot, displayUnit);
   const device = pickRepresentativeDevice(snapshot);
   const weightLbs = device?.weightLbs ?? null;
   // The active set's per-rep velocities — the same array the existing hero's VelocityStrip
@@ -308,6 +326,7 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
       weightLbs,
       currentSet.repTarget,
       prescription,
+      displayUnit,
     ),
   };
 }
