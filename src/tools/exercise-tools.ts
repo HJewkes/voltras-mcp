@@ -1,6 +1,7 @@
-// Wave 3D — `exercise.search` and `exercise.get` tool registrations.
+// Wave 3D — `exercise.search`, `exercise.get` and `exercise.confirm_setup`
+// tool registrations.
 //
-// Both tools are pure pass-throughs to the `ExerciseService` (R22 / AC-22):
+// The first two are pure pass-throughs to the `ExerciseService` (R22 / AC-22):
 // the wave-2B service owns the upstream catalog seam (`searchExercises`,
 // `getExerciseById`), so this module never touches `@voltras/workout-analytics`
 // directly. Search forwards `query` verbatim; get translates a missing entry
@@ -22,12 +23,24 @@
 // success path but would double-wrap a `NOT_FOUND` `errorResult`. We re-use
 // the same pieces — `safeParse` for INVALID_INPUT, `mapSdkError` via try/catch
 // — but compose them inline so `getById === undefined` can return the error
-// result directly.
+// result directly. `exercise.confirm_setup` composes the same way, for the
+// same reason.
+//
+// `exercise.confirm_setup` is the odd one out in this module: it writes, and
+// what it writes is the one thing the ROM clustering in
+// `store/exercise-setups.ts` cannot derive — what a physical setup actually IS
+// (VW-119).
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { z } from 'zod';
 import { mapSdkError } from '../errors.js';
-import { ExerciseGetInput, ExerciseSearchInput } from '../schemas/exercise.js';
+import {
+  ExerciseConfirmSetupInput,
+  ExerciseGetInput,
+  ExerciseSearchInput,
+} from '../schemas/exercise.js';
 import type { ServerState } from '../state/server-state.js';
+import type { StoredExerciseSetup } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 /**
@@ -61,7 +74,23 @@ export function registerExerciseTools(
       'Look up one exercise by its catalog id. Returns NOT_FOUND if the id does not exist — ' +
       'use `exercise.search` first if you only have a name, not an id.',
   } as never);
+
+  placeholders.get('exercise.confirm_setup')?.update({
+    paramsSchema: ExerciseConfirmSetupInput.shape,
+    callback: makeConfirmSetupCallback(state) as never,
+    description: CONFIRM_SETUP_DESCRIPTION,
+  } as never);
 }
+
+const CONFIRM_SETUP_DESCRIPTION =
+  'Name an inferred physical setup (VW-119) — the bench height, attachment or stance a group ' +
+  'of sets was performed at — and mark it confirmed. `setupId` comes from a ' +
+  '`baselines.recalc { inferSetups: true }` response; NOT_FOUND if no such setup exists. ' +
+  "THE LABEL MUST BE THE USER'S OWN ANSWER. The clustering can tell that two groups of sets " +
+  'moved the cable different distances; it cannot tell what the difference was, which is the ' +
+  'entire reason this tool exists. Ask, then record what they say. Do not infer a label from ' +
+  'the range of motion, the exercise name or the weight, and do not offer a guess for them to ' +
+  'confirm — a plausible wrong name is worse than "setup 1", because it reads as a measurement.';
 
 /**
  * Build the `exercise.get` callback. Cannot use `wrapHandler` because the
@@ -89,4 +118,54 @@ function makeGetCallback(
       return errorResult(mapSdkError(err));
     }
   };
+}
+
+/**
+ * Build the `exercise.confirm_setup` callback. Same inline composition as
+ * `exercise.get`, and for the same reason: an unknown `setupId` must become a
+ * `NOT_FOUND` result rather than a success carrying `undefined`.
+ *
+ * This is the ONLY writer of `confirmed_at` and of a non-generated label. The
+ * clustering derives which sets belong together and stops there; what the
+ * grouping physically IS only a human knows, and re-inference carries both
+ * fields forward untouched.
+ */
+function makeConfirmSetupCallback(
+  state: ServerState,
+): (args: unknown, extra?: unknown) => Promise<ToolResult> {
+  return async (args: unknown, _extra?: unknown): Promise<ToolResult> => {
+    const parsed = ExerciseConfirmSetupInput.safeParse(args);
+    if (!parsed.success) {
+      return errorResult({ code: 'INVALID_INPUT', message: parsed.error.message });
+    }
+    try {
+      return textResult(await confirmSetup(state, parsed.data));
+    } catch (err) {
+      return err instanceof SetupNotFound
+        ? errorResult({ code: 'NOT_FOUND', message: err.message })
+        : errorResult(mapSdkError(err));
+    }
+  };
+}
+
+/** Signals an unknown `setupId` so the callback can map it to `NOT_FOUND`. */
+class SetupNotFound extends Error {}
+
+async function confirmSetup(
+  state: ServerState,
+  input: z.infer<typeof ExerciseConfirmSetupInput>,
+): Promise<StoredExerciseSetup> {
+  const existing = await state.store.getExerciseSetup(input.setupId);
+  if (existing === undefined) {
+    throw new SetupNotFound(
+      `Setup not found: ${input.setupId}. Ids come from baselines.recalc { inferSetups: true }.`,
+    );
+  }
+  const confirmed: StoredExerciseSetup = {
+    ...existing,
+    label: input.label,
+    confirmedAt: new Date().toISOString(),
+  };
+  await state.store.putExerciseSetup(confirmed);
+  return confirmed;
 }

@@ -11,16 +11,16 @@
 // how consistent they were, and when it went stale. No amount of rep data
 // reproduces that.
 //
-// `setup_id` IS ALWAYS NULL FOR NOW
-// ---------------------------------
-// `exercise_setups` is inferred by ROM clustering, and that writer is a
-// separate, not-yet-built task. Until it exists there are no setups to point
-// at, so every baseline written here uses `setup_id = NULL`, meaning "the one
-// default setup for this exercise". The `UNIQUE (user_id, exercise_id,
-// setup_id, side)` constraint admits that, and the observation query is
-// correspondingly setup-agnostic: a NULL-setup baseline pools every set for
-// the key. When clustering ships, this becomes per-setup and the pooled row is
-// re-derivable from the same reps — which is exactly why no values are cached.
+// `setup_id` IS NULL UNLESS THE CALLER ASKS FOR A SETUP
+// -----------------------------------------------------
+// A NULL-`setup_id` baseline pools every set for the key — "the one default
+// setup for this exercise" — and is what every row written before VW-119 is.
+// Since ROM clustering shipped (`exercise-setups.ts`), a caller may name a
+// setup that exists and get a row derived from only the sets stamped into it.
+// The two coexist: the pooled row stays re-derivable from the same reps, which
+// is exactly why no values are cached here. The `UNIQUE (user_id, exercise_id,
+// setup_id, side)` constraint admits both, and `baselineKeyId` — a total
+// function of all four dimensions, NULLs included — remains the row identity.
 //
 // IDENTITY comes from `@voltras/workout-analytics`'s public `BaselineKey`
 // (`baselineKeyId` for the primary key, `matchesBaselineKey` for selection).
@@ -320,6 +320,7 @@ export function toBaselineRow(
     updatedAt,
     algorithmVersion: BASELINE_ALGORITHM_VERSION,
   };
+  if (key.setupId !== undefined) out.setupId = key.setupId;
   if (key.side !== undefined) out.side = key.side;
   if (derived.anchorSpread !== undefined) out.anchorSpread = derived.anchorSpread;
   if (derived.lastAnchorAt !== undefined) out.lastAnchorAt = derived.lastAnchorAt;

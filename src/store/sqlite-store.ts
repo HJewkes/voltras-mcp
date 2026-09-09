@@ -41,6 +41,7 @@ import {
   LOCAL_USER_ID,
   type BaselineState,
   type ExerciseSetsFilter,
+  type ExerciseSetupFilter,
   type FailureHarvestCounts,
   type SessionCountFilter,
   type SessionDateSpan,
@@ -58,6 +59,7 @@ import {
   type StoredPlannedExercise,
   type StoredTargetTempo,
   type StoredExerciseBaseline,
+  type StoredExerciseSetup,
   type StoredFailureAnchor,
   type StoredProgramAssignment,
   type StoredRep,
@@ -1352,6 +1354,8 @@ interface SetRow {
   side: string | null;
   user_id: string | null;
   exercise_id: string | null;
+  // Stamped by `stampSetSetup`, absent from `putSet`'s column list (VW-119).
+  setup_id: string | null;
   set_index_in_session: number | null;
   rest_before_sec: number | null;
   battery_pct: number | null;
@@ -1451,6 +1455,17 @@ interface TrainingProfileRow {
   named_program_history: string | null;
   provenance_json: string | null;
   updated_at: string;
+}
+
+interface ExerciseSetupRow {
+  id: string;
+  user_id: string;
+  exercise_id: string;
+  label: string | null;
+  detected_at: string;
+  confirmed_at: string | null;
+  cluster_version: string | null;
+  retired_at: string | null;
 }
 
 interface ExerciseBaselineRow {
@@ -2602,10 +2617,87 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(row ? rowToTrainingProfile(row) : undefined);
   }
 
+  // --- Exercise setups (VW-119) ---
+
+  /**
+   * `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`: `exercise_setups` is
+   * the FK parent of `sets.setup_id`, `exercise_baselines.setup_id` and
+   * `failure_anchors.setup_id`, all `ON DELETE SET NULL`. A replace is a
+   * delete-then-insert, so every re-inference would silently unstamp every set
+   * it had already stamped — the #79 regression, one table over.
+   * EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+   */
+  async putExerciseSetup(setup: StoredExerciseSetup): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO exercise_setups
+           (id, user_id, exercise_id, label, detected_at, confirmed_at,
+            cluster_version, retired_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           user_id = excluded.user_id,
+           exercise_id = excluded.exercise_id,
+           label = excluded.label,
+           detected_at = excluded.detected_at,
+           confirmed_at = excluded.confirmed_at,
+           cluster_version = excluded.cluster_version,
+           retired_at = excluded.retired_at`,
+      )
+      .run(
+        setup.id,
+        setup.userId,
+        setup.exerciseId,
+        setup.label ?? null,
+        setup.detectedAt ?? new Date().toISOString(),
+        setup.confirmedAt ?? null,
+        setup.clusterVersion ?? null,
+        setup.retiredAt ?? null,
+      );
+    return Promise.resolve();
+  }
+
+  async getExerciseSetup(id: string): Promise<StoredExerciseSetup | undefined> {
+    const row = this.db.prepare(`SELECT * FROM exercise_setups WHERE id = ?`).get(id) as
+      | ExerciseSetupRow
+      | undefined;
+    return Promise.resolve(row ? rowToExerciseSetup(row) : undefined);
+  }
+
+  /**
+   * Live setups for one (user, exercise), oldest-detected first. Retired rows
+   * are excluded: they are kept as history (a human may have named one) but a
+   * retired setup is by definition one the current clustering does not derive,
+   * so returning it would invite a caller to stamp fresh sets into it.
+   */
+  async listExerciseSetups(filter: ExerciseSetupFilter): Promise<StoredExerciseSetup[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM exercise_setups
+          WHERE user_id = ? AND exercise_id = ? AND retired_at IS NULL
+          ORDER BY detected_at ASC, id ASC`,
+      )
+      .all(filter.userId, filter.exerciseId) as unknown as ExerciseSetupRow[];
+    return Promise.resolve(rows.map(rowToExerciseSetup));
+  }
+
+  /**
+   * Stamp (or clear) one set's inferred setup.
+   *
+   * A targeted `UPDATE` rather than a `putSet` round-trip on purpose: `putSet`
+   * rewrites the whole row including a full rep re-insert, and this runs once
+   * per set per inference pass. It also keeps `setup_id` out of `putSet`'s
+   * column list, which is what makes a force-end/re-end retry preserve the
+   * stamp instead of clearing it.
+   */
+  async stampSetSetup(setId: string, setupId: string | null): Promise<void> {
+    this.db.prepare(`UPDATE sets SET setup_id = ? WHERE id = ?`).run(setupId, setId);
+    return Promise.resolve();
+  }
+
   // --- Exercise baselines (I5 / B56, VW-116) ---
 
   async getBaseline(key: BaselineKey): Promise<StoredExerciseBaseline | undefined> {
-    assertDefaultSetup(key);
+    this.assertResolvableSetup(key);
     const row = this.db
       .prepare(`SELECT * FROM exercise_baselines WHERE id = ?`)
       .get(baselineRowId(key)) as ExerciseBaselineRow | undefined;
@@ -2613,13 +2705,18 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async recalcBaseline(key: BaselineKey): Promise<StoredExerciseBaseline> {
-    assertDefaultSetup(key);
+    this.assertResolvableSetup(key);
     // Working sets only. A warm-up ramp and a technique set are performed at
     // deliberately different intent and cadence; counting them as shape
     // evidence is how a baseline ends up describing an exercise nobody did.
+    //
+    // A setup-keyed baseline reads only the sets stamped into that setup, which
+    // is the whole point of the clustering (VW-119): two bench heights are two
+    // shapes and averaging them describes neither.
     const sets = await this.getSetsForExercise({
       userId: key.userId,
       exerciseId: key.exerciseId,
+      ...(key.setupId !== undefined ? { setupId: key.setupId } : {}),
       ...(key.side !== undefined ? { side: key.side } : {}),
       purpose: ['working'],
     });
@@ -2631,6 +2728,28 @@ export class SqliteSessionStore implements SessionStore {
     const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString());
     this.upsertBaseline(row);
     return row;
+  }
+
+  /**
+   * Reject a baseline key naming a setup that does not exist.
+   *
+   * Setup ids are GENERATED by the ROM clustering (`setupRowId`), never chosen
+   * by a caller, so a `setupId` with no row behind it is a wrong mental model
+   * rather than a gap — answering it with the pooled row would silently return
+   * a baseline that means something else. An absent `setupId` is the pooled
+   * key and is always valid.
+   */
+  private assertResolvableSetup(key: BaselineKey): void {
+    if (key.setupId === undefined) return;
+    const row = this.db
+      .prepare(`SELECT 1 AS present FROM exercise_setups WHERE id = ?`)
+      .get(key.setupId);
+    if (row === undefined) {
+      throw new Error(
+        `unknown setup ${JSON.stringify(key.setupId)}: no such row in exercise_setups. ` +
+          'Setup ids come from the ROM clustering — run baselines.recalc { inferSetups: true } first.',
+      );
+    }
   }
 
   /**
@@ -2649,6 +2768,15 @@ export class SqliteSessionStore implements SessionStore {
     // `fa.lifter IS NULL` (VW-169): baselines are the OWNER's, and `BaselineKey`
     // has no lifter dimension because a guest working in gets no baseline at
     // all — no row, no anchors, no confidence state.
+    //
+    // `fa.setup_id IS NULL` is UNCONDITIONAL, including for a setup-keyed call
+    // (VW-119). Anchors carry no setup: `toFailureAnchor` still writes NULL, so
+    // this predicate matches every anchor there is. Splitting them by setup
+    // would need the column populated, and populating it would hide every
+    // anchor harvested before the clustering shipped from the pooled key that
+    // has been counting them — a silent CALIBRATED-to-SHAPE_ONLY demotion. So a
+    // setup-keyed baseline refines the SHAPE evidence (which sets count) and
+    // shares the exercise's anchor evidence.
     const where = [
       'fa.user_id = ?',
       'fa.exercise_id = ?',
@@ -2827,10 +2955,11 @@ export class SqliteSessionStore implements SessionStore {
    * anchor candidate under any threshold.
    */
   async reharvestExercise(key: BaselineKey): Promise<FailureHarvestCounts> {
-    assertDefaultSetup(key);
+    this.assertResolvableSetup(key);
     const sets = await this.getSetsForExercise({
       userId: key.userId,
       exerciseId: key.exerciseId,
+      ...(key.setupId !== undefined ? { setupId: key.setupId } : {}),
       ...(key.side !== undefined ? { side: key.side } : {}),
       purpose: ['working'],
     });
@@ -3149,6 +3278,9 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // be papered over with a default.
   if (row.user_id !== null) out.userId = row.user_id;
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  // VW-119: stamped by `stampSetSetup`, never by `putSet`. Absent means this
+  // set has not been clustered yet — not "the default setup".
+  if (row.setup_id !== null) out.setupId = row.setup_id;
   if (row.set_index_in_session !== null) out.setIndexInSession = row.set_index_in_session;
   if (row.rest_before_sec !== null) out.restBeforeSec = row.rest_before_sec;
   if (row.battery_pct !== null) out.batteryPct = row.battery_pct;
@@ -3401,18 +3533,18 @@ function rowToExerciseBaseline(row: ExerciseBaselineRow): StoredExerciseBaseline
   return out;
 }
 
-/**
- * Reject a key that names a setup. The setup dimension is inferred by ROM
- * clustering and that writer does not exist yet, so there is nothing to point
- * at: a caller passing a `setupId` today is working from a wrong mental model
- * and would silently get a row that means something else.
- */
-function assertDefaultSetup(key: BaselineKey): void {
-  if (key.setupId !== undefined) {
-    throw new Error(
-      'exercise baselines are per-default-setup only: setup inference (exercise_setups) has no writer yet',
-    );
-  }
+function rowToExerciseSetup(row: ExerciseSetupRow): StoredExerciseSetup {
+  const out: StoredExerciseSetup = {
+    id: row.id,
+    userId: row.user_id,
+    exerciseId: row.exercise_id,
+    detectedAt: row.detected_at,
+  };
+  if (row.label !== null) out.label = row.label;
+  if (row.confirmed_at !== null) out.confirmedAt = row.confirmed_at;
+  if (row.cluster_version !== null) out.clusterVersion = row.cluster_version;
+  if (row.retired_at !== null) out.retiredAt = row.retired_at;
+  return out;
 }
 
 function rowToTrainingBlock(row: TrainingBlockRow): StoredTrainingBlock {
