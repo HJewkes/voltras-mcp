@@ -31,7 +31,12 @@ import { type ServerState } from '../state/server-state.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
-import { LOCAL_USER_ID, type StoredSession, type StoredSet } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type StoredSession,
+  type StoredSet,
+  type StoredSide,
+} from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 
 const DEFAULT_LOOKBACK_WEEKS = 8;
@@ -53,7 +58,9 @@ const PROGRESSION_GET_DESCRIPTION =
   '(default: last 20 within an 8-week lookback, both overridable) that trained the given ' +
   'exerciseId — top weight and volume trends across those sessions. Cheaper than looping ' +
   '`session.get` calls yourself (a single session response can be large). `exerciseId` is not ' +
-  'validated against the catalog, so historical data for a renamed/removed exercise still works.';
+  'validated against the catalog, so historical data for a renamed/removed exercise still works. ' +
+  '`side` (VMCP-04.09) narrows the same history to one arm; omitted, the response covers both ' +
+  'and adds a `sideSplit` summary when any set in range carries a side.';
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -118,6 +125,8 @@ async function getProgressionForExercise(
     // VW-169: omitted ⇒ the owner's sets only. A guest working in on a shared
     // rig would otherwise land in the owner's top-weight and volume trends.
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+    // VMCP-04.09: omitted ⇒ both sides, matching metrics.compute's default.
+    ...(input.side !== undefined ? { side: input.side } : {}),
   });
   // Ascending (matches getSetsForExercise's ORDER BY started_at ASC); dedupe
   // to distinct sessions, then keep the most-recent `limit` — this is also
@@ -149,7 +158,7 @@ async function getProgressionForExercise(
   // because `scopeSessionSetsToExerciseId` needs the whole list to judge
   // whether the session is single- or multi-exercise before it can decide
   // whether an unattributed set is safe to keep.
-  const setsBySessionId = new Map<string, StoredSet[]>();
+  const exerciseScopedSetsBySessionId = new Map<string, StoredSet[]>();
   for (const id of limitedSessionIds) {
     // VW-169: the lifter scope comes FIRST. `getSetsForSession` returns the
     // whole session, and one session can hold both the owner's sets and a
@@ -158,14 +167,80 @@ async function getProgressionForExercise(
       await state.store.getSetsForSession(id),
       input.lifter,
     );
-    setsBySessionId.set(id, scopeSessionSetsToExerciseId(allSetsInSession, input.exerciseId));
+    exerciseScopedSetsBySessionId.set(
+      id,
+      scopeSessionSetsToExerciseId(allSetsInSession, input.exerciseId),
+    );
   }
 
-  return aggregateProgression(
+  // VMCP-04.09: the side filter narrows the same per-session sets used for
+  // the main aggregation, applied AFTER exercise scoping so the H2
+  // unattributed-set leniency still sees the session's full exercise context.
+  const setsBySessionId =
+    input.side === undefined
+      ? exerciseScopedSetsBySessionId
+      : filterSetsBySide(exerciseScopedSetsBySessionId, input.side);
+
+  const response = aggregateProgression(
     input.exerciseId,
     windowStartedAt,
     windowEndedAt,
     sessions,
     setsBySessionId,
   );
+
+  return {
+    ...response,
+    side: input.side,
+    ...(input.side === undefined
+      ? { sideSplit: computeSideSplit(limitedSessionIds, exerciseScopedSetsBySessionId) }
+      : {}),
+  };
+}
+
+function filterSetsBySide(
+  setsBySessionId: Map<string, StoredSet[]>,
+  side: StoredSide,
+): Map<string, StoredSet[]> {
+  return new Map(
+    [...setsBySessionId].map(([id, sets]) => [id, sets.filter((s) => s.side === side)]),
+  );
+}
+
+/** Per-side set count and last-session top load; `undefined` when no set in range has a `side`. */
+interface SideSplitSummary {
+  setCount: number;
+  lastSessionTopWeightLbs: number;
+}
+
+// VMCP-04.09: derived from the same `setsBySessionId` the aggregator already
+// consumes — not a second store query — since bilateral rows already carry
+// their own resolved `side`, no bilateral-group dedup is needed to split them.
+function computeSideSplit(
+  limitedSessionIds: string[],
+  setsBySessionId: Map<string, StoredSet[]>,
+): { left: SideSplitSummary; right: SideSplitSummary } | undefined {
+  const allSets = limitedSessionIds.flatMap((id) => setsBySessionId.get(id) ?? []);
+  if (!allSets.some((s) => s.side !== undefined)) return undefined;
+
+  const lastSessionSets =
+    setsBySessionId.get(limitedSessionIds[limitedSessionIds.length - 1]) ?? [];
+  return {
+    left: sideSplitSummary(allSets, lastSessionSets, 'left'),
+    right: sideSplitSummary(allSets, lastSessionSets, 'right'),
+  };
+}
+
+function sideSplitSummary(
+  allSets: StoredSet[],
+  lastSessionSets: StoredSet[],
+  side: StoredSide,
+): SideSplitSummary {
+  const lastSessionTopWeightLbs = lastSessionSets
+    .filter((s) => s.side === side)
+    .reduce((max, s) => (s.weightLbs !== undefined && s.weightLbs > max ? s.weightLbs : max), 0);
+  return {
+    setCount: allSets.filter((s) => s.side === side).length,
+    lastSessionTopWeightLbs,
+  };
 }
