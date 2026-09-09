@@ -16,6 +16,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { MutableVoiceListener, VoiceListenerRef } from '../tts-tools.js';
+import type { MuteHandle } from '../../voice/voice-listener.js';
 import type { ToolResult } from '../helpers.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
@@ -367,12 +368,18 @@ describe('system.speak — platform gating', () => {
 
 // ── TTS ducking — mute/unmute integration ────────────────────────────────────
 
+// Models the real listener closely enough to catch a mis-paired release: each
+// mute() gets its own handle, and `active` is what is still being spoken.
 function makeFakeVoiceListener(): MutableVoiceListener & {
   muteCalls: number;
   unmuteCalls: number;
+  mutedTexts: (string | undefined)[];
+  active: (string | undefined)[];
 } {
   let muteCalls = 0;
   let unmuteCalls = 0;
+  const mutedTexts: (string | undefined)[] = [];
+  const entries = new Map<MuteHandle, string | undefined>();
   return {
     get muteCalls() {
       return muteCalls;
@@ -380,10 +387,19 @@ function makeFakeVoiceListener(): MutableVoiceListener & {
     get unmuteCalls() {
       return unmuteCalls;
     },
-    mute: () => {
-      muteCalls += 1;
+    get active() {
+      return [...entries.values()];
     },
-    unmute: () => {
+    mutedTexts,
+    mute: (spokenText?: string) => {
+      muteCalls += 1;
+      mutedTexts.push(spokenText);
+      const handle: MuteHandle = { id: muteCalls };
+      entries.set(handle, spokenText);
+      return handle;
+    },
+    unmute: (handle: MuteHandle) => {
+      if (!entries.delete(handle)) return;
       unmuteCalls += 1;
     },
   };
@@ -454,6 +470,18 @@ describe('system.speak — TTS ducking (mute/unmute)', () => {
 
     child.emitExit(0);
     expect(vl.unmuteCalls).toBe(1);
+  });
+
+  // VMCP-05.20: the listener keeps hearing safety phrases through the cue, so
+  // it needs the cue text to tell the lifter's voice from its own.
+  it('hands the spoken text to mute() so the echo filter can run', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+    harness.setNextChild(new FakeChild());
+
+    await harness.invoke({ text: 'That rep was 15 percent slower. Reset.' });
+
+    expect(vl.mutedTexts).toEqual(['That rep was 15 percent slower. Reset.']);
   });
 
   it('calls unmute() after exit in blocking mode (success)', async () => {
@@ -528,5 +556,51 @@ describe('system.speak — TTS ducking (mute/unmute)', () => {
     const result = await slot.callback!({ text: 'no listener' });
     children[0]!.emitExit(0);
     expect(result.isError).toBeUndefined();
+  });
+});
+
+// VW-176. Cues do not interrupt a non-urgent `system.speak`, so two speak()
+// calls hold the mic muted at once. Each release must free its own text, or the
+// echo filter is left matching against words nobody is saying any more.
+describe('system.speak — overlapping speech releases its own mute (VW-176)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetSpeakState();
+  });
+
+  it('releases only the timed-out call when the failsafe fires', async () => {
+    vi.useFakeTimers();
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+
+    harness.setNextChild(new FakeChild()); // never exits — the failsafe is the only path
+    await harness.invoke({ text: 'long model line' });
+    vi.advanceTimersByTime(3000);
+    harness.setNextChild(new FakeChild());
+    await harness.invoke({ text: 'two reps left' });
+
+    vi.advanceTimersByTime(5000); // 8s failsafe for the first call only
+    expect(vl.active).toEqual(['two reps left']);
+
+    vi.advanceTimersByTime(3000);
+    expect(vl.active).toEqual([]);
+    expect(vl.unmuteCalls).toBe(2);
+  });
+
+  it('unmutes the interrupted older call and keeps the new text active', async () => {
+    const vl = makeFakeVoiceListener();
+    const harness = buildDuckingHarness(vl);
+
+    const older = new FakeChild();
+    harness.setNextChild(older);
+    await harness.invoke({ text: 'long model line' });
+
+    harness.setNextChild(new FakeChild());
+    await harness.invoke({ text: 'two reps left', interrupt: true });
+    expect(older.killed).toBe(true);
+
+    older.emitExit(null); // SIGTERM'd `say` exits
+    expect(vl.active).toEqual(['two reps left']);
+    expect(vl.unmuteCalls).toBe(1);
   });
 });
