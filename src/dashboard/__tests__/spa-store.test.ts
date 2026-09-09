@@ -5,9 +5,9 @@
  * historical batch merge, and live-slice isolation. Pure/headless: drives the
  * vanilla store directly, no React.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { dashboardStore, STALE_THRESHOLD_MS } from '../spa/store';
+import { DISPLAY_UNIT_KEY, dashboardStore, STALE_THRESHOLD_MS } from '../spa/store';
 import {
   initialAccumulatorState,
   type Snapshot,
@@ -188,6 +188,62 @@ describe('dashboardStore — rev-guarded snapshot application (VMCP-03.04)', () 
     dashboardStore.getState().applySnapshot(withRev(snapshot({ sessionId: 'a' }), 9), 1000);
     dashboardStore.getState().applySnapshot(snapshot({ sessionId: 'b' }), 1100); // no rev
     expect(dashboardStore.getState().snapshot?.session?.sessionId).toBe('b');
+  });
+});
+
+/** A minimal `window.localStorage` stand-in for the node test environment (no real DOM). */
+function fakeWindow(seed: Record<string, string> = {}) {
+  const backing = { ...seed };
+  return {
+    localStorage: {
+      getItem: (key: string) => backing[key] ?? null,
+      setItem: (key: string, value: string) => {
+        backing[key] = value;
+      },
+    },
+    backing,
+  };
+}
+
+describe('dashboardStore — displayUnit slice (VW-63)', () => {
+  afterEach(() => {
+    // Leave the module-singleton store the way every other describe block expects it.
+    dashboardStore.getState().setDisplayUnit('lbs');
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it('defaults to lbs with no persisted preference', () => {
+    expect(dashboardStore.getState().displayUnit).toBe('lbs');
+  });
+
+  it('setDisplayUnit updates the slice without touching other slices', () => {
+    dashboardStore.getState().applySnapshot(snapshot({ sessionId: 's1' }), 1000);
+    const before = dashboardStore.getState();
+    dashboardStore.getState().setDisplayUnit('kg');
+    const after = dashboardStore.getState();
+    expect(after.displayUnit).toBe('kg');
+    expect(after.snapshot).toBe(before.snapshot);
+  });
+
+  it('setDisplayUnit persists the choice to localStorage', () => {
+    const win = fakeWindow();
+    (globalThis as { window?: unknown }).window = win;
+    dashboardStore.getState().setDisplayUnit('kg');
+    expect(win.backing[DISPLAY_UNIT_KEY]).toBe('kg');
+  });
+
+  it('restores a persisted kg preference when the module (re)initializes', async () => {
+    (globalThis as { window?: unknown }).window = fakeWindow({ [DISPLAY_UNIT_KEY]: 'kg' });
+    vi.resetModules();
+    const fresh = await import('../spa/store');
+    expect(fresh.dashboardStore.getState().displayUnit).toBe('kg');
+  });
+
+  it('falls back to lbs when the persisted value is neither lbs nor kg', async () => {
+    (globalThis as { window?: unknown }).window = fakeWindow({ [DISPLAY_UNIT_KEY]: 'stones' });
+    vi.resetModules();
+    const fresh = await import('../spa/store');
+    expect(fresh.dashboardStore.getState().displayUnit).toBe('lbs');
   });
 });
 
