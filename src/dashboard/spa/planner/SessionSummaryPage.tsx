@@ -67,6 +67,7 @@ import {
   sessionRollup,
   setLine,
   setsAgainstPlan,
+  visibleSets,
 } from './planner-model';
 import { ErrorNote, PAGE_PADDING } from './PlanBuilderPage';
 import { PANEL_GAP, PanelCard } from './PanelCard';
@@ -302,7 +303,7 @@ function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Elemen
   return (
     <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Sets</Overline>
-      {props.exercise.sets.map((set) => (
+      {visibleSets(props.exercise).map((set) => (
         <div
           key={set.id}
           style={{
