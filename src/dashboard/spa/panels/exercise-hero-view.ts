@@ -28,6 +28,34 @@ import { type WorkoutSetView } from '../adapter';
 import { convertMass, type MassUnit } from '../live-page/mass';
 
 /**
+ * A {@link WorkoutSetView} plus the truthful load label for weightless training
+ * modes (VMCP-02.74's `describeLoad`: `damper 6` / `band` / `iso`), used when
+ * `weightLbs` is null instead of fabricating a numeric weight.
+ */
+export interface HeroSetView extends WorkoutSetView {
+  loadLabel?: string;
+}
+
+/** A target reps/weight pair; `weight` is absent for a weightless training mode. */
+interface HeroTarget {
+  reps: number;
+  weight?: number;
+}
+
+type HeroDoneRow = Omit<Extract<SetRowProps, { state: 'done' }>, 'weight'> & {
+  weight?: number;
+  loadLabel?: string;
+};
+type HeroLiveRow = Omit<Extract<SetRowProps, { state: 'live' }>, 'weight' | 'target'> & {
+  weight?: number;
+  loadLabel?: string;
+  target: HeroTarget;
+};
+
+/** {@link SetRowProps}, but `weight`/`target.weight` may be absent instead of a fabricated 0. */
+export type HeroSetRowProps = HeroDoneRow | HeroLiveRow;
+
+/**
  * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
  * live surface's `StatusPill` (verdict text) and `LiveAuraFrame` (flood), which
  * take the same `productive | threshold | stop` domain: below VL20 keep going,
@@ -59,15 +87,19 @@ export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null
  * `unit` (VW-196) rescales the weight fields via `convertMass` — the EXACT
  * contract above still holds, so this never pre-rounds; SetRow does.
  */
-export function toSetRowProps(view: WorkoutSetView, unit: MassUnit = 'lbs'): SetRowProps {
+export function toSetRowProps(view: HeroSetView, unit: MassUnit = 'lbs'): HeroSetRowProps {
   // TODO(VW-62): swap to the set-level MEAN sibling once WA publishes
   // `getSetRepMeanVelocities` (WA 1.5.0 exports only the peak fold). The per-rep
   // strips already moved to mean (`panels/live-view.ts`); this set-level path stays
   // peak until the sibling ships, so the hero's SetRow reads optimistic vs the recap.
-  const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mps) => mps ?? 0);
+  // A rep with no derivable peak velocity is omitted, not fabricated as 0.
+  const velocities = getSetRepPeakVelocities({ reps: view.reps }).filter(
+    (mps): mps is number => mps != null,
+  );
   const rpe = estimateSetRpe({ reps: view.reps });
   const repsDone = view.reps.length;
-  const weight = convertMass(view.weightLbs ?? 0, unit);
+  const weight = view.weightLbs == null ? undefined : convertMass(view.weightLbs, unit);
+  const loadLabel = view.weightLbs == null ? (view.loadLabel ?? '—') : undefined;
   if (view.kind === 'active') {
     return {
       state: 'live',
@@ -79,6 +111,7 @@ export function toSetRowProps(view: WorkoutSetView, unit: MassUnit = 'lbs'): Set
       },
       reps: repsDone,
       weight,
+      loadLabel,
       rpe,
       velocities,
     };
@@ -89,6 +122,7 @@ export function toSetRowProps(view: WorkoutSetView, unit: MassUnit = 'lbs'): Set
     unit,
     reps: repsDone,
     weight,
+    loadLabel,
     rpe,
     velocities,
   };
@@ -96,24 +130,34 @@ export function toSetRowProps(view: WorkoutSetView, unit: MassUnit = 'lbs'): Set
 
 type ExerciseSummary = NonNullable<ExerciseCardProps['summary']>;
 
+/** {@link ExerciseSummary}, but `weight` may be absent instead of a fabricated 0. */
+export type HeroExerciseSummary = Omit<ExerciseSummary, 'weight'> & {
+  weight?: number;
+  loadLabel?: string;
+};
+
 /**
  * Map the set timeline onto titan `ExerciseCard`'s header summary. `sets` counts
  * completed sets; `reps`/`weight` reflect the active rep target when configured,
  * else the last set's actuals. Weight is exact (rescaled by `unit` via
- * `convertMass`, VW-196) — `ExerciseCard` rounds it.
+ * `convertMass`, VW-196) — `ExerciseCard` rounds it. A weightless last set (or no
+ * sets at all) carries its `loadLabel` (or an em-dash) instead of a fabricated 0.
  */
 export function toExerciseSummary(
-  views: WorkoutSetView[],
+  views: HeroSetView[],
   repTarget: number | null,
   unit: MassUnit = 'lbs',
-): ExerciseSummary {
+): HeroExerciseSummary {
   const completed = views.filter((v) => v.kind === 'completed').length;
   const last = views[views.length - 1];
   const lastReps = last ? last.reps.length : 0;
+  const weight = last?.weightLbs == null ? undefined : convertMass(last.weightLbs, unit);
+  const loadLabel = last?.weightLbs == null ? (last?.loadLabel ?? '—') : undefined;
   return {
     sets: completed,
     reps: repTarget ?? lastReps,
-    weight: convertMass(last?.weightLbs ?? 0, unit),
+    weight,
+    loadLabel,
     unit,
   };
 }
