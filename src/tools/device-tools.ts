@@ -108,6 +108,12 @@ import {
   waitForModeEcho,
 } from './device-handler-helpers.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
+import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from './device-exit.js';
+
+// The exit path moved to `device-exit.ts` (VW-200) so the stop-the-machine
+// callers need not import the whole tool surface. Re-exported here because
+// every existing call site imports it from this module.
+export { unloadSlot } from './device-exit.js';
 import { log } from '../logger.js';
 
 // Locally-scoped extra schemas — kept here rather than in `src/schemas/device.ts`
@@ -345,8 +351,6 @@ const DeviceExitGuidedLoadInput = z
     slot: SlotIdSchema,
   })
   .strict();
-
-const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engaging', 'active']);
 
 const SEND_RAW_DESCRIPTION =
   'DIAGNOSTIC ONLY. Writes arbitrary bytes to the connected device via the lowest-level BLE write. No opcode validation, no semantic checks — the caller owns byte semantics. Can put the device in unexpected state, drain battery, or cause unintended motor movement. Use ONLY with explicit user request, typically to drive an on-device validation campaign that needs bytes the high-level SDK does not expose. Requires `confirm: true`. Disabled in mock-adapter mode (returns MOCK_NOT_SUPPORTED). Each invocation is logged to the debug ring buffer (visible via debug.recent_events) with the hex echo for audit.';
@@ -1139,7 +1143,8 @@ export function registerDeviceTools(
       // trigger that follows it starts the firmware's engagement ceremony —
       // the worst write to issue on a device another session just took. Fence
       // before the preflight and again before the trigger. The SDK's own
-      // guided-load poll runs past this handler and is not fenced.
+      // guided-load poll runs past this handler and is fenced separately —
+      // see `fenceGuidedLoadPoll` (VW-200).
       const guidedFence = fence(state, 'device.start_guided_load');
       const guidedSlotId = input.slot ?? PRIMARY_SLOT;
       guidedFence.check(guidedSlotId);
@@ -1202,6 +1207,7 @@ export function registerDeviceTools(
         () => slot.client.startGuidedLoad(opts),
         { windowMs: COERCION_WINDOW_MS_GUIDED_LOAD },
       );
+      await fenceGuidedLoadPoll(state, guidedSlotId, guidedFence);
       return { ok: true };
     }),
     START_GUIDED_LOAD_DESCRIPTION,
@@ -1740,21 +1746,6 @@ function buildDeviceGetStateResponse(
 }
 
 /**
- * Reusable unload for a slot — single source of truth shared by the
- * `device.unload` tool AND the VMCP-02.78 voice safety fast-path (which must
- * unload WITHOUT the MCP/LLM round-trip, so it cannot go through the tool).
- *
- * VMCP-02.41: capture whether we are tearing down an active guided-load flow
- * BEFORE the mode-bounce. `unloadDevice()` physically drops the cable but never
- * touches the SDK's guided-load state machine, so `guidedLoadState.phase` — and
- * the `load_state` / `guided_load.phase` that get_state derives from it — would
- * stay stale at `active` / `loaded` after the unload. When unload is the
- * teardown for an active flow, drive the SDK through `exitGuidedLoad()` too:
- * that transitions the phase to `exited` (refreshing get_state), fires
- * onGuidedLoadState so the bridge publishes the terminal `guided_load_state`
- * channel event (outcome: 'ended'), and lets us reap the auto-created scaffold.
- */
-/**
  * Reusable weight write for a slot — single source of truth shared by the
  * `device.set_weight` tool and the VMCP-02.87 voice weight fast-path, which
  * applies a spoken command without an MCP/LLM round-trip and so cannot go
@@ -1822,14 +1813,62 @@ async function enterWeightTrainingForGuidedLoad(
   }
 }
 
-export async function unloadSlot(state: ServerState, slotId: string): Promise<void> {
+/**
+ * Keep the fence alive for as long as the SDK's guided-load poll is (VW-200).
+ *
+ * `startGuidedLoad` resolves once the trigger is written and the poll is armed
+ * — the poll itself then runs for the whole 18s window, reading status and
+ * driving the phase machine, well after this handler returned. A steal in that
+ * window used to be invisible to us: the victim's poll kept talking to a device
+ * another session owned.
+ *
+ * Two cases. If the steal already landed while the trigger was in flight, stop
+ * the poll and fail the call with `LEASE_LOST` — the trigger cannot be un-sent,
+ * but the ceremony it started can be ended. If the fence is still intact, arm a
+ * watcher for the rest of the flow: on a trip it publishes `lease_lost` and
+ * exits guided load, and it detaches on the terminal phase so nothing outlives
+ * the poll.
+ *
+ * A pre-0.6.3 SDK has no `onGuidedLoadState`, so there is no terminal edge to
+ * detach on and no watcher is armed — the same degradation the event-bridge
+ * accepts, rather than a timer needing a poll-window constant of its own.
+ */
+async function fenceGuidedLoadPoll(
+  state: ServerState,
+  slotId: string,
+  guidedFence: LeaseFence,
+): Promise<void> {
   const slot = getSlot(state, slotId);
-  const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
-  await slot.client.unloadDevice();
-  if (wasGuidedLoadActive) {
-    await slot.client.exitGuidedLoad();
-    await reapGuidedLoadScaffold(state, slotId);
+  if (!guidedFence.intact()) {
+    await stopGuidedLoadPoll(state, slotId);
+    guidedFence.dispose();
+    guidedFence.check(slotId);
+    return;
   }
+  if (typeof slot.client.onGuidedLoadState !== 'function') {
+    guidedFence.dispose();
+    return;
+  }
+  let unsubscribe: (() => void) | null = null;
+  const stopWatching = (): void => {
+    unsubscribe?.();
+    unsubscribe = null;
+    guidedFence.dispose();
+  };
+  guidedFence.signal().addEventListener(
+    'abort',
+    () => {
+      guidedFence.report(slotId);
+      stopWatching();
+      void stopGuidedLoadPoll(state, slotId).catch((err) => {
+        log.warn(`device.start_guided_load: could not stop the poll on slot ${slotId}`, err);
+      });
+    },
+    { once: true },
+  );
+  unsubscribe = slot.client.onGuidedLoadState((gls) => {
+    if (!GUIDED_LOAD_ACTIVE_PHASES.has(gls.phase)) stopWatching();
+  });
 }
 
 /**

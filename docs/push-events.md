@@ -343,7 +343,16 @@ runtime-togglable via `system.set_cues` and reported by `server.health`.
 Exactly one client may drive the device at a time (`system.lease_*`). A tool that writes in
 several steps — `bilateral.cascade`, `device.start_guided_load`,
 `device.configure_isokinetic`, and the local voice weight fast-path — re-reads the lease
-after every await and stops if the device changed hands in the meantime:
+after every await and stops if the device changed hands in the meantime.
+
+The tools that BLOCK rather than step are fenced too (VW-200): `isometric.measure_hold`,
+`isometric.measure_max`, `isometric.measure_imbalance` and `timer.wait` wait on a signal the
+lease itself drives, so a steal cuts the hold, the protocol rest, or the rest timer short
+instead of running it out. An aborted isometric assessment leaves the cable unloaded — the
+athlete may be pulling against it — and `timer.wait` frees its singleton, so the next holder
+is not answered `BUSY` by a timer belonging to a session that no longer owns the device.
+`device.start_guided_load` keeps its fence armed past the tool result for as long as the
+SDK's status poll runs, and ends the flow through `device.exit_guided_load` on a trip:
 
 ```jsonc
 {
@@ -356,7 +365,8 @@ after every await and stops if the device changed hands in the meantime:
 `meta` carries `event_type: lease_lost` and `tool`, plus the usual `slot` and `at`.
 
 The tool call itself fails with the `LEASE_LOST` error code; the voice fast-path has no
-tool result, so there this event is the only signal. Settings that landed before the steal
+tool result, and neither does a guided-load flow already reported as started, so there this
+event is the only signal. Settings that landed before the steal
 are NOT rolled back — the other client unloaded the device as part of taking it, and a
 rollback would be one more write from a session that no longer holds the lease. To carry
 on, call `system.lease_acquire` and re-issue the whole call.
