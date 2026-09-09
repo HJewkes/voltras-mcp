@@ -91,12 +91,16 @@ function spawnServer(env: Record<string, string> = {}): ChildProcessWithoutNullS
   });
 }
 
+// `tsc` + the SPA typecheck take ~4s unloaded, but this hook runs in a worker
+// while the rest of the suite saturates CI's 2 vCPUs, so it routinely exceeds
+// vitest's 10s default and fails the whole job (main was red from 2026-09-09).
+const BUILD_HOOK_TIMEOUT_MS = 180_000;
+
 describe('server lifecycle (VMCP-01.25 / F11)', () => {
   beforeAll(() => {
     if (!existsSync(BIN_PATH)) {
       // Build once if dist is missing — this happens on fresh checkouts
-      // and in CI where `npm test` is run before `npm run build`. The
-      // build is fast (~2s) so paying it once per test process is fine.
+      // and in CI, whose `test` job runs `npm test` without `npm run build`.
       const result = spawnSync('npm', ['run', 'build'], {
         cwd: REPO_ROOT,
         stdio: 'inherit',
@@ -105,7 +109,7 @@ describe('server lifecycle (VMCP-01.25 / F11)', () => {
         throw new Error('failed to build the server before lifecycle tests');
       }
     }
-  });
+  }, BUILD_HOOK_TIMEOUT_MS);
 
   it('exits cleanly on SIGTERM within 2s (with dashboard sidecar up)', async () => {
     // Port 0 lets the OS pick a free port — avoids collisions across
