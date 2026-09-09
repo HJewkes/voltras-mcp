@@ -553,7 +553,7 @@ function bounceSetSummary(reps: RepBounceReading[]): {
  * THREE GUARDS, ALL POINTING THE SAME WAY. A wrong "your technique is
  * degrading" costs more than silence, and cross-session ROM has three ways to
  * lie: a baseline too thin to mean anything (B57, handled by `gate`), a setup
- * that moved between then and now (B15, handled by `comparability`), and a
+ * that moved between then and now (B15, handled by `driftGuard`), and a
  * position scale that changed under the rows (handled by
  * `priorComparableSets`). Any one of them nulls the number and says why.
  */
@@ -565,11 +565,17 @@ interface RomBaselineReading {
    */
   romVsBaselinePct: number | null;
   /**
-   * B15's execution-comparability verdict for this set's session against the
+   * B15's execution-drift verdict for this set's session against the
    * reference session `romVsBaselinePct` divides by. `null` when the
    * comparison never got far enough to run one.
+   *
+   * NAMED FOR ITS OWNER, not for the question. `driftGuard` rather than
+   * `comparability` because VW-94's context predicate answers a different
+   * question under that word (same exercise, lifter, settings, load) and ships
+   * a different shape on other pipelines — one name for two verdicts is a trap
+   * for anyone reading a response.
    */
-  comparability: DriftGuardVerdict | null;
+  driftGuard: DriftGuardVerdict | null;
   /** Why the comparison was refused, or the caveat riding along with a number. */
   note?: string;
 }
@@ -624,7 +630,7 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
   const refuse = (note: string): RomBaselineReading => ({
     gate,
     romVsBaselinePct: null,
-    comparability: null,
+    driftGuard: null,
     note,
   });
   // VW-169: a guest's set is not evidence about the owner, and the owner's
@@ -650,22 +656,22 @@ async function romBaseline(state: ServerState, set: StoredSet): Promise<RomBasel
   // (`isEligibleForComparison`). `summarizeSessionForDrift` supplies the
   // reference ROM only because a `DriftGuardVerdict` carries percentages, not
   // the denominator `romVsBaselinePct` divides by.
-  const comparability = await checkDriftGuard(state.store, {
+  const driftGuard = await checkDriftGuard(state.store, {
     key,
     baselineSessionId: reference.sessionId,
     currentSessionId: set.sessionId,
   });
   // B15's consumer contract: SKIP the comparison when it is not comparable,
   // PROPAGATE `reasoning` as a caveat when it is merely flagged.
-  if (!comparability.comparable) {
-    return { gate, romVsBaselinePct: null, comparability, note: comparability.reasoning };
+  if (!driftGuard.comparable) {
+    return { gate, romVsBaselinePct: null, driftGuard, note: driftGuard.reasoning };
   }
   return {
     gate,
     romVsBaselinePct:
       ((observed - reference.summary.medianRomM) / reference.summary.medianRomM) * 100,
-    comparability,
-    ...(comparability.flagged ? { note: comparability.reasoning } : {}),
+    driftGuard,
+    ...(driftGuard.flagged ? { note: driftGuard.reasoning } : {}),
   };
 }
 
@@ -1494,7 +1500,7 @@ const METRICS_COMPUTE_DESCRIPTION =
   'comparable to the reference session — the most recent earlier one for this exercise, since ' +
   'a seat or attachment change reads exactly like a ROM change and setup clustering is not ' +
   'built yet — and the two share a position scale. `baseline.note` always says which one ' +
-  'refused, and `baseline.comparability` carries the guard’s own verdict. `movementClass` is ' +
+  'refused, and `baseline.driftGuard` carries the guard’s own verdict. `movementClass` is ' +
   'reported, never gated on. A readout only: no cue, no watch, no push event. ' +
   '`strength.e1rm` (VW-142) — estimated 1RM, one of THREE input shapes on this one literal: ' +
   '`{ load, reps }` (Epley formula — `e1RM = load * (1 + reps / 30)`, no baseline gate), ' +

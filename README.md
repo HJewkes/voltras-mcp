@@ -434,12 +434,8 @@ This is a check on CONTEXT. Whether two sets were _executed_ the same way — te
 drift, and the intentional-ROM-change case — is the drift guard's separate question:
 `checkDriftGuard`, readable through `driftguard.check`. It reads reps; this predicate
 never does. A pair can pass one and fail the other, and a caller that needs both asks
-both.
-
-Both layers surface under the name `comparability`, at different paths, so read the path
-before the value: `quality.rom` reports the drift guard's verdict at
-`baseline.comparability` (VW-93), while the three tools above carry this predicate's
-report at the top level.
+both. The two never share a field name: `quality.rom` reports the drift guard's verdict at
+`baseline.driftGuard`, and `comparability` always means this predicate's report.
 
 ### Push events
 
