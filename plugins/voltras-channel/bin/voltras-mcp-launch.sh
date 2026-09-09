@@ -7,6 +7,9 @@
 # ~/.claude/plugins/cache and refuses to resolve paths outside that copy, so
 # this shim locates the real checkout at spawn time instead.
 #
+# This is the ONE launcher: the justfile and scripts/voltra-pt both exec this
+# same script rather than duplicating its resolution/build logic.
+#
 # Resolution order (first hit wins):
 #   1. $VOLTRAS_MCP_ENTRY        — absolute path to dist/bin.js
 #   2. $VOLTRAS_MCP_HOME         — repo root; uses $VOLTRAS_MCP_HOME/dist/bin.js
@@ -17,6 +20,12 @@
 # launcher path needs no setup. For launching plain `claude`, write the pointer
 # file once:  echo "$PWD" > ~/.voltras/mcp-home
 #
+# When the repo root is known (cases 1-3), the launcher also:
+#   - sources <repo root>/.launch.env if present (see .launch.env.example),
+#     exporting every variable it sets into the server's environment
+#   - runs `npm run build:dashboard` if dist/spa is missing or stale relative
+#     to src/dashboard/spa, so a fresh checkout serves a working /app
+#
 # stdout is the MCP stdio transport — every diagnostic here goes to stderr.
 
 set -euo pipefail
@@ -26,16 +35,20 @@ fail() {
   exit 1
 }
 
+repo_root=""
 entry=""
 
 if [ -n "${VOLTRAS_MCP_ENTRY:-}" ]; then
   entry="$VOLTRAS_MCP_ENTRY"
+  repo_root="$(cd "$(dirname "$entry")/.." && pwd)"
 elif [ -n "${VOLTRAS_MCP_HOME:-}" ]; then
-  entry="$VOLTRAS_MCP_HOME/dist/bin.js"
+  repo_root="$VOLTRAS_MCP_HOME"
+  entry="$repo_root/dist/bin.js"
 elif [ -r "$HOME/.voltras/mcp-home" ]; then
   read -r home <"$HOME/.voltras/mcp-home" || home=""
   [ -n "$home" ] || fail "~/.voltras/mcp-home is empty; write the repo root into it."
-  entry="$home/dist/bin.js"
+  repo_root="$home"
+  entry="$repo_root/dist/bin.js"
 elif command -v voltras-mcp >/dev/null 2>&1; then
   exec voltras-mcp "$@"
 else
@@ -44,6 +57,22 @@ Set VOLTRAS_MCP_HOME to the repo root, write it to ~/.voltras/mcp-home, or
 \`npm link\` the repo so \`voltras-mcp\` is on PATH."
 fi
 
+if [ -f "$repo_root/.launch.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$repo_root/.launch.env"
+  set +a
+fi
+
 [ -f "$entry" ] || fail "no server at $entry — run \`npm run build\` in the voltras-mcp repo."
+
+spa_src="$repo_root/src/dashboard/spa"
+spa_marker="$repo_root/dist/spa/index.html"
+if [ -d "$spa_src" ]; then
+  if [ ! -f "$spa_marker" ] || [ -n "$(find "$spa_src" -newer "$spa_marker" -print -quit)" ]; then
+    echo "voltras-channel: dashboard SPA missing or stale, running npm run build:dashboard" >&2
+    (cd "$repo_root" && npm run build:dashboard) >&2
+  fi
+fi
 
 exec node "$entry" "$@"
