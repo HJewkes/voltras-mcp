@@ -203,6 +203,22 @@ describe('system.listen_* — channel events', () => {
     expect(inputs).toHaveLength(1);
     expect(JSON.parse(inputs[0].content).transcript).toBe('cut the weight');
   });
+
+  it('publishes voice_input_failed on a listener error, without fabricating a slot (VW-195)', async () => {
+    // `system.listen_start` runs one mic per process, not per slot, so a
+    // listener error has no slot to attribute it to. A wrong slot would
+    // misroute a bilateral consumer, which is worse than an absent one.
+    // The real `McpChannelPublisher` still stamps `at` on this event at the
+    // transport boundary; see channel-publisher.test.ts.
+    const h = buildHarness();
+    await h.start({});
+    h.audio.emit('error', new Error('mic ripped out'));
+    await settle();
+    const failures = h.events.filter((e) => e.meta.event_type === 'voice_input_failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0].meta.error_code).toBe('AUDIO_STREAM_ERROR');
+    expect(failures[0].meta.slot).toBeUndefined();
+  });
 });
 
 interface FakeSafety {

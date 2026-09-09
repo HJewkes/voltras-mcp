@@ -47,23 +47,19 @@ export interface ChannelPublisher {
 
 /**
  * Build a slot-scoped publisher around an existing one. The wrapper passes
- * every publish through to `inner`, but spreads `slot: slotId` and an
- * emit-time `at` into the meta first so explicit keys on the event still win
- * (defensive — no caller should set `slot`/`at` directly, but the merge order
- * means a hand-set value overrides the injected tag rather than silently
- * colliding). `at` is a generic emit-time stamp distinct from any
- * event-specific `started_at`/`ended_at` the builder already set.
+ * every publish through to `inner`, spreading `slot: slotId` into the meta
+ * first so an explicit key on the event still wins (defensive — no caller
+ * should set `slot` directly, but the merge order means a hand-set value
+ * overrides the injected tag rather than silently colliding). The emit-time
+ * `at` stamp is applied once, at the base publisher, so it covers this event
+ * too without being stamped twice.
  */
-function slotScopedPublisher(
-  inner: ChannelPublisher,
-  slotId: string,
-  nowIso: () => string = () => new Date().toISOString(),
-): ChannelPublisher {
+function slotScopedPublisher(inner: ChannelPublisher, slotId: string): ChannelPublisher {
   return {
     publish(event: ChannelEvent): void {
       inner.publish({
         content: event.content,
-        meta: { slot: slotId, at: nowIso(), ...event.meta },
+        meta: { slot: slotId, ...event.meta },
       });
     },
     forSlot(nextSlotId: string): ChannelPublisher {
@@ -72,7 +68,7 @@ function slotScopedPublisher(
       // this rebase the merge above would let the outer slot win (`{slot: 'a',
       // ...{slot: 'b'}}` = 'b' — fine in this direction, but the explicit
       // rebase keeps the contract obvious).
-      return slotScopedPublisher(inner, nextSlotId, nowIso);
+      return slotScopedPublisher(inner, nextSlotId);
     },
   };
 }
@@ -83,6 +79,14 @@ function slotScopedPublisher(
  * channels aren't enabled at session launch (--channels flag), so a failure
  * here is not actionable. Matches the same void-discard pattern used for
  * sendResourceUpdated in event-bridge.ts.
+ *
+ * Stamps an emit-time `at` on every event, scoped or not (VW-195) — the
+ * three unscoped call sites (`timer_complete`, `voice_input_failed`, and the
+ * `debug.push_test_channel` round-trip probe) used to reach the transport
+ * with no timestamp at all, because only `forSlot()` used to inject one.
+ * `at` is distinct from any event-specific `started_at`/`ended_at` the
+ * builder already set; an explicit `at` on the event still wins over the
+ * injected one, same merge-order rule as `slot` above.
  */
 export class McpChannelPublisher implements ChannelPublisher {
   constructor(
@@ -93,12 +97,12 @@ export class McpChannelPublisher implements ChannelPublisher {
   publish(event: ChannelEvent): void {
     void this.server.server.notification({
       method: 'notifications/claude/channel',
-      params: { content: event.content, meta: event.meta },
+      params: { content: event.content, meta: { at: this.nowIso(), ...event.meta } },
     });
   }
 
   forSlot(slotId: string): ChannelPublisher {
-    return slotScopedPublisher(this, slotId, this.nowIso);
+    return slotScopedPublisher(this, slotId);
   }
 }
 

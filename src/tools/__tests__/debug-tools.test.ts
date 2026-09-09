@@ -393,6 +393,25 @@ describe('debug.push_test_channel', () => {
     expect((JSON.parse(r.content[0].text) as { code: string }).code).toBe('INVALID_INPUT');
     expect(publish).not.toHaveBeenCalled();
   });
+
+  it('never synthesizes a slot: the probe round-trips exactly what the caller sent plus the nonce (VW-195)', async () => {
+    // The probe's whole job is round-tripping the caller's own meta. A
+    // synthesized slot would break that round-trip contract even though the
+    // real `McpChannelPublisher` still stamps `at` on it at the transport
+    // boundary; see channel-publisher.test.ts.
+    const publish = vi.fn();
+    const { placeholders, invoke } = makePlaceholders(ALL_DEBUG_TOOLS);
+    registerDebugTools({} as never, fakeState({ publish }), placeholders as never);
+
+    await invoke('debug.push_test_channel', {
+      content: 'probe',
+      meta: { source: 'voltras' },
+      nonce: 'probe-456',
+    });
+    const call = publish.mock.calls[0][0] as { meta: Record<string, string> };
+    expect(call.meta.slot).toBeUndefined();
+    expect(call.meta).toStrictEqual({ source: 'voltras', nonce: 'probe-456' });
+  });
 });
 
 describe('debug.confirm_channel', () => {

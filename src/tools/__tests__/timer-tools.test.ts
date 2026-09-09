@@ -295,6 +295,18 @@ describe('timer.start (non-blocking)', () => {
     expect(parsed.summary).toContain('0:30');
   });
 
+  it('does not fabricate a slot for timer_complete (VW-195)', async () => {
+    // `timer.start` takes no slot and is not tied to any armed set, so
+    // `timer_complete` is genuinely global — a wrong slot would misroute a
+    // bilateral consumer, which is worse than an absent one. The real
+    // `McpChannelPublisher` still stamps `at` on this event at the
+    // transport boundary; see channel-publisher.test.ts.
+    await startCb({ durationMs: 1_000, label: 'rest' });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const event = channels.publish.mock.calls[0][0] as { meta: Record<string, string> };
+    expect(event.meta.slot).toBeUndefined();
+  });
+
   it('removes the timer from state.timers once it fires', async () => {
     const result = await startCb({ durationMs: 5_000, label: 'rest' });
     const id = (payload(result) as { timer_id: string }).timer_id;
