@@ -5,9 +5,12 @@
 // coarse connection hint the idle copy branches on. Component copy is the titan story's visual
 // check; here we test the logic that drives it. Pure projection — no DOM, no I/O.
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { initialAccumulatorState, type Snapshot } from '../spa/adapter.js';
+import { EmptyLiveView } from '../spa/live-page/EmptyLiveView.js';
 import {
   deriveRailExercises,
   stageIsEmpty,
@@ -200,5 +203,30 @@ describe('active-row progress placeholder (VW-68)', () => {
     const [row] = deriveRailExercises(model({ session: sessionModel() }));
     expect(row.summary.sets).toBe(0);
     expect(row.summary.reps).toBe('—');
+  });
+});
+
+// --- "Loaded" metric follows the display toggle (VW-63) -----------------------------------
+
+describe('EmptyLiveView "Loaded" metric follows the display toggle (VW-63)', () => {
+  function renderIdle(session: SessionModel): string {
+    return renderToStaticMarkup(createElement(EmptyLiveView, { model: model({ session }) }));
+  }
+
+  it('shows the raw lbs value when the display unit is lbs', () => {
+    const html = renderIdle(sessionModel({ weightLbs: 100, unit: 'lbs' }));
+    expect(html).toContain('Loaded');
+    expect(html).toContain('100');
+    expect(html).toContain('lbs');
+  });
+
+  it('converts the SAME load to kg when the display unit is kg — never a relabeled lbs number', () => {
+    // 100 lb × 0.45359237 ≈ 45.36 → rounds to 45 (formatMass, same convention as the rail
+    // summary and the recap heading — VW-63 never restates the conversion factor).
+    const html = renderIdle(sessionModel({ weightLbs: 100, unit: 'kg' }));
+    expect(html).toContain('Loaded');
+    expect(html).toContain('45');
+    expect(html).toContain('kg');
+    expect(html).not.toMatch(/>\s*100\s*</);
   });
 });

@@ -14,6 +14,7 @@ import {
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
 import { type DashboardModel } from './model';
+import { formatMass } from './mass';
 import {
   FATIGUE_CARD_WIDTH,
   PANEL_COLUMN_GAP,
@@ -190,6 +191,10 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
 
   const axisColor = useOnSurfaceColor('tertiary');
 
+  // The "Loaded" echo, converted to the wall's chosen display unit (VW-63) —
+  // `session.weightLbs` stays lbs; only this readout's value/label change.
+  const load = session.weightLbs !== null ? formatMass(session.weightLbs, session.unit) : null;
+
   return (
     <View
       style={{ flex: 1 }}
@@ -221,12 +226,12 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
                       Shown only when the settings cascade reported one; hidden under the mock
                       adapter, never a fabricated 0. Suppressed on a known disconnect (a stale
                       weight would mislead). */}
-                  {!disconnected && session.weightLbs !== null && (
+                  {!disconnected && load !== null && (
                     <MetricGroup>
                       <Metric
                         size="md"
-                        value={String(session.weightLbs)}
-                        unit={session.unit}
+                        value={String(load.value)}
+                        unit={load.unit}
                         label="Loaded"
                       />
                     </MetricGroup>
