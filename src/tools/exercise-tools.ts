@@ -1,6 +1,7 @@
-// Wave 3D — `exercise.search` and `exercise.get` tool registrations.
+// Wave 3D — `exercise.search`, `exercise.get` and `exercise.confirm_setup`
+// tool registrations.
 //
-// Both tools are pure pass-throughs to the `ExerciseService` (R22 / AC-22):
+// The first two are pure pass-throughs to the `ExerciseService` (R22 / AC-22):
 // the wave-2B service owns the upstream catalog seam (`searchExercises`,
 // `getExerciseById`), so this module never touches `@voltras/workout-analytics`
 // directly. Search forwards `query` verbatim; get translates a missing entry
@@ -22,7 +23,13 @@
 // success path but would double-wrap a `NOT_FOUND` `errorResult`. We re-use
 // the same pieces — `safeParse` for INVALID_INPUT, `mapSdkError` via try/catch
 // — but compose them inline so `getById === undefined` can return the error
-// result directly.
+// result directly. `exercise.confirm_setup` composes the same way, for the
+// same reason.
+//
+// `exercise.confirm_setup` is the odd one out in this module: it writes, and
+// what it writes is the one thing the ROM clustering in
+// `store/exercise-setups.ts` cannot derive — what a physical setup actually IS
+// (VW-119).
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
