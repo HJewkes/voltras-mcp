@@ -56,6 +56,7 @@ import {
 } from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
+import { type MassUnit } from '../live-page/mass';
 import {
   addPlannedExercise,
   createProgram,
@@ -95,6 +96,7 @@ export function PlanBuilderPage(): React.JSX.Element {
   const planTree = useStore(dashboardStore, (s) => s.planTree);
   const catalog = useStore(dashboardStore, (s) => s.catalog);
   const error = useStore(dashboardStore, (s) => s.plannerError);
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
   const narrow = useIsNarrowViewport();
 
   const [programId, setProgramId] = useState<string | null>(null);
@@ -209,6 +211,7 @@ export function PlanBuilderPage(): React.JSX.Element {
         <WorkoutEditor
           flat={selected}
           busy={busy}
+          displayUnit={displayUnit}
           onAddTargets={(id, patch) => mutate(() => updatePlannedExercise(id, patch))}
           onRemove={(id) => mutate(() => deletePlannedExercise(id))}
           onReorder={(ids) => void mutate(() => reorderPlannedExercises(selected.template.id, ids))}
@@ -545,6 +548,7 @@ function WorkoutList(props: {
 function WorkoutEditor(props: {
   flat: FlatTemplate;
   busy: boolean;
+  displayUnit: MassUnit;
   onAddTargets: (plannedExerciseId: string, patch: TargetPatch) => Promise<boolean>;
   onRemove: (plannedExerciseId: string) => Promise<boolean>;
   onReorder: (plannedExerciseIds: string[]) => void;
@@ -571,6 +575,7 @@ function WorkoutEditor(props: {
             key={exercise.id}
             exercise={exercise}
             busy={props.busy}
+            displayUnit={props.displayUnit}
             onUp={index === 0 ? null : () => move(index, -1)}
             onDown={index === ids.length - 1 ? null : () => move(index, 1)}
             onSave={(patch) => props.onAddTargets(exercise.id, patch)}
@@ -616,6 +621,7 @@ const SAVED_FLASH_MS = 2000;
 function PlannedExerciseRow(props: {
   exercise: PlanExerciseView;
   busy: boolean;
+  displayUnit: MassUnit;
   onUp: (() => void) | null;
   onDown: (() => void) | null;
   onSave: (patch: TargetPatch) => Promise<boolean>;
@@ -685,7 +691,7 @@ function PlannedExerciseRow(props: {
             <Typography variant="body1">
               {exercise.orderIndex + 1}. {exercise.name}
             </Typography>
-            <Caption color="tertiary">{prescriptionLine(exercise)}</Caption>
+            <Caption color="tertiary">{prescriptionLine(exercise, props.displayUnit)}</Caption>
           </div>
           {/* Reorder is two nudge buttons, not a drag handle: titan ships no
               drag-reorder primitive (see the component-gap note), and inventing a

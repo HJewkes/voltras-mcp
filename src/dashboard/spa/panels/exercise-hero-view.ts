@@ -25,6 +25,7 @@ import type {
   TempoDisplayProps,
 } from '@titan-design/react-ui';
 import { type WorkoutSetView } from '../adapter';
+import { convertMass, type MassUnit } from '../live-page/mass';
 
 /**
  * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
@@ -54,8 +55,11 @@ export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null
  * bands), per-rep velocity in m/s (SetRow's VelocityStrip formats), raw weights
  * (SetRow rounds). Velocities need no conversion: the server's bridge converts
  * them once when it builds each `WorkoutSample` (VW-160).
+ *
+ * `unit` (VW-196) rescales the weight fields via `convertMass` — the EXACT
+ * contract above still holds, so this never pre-rounds; SetRow does.
  */
-export function toSetRowProps(view: WorkoutSetView): SetRowProps {
+export function toSetRowProps(view: WorkoutSetView, unit: MassUnit = 'lbs'): SetRowProps {
   // TODO(VW-62): swap to the set-level MEAN sibling once WA publishes
   // `getSetRepMeanVelocities` (WA 1.5.0 exports only the peak fold). The per-rep
   // strips already moved to mean (`panels/live-view.ts`); this set-level path stays
@@ -63,15 +67,15 @@ export function toSetRowProps(view: WorkoutSetView): SetRowProps {
   const velocities = getSetRepPeakVelocities({ reps: view.reps }).map((mps) => mps ?? 0);
   const rpe = estimateSetRpe({ reps: view.reps });
   const repsDone = view.reps.length;
-  const weight = view.weightLbs ?? 0;
+  const weight = convertMass(view.weightLbs ?? 0, unit);
   if (view.kind === 'active') {
     return {
       state: 'live',
       setNumber: view.setNumber,
-      unit: 'lbs',
+      unit,
       target: {
         reps: view.targetReps ?? repsDone,
-        weight: view.targetWeightLbs ?? weight,
+        weight: view.targetWeightLbs === null ? weight : convertMass(view.targetWeightLbs, unit),
       },
       reps: repsDone,
       weight,
@@ -82,7 +86,7 @@ export function toSetRowProps(view: WorkoutSetView): SetRowProps {
   return {
     state: 'done',
     setNumber: view.setNumber,
-    unit: 'lbs',
+    unit,
     reps: repsDone,
     weight,
     rpe,
@@ -95,11 +99,13 @@ type ExerciseSummary = NonNullable<ExerciseCardProps['summary']>;
 /**
  * Map the set timeline onto titan `ExerciseCard`'s header summary. `sets` counts
  * completed sets; `reps`/`weight` reflect the active rep target when configured,
- * else the last set's actuals. Weight is exact — `ExerciseCard` rounds it.
+ * else the last set's actuals. Weight is exact (rescaled by `unit` via
+ * `convertMass`, VW-196) — `ExerciseCard` rounds it.
  */
 export function toExerciseSummary(
   views: WorkoutSetView[],
   repTarget: number | null,
+  unit: MassUnit = 'lbs',
 ): ExerciseSummary {
   const completed = views.filter((v) => v.kind === 'completed').length;
   const last = views[views.length - 1];
@@ -107,8 +113,8 @@ export function toExerciseSummary(
   return {
     sets: completed,
     reps: repTarget ?? lastReps,
-    weight: last?.weightLbs ?? 0,
-    unit: 'lbs',
+    weight: convertMass(last?.weightLbs ?? 0, unit),
+    unit,
   };
 }
 

@@ -9,6 +9,7 @@
  */
 import { estimateE1RMFromReps } from '@voltras/workout-analytics';
 
+import { formatMass, type MassUnit } from '../live-page/mass';
 import type { PlanExerciseView, PlanTemplateView, PlanTreeView } from '../../read-models/plan-tree';
 import type {
   SessionSummaryExercise,
@@ -65,15 +66,31 @@ export function resolveSelectedTemplateId(
 }
 
 /**
+ * `unit`-suffixed weight string, rounded via {@link formatMass}: `100 lb` /
+ * `45 kg`. This page's own singular-`lb` convention (vs. the live page's
+ * `lbs`) is kept regardless of `formatMass`'s `unit` label. Null/undefined/NaN
+ * render `'—'`, matching {@link formatNumber} (VW-196).
+ */
+export function formatWeightLbs(
+  valueLbs: number | null | undefined,
+  unit: MassUnit = 'lbs',
+): string {
+  if (valueLbs === null || valueLbs === undefined || !Number.isFinite(valueLbs)) return '—';
+  return `${formatMass(valueLbs, unit).value} ${unit === 'kg' ? 'kg' : 'lb'}`;
+}
+
+/**
  * One-line prescription for a planned exercise, e.g. `3 × 8-12 @ 135 lb`. Only
  * the parts the plan actually specifies appear — a bare "do 3 sets" prescription
  * renders `3 sets`, never an invented rep range or load.
  */
-export function prescriptionLine(exercise: PlanExerciseView): string {
+export function prescriptionLine(exercise: PlanExerciseView, unit: MassUnit = 'lbs'): string {
   const reps = repRange(exercise.targetRepsLow, exercise.targetRepsHigh);
   const head = reps === null ? `${exercise.targetSets} sets` : `${exercise.targetSets} × ${reps}`;
   const parts = [head];
-  if (exercise.targetWeightLbs !== undefined) parts.push(`@ ${exercise.targetWeightLbs} lb`);
+  if (exercise.targetWeightLbs !== undefined) {
+    parts.push(`@ ${formatWeightLbs(exercise.targetWeightLbs, unit)}`);
+  }
   if (exercise.targetRpe !== undefined) parts.push(`RPE ${exercise.targetRpe}`);
   if (exercise.restSec !== undefined) parts.push(`${exercise.restSec}s rest`);
   return parts.join(' · ');
@@ -86,11 +103,15 @@ export function repRange(low: number | undefined, high: number | undefined): str
   return `${low}-${high}`;
 }
 
-/** Signed lb delta as a label: `+5 lb`, `-5 lb`, or `hold`. */
-export function progressionLabel(progression: SessionSummaryProgression | null): string {
+/** Signed delta as a label: `+5 lb`, `-5 lb`, `+2 kg`, or `hold`. */
+export function progressionLabel(
+  progression: SessionSummaryProgression | null,
+  unit: MassUnit = 'lbs',
+): string {
   if (progression === null) return '—';
   if (progression.delta === 0) return 'hold';
-  return `${progression.delta > 0 ? '+' : ''}${progression.delta} lb`;
+  const { value } = formatMass(progression.delta, unit);
+  return `${value > 0 ? '+' : ''}${value} ${unit === 'kg' ? 'kg' : 'lb'}`;
 }
 
 /**
@@ -240,12 +261,15 @@ function sessionDurationMin(summary: SessionSummaryView): number | null {
 }
 
 /**
- * `10 × 135 lb`-style one-liner for a completed set. `loadLabel` (VMCP-02.74)
- * is computed server-side by `describeLoad` — this stays a plain wire-type
- * read so the SPA bundle never needs the server's `state/` module.
+ * `10 × 135 lb`-style one-liner for a completed set. A numeric `weightLbs`
+ * (Weight Training) formats through `formatWeightLbs` so the display toggle
+ * applies; a Band/Damper/Isokinetic set carries no `weightLbs` (#271), so its
+ * server-computed `loadLabel` (VMCP-02.74, `describeLoad`) passes through
+ * unconverted — a label with no number in it is never a mass to convert.
  */
-export function setLine(set: SessionSummarySet): string {
-  return `${set.repCount} × ${set.loadLabel}`;
+export function setLine(set: SessionSummarySet, unit: MassUnit = 'lbs'): string {
+  const load = set.weightLbs === null ? set.loadLabel : formatWeightLbs(set.weightLbs, unit);
+  return `${set.repCount} × ${load}`;
 }
 
 /**

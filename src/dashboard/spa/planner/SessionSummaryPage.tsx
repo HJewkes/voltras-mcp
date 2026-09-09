@@ -57,11 +57,13 @@ import {
 } from '@titan-design/react-ui';
 
 import { dashboardStore } from '../store';
+import { type MassUnit } from '../live-page/mass';
 import { fetchSessionSummary } from './planner-client';
 import {
   e1rmChangePct,
   e1rmSeries,
   formatNumber,
+  formatWeightLbs,
   nextTargetWeightLbs,
   progressionLabel,
   sessionRollup,
@@ -81,6 +83,7 @@ const CHART_HEIGHT = 150;
 export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Element {
   const summary = useStore(dashboardStore, (s) => s.sessionSummary);
   const error = useStore(dashboardStore, (s) => s.plannerError);
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +130,7 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
     { label: 'Exercises', value: `${rollup.exerciseCount}` },
     { label: 'Sets', value: `${rollup.setCount}` },
     { label: 'Reps', value: `${rollup.totalReps}` },
-    { label: 'Volume', value: formatNumber(rollup.volumeLbs, 'lb') },
+    { label: 'Volume', value: formatWeightLbs(rollup.volumeLbs, displayUnit) },
     {
       label: 'Duration',
       value: rollup.durationMin === null ? 'in progress' : `${rollup.durationMin} min`,
@@ -155,22 +158,29 @@ export function SessionSummaryPage(props: { sessionId: string }): React.JSX.Elem
         />
       ) : (
         summary.exercises.map((exercise) => (
-          <ExerciseCard key={exercise.exerciseId ?? 'unattributed'} exercise={exercise} />
+          <ExerciseCard
+            key={exercise.exerciseId ?? 'unattributed'}
+            exercise={exercise}
+            displayUnit={displayUnit}
+          />
         ))
       )}
     </Surface>
   );
 }
 
-function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
-  const { exercise } = props;
+function ExerciseCard(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
+  const { exercise, displayUnit } = props;
   const series = e1rmSeries(exercise);
   const changePct = e1rmChangePct(series);
   const tiles: MetricTileData[] = [
     { label: 'Sets', value: setsAgainstPlan(exercise) },
     { label: 'Reps', value: `${exercise.totalReps}` },
-    { label: 'Top load', value: formatNumber(exercise.topWeightLbs, 'lb') },
-    { label: 'Volume', value: formatNumber(exercise.volumeLbs, 'lb') },
+    { label: 'Top load', value: formatWeightLbs(exercise.topWeightLbs, displayUnit) },
+    { label: 'Volume', value: formatWeightLbs(exercise.volumeLbs, displayUnit) },
     { label: 'Best velocity', value: formatNumber(exercise.bestRepVelocity) },
   ];
 
@@ -216,9 +226,9 @@ function ExerciseCard(props: { exercise: SessionSummaryExercise }): React.JSX.El
           </Caption>
         </div>
         <Divider />
-        <ProgressionBlock exercise={exercise} />
+        <ProgressionBlock exercise={exercise} displayUnit={displayUnit} />
         <Divider />
-        <SetTable exercise={exercise} />
+        <SetTable exercise={exercise} displayUnit={displayUnit} />
       </>
     </PanelCard>
   );
@@ -268,8 +278,12 @@ function E1RMTrend(props: {
   );
 }
 
-function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
+function ProgressionBlock(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
   const { progression, progressionNote } = props.exercise;
+  const { displayUnit } = props;
   if (progression === null) {
     return (
       <div style={{ marginTop: SPACE.sm }}>
@@ -290,8 +304,15 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
       <MetricTiles
         gap={2}
         metrics={[
-          { label: 'Recommendation', value: progressionLabel(progression), valueColor: tone },
-          { label: 'Target load', value: formatNumber(nextTargetWeightLbs(props.exercise), 'lb') },
+          {
+            label: 'Recommendation',
+            value: progressionLabel(progression, displayUnit),
+            valueColor: tone,
+          },
+          {
+            label: 'Target load',
+            value: formatWeightLbs(nextTargetWeightLbs(props.exercise), displayUnit),
+          },
         ]}
       />
       <Caption color="tertiary">{progression.reasoning}</Caption>
@@ -299,7 +320,10 @@ function ProgressionBlock(props: { exercise: SessionSummaryExercise }): React.JS
   );
 }
 
-function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Element {
+function SetTable(props: {
+  exercise: SessionSummaryExercise;
+  displayUnit: MassUnit;
+}): React.JSX.Element {
   return (
     <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Sets</Overline>
@@ -318,7 +342,7 @@ function SetTable(props: { exercise: SessionSummaryExercise }): React.JSX.Elemen
             <Caption color="tertiary">#{set.index}</Caption>
           </div>
           <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="body2">{setLine(set)}</Typography>
+            <Typography variant="body2">{setLine(set, props.displayUnit)}</Typography>
           </div>
           {set.isWarmup && <Caption color="tertiary">warm-up</Caption>}
           <div style={{ width: 110 }}>
