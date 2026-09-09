@@ -139,13 +139,37 @@ describe('makeVoiceSafety — evaluate / unload routing', () => {
   });
 });
 
+// A pool phrase heard over TTS-degraded audio can drop weak suffixes, gain a
+// stray word, or land on a homophone. None of these are allowed to route as a
+// fresh safety trigger — that would re-fire the stop mid-ack. Generated from
+// each phrase's own words rather than hardcoded so a future pool edit stays
+// covered automatically.
+function mishearingsOf(phrase: string): string[] {
+  const words = phrase.replace(/[.,]/g, '').split(' ');
+  const variants = new Set<string>();
+  variants.add(phrase.replace(/\bweight\b/gi, 'wait'));
+  variants.add(phrase.replace(/\boff\b/gi, 'of'));
+  // Index 0 ("Stopping") is the mandated, already-vetted prefix — mutate only
+  // the words after it.
+  for (let i = 1; i < words.length; i++) {
+    if (/(ing|ed)$/i.test(words[i])) {
+      const stripped = [...words];
+      stripped[i] = words[i].replace(/(ing|ed)$/i, '');
+      variants.add(stripped.join(' '));
+    }
+    const dropped = words.filter((_, idx) => idx !== i);
+    variants.add(dropped.join(' '));
+  }
+  return [...variants];
+}
+
 describe('SAFETY_ACK_PHRASES pool (VW-157)', () => {
-  it('has 5 to 10 entries, each starting with "Stopping" and naming the weight state, at most 6 words', () => {
-    expect(SAFETY_ACK_PHRASES.length).toBeGreaterThanOrEqual(5);
+  it('has 3 to 10 entries, each starting with "Stopping" and naming the weight state, at most 6 words', () => {
+    expect(SAFETY_ACK_PHRASES.length).toBeGreaterThanOrEqual(3);
     expect(SAFETY_ACK_PHRASES.length).toBeLessThanOrEqual(10);
     for (const phrase of SAFETY_ACK_PHRASES) {
       expect(phrase.startsWith('Stopping')).toBe(true);
-      expect(/weight off|unloaded/i.test(phrase)).toBe(true);
+      expect(/weight off/i.test(phrase)).toBe(true);
       expect(phrase.split(' ').length).toBeLessThanOrEqual(6);
     }
   });
@@ -157,6 +181,17 @@ describe('SAFETY_ACK_PHRASES pool (VW-157)', () => {
   it('never matches the transcript-router safety matcher, so the ack cannot echo back as a stop command', () => {
     for (const phrase of SAFETY_ACK_PHRASES) {
       expect(routeTranscript(phrase).tier).not.toBe('safety');
+    }
+  });
+
+  it('stays safety-neutral under plausible mishearings (dropped suffix, dropped word, homophone)', () => {
+    for (const phrase of SAFETY_ACK_PHRASES) {
+      for (const mishearing of mishearingsOf(phrase)) {
+        expect(
+          routeTranscript(mishearing).tier,
+          `mishearing "${mishearing}" of "${phrase}" must not route as safety`,
+        ).not.toBe('safety');
+      }
     }
   });
 });

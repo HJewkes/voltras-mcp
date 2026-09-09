@@ -101,10 +101,8 @@ export interface VoiceSafetyContext {
 export const SAFETY_ACK_PHRASES: readonly string[] = [
   'Stopping. Weight off.',
   'Stopping now. Weight off.',
-  'Stopping. Cable fully unloaded.',
   'Stopping. All weight off.',
   'Stopping right away. Weight off.',
-  'Stopping. Load fully unloaded.',
 ];
 
 /** Picks a pool phrase via an injected index function — fixed in tests, random in production. */
