@@ -148,6 +148,26 @@ export interface LiveSetSignal {
   tempo?: string;
 }
 
+/** Discrete phase of an isometric hold, mirroring the channel `isometric_phase` event. */
+export type LiveIsometricPhase = 'ready' | 'go' | 'hold' | 'stop';
+
+/**
+ * Live echo of an `isometric_phase` channel event (VW-198/VW-154 second half), so the
+ * dashboard can walk the athlete through a hold without polling. Unlike the frame-cadence
+ * signals above, this is discrete — one event per phase transition (four per trial) — so
+ * there is no clock/anchor to derive; the SSE endpoint forwards the tee's payload verbatim.
+ */
+export interface LiveIsometricSignal {
+  /** Originating Voltra slot — see {@link LivePhaseSignal.slot}. */
+  slot: string;
+  phase: LiveIsometricPhase;
+  /** 1-indexed hold number within the run. */
+  trial: number;
+  /** Prescribed hold duration, ms — the countdown target during `hold`. */
+  holdMs: number;
+  side: 'left' | 'right' | null;
+}
+
 /**
  * The phase payloads as {@link PhaseClock} derives them — before a slot is
  * known. The clock is pure phase math over one device's frames and has no
@@ -170,12 +190,18 @@ export type LiveSetSignalCore = Omit<LiveSetSignal, 'slot'>;
  * hub itself is slot-agnostic (a flat fan-out); consumers demux on `data.slot`,
  * which is typed end-to-end including at the SPA client's `JSON.parse(...) as
  * LivePhaseSignal` boundary.
+ *
+ * `isometric` (VW-198) rides the same hub even though it has no frame-cadence origin —
+ * it is teed in from the `isometric_phase` channel event by `isometric-live-signal-tee.ts`
+ * rather than emitted by `LiveSignalEmitter`, but the verbatim-by-`type` forwarder needs
+ * no per-type awareness of that, so it just works.
  */
 export type LiveSignalEvent =
   | { type: 'phase'; data: LivePhaseSignal }
   | { type: 'phaseflip'; data: LivePhaseFlip }
   | { type: 'rep'; data: LiveRepSignal }
-  | { type: 'set'; data: LiveSetSignal };
+  | { type: 'set'; data: LiveSetSignal }
+  | { type: 'isometric'; data: LiveIsometricSignal };
 
 export type LiveSignalListener = (event: LiveSignalEvent) => void;
 
