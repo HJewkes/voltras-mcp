@@ -2,7 +2,7 @@
  * Dashboard client store (VMCP-03.02).
  *
  * Replaces the 13-`useState` `useDashboardModel` god-hook (and the live overlay's
- * own `useState`/`useRef` set) with ONE vanilla zustand store carrying three slices:
+ * own `useState`/`useRef` set) with ONE vanilla zustand store carrying these slices:
  *
  *   - **snapshot** — the authoritative 500 ms `/api/snapshot` poll + the client-side
  *     completed-set fold (`reduceSnapshot`, now the `applySnapshot` action) + the 1 s
@@ -15,6 +15,10 @@
  *   - **live** — the ~20 Hz `/api/stream` SSE overlay (driven by
  *     `createLiveStreamController`, written via `setLive`), demultiplexed per Voltra
  *     slot into `liveBySlot` (VW-48 P2) with `live` kept as the derived single-slot view.
+ *   - **displayUnit** (VW-63) — the wall's chosen lbs/kg DISPLAY unit, written via
+ *     `setDisplayUnit` and mirrored to `localStorage` so it survives a reload. Never
+ *     converts anything itself — every other slice above stays in lbs, and `mass.ts`
+ *     is the only place a value is actually rescaled for display.
  *
  * The store is framework-agnostic (`zustand/vanilla`) so it is unit-testable headlessly
  * and the I/O orchestration lives in effects that call these actions — no fetch/interval
@@ -37,6 +41,7 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
+import { type MassUnit } from './live-page/mass';
 import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
 import type { PlanTreeView } from '../read-models/plan-tree';
 import type { SessionSummaryView } from '../read-models/session-summary-view';
@@ -94,6 +99,23 @@ interface PlannerSlice {
 /** A best-effort batch of planner results (any subset), mirroring {@link HistoricalPatch}. */
 export type PlannerPatch = Partial<PlannerSlice>;
 
+/** localStorage key for the wall's chosen weight/force display unit (VW-63). */
+export const DISPLAY_UNIT_KEY = 'voltras.live.displayUnit';
+
+/**
+ * The viewer's chosen DISPLAY unit (VW-63) — independent of the model's source unit,
+ * which is always lbs. Persisted to `localStorage` so a wall keeps its unit across
+ * reloads; SSR/test envs with no `window` fall back to lbs.
+ */
+interface DisplayUnitSlice {
+  displayUnit: MassUnit;
+}
+
+function readStoredDisplayUnit(): MassUnit {
+  if (typeof window === 'undefined') return 'lbs';
+  return window.localStorage.getItem(DISPLAY_UNIT_KEY) === 'kg' ? 'kg' : 'lbs';
+}
+
 interface LiveSlice {
   /**
    * Per-slot live overlays, keyed by the slot the SSE payload was stamped with
@@ -130,12 +152,15 @@ interface DashboardActions {
   setLive(live: LiveModel | null, slot?: string): void;
   /** Merge a batch of planner results (best-effort; partial is fine). */
   applyPlanner(patch: PlannerPatch): void;
+  /** Choose the display unit (VW-63) and persist it to `localStorage`. */
+  setDisplayUnit(unit: MassUnit): void;
 }
 
 export type DashboardState = SnapshotSlice &
   HistoricalSlice &
   LiveSlice &
   PlannerSlice &
+  DisplayUnitSlice &
   DashboardActions;
 
 const initialSnapshot: SnapshotSlice = {
@@ -164,6 +189,7 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   ...initialPlanner,
   liveBySlot: {},
   live: null,
+  displayUnit: readStoredDisplayUnit(),
 
   applySnapshot: (data, now) =>
     set((state) => {
@@ -212,5 +238,11 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
         liveBySlot[slot] = live;
       }
       return { liveBySlot, live: deriveLive(liveBySlot) };
+    }),
+
+  setDisplayUnit: (unit) =>
+    set(() => {
+      if (typeof window !== 'undefined') window.localStorage.setItem(DISPLAY_UNIT_KEY, unit);
+      return { displayUnit: unit };
     }),
 }));

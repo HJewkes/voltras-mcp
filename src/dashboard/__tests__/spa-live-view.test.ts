@@ -127,6 +127,21 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
+  describe('session.unit follows the store displayUnit (VW-63)', () => {
+    it('defaults to lbs with no displayUnit in sources', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.unit).toBe('lbs');
+    });
+
+    it('reflects the chosen kg display unit — never hardcoded to lbs', () => {
+      const model = mapStoreToDashboardModel(sources({ displayUnit: 'kg' }));
+      expect(model?.session.unit).toBe('kg');
+      // The stored value itself stays lbs — only the unit LABEL changes here; a consumer
+      // (e.g. EmptyLiveView's "Loaded" metric) does the actual conversion via mass.ts.
+      expect(model?.session.weightLbs).toBeNull();
+    });
+  });
+
   describe('session.plannedSets (VW-42)', () => {
     it('surfaces the prescribed set count when the session has a plan', () => {
       const prescription: PrescriptionView = { sets: 4 };

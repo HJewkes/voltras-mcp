@@ -1,6 +1,7 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
+import { useStore } from 'zustand';
 import {
   LiveFatiguePanel,
   SessionRail,
@@ -24,34 +25,12 @@ import {
 import { FATIGUE_PANEL_CHROME, FATIGUE_PANEL_FALLBACK_BODY } from './panel-geometry';
 import type { DivergingHeroModel, LimbAsymmetry, LiveFatigueModel } from './fatigue-model';
 import { type MassUnit } from './mass';
+import { dashboardStore } from '../store';
 
 // Semantic reads for the corner UnitToggle's own chrome — its translucent (alpha) overlay
 // ground, active-segment plane, and border. These are NOT on-surface text roles, so they come
 // from the token map rather than `useOnSurfaceColor`; the toggle's text uses the hook.
 const t = getSemanticColors('dark');
-
-/** localStorage key for the client's chosen weight/force display unit (VW-63). */
-const DISPLAY_UNIT_KEY = 'voltras.live.displayUnit';
-
-/** Read the persisted display-unit preference; lbs unless kg was explicitly stored. SSR-safe. */
-function readStoredUnit(): MassUnit {
-  if (typeof window === 'undefined') return 'lbs';
-  return window.localStorage.getItem(DISPLAY_UNIT_KEY) === 'kg' ? 'kg' : 'lbs';
-}
-
-/**
- * The DISPLAY unit preference (VW-63) — a CLIENT choice, independent of the model's source
- * unit (always lbs). Persisted to localStorage so a wall keeps its unit across reloads. This
- * NEVER mutates the store/model; conversion happens at each readout.
- */
-function useDisplayUnit(): [MassUnit, (unit: MassUnit) => void] {
-  const [unit, setUnit] = useState<MassUnit>(readStoredUnit);
-  const choose = useCallback((next: MassUnit) => {
-    setUnit(next);
-    if (typeof window !== 'undefined') window.localStorage.setItem(DISPLAY_UNIT_KEY, next);
-  }, []);
-  return [unit, choose];
-}
 
 /** A subtle corner segmented control toggling the wall's weight/force display unit (VW-63). */
 function UnitToggle({ unit, onChange }: { unit: MassUnit; onChange: (unit: MassUnit) => void }) {
@@ -219,7 +198,10 @@ export interface LivePageProps {
  * The rail footer pace read-out is intentionally OMITTED (no store field).
  */
 export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: LivePageProps) {
-  const [displayUnit, setDisplayUnit] = useDisplayUnit();
+  // The wall's DISPLAY unit (VW-63) — a store slice so it persists across reloads
+  // (`store.ts`'s `setDisplayUnit`); never mutates the model, only how it's read.
+  const displayUnit = useStore(dashboardStore, (s) => s.displayUnit);
+  const setDisplayUnit = useStore(dashboardStore, (s) => s.setDisplayUnit);
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
   const completedSets = model.session.completedSets.length;
