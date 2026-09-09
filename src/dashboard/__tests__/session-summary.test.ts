@@ -193,6 +193,7 @@ function makeStore(
     putTrainingWeek: noop,
     putWorkoutTemplate: noop,
     putPlannedExercise: noop,
+    deletePlannedExercise: async () => true,
   };
 }
 
