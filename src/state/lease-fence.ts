@@ -11,8 +11,13 @@
 // first BLE write, re-check it after every await, and abort with `LEASE_LOST`
 // rather than issue the rest. It does not cancel a write already handed to the
 // SDK — nothing here can un-send a frame — so a fence bounds the damage to the
-// step already in flight. Per-tool `AbortSignal` support is the other half and
-// is not in this change.
+// step already in flight.
+//
+// VW-200 adds the other half for the tools that BLOCK rather than step: an
+// isometric hold, a protocol rest, `timer.wait`. They have no await to re-check
+// at, so `signal()` turns the same fence into an `AbortSignal` fed by the
+// lease's change notification, and `waitFenced` is the sleep that honours it.
+// Same epoch, same publish, no second clock.
 //
 // Generations, not holder names: a release followed by the SAME client
 // re-acquiring is still a new epoch, because the device was surrendered in
@@ -45,6 +50,8 @@ export class LeaseLostError extends Error {
 export interface FenceableLease {
   generation(): number;
   isTransferring(): boolean;
+  /** Subscribe to lease changes; returns the unsubscribe handle. */
+  onChange(listener: () => void): () => void;
 }
 
 export interface FenceDeps {
@@ -60,10 +67,31 @@ export interface LeaseFence {
   /** Abort the call: publish `lease_lost` and throw {@link LeaseLostError}. */
   check(slot: string): void;
   /**
+   * Publish `lease_lost` and RETURN the error rather than throwing it, for the
+   * abort callbacks that have a promise to reject instead of a stack to unwind.
+   */
+  lost(slot: string): LeaseLostError;
+  /**
    * Publish `lease_lost` without throwing, for the callers that are not tool
    * handlers (the voice fast-path has no tool result to fail).
    */
   report(slot: string): void;
+  /**
+   * A signal that aborts the moment the fence stops being intact (VW-200).
+   *
+   * For the blocking holders — an isometric hold, a rest, `timer.wait` — which
+   * are parked on a timer and have no await to re-check at. The signal is
+   * driven by the lease's own change notification, so it reads the same epoch
+   * `intact()` does and introduces no second clock. Created on first call and
+   * memoised; {@link dispose} drops the subscription it takes.
+   */
+  signal(): AbortSignal;
+  /**
+   * Drop the lease subscription taken by {@link signal}. A no-op for a fence
+   * that never asked for one, so the step-by-step `check` callers need not
+   * call it.
+   */
+  dispose(): void;
 }
 
 /**
@@ -82,14 +110,70 @@ export function fence(deps: FenceDeps, tool: string): LeaseFence {
     reported = true;
     deps.channels.forSlot(slot).publish(buildLeaseLostPayload({ tool, slot }));
   };
+  let controller: AbortController | null = null;
+  let unsubscribe: (() => void) | null = null;
   return {
     generation: taken,
     intact,
     report,
+    lost(slot: string): LeaseLostError {
+      report(slot);
+      return new LeaseLostError(tool, slot);
+    },
     check(slot: string): void {
       if (intact()) return;
       report(slot);
       throw new LeaseLostError(tool, slot);
     },
+    signal(): AbortSignal {
+      if (controller !== null) return controller.signal;
+      const created = new AbortController();
+      controller = created;
+      if (!intact()) {
+        created.abort();
+        return created.signal;
+      }
+      unsubscribe = deps.lease.onChange(() => {
+        if (intact()) return;
+        created.abort();
+      });
+      return created.signal;
+    },
+    dispose(): void {
+      unsubscribe?.();
+      unsubscribe = null;
+    },
   };
+}
+
+/**
+ * Sleep `ms`, or reject with {@link LeaseLostError} the moment the fence
+ * trips (VW-200).
+ *
+ * This is what makes a blocking lease holder interruptible: the timer and the
+ * lease's change notification race, and whichever lands first settles the
+ * promise. On a trip it publishes `lease_lost` exactly as a step-by-step
+ * `check` would, because it goes through the same fence.
+ */
+export function waitFenced(ms: number, leaseFence: LeaseFence, slot: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const signal = leaseFence.signal();
+    const settle = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      settle();
+      reject(leaseFence.lost(slot));
+    };
+    const timer = setTimeout(() => {
+      settle();
+      resolve();
+    }, ms);
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort);
+  });
 }

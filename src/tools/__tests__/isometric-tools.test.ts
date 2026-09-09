@@ -29,6 +29,8 @@ vi.mock('@voltras/node-sdk', () => ({
 }));
 
 const { registerIsometricTools } = await import('../isometric-tools.js');
+const { makeFakeLease } = await import('../../state/__tests__/fixtures/lease-fence.js');
+type FakeLease = ReturnType<typeof makeFakeLease>;
 
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -84,6 +86,12 @@ interface FrameListener {
 interface FakeClient {
   isConnected: boolean;
   onFrame: Mock<(cb: (frame: TelemetryFrame) => void) => () => void>;
+  /** VW-200: the abort path drops the load through `unloadSlot`. */
+  unloadDevice: Mock<() => Promise<void>>;
+  exitGuidedLoad: Mock<() => Promise<void>>;
+  guidedLoadState: { phase: string };
+  /** Every device write this client was asked to make, in order. */
+  writes: string[];
   /** Active frame listeners, in subscription order. */
   listeners: FrameListener[];
   /** Lifetime count of calls to onFrame (subscription count). */
@@ -94,9 +102,18 @@ interface FakeClient {
 
 function makeFakeClient(opts: { isConnected: boolean } = { isConnected: true }): FakeClient {
   const listeners: FrameListener[] = [];
+  const writes: string[] = [];
   const fc = {
     isConnected: opts.isConnected,
     listeners,
+    writes,
+    guidedLoadState: { phase: 'idle' },
+    unloadDevice: vi.fn(async (): Promise<void> => {
+      writes.push('unloadDevice');
+    }),
+    exitGuidedLoad: vi.fn(async (): Promise<void> => {
+      writes.push('exitGuidedLoad');
+    }),
     subscribeCount: 0,
     unsubscribeCount: 0,
     onFrame: vi.fn((cb: (frame: TelemetryFrame) => void): (() => void) => {
@@ -169,6 +186,7 @@ function makeState(
     store?: FakeStore;
     deviceIds?: Record<string, string | null>;
     channels?: ChannelPublisher;
+    lease?: FakeLease;
   } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
@@ -183,6 +201,7 @@ function makeState(
     slots: slotMap,
     store: opts.store,
     channels: opts.channels ?? noopChannelPublisher,
+    lease: opts.lease ?? makeFakeLease(),
   } as unknown as ServerState;
 }
 
@@ -736,5 +755,111 @@ describe('isometric.measure_imbalance', () => {
     expect(body.imbalance.strongerSide).toBe('left');
     // …and says so, rather than implying it was saved.
     expect(body.measurementId).toBeNull();
+  });
+});
+
+// VW-200: these tools issue no BLE command of their own, but they BLOCK — a
+// hold for seconds, the full protocol for minutes. Until the fence they kept
+// measuring, and kept cueing the athlete, on a device another session owned.
+describe('the lease fence over an isometric assessment', () => {
+  let measureHoldCb: Callback;
+  let measureMaxCb: Callback;
+  let client: FakeClient;
+  let lease: FakeLease;
+  let published: PublishedEvent[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    client = makeFakeClient();
+    published = [];
+    lease = makeFakeLease();
+    const state = makeState({ primary: client }, { channels: makeChannels(published), lease });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureHoldCb = slots.get('isometric.measure_hold')!.callback;
+    measureMaxCb = slots.get('isometric.measure_max')!.callback;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function leaseLostEvents(): PublishedEvent[] {
+    return published.filter((e) => e.meta.event_type === 'lease_lost');
+  }
+
+  it('measure_hold: a steal mid-hold fails the call with LEASE_LOST', async () => {
+    const promise = measureHoldCb({ holdMs: 5000 });
+    await vi.advanceTimersByTimeAsync(2000);
+
+    lease.steal();
+    const result = await promise;
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'LEASE_LOST' });
+  });
+
+  it('measure_hold: publishes one lease_lost naming the tool and the slot', async () => {
+    const promise = measureHoldCb({ holdMs: 5000 });
+    lease.steal();
+    await promise;
+
+    const events = leaseLostEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].meta.tool).toBe('isometric.measure_hold');
+    expect(events[0].meta.slot).toBe('primary');
+  });
+
+  it('measure_hold: detaches the frame listener and still cues stop', async () => {
+    const promise = measureHoldCb({ holdMs: 5000 });
+    await vi.advanceTimersByTimeAsync(2000);
+    lease.steal();
+    await promise;
+
+    expect(client.unsubscribeCount).toBe(1);
+    // The athlete is mid-pull against a cable that is about to be unloaded —
+    // the stop cue matters more here than on the happy path, not less.
+    expect(phasesOf(published)).toEqual(['ready', 'go', 'hold', 'stop']);
+  });
+
+  it('measure_hold: leaves the device unloaded, and writes nothing else', async () => {
+    const promise = measureHoldCb({ holdMs: 5000 });
+    lease.steal();
+    await promise;
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(client.writes).toEqual(['unloadDevice']);
+  });
+
+  it('measure_max: a steal during the rest stops the remaining trials', async () => {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 3, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    lease.steal();
+    const result = await promise;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(payload(result)).toMatchObject({ code: 'LEASE_LOST' });
+    // One trial ran, and no fourth hold subscribed after the steal.
+    expect(client.subscribeCount).toBe(1);
+    expect(client.unsubscribeCount).toBe(1);
+    expect(leaseLostEvents()).toHaveLength(1);
+  });
+
+  it('measure_max: runs to completion when the holder keeps the lease', async () => {
+    // The sanity case: a notification that leaves the generation where it was
+    // — the holder refreshing its own claim — aborts nothing.
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    lease.touch();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+
+    const body = payload(await promise) as { ok: boolean; validTrialCount: number };
+    expect(body.ok).toBe(true);
+    expect(body.validTrialCount).toBe(2);
+    expect(leaseLostEvents()).toHaveLength(0);
+    expect(client.writes).toEqual([]);
   });
 });

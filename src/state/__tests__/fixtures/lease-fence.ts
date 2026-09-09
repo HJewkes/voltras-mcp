@@ -13,21 +13,39 @@ export interface FakeLease extends FenceableLease {
   steal(): void;
   /** Freeze the lease as `beginTransfer` does, without completing a steal. */
   beginTransfer(): void;
+  /**
+   * Notify watchers WITHOUT moving the epoch — a holder refreshing its own
+   * lease. Nothing may abort on this.
+   */
+  touch(): void;
 }
 
 export function makeFakeLease(): FakeLease {
   let epoch = 1;
   let transferring = false;
+  const watchers = new Set<() => void>();
+  const notify = (): void => {
+    for (const watcher of [...watchers]) watcher();
+  };
   return {
     generation: () => epoch,
     isTransferring: () => transferring,
+    onChange: (listener: () => void) => {
+      watchers.add(listener);
+      return (): void => {
+        watchers.delete(listener);
+      };
+    },
     steal: () => {
       epoch += 1;
       transferring = false;
+      notify();
     },
     beginTransfer: () => {
       transferring = true;
+      notify();
     },
+    touch: notify,
   };
 }
 
