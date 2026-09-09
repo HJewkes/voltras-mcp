@@ -128,7 +128,10 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
-  'decline, drop it and move on.';
+  'decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override ' +
+  '— `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/' +
+  'movement-pattern default when the live prescription resolves a tempo; omit it to leave the ' +
+  'default in effect.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
@@ -505,6 +508,7 @@ async function createPlannedExercise(
     ...(input.targetRpe !== undefined ? { targetRpe: input.targetRpe } : {}),
     ...(input.restSec !== undefined ? { restSec: input.restSec } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.targetTempo !== undefined ? { targetTempo: input.targetTempo } : {}),
   };
   await state.store.putPlannedExercise(plannedExercise);
   const warnings = await lintTemplateVolume(state, input.workoutTemplateId);

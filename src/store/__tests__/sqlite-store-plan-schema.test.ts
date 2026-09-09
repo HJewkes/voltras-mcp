@@ -245,6 +245,45 @@ describe('SqliteSessionStore — v3 plan schema', () => {
     });
   });
 
+  describe('planned_exercises.targetTempo (VW-46)', () => {
+    beforeEach(async () => {
+      await store.putTrainingProgram(makeProgram());
+      await store.putTrainingBlock(makeBlock());
+      await store.putTrainingWeek(makeWeek());
+      await store.putWorkoutTemplate(makeTemplate());
+    });
+
+    it('round-trips a coach tempo through target_tempo_json, field order preserved', async () => {
+      // Every field distinct so a transposed order (the known footgun) fails this.
+      const targetTempo = { ecc: 5, pauseBottom: 6, con: 7, pauseTop: 8 };
+      await store.putPlannedExercise(makePlanned({ targetTempo }));
+      const [stored] = await store.getPlannedExercisesForTemplate('tmpl-1');
+      expect(stored?.targetTempo).toEqual(targetTempo);
+    });
+
+    it('leaves targetTempo undefined when no coach tempo is set', async () => {
+      await store.putPlannedExercise(makePlanned({ targetTempo: undefined }));
+      const [stored] = await store.getPlannedExercisesForTemplate('tmpl-1');
+      expect(stored?.targetTempo).toBeUndefined();
+    });
+
+    it('stores the JSON payload as the documented named-object shape', async () => {
+      await store.putPlannedExercise(
+        makePlanned({ targetTempo: { ecc: 3, pauseBottom: 1, con: 1, pauseTop: 0 } }),
+      );
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      const row = raw
+        .prepare('SELECT target_tempo_json FROM planned_exercises WHERE id = ?')
+        .get('pe-1') as { target_tempo_json: string };
+      expect(JSON.parse(row.target_tempo_json)).toEqual({
+        ecc: 3,
+        pause_bottom: 1,
+        con: 1,
+        pause_top: 0,
+      });
+    });
+  });
+
   describe('program_assignments', () => {
     beforeEach(async () => {
       await store.putTrainingProgram(makeProgram());
