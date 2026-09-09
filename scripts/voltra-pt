@@ -19,7 +19,10 @@
 #   plugin mode (default) — runs the server as the voltras-channel plugin from
 #     the voltras-local marketplace and passes `--channels`. This needs the
 #     plugin installed AND the plugin allowlisted in machine-wide managed
-#     settings; see docs/channel-plugin-packaging.md.
+#     settings; see docs/channel-plugin-packaging.md. Sets VOLTRA_PT=1 so the
+#     plugin launcher leaves the dashboard sidecar at its default port
+#     instead of the off-by-default it uses for non-PT plugin sessions
+#     (VW-183).
 #
 #
 # Before launching it runs the bench pre-flight (scripts/ensure-whisper.mjs then
@@ -89,6 +92,9 @@ EOF
 
   # Lets the plugin's launch shim find this checkout's dist/bin.js.
   export VOLTRAS_MCP_HOME="$REPO_ROOT"
+  # Tells voltras-mcp-launch.sh this is a PT session, so it leaves the
+  # dashboard sidecar at its default port instead of turning it off (VW-183).
+  export VOLTRA_PT=1
   CHANNEL_FLAG=(--channels "$CHANNEL_ENTRY")
 fi
 

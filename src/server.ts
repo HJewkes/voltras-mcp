@@ -51,7 +51,7 @@ import {
  * fall back to {@link DEFAULT_DASHBOARD_PORT} so a typo doesn't silently
  * disable the dashboard.
  */
-function resolveDashboardPort(env: NodeJS.ProcessEnv = process.env): number | null {
+export function resolveDashboardPort(env: NodeJS.ProcessEnv = process.env): number | null {
   const raw = env.VMCP_DASHBOARD_PORT;
   if (raw === undefined || raw === '') return DEFAULT_DASHBOARD_PORT;
   if (raw === 'off' || raw === '0') return null;
@@ -163,6 +163,7 @@ export async function runServer(): Promise<void> {
     state.dashboard = {
       available: dashboardHandle !== undefined,
       url: dashboardHandle !== undefined ? dashboardUrlFor(dashboardHandle.port) : null,
+      disabledReason: dashboardHandle === undefined && dashboardPort === null ? 'disabled' : null,
     };
 
     // Register the shutdown hook regardless of whether the dashboard came

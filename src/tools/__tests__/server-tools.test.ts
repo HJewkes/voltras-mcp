@@ -213,6 +213,38 @@ describe('server.health', () => {
     expect(body.dashboardUrl).toBeNull();
   });
 
+  it('reports dashboardDisabledReason "disabled" when VMCP_DASHBOARD_PORT turned the sidecar off (VW-183)', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      dashboard: { available: false, url: null, disabledReason: 'disabled' },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    expect(body.dashboardAvailable).toBe(false);
+    expect(body.dashboardDisabledReason).toBe('disabled');
+  });
+
+  it('reports dashboardDisabledReason null for a non-disabled unavailable dashboard (e.g. port in use)', async () => {
+    const { placeholders, invoke } = makePlaceholders(['server.health']);
+    const state = {
+      lease: new WriteLease(),
+      cueSettings: { enabled: false, midSetEnabled: false },
+      config: { adapter: 'node', dbPath: '/x', logLevel: 'info' },
+      dashboard: { available: false, url: null, disabledReason: null },
+    } as never;
+    registerServerTools({} as never, state, placeholders as never);
+
+    const body = JSON.parse((await invoke('server.health', {})).content[0].text);
+
+    expect(body.dashboardAvailable).toBe(false);
+    expect(body.dashboardDisabledReason).toBeNull();
+  });
+
   it('reports the LIVE cue settings, not the env vars they were seeded from', async () => {
     // Arrange: config still says both cues env vars were `off` at startup,
     // while `system.set_cues` has since turned both on. Health must report the

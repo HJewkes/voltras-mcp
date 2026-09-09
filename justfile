@@ -32,5 +32,5 @@ sim:
 # Bench pre-flight, then the plugin launcher against a real device.
 bench:
     node "{{justfile_directory()}}/scripts/preflight.mjs"
-    VOLTRAS_MCP_HOME="{{justfile_directory()}}" \
+    VOLTRAS_MCP_HOME="{{justfile_directory()}}" VOLTRA_PT=1 \
         "{{justfile_directory()}}/plugins/voltras-channel/bin/voltras-mcp-launch.sh"
