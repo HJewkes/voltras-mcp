@@ -1,0 +1,203 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`dashboard route JSON — byte-identical before/after the read-model extraction > GET /api/history 1`] = `
+{
+  "sessions": [
+    {
+      "endedAt": "2026-05-01T10:00:00.000Z",
+      "id": "1",
+      "startedAt": "2026-05-01T09:00:00.000Z",
+    },
+    {
+      "endedAt": "2026-05-02T10:00:00.000Z",
+      "id": "2",
+      "startedAt": "2026-05-02T09:00:00.000Z",
+    },
+    {
+      "endedAt": "2026-05-03T10:00:00.000Z",
+      "id": "3",
+      "startedAt": "2026-05-03T09:00:00.000Z",
+    },
+  ],
+}
+`;
+
+exports[`dashboard route JSON — byte-identical before/after the read-model extraction > GET /api/session-plan 1`] = `
+{
+  "plan": {
+    "exercises": [
+      {
+        "active": false,
+        "name": "Back Squat",
+        "order": 0,
+        "repsHigh": 5,
+        "repsLow": 5,
+        "sets": 4,
+        "weightLbs": 185,
+      },
+      {
+        "active": true,
+        "name": "Bench Press",
+        "order": 1,
+        "sets": 3,
+      },
+      {
+        "active": false,
+        "name": "row",
+        "order": 2,
+        "sets": 3,
+      },
+    ],
+    "sets": 3,
+    "tempo": [
+      3,
+      0,
+      1,
+      0,
+    ],
+    "title": "Push A · Hypertrophy",
+  },
+}
+`;
+
+exports[`dashboard route JSON — byte-identical before/after the read-model extraction > GET /api/session-summary/:id 1`] = `
+{
+  "exercises": [
+    {
+      "bestRepVelocity": 0.9,
+      "exerciseId": "bench",
+      "fatigue": {
+        "consistency": "variable",
+        "fatigueLevel": "high",
+        "rir": 2.6666666666666665,
+        "rpe": 7.333333333333334,
+        "velocityLossPct": 33.333333333333336,
+      },
+      "maxVelocityLossPct": 33.333333333333336,
+      "name": "Bench Press",
+      "progression": {
+        "basedOnSessionId": "sess-S",
+        "delta": 0,
+        "reasoning": "Planned exercise has no rep target; cannot suggest a load delta.",
+        "targetRepsHigh": null,
+        "targetRepsLow": null,
+        "targetSets": 3,
+        "targetWeightLbs": null,
+      },
+      "progressionNote": null,
+      "setCount": 3,
+      "sets": [
+        {
+          "bestRepVelocity": 0.9,
+          "endedAt": "2026-07-30T10:02:00.000Z",
+          "id": "s0",
+          "index": 1,
+          "isWarmup": true,
+          "loadLabel": "45 lb",
+          "repCount": 5,
+          "startedAt": "2026-07-30T10:00:00.000Z",
+          "velocityLossPct": 33.333333333333336,
+          "weightLbs": 45,
+        },
+        {
+          "bestRepVelocity": 0.9,
+          "endedAt": "2026-07-30T10:02:00.000Z",
+          "id": "s1",
+          "index": 2,
+          "isWarmup": false,
+          "loadLabel": "100 lb",
+          "repCount": 10,
+          "startedAt": "2026-07-30T10:00:00.000Z",
+          "velocityLossPct": 33.333333333333336,
+          "weightLbs": 100,
+        },
+        {
+          "bestRepVelocity": 0.9,
+          "endedAt": "2026-07-30T10:02:00.000Z",
+          "id": "s2",
+          "index": 3,
+          "isWarmup": false,
+          "loadLabel": "120 lb",
+          "repCount": 8,
+          "startedAt": "2026-07-30T10:00:00.000Z",
+          "velocityLossPct": 33.333333333333336,
+          "weightLbs": 120,
+        },
+      ],
+      "topWeightLbs": 120,
+      "totalReps": 23,
+      "verdict": {
+        "dimensions": {
+          "rom": "ok",
+          "tempo": "ok",
+          "velocityLoss": "alarm",
+        },
+        "state": "grinding",
+        "tone": "warn",
+      },
+      "verdictSetIndex": 3,
+      "volumeLbs": 2185,
+      "workingSetCount": 2,
+    },
+    {
+      "bestRepVelocity": 0.9,
+      "exerciseId": "row",
+      "fatigue": {
+        "consistency": "variable",
+        "fatigueLevel": "high",
+        "rir": 2.6666666666666665,
+        "rpe": 7.333333333333334,
+        "velocityLossPct": 33.333333333333336,
+      },
+      "maxVelocityLossPct": 33.333333333333336,
+      "name": "row",
+      "progression": {
+        "basedOnSessionId": "sess-S",
+        "delta": 0,
+        "reasoning": "Planned exercise has no rep target; cannot suggest a load delta.",
+        "targetRepsHigh": null,
+        "targetRepsLow": null,
+        "targetSets": 3,
+        "targetWeightLbs": null,
+      },
+      "progressionNote": null,
+      "setCount": 1,
+      "sets": [
+        {
+          "bestRepVelocity": 0.9,
+          "endedAt": "2026-07-30T10:02:00.000Z",
+          "id": "s3",
+          "index": 1,
+          "isWarmup": false,
+          "loadLabel": "90 lb",
+          "repCount": 10,
+          "startedAt": "2026-07-30T10:00:00.000Z",
+          "velocityLossPct": 33.333333333333336,
+          "weightLbs": 90,
+        },
+      ],
+      "topWeightLbs": 90,
+      "totalReps": 10,
+      "verdict": {
+        "dimensions": {
+          "rom": "ok",
+          "tempo": "ok",
+          "velocityLoss": "alarm",
+        },
+        "state": "grinding",
+        "tone": "warn",
+      },
+      "verdictSetIndex": 1,
+      "volumeLbs": 900,
+      "workingSetCount": 1,
+    },
+  ],
+  "session": {
+    "endedAt": "2026-07-30T11:00:00.000Z",
+    "exerciseId": "bench",
+    "exerciseName": "Bench Press",
+    "id": "sess-S",
+    "startedAt": "2026-07-30T10:00:00.000Z",
+  },
+}
+`;
