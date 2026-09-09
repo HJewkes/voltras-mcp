@@ -594,3 +594,109 @@ describe('bilateral.cascade', () => {
     expect(guard.echoedMode()).toBe(FakeTrainingMode.WeightTraining);
   });
 });
+
+// VMCP-01.65: the write-lease is checked at call entry by `lease-guard.ts`,
+// which is no help once the cascade is already awaiting the device. These
+// cover the re-check.
+describe('bilateral.cascade — lease fence (VMCP-01.65)', () => {
+  let primary: FakeSlot;
+  let secondary: FakeSlot;
+  let state: State;
+  let reg: RecordedTool;
+
+  beforeEach(() => {
+    primary = makeSlot('primary', true);
+    secondary = makeSlot('secondary', true);
+    ({ state, reg } = setupHandler([
+      ['primary', primary],
+      ['secondary', secondary],
+    ]));
+  });
+
+  /**
+   * Hold every slot's mode write open, so a steal can land after both slots
+   * issued it and before either fanned out — the exact window the entry check
+   * cannot see.
+   */
+  function gateModeWrites(slots: FakeSlot[]): { issued: Promise<void>; release: () => void } {
+    let releaseAll = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    let markIssued = (): void => {};
+    const issued = new Promise<void>((resolve) => {
+      markIssued = resolve;
+    });
+    let seen = 0;
+    for (const slot of slots) {
+      slot.client.setMode.mockImplementation(async () => {
+        seen += 1;
+        if (seen === slots.length) markIssued();
+        await gate;
+      });
+    }
+    return { issued, release: () => releaseAll() };
+  }
+
+  function assertNoFanOut(slot: FakeSlot): void {
+    expect(slot.client.setWeight).not.toHaveBeenCalled();
+    expect(slot.client.setEccentric).not.toHaveBeenCalled();
+    expect(slot.client.setChains).not.toHaveBeenCalled();
+  }
+
+  it('a steal while both slots await their mode write stops every remaining setter', async () => {
+    const modeWrites = gateModeWrites([primary, secondary]);
+    const call = invoke(reg, FULL_SETTINGS);
+    await modeWrites.issued;
+
+    state.lease.steal();
+    modeWrites.release();
+    const { isError, payload } = await call;
+
+    expect(isError).toBe(true);
+    expect(payload.code).toBe('LEASE_LOST');
+    assertNoFanOut(primary);
+    assertNoFanOut(secondary);
+  });
+
+  it('a steal during the first slot stops the second slot writing at all', async () => {
+    // Slots fan out concurrently, but each pipeline starts by re-reading the
+    // fence — so a steal that lands inside slot one's mode write is seen by
+    // slot two before it issues anything.
+    primary.client.setMode.mockImplementation(async () => {
+      state.lease.steal();
+    });
+
+    const { isError, payload } = await invoke(reg, FULL_SETTINGS);
+
+    expect(isError).toBe(true);
+    expect(payload.code).toBe('LEASE_LOST');
+    expect(secondary.client.setMode).not.toHaveBeenCalled();
+    assertNoFanOut(secondary);
+    assertNoFanOut(primary);
+  });
+
+  it('pushes one lease_lost naming the tool and the slot', async () => {
+    const modeWrites = gateModeWrites([primary, secondary]);
+    const call = invoke(reg, FULL_SETTINGS);
+    await modeWrites.issued;
+
+    state.lease.steal();
+    modeWrites.release();
+    await call;
+
+    expect(state.channels.events).toHaveLength(1);
+    expect(state.channels.events[0].meta.event_type).toBe('lease_lost');
+    expect(state.channels.events[0].meta.tool).toBe('bilateral.cascade');
+  });
+
+  it('an untouched lease cascades exactly as before', async () => {
+    const { isError, payload } = await invoke(reg, FULL_SETTINGS);
+
+    expect(isError).toBeUndefined();
+    expect(payload.ok).toBe(true);
+    expect(primary.client.setWeight).toHaveBeenCalledWith(75);
+    expect(secondary.client.setWeight).toHaveBeenCalledWith(75);
+    expect(state.channels.events).toHaveLength(0);
+  });
+});

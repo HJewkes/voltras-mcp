@@ -2098,6 +2098,76 @@ describe('registerDeviceTools', () => {
       expect(offending).toEqual([]);
     });
   });
+
+  // VMCP-01.65: `lease-guard.ts` checks the lease at call entry, which is no
+  // help once the handler is already awaiting the device. These cover the
+  // re-check on the two multi-step device tools.
+  describe('the lease fence', () => {
+    /** Hold one setter open so a steal can land while the handler awaits it. */
+    function gate(mock: Mock): { issued: Promise<void>; release: () => void } {
+      let releaseAll = (): void => {};
+      const held = new Promise<void>((resolve) => {
+        releaseAll = resolve;
+      });
+      let markIssued = (): void => {};
+      const issued = new Promise<void>((resolve) => {
+        markIssued = resolve;
+      });
+      mock.mockImplementation(async () => {
+        markIssued();
+        await held;
+      });
+      return { issued, release: () => releaseAll() };
+    }
+
+    it('device.start_guided_load: a steal during the pre-trigger unload never triggers', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ trainingMode: 'Weight Training' });
+      const client = primaryClient(state);
+      const unload = gate(client.unloadDevice);
+      const call = invoke(placeholders.get('device.start_guided_load')!, { targetWeightLbs: 50 });
+      await unload.issued;
+
+      state.lease.steal();
+      unload.release();
+      const { isError, payload } = await call;
+
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('LEASE_LOST');
+      expect(client.startGuidedLoad).not.toHaveBeenCalled();
+      expect(state.channels.events[0]?.meta.tool).toBe('device.start_guided_load');
+    });
+
+    it('device.configure_isokinetic: a steal mid-sequence stops the later writes', async () => {
+      const client = primaryClient(state);
+      const speed = gate(client.setIsokineticTargetSpeed);
+      const call = invoke(placeholders.get('device.configure_isokinetic')!, {
+        targetSpeedMmPerSec: 300,
+        eccMode: 'isokinetic',
+        eccConstWeightLbs: 40,
+      });
+      await speed.issued;
+
+      state.lease.steal();
+      speed.release();
+      const { isError, payload } = await call;
+
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('LEASE_LOST');
+      expect(client.setIsokineticEccMode).not.toHaveBeenCalled();
+      expect(client.setIsokineticEccConstWeight).not.toHaveBeenCalled();
+    });
+
+    it('leaves a READ tool alone — device.get_state still answers after a steal', async () => {
+      state.lease.steal();
+
+      const { isError, payload } = await invoke(placeholders.get('device.get_state')!, {});
+
+      expect(isError).toBeUndefined();
+      expect(payload.connected).toBe(false);
+      expect(state.channels.events).toHaveLength(0);
+    });
+  });
 });
 
 function walkTs(dir: string): string[] {
