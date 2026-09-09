@@ -121,7 +121,7 @@ function makeSet(
   sessionId: string,
   weightLbs: number,
   repCount: number,
-  opts: { exerciseId?: string; startedAt?: string } = {},
+  opts: { exerciseId?: string; startedAt?: string; side?: 'left' | 'right' } = {},
 ): StoredSet {
   const reps = Array.from({ length: repCount }, (_, i) =>
     Object.assign(makeRep(i + 1), { id: `${id}-r${i + 1}`, setId: id, index: i }),
@@ -140,6 +140,7 @@ function makeSet(
     trainingMode: 'WeightTraining',
     weightLbs,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
+    ...(opts.side !== undefined ? { side: opts.side } : {}),
     reps,
   };
 }
@@ -185,14 +186,20 @@ function makeStore(
     // Mirrors `sqlite-store.ts`'s real query: exact exerciseId match, `from`/`to`
     // window on the SET's own `startedAt`, ascending order.
     getSetsForExercise: vi.fn(
-      async (filter: { exerciseId: string; from?: string; to?: string }) => {
+      async (filter: {
+        exerciseId: string;
+        from?: string;
+        to?: string;
+        side?: 'left' | 'right';
+      }) => {
         const all = Object.values(setMap).flat();
         return all
           .filter(
             (s) =>
               s.exerciseId === filter.exerciseId &&
               (filter.from === undefined || s.startedAt >= filter.from) &&
-              (filter.to === undefined || s.startedAt <= filter.to),
+              (filter.to === undefined || s.startedAt <= filter.to) &&
+              (filter.side === undefined || s.side === filter.side),
           )
           .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
       },
@@ -492,5 +499,75 @@ describe('progression.get_for_exercise — multi-exercise session (H1/H2)', () =
     // from its own sets, to hold more than one exercise).
     expect(body.sessions[0].setCount).toBe(1);
     expect(body.sessions[0].topWeightLbs).toBe(135);
+  });
+});
+
+// ── side filter and sideSplit (VMCP-04.09) ───────────────────────────────────
+
+describe('progression.get_for_exercise — side (VMCP-04.09)', () => {
+  it('left-only filter: forwards side to getSetsForExercise, echoes it, and scopes the session summary to that arm', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const left = makeSet('l1', 's1', 30, 5, { side: 'left' });
+    const right = makeSet('r1', 's1', 45, 5, { side: 'right' });
+    const h = setup([s1], { s1: [left, right] });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press', side: 'left' });
+    expect(r.isError).toBeUndefined();
+
+    const filter = h.store.getSetsForExercise.mock.calls[0][0] as { side?: string };
+    expect(filter.side).toBe('left');
+
+    const body = parseResult(r) as {
+      side: string;
+      sideSplit?: unknown;
+      sessions: Array<{ setCount: number; topWeightLbs: number }>;
+    };
+    expect(body.side).toBe('left');
+    expect(body.sideSplit).toBeUndefined();
+    expect(body.sessions[0].setCount).toBe(1);
+    expect(body.sessions[0].topWeightLbs).toBe(30);
+  });
+
+  it('absent side returns both arms plus a sideSplit summary', async () => {
+    const s1 = makeSession('s1', recentDate(10));
+    const s2 = makeSession('s2', recentDate(3));
+    const h = setup([s1, s2], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left' }),
+        makeSet('r1', 's1', 45, 5, { side: 'right' }),
+      ],
+      s2: [
+        makeSet('l2', 's2', 35, 5, { side: 'left' }),
+        makeSet('r2', 's2', 50, 5, { side: 'right' }),
+      ],
+    });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    expect(r.isError).toBeUndefined();
+
+    const body = parseResult(r) as {
+      side?: string;
+      sideSplit: {
+        left: { setCount: number; lastSessionTopWeightLbs: number };
+        right: { setCount: number; lastSessionTopWeightLbs: number };
+      };
+      sessions: Array<{ setCount: number }>;
+    };
+    expect(body.side).toBeUndefined();
+    // Both sides' sets contribute — the un-filtered session summary sees 2 sets.
+    expect(body.sessions[1].setCount).toBe(2);
+    expect(body.sideSplit.left).toEqual({ setCount: 2, lastSessionTopWeightLbs: 35 });
+    expect(body.sideSplit.right).toEqual({ setCount: 2, lastSessionTopWeightLbs: 50 });
+  });
+
+  it('single-arm history (no set carries a side) has no sideSplit', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], { s1: [makeSet('a1', 's1', 100, 5)] });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    expect(r.isError).toBeUndefined();
+
+    const body = parseResult(r) as { sideSplit?: unknown };
+    expect(body.sideSplit).toBeUndefined();
   });
 });
