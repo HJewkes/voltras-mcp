@@ -53,4 +53,50 @@ describe('McpChannelPublisher', () => {
 
     expect(() => publisher.publish({ content: 'x', meta: {} })).not.toThrow();
   });
+
+  it('stamps forSlot(...).publish(...) events with slot and an injected emit-time at', () => {
+    const server = makeFakeServer();
+    const publisher = new McpChannelPublisher(
+      server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
+    );
+
+    publisher
+      .forSlot('primary')
+      .publish({ content: 'Rep 3 complete.', meta: { event_type: 'rep_finalized' } });
+
+    expect(server.server.notification).toHaveBeenCalledWith({
+      method: 'notifications/claude/channel',
+      params: {
+        content: 'Rep 3 complete.',
+        meta: { slot: 'primary', at: '2026-09-08T12:00:00.000Z', event_type: 'rep_finalized' },
+      },
+    });
+  });
+
+  it('keeps an event-specific ended_at unchanged alongside the injected at', () => {
+    const server = makeFakeServer();
+    const publisher = new McpChannelPublisher(
+      server as unknown as ConstructorParameters<typeof McpChannelPublisher>[0],
+      () => '2026-09-08T12:00:00.000Z',
+    );
+
+    publisher.forSlot('primary').publish({
+      content: 'Set ended.',
+      meta: { event_type: 'set_ended', ended_at: '2026-09-08T11:59:50.000Z' },
+    });
+
+    expect(server.server.notification).toHaveBeenCalledWith({
+      method: 'notifications/claude/channel',
+      params: {
+        content: 'Set ended.',
+        meta: {
+          slot: 'primary',
+          at: '2026-09-08T12:00:00.000Z',
+          event_type: 'set_ended',
+          ended_at: '2026-09-08T11:59:50.000Z',
+        },
+      },
+    });
+  });
 });
