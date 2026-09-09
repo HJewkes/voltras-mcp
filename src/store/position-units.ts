@@ -19,6 +19,9 @@ import { mmToM } from '../state/live-signal.js';
 import { CURRENT_POSITION_UNITS } from '../state/set-capture.js';
 import type { StoredRep, StoredRepVbt, StoredSet } from './types.js';
 
+/** The two fields the normaliser reads: the marker, and the reps it scales. */
+export type PositionScaledSet = Pick<StoredSet, 'reps' | 'positionUnits'>;
+
 /**
  * Return `set` with every absolute position on its reps expressed in metres.
  *
@@ -46,8 +49,12 @@ import type { StoredRep, StoredRepVbt, StoredSet } from './types.js';
  * the bridge's position conversion (VMCP-05.19, #225), so on a device-native
  * row that field holds millimetres despite its name. Every other member of the
  * block is a velocity, a force or a time.
+ *
+ * Generic over the input so a caller holding only the marker and the reps —
+ * `setMedianRomM`, which is a pure read over one set — keeps its narrow
+ * parameter instead of demanding a whole `StoredSet`.
  */
-export function normalisePositionsToMetres(set: StoredSet): StoredSet {
+export function normalisePositionsToMetres<T extends PositionScaledSet>(set: T): T {
   if (set.positionUnits !== 'device_native') return set;
   return { ...set, positionUnits: CURRENT_POSITION_UNITS, reps: set.reps.map(scaleRep) };
 }
