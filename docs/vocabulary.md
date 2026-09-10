@@ -25,21 +25,21 @@ ceiling. These are values, not activity — setting one doesn't start or stop an
 
 | Tool                        | Location                        |
 | --------------------------- | ------------------------------- |
-| `device.set_weight`         | `src/tools/device-tools.ts:647` |
-| `device.set_chains`         | `src/tools/device-tools.ts:729` |
-| `device.set_eccentric`      | `src/tools/device-tools.ts:756` |
-| `device.set_damper_level`   | `src/tools/device-tools.ts:787` |
-| `device.set_band_max_force` | `src/tools/device-tools.ts:831` |
+| `device.set_weight`         | `src/tools/device-tools.ts:670` |
+| `device.set_chains`         | `src/tools/device-tools.ts:752` |
+| `device.set_eccentric`      | `src/tools/device-tools.ts:779` |
+| `device.set_damper_level`   | `src/tools/device-tools.ts:810` |
+| `device.set_band_max_force` | `src/tools/device-tools.ts:854` |
 
 `device.get_state` fields: `weightLbs`, `chainSettingLbs`, `eccentricPercentTenths`,
-`damperLevel` (`src/tools/device-tools.ts:1622-1637`). **Band max force is the
+`damperLevel` (`src/tools/device-tools.ts:1687-1702`). **Band max force is the
 exception** — `device.set_band_max_force` writes `bandMaxForceLbsTenths`
-(`src/tools/device-tools.ts:838`) but that field is never copied into the
+(`src/tools/device-tools.ts:861`) but that field is never copied into the
 `device.get_state` snapshot, so it cannot be read back directly; only a
 `setting_coerced` event on that field would surface a mismatch.
 
 A setting written under tension is a firmware no-op until the cable goes slack — it
-never changes the rep in progress (`src/tools/device-tools.ts:345`, the
+never changes the rep in progress (`src/tools/device-tools.ts:368`, the
 `device.set_weight` description, VW-170).
 
 ## 2. TRAINING MODE
@@ -48,13 +48,13 @@ What discipline the device is configured for.
 
 | Tool                          | Location                        |
 | ----------------------------- | ------------------------------- |
-| `device.set_mode`             | `src/tools/device-tools.ts:670` |
-| `device.configure_isokinetic` | `src/tools/device-tools.ts:944` |
-| `device.enter_row_mode`       | `src/tools/device-tools.ts:692` |
+| `device.set_mode`             | `src/tools/device-tools.ts:693` |
+| `device.configure_isokinetic` | `src/tools/device-tools.ts:967` |
+| `device.enter_row_mode`       | `src/tools/device-tools.ts:715` |
 
 `device.get_state` fields: `requested_mode` and `active_mode`
-(`src/tools/device-tools.ts:1642-1643`) — what was asked for vs. what the device
-reports — plus `mode_revert_latched` (`src/tools/device-tools.ts:1671`), which means the
+(`src/tools/device-tools.ts:1708-1709`) — what was asked for vs. what the device
+reports — plus `mode_revert_latched` (`src/tools/device-tools.ts:1737`), which means the
 device bounced back out of the requested mode on its own.
 
 ## 3. ENGAGEMENT / LOAD STATE
@@ -65,12 +65,12 @@ completely slack.
 
 | Tool                       | Location                         |
 | -------------------------- | -------------------------------- |
-| `device.start_guided_load` | `src/tools/device-tools.ts:1043` |
-| `device.exit_guided_load`  | `src/tools/device-tools.ts:1210` |
-| `device.unload`            | `src/tools/device-tools.ts:1026` |
+| `device.start_guided_load` | `src/tools/device-tools.ts:1063` |
+| `device.exit_guided_load`  | `src/tools/device-tools.ts:1236` |
+| `device.unload`            | `src/tools/device-tools.ts:1037` |
 
 `device.get_state` fields: `load_state` and `guided_load` (`phase`,
-`countdown_remaining_ms`, `fitness_mode_raw`) (`src/tools/device-tools.ts:1646-1651`).
+`countdown_remaining_ms`, `fitness_mode_raw`) (`src/tools/device-tools.ts:1712-1717`).
 
 The guided-load ceremony (armed → countdown → engaging → active) is the sanctioned way
 to apply load onto an already-extended cable. The plain `set.start` path does not run
@@ -95,15 +95,15 @@ Whether reps and sets are being persisted, independent of settings, mode, or eng
 | `session.set_exercise` | `src/tools/session-tools.ts:150` |
 | `session.list`         | `src/tools/session-tools.ts:164` |
 | `session.get`          | `src/tools/session-tools.ts:171` |
-| `set.start`            | `src/tools/set-tools.ts:187`     |
-| `set.end`              | `src/tools/set-tools.ts:196`     |
+| `set.start`            | `src/tools/set-tools.ts:193`     |
+| `set.end`              | `src/tools/set-tools.ts:202`     |
 
 `device.get_state` fields: `is_recording` and `active_set`
-(`src/tools/device-tools.ts:1645,1652`).
+(`src/tools/device-tools.ts:1711,1718`).
 
 Two lifecycle behaviors worth naming:
 
-- **Auto-arm** (VW-164/VW-181): `autoArmSet` (`src/state/auto-arm.ts:71`) opens a set on
+- **Auto-arm** (VW-164/VW-181): `autoArmSet` (`src/state/auto-arm.ts:72`) opens a set on
   the lifter's own reps during an open session, before any `set.start` call, when
   `VMCP_AUTO_ARM=on` (the default).
 - **Upgrade in place**: calling `set.start` against an auto-armed set does not fail —

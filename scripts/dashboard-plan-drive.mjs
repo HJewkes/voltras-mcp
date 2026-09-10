@@ -17,10 +17,11 @@
 // fixture, which is exactly what this exists to stop doing.
 //
 // ── Why one session per exercise ───────────────────────────────────────────
-// `session.start` throws SESSION_ALREADY_ACTIVE while a session is open and the
-// exercise is fixed at start; there is no `session.set_exercise` tool. So
-// advancing to the next planned exercise means `session.end` then
-// `session.start` with the next `exerciseId`, re-attaching the SAME template.
+// `session.start` throws SESSION_ALREADY_ACTIVE while a session is open. A
+// `session.set_exercise` tool does exist (`src/tool-registry.ts:42`), but this
+// driver does not use it — advancing to the next planned exercise here means
+// `session.end` then `session.start` with the next `exerciseId`, re-attaching
+// the SAME template.
 // The rail's `upcoming` rows come from the template (not the session), so they
 // still render correctly — but each session only carries its OWN completed sets,
 // so an exercise already finished shows as a done row with an empty strip.
