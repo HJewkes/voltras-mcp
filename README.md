@@ -216,8 +216,11 @@ tool calls are what Claude issues underneath.
    exactly one of `exerciseId` (validated against the exercise catalog — use
    `exercise.search` to find one) or `exerciseName` (free text). If you intend to attach a
    training plan later, start with `exerciseId`.
-4. **"Starting my set — stop me at 8 reps."** → `set.start`, optionally with a `watch`
-   block so the server auto-stops the set at 8 reps or on a velocity-loss threshold. Lift.
+4. **"Starting my set — cue me at 8 reps."** → `set.start`, optionally with a `watch`
+   block so the server publishes an advisory cue at 8 reps or on a velocity-loss
+   threshold. The server does not stop the set for you — react to the cue yourself
+   (stop lifting, or ask Claude to end the set) or let the device's own disengage
+   signal close it naturally. Lift.
    The set's header weight tracks the unit until the first rep closes, so arming before
    you dial the weight in still logs the weight you lifted. After rep 1 it is frozen: a
    weight written mid-set is the firmware's own no-op — it does not apply while the cable

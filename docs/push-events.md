@@ -80,7 +80,7 @@ filters on.
 
 ## Events
 
-| Event                            | Fires when                                                                                                                                                                                      | Auto-stops the set?       |
+| Event                            | Fires when                                                                                                                                                                                      | Force-closes the set?     |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | `rep_finalized`                  | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                                                                                                   | —                         |
 | `set_started`                    | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                                                                                                    | —                         |
@@ -89,10 +89,10 @@ filters on.
 | `set_ended_by_device`            | The user pressed Stop on the Voltra itself while a set was open.                                                                                                                                | implicit (device stopped) |
 | `connection_changed`             | Any connection-state transition. Disconnects include active-set context.                                                                                                                        | —                         |
 | `timer_complete`                 | A `timer.start` duration elapses.                                                                                                                                                               | —                         |
-| `set_target_reached`             | A `rep_count_reached` trigger matches.                                                                                                                                                          | optional, via `stopOn`    |
-| `velocity_loss_exceeded`         | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).                                                                                          | optional, via `stopOn`    |
+| `set_target_reached`             | A `rep_count_reached` trigger matches.                                                                                                                                                          | No — advisory cue only    |
+| `velocity_loss_exceeded`         | A `velocity_loss_exceeded` trigger matches. See [the baseline](#which-reps-set-the-velocity-baseline).                                                                                          | No — advisory cue only    |
 | `velocity_loss_watch_suppressed` | At set start, a registered `velocity_loss_exceeded` trigger will never fire because the set's movement class makes the signal invalid. See [the movement-class gate](#the-movement-class-gate). | —                         |
-| `idle_timeout`                   | The `idle_timeout_ms` watchdog fires — no rep activity for the configured window.                                                                                                               | optional, via `stopOn`    |
+| `idle_timeout`                   | The set's `inactivityTimeoutMs` watchdog fires — no rep activity for the configured window.                                                                                                     | Yes — always              |
 | `rest_status`                    | Passive rest-period ticks, only when `VMCP_REST_TIMER=on` auto-arms the cycle at a natural set close.                                                                                           | —                         |
 | `idle_rep_reclaimed`             | An auto-armed set adopted reps a previous idle report already counted. See [auto-armed sets](#auto-armed-sets).                                                                                 | —                         |
 | `voice_command_applied`          | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).                                                                                        | —                         |
@@ -215,24 +215,31 @@ as before.
 
 ## The trigger DSL
 
-`set.start({ watch: { stopOn[], notifyOn[] } })` registers triggers the server evaluates
-itself, so a stop condition doesn't depend on the model noticing in time.
+`set.start({ watch: { notifyOn[], inactivityTimeoutMs } })` registers triggers the server
+evaluates itself. As of the F14/F15 rewrite, `notifyOn` triggers (`rep_count_reached`,
+`velocity_loss_exceeded`) are **advisory cues only** — they publish their channel event
+and the set keeps running; the model voice-coaches the lifter, who finishes the cycle
+naturally or asks the model to end the set. `inactivityTimeoutMs` is the one remaining
+force-close path: when no rep activity lands for that many milliseconds, the server
+finalizes the set itself (`idle_timeout` fires, and `set_ended` carries
+`partial_reason: 'inactivity_timeout'`) because the lifter has genuinely walked away and
+the slot must be freed.
 
-- A `stopOn` match auto-stops the set: it fires the trigger event _and_ `set_ended`, with
-  `partial_reason: 'auto_stopped'` and `auto_stop_cause` naming the trigger type.
-- A `notifyOn` match only fires the trigger event, with `auto_stopped: 'false'` — the model
-  decides what to do.
+There is no `stopOn` field — a caller that passes one gets a silent no-op (Zod strips
+unknown keys), matching the advisory-only semantics.
+
+- A `notifyOn` match fires only the trigger event; the set is untouched.
 - Triggers dedupe per `(type, value)`, so registering the same spec twice fires once.
 
 ```jsonc
-// Stop at 8 reps, warn at 25% velocity loss, auto-stop after 30s of inactivity
+// Cue at 8 reps, cue at 25% velocity loss, force-close after 30s of inactivity
 {
   "watch": {
-    "stopOn": [
+    "notifyOn": [
       { "type": "rep_count_reached", "value": 8 },
-      { "type": "idle_timeout_ms", "value": 30000 },
+      { "type": "velocity_loss_exceeded", "pct": 25 },
     ],
-    "notifyOn": [{ "type": "velocity_loss_exceeded", "pct": 25 }],
+    "inactivityTimeoutMs": 30000,
   },
 }
 ```

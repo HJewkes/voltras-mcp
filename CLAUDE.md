@@ -11,7 +11,7 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run format` / `npm run format:check` — Prettier (globs are `src/**` and `scripts/**` only; markdown is not format-gated)
 - `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
 
-CI gate: lint + typecheck + test + build. The pre-commit hook runs lint-staged + typecheck + `vitest related` on staged files (full suite stays in CI).
+CI gate: lint + typecheck + test + build. The pre-commit hook runs `lint-staged` only; `.husky/pre-push` runs `prettier --check` over files changed vs `origin/main` under `src/**`, `scripts/**`, or `site/**` markdown. Typecheck and the full test suite run in CI, not locally.
 
 ## Adapter Modes
 
