@@ -43,6 +43,11 @@
 //   --stall=right@2         freeze that slot's telemetry mid-set on set 2
 //   --stall-ms=6000         stall duration; <=0 stalls for the REST OF THE RUN
 //   --max-set-ms=45000      per-set poll ceiling; set.end always fires on timeout
+//   --pinned                each set is EXACTLY its `--reps` target, from a
+//                           device parked before and after, so every derived
+//                           number repeats run to run. Off by default — this is
+//                           for `npm run docs:captures`, not for a demo. See
+//                           scripts/lib/mock-burst.mjs.
 //
 // Usage:
 //   npm run build && npm run build:dashboard
@@ -64,6 +69,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as os from 'node:os';
+
+import {
+  armBursts,
+  burstDurationMs,
+  control as controlPost,
+  pinnedConnectProfile,
+  releaseBurst,
+} from './lib/mock-burst.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const binPath = path.resolve(__dirname, '../dist/bin.js');
@@ -87,6 +100,15 @@ const MAX_SET_MS = Number(flag('max-set-ms', 45000));
 const STALL_MS = Number(flag('stall-ms', 6000));
 const CONTROL_PORT = Number(flag('control-port', 7735));
 const POLL_MS = 400;
+/**
+ * Opt-in determinism (`--pinned`, dual only). Each slot's set runs exactly its
+ * `--reps` target from a device parked before and after, instead of whatever a
+ * poll happens to catch mid-cycle — see scripts/lib/mock-burst.mjs. Off by
+ * default: free-running telemetry is the point of this driver as a demo.
+ */
+const PINNED = flags.has('pinned');
+/** How long a pinned set stays open, parked, after its burst — the window a screenshot lands in. */
+const SETTLE_MS = Number(flag('settle-ms', 8000));
 // Default to a seeded-catalog exerciseId (not a free-text name) so the active
 // session resolves to muscle groups and lights the dashboard BodyMap heatmap.
 // `session.start` enforces exerciseId XOR exerciseName, so we send exactly one:
@@ -146,6 +168,20 @@ const child = spawn(process.execPath, [...(DUAL ? ['--import', preloadPath] : []
     VMCP_DB_PATH: DB_PATH,
     VMCP_REST_TIMER: 'on',
     VMCP_MOCK_CONTROL_PORT: String(CONTROL_PORT),
+    // Pinned runs need each slot parked from the first moment it connects, and
+    // the preload only applies what this env var declares.
+    ...(PINNED
+      ? {
+          VMCP_MOCK_DEVICES: JSON.stringify(
+            SLOTS.map((slot) => ({
+              deviceId: DEVICE_ID[slot],
+              deviceName: `VTR-Mock${slot === 'left' ? 'L' : 'R'}`,
+              weight: 100,
+              ...pinnedConnectProfile(),
+            })),
+          ),
+        }
+      : {}),
   },
   stdio: ['pipe', 'pipe', 'pipe'],
 });
@@ -248,15 +284,7 @@ function summarizeSlots(snap, label) {
 }
 
 /** Drive the preload's control plane (adapter-level stall/resume/configure). */
-async function control(route, body) {
-  const res = await fetch(`http://127.0.0.1:${CONTROL_PORT}${route}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`control ${route} ${res.status}: ${await res.text()}`);
-  return res.json();
-}
+const control = (route, body) => controlPost(CONTROL_PORT, route, body);
 
 /**
  * Poll `/api/snapshot` until `slot` reaches `target` reps (or the deadline).
@@ -278,6 +306,31 @@ async function waitForReps(slot, target, deadline) {
 }
 
 /**
+ * One pinned slot-set: release exactly `target` reps from the parked device,
+ * hold the set open while it stays parked, then close. The count cannot
+ * overrun — if it does the park failed, and a screenshot of a run that is no
+ * longer deterministic is worse than a failed run.
+ */
+async function runPinnedSlotSet(slot, setNumber, target) {
+  await releaseBurst(CONTROL_PORT, DEVICE_ID[slot], target);
+  const deadline = Date.now() + burstDurationMs(target) + 30000;
+  let reps = 0;
+  while (reps !== target) {
+    if (Date.now() >= deadline) {
+      throw new Error(`set ${setNumber} ${slot}: burst stuck at ${reps}/${target} reps`);
+    }
+    reps = slotReps(await snapshot(), slot) ?? 0;
+    if (reps > target)
+      throw new Error(`set ${setNumber} ${slot}: burst overran ${reps} > ${target}`);
+    if (reps !== target) await sleep(250);
+  }
+  await sleep(SETTLE_MS);
+  await callTool('set.end', { slot });
+  log(`set ${setNumber} ${slot}: ended at ${reps} reps (pinned)`);
+  return reps;
+}
+
+/**
  * One slot's set: optional lag before `set.start`, poll to the slot's own rep
  * target, optionally freeze telemetry partway, then ALWAYS `set.end`.
  */
@@ -286,6 +339,7 @@ async function runSlotSet(slot, setNumber) {
   if (PLAN.lagMs[slot] > 0) await sleep(PLAN.lagMs[slot]);
   await callTool('set.start', { slot });
   log(`set ${setNumber} ${slot}: started (target ${target} reps)`);
+  if (PINNED) return runPinnedSlotSet(slot, setNumber, target);
   const deadline = Date.now() + MAX_SET_MS;
 
   if (PLAN.stallAtSet[slot] === setNumber) {
@@ -315,6 +369,14 @@ async function runDual() {
     log(`slot ${slot} ← ${DEVICE_ID[slot]} (mock telemetry streaming)`);
   }
   await sleep(500);
+  if (PINNED) {
+    // Wait out the one rep each adapter always streams on connect (only its own
+    // set boundary can stop it), then arm each slot's burst size. Both happen
+    // before `session.start`, so those reps land outside every recorded set.
+    await sleep(burstDurationMs(1) + 1500);
+    for (const slot of SLOTS) await armBursts(CONTROL_PORT, DEVICE_ID[slot], PLAN.reps[slot]);
+    log(`pinned: both slots parked, armed for ${SLOTS.map((s) => PLAN.reps[s]).join('/')} reps`);
+  }
 
   const sessionArgs = EXERCISE_ID
     ? { exerciseId: EXERCISE_ID }

@@ -18,6 +18,13 @@ carries no plan data at all. If you need to check a plan-related visual (the hea
 use `dashboard-plan-drive.mjs` or a real device with a plan attached — `dashboard-sim`
 and plain `dashboard-mock-drive` cannot show it.
 
+**Both real-pipeline drivers can be pinned.** `dashboard-plan-drive.mjs --pinned-reps=N`
+and `dashboard-mock-drive.mjs --dual --pinned` run each set as an exact rep burst from a
+mock device parked before and after it, so every value on the dashboard repeats run to
+run ([`scripts/lib/mock-burst.mjs`](../scripts/lib/mock-burst.mjs)). Off by default —
+free-running telemetry is what you want when watching a demo, and pinned is what
+`npm run docs:captures` needs ([screenshot-harness.md](screenshot-harness.md)).
+
 **Cues have no dashboard surface at all, on any driver.** Coaching cues are spoken
 audio (`system.speak`), not a rendered value — there is no `VMCP_CUES` / cue read-out
 anywhere under `src/dashboard`. The dashboard's own "cue" language (the nav item's

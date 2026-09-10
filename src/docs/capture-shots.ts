@@ -66,27 +66,35 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // The only driver that can show a prescription — `dashboard-sim` carries no
     // plan data and plain `dashboard-mock-drive` attaches none.
     driver: 'scripts/dashboard-plan-drive.mjs',
-    // 12s of reps per set and 10s of rest widen both predicate windows to ~10x
-    // the poll interval plus a screenshot, so a shot never races the driver.
+    // `--pinned-reps` is what makes the numbers in these images predictable:
+    // every set is exactly 5 reps from a device parked before and after, so the
+    // frame sequence is identical run to run (scripts/lib/mock-burst.mjs). The
+    // 8s settle and 10s rest are the windows a screenshot lands in — during
+    // both the device is parked, so the shot is taken against a STILL page
+    // rather than racing a driver.
     args: [
       '--port={port}',
       '--control-port={controlPort}',
       '--sets=2',
-      '--dwell-ms=12000',
+      '--pinned-reps=5',
+      '--settle-ms=8000',
       '--rest-ms=10000',
     ],
   },
   {
     name: 'dual',
     driver: 'scripts/dashboard-mock-drive.mjs',
-    // Asymmetric on purpose: equal sides prove nothing about the diverging stage.
+    // Asymmetric on purpose: equal sides prove nothing about the diverging
+    // stage. Pinned, the asymmetry is exact — 6 reps against 4, every run.
     args: [
       '--dual',
       '--port={port}',
       '--control-port={controlPort}',
       '--sets=2',
+      '--pinned',
       '--reps=left:6,right:4',
       '--lag=right:2500',
+      '--settle-ms=14000',
     ],
   },
 ];
@@ -100,8 +108,14 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
 export type CaptureWait =
   /** Server up, nothing connected, no session. */
   | { readonly kind: 'idle' }
-  /** A set is open on every listed slot, and each has at least `minReps` reps. */
-  | { readonly kind: 'set-open'; readonly minReps: number; readonly slots: readonly string[] }
+  /**
+   * A set is open on every listed slot and holds EXACTLY that slot's rep count.
+   * Exact, not a floor: the driver pins each set to a fixed burst and parks the
+   * device afterwards, so the shot must land on the parked state. A `>=` here
+   * would fire mid-burst and screenshot a moving page — the defect this whole
+   * value layer exists to remove.
+   */
+  | { readonly kind: 'set-open'; readonly reps: readonly (readonly [string, number])[] }
   /** Session live, no set open, at least one set already logged — the rest stage. */
   | { readonly kind: 'rest' }
   /** No session open and at least `minSessions` sessions in history. */
@@ -120,11 +134,38 @@ export interface CaptureShot {
   readonly waitFor: CaptureWait;
   /**
    * Strings that must be present in the rendered page after the capture, matched
-   * exactly and case-sensitively. This is what proves the PNG is not blank: a
-   * dashboard that failed to mount, lost its stylesheet or rendered an empty
-   * stage still screenshots cleanly and throws nothing.
+   * case-sensitively against the page text with runs of whitespace collapsed to
+   * one space (the DOM puts a label and its value in separate blocks, so raw
+   * `innerText` would need embedded newlines to assert the pair). This is what
+   * proves the PNG is not blank: a dashboard that failed to mount, lost its
+   * stylesheet or rendered an empty stage still screenshots cleanly and throws
+   * nothing.
    */
   readonly expectText: readonly string[];
+  /**
+   * The DATA on the page, pinned. Same matching as `expectText` — these are
+   * simply the strings that carry numbers the pipeline computed rather than
+   * labels the markup hard-codes, and they are the half `expectText` cannot
+   * check: a panel that renders a wrong number, or a NaN, still contains every
+   * label it always did.
+   *
+   * Every value here is deterministic because the driver pins the input: a
+   * fixed burst of reps from a device parked on both sides of it, so the frame
+   * sequence the analytics sees is identical run to run
+   * (scripts/lib/mock-burst.mjs).
+   *
+   * DELIBERATELY NOT ASSERTED, because they are still not deterministic:
+   *   - the header wall clock, and the session-summary start/end stamps and
+   *     `DURATION` — real time, moving.
+   *   - the rest countdown (`VMCP_REST_TIMER=on`) — counting down as the shot
+   *     is taken.
+   *   - anything derived from frame timestamps (tempo seconds, set duration):
+   *     a frame is stamped with `Date.now()` at decode, so its VALUES repeat
+   *     across runs but its CLOCK does not.
+   * An assertion on any of those would have to be loose enough to pass on a
+   * moving value, which is the defect, not the fix.
+   */
+  readonly expectValues: readonly string[];
   /**
    * True when the view is assembled from transitions the SPA observes while it
    * is open. The live page derives its completed-set columns from `sets.active`
@@ -151,6 +192,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     caption: 'The wall dashboard before a Voltra is connected.',
     waitFor: { kind: 'idle' },
     expectText: ['No Voltra connected', 'VELOCITY · this set'],
+    expectValues: ['Session 0/0 sets'],
     holdsPageOpen: false,
   },
   {
@@ -158,10 +200,21 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     scenario: 'planned',
     route: '/app',
     caption: 'The live page mid-set, with the prescribed sets, reps, load and tempo attached.',
-    // Three reps in: enough for the velocity chart and the fatigue verdict to
-    // have data, early enough to be well inside the 12s dwell.
-    waitFor: { kind: 'set-open', minReps: 3, slots: ['primary'] },
+    // The whole pinned burst, with the device parked on it: the velocity chart
+    // and the fatigue verdict have their full five reps and nothing is moving.
+    waitFor: { kind: 'set-open', reps: [['primary', 5]] },
     expectText: ['Push A · Hypertrophy', 'Cable Chest Press', 'VELOCITY · this set', 'FATIGUE'],
+    expectValues: [
+      // The prescription, walked out of the real plan store by the driver.
+      'Cable Chest Press 3 × 8–10 @ 140 lbs',
+      '0/8 sets',
+      // The velocity chart's per-rep peaks — the pipeline's own output, and the
+      // reason the burst has to be pinned: these moved every run before it.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      // The readout that caught this: two runs of the OLD harness disagreed
+      // here (5.5 "Good" against 6.0 "Slowing") and both were green.
+      'FATIGUE 5.0 RPE Good',
+    ],
     holdsPageOpen: true,
   },
   {
@@ -171,6 +224,16 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     caption: 'The rest stage between two sets of a planned exercise.',
     waitFor: { kind: 'rest' },
     expectText: ['TONNAGE', 'Cable Chest Press', 'Push A · Hypertrophy'],
+    expectValues: [
+      'VOLUME 5 TONNAGE 0 lbs',
+      '1/8 sets',
+      // Tonnage is 0 and load is `—` because the mock emits no settings
+      // cascade, so the dashboard never learns a weight. That degradation is
+      // real and pinned here on purpose — see dashboard-plan-drive's header.
+      'SET REPS LBS RPE 1 5 0 —',
+      'SET VERDICT 5 Reps 0 lbs 12%',
+      'Next · Cable Chest Press · set 2 of 3',
+    ],
     holdsPageOpen: true,
   },
   {
@@ -180,6 +243,17 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     caption: 'The session-completion screen for the session that just ended.',
     waitFor: { kind: 'sessions-ended', minSessions: 3 },
     expectText: ['Session complete', 'EXERCISES', 'NEXT SESSION'],
+    expectValues: [
+      // `DURATION` sits between `VOLUME` and its value and is deliberately not
+      // asserted: it is wall-clock, unlike everything before it.
+      'EXERCISES 1 SETS 2 REPS 10 VOLUME —',
+      'FATIGUE 5.0 RPE Good',
+      'RIR 4.8',
+      'BEST VELOCITY 0.5',
+      '12% peak-to-last within a set — set #2, the set the verdict above reads.',
+      'RECOMMENDATION -5 lb TARGET LOAD 40 lb',
+      '#1 5 × — loss 12% best 0.5 #2 5 × — loss 12% best 0.5',
+    ],
     holdsPageOpen: false,
   },
   {
@@ -189,6 +263,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     caption: 'The plan builder, showing a seeded workout template and the exercise catalog.',
     waitFor: { kind: 'plan-seeded', minExercises: 3 },
     expectText: ['Push A — planned exercises', 'Cable Incline Chest Press', 'Save targets'],
+    expectValues: [
+      '30 exercises',
+      'Push A Block 1 · Week 1 · 3 exercises completed',
+      '1. Cable Chest Press 3 × 8-10 · @ 140 lb · 90s rest',
+      '2. Cable Incline Chest Press 3 × 10 · @ 95 lb · 75s rest',
+      '3. Cable Chest Fly 2 × 12-15 · @ 45 lb · 60s rest',
+    ],
     holdsPageOpen: false,
   },
   {
@@ -196,8 +277,20 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     scenario: 'dual',
     route: '/app?variant=live-dual',
     caption: 'The diverging stage mid-set, with two Voltras bound to the left and right slots.',
-    waitFor: { kind: 'set-open', minReps: 3, slots: ['left', 'right'] },
+    waitFor: {
+      kind: 'set-open',
+      reps: [
+        ['left', 6],
+        ['right', 4],
+      ],
+    },
     expectText: ['MOCK-VOLTRA-LEFT', 'MOCK-VOLTRA-RIGHT', 'L/R'],
+    expectValues: [
+      // Both sides' per-rep peaks in one string, so a slot that stopped
+      // updating or started mirroring its neighbour cannot pass.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      'L/R 2% Right leading',
+    ],
     holdsPageOpen: true,
   },
 ];
