@@ -43,10 +43,17 @@
 // device via `VMCP_MOCK_DEVICES`, because stock `VOLTRA_ADAPTER=mock` hardcodes
 // one fixed device id and this driver wants its own.
 //
+// ── Pinned mode (--pinned-reps=N) ──────────────────────────────────────────
+// Off by default. On, each set is exactly N reps from a device parked before
+// and after it instead of whatever a wall-clock dwell catches, so every derived
+// number on the dashboard repeats run to run. `npm run docs:captures` needs
+// that; a human watching a demo does not. See scripts/lib/mock-burst.mjs.
+//
 // Usage:
 //   npm run build && npm run build:dashboard
 //   node scripts/dashboard-plan-drive.mjs                 # :7726, holds open
 //   node scripts/dashboard-plan-drive.mjs --port=7810 --sets=3
+//   node scripts/dashboard-plan-drive.mjs --pinned-reps=5 # deterministic sets
 //   HOLD=0 node scripts/dashboard-plan-drive.mjs          # exit after the workout
 //
 // Open http://127.0.0.1:<port>/app BEFORE/DURING the run — the set log
@@ -56,6 +63,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as os from 'node:os';
+
+import {
+  armBursts,
+  burstDurationMs,
+  pinnedConnectProfile,
+  releaseBurst,
+} from './lib/mock-burst.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const binPath = path.resolve(__dirname, '../dist/bin.js');
@@ -74,6 +88,15 @@ const CONTROL_PORT = Number(flag('control-port', 7737));
 /** Seconds of reps per set — the mock streams continuously, so dwell sets the rep count. */
 const DWELL_MS = Number(flag('dwell-ms', process.env.DWELL_MS ?? 8000));
 const REST_MS = Number(flag('rest-ms', process.env.REST_MS ?? 5000));
+/**
+ * Opt-in determinism (`--pinned-reps=N`, 0 = off). Each set runs exactly N reps
+ * from a device that is parked before and after, instead of whatever a
+ * wall-clock dwell happens to catch — see scripts/lib/mock-burst.mjs. Off by
+ * default: the free-running dwell is what makes this useful as a demo driver.
+ */
+const PINNED_REPS = Number(flag('pinned-reps', 0));
+/** How long a pinned set stays open, parked, after its burst — the window a screenshot lands in. */
+const SETTLE_MS = Number(flag('settle-ms', 8000));
 const HOLD = flag('hold', process.env.HOLD ?? '1') !== '0';
 const DB_PATH =
   process.env.VMCP_DB_PATH ?? path.join(os.tmpdir(), `vmcp-plan-drive-${PORT}.sqlite`);
@@ -122,6 +145,7 @@ const child = spawn(process.execPath, ['--import', preloadPath, binPath], {
         deviceName: 'VTR-MockPlan',
         weight: PLANNED[0].weightLbs,
         repsPerSet: 8,
+        ...(PINNED_REPS > 0 ? pinnedConnectProfile() : {}),
       },
     ]),
   },
@@ -263,15 +287,48 @@ async function seedPlan() {
 
 // ── the workout ────────────────────────────────────────────────────────────
 
+/** Reps on the open set as the dashboard sees them, or null when none is open. */
+function activeReps(snap) {
+  const active = snap.sets?.active;
+  if (!active) return null;
+  return active.reps?.length ?? active.repCount ?? 0;
+}
+
+/**
+ * Poll until the open set holds exactly `target` reps. A pinned device parks
+ * after its burst, so the count cannot climb past the target — if it does, the
+ * park failed and the run is no longer deterministic, which is worth a throw
+ * rather than a screenshot of whatever happened.
+ */
+async function waitForBurst(target, label) {
+  const deadline = Date.now() + burstDurationMs(target) + 30000;
+  let reps = 0;
+  while (Date.now() < deadline) {
+    reps = activeReps(await snapshot()) ?? 0;
+    if (reps === target) return;
+    if (reps > target) throw new Error(`${label}: burst overran, ${reps} reps > ${target}`);
+    await sleep(250);
+  }
+  throw new Error(`${label}: burst never reached ${target} reps (stuck at ${reps})`);
+}
+
 /** One set: start, let the mock accrue reps, end. The mock never auto-closes a set. */
 async function runSet(exerciseIndex, setNumber) {
+  const label = `ex${exerciseIndex + 1} set ${setNumber}`;
   await callTool('set.start', {});
   await sleep(300);
-  summarize(await snapshot(), `ex${exerciseIndex + 1} set ${setNumber} start`);
-  await sleep(DWELL_MS);
-  summarize(await snapshot(), `ex${exerciseIndex + 1} set ${setNumber} mid  `);
+  summarize(await snapshot(), `${label} start`);
+  if (PINNED_REPS > 0) {
+    await releaseBurst(CONTROL_PORT, DEVICE_ID, PINNED_REPS);
+    await waitForBurst(PINNED_REPS, label);
+    summarize(await snapshot(), `${label} mid  `);
+    await sleep(SETTLE_MS);
+  } else {
+    await sleep(DWELL_MS);
+    summarize(await snapshot(), `${label} mid  `);
+  }
   await callTool('set.end', {});
-  summarize(await snapshot(), `ex${exerciseIndex + 1} set ${setNumber} end  `);
+  summarize(await snapshot(), `${label} end  `);
 }
 
 /**
@@ -333,6 +390,14 @@ async function main() {
   await callTool('device.connect', { deviceId: devId });
   log(`connected ${devId} — mock telemetry streaming`);
   await sleep(500);
+  if (PINNED_REPS > 0) {
+    // Wait out the one rep the adapter always streams on connect (it can only
+    // be stopped by its own set boundary), then arm the burst size. Both happen
+    // before `session.start`, so that rep lands outside every recorded set.
+    await sleep(burstDurationMs(1) + 1500);
+    await armBursts(CONTROL_PORT, DEVICE_ID, PINNED_REPS);
+    log(`pinned: parked, armed for ${PINNED_REPS}-rep bursts`);
+  }
 
   const templateId = await seedPlan();
   for (let i = 0; i < PLANNED.length; i++) await runPlannedExercise(i, templateId);

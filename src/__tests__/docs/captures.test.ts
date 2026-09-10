@@ -13,6 +13,12 @@
 // declared shot is on disk at the declared geometry, each capture recorded the
 // assertions it had to satisfy, nothing extra is sitting in the directory, and
 // no site page links a capture that no longer exists.
+//
+// The VALUES on the page are gated too, but not here — they are pinned in the
+// definition (`expectValues`) and checked by the capture run itself, against
+// the live page. What CI holds is that the committed capture satisfied the
+// pinned values the definition declares NOW, so pinning a new value without
+// regenerating is the same red build as moving a shot without regenerating.
 
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
@@ -41,6 +47,7 @@ interface ManifestShot {
   readonly file: string;
   readonly waitFor: unknown;
   readonly assertedText: readonly string[];
+  readonly assertedValues: readonly string[];
   readonly width: number;
   readonly height: number;
   readonly bytes: number;
@@ -108,8 +115,17 @@ describe('the capture manifest tracks the capture definition', () => {
       // The assertions are the only evidence a PNG is not blank, so a capture
       // taken against a weaker set than the definition declares is stale.
       expect(entry?.assertedText).toEqual([...shot.expectText]);
+      // And the only evidence it is not WRONG: labels survive a panel that
+      // renders a bad number, the pinned values do not. A capture taken before
+      // a value was pinned is as stale as one taken against a moved label.
+      expect(entry?.assertedValues).toEqual([...shot.expectValues]);
     },
   );
+
+  it('pins at least one computed value on every shot', () => {
+    const unpinned = CAPTURE_SHOTS.filter((shot) => shot.expectValues.length === 0);
+    expect(unpinned.map((shot) => shot.name)).toEqual([]);
+  });
 });
 
 describe('the captures on disk', () => {
@@ -158,7 +174,8 @@ describe('the captures are safe to publish', () => {
   it('asserts on no string that reads as protocol detail', () => {
     const offenders: string[] = [];
     for (const shot of CAPTURE_SHOTS) {
-      for (const match of guard.find(shot.expectText.join('\n'))) {
+      const asserted = [...shot.expectText, ...shot.expectValues].join('\n');
+      for (const match of guard.find(asserted)) {
         if (LITERAL_KINDS.has(match.kind)) offenders.push(`${shot.name}: ${match.kind}`);
       }
     }

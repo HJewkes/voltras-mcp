@@ -8,14 +8,29 @@
 //   npm run docs:captures -- --only live-rest   # re-take one
 //
 // ── How a shot is timed ────────────────────────────────────────────────────
-// The mock drivers are TIME-driven and cannot be stepped, so every shot waits on
-// a PREDICATE over `/api/snapshot` (the same JSON the SPA polls) rather than on a
-// sleep. This is not a style preference: a dashboard that failed to mount, lost
-// its stylesheet or rendered an empty stage screenshots perfectly cleanly and
-// throws nothing, so a fixed delay would write a blank PNG and report success.
-// After the predicate fires the script also WAITS for the shot's expected strings
-// to be in the DOM, screenshots, then re-reads the DOM and fails if any of them
-// has gone — the capture is bracketed by the assertion, not followed by it.
+// Every shot waits on a PREDICATE over `/api/snapshot` (the same JSON the SPA
+// polls) rather than on a sleep. This is not a style preference: a dashboard
+// that failed to mount, lost its stylesheet or rendered an empty stage
+// screenshots perfectly cleanly and throws nothing, so a fixed delay would write
+// a blank PNG and report success. After the predicate fires the script also
+// WAITS for the shot's expected strings to be in the DOM, screenshots, then
+// re-reads the DOM and fails if any of them has gone — the capture is bracketed
+// by the assertion, not followed by it.
+//
+// ── What is asserted ───────────────────────────────────────────────────────
+// Two kinds of string, both from `src/docs/capture-shots.ts`, both matched the
+// same way: `expectText` (labels the markup hard-codes) proves the page is not
+// blank, and `expectValues` (numbers the pipeline computed) proves it is not
+// WRONG. Labels alone cannot catch a wrong number or a NaN — the panel is still
+// there and still says `TONNAGE`.
+//
+// `expectValues` is only meaningful because the drivers can be pinned: each set
+// is an exact burst of reps from a mock device parked before and after it, so
+// the frame sequence reaching the analytics is identical run to run
+// (scripts/lib/mock-burst.mjs). The inputs are fixed; the real SDK, event
+// bridge, analytics and SPA all still run. Wall clocks, rest countdowns and
+// anything derived from frame timestamps stay excluded — see the note on
+// `expectValues` in the definition for exactly which fields and why.
 //
 // ── Isolation ──────────────────────────────────────────────────────────────
 // Every run gets a fresh `VMCP_DB_PATH` under a temp directory that is deleted
@@ -52,6 +67,16 @@ const POLL_MS = 250;
  * this is generous on purpose and only ever fires on a genuinely stuck run.
  */
 const PREDICATE_TIMEOUT_MS = 300_000;
+/**
+ * Per-assertion ceiling for the DOM, deliberately far shorter than the state
+ * predicate's. By the time this runs the predicate already holds, so the page
+ * only has to finish its own 2s poll and paint. Giving it the predicate's five
+ * minutes instead is actively harmful: a genuinely WRONG value never appears,
+ * so the wait runs to the end of the whole scenario and the error then reports
+ * the page as it looked minutes later, not as it looked when the value was
+ * wrong.
+ */
+const TEXT_TIMEOUT_MS = 20_000;
 /** How long the dashboard sidecar gets to bind after the driver starts. */
 const DASHBOARD_BIND_TIMEOUT_MS = 60_000;
 
@@ -112,10 +137,10 @@ async function evaluateWait(port, waitFor) {
       };
     }
     case 'set-open': {
-      const counts = waitFor.slots.map((slot) => [slot, slotReps(snapshot, slot)]);
+      const counts = waitFor.reps.map(([slot, want]) => [slot, want, slotReps(snapshot, slot)]);
       return {
-        ok: counts.every(([, reps]) => reps !== null && reps >= waitFor.minReps),
-        detail: counts.map(([slot, reps]) => `${slot}=${reps ?? '—'}`).join(' '),
+        ok: counts.every(([, want, reps]) => reps === want),
+        detail: counts.map(([slot, want, reps]) => `${slot}=${reps ?? '—'}/${want}`).join(' '),
       };
     }
     case 'rest': {
@@ -165,22 +190,54 @@ async function waitForState(port, waitFor, label) {
 
 // ── the page ───────────────────────────────────────────────────────────────
 
-/** Every expected string that is NOT in the page's rendered text right now. */
-async function missingText(page, expectText) {
-  const text = await page.evaluate(() => document.body.innerText);
-  return expectText.filter((expected) => !text.includes(expected));
+/**
+ * The page's rendered text with every whitespace run collapsed to one space.
+ * The dashboard puts a label and its value in separate blocks, so `LBS` and the
+ * number under it are two `innerText` lines; flattening is what lets a shot
+ * assert the PAIR ("TONNAGE 0 lbs") rather than a bare number that would match
+ * anywhere on the page.
+ */
+async function pageText(page) {
+  const raw = await page.evaluate(() => document.body.innerText);
+  return raw.replace(/\s+/g, ' ').trim();
 }
 
-/** Wait until the page has rendered every expected string, or throw listing the gaps. */
-async function waitForText(page, expectText, label) {
-  const deadline = Date.now() + PREDICATE_TIMEOUT_MS;
-  let missing = expectText;
+/** Every expected string that is NOT in the page's rendered text right now. */
+function missingIn(text, expected) {
+  return expected.filter((want) => !text.includes(want));
+}
+
+/**
+ * What the page says where an expected string should have been. Locating the
+ * longest matching prefix and printing what follows turns "missing TONNAGE 0
+ * lbs" into "…got TONNAGE 12 lbs", which names the field AND its wrong value.
+ */
+function nearMiss(text, want) {
+  for (let end = want.length - 1; end > 0; end--) {
+    const at = text.indexOf(want.slice(0, end));
+    if (at >= 0) return `"${want}" but page has "${text.slice(at, at + want.length + 16)}…"`;
+  }
+  return `"${want}" (no part of it is on the page)`;
+}
+
+/**
+ * Wait until the page has rendered every expected string, or throw naming the
+ * gaps. The report is built from the CLOSEST sample seen, not the last one: a
+ * driver keeps moving while this waits, so the final sample can be a page from
+ * the next set entirely, and "wrong value" would be reported as "wrong screen".
+ */
+async function waitForText(page, expected, label) {
+  const deadline = Date.now() + TEXT_TIMEOUT_MS;
+  let closest = { text: '', missing: expected };
   while (Date.now() < deadline) {
-    missing = await missingText(page, expectText);
+    const text = await pageText(page);
+    const missing = missingIn(text, expected);
     if (missing.length === 0) return;
+    if (missing.length <= closest.missing.length) closest = { text, missing };
     await sleep(POLL_MS);
   }
-  throw new Error(`${label}: page never rendered ${JSON.stringify(missing)}`);
+  const report = closest.missing.map((want) => nearMiss(closest.text, want));
+  throw new Error(`${label}: page never rendered ${report.join('; ')}`);
 }
 
 /**
@@ -226,20 +283,21 @@ async function captureShot(page, origin, port, shot, outDir) {
     else await page.goto(target, { waitUntil: 'networkidle' });
   };
 
+  const expected = [...shot.expectText, ...shot.expectValues];
   if (shot.holdsPageOpen && page.url() !== target) await open();
   const observed = await waitForState(port, shot.waitFor, shot.name);
   if (!shot.holdsPageOpen) await open();
-  await waitForText(page, shot.expectText, shot.name);
+  await waitForText(page, expected, shot.name);
   await settlePaint(page);
 
   const file = path.join(outDir, `${shot.name}.png`);
   await page.screenshot({ path: file, fullPage: false });
 
-  const stillMissing = await missingText(page, shot.expectText);
+  const after = await pageText(page);
+  const stillMissing = missingIn(after, expected);
   if (stillMissing.length > 0) {
-    throw new Error(
-      `${shot.name}: state moved during the capture, lost ${JSON.stringify(stillMissing)}`,
-    );
+    const report = stillMissing.map((want) => nearMiss(after, want));
+    throw new Error(`${shot.name}: state moved during the capture, lost ${report.join('; ')}`);
   }
 
   const bytes = fs.statSync(file).size;
@@ -253,6 +311,7 @@ async function captureShot(page, origin, port, shot, outDir) {
     file: `${shot.name}.png`,
     waitFor: shot.waitFor,
     assertedText: shot.expectText,
+    assertedValues: shot.expectValues,
     width,
     height,
     bytes,
