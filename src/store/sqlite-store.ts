@@ -944,7 +944,7 @@ function migrateV7ToV8(db: DatabaseSync): void {
  * A TYPE FIX, done while the column is still empty and therefore free. v7
  * created it as `INTEGER` and `StoredSet` typed it `boolean`, modelling inverse
  * chains as on/off. The device does not work that way: `setInverseChains(lbs)`
- * takes a magnitude in pounds over 0-100, with one protocol command per value.
+ * takes a magnitude in pounds over 0-100.
  * Under the boolean model a 5 lb and a 40 lb inverse-chains set were the same
  * configuration, which they are not.
  *

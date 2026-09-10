@@ -43,8 +43,8 @@
 //                                 LiveState's `latestInProgress` for
 //                                 `set.live_metrics` reads. Canonical
 //                                 per-set close in WT/RB/Damper flows
-//                                 through `onSetSummary` (`aa 85 5f`)
-//                                 and emits `set_ended` with
+//                                 through `onSetSummary` and emits
+//                                 `set_ended` with
 //                                 `meta.closed_by='device'`. (Critic gap
 //                                 Q6.)
 //   onSettingsUpdate            → applySettings + notify voltra://device/current.
@@ -59,17 +59,16 @@
 //                                 event for each field that transitions
 //                                 (assistMode, trainingModeRaw,
 //                                 chainTargetForceTenths, weightLbsTenths,
-//                                 eccentricPercentTenths). Frames where
-//                                 `trainingMode === Idle (0)` are dropped
-//                                 entirely — these are the transitional
-//                                 mid-mode-switch frames that produce
-//                                 `assistMode 2↔0↔2` burst noise without
-//                                 carrying any stable post-switch state.
-//                                 assistMode=8 is the device's idle sentinel
-//                                 (no active fitness mode) — surfaced as-is in
+//                                 eccentricPercentTenths). State dumps
+//                                 reporting Idle are dropped entirely — these
+//                                 are the transitional mid-mode-switch reports
+//                                 that produce assistMode burst noise without
+//                                 carrying any stable post-switch state. The
+//                                 device's idle sentinel for assistMode (no
+//                                 active fitness mode) is surfaced as-is in
 //                                 channel events and `device.get_state` so
-//                                 consumers can distinguish `0` (off) /
-//                                 `2` (on) / `8` (idle) (Bug 26).
+//                                 consumers can distinguish it from assist-off
+//                                 (Bug 26).
 //   onConnectionStateChange     → applySettings({ connected }) + notify
 //                                 voltra://device/current. On 'disconnected'
 //                                 also markDisconnected and notify both
@@ -79,8 +78,8 @@
 // ── Why frame-driven cycle detection ──────────────────────────────────────
 //
 // The SDK's BLE `rep_boundary` notification fires at every phase transition
-// (the device-side decode comment confirms "end of concentric or eccentric"),
-// so a single user-perceived rep produces two notifications: one at
+// (end of concentric or of eccentric), so a single user-perceived rep
+// produces two notifications: one at
 // CONCENTRIC→ECCENTRIC and another at ECCENTRIC→IDLE. The pre-fix bridge
 // invoked `live.appendRep` on each, doubling the rep count and splitting
 // telemetry across two records. The fix is to ignore the device-level
@@ -185,8 +184,7 @@ const SDK_PHASE_UNKNOWN = -1;
 // type path (which is not exported from the package's public entry).
 //
 // `damperLevel` was added in SDK 0.6.0's `VoltraDeviceSettings` and surfaces
-// through this same callback when the cmd=0x10 cascade carries paramID
-// 0x0351.
+// through this same callback whenever the settings-update echo carries it.
 interface SdkSettingsUpdate {
   baseWeight?: number;
   weight?: number;
@@ -206,10 +204,9 @@ interface SdkSettingsUpdate {
 // callback, so the structural alias is sufficient and keeps the bridge
 // decoupled from the SDK's private module paths.
 //
-// Field offsets validated on-device in session E (2026-05-07); see
-// `voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md`.
-// `trainingMode` here is a raw byte (0 = transitional / mid-mode-switch,
-// 1 = WeightTraining, 2 = ResistanceBand); the bridge uses the SDK's
+// The SDK's decode of these fields was validated on-device in session E
+// (2026-05-07). `trainingMode` here is the device's own raw value, which has a
+// distinct transitional (mid-mode-switch) reading; the bridge uses the SDK's
 // numeric `TrainingMode` enum for typed comparisons.
 interface SdkStateDump {
   trainingMode: TrainingMode;
@@ -241,8 +238,8 @@ const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active
  * before the user starts a new session. VW-164: this is the FLOOR, not a cap
  * — a set that asked for a longer window keeps it (`inactivityThresholdFor`).
  *
- * In WT/RB/Damper modes the device's `onSetSummary` (`aa 85 5f`) is the
- * canonical per-set close marker and the watchdog rarely fires. Modes that
+ * In WT/RB/Damper modes the device's `onSetSummary` is the canonical per-set
+ * close marker and the watchdog rarely fires. Modes that
  * don't emit a per-set close (rowing, iso, custom-curves) fall through to
  * this watchdog for v1.
  *
@@ -250,9 +247,7 @@ const setUriForSlot = (slotId: string): string => `voltra://set/${slotId}/active
  * first `onInProgress` outside a 500ms window after `set.start` as the
  * close signal — wrong on noble + fast-tempo WT (the device fires
  * `onInProgress` continuously during workout mode, so the post-grace event
- * arrives well before the user finishes reps). See
- * `sources/integration-plans/mcp-rep-count-fix-2026-05-09.md` and
- * `voltra-private/captures/sessions/validation-phase-6-set-boundaries-2026-05-06T20-12-57.events.json`.
+ * arrives well before the user finishes reps).
  */
 const SET_INACTIVITY_TIMEOUT_MS = 90_000;
 
@@ -481,7 +476,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   const unsubs: Array<() => void> = [];
   // Latest known damperLevel; the bridge synthesizes a `settings_update`
   // channel event only on transition (Bug 27). Initialised to `undefined`
-  // so the very first cmd=0x10 cascade carrying damperLevel emits a baseline
+  // so the very first settings-update echo carrying damperLevel emits a baseline
   // event — without that, cold-start consumers would never see the initial
   // damper value and would have to call `device.get_state` to discover it.
   let lastDamperLevel: number | undefined = undefined;
@@ -510,17 +505,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // VMCP-02.40: `chainTargetForceTenths` and `weightLbsTenths` are no longer
   // tracked here — they were the firmware's lazily-computed effective-force
   // values, false-positive on the Damper→WeightTraining mode-bounce and stale
-  // across cmd=0x10 cascade writes. User-facing chain/weight transitions are
-  // now sourced from the cmd=0x10 cascade (see `lastChainSettingLbs` /
+  // across settings writes. User-facing chain/weight transitions are
+  // now sourced from the settings-update echo (see `lastChainSettingLbs` /
   // `lastBaseWeight` below).
   let lastAssistMode: number | undefined = undefined;
   let lastTrainingModeRaw: number | undefined = undefined;
   let lastEccentricPercentTenths: number | undefined = undefined;
-  // VMCP-02.40: cmd=0x10 cascade-sourced user-set values. Transition publish
-  // for `settings_update` channel events lives in the `onSettingsUpdate`
-  // handler below — fires when the cmd=0x10 echo carries a new value, which
-  // is the reliable per-write signal (state-dump's offset 5-6 / offset 3-4
-  // are lazy and unsuitable for this purpose).
+  // VMCP-02.40: user-set values sourced from the settings-update echo.
+  // Transition publish for `settings_update` channel events lives in the
+  // `onSettingsUpdate` handler below — fires when the echo carries a new
+  // value, which is the reliable per-write signal (the state dump's
+  // corresponding fields are lazy and unsuitable for this purpose).
   let lastChainSettingLbs: number | undefined = undefined;
   let lastBaseWeight: number | undefined = undefined;
   // VMCP-02.29 parity scaffold. The ring holds the most recent
@@ -580,7 +575,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   // lifecycle is owned by the explicit `set.start`/`set.end` tools.
   // Diagnostic raw-frame capture (SDK 0.6.2+). Fires for every inbound BLE
   // notification BEFORE decode, including frames the decoder can't classify
-  // (cmd=0x10 family until Phase 1a lands). Pushed into the events ring as
+  // (the settings-echo family, until Phase 1a lands). Pushed into the events ring as
   // a 'raw_frame' event for byte-level analysis. The client.onRawFrame
   // method itself is no-op on SDK <0.6.2; the optional-chain guards against
   // pre-0.6.2 SDK builds in case a consumer pins an older version.
@@ -813,7 +808,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // finalized rep. F14/F15 rewrite: triggers are advisory cues
           // only — they publish channel events so the model can voice-
           // coach the user, but they never force-close the set. The
-          // canonical set close comes from the device's `aa 85 5f`
+          // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
           evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
         }
@@ -920,11 +915,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   pushUnsub(
     unsubs,
     client.onSetSummary((payload: SetSummaryEvent) => {
-      // Vendor `aa 85 5f` set-summary frame — emitted by the device per-set
+      // Vendor set-summary report — emitted by the device per-set
       // in WT/RB/Damper after all reps complete (renamed from `preSummary`
       // in SDK 0.9.0; the legacy "fires ~3s before final rep" docstring was
-      // a misnomer — see voltra-private/research/aa-subtype-catalog-2026-05-07-android-deep.md
-      // §7.5). This is the canonical per-set close signal: it reconciles the
+      // a misnomer). This is the canonical per-set close signal: it reconciles the
       // firmware rep pipeline and routes the close through `finalizeSet`, which
       // emits the single `set_ended` channel event (`closed_by='device'`).
       // Ghost setSummary after `set.end` already closed the set: silent
@@ -946,7 +940,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         return;
       }
       // Capture the typed payload onto the active set + close immediately.
-      // `aa 85 5f` is the canonical per-set close marker in WT/RB/Damper —
+      // `onSetSummary` is the canonical per-set close marker in WT/RB/Damper —
       // it fires after all reps complete with the final rep count, not
       // before. `finalizeSet` reads `consumeLatestSetSummary()` and threads
       // the device's repCount/repDurationMs/targetWeightTenths into the
@@ -990,14 +984,14 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // close signal — that heuristic (`SET_START_GRACE_MS = 500ms`)
       // terminated fast-tempo WT sets prematurely under noble (sets
       // ended at 1–3s capturing 0–2 of 8–12 actual reps). Per-set
-      // close in WT/RB/Damper now flows through `onSetSummary`
-      // (`aa 85 5f`); modes without a per-set close marker fall
-      // through to the inactivity watchdog.
+      // close in WT/RB/Damper now flows through `onSetSummary`;
+      // modes without a per-set close marker fall through to the
+      // inactivity watchdog.
       //
       // Bug 24 — Isometric auto-telemetry stream policy (D1):
       // When the user sets Isometric mode without first calling
-      // `session.start`, the device starts a 500ms-cadence cmd=0x70
-      // (aa 81 2b) keep-alive burst (A4 confirms cadence). Without a
+      // `session.start`, the device starts a 500ms-cadence keep-alive
+      // burst (A4 confirms cadence). Without a
       // gate, every burst frame would push a `set_boundary` debug event
       // tagged `hadActiveSet: false` — orphan events that pollute the
       // diagnostic surface and could confuse downstream consumers. The
@@ -1090,7 +1084,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
   unsubs.push(() => clearInterval(idleRepSummaryTimer));
 
   // Guided-load (Phase 1g, SDK 0.6.3+, @experimental). Fires whenever the
-  // SDK's polling loop decodes a fresh status-register read. The bridge's
+  // SDK's polling loop decodes a fresh guided-load status read. The bridge's
   // contract here is exclusively about session/set CONTEXT — when the
   // device transitions into the direct-load state machine ('armed' /
   // 'countdown' / 'engaging' / 'active'), any rep_boundary or set_boundary
@@ -1210,46 +1204,46 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
 
       // Feed the mode-revert guard. The guard ignores updates that don't
       // carry a trainingMode field; this call is safe to invoke
-      // unconditionally regardless of which paramIDs the cascade actually
+      // unconditionally regardless of which fields the echo actually
       // surfaced. `mode` and `trainingMode` are aliases at the wire layer
       // (different SDK versions used different field names); we collapse
       // them here for the guard.
       const incomingMode = settings.mode ?? settings.trainingMode;
       slot.modeRevertGuard.onSettingsUpdate(incomingMode);
 
-      // Synthesize `settings_update` channel events when the cmd=0x10
-      // cascade carries a new value for any of the user-set fields the
+      // Synthesize `settings_update` channel events when the settings-update
+      // echo carries a new value for any of the user-set fields the
       // bridge surfaces. The `__all` block in the payload snapshots every
       // monitored field at emission time so consumers don't have to merge
       // against a prior settings_update.
       //
       // VMCP-02.40: chain + base-weight transitions publish from this
       // handler (not from `synthStateDumpTransitions`), so the channel
-      // event reflects the user-set value as soon as the cmd=0x10 echo
+      // event reflects the user-set value as soon as the echo
       // lands. The state-dump's `chainTargetForceTenths` /
       // `weightLbsTenths` were the prior source but are firmware-internal
       // lazy values; sourcing here removes the false-positive class.
       const incomingWeight = settings.weight ?? settings.baseWeight;
       if (settings.damperLevel !== undefined && settings.damperLevel !== lastDamperLevel) {
         lastDamperLevel = settings.damperLevel;
-        publishCmd10SettingsUpdate('damperLevel', settings.damperLevel, live, slotChannels);
+        publishSettingsEchoUpdate('damperLevel', settings.damperLevel, live, slotChannels);
       }
       if (typeof settings.chains === 'number' && settings.chains !== lastChainSettingLbs) {
         lastChainSettingLbs = settings.chains;
-        publishCmd10SettingsUpdate('chainSettingLbs', settings.chains, live, slotChannels);
+        publishSettingsEchoUpdate('chainSettingLbs', settings.chains, live, slotChannels);
       }
       if (typeof incomingWeight === 'number' && incomingWeight !== lastBaseWeight) {
         lastBaseWeight = incomingWeight;
-        publishCmd10SettingsUpdate('weightLbs', incomingWeight, live, slotChannels);
+        publishSettingsEchoUpdate('weightLbs', incomingWeight, live, slotChannels);
         refreshPreFirstRepSnapshot(state, live);
       }
 
       // F2/F3 coercion correlation: walk every field the SDK surfaced and
       // ask the slot's CoercionWatch whether it matches a recently-fired
       // setter at a coerced value. VMCP-02.40 routes chain + weight
-      // coercion-watch through this cmd=0x10 cascade path (the only frame
-      // that reliably reflects the post-write user-set value); only ecc
-      // and assistMode remain observed in `onStateDump` below.
+      // coercion-watch through this settings-update echo path (the only
+      // report that reliably reflects the post-write user-set value); only
+      // ecc and assistMode remain observed in `onStateDump` below.
       observeSettingsUpdateCoercions(
         settings,
         slot.coercionWatch,
@@ -1261,18 +1255,17 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
     }),
   );
 
-  // cmd=0x07 state-dump — exposes assist mode, active training mode, weight,
+  // State dump — exposes assist mode, active training mode, weight,
   // effective chain target force, and eccentric overload. SDK 0.7.0+ routes
   // this through `onStateDump`. `onStateDump` is absent on older builds; the
   // optional-chain guard keeps backward compatibility with any pre-0.7.0
   // test fixtures.
   //
-  // Mode-switch bursts emit ~4 cmd=0x07 frames in ~130ms; two carry the new
-  // mode value, two carry transitional `trainingMode=0` (Idle) frames with
-  // assistMode flicker. Suppress the transitional frames entirely (no
-  // LiveState mutation, no channel events, no resource notify) so consumers
-  // never see the `assistMode 2↔0↔2` oscillation. Investigation:
-  // voltra-private/research/cmd-0x07-variable-layout-fix-2026-05-08.md.
+  // Mode-switch bursts emit ~4 state dumps in ~130ms; two carry the new
+  // mode value, two are transitional (Idle) dumps with assistMode flicker.
+  // Suppress the transitional dumps entirely (no LiveState mutation, no
+  // channel events, no resource notify) so consumers never see the assistMode
+  // oscillation.
   if (typeof client.onStateDump === 'function') {
     pushUnsub(
       unsubs,
@@ -1462,7 +1455,7 @@ function notifySlot(
  * The user dropped the auto-stop semantics entirely; triggers are now
  * advisory cues. The model voice-coaches the user to "rack it — that's
  * your 5", the user finishes their cycle naturally, and the device's
- * `aa 85 5f` disengage signal becomes the canonical set close.
+ * `onSetSummary` disengage signal becomes the canonical set close.
  *
  * Synchronous trigger types only: `rep_count_reached` and
  * `velocity_loss_exceeded`. Inactivity timeout is handled via the
@@ -1777,9 +1770,9 @@ function refreshPreFirstRepSnapshot(state: ServerState, live: LiveState): void {
  * transitioned. Called once per `onStateDump` after `applyStateDump` so the
  * live snapshot is already current when the payload's `__all` block is built.
  *
- * assistMode=8 is the firmware's idle sentinel (no active fitness mode); it
- * is reported as-is in the payload so consumers can distinguish "assist off"
- * (0) from "device idle" (8) if needed.
+ * The firmware reports a distinct idle sentinel for assistMode (no active
+ * fitness mode); it is reported as-is in the payload so consumers can
+ * distinguish "assist off" from "device idle" if needed.
  */
 function synthStateDumpTransitions(
   dump: SdkStateDump,
@@ -1796,7 +1789,7 @@ function synthStateDumpTransitions(
   // VMCP-02.40: state-dump-derived `chainTargetForceTenths` and
   // `weightLbsTenths` are kept in the `__all` block for diagnostic context
   // but no longer drive per-field `settings_update` channel events — those
-  // transitions now publish from `onSettingsUpdate` (cmd=0x10 cascade)
+  // transitions now publish from `onSettingsUpdate` (the settings-update echo)
   // under `chainSettingLbs` / `weightLbs`, where the values reflect the
   // user-set state per-write instead of the firmware's lazy effective
   // force.
@@ -1845,13 +1838,14 @@ function publishIfTransition(
 }
 
 /**
- * VMCP-02.40: publish a `settings_update` channel event for a cmd=0x10
- * cascade-sourced field transition (damperLevel, chainSettingLbs, weightLbs).
+ * VMCP-02.40: publish a `settings_update` channel event for a field
+ * transition sourced from the settings-update echo (damperLevel,
+ * chainSettingLbs, weightLbs).
  * Composes the `__all` block from the just-updated LiveState snapshot so
  * consumers see the post-write value for the changed field alongside the
  * latest known values for the other tracked fields.
  */
-function publishCmd10SettingsUpdate(
+function publishSettingsEchoUpdate(
   field: SettingsUpdateField,
   current: number,
   live: LiveState,
@@ -1875,23 +1869,21 @@ function publishCmd10SettingsUpdate(
  * slot's CoercionWatch whether any of them matches a recently-fired setter
  * at a coerced value. Publishes one `setting_coerced` channel event per hit.
  *
- * VMCP-02.40: chain + base-weight coercion observation lives here (cmd=0x10
- * cascade is the only frame that reliably reflects the user-set chain /
- * weight per-write). The state-dump-derived `chainTargetForceTenths` and
- * `weightLbsTenths` are the firmware's lazily-computed effective force at
+ * VMCP-02.40: chain + base-weight coercion observation lives here (the
+ * settings-update echo is the only report that reliably reflects the user-set
+ * chain / weight per-write). The state-dump-derived `chainTargetForceTenths`
+ * and `weightLbsTenths` are the firmware's lazily-computed effective force at
  * the cable — observed against requested user values they false-positive on
- * mode-bounce transients and stale across writes. The diagnostic at
- * `sources/archive/handoffs/HANDOFF-2026-05-21-coercion-watch-field-source.md` carries
- * the byte-level evidence.
+ * mode-bounce transients and stale across writes.
  *
- * Fields observed here (all cmd=0x10-sourced, whole-pound units):
+ * Fields observed here (all from the settings-update echo, whole-pound units):
  *   * `damperLevel` — direct passthrough (no unit conversion).
  *   * `chains` — user-set chain force in lbs.
  *   * `baseWeight` — user-set base weight in lbs.
  *
  * State-dump-only fields (`assistMode`, `eccentricPercentTenths`) are still
- * observed in the `onStateDump` handler — they have no cmd=0x10 echo today
- * (eccentric may move here in a follow-up once a cmd=0x10 source is wired).
+ * observed in the `onStateDump` handler — they have no settings-update echo
+ * today (eccentric may move here in a follow-up once an echo source is wired).
  */
 /**
  * Guided-load phases that precede the settled `active` (engaged) state. Base
@@ -1940,11 +1932,11 @@ function observeSettingsUpdateCoercions(
  * `setting_coerced` event per hit.
  *
  * VMCP-02.40: chain + weight observations moved to
- * `observeSettingsUpdateCoercions` (cmd=0x10 path). Only `assistMode` and
- * `eccentricPercentTenths` remain here — they have no cmd=0x10 echo today.
- * Eccentric's `eccentricPercentTenths` has the documented 80→320→0
+ * `observeSettingsUpdateCoercions` (the settings-update echo path). Only
+ * `assistMode` and `eccentricPercentTenths` remain here — they have no echo
+ * today. Eccentric's `eccentricPercentTenths` has the documented 80→320→0
  * transient burst defused by the 2-of-2 stability counter; a follow-up may
- * route eccentric through cmd=0x10 too.
+ * route eccentric through the echo too.
  */
 function observeStateDumpCoercions(
   dump: SdkStateDump,

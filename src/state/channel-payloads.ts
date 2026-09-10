@@ -241,7 +241,7 @@ export function buildRepFinalizedPayload(
     },
     set_context: {
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (the single reliable
+      // VMCP-02.70: `active_mode` keys on the settings-update echo (the single reliable
       // mode signal), so it equals `requested_mode`. `training_mode` is kept as
       // a deprecated alias (= requested) for one release.
       requested_mode: device.trainingMode ?? null,
@@ -371,7 +371,7 @@ export function buildSetStartedPayload(
   if (device.weightLbs !== undefined && device.weightLbs > 0) {
     meta.weight_lbs = String(device.weightLbs);
   }
-  // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (= requested_mode);
+  // VMCP-02.70: `active_mode` keys on the settings-update echo (= requested_mode);
   // `training_mode` stays as a deprecated alias (= requested).
   if (device.trainingMode !== undefined) {
     meta.requested_mode = device.trainingMode;
@@ -511,7 +511,7 @@ function buildSetStartedSummary(device: DeviceSnapshot, ordinal: number): string
  * Cause of a `set_ended` channel emission. `'tool'` covers tool-driven
  * closes (explicit `set.end`, inactivity-watchdog finalize, guided-load
  * reap); `'device_signal'` is the bridge's autonomous finalize triggered
- * by the firmware emitting `aa 85 5f` (set-summary) on user disengage —
+ * by the firmware emitting its per-set summary on user disengage —
  * the device has no Stop button.
  *
  * F14/F15 rewrite: the two emissions previously diverged on `event_type`
@@ -532,7 +532,7 @@ export type SetEndedCause = 'tool' | 'device_signal';
  * ever receiving an `onSummary` (mid-set disconnect, abrupt close) omit
  * the block entirely.
  *
- * Note: `aa 86 7d` "summary" only fires at workout-end / post-STOP and
+ * Note: the `onSummary` report only fires at workout-end / post-STOP and
  * may not fire at all in WT/RB/Damper. Per-set device close in those
  * modes is captured via `DeviceSetSummaryBlock` below.
  */
@@ -543,7 +543,7 @@ export interface DeviceSummaryBlock {
 
 /**
  * Device-asserted per-set summary metadata, harvested from the SDK's
- * `onSetSummary` vendor frame (`aa 85 5f`) via
+ * `onSetSummary` vendor report via
  * `LiveState.consumeLatestSetSummary`. The canonical per-set close marker
  * in WT/RB/Damper modes — fires after all reps complete with the final
  * rep count. Threaded onto `set_ended_by_device` payloads when present.
@@ -568,7 +568,7 @@ export interface DeviceSetSummaryBlock {
  * F14/F15 rewrite: the previously-distinct `set_ended_by_device` event
  * type has been folded into a unified `set_ended`. The `meta.closed_by`
  * discriminator carries the close cause:
- *   * `'device'`             — autonomous `aa 85 5f` close (`cause='device_signal'`).
+ *   * `'device'`             — autonomous device-signalled close (`cause='device_signal'`).
  *   * `'inactivity_timeout'` — bridge watchdog tripped after no activity.
  *   * `'disconnect'`         — connection loss cascade.
  *   * `'session_end'`        — explicit `session.end` cascade.
@@ -659,7 +659,7 @@ export function buildSetEndedPayload(
       session_id: stored.sessionId,
       weight_lbs: stored.weightLbs,
       // VMCP-02.09/02.70: requested mode captured at set start (= active_mode,
-      // which now keys on the same cmd=0x10 echo). A closed/persisted set has no
+      // which now keys on the same settings-update echo). A closed/persisted set has no
       // live device mode to re-derive, so active_mode stays null on the
       // historical set_ended event (it is live on set_started / rep_finalized /
       // get_state). training_mode retained as a deprecated alias (= requested).
@@ -896,7 +896,7 @@ function buildSetEndedSummary(
 }
 
 // VMCP-02.73: `buildSetPreSummaryPayload` / the `set_pre_summary` channel
-// event were removed. The event derived from the same `aa 85 5f` frame in the
+// event were removed. The event derived from the same `onSetSummary` report in the
 // same handler tick as `set_ended`, carried no unique data (the reconciled
 // count, final-rep duration, and schema version are all on `set_ended`), and
 // was a second reconciliation surface. No consumer read it by name. `set_ended`
@@ -915,7 +915,7 @@ export interface SetSoFar {
     set_id: string;
     session_id: string;
     weight_lbs: number | null;
-    // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+    // VMCP-02.70: active_mode keys on the settings-update echo (= requested_mode);
     // training_mode retained as a deprecated alias (= requested).
     requested_mode: string | null;
     active_mode: string | null;
@@ -1285,14 +1285,14 @@ export function buildGuidedLoadStatePayload(input: GuidedLoadStatePayloadInput):
 }
 
 // VMCP-02.70: `buildModeDivergedPayload` / the `mode_diverged` channel event
-// were removed. The watch compared the cmd=0x10 echo (requested) against the
-// cmd=0x07 state-dump raw[0] (treated as "applied"), but the 2026-07-07 bench
-// proved raw[0] is an engagement field, not a mode — it can't represent Damper
-// (reads 1 at idle) and emits transient 0 on every switch, so the comparison
-// produced false positives. There is one reliable mode signal (the echo), so
+// were removed. The watch compared the settings-update echo (requested)
+// against a state-dump field (treated as "applied"), but the 2026-07-07 bench
+// proved that field reports engagement, not a mode — it can't represent Damper
+// and goes transiently unset on every switch, so the comparison produced
+// false positives. There is one reliable mode signal (the echo), so
 // requested and active no longer diverge. No external consumer read the event.
 // The real mode-clobber it was meant to catch (Bug B) is fixed at the SDK
-// (SDK-01.13, PREPARE removal).
+// (SDK-01.13).
 
 /**
  * Compute the dedupe key for a trigger spec. Used by the bridge's
@@ -1373,7 +1373,7 @@ export function buildConnectionChangedPayload(
       connected: device.connected,
       battery_percent: device.batteryPercent ?? null,
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+      // VMCP-02.70: active_mode keys on the settings-update echo (= requested_mode);
       // training_mode retained as a deprecated alias (= requested).
       requested_mode: device.trainingMode ?? null,
       active_mode: activeMode(device),
@@ -1465,8 +1465,8 @@ export function buildSetAbortedByModeRevertPayload(
 /**
  * Build the meta + content for a synthetic `settings_update` channel event.
  * Fires when the bridge observes a transition in a monitored device-setting
- * field (`damperLevel` from the cmd=0x10 cascade; assist mode + chains
- * activity from the cmd=0x07 state-dump).
+ * field (`damperLevel` from the settings-update echo; assist mode + chains
+ * activity from the state dump).
  *
  * The content body carries a `__all` block snapshotting every known field
  * at emission time so consumers don't have to merge against a prior
@@ -1480,32 +1480,31 @@ export interface SettingsUpdateAll {
   damperLevel?: number;
   assistMode?: number;
   /**
-   * Active training-mode raw byte from the last cmd=0x07 state-dump
-   * (1 = WeightTraining, 2 = ResistanceBand). The bridge drops transitional
-   * frames where the byte is 0, so this field never appears as 0 in a
-   * published payload.
+   * Active training-mode raw value from the last state dump. The bridge drops
+   * transitional state dumps, so this field never carries a mid-mode-switch
+   * value in a published payload.
    */
   trainingModeRaw?: number;
   /**
-   * Effective chain target force at the cable in tenths of pounds, decoded
-   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
-   * `min(chains, weight) × 10` (the device caps chains at weight). For the
-   * user's chains setting in lbs prefer `chainSettingLbs`.
+   * Effective chain target force at the cable in tenths of pounds, decoded by
+   * the SDK from the state dump. Equals `min(chains, weight) × 10` (the device
+   * caps chains at weight). For the user's chains setting in lbs prefer
+   * `chainSettingLbs`.
    */
   chainTargetForceTenths?: number;
-  /** Active weight in tenths of pounds from cmd=0x07 (mirrors `baseWeight × 10`). */
+  /** Active weight in tenths of pounds from the state dump (mirrors `baseWeight × 10`). */
   weightLbsTenths?: number;
-  /** Eccentric overload in tenths of percent from cmd=0x07. */
+  /** Eccentric overload in tenths of percent from the state dump. */
   eccentricPercentTenths?: number;
   /**
    * User's chains setting in pounds (= what `set_chains` wrote, after the
-   * firmware's silent chains≤weight cap), sourced from the cmd=0x10
-   * cascade `chains` field. On-device testing 2026-05-07 confirmed this
+   * firmware's silent chains≤weight cap), sourced from the settings-update
+   * echo's `chains` field. On-device testing 2026-05-07 confirmed this
    * is reliable.
    */
   chainSettingLbs?: number;
   /**
-   * User's inverse-chains setting in pounds, from the same cmd=0x10 cascade
+   * User's inverse-chains setting in pounds, from the same settings-update echo
    * as `chainSettingLbs`. A WEIGHT, NOT A FLAG: inverse chains subtract
    * resistance through the concentric and add it through the eccentric, so a
    * set at 20 lbs of inverse chains is a different configuration from one at
@@ -1518,8 +1517,8 @@ export type SettingsUpdateField =
   | 'damperLevel'
   | 'assistMode'
   | 'trainingModeRaw'
-  // VMCP-02.40: chain + weight transitions now publish from the cmd=0x10
-  // cascade path under the user-facing field names. The state-dump-derived
+  // VMCP-02.40: chain + weight transitions now publish from the
+  // settings-update echo under the user-facing field names. The state-dump-derived
   // `chainTargetForceTenths` / `weightLbsTenths` no longer emit per-field
   // settings_update channel events (they remain in the `__all` payload for
   // diagnostic context) — they're the firmware's lazily-computed
@@ -1657,7 +1656,7 @@ export function buildSettingCoercedPayload(
       set_id: context.setId,
       session_id: context.sessionId,
       weight_lbs: device.weightLbs ?? null,
-      // VMCP-02.70: active_mode keys on the cmd=0x10 echo (= requested_mode);
+      // VMCP-02.70: active_mode keys on the settings-update echo (= requested_mode);
       // training_mode retained as a deprecated alias (= requested).
       requested_mode: device.trainingMode ?? null,
       active_mode: activeMode(device),

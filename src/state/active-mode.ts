@@ -1,30 +1,29 @@
-// VMCP-02.70 — active-mode derivation keys on the cmd=0x10 echo.
+// VMCP-02.70 — active-mode derivation keys on the settings-update echo.
 //
-// `active_mode` used to be derived from `DeviceSnapshot.trainingModeRaw` (the
-// cmd=0x07 state-dump byte). The 2026-07-07 bench reverse-engineering
-// (sources/audits/mode-system-rootcause-2026-07-07.md) proved
-// that byte is NOT the applied training mode — it is an *engagement* field
-// (0/1/2/3 = home / WeightTraining-active / band-active / damper-active). It
-// cannot represent Damper as a mode (reads 1 at idle), emits transient 0 on
-// every switch, and only reflects a fitness value (2=RB) while a set is active.
-// Reading it as the applied mode reported Damper as "Weight Training".
+// `active_mode` used to be derived from `DeviceSnapshot.trainingModeRaw` (a
+// state-dump field). The 2026-07-07 bench work proved that field is NOT the
+// applied training mode — it reports *engagement*, not mode. It cannot
+// represent Damper as a mode, goes transiently unset on every switch, and only
+// reflects a fitness value while a set is active. Reading it as the applied
+// mode reported Damper as "Weight Training".
 //
-// The reliable current-mode signal is the cmd=0x10 echo (the device's ACK of a
-// mode write), already surfaced as `DeviceSnapshot.trainingMode`. `active_mode`
-// now keys on it, so it equals `requested_mode` — there is only one reliable
-// mode signal, not a distinct requested-vs-applied pair. The old raw[0]-based
-// `mode_diverged` event (which compared the echo against this non-mode byte and
-// produced false positives for Damper) was removed alongside this change.
+// The reliable current-mode signal is the settings-update echo (the device's
+// acknowledgement of a mode write, observed on `onSettingsUpdate`), already
+// surfaced as `DeviceSnapshot.trainingMode`. `active_mode` now keys on it, so
+// it equals `requested_mode` — there is only one reliable mode signal, not a
+// distinct requested-vs-applied pair. The old `mode_diverged` event (which
+// compared the echo against this non-mode field and produced false positives
+// for Damper) was removed alongside this change.
 //
 // `trainingModeRaw` is still carried on `DeviceSnapshot` and surfaced by
 // `device.get_state` for diagnostics. The write-echo is only as fresh as the
 // last observed transition; a proactive on-demand mode read is tracked in
-// SDK-01.14 (safe cmd=0x0F queryDeviceSettings).
+// SDK-01.14.
 
 import type { DeviceSnapshot } from './live-state.js';
 
 /**
- * The device's current training mode name, keyed on the cmd=0x10 echo
+ * The device's current training mode name, keyed on the settings-update echo
  * (`DeviceSnapshot.trainingMode`). Returns `null` when no mode has been
  * observed yet (fresh connect before any mode write / cascade replay).
  *

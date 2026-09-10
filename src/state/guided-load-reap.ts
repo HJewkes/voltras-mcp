@@ -35,7 +35,7 @@ export interface GuidedLoadReapOptions {
  * Reap the guided-load scaffold on the supplied slot.
  *
  * Set reap: `finalizeSet` with `partialReason: 'guided_load_exited'` and
- * `disengageMotor: false` (the exit frame / poll-window teardown already
+ * `disengageMotor: false` (the guided-load exit / poll-window teardown already
  * released the motor; a redundant `Workout.STOP` would just churn state).
  * `cause: 'tool'` marks it a tool-consistent close for channel subscribers.
  *

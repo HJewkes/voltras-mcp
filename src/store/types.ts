@@ -370,14 +370,14 @@ export interface StoredSet {
   // Distinct from `setupId`, which is inferred physical configuration. A
   // chains set and a constant-load set are indistinguishable without these.
 
-  /** User's chains setting in lbs, from the cmd=0x10 cascade echo. */
+  /** User's chains setting in lbs, from the settings-update echo. */
   chainsLbs?: number;
   /** Damper resistance level (0-9). */
   damperLevel?: number;
   /** Eccentric overload percentage. */
   eccentricPct?: number;
   /**
-   * User's inverse-chains setting in lbs, from the cmd=0x10 cascade echo.
+   * User's inverse-chains setting in lbs, from the settings-update echo.
    * A MAGNITUDE, NOT A FLAG: the device takes `setInverseChains(lbs)` over
    * 0-100. Mechanically the opposite of `chainsLbs` — inverse chains shed
    * resistance through the concentric and add it through the eccentric.
