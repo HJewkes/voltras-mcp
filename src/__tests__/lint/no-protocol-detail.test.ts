@@ -32,6 +32,13 @@ describe('encoded values', () => {
     ['a hex literal inside a doc tag', '/** @remarks writes 0x1f */', 'hex-literal'],
     ['a spaced byte sequence', '// captured a9 c7 00 04 in a row', 'byte-sequence'],
     ['a hyphenated byte sequence', '// captured a9-c7-00-04 in a row', 'byte-sequence'],
+    ['an underscored byte sequence', '// captured a9_c7_00_04 in a row', 'byte-sequence'],
+    [
+      'an underscored byte sequence behind a prefix',
+      'const frame_a9_c7_00_04 = 1;',
+      'byte-sequence',
+    ],
+    ['a value in a template literal', 'const probe = `writes 0x1f`;', 'hex-literal'],
     ['a free-standing hex run', "const probe = 'a9c7f0';", 'bare-hex'],
     ['a hex run inside an identifier', 'const REG_A9C7 = 1;', 'bare-hex'],
     ['a hex run across a case boundary', 'const probeA9C7Latch = 1;', 'bare-hex'],
@@ -68,8 +75,20 @@ describe('what the guard does not fire on', () => {
     ['a version', '// requires @voltras/node-sdk 0.12.0'],
     ['a viewport size', "const shot = { size: '1440x900' };"],
     ['ordinary prose', '// A read-only, best-effort back-fill of the self-report.'],
+    ['a snake_case identifier', 'const set_weight_lbs = 1;'],
+    ['a snake_case event name', "const name = 'on_per_rep';"],
   ])('lets %s through', (_label, text) => {
     expect(find(text)).toEqual([]);
+  });
+});
+
+// The rule reads the parsed source, not the file as a text tool classifies it.
+// That is what makes it immune to VW-223: a NUL byte anywhere in a file makes
+// `grep -r` report "Binary file ... matches" and print nothing, and every sweep
+// in this campaign walked past `coercion-watch.ts` for exactly that reason.
+describe('a NUL byte does not hide anything from it', () => {
+  it('still finds a value in a file carrying one', () => {
+    expect(kinds('const sep = `a\u0000b`; // observed 0x1f')).toContain('hex-literal');
   });
 });
 

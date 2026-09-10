@@ -23,6 +23,18 @@
 //     writing to it does carries no value in any shape a pattern can match.
 //     Prose is a review-checklist item (see CLAUDE.md), not a lint rule, and
 //     nothing here should be read as covering it.
+//   - It cannot see a value SPLIT ACROSS A CONCATENATION. `'0x' + '1f'` and a
+//     line-wrapped `'a9c7' + 'f00d'` are two string literals to the parser and
+//     neither half is a finding on its own. Constant folding would close it and
+//     is not worth the machinery: deliberate evasion is not the threat model,
+//     because anyone evading the rule would simply not write the value. The
+//     case that actually happens is a long string wrapped to fit the line
+//     width, so if a value must live in source, keep it on one line where the
+//     rule can see it.
+//
+// Naming that last limit is the point. A guard that is silently narrower than
+// it looks is the failure this campaign is named after: a `[redacted]` marker
+// beside surviving prose made an exposure look handled (VW-220).
 //
 // It never reports the matched token. A CI log is as public as the source it
 // refused to accept, so the message names the shape and lets the file, line and
@@ -69,6 +81,17 @@ const SEGMENT_BOUNDARY = /[_$]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z0-9])(?=[A-Z][a-z])/
 const HEX_RUN = /^[0-9a-f]{4,}$/i;
 const HAS_HEX_LETTER = /[a-f]/i;
 const HAS_DIGIT = /\d/;
+
+/**
+ * A byte sequence can also be spelled with `_`, and `_` is an identifier
+ * separator rather than punctuation, so that spelling is found by segmenting
+ * words rather than by widening the punctuation class above. Doing it here is
+ * what reaches `frame_a9_c7_00_04` as well as `a9_c7_00_04`; widening the
+ * punctuation class reaches only the second, because the run no longer starts
+ * at a word boundary once something is prefixed to it.
+ */
+const HEX_PAIR = /^[0-9a-f]{2}$/i;
+const BYTES_IN_A_CAPTURE = 3;
 
 /**
  * A whole identifier segment made of hex characters, long enough to be a
@@ -120,10 +143,15 @@ export function findProtocolDetail(text) {
     if (tickets.some(([from, to]) => match.index >= from && match.index < to)) continue;
     const word = match[0];
     let cursor = 0;
+    let pairRun = 0;
     for (const segment of word.split(SEGMENT_BOUNDARY)) {
       const at = word.indexOf(segment, cursor);
       if (isBareHexRun(segment)) {
         findings.push({ kind: 'bare-hex', index: match.index + at, length: segment.length });
+      }
+      pairRun = HEX_PAIR.test(segment) ? pairRun + 1 : 0;
+      if (pairRun === BYTES_IN_A_CAPTURE) {
+        findings.push({ kind: 'byte-sequence', index: match.index, length: word.length });
       }
       cursor = at + segment.length;
     }
