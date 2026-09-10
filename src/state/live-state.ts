@@ -934,8 +934,8 @@ export class LiveState {
    * `max(existing+1, device)` positional reconstruction. That reconstruction
    * over-counted by 1 whenever the last rep's `onPerRep` 'return' DID fire
    * (its boundary was already in `existing`, so appending a positional
-   * terminal rep double-counted it): bench 2026-07-07 WT set ab482e3f 8→9, RB
-   * set 20a4bea8 11→12. Because `firmwareTotalRepCount` feeds the reconciled
+   * terminal rep double-counted it): on the 2026-07-07 bench the weight-training
+   * set read 8→9 and the row set 11→12. Because `firmwareTotalRepCount` feeds the reconciled
    * `device_rep_count` on both `set_pre_summary` and `set_ended`, the inflation
    * surfaced regardless of `VMCP_REP_SOURCE`.
    *

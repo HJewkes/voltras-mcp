@@ -1,6 +1,6 @@
 // `getTierSignal()` — the training-experience tier signal (VW-92 MVP).
 //
-// Design doc: voltras-workspace `sources/research/tier-signal-design.md`
+// Design doc: the internal tier-signal design note, held outside this repo
 // (§3.1 output shape, §6.2 "deliberately crude ceiling"). This is the MVP
 // slice only: no `detectPlateau()` wiring, no g1/g2/g4 gates. The self-report
 // probe (`training_profile.ever_plateaued`) stands in for a real plateau

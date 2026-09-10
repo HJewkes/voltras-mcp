@@ -50,21 +50,21 @@ export const COERCION_WINDOW_MS_GUIDED_LOAD = 15000;
 /**
  * Default stability threshold for fields without a `STABILITY_BY_FIELD`
  * entry. The 2-of-2 default filters mid-cascade transient state-dumps (the
- * documented 80→320→0 ecc burst). Fields fed by single-shot frames (cmd=0x10
- * cascade echoes) must override to 1 — they only ever arrive once per
- * setter write so a 2-of-2 requirement would never reach stability.
+ * documented 80→320→0 ecc burst). Fields fed by a settings-update cascade
+ * echo must override to 1 — they only ever arrive once per setter write so
+ * a 2-of-2 requirement would never reach stability.
  */
 export const COERCION_STABILITY_THRESHOLD = 2;
 
 /**
  * Per-field override for the stability threshold consumed by `observe()`. A
  * value of 1 means "fire on the first non-matching observation" — used for
- * fields fed by single-shot frames (cmd=0x10 cascade echoes, which arrive
- * exactly once per setter write). Fields with documented transient bursts
+ * fields fed by a settings-update cascade echo, which arrives exactly once
+ * per setter write. Fields with documented transient bursts
  * (notably `eccentricPercentTenths`'s 80→320→0 cascade-settle pattern) keep
  * the 2-of-2 default so the transient doesn't false-positive.
  *
- * VMCP-02.40: chains and baseWeight (cmd=0x10 cascade) routed at 1 so a
+ * VMCP-02.40: chains and baseWeight (settings-update cascade) routed at 1 so a
  * coerced echo fires immediately. The state-dump-sourced equivalents
  * (`chainTargetForceTenths`, `weightLbsTenths`) are no longer observed for
  * coercion at all — see `observeSettingsUpdateCoercions` /
@@ -280,7 +280,9 @@ export class CoercionWatch {
 }
 
 function makeKey(setterName: string, field: string): string {
-  return `${setterName} ${field}`;
+  // Escaped, not literal: a raw NUL byte makes grep classify this file as
+  // binary and skip it, which hid it from every confidentiality sweep.
+  return `${setterName}\u0000${field}`;
 }
 
 /**

@@ -1,9 +1,9 @@
 // Input schemas for the isometric assessment tools.
 //
-// The protocol parameters (defaults + clamps) come from
-// sources/research/isometric-protocol-2026-05-09.md. Each clamp here
-// reflects a published evidence range — see the brief's "Recommended Voltra
-// Protocol" section. Defaults match the unilateral baseline (5s holds × 3
+// The testing-protocol parameters (defaults + clamps) come from an internal
+// review of the isometric-assessment literature dated 2026-05-09, held
+// outside this repo. Each clamp reflects a published evidence range from
+// that review. Defaults match the unilateral baseline (5s holds × 3
 // trials with 90s rest within side / 120s between sides, non-dominant first).
 
 import { z } from 'zod';
