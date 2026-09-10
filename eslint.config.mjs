@@ -6,6 +6,10 @@
 // - `no-restricted-syntax` (NF-07): tool handler functions (any function whose
 //   identifier ends with `Handler`) must not reference `Buffer.*` directly.
 //   Tool handler returns are JSON-typed; raw bytes never cross the MCP boundary.
+// - `voltras/no-protocol-detail` (VW-213): the source-level confidentiality
+//   guard. Bans device values and private-tree provenance from source,
+//   comments and strings. Threshold is zero; the only exemptions are three
+//   inline directives in `uint8ArrayToHex`, pinned by a test.
 // - VW-64: derived view-model metrics must come from
 //   `@voltras/workout-analytics/view`, not the package root (a `no-restricted-syntax`
 //   selector on named import specifiers) or a `dist/**` deep import
@@ -14,6 +18,8 @@
 
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+
+import voltras from './eslint-rules/no-protocol-detail.mjs';
 
 export default tseslint.config(
   {
@@ -31,6 +37,22 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // An exemption that is never re-examined becomes a hole. A directive left
+    // behind after the line it covered changed is an error, not a warning.
+    linterOptions: { reportUnusedDisableDirectives: 'error' },
+  },
+  {
+    files: ['src/**/*.{ts,tsx,cjs}'],
+    plugins: { voltras },
+    rules: { 'voltras/no-protocol-detail': 'error' },
+  },
+  {
+    // The 15 test files under `src/**/__tests__/` hold protocol fixtures that
+    // predate this rule; converting them to synthetic values is w5-13.
+    files: ['src/**/__tests__/**', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    rules: { 'voltras/no-protocol-detail': 'off' },
+  },
   {
     files: ['src/**/*.ts'],
     languageOptions: {

@@ -711,9 +711,8 @@ const REP_RANGE_LOAD_CEILING = 15;
 /**
  * B07 (VMCP-06.07) effort gate: at or below this intra-set velocity loss the
  * set is read as far from failure, i.e. 'easy'. The threshold is the only one
- * the outcome table in `voltras-workspace/sources/research/
- * vbt-rir-research-and-protocol.md` §1.3 (outside this repo) treats as a
- * distinct regime, verbatim:
+ * the outcome table in the internal VBT/RIR research review §1.3 (held
+ * outside this repo) treats as a distinct regime, verbatim:
  *
  *   "Power / jump / sprint / velocity vs. submaximal loads | Lower VL (≤15 %)
  *    is clearly better; high VL is actively counterproductive."

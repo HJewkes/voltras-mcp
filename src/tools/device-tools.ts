@@ -2024,6 +2024,7 @@ function bytesToUint8Array(input: string | number[]): Uint8Array {
   return Uint8Array.from(input);
 }
 
+// eslint-disable-next-line voltras/no-protocol-detail -- the hex alphabet, not a device value (VW-213)
 const HEX_DIGITS = '0123456789abcdef';
 
 /**
@@ -2036,7 +2037,9 @@ function uint8ArrayToHex(data: Uint8Array): string {
   let out = '';
   for (let i = 0; i < data.length; i += 1) {
     const b = data[i];
+    // eslint-disable-next-line voltras/no-protocol-detail -- a nibble mask, not a device value (VW-213)
     out += HEX_DIGITS[(b >> 4) & 0x0f];
+    // eslint-disable-next-line voltras/no-protocol-detail -- a nibble mask, not a device value (VW-213)
     out += HEX_DIGITS[b & 0x0f];
   }
   return out;

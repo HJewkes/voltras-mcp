@@ -1,6 +1,6 @@
 // Persistence contracts for voltras-mcp.
 //
-// Mirrors the WA-04 target schema (analytics plan `622c5d67`) so the SQLite
+// Mirrors the WA-04 target schema so the SQLite
 // implementation in `src/store/sqlite-store.ts` can be swapped for a thin
 // adapter over `@voltras/workout-analytics` storage once that package ships.
 //
@@ -10,7 +10,7 @@
 // If `@voltras/workout-analytics` changes the `Rep` shape, this file fails to
 // compile and the schema drift surfaces in CI rather than at runtime.
 //
-// Designed in tandem with PR 1 of plan `a9cb1cb7`. The accompanying
+// Designed in tandem with the first PR of the WA-04 plan. The accompanying
 // `src/store/sqlite-store.ts` (Task 07) provides the only built-in
 // implementation of `SessionStore`.
 //
