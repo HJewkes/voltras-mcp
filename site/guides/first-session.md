@@ -73,14 +73,20 @@ database and a non-default dashboard port produced:
 [drive] connected — mock telemetry streaming
 [drive] session.start | rev=1 session=Cable Chest Press activeSet=none
 [drive] set 1 start   | rev=2 session=Cable Chest Press activeSet=#? reps=1
+[drive] set 1 mid     | rev=3 session=Cable Chest Press activeSet=#? reps=3
 [drive] set 1 end     | rev=4 session=Cable Chest Press activeSet=none
 [drive] set 2 start   | rev=5 session=Cable Chest Press activeSet=#? reps=0
+[drive] set 2 mid     | rev=6 session=Cable Chest Press activeSet=#? reps=2
 [drive] set 2 end     | rev=7 session=Cable Chest Press activeSet=none
 [drive] set 3 start   | rev=8 session=Cable Chest Press activeSet=#? reps=0
+[drive] set 3 mid     | rev=9 session=Cable Chest Press activeSet=#? reps=2
 [drive] set 3 end     | rev=10 session=Cable Chest Press activeSet=none
 [drive] session.end | rev=11 session=none activeSet=none
 [drive] workout complete: 3 sets driven through the real pipeline
 ```
+
+The `mid` line per set is where reps are actually accruing from mock telemetry — the
+`start`/`end` lines only mark the set boundary itself.
 
 `device.scan` → `device.connect` → `session.start` → (`set.start` → `set.end`) × 3 →
 `session.end` — the same call sequence as Option A, just with no BLE underneath.
