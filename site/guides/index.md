@@ -1,5 +1,10 @@
 # Guides
 
+- [Your first session](/guides/first-session) — open a session, run sets, and close out,
+  either with a Voltra or the mock adapter.
+- [Running a planned session](/guides/planned-session) — build or import a plan, attach
+  it to a live session, and run against its prescription.
+
 ## The wall dashboard, stage by stage
 
 voltras-mcp ships a local web dashboard alongside the MCP server, so a workout is
