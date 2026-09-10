@@ -39,7 +39,8 @@
     "prepare": "husky",
     "docs:dev": "vitepress dev site",
     "docs:build": "vitepress build site",
-    "docs:reference": "node scripts/gen-tool-reference.mjs"
+    "docs:reference": "node scripts/gen-tool-reference.mjs",
+    "docs:captures": "node scripts/capture-screens.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -71,6 +72,7 @@
     "lint-staged": "^16.4.0",
     "lucide-react": "^1.23.0",
     "nativewind": "^4.2.6",
+    "playwright-core": "^1.63.0",
     "prettier": "^3.8.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
