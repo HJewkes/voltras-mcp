@@ -162,15 +162,13 @@ export const DeviceEnterRowModeInput = z.object({
 });
 
 /**
- * Distance-preset names accepted by `device.start_row`. The wire-byte
- * mapping lives in `@voltras/node-sdk`; the SDK's `RowingDistancePreset`
- * type is the source of truth. Re-declared here as a literal because
- * importing a type union as a runtime value isn't possible — when adding
- * presets, update both lists.
+ * Distance-preset names accepted by `device.start_row`. The SDK owns the
+ * mapping; its `RowingDistancePreset` type is the source of truth.
+ * Re-declared here as a literal because importing a type union as a runtime
+ * value isn't possible — when adding presets, update both lists.
  *
- * Only `JustRow` and `M50` are independently verified against iPad
- * sysdiagnose; the 100/500/1000/2000/5000 m codes are inferred and
- * pending on-device validation.
+ * Only `JustRow` and `M50` are independently verified against a real unit.
+ * Every longer preset is inferred and pending on-device validation.
  */
 export const ROWING_DISTANCE_PRESETS = [
   'JustRow',
@@ -192,11 +190,10 @@ export const DeviceStartRowInput = z.object({
 /**
  * Input for `device.start_guided_load` (Phase 1g, @experimental).
  *
- * Triggers the firmware direct-load (`0xAA 0x12`) flow at the supplied
- * target weight. The SDK polls the 4 status registers every 500ms for
- * 18 seconds post-trigger; both intervals are overridable for diagnostics
- * but rarely need adjustment. `targetWeightLbs` reuses the SDK's standard
- * BP_BASE_WEIGHT range (5..200).
+ * Triggers the firmware direct-load flow at the supplied target weight. The
+ * SDK polls device status every 500ms for 18 seconds post-trigger; both
+ * intervals are overridable for diagnostics but rarely need adjustment.
+ * `targetWeightLbs` reuses the SDK's standard base-weight range (5..200).
  *
  * `inactivityTimeoutSeconds` (VMCP-02.15) — the inactivity watchdog
  * threshold for the AUTO-CREATED set the bridge mints on `armed`.
@@ -277,9 +274,9 @@ const RESPONSE_WINDOW_DEFAULT_MS = 500;
 /**
  * Input for `device.send_raw`.
  *
- * `bytes` accepts either a hex string (`"AA811001020304"`) or an array of
- * integers in 0–255. The handler converts to `Uint8Array` internally and
- * rejects out-of-range values or odd-length hex with `INVALID_INPUT`.
+ * `bytes` accepts either an even-length hex string or an array of integers in
+ * 0–255. The handler converts to `Uint8Array` internally and rejects
+ * out-of-range values or odd-length hex with `INVALID_INPUT`.
  *
  * `confirm` MUST be the literal `true`. This is intentional friction: the
  * tool is a generic BLE write-pipe with no opcode validation, so the caller
@@ -341,43 +338,43 @@ export const DeviceGetStateOutput = z.object({
   damperLevel: z.number().int().min(0).max(9).optional(),
   isRowingActive: z.boolean().optional(),
   /**
-   * Raw assist-mode value from the last cmd=0x07 state-dump. 0 = off, 2 = on,
-   * 8 = device idle sentinel. Absent until the first state-dump has fired.
+   * Assist-mode value in the device's own encoding, reported uninterpreted
+   * from its periodic state report. Absent until the first report has fired.
    */
   assistMode: z.number().int().optional(),
   /**
-   * Active training mode raw byte from the last cmd=0x07 state-dump
-   * (1 = WeightTraining, 2 = ResistanceBand). The bridge drops transitional
-   * frames where the byte is 0, so this field never appears as 0 in the
-   * tool output. Distinct from `trainingMode` above (the string form sourced
-   * from the cmd=0x10 cascade). Absent until the first stable state-dump
-   * has fired.
+   * Active training mode in the device's own encoding, from its periodic
+   * state report. The bridge drops transitional reports, so this field never
+   * appears as 0 in the tool output. Distinct from `trainingMode` above,
+   * which is the interpreted mode name taken off the settings-update echo and
+   * is what a caller should read. Absent until the first stable report.
    */
   trainingModeRaw: z.number().int().min(0).optional(),
   /**
-   * Effective chain target force at the cable in tenths of pounds, decoded
-   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
-   * `min(chains, weight) × 10` — the device caps chains at weight.
-   * For the user's chains setting in lbs prefer `chainSettingLbs`.
+   * Effective chain target force at the cable in tenths of pounds, off the
+   * device's periodic state report. Equals `min(chains, weight) × 10` — the
+   * device caps chains at weight. For the user's chains setting in lbs prefer
+   * `chainSettingLbs`.
    */
   chainTargetForceTenths: z.number().int().min(0).optional(),
   /**
-   * Active weight setting in tenths of pounds, from cmd=0x07 bytes [6-7]
-   * (mirrors `baseWeight × 10`). Zero in non-WeightTraining modes.
+   * Active weight setting in tenths of pounds, off the device's periodic
+   * state report (mirrors `baseWeight × 10`). Zero in non-WeightTraining
+   * modes.
    */
   weightLbsTenths: z.number().int().min(0).optional(),
   /**
-   * Eccentric overload setting in tenths of percent, from cmd=0x07
-   * bytes [10-11] (mirrors `eccentric × 10`).
+   * Eccentric overload setting in tenths of percent, off the device's
+   * periodic state report (mirrors `eccentric × 10`).
    */
   eccentricPercentTenths: z.number().int().min(0).optional(),
   /**
-   * User's chains setting in pounds, sourced from the cmd=0x10 cascade
-   * `chains` field on `onSettingsUpdate`. This is the value the firmware
+   * User's chains setting in pounds, from the `chains` field on the
+   * settings-update echo (`onSettingsUpdate`). This is the value the firmware
    * accepted after its silent chains≤weight cap (a `set_chains(60)` write
    * against `weightLbs=50` surfaces here as 50). On-device testing
-   * 2026-05-07 confirmed this is reliable. Absent until the first cmd=0x10
-   * cascade carrying the `chains` field has fired.
+   * 2026-05-07 confirmed this is reliable. Absent until the first echo
+   * carrying the `chains` field has fired.
    */
   chainSettingLbs: z.number().min(0).optional(),
 });

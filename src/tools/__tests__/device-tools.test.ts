@@ -1062,7 +1062,7 @@ describe('registerDeviceTools', () => {
   describe('device.get_state (AC-26)', () => {
     // Phase 0.5.2 reshape: device.get_state now reads its substantive fields
     // (deviceId, weightLbs, trainingMode, damperLevel, chainSettingLbs, the
-    // cmd=0x07 state-dump fields, batteryPercent) from `live.snapshotDevice()`
+    // periodic state-report fields, batteryPercent) from `live.snapshotDevice()`
     // — the same source `voltra://device/{slot}/current` reads from. Only
     // `connected`, `connectionState`, and `isRowingActive` come from the live
     // client. This keeps the tool aligned with the resource across the
@@ -1168,8 +1168,8 @@ describe('registerDeviceTools', () => {
       expect(payload.isRowingActive).toBe(true);
     });
 
-    it('surfaces cmd=0x07 state-dump fields from live.snapshotDevice', async () => {
-      // Wire a fake live that returns state-dump fields.
+    it('surfaces the periodic state-report fields from live.snapshotDevice', async () => {
+      // Wire a fake live that returns state-report fields.
       const slot = state.slots.get('primary')!;
       slot.live = makeFakeLive({
         assistMode: 2,
@@ -1195,11 +1195,12 @@ describe('registerDeviceTools', () => {
       expect(payload.eccentricPercentTenths).toBe(50);
     });
 
-    // VMCP-02.70 — active_mode keys on the cmd=0x10 echo (the single reliable
-    // mode signal), NOT the cmd=0x07 raw[0] engagement byte. Here the user is in
-    // Isokinetic but raw[0] reads 1 (raw[0] can't represent Iso/Damper at idle);
+    // VMCP-02.70 — active_mode keys on the settings-update echo (the single
+    // reliable mode signal), NOT the engagement value on the periodic state
+    // report. Here the user is in Isokinetic but that value reads 1, because it
+    // cannot represent Iso/Damper at idle;
     // active_mode must report Isokinetic (= requested_mode), not 'Weight Training'.
-    it('surfaces active_mode from the cmd=0x10 echo, ignoring the raw[0] engagement byte', async () => {
+    it('surfaces active_mode from the settings-update echo, ignoring the engagement value', async () => {
       const slot = state.slots.get('primary')!;
       slot.live = makeFakeLive({ trainingMode: 'Isokinetic', trainingModeRaw: 1 });
       const reg = placeholders.get('device.get_state')!;
@@ -1207,7 +1208,7 @@ describe('registerDeviceTools', () => {
       expect(isError).toBeUndefined();
       expect(payload.requested_mode).toBe('Isokinetic');
       expect(payload.active_mode).toBe('Isokinetic');
-      // Deprecated aliases retained for one release; raw[0] stays for diagnostics.
+      // Deprecated aliases retained for one release; the raw value stays for diagnostics.
       expect(payload.trainingMode).toBe('Isokinetic');
       expect(payload.trainingModeRaw).toBe(1);
     });
@@ -1219,11 +1220,11 @@ describe('registerDeviceTools', () => {
       expect(payload.active_mode).toBeNull();
     });
 
-    it('omits state-dump fields when live.snapshotDevice returns them as undefined', async () => {
+    it('omits the state-report fields when live.snapshotDevice returns them as undefined', async () => {
       const reg = placeholders.get('device.get_state')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
-      // Default makeFakeLive returns no state-dump fields.
+      // Default makeFakeLive returns no state-report fields.
       expect(payload).not.toHaveProperty('assistMode');
       expect(payload).not.toHaveProperty('trainingModeRaw');
       expect(payload).not.toHaveProperty('chainTargetForceTenths');
@@ -1930,7 +1931,7 @@ describe('registerDeviceTools', () => {
     });
 
     // VMCP-02.45 cold-boot gap: on a fresh boot/wake the requested-mode echo
-    // (cmd=0x10 cascade) has not fired yet, so `trainingMode` is undefined —
+    // (the settings-update echo) has not fired yet, so `trainingMode` is undefined —
     // the exact scenario this preflight targets. An undefined requested mode
     // must be treated like Idle (drive WeightTraining, skip the unload), not
     // fall through to the unload branch and silently inactivity_timeout.

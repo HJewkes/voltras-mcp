@@ -22,7 +22,7 @@ describe('shouldPreflightWeightTraining', () => {
   });
 
   it('drives WeightTraining when no requested mode has been observed (cold boot)', () => {
-    // #83: undefined (no cmd=0x10 cascade yet) is treated the same as Idle.
+    // #83: undefined (no settings-update echo yet) is treated the same as Idle.
     expect(shouldPreflightWeightTraining(undefined)).toBe(true);
   });
 
