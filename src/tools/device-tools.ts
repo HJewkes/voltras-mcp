@@ -598,10 +598,9 @@ export function registerDeviceTools(
       // Capture the adapter reference BEFORE manager.disconnect runs.
       // `manager.disconnect(id)` calls `client.dispose()` internally, which
       // clears the adapter reference; capturing here lets us still force-close
-      // the adapter even if the manager path errors mid-teardown. Slot-routing
-      // bug fix — see
-      // `sources/audits/ble-slot-routing-2026-05-08.md` and
-      // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
+      // the adapter even if the manager path errors mid-teardown. Fixes the
+      // slot-routing bug where a disconnect on one slot could strand the
+      // other slot's adapter handle.
       const adapterRef = slot.client.getAdapter();
       // Best-effort: return the device to Idle before tearing down the BLE
       // link so the device exits any active workout and shows its home screen.
@@ -662,10 +661,10 @@ export function registerDeviceTools(
   // Wrapped in `trackedSetterCall` so the bridge can correlate a subsequent
   // settings-update echo at `baseWeight !== input.lbs` into a
   // `setting_coerced` channel event (F2/F3). VMCP-02.40: source from the
-  // settings-update echo (`baseWeight`, whole lbs) rather than the device's
-  // periodic state report (`weightLbsTenths`, ×10, a lazily-refreshed
-  // firmware-internal effective weight) — the echo is the only signal that
-  // reliably reflects user-set weight per-write.
+  // settings-update echo (`baseWeight`, whole lbs) rather than the state dump
+  // (`weightLbsTenths`, ×10, a lazily-refreshed firmware-internal effective
+  // weight) — the echo is the only signal that reliably reflects user-set
+  // weight per-write.
   install(
     placeholders,
     'device.set_weight',
@@ -746,8 +745,8 @@ export function registerDeviceTools(
   // request of 60 lbs against a 50-lb weight surfaces as `chains = 50` in the
   // settings-update echo (not 60) — that mismatch is exactly the F3 coercion
   // signal. VMCP-02.40: source from the echo (`chains`, whole lbs) rather than
-  // the device's periodic state report (`chainTargetForceTenths`, ×10, a
-  // lazily-refreshed firmware-internal effective chain force).
+  // the state dump (`chainTargetForceTenths`, ×10, a lazily-refreshed
+  // firmware-internal effective chain force).
   install(
     placeholders,
     'device.set_chains',
@@ -768,7 +767,7 @@ export function registerDeviceTools(
   // device.set_eccentric — passthrough; schema enforces -195..+195 in pound
   // steps. Wrapped in `trackedSetterCall` so a device-side coercion (firmware
   // safety ramp, etc.) surfaces as a `setting_coerced` channel event when
-  // the post-write state report disagrees with the requested value. The
+  // the post-write state dump disagrees with the requested value. The
   // earlier "assistMode=on enforces an ecc floor" hypothesis (F2 original
   // PM finding) was retracted 2026-05-11 after hardware re-validation —
   // see VMCP-01.35.
@@ -845,8 +844,8 @@ export function registerDeviceTools(
   );
 
   // band-max-force / isokinetic setters: the SDK explicitly notes the
-  // device echoes these back on neither its settings update nor its periodic
-  // state report (see SDK voltra-client.d.ts comments on `setBandMaxForce`). The
+  // device echoes these back on neither its settings update nor its state
+  // dump (see SDK voltra-client.d.ts comments on `setBandMaxForce`). The
   // tracked-setter call still registers a check so future protocol
   // versions that surface them would auto-light up; today the check
   // silently expires after `COERCION_WINDOW_MS`.
@@ -1121,7 +1120,7 @@ export function registerDeviceTools(
       // transition and clears it on the terminal phase (exited/timeout).
       slot.pendingGuidedLoadTargetLbs = input.targetWeightLbs;
       // VMCP-02.45: from a cold Idle/no-mode start the firmware suppresses its
-      // periodic state report AND the auto-unload (Workout.STOP) does not
+      // state dump AND the auto-unload (Workout.STOP) does not
       // establish a training mode — so the target weight and the trigger land
       // on a device that falls straight back to Idle and never engages (the
       // user sees inactivity_timeout, 0 reps, and a silent channel). When the
@@ -1129,10 +1128,9 @@ export function registerDeviceTools(
       // resumes and the trigger sticks, and skip the Workout.STOP unload (the
       // cable is already slack in Idle, and STOP can knock the freshly-set
       // mode back to Idle). Mirrors the hardware-validated
-      // set_mode(WeightTraining) → start_guided_load(skipUnload) recovery
-      // (HANDOFF-2026-05-21-vmcp-02.29-phase-1-parity-data §'Engagement
-      // journey'). A failed setMode propagates as a structured error rather
-      // than the silent inactivity_timeout the bug produced.
+      // set_mode(WeightTraining) → start_guided_load(skipUnload) recovery. A
+      // failed setMode propagates as a structured error rather than the
+      // silent inactivity_timeout the bug produced.
       //
       // `trainingMode` is the REQUESTED mode carried on the settings-update
       // echo, and is `undefined` until the first echo fires. On a fresh boot/wake
@@ -1193,10 +1191,10 @@ export function registerDeviceTools(
       //
       // VMCP-02.40: baseWeight + chains source from the settings-update echo
       // (whole lbs, refreshed per-write). The earlier fields taken off the
-      // periodic state report (`weightLbsTenths` / `chainTargetForceTenths`)
-      // are lazily-updated firmware-internal effective-force values and
+      // state dump (`weightLbsTenths` / `chainTargetForceTenths`) are
+      // lazily-updated firmware-internal effective-force values and
       // false-positive on the Damper→WeightTraining mode-bounce transient.
-      // Eccentric still reads off the state report, with its existing 2-of-2
+      // Eccentric still reads off the state dump, with its existing 2-of-2
       // stability defense against the documented transient burst, until a
       // separate pass moves it onto the echo too.
       const fields = buildGuidedLoadTrackedFields(input.targetWeightLbs, preDevice);
@@ -1642,7 +1640,7 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  * context. Mirrors the field shape of `voltra://device/{slot}/current` for
  * the preserved-state portion so callers get identical values across both
  * surfaces during the disconnect window (deviceId, weightLbs, trainingMode,
- * damperLevel, chainSettingLbs, plus the periodic state-report fields).
+ * damperLevel, chainSettingLbs, plus the state-dump fields).
  *
  * Tool-only additions (transient, not preserved):
  *   * `connectionState`
@@ -1704,8 +1702,8 @@ function buildDeviceGetStateResponse(
   ] as const);
   // VMCP-02.70: `active_mode` keys on the settings-update echo (the single
   // reliable mode signal) and so equals `requested_mode`. `trainingModeRaw`
-  // (the engagement value off the periodic state report) stays on the
-  // snapshot for diagnostics only.
+  // (the engagement value off the state dump) stays on the snapshot for
+  // diagnostics only.
   // `trainingMode` / `trainingModeRaw` remain deprecated aliases for one release.
   out.requested_mode = device.trainingMode ?? null;
   out.active_mode = activeMode(device);

@@ -6,8 +6,8 @@
 // fails the build if the enum ever flips to numeric-only or otherwise breaks
 // derivation. `Idle` is excluded because it is never user-selectable.
 //
-// RSSI is intentionally omitted from `DeviceGetStateOutput`. Per
-// critic-report.md, `VoltraDeviceSettings` exposes no `rssi` field, and
+// RSSI is intentionally omitted from `DeviceGetStateOutput`.
+// `VoltraDeviceSettings` exposes no `rssi` field, and
 // `VoltraClient` has no separate RSSI getter — the only RSSI source in the
 // SDK lives on `DiscoveredDevice` (a transient scan result, not a connected
 // device state). When the SDK adds a runtime RSSI getter, restore the
@@ -339,33 +339,31 @@ export const DeviceGetStateOutput = z.object({
   isRowingActive: z.boolean().optional(),
   /**
    * Assist-mode value in the device's own encoding, reported uninterpreted
-   * from its periodic state report. Absent until the first report has fired.
+   * off the state dump. Absent until the first dump has fired.
    */
   assistMode: z.number().int().optional(),
   /**
-   * Active training mode in the device's own encoding, from its periodic
-   * state report. The bridge drops transitional reports, so this field never
-   * appears as 0 in the tool output. Distinct from `trainingMode` above,
-   * which is the interpreted mode name taken off the settings-update echo and
-   * is what a caller should read. Absent until the first stable report.
+   * Active training mode in the device's own encoding, off the state dump.
+   * The bridge drops transitional dumps, so this field never appears as 0 in
+   * the tool output. Distinct from `trainingMode` above, which is the
+   * interpreted mode name taken off the settings-update echo and is what a
+   * caller should read. Absent until the first stable dump.
    */
   trainingModeRaw: z.number().int().min(0).optional(),
   /**
    * Effective chain target force at the cable in tenths of pounds, off the
-   * device's periodic state report. Equals `min(chains, weight) × 10` — the
-   * device caps chains at weight. For the user's chains setting in lbs prefer
-   * `chainSettingLbs`.
+   * state dump. Equals `min(chains, weight) × 10` — the device caps chains at
+   * weight. For the user's chains setting in lbs prefer `chainSettingLbs`.
    */
   chainTargetForceTenths: z.number().int().min(0).optional(),
   /**
-   * Active weight setting in tenths of pounds, off the device's periodic
-   * state report (mirrors `baseWeight × 10`). Zero in non-WeightTraining
-   * modes.
+   * Active weight setting in tenths of pounds, off the state dump (mirrors
+   * `baseWeight × 10`). Zero in non-WeightTraining modes.
    */
   weightLbsTenths: z.number().int().min(0).optional(),
   /**
-   * Eccentric overload setting in tenths of percent, off the device's
-   * periodic state report (mirrors `eccentric × 10`).
+   * Eccentric overload setting in tenths of percent, off the state dump
+   * (mirrors `eccentric × 10`).
    */
   eccentricPercentTenths: z.number().int().min(0).optional(),
   /**
