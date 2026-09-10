@@ -144,16 +144,13 @@ describe('confidentiality boundary', () => {
     expect(offenders).toEqual([]);
   });
 
-  // Pinned on purpose: these four descriptions name device internals, so the
-  // generator strips them. A change here means a description gained or lost
-  // protocol detail — read the diff before updating the numbers.
-  it('redacts protocol detail out of the descriptions that carry it', () => {
-    expect(report.redactions).toEqual({
-      'device.unload': 2,
-      'device.start_guided_load': 2,
-      'device.exit_guided_load': 1,
-      'device.start_row': 1,
-    });
+  // Empty on purpose (VW-213). Four descriptions used to name device
+  // internals and the generator stripped them on the way out; they now state
+  // the observable instead, so nothing reaches the guard. A non-empty map here
+  // means a description gained protocol detail — fix the description, not this
+  // expectation.
+  it('has no description left for the generator to redact', () => {
+    expect(report.redactions).toEqual({});
   });
 
   it('boots the server against an isolated store and no dashboard', () => {

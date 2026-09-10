@@ -23,7 +23,7 @@ import { LifterLabel } from './session.js';
  * publish a channel event (`set_target_reached`, `velocity_loss_exceeded`)
  * when the condition matches; the bridge never writes `Workout.STOP` from a
  * rep-evaluation path. The model voice-coaches the user, the user finishes
- * naturally, the device's `aa 85 5f` disengage signal becomes the canonical
+ * naturally, and the device's own disengage signal becomes the canonical
  * set close. Force-stopping mid-rep on a rep-count match ripped the cable
  * mid-eccentric on hardware (2026-05-11 capture); the user explicitly chose
  * to drop the force-stop semantics rather than refine the bandaid.
@@ -56,8 +56,8 @@ export type TriggerSpec = z.infer<typeof TriggerSpec>;
  * Watch config attached to a set at start time. Triggers in `notifyOn` are
  * **advisory cues only** — when they match, the bridge publishes a channel
  * event so the model can voice-coach the user, but it does **not** finalize
- * the set. The user finishes their cycle naturally; the device's per-set
- * disengage signal (`aa 85 5f` in WT/RB/Damper) becomes the canonical close.
+ * the set. The user finishes their cycle naturally; the device's own per-set
+ * disengage signal becomes the canonical close in every strength mode.
  *
  * `inactivityTimeoutMs` is the only force-close path retained from the old
  * trigger DSL. When no SDK activity (`onInProgress` / `onSetSummary` /

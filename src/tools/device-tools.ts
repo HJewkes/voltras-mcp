@@ -278,11 +278,11 @@ const DEFAULT_SCAN_TIMEOUT_MS = 10_000;
 //
 // All 8 setters share two cross-cutting caveats from the on-device validation
 // pass: (1) settings persist GLOBALLY across mode switches — flipping the
-// device into a different training mode does not clear them — and (2) the
-// underlying opcodes (0xa9/0xc7) do NOT trigger a `modeConfirmation`, so the
-// `await client.setX(...)` resolves on adapter.write completion, not on a
-// device acknowledgement. The const-weight and overload-weight setters cause
-// an audible device beep — possibly a firmware safety/range cue.
+// device into a different training mode does not clear them — and (2) none of
+// them draws a `modeConfirmation`, so the `await client.setX(...)` resolves on
+// adapter.write completion, not on a device acknowledgement. The const-weight
+// and overload-weight setters cause an audible device beep — possibly a
+// firmware safety/range cue.
 
 const DAMPER_LEVEL_DESCRIPTION =
   'Set the damper-mode resistance level (0-9). UI displays the value as N+1 (1-10). Settings persist globally across mode switches; no modeConfirmation is emitted by the device. Validated on-device 2026-05-06.';
@@ -328,10 +328,10 @@ const CONFIGURE_ISOKINETIC_DESCRIPTION =
   'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
 
 const START_GUIDED_LOAD_DESCRIPTION =
-  'ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md). @experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes BP_BASE_WEIGHT, sends the AA12 trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Weight Training gate (VMCP-02.90):** this is the ENGAGEMENT / LOAD STATE layer\'s engagement ceremony, and it requires the Weight Training mode — guided load is confirmed to enter from Weight Training and NOT from Damper, where the ceremony holds at `armed` for the full 18s poll window, times out, and leaves a junk auto-created set behind. From any other selectable mode the tool refuses with `GUIDED_LOAD_MODE_MISMATCH` naming the current mode, before anything is written; no other mode has been tested, so the allowlist is exactly one mode wide. Pass `autoSwitchMode: true` to have the tool switch to Weight Training as part of engaging: it waits for the device to echo the new mode (a `MODE_ECHO_TIMEOUT` error and no trigger if the echo never lands) and still runs the pre-trigger unload, so the ceremony starts from a slack cable. Default is `false` on purpose — a lifter who selected Damper on the unit chose it.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.\n\n**Set-level intent (VW-168a):** the set is created for you on `armed`, before any `set.start` could run, so pass `isWarmup: true` for a guided-load warm-up and `watch` (the same shape `set.start` takes) for mid-set notifications. Without them the set records as a working set with no watch, and a warm-up ramp done this way pollutes progression scoring. A `watch.inactivityTimeoutMs` replaces `inactivityTimeoutSeconds` for this set. Both are ignored when a set is already recording on the slot.';
+  'ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md). @experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK sets the target weight, triggers the flow, then polls device status every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary events are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Weight Training gate (VMCP-02.90):** this is the ENGAGEMENT / LOAD STATE layer\'s engagement ceremony, and it requires the Weight Training mode — guided load is confirmed to enter from Weight Training and NOT from Damper, where the ceremony holds at `armed` for the full 18s poll window, times out, and leaves a junk auto-created set behind. From any other selectable mode the tool refuses with `GUIDED_LOAD_MODE_MISMATCH` naming the current mode, before anything is written; no other mode has been tested, so the allowlist is exactly one mode wide. Pass `autoSwitchMode: true` to have the tool switch to Weight Training as part of engaging: it waits for the device to echo the new mode (a `MODE_ECHO_TIMEOUT` error and no trigger if the echo never lands) and still runs the pre-trigger unload, so the ceremony starts from a slack cable. Default is `false` on purpose — a lifter who selected Damper on the unit chose it.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.\n\n**Set-level intent (VW-168a):** the set is created for you on `armed`, before any `set.start` could run, so pass `isWarmup: true` for a guided-load warm-up and `watch` (the same shape `set.start` takes) for mid-set notifications. Without them the set records as a working set with no watch, and a warm-up ramp done this way pollutes progression scoring. A `watch.inactivityTimeoutMs` replaces `inactivityTimeoutSeconds` for this set. Both are ignored when a set is already recording on the slot.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Exit the firmware "direct-load" flow. Writes the exit frame (0x0004 to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.';
+  '@experimental — Exit the firmware "direct-load" flow. Writes the exit command and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own, but only the exit write clears the direct-load state the firmware is still holding.';
 
 const SET_ECCENTRIC_DESCRIPTION =
   'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
@@ -341,8 +341,8 @@ const SET_ECCENTRIC_DESCRIPTION =
 const UNLOAD_DESCRIPTION =
   'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
   "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. " +
-  'Mechanism: writes two `BP_SET_FITNESS_MODE` frames back-to-back (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
-  "A single `FITNESS_WORKOUT_STATE=0` write (used by rowing's `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. " +
+  'Mechanism: two back-to-back mode writes (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
+  "The alternative — the single write rowing's `exitWorkout()` exits through — was considered but not chosen: it has not been verified to physically unload the cable for non-rowing modes. " +
   'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. ' +
   'When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41).';
 
@@ -598,10 +598,9 @@ export function registerDeviceTools(
       // Capture the adapter reference BEFORE manager.disconnect runs.
       // `manager.disconnect(id)` calls `client.dispose()` internally, which
       // clears the adapter reference; capturing here lets us still force-close
-      // the adapter even if the manager path errors mid-teardown. Slot-routing
-      // bug fix — see
-      // `sources/audits/ble-slot-routing-2026-05-08.md` and
-      // `sdk-slot-routing-code-trace-2026-05-08.md` "Fix A".
+      // the adapter even if the manager path errors mid-teardown. Fixes the
+      // slot-routing bug where a disconnect on one slot could strand the
+      // other slot's adapter handle.
       const adapterRef = slot.client.getAdapter();
       // Best-effort: return the device to Idle before tearing down the BLE
       // link so the device exits any active workout and shows its home screen.
@@ -660,11 +659,12 @@ export function registerDeviceTools(
   // device.set_weight — direct passthrough to the SDK; the schema clamps
   // input to the device-allowed range so the SDK never sees out-of-band lbs.
   // Wrapped in `trackedSetterCall` so the bridge can correlate a subsequent
-  // cmd=0x10 cascade echo at `baseWeight !== input.lbs` into a
-  // `setting_coerced` channel event (F2/F3). VMCP-02.40: source from cmd=0x10
-  // (`baseWeight`, whole lbs) rather than state-dump (`weightLbsTenths`, ×10,
-  // lazily-refreshed firmware-internal effective-weight) — the cmd=0x10 echo
-  // is the only frame that reliably reflects user-set weight per-write.
+  // settings-update echo at `baseWeight !== input.lbs` into a
+  // `setting_coerced` channel event (F2/F3). VMCP-02.40: source from the
+  // settings-update echo (`baseWeight`, whole lbs) rather than the state dump
+  // (`weightLbsTenths`, ×10, a lazily-refreshed firmware-internal effective
+  // weight) — the echo is the only signal that reliably reflects user-set
+  // weight per-write.
   install(
     placeholders,
     'device.set_weight',
@@ -685,9 +685,9 @@ export function registerDeviceTools(
   // correct primitive for Rowing — `client.setMode(Rowing)` auto-routes
   // to enterRowMode + startRow (Just Row, no preset). MCP callers that
   // need a distance preset can still use `device.start_row` directly.
-  // Either way, the strength-arm primitive (`BP_SET_FITNESS_MODE = 5`)
-  // is NEVER written for Rowing — firmware would silently reinterpret
-  // it as a strength session, reverting the rowing flow. HIGH safety.
+  // Either way, the strength-arm primitive is NEVER written for Rowing —
+  // firmware would silently reinterpret it as a strength session, reverting
+  // the rowing flow. HIGH safety.
   install(
     placeholders,
     'device.set_mode',
@@ -723,7 +723,7 @@ export function registerDeviceTools(
       'NOT engage between these two calls.',
   );
 
-  // <Bug-22> Stage 2 of Rowing entry — commits via EP_SCR_SWITCH and
+  // <Bug-22> Stage 2 of Rowing entry — commits the preset-screen selection and
   // schedules SDK-side reasserts at +750/+1750/+3000 ms. `distance`
   // defaults to `'JustRow'` (free row, no preset).
   install(
@@ -736,16 +736,16 @@ export function registerDeviceTools(
     }),
     'Commit into a live rowing session (stage 2 of 2). Requires a prior ' +
       'device.enter_row_mode. Distance presets are iPad-side stroke targets — ' +
-      'EP_SCR_SWITCH only selects the preset screen.',
+      'the commit only selects the preset screen on the unit.',
   );
   // </Bug-22>
 
   // device.set_chains — passthrough; schema enforces 0–100 lbs. Wrapped in
   // `trackedSetterCall`: the firmware silently caps chains at weight, so a
   // request of 60 lbs against a 50-lb weight surfaces as `chains = 50` in the
-  // cmd=0x10 cascade echo (not 60) — that mismatch is exactly the F3 coercion
-  // signal. VMCP-02.40: source from cmd=0x10 (`chains`, whole lbs) rather than
-  // state-dump (`chainTargetForceTenths`, ×10, lazily-refreshed
+  // settings-update echo (not 60) — that mismatch is exactly the F3 coercion
+  // signal. VMCP-02.40: source from the echo (`chains`, whole lbs) rather than
+  // the state dump (`chainTargetForceTenths`, ×10, a lazily-refreshed
   // firmware-internal effective chain force).
   install(
     placeholders,
@@ -767,7 +767,7 @@ export function registerDeviceTools(
   // device.set_eccentric — passthrough; schema enforces -195..+195 in pound
   // steps. Wrapped in `trackedSetterCall` so a device-side coercion (firmware
   // safety ramp, etc.) surfaces as a `setting_coerced` channel event when
-  // the post-write state-dump disagrees with the requested value. The
+  // the post-write state dump disagrees with the requested value. The
   // earlier "assistMode=on enforces an ecc floor" hypothesis (F2 original
   // PM finding) was retracted 2026-05-11 after hardware re-validation —
   // see VMCP-01.35.
@@ -827,9 +827,9 @@ export function registerDeviceTools(
     'device.set_assist_mode',
     DeviceSetAssistModeInput,
     wrapHandler(DeviceSetAssistModeInput, async (input) => {
-      // Device reports assistMode as 0 (off) / 2 (on) / 8 (idle sentinel)
-      // in state-dump frames. Translate the user enum to the device's
-      // 0/2 representation so coercion comparison stays apples-to-apples.
+      // The device reports assist mode as a number, so translate the user
+      // enum into the same representation before registering the coercion
+      // check — otherwise the comparison is enum-against-number.
       const slot = getSlot(state, input.slot);
       const requested = input.mode === 'on' ? 2 : 0;
       await trackedSetterCall(
@@ -844,8 +844,8 @@ export function registerDeviceTools(
   );
 
   // band-max-force / isokinetic setters: the SDK explicitly notes the
-  // device does NOT echo these in settings-update / state-dump frames
-  // (see SDK voltra-client.d.ts comments on `setBandMaxForce`). The
+  // device echoes these back on neither its settings update nor its state
+  // dump (see SDK voltra-client.d.ts comments on `setBandMaxForce`). The
   // tracked-setter call still registers a check so future protocol
   // versions that surface them would auto-light up; today the check
   // silently expires after `COERCION_WINDOW_MS`.
@@ -1119,22 +1119,21 @@ export function registerDeviceTools(
       // event. NOT single-shot — the bridge reads it on every phase
       // transition and clears it on the terminal phase (exited/timeout).
       slot.pendingGuidedLoadTargetLbs = input.targetWeightLbs;
-      // VMCP-02.45: from a cold Idle/no-mode start the firmware suppresses
-      // state-dump telemetry AND the auto-unload (Workout.STOP) does not
-      // establish a training mode — so BP_BASE_WEIGHT + the AA12 trigger land
+      // VMCP-02.45: from a cold Idle/no-mode start the firmware suppresses its
+      // state dump AND the auto-unload (Workout.STOP) does not
+      // establish a training mode — so the target weight and the trigger land
       // on a device that falls straight back to Idle and never engages (the
       // user sees inactivity_timeout, 0 reps, and a silent channel). When the
       // device is in Idle, drive it into WeightTraining first so telemetry
       // resumes and the trigger sticks, and skip the Workout.STOP unload (the
       // cable is already slack in Idle, and STOP can knock the freshly-set
       // mode back to Idle). Mirrors the hardware-validated
-      // set_mode(WeightTraining) → start_guided_load(skipUnload) recovery
-      // (HANDOFF-2026-05-21-vmcp-02.29-phase-1-parity-data §'Engagement
-      // journey'). A failed setMode propagates as a structured error rather
-      // than the silent inactivity_timeout the bug produced.
+      // set_mode(WeightTraining) → start_guided_load(skipUnload) recovery. A
+      // failed setMode propagates as a structured error rather than the
+      // silent inactivity_timeout the bug produced.
       //
-      // `trainingMode` is the REQUESTED mode echoed from the cmd=0x10 cascade
-      // and is `undefined` until the first cascade fires. On a fresh boot/wake
+      // `trainingMode` is the REQUESTED mode carried on the settings-update
+      // echo, and is `undefined` until the first echo fires. On a fresh boot/wake
       // — the exact cold-start this preflight targets — no requested mode has
       // been observed yet, so treat that unknown/absent requested mode the same
       // as explicit Idle: drive WeightTraining and skip the unload. (Requested
@@ -1190,14 +1189,14 @@ export function registerDeviceTools(
       // coercion we want to surface. The longer GUIDED_LOAD window
       // accommodates the firmware's ~10s internal safety-ramp settle.
       //
-      // VMCP-02.40: baseWeight + chains source from cmd=0x10 cascade echo
-      // (whole lbs, refreshed per-write). The earlier state-dump-sourced
-      // `weightLbsTenths` / `chainTargetForceTenths` are lazily-updated
-      // firmware-internal effective-force values and false-positive on the
-      // Damper→WeightTraining mode-bounce transient. Eccentric remains on
-      // the state-dump path with its existing 2-of-2 stability defense
-      // (handles the documented 80→320→0 transient burst) until a separate
-      // pass routes it through cmd=0x10 too.
+      // VMCP-02.40: baseWeight + chains source from the settings-update echo
+      // (whole lbs, refreshed per-write). The earlier fields taken off the
+      // state dump (`weightLbsTenths` / `chainTargetForceTenths`) are
+      // lazily-updated firmware-internal effective-force values and
+      // false-positive on the Damper→WeightTraining mode-bounce transient.
+      // Eccentric still reads off the state dump, with its existing 2-of-2
+      // stability defense against the documented transient burst, until a
+      // separate pass moves it onto the echo too.
       const fields = buildGuidedLoadTrackedFields(input.targetWeightLbs, preDevice);
       guidedFence.check(guidedSlotId);
       await trackedSetterCall(
@@ -1641,7 +1640,7 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  * context. Mirrors the field shape of `voltra://device/{slot}/current` for
  * the preserved-state portion so callers get identical values across both
  * surfaces during the disconnect window (deviceId, weightLbs, trainingMode,
- * damperLevel, chainSettingLbs, plus the cmd=0x07 state-dump fields).
+ * damperLevel, chainSettingLbs, plus the state-dump fields).
  *
  * Tool-only additions (transient, not preserved):
  *   * `connectionState`
@@ -1701,9 +1700,10 @@ function buildDeviceGetStateResponse(
     'isStale',
     'disconnectedAt',
   ] as const);
-  // VMCP-02.70: `active_mode` keys on the cmd=0x10 echo (the single reliable
-  // mode signal) and so equals `requested_mode`. `trainingModeRaw` (the cmd=0x07
-  // state-dump engagement byte) stays on the snapshot for diagnostics only.
+  // VMCP-02.70: `active_mode` keys on the settings-update echo (the single
+  // reliable mode signal) and so equals `requested_mode`. `trainingModeRaw`
+  // (the engagement value off the state dump) stays on the snapshot for
+  // diagnostics only.
   // `trainingMode` / `trainingModeRaw` remain deprecated aliases for one release.
   out.requested_mode = device.trainingMode ?? null;
   out.active_mode = activeMode(device);

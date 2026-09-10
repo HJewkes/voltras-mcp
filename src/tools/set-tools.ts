@@ -301,7 +301,7 @@ function armModeRevertGuardForSet(slot: ReturnType<typeof getSlot>): void {
 /**
  * VW-163: is the latched revert still live on the device?
  *
- * The cmd=0x10 echo (`DeviceSnapshot.trainingMode`) is the single reliable
+ * The settings-update echo (`DeviceSnapshot.trainingMode`) is the single reliable
  * mode signal (see `active-mode.ts`), so the revert is live only while the
  * device still echoes the mode it reverted TO. Once the echo moves — back to
  * the requested mode after a later `device.set_mode`, or on to some third
@@ -835,7 +835,7 @@ async function endSetTool(
  *
  * F14/F15 rewrite: there is no longer a watch-trigger force-close path.
  * Watch triggers publish advisory channel events only; the canonical set
- * close comes from the device's `aa 85 5f` disengage signal or the user's
+ * close comes from the device's own disengage signal or the user's
  * explicit `set.end` tool call. The only remaining force-close paths are
  * inactivity (the user walked away), disconnect, session_end cascade, and
  * the guided-load reap.

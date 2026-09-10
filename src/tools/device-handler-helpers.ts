@@ -20,8 +20,8 @@ import { log } from '../logger.js';
  * `device.start_guided_load`). Returns `true` when the guided-load entry must
  * first drive the device into WeightTraining and skip the Workout.STOP unload.
  *
- * `requestedMode` is the REQUESTED mode echoed from the cmd=0x10 cascade and is
- * `undefined` until the first cascade fires. On a fresh boot/wake no requested
+ * `requestedMode` is the REQUESTED mode carried on the settings-update echo,
+ * and is `undefined` until the first echo fires. On a fresh boot/wake no requested
  * mode has been observed yet, so an unknown/absent requested mode is treated
  * the same as explicit Idle (#83 cold-boot fix — preserved verbatim).
  */
@@ -135,7 +135,7 @@ export async function teardownBleResources(
 /**
  * VW-178: will the next `set.start` refuse over a latched mode revert?
  *
- * Two independent views of the same cmd=0x10 echo must both say the revert is
+ * Two independent views of the same settings-update echo must both say the revert is
  * still live: the guard's own last settings_update (`stillRevertedPerGuard`
  * from `ModeRevertGuard.isStillReverted()`) and the LiveState snapshot every
  * other mode surface reads (`echoedModeName`). Since VW-178 nothing clears the

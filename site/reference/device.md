@@ -208,7 +208,7 @@ Configure isokinetic mode in one call (VMCP-02.16) — replaces the five per-fie
 
 Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining).
 
-This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. Mechanism: writes two `[redacted]` frames back-to-back (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. A single `[redacted]=0` write (used by rowing's `exitWorkout()` 5-write sequence) was considered but not chosen — the workout-state-zero shape has not been verified to physically unload the cable for non-rowing modes. Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41).
+This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. Mechanism: two back-to-back mode writes (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. The alternative — the single write rowing's `exitWorkout()` exits through — was considered but not chosen: it has not been verified to physically unload the cable for non-rowing modes. Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41).
 
 **Parameters**
 
@@ -220,7 +220,7 @@ This is the prerequisite for `device.start_guided_load`'s visible countdown cere
 
 ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md).
 
-Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK writes [redacted], sends the [redacted] trigger, and polls the 4 status registers every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary frames are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.
+Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK sets the target weight, triggers the flow, then polls device status every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary events are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.
 
 **Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware's direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot's prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.
 
@@ -254,7 +254,7 @@ Failure detection: if `guided_load_state` emits `phase: active` immediately (no 
 
 Exit the firmware "direct-load" flow.
 
-Writes the exit frame ([redacted] to the fitness-mode register) and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own but the exit frame cleans up the firmware state.
+Writes the exit command and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own, but only the exit write clears the direct-load state the firmware is still holding.
 
 **Parameters**
 
@@ -274,7 +274,7 @@ Must be followed by device.start_row to commit into a live rowing session. The c
 
 Commit into a live rowing session (stage 2 of 2).
 
-Requires a prior device.enter_row_mode. Distance presets are iPad-side stroke targets — [redacted] only selects the preset screen.
+Requires a prior device.enter_row_mode. Distance presets are iPad-side stroke targets — the commit only selects the preset screen on the unit.
 
 **Parameters**
 
