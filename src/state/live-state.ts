@@ -63,41 +63,40 @@ export interface DeviceSnapshot {
   /** ISO timestamp of the last connection drop, when one is known. */
   disconnectedAt?: string;
   /**
-   * Assist-mode raw value from the last cmd=0x07 state-dump frame. 0 = off,
-   * 2 = on, 8 = device idle / no active mode (Bug 26). Absent until the
-   * first state-dump has been received.
+   * Assist-mode raw value from the last state dump (Bug 26). Reported as the
+   * device gives it; the device distinguishes assist-off from a device-idle
+   * sentinel. Absent until the first state dump has been received.
    */
   assistMode?: number;
   /**
-   * Active training mode raw byte from the last cmd=0x07 state-dump
-   * (0 = transitional / mid-mode-switch, 1 = WeightTraining,
-   * 2 = ResistanceBand). Distinct from {@link trainingMode} above, which is
-   * the string form sourced from the cmd=0x10 cascade. Absent until the
-   * first state-dump has fired.
+   * Active training mode raw value from the last state dump. NOT the applied
+   * training mode — it reports engagement, and cannot represent Damper; see
+   * `active-mode.ts` for why `active_mode` does not key on it. Distinct from
+   * {@link trainingMode} above, which is the string form sourced from the
+   * settings-update echo. Absent until the first state dump has fired.
    */
   trainingModeRaw?: number;
   /**
-   * Effective chain target force at the cable in tenths of pounds, decoded
-   * from bytes [8-9] of the cmd=0x07 inner `aa 80 25` envelope. Equals
-   * `min(chains, weight) × 10` — the device silently caps chain setting at
-   * the active weight. For the user's chains setting in lbs prefer
-   * {@link chainSettingLbs} (sourced from the cmd=0x10 cascade).
+   * Effective chain target force at the cable in tenths of pounds, decoded by
+   * the SDK from the state dump. Equals `min(chains, weight) × 10` — the
+   * device silently caps chain setting at the active weight. For the user's
+   * chains setting in lbs prefer {@link chainSettingLbs} (sourced from the
+   * settings-update echo).
    */
   chainTargetForceTenths?: number;
   /**
-   * Active weight setting in tenths of pounds, decoded from bytes [6-7] of
-   * the cmd=0x07 inner `aa 80 25` envelope. Mirrors the cmd=0x10 cascade
-   * `baseWeight` × 10. Zero in non-WeightTraining modes.
+   * Active weight setting in tenths of pounds, decoded by the SDK from the
+   * state dump. Mirrors the echo's `baseWeight` × 10. Zero in
+   * non-WeightTraining modes.
    */
   weightLbsTenths?: number;
   /**
-   * Eccentric overload setting in tenths of percent, decoded from bytes
-   * [10-11] of the cmd=0x07 inner `aa 80 25` envelope. Mirrors the cmd=0x10
-   * cascade `eccentric` × 10.
+   * Eccentric overload setting in tenths of percent, decoded by the SDK from
+   * the state dump. Mirrors the echo's `eccentric` × 10.
    */
   eccentricPercentTenths?: number;
   /**
-   * User's chains setting in pounds, sourced from the cmd=0x10 cascade
+   * User's chains setting in pounds, sourced from the settings-update echo's
    * `chains` field on `onSettingsUpdate`. This is the value the firmware
    * accepted after its silent chains≤weight cap (e.g., a `set_chains(60)`
    * write against weight=50 surfaces here as 50). On-device testing
@@ -106,8 +105,8 @@ export interface DeviceSnapshot {
    */
   chainSettingLbs?: number;
   /**
-   * User's inverse-chains setting in pounds, sourced from the cmd=0x10
-   * cascade `inverseChains` field on `onSettingsUpdate`. Same provenance as
+   * User's inverse-chains setting in pounds, sourced from the settings-update
+   * echo's `inverseChains` field on `onSettingsUpdate`. Same provenance as
    * {@link chainSettingLbs} and preferred for the same reason: it is the
    * value the firmware accepted, not a lazily-recomputed state-dump figure.
    *
@@ -352,9 +351,9 @@ export interface ActiveSet {
    * If `endSet` runs without a prior `onSummary` (mid-set disconnect, no
    * graceful close), the finalized set has no summary block — never stale.
    *
-   * Note: `aa 86 7d` "summary" is workout-end / post-STOP only and may not
+   * Note: the `onSummary` report is workout-end / post-STOP only and may not
    * fire at all in WT/RB/Damper. Per-set device-driven close in those modes
-   * is signaled by `onSetSummary` (`aa 85 5f`) — see `latestSetSummary`.
+   * is signaled by `onSetSummary` — see `latestSetSummary`.
    */
   latestSummary?: {
     repCount: number;
@@ -403,7 +402,7 @@ export interface ActiveSet {
   firmwareReps?: FirmwareRep[];
   /**
    * Firmware's authoritative total rep count for the set, captured from the
-   * `onSetSummary` (`aa 85 5f`) payload's `repCount` at close (VMCP-02.29
+   * `onSetSummary` payload's `repCount` at close (VMCP-02.29
    * PR4). Recorded alongside the terminal firmware rep the close path appends
    * so `debug.compare_rep_streams` can check the firmware pipeline's accrued
    * `firmwareReps.length` against the device's own count. Absent for sets
@@ -640,7 +639,7 @@ export class LiveState {
   }
 
   /**
-   * Merge state-dump fields from a cmd=0x07 frame into the device snapshot.
+   * Merge state-dump fields into the device snapshot.
    * Called by the event-bridge `onStateDump` handler; decoupled from
    * `applySettings` so callers can mutate just the assist/chains surface
    * without risk of clobbering the weight/mode/battery fields that arrive
@@ -923,7 +922,7 @@ export class LiveState {
   }
 
   /**
-   * Finalize the firmware-rep pipeline on the device's `aa 85 5f` close
+   * Finalize the firmware-rep pipeline on the device's `onSetSummary` close
    * (VMCP-02.29 PR4). Records the device's authoritative `repCount` as
    * {@link ActiveSet.firmwareTotalRepCount} and, when needed, materializes the
    * terminal enriched slice the bridge cut from the last `onPerRep` 'return'

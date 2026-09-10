@@ -106,7 +106,7 @@ export interface LivePhaseSignal {
 }
 
 /**
- * Emitted the instant the phase byte flips, ahead of the next `phase` frame, so
+ * Emitted the instant the phase flips, ahead of the next `phase` frame, so
  * a client can snap its tempo bar and reset its phase clock without waiting up
  * to ~90 ms for the next sample.
  */

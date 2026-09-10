@@ -62,7 +62,7 @@ export interface SettingsContext {
  * Read the settings context off a device snapshot.
  *
  * `chainSettingLbs` rather than `chainTargetForceTenths`: the former is the
- * user's setting from the cmd=0x10 cascade echo (post-cap, confirmed reliable
+ * user's setting from the settings-update echo (post-cap, confirmed reliable
  * on-device), the latter is a state-dump field equal to `min(chains, weight)`,
  * which silently reads as the weight whenever chains exceed it.
  *

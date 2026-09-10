@@ -6,7 +6,7 @@
 // layer (src/tools/isometric-tools.ts) drives the protocol, captures
 // telemetry samples, and calls these helpers to produce the final shape.
 //
-// Protocol references — sources/research/isometric-protocol-2026-05-09.md:
+// Assessment protocol this module implements:
 //   * Hold duration: 5s default (clamp 3–10s)
 //   * Trials per side: 3 default (clamp 2–5)
 //   * Rest between trials (same side): 90s

@@ -92,8 +92,7 @@ export function removeSlot(state: ServerState, slotId: string): void {
   // this client (manager.disconnect skipped, adapter teardown errored), the
   // disposed flag prevents subsequent stray writes from routing through a
   // stale adapter handle. Dispose is idempotent — if a prior path already
-  // disposed, this is a no-op. Slot-routing bug fix — see
-  // `sources/audits/ble-slot-routing-2026-05-08.md`.
+  // disposed, this is a no-op. Slot-routing bug fix.
   try {
     slot.client.dispose();
   } catch {
@@ -127,8 +126,7 @@ export function resetPrimarySlot(state: ServerState): void {
   // Defensive dispose of the outgoing client before swapping in the fresh
   // one. Same rationale as `removeSlot`: ensures no stale adapter/writeChar
   // can route a stray write after the slot has been swapped. Idempotent.
-  // Slot-routing bug fix — see
-  // `sources/audits/ble-slot-routing-2026-05-08.md`.
+  // Slot-routing bug fix.
   try {
     slot.client.dispose();
   } catch {

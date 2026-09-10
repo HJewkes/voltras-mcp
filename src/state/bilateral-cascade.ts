@@ -11,7 +11,7 @@
 //   * VW-162 — the MODE write is never part of the fan-out. When the plan
 //     changes the slot's mode, the mode setter goes first on its own, the
 //     slot's mode-revert guard is armed for it (exactly as `device.set_mode`
-//     does), and we wait for the device's cmd=0x10 echo before any other
+//     does), and we wait for the device's settings-update echo before any other
 //     setter fires. This header used to claim there was "no documented
 //     ordering dependency" between the four setters; hardware falsified that
 //     on 2026-09-07 — a `{mode: Isokinetic, ...}` cascade left the right unit
@@ -288,7 +288,7 @@ function buildFanOutSteps(target: SlotTarget, plan: CascadePlan): CascadeStep[] 
       invoke: () => target.client.setWeight(weightValue),
       value: weightValue,
       // VMCP-02.40: coercion source switched from state-dump
-      // `weightLbsTenths` (×10, lazy) to cmd=0x10 `baseWeight` (whole lbs).
+      // `weightLbsTenths` (×10, lazy) to the echo's `baseWeight` (whole lbs).
       coercionField: 'baseWeight',
       coercionRequested: weightValue,
     });
@@ -301,7 +301,7 @@ function buildFanOutSteps(target: SlotTarget, plan: CascadePlan): CascadeStep[] 
       value: eccValue,
       // Eccentric stays on the state-dump path for now — has a documented
       // 80→320→0 transient burst that the 2-of-2 stability counter
-      // defuses. A separate pass may route this through cmd=0x10.
+      // defuses. A separate pass may route this through the echo.
       coercionField: 'eccentricPercentTenths',
       coercionRequested: eccValue * 10,
     });
@@ -313,7 +313,7 @@ function buildFanOutSteps(target: SlotTarget, plan: CascadePlan): CascadeStep[] 
       invoke: () => target.client.setChains(chainsValue),
       value: chainsValue,
       // VMCP-02.40: coercion source switched from state-dump
-      // `chainTargetForceTenths` (×10, lazy) to cmd=0x10 `chains` (whole lbs).
+      // `chainTargetForceTenths` (×10, lazy) to the echo's `chains` (whole lbs).
       coercionField: 'chains',
       coercionRequested: chainsValue,
     });

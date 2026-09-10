@@ -2,10 +2,10 @@
 //
 // The Voltra firmware can silently revert the training mode after a
 // `device.set_mode` write. The most prominent observed case is Rowing:
-// the SDK writes the strength-mode GO command at session.start, the device
-// briefly accepts but autonomously reverts to WeightTraining and engages
-// the cable at the configured weight. The user sees a load on a mode they
-// did not ask for — a HIGH-severity safety issue.
+// the SDK engages the motor at session.start, the device briefly accepts
+// but autonomously reverts to WeightTraining and engages the cable at the
+// configured weight. The user sees a load on a mode they did not ask for —
+// a HIGH-severity safety issue.
 //
 // This guard sits at the bridge layer (independent of any in-SDK reassert
 // logic — see B2's Rowing-specific safety guard) and watches the
@@ -17,10 +17,9 @@
 // refuses to engage the motor, and emits a `set_aborted_by_mode_revert`
 // channel event so PT Claude can explain the safety abort to the user.
 //
-// Design follows the sketch in
-// `voltra-private/research/safety-state-error-frames-2026-05-07-android-deep.md`
-// (A11) — the firmware exposes no error/fault frames, so the SDK / bridge
-// must invent its own safety surface from positive telemetry signals.
+// Design follows the A11 sketch — the device surfaces no fault or error
+// signal of its own, so the SDK / bridge must invent its own safety surface
+// from positive telemetry signals.
 //
 // One guard instance per slot: bilateral lifts run two devices and each
 // one's mode-revert detection is independent.
@@ -118,8 +117,8 @@ export class ModeRevertGuard {
    * to recover.
    *
    * `trainingMode` is the value lifted from the SDK's
-   * `DeviceSettings.trainingMode` field (the high-level setting after
-   * cmd=0x10 cascade decode). `undefined` means the settings_update
+   * `DeviceSettings.trainingMode` field (the high-level setting the SDK
+   * decodes out of the echo). `undefined` means the settings_update
    * carried no trainingMode at all (e.g., a damperLevel-only update) —
    * those events do not affect the guard.
    */

@@ -65,8 +65,8 @@ const NOT_ARMED: AutoArmResult = { armed: false };
  * reporting path and nothing is lost.
  *
  * The device motor is deliberately NOT engaged: the lifter is already lifting
- * — that is what produced the rep — so there is nothing to engage, and a
- * strength-mode GO mid-rep would be a load change nobody asked for. Mirrors
+ * — that is what produced the rep — so there is nothing to engage, and
+ * engaging the motor mid-rep would be a load change nobody asked for. Mirrors
  * the guided-load bootstrap, which also mints its set without re-engaging.
  */
 export function autoArmSet(state: ServerState, slotId: string): AutoArmResult {

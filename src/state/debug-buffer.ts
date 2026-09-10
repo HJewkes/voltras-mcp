@@ -56,8 +56,8 @@ export interface DebugEvent {
      * `client.onRawFrame` listener. Payload: `{bytesHex, bytesLength}`. Fires
      * for EVERY notification — telemetry stream, vendor frames, settings
      * cascades, async-updates, frames the decoder cannot classify. Diagnostic
-     * surface for byte-level work (cmd=0x10 reconnaissance, bootstrap parity
-     * capture). At 40 Hz telemetry rate this can fill a 256-capacity ring in
+     * surface for byte-level work (settings-cascade reconnaissance, bootstrap
+     * parity capture). At 40 Hz telemetry rate this can fill a 256-capacity ring in
      * ~6 seconds — bump `VMCP_DEBUG_BUFFER_SIZE` for longer captures.
      */
     | 'raw_frame'
