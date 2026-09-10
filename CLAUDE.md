@@ -45,7 +45,31 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, and the screenshot definition behind `npm run docs:captures`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `src/types/` — non-test type-only modules (excluded from coverage)
+- `eslint-rules/` — repo-local ESLint rules loaded by `eslint.config.mjs`
 
 ## Confidentiality / Privacy
 
-No protocol bytes, raw frame payloads, or proprietary command codes may appear in any tool input, output, schema, log line, error message, or commit. ESLint flags `Buffer.*` references inside any function whose name ends with `Handler` (NF-07). Only typed values from the SDK's public surface cross the MCP boundary.
+**Why this exists.** Beyond Power shared the device's internals informally to help the community SDK, and asked that they not be shared publicly. That is a **confidentiality boundary** — a trust commitment, not a signed agreement. Write "confidentiality boundary"; never write "NDA", because nothing was signed.
+
+**The rule.** No device value, byte, frame payload, command code, register name, offset, or pointer into a non-public tree may appear in:
+
+- source, comments (including trailing ones), string literals or identifiers
+- tool inputs, outputs, schemas or descriptions
+- log lines or error messages
+- commit messages, PR titles or PR bodies
+
+Describe the observable behaviour instead. Protocol-derived findings belong in `voltra-private/research/`, not here.
+
+**What enforces it, and what does not.**
+
+| layer | covers | runs |
+| --- | --- | --- |
+| `voltras/no-protocol-detail` (`eslint-rules/`) | encoded values and provenance in `src/**`: hex literals, byte sequences, bare hex runs, command codes, private-tree paths | `npm run lint`, CI |
+| NF-07 (`eslint.config.mjs`) | `Buffer.*` inside any `*Handler` function | `npm run lint`, CI |
+| `src/docs/protocol-guard.ts` | protocol-shaped tokens on generated documentation pages | `npm run docs:reference`, `npm test`, CI |
+
+**Prose is not covered, and no rule will cover it.** A sentence that names a register and describes what writing to it does carries no value in any shape a pattern can match, and a partial redaction is worse than none: `[redacted]` next to an intact mechanism sentence reads as a decision someone already made rather than as an oversight (VW-220). So prose is a **review-checklist item**: when a change touches device behaviour, read the prose and ask whether a reader could reconstruct anything from it.
+
+**Three lint exemption directives exist**, all in `uint8ArrayToHex` (`src/tools/device-tools.ts`), all inline with a stated reason, and the full set is pinned by `src/__tests__/lint/no-protocol-detail.test.ts`. Adding a third means editing that pin and saying why. `reportUnusedDisableDirectives` is `error`, so a directive left behind after its line changed fails the build.
+
+The 15 test files under `src/**/__tests__/` still hold protocol fixtures and are exempt by path (w5-13). The exemption is a path glob in `eslint.config.mjs`; it governs what is fixed, never what is counted.
