@@ -4,6 +4,10 @@
   either with a Voltra or the mock adapter.
 - [Running a planned session](/guides/planned-session) — build or import a plan, attach
   it to a live session, and run against its prescription.
+- [Bilateral work](/guides/bilateral) — connect and bind two Voltras, cascade settings
+  across both with `bilateral.cascade`, and read per-slot events.
+- [Isometric assessment](/guides/isometric) — the single-hold primitive versus the two
+  blocking protocols, trial validity, and the calibration caveat on the force figures.
 
 ## The wall dashboard, stage by stage
 
