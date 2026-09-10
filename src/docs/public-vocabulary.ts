@@ -223,6 +223,14 @@ export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
  * Names from outside this project that descriptions cite: SDK entry points,
  * analytics helpers, and platform names. Public by virtue of belonging to a
  * published API or product, not to the device protocol.
+ *
+ * A DOTTED name is not derivable from its owner: `TrainingMode` here does not
+ * make `TrainingMode.Isokinetic` public, because normalization collapses the
+ * whole token to one form. So every member a description could reasonably cite
+ * is listed, not just the one a description happens to cite today — an
+ * allowlist that is complete only in the direction someone looked is this
+ * campaign's recurring failure, and it fails by silently redacting a public
+ * name, which reads to a reader as detail somebody chose to hide.
  */
 export const EXTERNAL_NAMES: readonly string[] = [
   'analyzeTrend',
@@ -239,8 +247,18 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'macOS',
   'MockBLEAdapter',
   'MockBLEAdapter.configure',
+  'MockBLEAdapter.injectError',
   'onPerRep',
   'TrainingMode',
+  'TrainingMode.CustomCurves',
+  'TrainingMode.Damper',
+  'TrainingMode.Idle',
+  'TrainingMode.Isokinetic',
+  'TrainingMode.ResistanceBand',
+  'TrainingMode.Rowing',
+  'TrainingMode.WeightTraining',
+  'TrainingModeNames',
+  'Workout.GO',
   'Workout.STOP',
 ];
 
