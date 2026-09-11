@@ -125,9 +125,11 @@ A run against an isolated database and a non-default dashboard port, with the ri
 running fewer reps and starting late:
 
 ```
-node scripts/dashboard-mock-drive.mjs --dual --reps=left:6,right:4 --lag=right:2500
+VMCP_DB_PATH=/tmp/vmcp-dual-verbatim.sqlite node scripts/dashboard-mock-drive.mjs --dual \
+  --reps=left:6,right:4 --lag=right:2500 --port=7793 --control-port=7792
 
-[drive] dashboard at http://127.0.0.1:<port>/app  (open it now)
+[drive] MCP initialized; waiting for handlers + dashboard bind…
+[drive] dashboard at http://127.0.0.1:7793/app  (open it now)
 [drive] slot left ← mock-voltra-left (mock telemetry streaming)
 [drive] slot right ← mock-voltra-right (mock telemetry streaming)
 [drive] sessions started | rev=1 reps left=— right=—
@@ -135,25 +137,30 @@ node scripts/dashboard-mock-drive.mjs --dual --reps=left:6,right:4 --lag=right:2
 [drive] set 1 right: started (target 4 reps)
 [drive] set 1 right: ended at 4 reps
 [drive] set 1 left: ended at 6 reps
+[drive] set 1 done    | rev=77 reps left=— right=—
 [drive] set 1: left=6 right=4
 [drive] set 2 left: started (target 6 reps)
 [drive] set 2 right: started (target 4 reps)
 [drive] set 2 right: ended at 4 reps
 [drive] set 2 left: ended at 6 reps
+[drive] set 2 done    | rev=124 reps left=— right=4
 [drive] set 2: left=6 right=4
 [drive] set 3 left: started (target 6 reps)
 [drive] set 3 right: started (target 4 reps)
 [drive] set 3 right: ended at 6 reps
 [drive] set 3 left: ended at 6 reps
+[drive] set 3 done    | rev=164 reps left=— right=4
 [drive] set 3: left=6 right=6
 [drive] sessions ended  | rev=165 reps left=— right=—
 [drive] dual workout complete: 3 sets × 2 slots through the real pipeline
 ```
 
-Both slots connected, ran independent sets, and closed independently — the two rep streams
-stayed apart the whole run. This is what this guide's dual-mock claims are checked against.
-Open `http://127.0.0.1:<port>/app` before or during the run, same as the single-slot driver
-— the set log accumulates client-side from live transitions.
+This is the run's complete, unedited output — nothing trimmed. Both slots connected, ran
+independent sets, and closed independently; the `set N done | rev=… reps left=… right=…`
+lines are the per-slot rep counts landing separately, which is the actual evidence the two
+rep streams stayed apart rather than mirroring each other. Open `http://127.0.0.1:<port>/app`
+before or during the run, same as the single-slot driver — the set log accumulates
+client-side from live transitions.
 
 ## What to read next
 
