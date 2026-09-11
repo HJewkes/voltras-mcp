@@ -19,6 +19,7 @@
 // task; the alias will be unified once both branches merge.
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
+import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
@@ -1407,6 +1408,18 @@ export interface SessionStore extends ExerciseSetupStore {
    * and writes one row. The returned row is the freshly-written one.
    */
   recalcBaseline(key: BaselineKey): Promise<StoredExerciseBaseline>;
+
+  /**
+   * Which pool of failure anchors a recalculation of this key would read, and
+   * whether a setup-keyed call fell back to the exercise's pooled anchors
+   * (VW-204).
+   *
+   * Reported rather than inferable: an anchor from a different bench angle is
+   * exactly the comparison the ROM clustering exists to prevent, so a caller
+   * holding a setup-keyed baseline has to be able to tell whether the
+   * confidence behind it came from that setup or from everything.
+   */
+  describeAnchorSelection(key: BaselineKey): Promise<AnchorSelectionReport>;
 
   // --- Failure anchors (B59 / VW-174) ---
 

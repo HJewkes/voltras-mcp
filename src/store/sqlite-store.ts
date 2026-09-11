@@ -32,9 +32,12 @@ import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
   baselineRowId,
   deriveBaselineState,
+  selectSetupAnchors,
   summarizeSets,
   toBaselineRow,
   type AnchorObservation,
+  type AnchorSelection,
+  type AnchorSelectionReport,
   type BaselineObservations,
 } from './exercise-baselines.js';
 import {
@@ -1504,6 +1507,7 @@ interface FailureAnchorJoinRow {
   session_id: string | null;
   observed_at: string;
   terminal_velocity_mps: number | null;
+  setup_id: string | null;
 }
 
 interface TrainingBlockRow {
@@ -2839,7 +2843,7 @@ export class SqliteSessionStore implements SessionStore {
     });
     const observations: BaselineObservations = {
       ...summarizeSets(sets),
-      anchors: this.selectAnchors(key),
+      anchors: this.selectAnchors(key).anchors,
     };
     const now = new Date();
     const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString());
@@ -2869,6 +2873,12 @@ export class SqliteSessionStore implements SessionStore {
     }
   }
 
+  async describeAnchorSelection(key: BaselineKey): Promise<AnchorSelectionReport> {
+    this.assertResolvableSetup(key);
+    const { anchors: _anchors, ...report } = this.selectAnchors(key);
+    return Promise.resolve(report);
+  }
+
   /**
    * Failure anchors for one key. Only anchors whose harvest filter ACCEPTED
    * them (`filter_verdict = 'failure'`) count: the table deliberately stores
@@ -2880,26 +2890,24 @@ export class SqliteSessionStore implements SessionStore {
    * some day). It exists so several anchors from ONE bout cannot satisfy the
    * distinct-sessions gate — correlated anchors look more consistent than they
    * are.
+   *
+   * The query fetches the WHOLE pool and `selectSetupAnchors` narrows it in
+   * memory (VW-204). One query rather than a same-setup query plus a fallback
+   * query, so the two pools can never disagree about which anchors exist.
    */
-  private selectAnchors(key: BaselineKey): AnchorObservation[] {
+  private selectAnchors(key: BaselineKey): AnchorSelection {
     // `fa.lifter IS NULL` (VW-169): baselines are the OWNER's, and `BaselineKey`
     // has no lifter dimension because a guest working in gets no baseline at
     // all — no row, no anchors, no confidence state.
     //
-    // `fa.setup_id IS NULL` is UNCONDITIONAL, including for a setup-keyed call
-    // (VW-119). Anchors carry no setup: `toFailureAnchor` still writes NULL, so
-    // this predicate matches every anchor there is. Splitting them by setup
-    // would need the column populated, and populating it would hide every
-    // anchor harvested before the clustering shipped from the pooled key that
-    // has been counting them — a silent CALIBRATED-to-SHAPE_ONLY demotion. So a
-    // setup-keyed baseline refines the SHAPE evidence (which sets count) and
-    // shares the exercise's anchor evidence.
-    const where = [
-      'fa.user_id = ?',
-      'fa.exercise_id = ?',
-      'fa.setup_id IS NULL',
-      'fa.lifter IS NULL',
-    ];
+    // NO `setup_id` PREDICATE, for either kind of key (VW-204). It used to be
+    // `fa.setup_id IS NULL` unconditionally, which matched everything only
+    // because nothing wrote the column. Now that the writer stamps it, keeping
+    // that predicate would hide every stamped anchor from the pooled key that
+    // has been counting it — a silent CALIBRATED-to-SHAPE_ONLY demotion. The
+    // pooled key therefore keeps counting the whole pool, and preference by
+    // setup happens after the fetch.
+    const where = ['fa.user_id = ?', 'fa.exercise_id = ?', 'fa.lifter IS NULL'];
     const params: string[] = [key.userId, key.exerciseId];
     if (key.side !== undefined) {
       where.push('fa.side = ?');
@@ -2908,23 +2916,28 @@ export class SqliteSessionStore implements SessionStore {
     const rows = this.db
       .prepare(
         `SELECT s.session_id AS session_id, fa.observed_at AS observed_at,
-                fa.terminal_velocity_mps AS terminal_velocity_mps
+                fa.terminal_velocity_mps AS terminal_velocity_mps,
+                fa.setup_id AS setup_id
            FROM failure_anchors fa
            LEFT JOIN sets s ON s.id = fa.set_id
           WHERE ${where.join(' AND ')} AND fa.filter_verdict = 'failure'
           ORDER BY fa.observed_at ASC`,
       )
       .all(...params) as unknown as FailureAnchorJoinRow[];
-    return rows.map((row) => {
-      const out: AnchorObservation = {
-        sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
-        observedAt: row.observed_at,
-      };
-      if (row.terminal_velocity_mps !== null) {
-        out.terminalVelocityMps = row.terminal_velocity_mps;
-      }
-      return out;
-    });
+    return selectSetupAnchors(
+      key.setupId,
+      rows.map((row) => {
+        const out: AnchorObservation = {
+          sessionBucket: row.session_id ?? `day:${row.observed_at.slice(0, 10)}`,
+          observedAt: row.observed_at,
+        };
+        if (row.terminal_velocity_mps !== null) {
+          out.terminalVelocityMps = row.terminal_velocity_mps;
+        }
+        if (row.setup_id !== null) out.setupId = row.setup_id;
+        return out;
+      }),
+    );
   }
 
   /**
@@ -3052,6 +3065,11 @@ export class SqliteSessionStore implements SessionStore {
    * A set with no `exerciseId` or `userId` has no baseline key to belong to,
    * so there is nothing an anchor could inform — skipped as `'not_candidate'`
    * rather than written against a key that does not exist.
+   *
+   * The setup is read from the SET ROW rather than from the passed object
+   * (VW-204), because the clustering stamps the row and the caller may be
+   * holding a copy made before that ran. Absent stays absent: an unstamped set
+   * is not evidence about any bench.
    */
   async harvestFailureAnchor(set: StoredSet): Promise<FailureVerdict> {
     if (set.exerciseId === undefined || set.userId === undefined) {
@@ -3059,10 +3077,27 @@ export class SqliteSessionStore implements SessionStore {
     }
     const evaluation = evaluateFailureCandidate(set, this.harvestContext(set));
     if (evaluation.verdict === 'not_candidate') return evaluation.verdict;
+    const setupId = this.storedSetupIdOf(set);
     await this.putFailureAnchor(
-      toFailureAnchor(set, set.userId, set.exerciseId, randomUUID(), evaluation),
+      toFailureAnchor(
+        set,
+        set.userId,
+        set.exerciseId,
+        randomUUID(),
+        evaluation,
+        setupId === undefined ? {} : { setupId },
+      ),
     );
     return evaluation.verdict;
+  }
+
+  /** The setup currently stamped on a set row, or the caller's if there is no row. */
+  private storedSetupIdOf(set: StoredSet): string | undefined {
+    const row = this.db.prepare(`SELECT setup_id FROM sets WHERE id = ?`).get(set.id) as
+      | { setup_id: string | null }
+      | undefined;
+    if (row === undefined) return set.setupId;
+    return row.setup_id ?? undefined;
   }
 
   /**
@@ -3604,9 +3639,11 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
  * happened in ordinary training. Nothing in the product prescribes one, so
  * nothing here may write `'prescribed'`.
  *
- * `setupId` is left absent — `exercise_setups` has no writer either (VW-119),
- * and `selectAnchors` filters `setup_id IS NULL`, so a value here would hide
- * the anchor from the only reader there is.
+ * `setupId` is the inferred physical setup the set was performed at (VW-204),
+ * passed in rather than read off `set` so the caller can resolve it against
+ * the stored row. Absent when the clustering has not stamped the set — which
+ * is most of them, and is why `selectAnchors` falls back to the pooled anchors
+ * rather than treating an unstamped anchor as belonging to another bench.
  */
 function toFailureAnchor(
   set: StoredSet,
@@ -3614,6 +3651,7 @@ function toFailureAnchor(
   exerciseId: string,
   id: string,
   evaluation: FailureCandidateEvaluation,
+  origin: { setupId?: string } = {},
 ): StoredFailureAnchor {
   const out: StoredFailureAnchor = {
     id,
@@ -3627,6 +3665,7 @@ function toFailureAnchor(
     filterVerdict: evaluation.verdict,
     filterVersion: evaluation.filterVersion,
   };
+  if (origin.setupId !== undefined) out.setupId = origin.setupId;
   if (set.side !== undefined) out.side = set.side;
   if (set.lifter !== undefined) out.lifter = set.lifter;
   if (set.weightLbs !== undefined) out.loadLbs = set.weightLbs;
