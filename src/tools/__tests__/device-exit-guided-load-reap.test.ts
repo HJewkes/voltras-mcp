@@ -128,7 +128,7 @@ interface FakeClient {
 }
 
 function makeFakeClient(): FakeClient {
-  return {
+  const client: FakeClient = {
     isConnected: true,
     connectionState: 'connected',
     connectedDeviceId: 'VTR-test',
@@ -142,7 +142,11 @@ function makeFakeClient(): FakeClient {
     },
     guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
     isRowingActive: false,
-    exitGuidedLoad: vi.fn(async () => undefined),
+    // Mirrors the SDK, which transitions its own phase to `exited` after the
+    // exit write. The VMCP-02.88 read-back reads that phase back.
+    exitGuidedLoad: vi.fn(async () => {
+      client.guidedLoadState.phase = 'exited';
+    }),
     endSet: vi.fn(async () => undefined),
     setAdapter: vi.fn(() => undefined),
     getAdapter: vi.fn(() => null),
@@ -165,6 +169,7 @@ function makeFakeClient(): FakeClient {
     enterRowMode: vi.fn(async () => undefined),
     startRow: vi.fn(async () => undefined),
   };
+  return client;
 }
 
 interface FakeRegisteredTool {
@@ -416,7 +421,8 @@ describe('device.exit_guided_load — F4 / F8 lifecycle reap', () => {
     const { isError, payload } = await h.invoke('device.exit_guided_load', {});
 
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(h.client.exitGuidedLoad).toHaveBeenCalledTimes(1);
     expect(h.live.set).toBeUndefined();
     expect(h.putSet).toHaveBeenCalledTimes(1);
@@ -443,7 +449,8 @@ describe('device.exit_guided_load — F4 / F8 lifecycle reap', () => {
     const { isError, payload } = await h.invoke('device.exit_guided_load', {});
 
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(h.client.exitGuidedLoad).toHaveBeenCalledTimes(1);
     expect(h.putSet).not.toHaveBeenCalled();
     expect(h.putSession).not.toHaveBeenCalled();

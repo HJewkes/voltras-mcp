@@ -368,7 +368,8 @@ describe('device.unload — VMCP-02.41 guided-load teardown', () => {
     const { isError, payload } = await h.invoke('device.unload', {});
 
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(h.client.unloadDevice).toHaveBeenCalledTimes(1);
     expect(h.client.exitGuidedLoad).toHaveBeenCalledTimes(1);
     // Physical release first, software-state cleanup second.
@@ -460,7 +461,8 @@ describe('device.unload — VMCP-02.41 guided-load teardown', () => {
     const { isError, payload } = await h.invoke('device.unload', {});
 
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(h.client.unloadDevice).toHaveBeenCalledTimes(1);
     expect(h.client.exitGuidedLoad).not.toHaveBeenCalled();
     expect(h.putSet).not.toHaveBeenCalled();

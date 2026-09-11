@@ -109,6 +109,11 @@ import {
 } from './device-handler-helpers.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { GUIDED_LOAD_ACTIVE_PHASES, stopGuidedLoadPoll, unloadSlot } from './device-exit.js';
+import {
+  readBackGuidedLoadExit,
+  readBackGuidedLoadTrigger,
+  readBackUnload,
+} from './guided-load-readback.js';
 
 // The exit path moved to `device-exit.ts` (VW-200) so the stop-the-machine
 // callers need not import the whole tool surface. Re-exported here because
@@ -328,10 +333,11 @@ const CONFIGURE_ISOKINETIC_DESCRIPTION =
   'Setting either eccentric weight makes the device emit an audible beep — a firmware safety/range cue; the command still succeeds. Validated on-device 2026-05-06.';
 
 const START_GUIDED_LOAD_DESCRIPTION =
-  'ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md). @experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK sets the target weight, triggers the flow, then polls device status every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary events are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Weight Training gate (VMCP-02.90):** this is the ENGAGEMENT / LOAD STATE layer\'s engagement ceremony, and it requires the Weight Training mode — guided load is confirmed to enter from Weight Training and NOT from Damper, where the ceremony holds at `armed` for the full 18s poll window, times out, and leaves a junk auto-created set behind. From any other selectable mode the tool refuses with `GUIDED_LOAD_MODE_MISMATCH` naming the current mode, before anything is written; no other mode has been tested, so the allowlist is exactly one mode wide. Pass `autoSwitchMode: true` to have the tool switch to Weight Training as part of engaging: it waits for the device to echo the new mode (a `MODE_ECHO_TIMEOUT` error and no trigger if the echo never lands) and still runs the pre-trigger unload, so the ceremony starts from a slack cable. Default is `false` on purpose — a lifter who selected Damper on the unit chose it.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.\n\n**Set-level intent (VW-168a):** the set is created for you on `armed`, before any `set.start` could run, so pass `isWarmup: true` for a guided-load warm-up and `watch` (the same shape `set.start` takes) for mid-set notifications. Without them the set records as a working set with no watch, and a warm-up ramp done this way pollutes progression scoring. A `watch.inactivityTimeoutMs` replaces `inactivityTimeoutSeconds` for this set. Both are ignored when a set is already recording on the slot.';
+  'ENGAGEMENT / LOAD STATE layer (see docs/vocabulary.md). @experimental — Trigger the firmware "direct-load" flow at the supplied target weight (5-200 lbs). The SDK sets the target weight, triggers the flow, then polls device status every 500ms for 18s post-trigger; transitions (armed → countdown → engaging → active) are surfaced via the bridge. The bridge also auto-creates a session+set on entry so subsequent rep_boundary / set_boundary events are properly attributed (closes Bugs 28/29). Polling intervals can be overridden for diagnostics but rarely need adjustment.\n\n**Auto-unload (VMCP-02.06):** Before the direct-load trigger fires, this tool invokes the unload primitive (mode-bounce: Damper → WeightTraining) on the target slot. The firmware\'s direct-load flow only emits the visible countdown ceremony when the cable is fully unloaded at trigger time; pre-unloading is idempotent and ensures the ceremony fires regardless of the slot\'s prior state. To skip auto-unload (e.g., for diagnostics), pass `skipUnload: true`.\n\n**Weight Training gate (VMCP-02.90):** this is the ENGAGEMENT / LOAD STATE layer\'s engagement ceremony, and it requires the Weight Training mode — guided load is confirmed to enter from Weight Training and NOT from Damper, where the ceremony holds at `armed` for the full 18s poll window, times out, and leaves a junk auto-created set behind. From any other selectable mode the tool refuses with `GUIDED_LOAD_MODE_MISMATCH` naming the current mode, before anything is written; no other mode has been tested, so the allowlist is exactly one mode wide. Pass `autoSwitchMode: true` to have the tool switch to Weight Training as part of engaging: it waits for the device to echo the new mode (a `MODE_ECHO_TIMEOUT` error and no trigger if the echo never lands) and still runs the pre-trigger unload, so the ceremony starts from a slack cable. Default is `false` on purpose — a lifter who selected Damper on the unit chose it.\n\n**Idle preflight (VMCP-02.45):** if the device is in `Idle` (e.g. fresh boot/wake), this tool first issues `set_mode(WeightTraining)` and skips the unload — the firmware suppresses telemetry in Idle and the Workout.STOP unload does not establish a mode, so without this the trigger lands on a device that falls back to Idle and never engages (silent inactivity_timeout). A failed mode-set surfaces as a structured error instead.\n\nFailure detection: if `guided_load_state` emits `phase: active` immediately (no prior `countdown` or `engaging` event), the device skipped the ceremony despite the unload — call `device.unload` explicitly and re-trigger.\n\n**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed; `read_back` reports what was observed afterwards. The tool waits up to the mode-echo window for the device to report a phase, then returns `verdict` (`confirmed` / `unconfirmed`), `source` (`device` / `server`), `observed_phase` and `waited_ms`. Only `countdown`, `engaging` and `active` are device-sourced — `armed` is reported identically whether the device answered or the SDK synthesised it on the trigger write, so it confirms nothing and comes back as `unconfirmed` with the reason spelled out. `ceremony_skipped: true` marks the device reporting engagement with no countdown observed first. A phase outside the active set after the trigger is a `GUIDED_LOAD_NOT_ARMED` error, not a success. The window bounds "did the device answer", NOT "did the load engage" — engagement waits on a person pulling the cable and is confirmed by the `guided_load_state` channel event.\n\n**Exercise attribution (VMCP-02.13):** pass `exerciseName` (and optionally `exerciseId`) so the auto-created session is filterable by exercise post-hoc instead of the generic "Guided Load (auto)". Ignored when an explicit `session.start` is already active on the slot — that session is reused as-is.\n\n**Set-level intent (VW-168a):** the set is created for you on `armed`, before any `set.start` could run, so pass `isWarmup: true` for a guided-load warm-up and `watch` (the same shape `set.start` takes) for mid-set notifications. Without them the set records as a working set with no watch, and a warm-up ramp done this way pollutes progression scoring. A `watch.inactivityTimeoutMs` replaces `inactivityTimeoutSeconds` for this set. Both are ignored when a set is already recording on the slot.';
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
-  '@experimental — Exit the firmware "direct-load" flow. Writes the exit command and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own, but only the exit write clears the direct-load state the firmware is still holding.';
+  '@experimental — Exit the firmware "direct-load" flow. Writes the exit command and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own, but only the exit write clears the direct-load state the firmware is still holding. ' +
+  '**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed. `read_back.verdict` is always `unconfirmed` with `source: "server"`, because the SDK stops the status poll BEFORE writing the exit — no device-sourced observation of the exit exists to have. A phase still inside the active set afterwards is a `GUIDED_LOAD_EXIT_UNCONFIRMED` error rather than a success. Exit does not release residual cable tension; `device.unload` is what does.';
 
 const SET_ECCENTRIC_DESCRIPTION =
   'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
@@ -344,7 +350,8 @@ const UNLOAD_DESCRIPTION =
   'Mechanism: two back-to-back mode writes (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
   "The alternative — the single write rowing's `exitWorkout()` exits through — was considered but not chosen: it has not been verified to physically unload the cable for non-rowing modes. " +
   'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. ' +
-  'When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41).';
+  'When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41). ' +
+  '**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed. `read_back.verdict` is always `unconfirmed`: the device acknowledges the unload with nothing this server can read, and `observed_load_state` reads `unloaded` during ordinary weight reps too, so it cannot tell a released cable from a slack one. Confirm by eye before loading a lifter. When the call tore down a live guided-load flow and the phase is still inside the active set afterwards, that is an `UNLOAD_UNCONFIRMED` error rather than a success.';
 
 const DeviceExitGuidedLoadInput = z
   .object({
@@ -1038,8 +1045,22 @@ export function registerDeviceTools(
     DeviceUnloadInput,
     wrapHandler(DeviceUnloadInput, async (input) => {
       const slotId = input.slot ?? PRIMARY_SLOT;
+      const slot = getSlot(state, slotId);
+      const guidedLoadWasActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
       await unloadSlot(state, slotId);
-      return { ok: true };
+      return {
+        ok: true,
+        read_back: readBackUnload({
+          slotId,
+          phase: slot.client.guidedLoadState.phase,
+          loadState: deriveLoadState(
+            slot.client.isConnected,
+            slot.client.guidedLoadState,
+            slot.client.isRowingActive,
+          ),
+          guidedLoadWasActive,
+        }),
+      };
     }),
     UNLOAD_DESCRIPTION,
   );
@@ -1207,7 +1228,18 @@ export function registerDeviceTools(
         { windowMs: COERCION_WINDOW_MS_GUIDED_LOAD },
       );
       await fenceGuidedLoadPoll(state, guidedSlotId, guidedFence);
-      return { ok: true };
+      // VMCP-02.88: the trigger is written; now look. `ok` alone only ever
+      // said the write did not throw, which on a load-applying device is not
+      // the same claim as "the flow started".
+      return {
+        ok: true,
+        read_back: await readBackGuidedLoadTrigger({
+          slotId: guidedSlotId,
+          targetWeightLbs: input.targetWeightLbs,
+          readPhase: () => slot.client.guidedLoadState.phase,
+          checkFence: () => guidedFence.check(guidedSlotId),
+        }),
+      };
     }),
     START_GUIDED_LOAD_DESCRIPTION,
   );
@@ -1247,7 +1279,10 @@ export function registerDeviceTools(
       }
       await slot.client.exitGuidedLoad();
       await reapGuidedLoadScaffold(state, slotId);
-      return { ok: true };
+      return {
+        ok: true,
+        read_back: readBackGuidedLoadExit(slotId, slot.client.guidedLoadState.phase),
+      };
     }),
     EXIT_GUIDED_LOAD_DESCRIPTION,
   );

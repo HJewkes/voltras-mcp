@@ -116,7 +116,7 @@ interface FakeClient {
 }
 
 function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
-  return {
+  const client: FakeClient = {
     isConnected: false,
     connectionState: 'disconnected',
     connectedDeviceId: null,
@@ -147,7 +147,11 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
     startGuidedLoad: vi.fn(async () => undefined),
-    exitGuidedLoad: vi.fn(async () => undefined),
+    // Mirrors the SDK, which transitions its own phase to `exited` after the
+    // exit write. The VMCP-02.88 read-back reads that phase back.
+    exitGuidedLoad: vi.fn(async () => {
+      client.guidedLoadState.phase = 'exited';
+    }),
     enterRowMode: vi.fn(async () => undefined),
     startRow: vi.fn(async () => undefined),
     isRowingActive: false,
@@ -160,6 +164,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     onFrame: vi.fn(() => undefined),
     ...overrides,
   };
+  return client;
 }
 
 interface FakeLive {
@@ -291,7 +296,8 @@ describe('device.exit_guided_load', () => {
     client.guidedLoadState = { phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: 0x0026 };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
@@ -303,7 +309,8 @@ describe('device.exit_guided_load', () => {
     };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
@@ -315,7 +322,8 @@ describe('device.exit_guided_load', () => {
     };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
@@ -327,7 +335,20 @@ describe('device.exit_guided_load', () => {
     };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
+    expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
+  });
+
+  // VMCP-02.88 mismatch path: the exit was written and the flow is still
+  // running afterwards. That is the "exit while still displayed" symptom, and
+  // it must not come back as ok.
+  it('fails GUIDED_LOAD_EXIT_UNCONFIRMED when the flow is still running after the write', async () => {
+    client.guidedLoadState = { phase: 'active', countdownRemainingMs: null, fitnessModeRaw: null };
+    client.exitGuidedLoad.mockImplementationOnce(async () => undefined);
+    const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
+    expect(isError).toBe(true);
+    expect(payload.code).toBe('GUIDED_LOAD_EXIT_UNCONFIRMED');
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
@@ -367,7 +388,8 @@ describe('device.exit_guided_load', () => {
     };
     const { isError, payload } = await invoke(placeholders, 'device.exit_guided_load', {});
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 
@@ -381,7 +403,8 @@ describe('device.exit_guided_load', () => {
       slot: 'primary',
     });
     expect(isError).toBeUndefined();
-    expect(payload).toEqual({ ok: true });
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
     expect(client.exitGuidedLoad).toHaveBeenCalledTimes(1);
   });
 

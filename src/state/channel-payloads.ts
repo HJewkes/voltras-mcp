@@ -1157,6 +1157,22 @@ export function buildIdleTimeoutPayload(
  * the SDK type (matches the `ConnectionState` mirroring below). The SDK's
  * `GuidedLoadPhase` union is `idle | armed | countdown | engaging | active |
  * exited | timeout`.
+ *
+ * VMCP-02.89 — two of these names promise more than they deliver, and the
+ * names are the SDK's, so this is where the caveat lives rather than a rename:
+ *
+ *   * `timeout` is the SDK's OWN poll window closing without an engagement
+ *     report. The device never said anything failed; we stopped listening.
+ *     Nothing here may describe it as a device-reported failure.
+ *   * `active` is derived from the device's own status report. Whether that
+ *     report coincides with the cable mechanically engaging, or merely with
+ *     the device entering the mode, is unverified — the mock cannot answer it
+ *     and no hardware measurement exists. A bench sitting settles it.
+ *
+ * `idle`, `armed`, `exited` and `timeout` are synthesised by the SDK with no
+ * device involvement; `countdown`, `engaging` and `active` are decoded from a
+ * status response. `armed` is reachable BOTH ways, which is why
+ * `guided-load-readback.ts` refuses to treat it as a confirmation.
  */
 export type GuidedLoadPhase =
   | 'idle'
@@ -1172,7 +1188,9 @@ export type GuidedLoadPhase =
  * add of VMCP-02.03: agents branch on `outcome` (`failed` / `engaged`) instead
  * of memorizing the phase enum. `pending` covers the in-progress phases
  * (armed/countdown/engaging); `engaged` = active; `ended` = exited (clean
- * teardown); `failed` = timeout (the silent ceremony-skip / poll-window expiry).
+ * teardown); `failed` = timeout — the SDK's poll window closing with no
+ * engagement reported, which is a silence rather than a device-reported
+ * failure (VMCP-02.89).
  */
 export type GuidedLoadOutcome = 'pending' | 'engaged' | 'ended' | 'failed';
 
@@ -1211,8 +1229,9 @@ function guidedLoadSummary(
       return 'Guided load exited.';
     case 'timeout':
       return (
-        `Guided load FAILED to engage${at} (ceremony skipped or timed out). ` +
-        `Call device.unload and re-trigger.`
+        `Guided load poll window closed${at} without the device reporting ` +
+        `engagement — that window is this server's, not the device's, so the ` +
+        `unit may still be holding the flow. Call device.unload and re-trigger.`
       );
     case 'idle':
       return 'Guided load idle.';

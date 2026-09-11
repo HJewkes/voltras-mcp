@@ -1554,7 +1554,9 @@ describe('buildGuidedLoadStatePayload (VMCP-02.03)', () => {
     expect(parsed.set_context).toEqual({ set_id: 'set-9', session_id: 'sess-9' });
   });
 
-  it('timeout: outcome=failed and the summary tells the agent to unload + retrigger', () => {
+  // VMCP-02.89: `timeout` is this server's poll window closing, not a failure
+  // the device reported. The summary must not claim the device said anything.
+  it('timeout: outcome=failed, and the summary names the window as ours', () => {
     const { meta, content } = buildGuidedLoadStatePayload({
       phase: 'timeout',
       countdownRemainingMs: null,
@@ -1562,7 +1564,8 @@ describe('buildGuidedLoadStatePayload (VMCP-02.03)', () => {
     });
     expect(meta.outcome).toBe('failed');
     const parsed = JSON.parse(content) as { summary: string };
-    expect(parsed.summary).toContain('FAILED');
+    expect(parsed.summary).toContain("this server's, not the device's");
+    expect(parsed.summary).not.toContain('FAILED');
     expect(parsed.summary.toLowerCase()).toContain('device.unload');
   });
 
