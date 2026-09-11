@@ -96,11 +96,11 @@ contradiction is a structured error rather than a success.
 | --------------------- | ----------------------------------------------------------------------------------------- |
 | `verdict`             | `confirmed` only when a device-sourced read matched the request; otherwise `unconfirmed`  |
 | `source`              | `device` when the value came off the unit, `server` when it is this process's bookkeeping |
-| `observed_phase`      | The guided-load phase read after the write                                                 |
+| `observed_phase`      | The guided-load phase read after the write                                                |
 | `observed_load_state` | `device.unload` only — the `load_state` summary read after the write                      |
-| `unconfirmed_reason`  | Present exactly when `verdict` is `unconfirmed`; says what could not be established        |
-| `waited_ms`           | `device.start_guided_load` only — how long the read-back waited                            |
-| `ceremony_skipped`    | `true` when the device reported engagement with no countdown observed first                |
+| `unconfirmed_reason`  | Present exactly when `verdict` is `unconfirmed`; says what could not be established       |
+| `waited_ms`           | `device.start_guided_load` only — how long the read-back waited                           |
+| `ceremony_skipped`    | `true` when the device reported engagement with no countdown observed first               |
 
 How much each can observe differs, and the difference belongs to the SDK, not to a choice
 made here (`src/tools/guided-load-readback.ts`):
@@ -118,6 +118,18 @@ made here (`src/tools/guided-load-readback.ts`):
   reads `unloaded` during ordinary weight reps too, so it cannot tell a released cable
   from a slack one. When the call tore down a live flow and the phase is still inside the
   active set, that is an `UNLOAD_UNCONFIRMED` error.
+
+Four things the mock adapter cannot reach, so no test result speaks to any of them:
+
+1. The **no-op unload** — the mock has no cable and no residual tension.
+2. **Exit while still displayed** — the mock's exit is instantaneous and total.
+3. The **wedged mode** from a physically-selected Damper (VMCP-02.61) — no physical
+   selector exists to wedge.
+4. The **idle-at-base-weight short-circuit** (VMCP-02.20), and engagement generally — the
+   mock answers no guided-load status read, so the phase never leaves `armed` on its own.
+
+So the contradiction paths and the bounds are tested; the device-sourced confirmation path
+is not. VMCP-02.88 and VMCP-02.89 stay open until a bench sitting covers it.
 
 Two phase names promise more than they deliver, and the names are the SDK's (VMCP-02.89).
 `timeout` is the SDK's own poll window closing with no engagement reported — a silence,

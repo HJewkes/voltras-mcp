@@ -29,6 +29,26 @@
 // What all three CAN do is refuse to call an observed contradiction a success.
 // That is what the mismatch errors below are for, and it is the half of
 // VMCP-02.88 that is verifiable without a device.
+//
+// WHAT THE MOCK CANNOT REACH. Every test over this module runs against the
+// mock adapter, and the symptoms VMCP-02.88 / VMCP-02.89 / VMCP-02.20 /
+// VMCP-02.61 describe all came from a real unit. Four of them are out of reach
+// here, and a green suite is not evidence about any of them:
+//
+//   1. The NO-OP UNLOAD. The mock has no cable and no residual tension, so an
+//      unload that the device ignores cannot be staged.
+//   2. EXIT WHILE STILL DISPLAYED. The mock's exit is instantaneous and total;
+//      a unit that keeps showing the flow after the exit write has no analogue.
+//   3. The WEDGED MODE from a physically-selected Damper (VMCP-02.61). There
+//      is no physical selector to wedge.
+//   4. The IDLE-AT-BASE-WEIGHT SHORT-CIRCUIT (VMCP-02.20), and engagement
+//      generally. The mock answers no guided-load status read at all, so the
+//      phase never leaves `armed` on its own and `ceremony_skipped` is only
+//      ever exercised through a constructed phase, never a real one.
+//
+// The consequence for this module: the contradiction paths and the bounds are
+// tested, the DEVICE-sourced confirmation path is not. Those need a bench
+// sitting, and both tickets stay open until one happens.
 
 import { MODE_REVERT_WINDOW_MS } from '../state/mode-revert-guard.js';
 import { MODE_ECHO_POLL_MS } from './device-handler-helpers.js';

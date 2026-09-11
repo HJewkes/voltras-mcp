@@ -1166,8 +1166,9 @@ export function buildIdleTimeoutPayload(
  *     Nothing here may describe it as a device-reported failure.
  *   * `active` is derived from the device's own status report. Whether that
  *     report coincides with the cable mechanically engaging, or merely with
- *     the device entering the mode, is unverified — the mock cannot answer it
- *     and no hardware measurement exists. A bench sitting settles it.
+ *     the device entering the mode, is unverified — one of the four things the
+ *     mock cannot answer (the full list is in `guided-load-readback.ts`) and no
+ *     hardware measurement exists. A bench sitting settles it.
  *
  * `idle`, `armed`, `exited` and `timeout` are synthesised by the SDK with no
  * device involvement; `countdown`, `engaging` and `active` are decoded from a
