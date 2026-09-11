@@ -2003,6 +2003,102 @@ describe('set.get', () => {
   });
 });
 
+describe('set.get — rep_count disagreement (VMCP-02.59)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface ReadSet extends StoredSet {
+    repCountDisagreement?: {
+      counts: Array<{ source: string; count: number; provenance: string }>;
+      deltas: Array<{ between: [string, string]; difference: number }>;
+      verdict: null;
+    };
+  }
+
+  function storedWith(repCount: number, firmwareRepCount?: number): StoredSet {
+    return {
+      id: 'set-RC',
+      sessionId: 'sess-A',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      ...(firmwareRepCount !== undefined ? { firmwareRepCount } : {}),
+      reps: Array.from({ length: repCount }, (_, i) => ({
+        ...makeRep(i + 1),
+        id: `r${i}`,
+        setId: 'set-RC',
+        index: i,
+      })),
+    };
+  }
+
+  async function read(stored: StoredSet): Promise<ReadSet> {
+    h.store.getSet.mockResolvedValueOnce(stored);
+    const r = await h.invoke('set.get', { setId: stored.id });
+    expect(r.isError).toBeUndefined();
+    return parseResult(r) as ReadSet;
+  }
+
+  it('names both stored counts and the gap when the derived array and the device split', async () => {
+    const body = await read(storedWith(13, 14));
+    expect(body.repCountDisagreement?.counts.map((c) => [c.source, c.count])).toEqual([
+      ['analytics_reps', 13],
+      ['device_total', 14],
+    ]);
+    expect(body.repCountDisagreement?.deltas).toEqual([
+      { between: ['analytics_reps', 'device_total'], difference: 1 },
+    ]);
+    expect(body.repCountDisagreement?.verdict).toBeNull();
+  });
+
+  it('reads a row written before this change with every stored count unchanged', async () => {
+    // The pre-existing row is returned verbatim; the report is an addition to
+    // the read, never an edit of what was persisted.
+    const stored = storedWith(13, 14);
+    const before = structuredClone(stored);
+    const body = await read(stored);
+    expect(stored).toEqual(before);
+    expect(body.reps).toHaveLength(13);
+    expect(body.firmwareRepCount).toBe(14);
+    expect(h.store.putSet).not.toHaveBeenCalled();
+  });
+
+  it('returns both counts as stored when the derived array is the LONGER one', async () => {
+    // The reconciliation guard. A future `max()` of the two counts is invisible
+    // while the device count is the larger, so this case reads the other way
+    // round: 14 derived reps against a device count of 13. Both must survive
+    // the read exactly as written.
+    const body = await read(storedWith(14, 13));
+    expect(body.reps).toHaveLength(14);
+    expect(body.firmwareRepCount).toBe(13);
+    expect(body.repCountDisagreement?.counts.map((c) => [c.source, c.count])).toEqual([
+      ['analytics_reps', 14],
+      ['device_total', 13],
+    ]);
+  });
+
+  it('omits the report when the two stored counts agree', async () => {
+    const body = await read(storedWith(12, 12));
+    expect(body).not.toHaveProperty('repCountDisagreement');
+  });
+
+  it('omits the report when the row carries no device count at all', async () => {
+    // Absent is absent: a row with no firmware count is not a row whose device
+    // counted zero reps, and it must not be reported as a 13-rep disagreement.
+    const body = await read(storedWith(13));
+    expect(body).not.toHaveProperty('repCountDisagreement');
+  });
+
+  it('recomputes per read rather than reporting a stale split', async () => {
+    expect((await read(storedWith(13, 14))).repCountDisagreement).toBeDefined();
+    expect((await read(storedWith(14, 14))).repCountDisagreement).toBeUndefined();
+  });
+});
+
 describe('set.start — idle_timeout_ms watchdog', () => {
   let h: Harness;
 

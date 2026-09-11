@@ -64,6 +64,10 @@ import {
   type SetEndedCause,
 } from '../state/channel-payloads.js';
 import { finalizeReps } from '../state/rep-finalize.js';
+import {
+  deriveRepCountDisagreement,
+  type RepCountDisagreement,
+} from '../state/rep-count-disagreement.js';
 import { publishVelocityLossSuppression } from '../state/velocity-loss-gate.js';
 import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
@@ -181,7 +185,11 @@ const SET_UPDATE_DESCRIPTION =
 
 const SET_GET_DESCRIPTION =
   'Fetch one completed, persisted set by id, including its reps. Read-only and unaffected by ' +
-  'live device state — use `set.live_metrics` for an in-progress set instead.';
+  'live device state — use `set.live_metrics` for an in-progress set instead. When the ' +
+  "set's rep counts disagree, a `repCountDisagreement` block names each count, says where it " +
+  'came from, and reports the gaps. It deliberately does NOT say which count is correct: the ' +
+  'device counts reps and this server only enriches them, so report the split rather than ' +
+  'resolving it.';
 
 export function registerSetTools(
   _server: McpServer,
@@ -1292,12 +1300,35 @@ async function resyncOwnerBaseline(state: ServerState, updated: StoredSet): Prom
   }
 }
 
-async function getStoredSet(state: ServerState, setId: string): Promise<StoredSet> {
+/**
+ * The stored row plus the read-time additions `set.get` enriches it with.
+ * Nothing here is persisted, and nothing here rewrites a stored value.
+ */
+type ReadStoredSet = StoredSet & {
+  repCountDisagreement?: RepCountDisagreement;
+};
+
+/**
+ * VMCP-02.59: the two counts a persisted set carries — the derived rep array
+ * and the device's own total — compared at READ time, so a reader can see that
+ * they split without querying two places and doing the subtraction.
+ *
+ * Recomputed on every read rather than stamped at close: a stored verdict
+ * would keep asserting a gap after either count was corrected. The counts the
+ * device only ever reported on a frame (`device_set_summary`, `device_summary`)
+ * are not persisted, so they are absent here and present on `set_ended`; an
+ * absent count is omitted from the report, never filled in with a zero.
+ */
+async function getStoredSet(state: ServerState, setId: string): Promise<ReadStoredSet> {
   const stored = await state.store.getSet(setId);
   if (stored === undefined) {
     throw new ToolError('SET_NOT_FOUND', `No set found with id ${JSON.stringify(setId)}.`);
   }
-  return stored;
+  const repCountDisagreement = deriveRepCountDisagreement({
+    analytics_reps: stored.reps.length,
+    device_total: stored.firmwareRepCount,
+  });
+  return repCountDisagreement === undefined ? stored : { ...stored, repCountDisagreement };
 }
 
 /**

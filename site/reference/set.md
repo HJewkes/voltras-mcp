@@ -53,7 +53,7 @@ The fix for a set that ran under the wrong label: `{ setId, lifter: 'Jordan' }` 
 
 Fetch one completed, persisted set by id, including its reps.
 
-Read-only and unaffected by live device state — use `set.live_metrics` for an in-progress set instead.
+Read-only and unaffected by live device state — use `set.live_metrics` for an in-progress set instead. When the set's rep counts disagree, a `repCountDisagreement` block names each count, says where it came from, and reports the gaps. It deliberately does NOT say which count is correct: the device counts reps and this server only enriches them, so report the split rather than resolving it.
 
 **Parameters**
 
