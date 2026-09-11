@@ -84,6 +84,13 @@ The submit button's own selector ships marked `UNVERIFIED` in source: nobody has
 yet, so the first real run is also the first verification of that one constant
 (`tools/truecoach-submit/src/selectors.js:28-45`).
 
+By default a human runs the submitter by hand. One environment variable changes that:
+`VMCP_TRUECOACH_SUBMIT_ON_END=on` (with the outbox also on) makes every outbox write spawn
+`tools/truecoach-submit --submit --session <id>` itself, detached, once per session —
+turning "a person chooses to post this" into "ending a session posts it" with no further
+action from you. Read both gates above before setting it, since it's the trigger that puts
+the account risk on autopilot (`README.md`).
+
 Pulling a coach's assigned workouts the other direction — TrueCoach into the local plan
 tree — is a different, already-read-only tool: see
 [`truecoach.import_week`](/reference/truecoach).

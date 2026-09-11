@@ -17,8 +17,13 @@ It isn't read-only end to end, though: the plan builder page writes through a sm
 surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/exercises`,
 `PATCH /api/plan/exercises/:id`, and more — implemented as a second thin adapter over the
 same `SessionStore` methods the `plan.*` MCP tools call, not a reimplementation
-(`src/dashboard/README.md`). There's deliberately no delete route, because `SessionStore`
-has no planning delete either. So: the live view is read-only; the plan builder is not.
+(`src/dashboard/README.md`). That surface also includes `DELETE /api/plan/exercises/:id`,
+which unplans one exercise and closes the gap it leaves in the template's order
+(`src/dashboard/server.ts:65`, `SessionStore.deletePlannedExercise`,
+`src/store/sqlite-store.ts:2534`, VW-121) — a plain delete of the planned row, not of any
+session that was actually trained against it: the assignment linking a past session to that
+plan entry falls back to unlinked rather than disappearing. So: the live view is read-only;
+the plan builder is not.
 
 ## Finding its URL
 
@@ -34,11 +39,11 @@ there's nothing to point at (`README.md`, `site/reference/server.md`).
 The SPA hash-routes, since the sidecar serves one static `index.html` with no server-side
 fallback (`src/dashboard/README.md`):
 
-| URL             | Page                                                                        |
-| --------------- | ---------------------------------------------------------------------------- |
-| `/app` or `/app#/` | The live page — the wall display, deliberately chrome-free.               |
-| `/app#/plan`     | The plan builder: browse the exercise catalog, see the workout being planned, edit it by hand. |
-| `/app#/summary`  | The session-completion screen for the most recent session; `#/summary/<sessionId>` pins a specific one. |
+| URL                | Page                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------- |
+| `/app` or `/app#/` | The live page — the wall display, deliberately chrome-free.                                             |
+| `/app#/plan`       | The plan builder: browse the exercise catalog, see the workout being planned, edit it by hand.          |
+| `/app#/summary`    | The session-completion screen for the most recent session; `#/summary/<sessionId>` pins a specific one. |
 
 `/` redirects to `/app`. `?variant=live` / `?variant=live-dual` pins the single or diverging
 live-page stage for testing; without it, the page picks the stage from live state — which
