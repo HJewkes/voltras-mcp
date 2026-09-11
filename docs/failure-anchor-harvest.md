@@ -62,15 +62,51 @@ down-weighted.
 `putFailureAnchor` upserts on `UNIQUE (set_id, filter_version)` (added in the additive v11→v12
 migration alongside `exercise_baselines.last_anchor_at`). Re-evaluating a set under the same filter
 version rewrites its verdict in place; bumping `FAILURE_FILTER_VERSION` adds a row beside the old
-one, so a threshold change is re-scorable against history rather than destructive of it. `setup_id`
-is written NULL — `exercise_setups` has no writer either (VW-119), and `selectAnchors` filters
-`setup_id IS NULL`.
+one, so a threshold change is re-scorable against history rather than destructive of it.
+
+`setup_id` carries the inferred physical setup the set was performed at (VW-204). It is read off
+the stored set row at harvest time rather than off the object in hand, because the clustering
+stamps the row and a caller may be holding a copy made before that ran. A set the clustering never
+stamped leaves it NULL, which reads as **unknown**, not as "some other bench".
 
 Only candidates are written. A `not_candidate` row per closed set would be noise, not history.
 
+## Selection: prefer the same setup, fall back to the pool
+
+Detection decides which sets are anchors; selection decides which anchors answer for a given
+baseline key. `selectSetupAnchors` (`src/store/exercise-baselines.ts`) is the whole rule, and it is
+pure:
+
+| Key | Anchors read | `scope` | `pooledFallback` |
+| --- | --- | --- | --- |
+| No `setupId` | every anchor for the exercise | `pooled` | `false` |
+| `setupId`, at least one anchor carries it | those anchors only | `setup` | `false` |
+| `setupId`, no anchor carries it | every anchor for the exercise | `pooled` | `true` |
+
+Three things this does NOT do, each deliberate:
+
+- **No minimum count.** One anchor from this bench is evidence about this bench. "At least N
+  same-setup anchors" would be a threshold with nothing in this repo behind it, and the fallback
+  rule already covers the case where there are none.
+- **No `setup_id` predicate in SQL, for either kind of key.** The reader used to filter
+  `setup_id IS NULL` unconditionally, which matched everything only because nothing wrote the
+  column. Keeping that once the writer stamps it would drop every stamped anchor out of the pooled
+  baseline that had been counting it — a silent CALIBRATED-to-SHAPE_ONLY demotion across an entire
+  history. The query fetches the whole pool and narrows it in memory instead.
+- **No change for an exercise with no inferred setups.** That is the common case. Every anchor is
+  unstamped, the pooled key reads all of them, and the result is identical to the pre-VW-204
+  behaviour.
+
+The fallback is REPORTED, not silent: `baselines.get` and `baselines.recalc` both return
+`anchorSelection` (`scope`, `pooledFallback`, `anchorCount`, `reason`). An anchor from a different
+bench angle is exactly the comparison the clustering exists to prevent, so a caller has to be able
+to tell which pool answered before it compares two setups.
+
 ## Where it runs
 
-- **Set close.** `recalcBaselineForSet` in `src/tools/set-tools.ts` harvests, then recalculates, in
-  one best-effort envelope, so the derivation sees the new anchor in the same `set.end`.
+- **Set close.** `inferSetupForSet` clusters first so the set row carries its `setup_id`, then
+  `recalcBaselineForSet` in `src/tools/set-tools.ts` harvests and recalculates in one best-effort
+  envelope, so the derivation sees the new anchor — setup-keyed — in the same `set.end`.
 - **Back-fill.** `baselines.recalc { reharvest: true }` re-runs the filter over the key's stored
   working sets and returns the verdict tally, then derives. Idempotent at a fixed filter version.
+  This is what keys historical anchors, which were all written before the column had a writer.

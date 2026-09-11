@@ -133,6 +133,7 @@ function makeStore(): SessionStore & {
   getSetsForSession: ReturnType<typeof vi.fn>;
   harvestFailureAnchor: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
+  getSetsForExercise: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -159,6 +160,10 @@ function makeStore(): SessionStore & {
     getAssignmentsForTemplate: vi.fn(async () => []),
     harvestFailureAnchor: vi.fn(async () => 'not_candidate' as const),
     recalcBaseline: vi.fn(async () => undefined),
+    // VW-204: set close infers the setup before harvesting, so these two are
+    // what the clustering pass touches on the way past.
+    getSetsForExercise: vi.fn(async () => []),
+    listExerciseSetups: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }
@@ -1311,6 +1316,22 @@ describe('set.end', () => {
     expect(harvested.exerciseId).toBe('row');
     expect(h.store.harvestFailureAnchor.mock.invocationCallOrder[0]).toBeLessThan(
       h.store.recalcBaseline.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('infers the setup before harvesting, so the anchor is setup-keyed on the first close (VW-204)', async () => {
+    // The clustering stamps `setup_id` on the set row and the harvest reads it
+    // back. Harvesting first would write an unkeyed anchor that only a manual
+    // reharvest could ever key, so every live anchor would arrive pooled.
+    startSession(h.live);
+    h.live.setSessionExercise('row', 'Cable Row');
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    await h.invoke('set.end', {});
+
+    expect(h.store.getSetsForExercise.mock.invocationCallOrder[0]).toBeLessThan(
+      h.store.harvestFailureAnchor.mock.invocationCallOrder[0],
     );
   });
 

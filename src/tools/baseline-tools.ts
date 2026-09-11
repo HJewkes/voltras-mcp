@@ -22,6 +22,7 @@ import {
   type FeatureGateVerdict,
   type GatedFeature,
 } from '../store/baseline-gate.js';
+import type { AnchorSelectionReport } from '../store/exercise-baselines.js';
 import { inferExerciseSetups, type SetupInferenceSummary } from '../store/exercise-setups.js';
 import {
   LOCAL_USER_ID,
@@ -39,6 +40,14 @@ interface PlaceholderTools {
  * the install pattern used by the other tool registries (see
  * `profile-tools.ts`).
  */
+const ANCHOR_SELECTION_DESCRIPTION =
+  '`anchorSelection` says which failure anchors the confidence state rests on: `scope` ' +
+  '"setup" means anchors from the named setup only, "pooled" means every anchor for the ' +
+  'exercise. `pooledFallback: true` means you asked for a setup, no anchor carries it, and the ' +
+  'exercise-wide anchors answered instead — so the confidence behind this row was measured at ' +
+  'setups that may not be the one you asked about. Say so when you report it; do not compare ' +
+  'two setups whose anchors both came from the pooled fallback.';
+
 const GET_BASELINE_DESCRIPTION =
   'Read the persisted confidence state for one exercise baseline (COLD -> SHAPE_ONLY -> ' +
   'PROVISIONAL -> CALIBRATED -> STALE). This is a diagnostic read over an internal state ' +
@@ -55,7 +64,8 @@ const GET_BASELINE_DESCRIPTION =
   'different things). Hand baseline numbers to the user tier-qualified, or not at all. ' +
   'Pass `setupId` to read the baseline for ONE inferred physical setup (bench height, ' +
   'attachment, stance) rather than the pooled row across all of them; ids come back from ' +
-  '`baselines.recalc { inferSetups: true }` and cannot be invented.';
+  '`baselines.recalc { inferSetups: true }` and cannot be invented. ' +
+  ANCHOR_SELECTION_DESCRIPTION;
 
 const RECALC_BASELINE_DESCRIPTION =
   'Force a baseline recalculation for one (exercise, side) key. Set-close already recalculates ' +
@@ -72,7 +82,8 @@ const RECALC_BASELINE_DESCRIPTION =
   'are neutral ordinals ("setup 1") — it can tell that two groups of sets used different cable ' +
   'geometry, NOT what the difference was, so do not describe a setup as a bench angle or an ' +
   'attachment. Ask the user what a setup is and record their answer with ' +
-  '`exercise.confirm_setup`.';
+  '`exercise.confirm_setup`. ' +
+  ANCHOR_SELECTION_DESCRIPTION;
 
 export function registerBaselineTools(
   _server: McpServer,
@@ -135,17 +146,20 @@ async function getBaseline(
   baseline: StoredExerciseBaseline | null;
   summaryMessage: string;
   gates: Record<GatedFeature, FeatureGateVerdict>;
+  anchorSelection: AnchorSelectionReport;
 }> {
-  const baseline = await state.store.getBaseline({
+  const key = {
     userId: LOCAL_USER_ID,
     exerciseId: input.exerciseId,
     ...(input.setupId !== undefined ? { setupId: input.setupId } : {}),
     ...(input.side !== undefined ? { side: input.side } : {}),
-  });
+  };
+  const baseline = await state.store.getBaseline(key);
   return {
     baseline: baseline ?? null,
     summaryMessage: describeBaselineState(baseline),
     gates: deriveAllFeatureGates(baseline),
+    anchorSelection: await state.store.describeAnchorSelection(key),
   };
 }
 
@@ -160,6 +174,7 @@ async function recalcBaseline(
   input: z.infer<typeof BaselinesRecalcInput>,
 ): Promise<{
   baseline: StoredExerciseBaseline;
+  anchorSelection: AnchorSelectionReport;
   harvest?: FailureHarvestCounts;
   setups?: SetupInferenceSummary;
 }> {
@@ -182,6 +197,7 @@ async function recalcBaseline(
   const baseline = await state.store.recalcBaseline(key);
   return {
     baseline,
+    anchorSelection: await state.store.describeAnchorSelection(key),
     ...(harvest !== undefined ? { harvest } : {}),
     ...(setups !== undefined ? { setups } : {}),
   };

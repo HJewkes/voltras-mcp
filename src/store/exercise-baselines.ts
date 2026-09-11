@@ -122,6 +122,83 @@ export interface AnchorObservation {
   observedAt: string;
   /** Terminal velocity at failure. Absent anchors do not contribute to spread. */
   terminalVelocityMps?: number;
+  /**
+   * The inferred physical setup the anchor's set was performed at (VW-119).
+   * Absent means unknown, NOT "some other setup": every anchor harvested
+   * before the clustering ran carries nothing, and a set with no measurable
+   * travel is never stamped.
+   */
+  setupId?: string;
+}
+
+/** Which pool {@link selectSetupAnchors} drew from. */
+export type AnchorScope = 'pooled' | 'setup';
+
+/** What an anchor selection did, without the anchors themselves. */
+export interface AnchorSelectionReport {
+  scope: AnchorScope;
+  /**
+   * The key named a setup and no anchor carries it, so the exercise's whole
+   * pool was used. Always false for a pooled key — a key that asked for
+   * nothing narrower did not fall back to anything.
+   */
+  pooledFallback: boolean;
+  anchorCount: number;
+  /** One phrase naming why this pool, in the shape the filter's `reason` takes. */
+  reason: string;
+}
+
+/** A selection report plus the anchors it selected. */
+export interface AnchorSelection extends AnchorSelectionReport {
+  anchors: AnchorObservation[];
+}
+
+/**
+ * Prefer anchors from one inferred setup, and fall back to the whole pool when
+ * none carry it (VW-204).
+ *
+ * PREFER, THEN FALL BACK — never "same setup only". A naive filter would leave
+ * a newly-clustered exercise with zero eligible anchors and silently stop
+ * producing a baseline that worked yesterday, which is a demotion nothing
+ * downstream can see: anchor evidence feeds the CALIBRATED gate, and losing it
+ * reads as SHAPE_ONLY rather than as an error.
+ *
+ * NO MINIMUM COUNT, deliberately. "At least N same-setup anchors" would be a
+ * threshold with no source behind it; one anchor from this bench is evidence
+ * about this bench, and the fallback rule already covers the case where there
+ * are none.
+ *
+ * A key naming no setup takes the whole pool and reports no fallback: it asked
+ * for nothing narrower, so it lost nothing. That is the common case — most
+ * exercises have no setups inferred — and it is byte-identical to the
+ * pre-VW-204 behaviour, where every anchor carried a NULL setup.
+ */
+export function selectSetupAnchors(
+  setupId: string | undefined,
+  anchors: AnchorObservation[],
+): AnchorSelection {
+  if (setupId === undefined) {
+    return pooled(anchors, false, 'pooled key: every anchor for the exercise counts');
+  }
+  const sameSetup = anchors.filter((a) => a.setupId === setupId);
+  if (sameSetup.length === 0) {
+    return pooled(anchors, true, 'no anchor carries this setup; pooled anchors used instead');
+  }
+  return {
+    scope: 'setup',
+    pooledFallback: false,
+    anchorCount: sameSetup.length,
+    reason: 'anchors from this setup only',
+    anchors: sameSetup,
+  };
+}
+
+function pooled(
+  anchors: AnchorObservation[],
+  pooledFallback: boolean,
+  reason: string,
+): AnchorSelection {
+  return { scope: 'pooled', pooledFallback, anchorCount: anchors.length, reason, anchors };
 }
 
 /** Everything the derivation needs, already reduced out of SQL rows. */
