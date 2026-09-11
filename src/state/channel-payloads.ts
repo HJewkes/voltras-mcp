@@ -35,6 +35,7 @@ import {
 import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from './live-state.js';
 import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
+import { deriveRepCountDisagreement } from './rep-count-disagreement.js';
 import type { MovementClass } from '../exercises/movement-class.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
@@ -581,6 +582,11 @@ export interface DeviceSetSummaryBlock {
  * and content gains a `device_summary` block. When absent (mid-set
  * disconnect, no graceful close, no summary frame received) the payload
  * omits both.
+ *
+ * Content also gains a `rep_count_disagreement` block whenever two of this
+ * set's rep counts differ (VMCP-02.59). It names each count and its
+ * provenance and reports the gaps; it never says which count is right. A set
+ * whose counts agree carries no such block.
  */
 export function buildSetEndedPayload(
   stored: StoredSet,
@@ -643,6 +649,19 @@ export function buildSetEndedPayload(
     meta.device_schema_version = String(deviceSetSummary.schemaVersion);
   }
 
+  // VMCP-02.59: every count this set produced, named and compared, whenever
+  // two of them disagree. Derived here from the same numbers the payload
+  // already carries, so the report cannot describe a count the reader cannot
+  // also see. `device_total` reads `stored.firmwareRepCount` rather than the
+  // `firmwareReconciledTotal` argument so the channel report and the `set.get`
+  // report are derived from one field, not two copies of it.
+  const repCountDisagreement = deriveRepCountDisagreement({
+    analytics_reps: stored.reps.length,
+    device_total: stored.firmwareRepCount,
+    device_set_summary: deviceSetSummary?.repCount,
+    device_summary: deviceSummary?.repCount,
+  });
+
   const reps = stored.reps.map(serializeRepForPayload);
   const vbt = computeVbtSummary(stored.reps);
   const summary = buildSetEndedSummary(
@@ -682,6 +701,7 @@ export function buildSetEndedPayload(
           },
         }
       : {}),
+    ...(repCountDisagreement !== undefined ? { rep_count_disagreement: repCountDisagreement } : {}),
     ...(deviceSetSummary !== undefined
       ? {
           device_set_summary: {

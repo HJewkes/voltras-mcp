@@ -164,6 +164,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'raw_frame',
   'repCount',
   'run_in_background',
+  'repCountDisagreement',
   'repDelta',
   'rep_boundary',
   'reported_minus_one',

@@ -136,6 +136,66 @@ peaks:
 Both are persisted on the stored set as `firmwarePeakForceLbs` and
 `firmwarePeakPower`, so `set.get` and `session.get` return them too.
 
+`rep_count` here is the raw count off the device's end-of-set summary and is one of
+the counts compared in [`rep_count_disagreement`](#the-rep_count_disagreement-block-on-set_ended)
+below. It is not persisted anywhere, so it appears on `set_ended` and nowhere else.
+
+## The `rep_count_disagreement` block on `set_ended`
+
+One set can produce several rep counts that do not agree. A real bench set read 12
+live, 13 in the derived `reps` array, 14 as the device's own total, and 12 on the
+device's end-of-set summary. `set_ended` carries a `rep_count_disagreement` block
+whenever two of the counts it knows about differ:
+
+```jsonc
+{
+  "rep_count_disagreement": {
+    "counts": [
+      { "source": "analytics_reps", "count": 13, "provenance": "reps this server segmented ..." },
+      { "source": "device_total", "count": 14, "provenance": "the device's own running rep ..." },
+      { "source": "device_set_summary", "count": 12, "provenance": "the count on the device's ..." },
+    ],
+    "deltas": [
+      { "between": ["analytics_reps", "device_total"], "difference": 1 },
+      { "between": ["analytics_reps", "device_set_summary"], "difference": 1 },
+      { "between": ["device_total", "device_set_summary"], "difference": 2 },
+    ],
+    "verdict": null,
+  },
+}
+```
+
+The four sources, and where each number already appears on the payload:
+
+| `source`             | Is                                                                | Also visible as                           |
+| -------------------- | ----------------------------------------------------------------- | ----------------------------------------- |
+| `analytics_reps`     | Reps this server segmented out of the telemetry stream            | `meta.rep_count`, `content.reps.length`   |
+| `device_total`       | The device's own running rep total, verbatim                      | `meta.device_rep_count`                   |
+| `device_set_summary` | The count on the device's end-of-set summary, as it arrived        | `content.device_set_summary.rep_count`    |
+| `device_summary`     | The count on the device's end-of-workout summary, as it arrived    | `content.device_summary.rep_count`        |
+
+Read it as a signal, not an error. The device counts reps and this server only
+enriches them, so a split means something about the derivation or the capture
+differs from what the device saw — that is the finding.
+
+Four rules the block keeps:
+
+- **It never picks a winner.** `verdict` is always `null`. Classifying a gap as small
+  or large needs a tolerance and no source here states one, and a one-rep gap is
+  exactly the interesting case (VMCP-02.23 / VMCP-02.42 are both a one-rep over-count
+  on a cable-engagement rep).
+- **An absent count stays absent.** A source that sent nothing is left out of `counts`
+  entirely rather than entered as `0`. "No count arrived" and "the device counted zero
+  reps" are different claims.
+- **Agreeing pairs are not listed.** `deltas` holds only the pairs that differ, and a
+  set whose counts all agree carries no block at all rather than a noisy zero report.
+- **It is derived, never stored.** Nothing about it is written to the set, so it cannot
+  outlive the counts it describes.
+
+`set.get` returns the same report under `repCountDisagreement`, built from the two
+counts a stored row carries: `analytics_reps` and `device_total`. The two frame counts
+are not persisted, so a stored set can never report them.
+
 ## Isometric hold phases
 
 A hold is timed by the server but performed by a human, and until VW-154 the

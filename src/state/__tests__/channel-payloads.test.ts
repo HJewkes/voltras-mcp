@@ -1235,6 +1235,105 @@ describe('buildSetEndedPayload — device_summary', () => {
   });
 });
 
+describe('buildSetEndedPayload — rep_count_disagreement (VMCP-02.59)', () => {
+  function buildStored(repCount: number, firmwareRepCount?: number): StoredSet {
+    const reps = Array.from({ length: repCount }, (_, i) => makeRep(i + 1, 800, 500));
+    return {
+      id: 'set-rc',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:30.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      ...(firmwareRepCount !== undefined ? { firmwareRepCount } : {}),
+      reps: reps.map((r, i) => ({ ...r, id: `r${i}`, setId: 'set-rc', index: i })),
+    };
+  }
+
+  interface Block {
+    counts: Array<{ source: string; count: number; provenance: string }>;
+    deltas: Array<{ between: [string, string]; difference: number }>;
+    verdict: null;
+  }
+
+  function parseBlock(content: string): Block | undefined {
+    return (JSON.parse(content) as { rep_count_disagreement?: Block }).rep_count_disagreement;
+  }
+
+  it('reports all four counts when the set produced four (the ticket set)', () => {
+    const { content } = buildSetEndedPayload(
+      buildStored(13, 14),
+      'device_signal',
+      { repCount: 12, schemaVersion: 1 },
+      { repCount: 12, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      14,
+    );
+    const block = parseBlock(content);
+    expect(block?.counts.map((c) => [c.source, c.count])).toEqual([
+      ['analytics_reps', 13],
+      ['device_total', 14],
+      ['device_set_summary', 12],
+      ['device_summary', 12],
+    ]);
+    expect(block?.verdict).toBeNull();
+  });
+
+  it('leaves the counts the payload already publishes untouched', () => {
+    // The report describes the other keys; it never rewrites one of them.
+    const { meta, content } = buildSetEndedPayload(
+      buildStored(13, 14),
+      'device_signal',
+      undefined,
+      { repCount: 12, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      14,
+    );
+    expect(meta.rep_count).toBe('13');
+    expect(meta.device_rep_count).toBe('14');
+    const parsed = JSON.parse(content) as {
+      reps: unknown[];
+      device_set_summary: { rep_count: number };
+    };
+    expect(parsed.reps).toHaveLength(13);
+    expect(parsed.device_set_summary.rep_count).toBe(12);
+  });
+
+  it('omits the block entirely when every count agrees', () => {
+    const { content } = buildSetEndedPayload(
+      buildStored(2, 2),
+      'device_signal',
+      undefined,
+      { repCount: 2, repDurationMs: 1000, targetWeightTenths: 200, schemaVersion: 1 },
+      2,
+    );
+    expect(parseBlock(content)).toBeUndefined();
+  });
+
+  it('omits the block when the derived array is the only count there is', () => {
+    expect(parseBlock(buildSetEndedPayload(buildStored(3)).content)).toBeUndefined();
+  });
+
+  it('never enters a count of zero for a source that sent nothing', () => {
+    const { content } = buildSetEndedPayload(buildStored(13, 14));
+    const block = parseBlock(content);
+    expect(block?.counts.map((c) => c.source)).toEqual(['analytics_reps', 'device_total']);
+    expect(block?.deltas).toEqual([{ between: ['analytics_reps', 'device_total'], difference: 1 }]);
+  });
+
+  it('reads device_total off the stored row, not off the reconciled argument', () => {
+    // Same field `set.get` reads, so the two surfaces cannot report different
+    // numbers for the same set.
+    const { content } = buildSetEndedPayload(buildStored(13, 14), 'device_signal', undefined, {
+      repCount: 12,
+      repDurationMs: 5765,
+      targetWeightTenths: 200,
+      schemaVersion: 1,
+    });
+    const block = parseBlock(content);
+    expect(block?.counts.find((c) => c.source === 'device_total')?.count).toBe(14);
+  });
+});
+
 describe('buildSettingCoercedPayload', () => {
   const baseCheck: PendingCoercionCheck = {
     setterName: 'device.set_eccentric',
