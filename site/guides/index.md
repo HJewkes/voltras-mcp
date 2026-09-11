@@ -8,6 +8,11 @@
   across both with `bilateral.cascade`, and read per-slot events.
 - [Isometric assessment](/guides/isometric) — the single-hold primitive versus the two
   blocking protocols, trial validity, and the calibration caveat on the force figures.
+- [Coach reports and the outbox](/guides/coach-report) — reading `report.session_results`,
+  load labels on non-weight modes, the local outbox, and the separate, gated write-back
+  submitter.
+- [The wall dashboard](/guides/dashboard) — the sidecar itself: finding its URL, its three
+  pages, how it stays current, and driving it without hardware.
 
 ## The wall dashboard, stage by stage
 
@@ -17,7 +22,9 @@ something you can watch on a screen instead of only reading back through Claude.
 session (`dashboardAvailable`/`dashboardUrl`) — it has no dedicated MCP resource of its
 own. The captures below are all driven through the real tool pipeline against the mock
 adapter (`VOLTRA_ADAPTER=mock`), never a real device, so the numbers on them are
-reproducible rather than a one-off recording.
+reproducible rather than a one-off recording. This walkthrough is the captures; for the
+sidecar itself — the URL, the three pages, how it stays current, driving it without
+hardware — see [the dashboard guide](/guides/dashboard).
 
 ### Before a Voltra connects
 
