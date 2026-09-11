@@ -988,8 +988,11 @@ export async function finalizeSet(
   if (match !== undefined) {
     await stampPartnerGroup(state, match.b.setId, match.groupId);
   }
-  await recalcBaselineForSet(state, stored);
+  // INFER THE SETUP FIRST (VW-204), so the harvest inside `recalcBaselineForSet`
+  // stamps this set's anchor with the setup it was performed at rather than
+  // leaving it unkeyed until someone runs a reharvest.
   await inferSetupForSet(state, stored);
+  await recalcBaselineForSet(state, stored);
   // Record this close so the NEXT set on this slot can measure its achieved
   // rest. In-memory on purpose: after a restart the previous close time is
   // genuinely unknown, and an absent rest beats one computed across a gap of

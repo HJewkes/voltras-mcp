@@ -12,6 +12,7 @@ import type { BaselineKey } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { FeatureGateVerdict, GatedFeature } from '../../store/baseline-gate.js';
+import type { AnchorSelectionReport } from '../../store/exercise-baselines.js';
 import { LOCAL_USER_ID, type StoredExerciseBaseline } from '../../store/types.js';
 import { registerBaselineTools } from '../baseline-tools.js';
 
@@ -21,6 +22,7 @@ interface GetBaselineBody {
   baseline: StoredExerciseBaseline | null;
   summaryMessage: string;
   gates: Record<GatedFeature, FeatureGateVerdict>;
+  anchorSelection: AnchorSelectionReport;
 }
 
 interface FakeRegisteredTool {
@@ -47,15 +49,24 @@ interface Harness {
   getBaseline: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
   reharvestExercise: ReturnType<typeof vi.fn>;
+  describeAnchorSelection: ReturnType<typeof vi.fn>;
   invoke: (name: string, args: unknown) => Promise<ToolResult>;
 }
+
+const POOLED_SELECTION: AnchorSelectionReport = {
+  scope: 'pooled',
+  pooledFallback: false,
+  anchorCount: 3,
+  reason: 'pooled key: every anchor for the exercise counts',
+};
 
 function setup(row: StoredExerciseBaseline | undefined): Harness {
   const getBaseline = vi.fn(async () => row);
   const recalcBaseline = vi.fn(async () => makeBaseline({ state: 'PROVISIONAL' }));
   const reharvestExercise = vi.fn(async () => ({ failure: 2, abort: 1, notCandidate: 9 }));
+  const describeAnchorSelection = vi.fn(async () => POOLED_SELECTION);
   const state = {
-    store: { getBaseline, recalcBaseline, reharvestExercise },
+    store: { getBaseline, recalcBaseline, reharvestExercise, describeAnchorSelection },
   } as unknown as ServerState;
 
   const placeholders = new Map<string, FakeRegisteredTool>();
@@ -78,6 +89,7 @@ function setup(row: StoredExerciseBaseline | undefined): Harness {
     getBaseline,
     recalcBaseline,
     reharvestExercise,
+    describeAnchorSelection,
     invoke: async (name, args) => {
       const tool = placeholders.get(name);
       if (!tool?.callback) throw new Error(`no callback installed for ${name}`);
@@ -126,6 +138,30 @@ describe('baselines.get', () => {
     }
   });
 
+  it('carries the pooled-fallback report to the wire, so the caller can tell which pool answered', async () => {
+    // VW-204: a setup-keyed row whose anchors came from the whole exercise is
+    // a different claim about the athlete than one anchored at that setup, and
+    // a caller that cannot see the difference will compare across setups.
+    const h = setup(makeBaseline({ setupId: 'setup-1' }));
+    h.describeAnchorSelection.mockResolvedValue({
+      scope: 'pooled',
+      pooledFallback: true,
+      anchorCount: 4,
+      reason: 'no anchor carries this setup; pooled anchors used instead',
+    });
+
+    const body = parse<GetBaselineBody>(
+      await h.invoke('baselines.get', { exerciseId: 'bench-press', setupId: 'setup-1' }),
+    );
+
+    expect(body.anchorSelection).toEqual({
+      scope: 'pooled',
+      pooledFallback: true,
+      anchorCount: 4,
+      reason: 'no anchor carries this setup; pooled anchors used instead',
+    });
+  });
+
   it('passes an explicit side through to the store key', async () => {
     // Arrange
     const h = setup(makeBaseline({ side: 'left' }));
@@ -152,7 +188,7 @@ describe('baselines.get', () => {
 });
 
 describe('baselines.recalc', () => {
-  it('returns the freshly written row alone — no gates, no summary', async () => {
+  it('returns the freshly written row and its anchor pool — no gates, no summary', async () => {
     // Arrange
     const h = setup(undefined);
 
@@ -161,7 +197,7 @@ describe('baselines.recalc', () => {
 
     // Assert
     const body = parse<Record<string, unknown>>(r);
-    expect(Object.keys(body)).toEqual(['baseline']);
+    expect(Object.keys(body)).toEqual(['baseline', 'anchorSelection']);
     expect((body.baseline as StoredExerciseBaseline).state).toBe('PROVISIONAL');
     expect(h.recalcBaseline).toHaveBeenCalledOnce();
     expect(h.reharvestExercise).not.toHaveBeenCalled();
