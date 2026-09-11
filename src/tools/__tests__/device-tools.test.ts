@@ -179,7 +179,7 @@ interface FakeManager {
 
 function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
   const guidedLoadListeners: Array<(gls: { phase: string }) => void> = [];
-  return {
+  const client: FakeClient = {
     isConnected: false,
     connectionState: 'disconnected',
     connectedDeviceId: null,
@@ -209,8 +209,16 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     setIsokineticEccSpeedLimit: vi.fn(async () => undefined),
     setIsokineticEccConstWeight: vi.fn(async () => undefined),
     setIsokineticEccOverloadWeight: vi.fn(async () => undefined),
-    startGuidedLoad: vi.fn(async () => undefined),
-    exitGuidedLoad: vi.fn(async () => undefined),
+    // Both mirror the SDK's own phase bookkeeping, which the VMCP-02.88
+    // read-back reads: the trigger drives the flow off `idle`, and a device
+    // that answers its status poll reports `countdown`. A test that needs a
+    // silent device, or a device that never armed, overrides these.
+    startGuidedLoad: vi.fn(async () => {
+      client.guidedLoadState.phase = 'countdown';
+    }),
+    exitGuidedLoad: vi.fn(async () => {
+      client.guidedLoadState.phase = 'exited';
+    }),
     guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
     guidedLoadListeners,
     onGuidedLoadState: vi.fn((cb: (gls: { phase: string }) => void) => {
@@ -235,6 +243,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     onFrame: vi.fn(() => undefined),
     ...overrides,
   };
+  return client;
 }
 
 function makeFakeManager(): FakeManager {
@@ -1050,12 +1059,25 @@ describe('registerDeviceTools', () => {
   });
 
   describe('device.unload (VMCP-02.06)', () => {
-    it('forwards to client.unloadDevice and returns ok:true', async () => {
+    it('forwards to client.unloadDevice and returns ok with a read-back', async () => {
       const reg = placeholders.get('device.unload')!;
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true });
+      expect(payload.ok).toBe(true);
+      expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
       expect(primaryClient(state).unloadDevice).toHaveBeenCalledTimes(1);
+    });
+
+    // VMCP-02.88 mismatch path: the teardown was asked to end a live flow and
+    // the flow is still running afterwards. Reporting ok here is the bug.
+    it('fails UNLOAD_UNCONFIRMED when the flow it tore down is still running', async () => {
+      const client = primaryClient(state);
+      client.guidedLoadState.phase = 'active';
+      client.exitGuidedLoad.mockImplementationOnce(async () => undefined);
+      const { isError, payload } = await invoke(placeholders.get('device.unload')!, {});
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('UNLOAD_UNCONFIRMED');
+      expect(client.unloadDevice).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1847,14 +1869,54 @@ describe('registerDeviceTools', () => {
   });
 
   describe('device.start_guided_load', () => {
-    it('forwards targetWeightLbs to client.startGuidedLoad and returns ok:true', async () => {
+    it('forwards targetWeightLbs to client.startGuidedLoad and returns ok with a read-back', async () => {
       const reg = placeholders.get('device.start_guided_load')!;
       const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true });
+      expect(payload.ok).toBe(true);
+      expect(payload.read_back).toMatchObject({
+        verdict: 'confirmed',
+        source: 'device',
+        observed_phase: 'countdown',
+      });
       expect(primaryClient(state).startGuidedLoad).toHaveBeenCalledWith({
         targetWeightLbs: 50,
       });
+    });
+
+    // VMCP-02.88 mismatch path: the SDK drives the phase off `idle` the moment
+    // the trigger lands, so a phase outside the active set afterwards means the
+    // flow never started. That is not an `ok`.
+    it('fails GUIDED_LOAD_NOT_ARMED when the trigger left the phase at idle', async () => {
+      const client = primaryClient(state);
+      client.startGuidedLoad.mockImplementationOnce(async () => undefined);
+      const reg = placeholders.get('device.start_guided_load')!;
+      const { isError, payload } = await invoke(reg, { targetWeightLbs: 50 });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('GUIDED_LOAD_NOT_ARMED');
+      expect(payload.message).toContain('50 lb');
+    });
+
+    it('reports the honest unknown when the device never answers the poll', async () => {
+      const client = primaryClient(state);
+      client.startGuidedLoad.mockImplementationOnce(async () => {
+        client.guidedLoadState.phase = 'armed';
+      });
+      const reg = placeholders.get('device.start_guided_load')!;
+      vi.useFakeTimers();
+      try {
+        const call = invoke(reg, { targetWeightLbs: 50 });
+        await vi.advanceTimersByTimeAsync(MODE_REVERT_WINDOW_MS);
+        const { isError, payload } = await call;
+        expect(isError).toBeUndefined();
+        expect(payload.read_back).toMatchObject({
+          verdict: 'unconfirmed',
+          source: 'server',
+          observed_phase: 'armed',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     // VMCP-02.06 — auto-unload precedes the direct-load trigger by default.
@@ -1871,6 +1933,7 @@ describe('registerDeviceTools', () => {
       });
       client.startGuidedLoad.mockImplementationOnce(async () => {
         callOrder.push('startGuidedLoad');
+        client.guidedLoadState.phase = 'countdown';
       });
       const { isError } = await invoke(reg, { targetWeightLbs: 50 });
       expect(isError).toBeUndefined();
@@ -1898,6 +1961,7 @@ describe('registerDeviceTools', () => {
       });
       client.startGuidedLoad.mockImplementationOnce(async () => {
         callOrder.push('startGuidedLoad');
+        client.guidedLoadState.phase = 'countdown';
       });
       const reg = placeholders.get('device.start_guided_load')!;
       const { isError } = await invoke(reg, { targetWeightLbs: 20 });
@@ -1945,6 +2009,7 @@ describe('registerDeviceTools', () => {
       });
       client.startGuidedLoad.mockImplementationOnce(async () => {
         callOrder.push('startGuidedLoad');
+        client.guidedLoadState.phase = 'countdown';
       });
       const reg = placeholders.get('device.start_guided_load')!;
       const { isError } = await invoke(reg, { targetWeightLbs: 20 });
@@ -2018,6 +2083,7 @@ describe('registerDeviceTools', () => {
         });
         client.startGuidedLoad.mockImplementationOnce(async () => {
           callOrder.push('startGuidedLoad');
+          client.guidedLoadState.phase = 'countdown';
         });
         const reg = placeholders.get('device.start_guided_load')!;
         const { isError } = await invoke(reg, { targetWeightLbs: 50, autoSwitchMode: true });
@@ -2303,7 +2369,13 @@ describe('registerDeviceTools', () => {
         });
         client.startGuidedLoad.mockImplementation(async () => {
           writes.push('startGuidedLoad');
+          // `armed` is the SDK's own synchronous transition; `countdown` is
+          // the device answering its first status read. The second emit is
+          // what the VMCP-02.88 read-back can actually confirm — without it
+          // these tests would sit in the read-back window instead of
+          // exercising the fence.
           emit('armed');
+          emit('countdown');
           poll = setInterval(() => writes.push('poll'), POLL_MS);
         });
         client.exitGuidedLoad.mockImplementation(async () => {
@@ -2339,6 +2411,30 @@ describe('registerDeviceTools', () => {
         // The exit IS the stop, and it is the last thing written.
         expect(writes.slice(atSteal)).toEqual(['exitGuidedLoad']);
         expect(primaryClient(state).exitGuidedLoad).toHaveBeenCalledTimes(1);
+      });
+
+      // VMCP-02.88: the read-back holds the handler open for up to the
+      // mode-echo window, which is a new place a steal can land. It must come
+      // back LEASE_LOST, never a guided-load verdict for a device someone else
+      // now owns.
+      it('a steal during the read-back fails LEASE_LOST, not a verdict', async () => {
+        const client = primaryClient(state);
+        // A silent device: armed and nothing more, so the read-back waits.
+        client.startGuidedLoad.mockImplementation(async () => {
+          writes.push('startGuidedLoad');
+          client.guidedLoadState.phase = 'armed';
+        });
+        const call = invoke(placeholders.get('device.start_guided_load')!, {
+          targetWeightLbs: 50,
+        });
+        await vi.advanceTimersByTimeAsync(MODE_ECHO_POLL_MS);
+        state.lease.steal();
+        await vi.advanceTimersByTimeAsync(MODE_REVERT_WINDOW_MS);
+
+        const { isError, payload } = await call;
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('LEASE_LOST');
+        expect(payload.read_back).toBeUndefined();
       });
 
       it('publishes lease_lost for the started flow it had to abandon', async () => {

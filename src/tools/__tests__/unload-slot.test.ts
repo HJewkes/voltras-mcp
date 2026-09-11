@@ -209,14 +209,19 @@ describe('device.unload tool — behavior preserved through the extraction', () 
     registerDeviceTools({ tool: vi.fn() } as never, fixture.state as never, placeholders as never);
   });
 
-  it('still returns {ok:true} and drives the extracted unload', async () => {
+  it('still returns ok and drives the extracted unload', async () => {
     const reg = placeholders.get('device.unload');
     const result = (await reg!.callback({})) as {
       isError?: boolean;
       content: Array<{ text: string }>;
     };
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0].text)).toEqual({ ok: true });
+    const payload = JSON.parse(result.content[0].text) as {
+      ok: boolean;
+      read_back: { verdict: string };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.read_back.verdict).toBe('unconfirmed');
     expect(fixture.client.unloadDevice).toHaveBeenCalledTimes(1);
   });
 });
