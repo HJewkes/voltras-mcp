@@ -27,6 +27,7 @@
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
 import {
+  type LiveCoachLineSignal,
   type LiveIsometricResultSignal,
   type LiveIsometricSignal,
   type LivePhase,
@@ -128,6 +129,9 @@ function createSlotState(): SlotState {
  * It takes no slot: a bilateral result spans two slots and names each one inside its own
  * payload, so there is nothing for a consumer to demux.
  *
+ * `onCoachLine` (VW-289) receives each spoken coaching line the same discrete way, and
+ * takes no slot either — a spoken line addresses the person, not a device.
+ *
  * `onModel`'s second argument is the originating slot ({@link PRIMARY_SLOT} for a
  * single-Voltra stream). Slot-blind consumers may ignore it and behave exactly as before.
  */
@@ -136,6 +140,7 @@ export function createLiveStreamController(
   onSnapshot?: (snapshot: Snapshot) => void,
   onIsometric?: (signal: LiveIsometricSignal, slot: string) => void,
   onIsometricResult?: (signal: LiveIsometricResultSignal) => void,
+  onCoachLine?: (signal: LiveCoachLineSignal) => void,
 ): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
   // poll-only silently rather than throwing.
@@ -299,6 +304,12 @@ export function createLiveStreamController(
     onIsometricResult?.(data);
   };
 
+  // Same discrete forward again (VW-289). Deliberately does NOT touch liveness: a spoken
+  // line proves the trainer is talking, not that a Voltra is still streaming frames.
+  const onCoachLineEvent = (e: MessageEvent<string>): void => {
+    onCoachLine?.(JSON.parse(e.data) as LiveCoachLineSignal);
+  };
+
   source.addEventListener('phase', onPhase);
   source.addEventListener('phaseflip', onFlip);
   source.addEventListener('rep', onRep);
@@ -307,6 +318,7 @@ export function createLiveStreamController(
   source.addEventListener('snapshot', onSnapshotEvent);
   source.addEventListener('isometric', onIsometricEvent);
   source.addEventListener('isometric_result', onIsometricResultEvent);
+  source.addEventListener('coach_line', onCoachLineEvent);
   // EventSource auto-reconnects honoring the server's `retry:` hint; we just
   // let the staleness clock flip `connected` to false in the meantime.
   source.onerror = (): void => commitAll(true);
@@ -332,6 +344,7 @@ export function createLiveStreamController(
     source.removeEventListener('snapshot', onSnapshotEvent);
     source.removeEventListener('isometric', onIsometricEvent);
     source.removeEventListener('isometric_result', onIsometricResultEvent);
+    source.removeEventListener('coach_line', onCoachLineEvent);
     source.close();
   };
 }

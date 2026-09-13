@@ -69,6 +69,8 @@ which is worse than an absent one:
   slot stamped on the envelope would misattribute the other. Each side names its own slot
   inside the payload's `sides` array instead. The single-sided `isometric.measure_max`
   form publishes the same way, so the event has one shape rather than two.
+- `coach_line` — a spoken line is addressed to the person, not to a device. Even a cue
+  triggered by one slot's set is heard by the whole room.
 
 Two more events carry slot information, but not under the `slot` key, so a consumer
 filtering on `slot` silently drops them even though each one knows exactly which
@@ -104,6 +106,7 @@ filters on.
 | `isometric_phase`                | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                                                                                                    | —                         |
 | `isometric_result`               | An isometric assessment finished computing its answer. See [the isometric result](#the-isometric-result).                                                                                       | —                         |
 | `lease_lost`                     | A multi-step device write stopped partway because another client took the lease. See [below](#lease_lost).                                                                                      | —                         |
+| `coach_line`                     | A coaching line was spoken aloud, by `system.speak` or by a deterministic cue. See [the coach line](#the-coach-line).                                                                           | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
 exhaustive. The authoritative list is the set of publish sites under `src/state/`.
@@ -301,6 +304,37 @@ frame it however it frames things.
 
 `peakForceLbs` is the mean of that side's best two valid trials, in pounds, or `null`
 under two valid trials. Forces and percentages are rounded to one decimal place.
+
+## The coach line
+
+A spoken line is heard once, from across the room, over whatever else is playing. Nothing
+recorded that it happened, so a cue the lifter missed was simply gone. `coach_line`
+(VW-289) publishes each line as it starts playing, and the wall dashboard captions the
+latest one on the rest stage for a fixed dwell.
+
+```jsonc
+{
+  "summary": "spoken (speak): two reps to go",
+  "coach_line": {
+    "text": "two reps to go", // exactly what was said
+    "source": "speak", // `speak`, or the cue category that fired
+    "occurredAt": 1757740000000, // the caption's dwell clock
+  },
+}
+```
+
+`meta` carries `event_type: coach_line` and `line_source` (the same value as `source`),
+plus the usual `at`. It carries no `slot` — see the [slot-exception list](#events) above.
+
+`system.speak` and the cue emitter both reach this through the one internal `speak()` they
+share, so one utterance is one event however it was triggered. `source` distinguishes
+them: `speak` means the model chose to say it, and any other value is the cue category
+that fired (`set_intro`, `target_hit`, `slowdown`, `set_complete`). Cues are off by
+default (`VMCP_CUES`), so `speak` is the common case.
+
+Nothing is published for a line that never played: off macOS `system.speak` fails with
+`TTS_NOT_SUPPORTED` before this point, and a missing `say` binary fails the same way.
+Empty text is also dropped, since it makes no sound.
 
 ## The voice fast-path
 

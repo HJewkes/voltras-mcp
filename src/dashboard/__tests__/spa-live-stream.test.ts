@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLiveStreamController, type LiveModel } from '../spa/live-stream.js';
 import type {
+  LiveCoachLineSignal,
   LiveIsometricResultSignal,
   LiveIsometricSignal,
   LivePhaseSignal,
@@ -214,6 +215,36 @@ describe('createLiveStreamController — isometric result echo (VW-264)', () => 
     const dispose = createLiveStreamController(() => {});
     const es = MockEventSource.instances.at(-1)!;
     expect(() => es.emit('isometric_result', resultSignal)).not.toThrow();
+    dispose();
+  });
+});
+
+describe('createLiveStreamController — coach line echo (VW-289)', () => {
+  const coachLine: LiveCoachLineSignal = {
+    text: 'two reps to go',
+    source: 'speak',
+    occurredAt: 1_700_000_000_000,
+  };
+
+  it('forwards the coach_line echo verbatim', () => {
+    const lines: LiveCoachLineSignal[] = [];
+    const dispose = createLiveStreamController(
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      (line) => lines.push(line),
+    );
+    const es = MockEventSource.instances.at(-1)!;
+    es.emit('coach_line', coachLine);
+    expect(lines).toEqual([coachLine]);
+    dispose();
+  });
+
+  it('never calls onCoachLine when the controller is started without one', () => {
+    const dispose = createLiveStreamController(() => {});
+    const es = MockEventSource.instances.at(-1)!;
+    expect(() => es.emit('coach_line', coachLine)).not.toThrow();
     dispose();
   });
 });

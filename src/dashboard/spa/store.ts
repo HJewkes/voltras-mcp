@@ -49,7 +49,11 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
-import type { LiveIsometricResultSignal, LiveIsometricSignal } from '../../state/live-signal';
+import type {
+  LiveCoachLineSignal,
+  LiveIsometricResultSignal,
+  LiveIsometricSignal,
+} from '../../state/live-signal';
 import { type MassUnit } from './live-page/mass';
 import { parseRoute, type Route } from './routing';
 import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
@@ -185,6 +189,15 @@ interface IsometricSlice {
   isometricResult: LiveIsometricResultSignal | null;
 }
 
+/**
+ * The last coaching line spoken aloud (VW-289), or null before any. Retained after its
+ * caption stops showing — the dwell is the model's decision, not the store's, exactly as
+ * for {@link IsometricSlice.isometricResult}.
+ */
+interface CoachLineSlice {
+  coachLine: LiveCoachLineSignal | null;
+}
+
 /** @see IsometricSlice.isometric */
 function deriveIsometric(bySlot: Record<string, LiveIsometricSignal>): LiveIsometricSignal | null {
   return bySlot[PRIMARY_SLOT] ?? Object.values(bySlot)[0] ?? null;
@@ -212,6 +225,8 @@ interface DashboardActions {
   setIsometric(signal: LiveIsometricSignal | null, slot?: string): void;
   /** Apply the latest finished isometric assessment (VW-264). @see IsometricSlice.isometricResult */
   setIsometricResult(result: LiveIsometricResultSignal | null): void;
+  /** Apply the latest spoken coaching line (VW-289). @see CoachLineSlice */
+  setCoachLine(line: LiveCoachLineSignal | null): void;
   /** Merge a batch of planner results (best-effort; partial is fine). */
   applyPlanner(patch: PlannerPatch): void;
   /** Choose the display unit (VW-63) and persist it to `localStorage`. */
@@ -226,6 +241,7 @@ export type DashboardState = SnapshotSlice &
   HistoricalSlice &
   LiveSlice &
   IsometricSlice &
+  CoachLineSlice &
   PlannerSlice &
   DisplayUnitSlice &
   UiSlice &
@@ -261,6 +277,7 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   isometricBySlot: {},
   isometric: null,
   isometricResult: null,
+  coachLine: null,
   displayUnit: readStoredDisplayUnit(),
   route: readInitialRoute(),
 
@@ -329,6 +346,8 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
     }),
 
   setIsometricResult: (result) => set({ isometricResult: result }),
+
+  setCoachLine: (line) => set({ coachLine: line }),
 
   setDisplayUnit: (unit) =>
     set(() => {

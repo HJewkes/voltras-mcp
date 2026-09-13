@@ -22,6 +22,7 @@
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { McpChannelPublisher, noopChannelPublisher } from './state/channel-publisher.js';
+import { publishCoachLine } from './state/event-bridge.js';
 import { errorResult, type ToolResult } from './tools/helpers.js';
 import { CORE_TOOL_NAMES, MOCK_TOOL_NAMES } from './tool-registry.js';
 import { isDeviceEngaged, type ServerState } from './state/server-state.js';
@@ -189,7 +190,11 @@ function registerRealTools(
   registerTimerTools(server, state, placeholders);
   registerServerTools(server, state, placeholders);
   registerDebugTools(server, state, placeholders);
-  registerSystemTools(server, placeholders, undefined, state.voice);
+  // The coach-line sink reads `state.channels` at call time (VW-289): tools are
+  // registered before `wireProcessState` finishes teeing the publisher.
+  registerSystemTools(server, placeholders, undefined, state.voice, (line) =>
+    publishCoachLine(state, line),
+  );
   registerVoiceTools(server, state, placeholders, makeVoiceSafety(state), makeVoiceWeight(state));
   registerCueTools(server, state, placeholders);
   registerSlotTools(server, state, placeholders);

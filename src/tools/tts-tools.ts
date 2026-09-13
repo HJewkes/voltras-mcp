@@ -60,11 +60,23 @@ export interface VoiceListenerRef {
   readonly listener: MutableVoiceListener | null;
 }
 
+/**
+ * Where a spoken line goes so the wall can caption it (VW-289). Called once per
+ * utterance that actually started playing — never for a rejected or unspawnable
+ * one. Wired to `publishCoachLine`; absent in tests and off-darwin.
+ */
+export type CoachLineSink = (line: { text: string; source: string; occurredAt: number }) => void;
+
+/** The default `source` on a coach line: a `system.speak` call, not a cue. */
+export const SPEAK_LINE_SOURCE = 'speak';
+
 export interface SpeakDeps {
   readonly platform: NodeJS.Platform;
   readonly spawn: SpawnFn;
   /** Optional — resolved at call time so late-armed listeners are seen. */
   readonly voiceListenerRef?: VoiceListenerRef | null;
+  /** Optional — see {@link CoachLineSink}. Speech works unchanged without one. */
+  readonly coachLine?: CoachLineSink | null;
 }
 
 const DEFAULT_DEPS: SpeakDeps = {
@@ -141,18 +153,25 @@ const TOOL_DESCRIPTION = [
  * Pass `voiceListenerRef` so `system.speak` can mute/unmute around TTS
  * playback — the ref is read at call time so listeners armed after registration
  * are included. When absent or null, speak still works; muting is a no-op.
+ *
+ * Pass `coachLine` so each spoken line reaches the wall caption (VW-289).
  */
 export function registerSystemTools(
   _server: McpServer,
   placeholders: PlaceholderTools,
   deps: SpeakDeps = DEFAULT_DEPS,
   voiceListenerRef?: VoiceListenerRef | null,
+  coachLine?: CoachLineSink | null,
 ): void {
   const tool = placeholders.get('system.speak');
   if (tool === undefined) {
     throw new Error('tool placeholder not registered: system.speak');
   }
-  const effectiveDeps: SpeakDeps = voiceListenerRef != null ? { ...deps, voiceListenerRef } : deps;
+  const effectiveDeps: SpeakDeps = {
+    ...deps,
+    ...(voiceListenerRef != null ? { voiceListenerRef } : {}),
+    ...(coachLine != null ? { coachLine } : {}),
+  };
   tool.update({
     description: TOOL_DESCRIPTION,
     paramsSchema: SystemSpeakInput.shape,
@@ -186,7 +205,18 @@ function buildSayArgs(input: SystemSpeakInputType): string[] {
   return args;
 }
 
-export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promise<ToolResult> {
+/**
+ * Speak `input.text` aloud. `source` names what asked for it — a cue category
+ * for the emitter, {@link SPEAK_LINE_SOURCE} for a `system.speak` call — and
+ * rides the `coach_line` push event so the wall caption can say where the line
+ * came from. Both callers land here, which is why the event is emitted at this
+ * one point rather than at either of them.
+ */
+export async function speak(
+  input: SystemSpeakInputType,
+  deps: SpeakDeps,
+  source: string = SPEAK_LINE_SOURCE,
+): Promise<ToolResult> {
   if (input.interrupt) interruptInFlight();
 
   const voiceListener = deps.voiceListenerRef?.listener ?? null;
@@ -200,6 +230,7 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
       message: '`say` binary not found on PATH; macOS TTS is unavailable.',
     });
   }
+  emitCoachLine(deps, input.text, source);
   inFlight = child;
   child.once('exit', () => {
     if (inFlight === child) inFlight = null;
@@ -227,6 +258,20 @@ export async function speak(input: SystemSpeakInputType, deps: SpeakDeps): Promi
   child.once('error', unmuteOnce);
 
   return textResult({ ok: true });
+}
+
+/**
+ * Announce a line that is now playing. Blank text is dropped — `say` with an
+ * empty string makes no sound, so captioning it would put an empty box on the
+ * wall. A throwing sink is swallowed: a caption must never break the cue.
+ */
+function emitCoachLine(deps: SpeakDeps, text: string, source: string): void {
+  if (deps.coachLine == null || text.trim() === '') return;
+  try {
+    deps.coachLine({ text, source, occurredAt: Date.now() });
+  } catch {
+    // Best-effort, exactly like the cue tee's own swallow.
+  }
 }
 
 function interruptInFlight(): void {
