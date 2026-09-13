@@ -836,6 +836,57 @@ describe('mapStoreToFatigueModel (dual Voltra)', () => {
     });
   });
 
+  it('withholds the imbalance when the two slots are anchored differently (VW-272)', () => {
+    // Same commanded load, 0.30 m of cable travel on one side against 0.45 m on
+    // the other: a different anchor, so a different resistance moment arm.
+    const left = buildReps([
+      { concVel: 500, rom: 300 },
+      { concVel: 500, rom: 300 },
+    ]);
+    const right = buildReps([
+      { concVel: 600, rom: 450 },
+      { concVel: 600, rom: 450 },
+    ]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', left), limb('right', right)]) }),
+    )!;
+
+    expect(model.asymmetrySetup!.comparability).toBe('setup_confounded');
+    // The 16.7% the velocities alone would have produced is refused, WITH a reason.
+    expect(model.asymmetry).toBeNull();
+    expect(model.asymmetrySetup!.reason).toContain('different joint torque');
+    expect(model.asymmetrySetup!.left.medianRomM).toBeCloseTo(0.3, 3);
+    expect(model.asymmetrySetup!.right.medianRomM).toBeCloseTo(0.45, 3);
+  });
+
+  it('still states the imbalance when both slots travel the same (VW-272)', () => {
+    const left = buildReps([
+      { concVel: 500, rom: 400 },
+      { concVel: 500, rom: 400 },
+    ]);
+    const right = buildReps([
+      { concVel: 600, rom: 420 },
+      { concVel: 600, rom: 420 },
+    ]);
+    const model = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('left', left), limb('right', right)]) }),
+    )!;
+
+    expect(model.asymmetrySetup!.comparability).toBe('comparable');
+    expect(model.asymmetry!.strongerSide).toBe('right');
+  });
+
+  it('has no setup verdict at all when there is no left/right pair to gate (VW-272)', () => {
+    const reps = () => buildReps([{ concVel: 500, rom: 400 }]);
+    const single = mapStoreToFatigueModel(sources({ snapshot: dual([limb('left', reps())]) }))!;
+    const unsided = mapStoreToFatigueModel(
+      sources({ snapshot: dual([limb('primary', reps()), limb('secondary', reps())]) }),
+    )!;
+
+    expect(single.asymmetrySetup).toBeNull();
+    expect(unsided.asymmetrySetup).toBeNull();
+  });
+
   it('reports a 0% imbalance for two matched limbs', () => {
     const reps = () =>
       buildReps([

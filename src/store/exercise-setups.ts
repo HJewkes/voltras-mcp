@@ -29,6 +29,7 @@
 
 import { getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 
+import { SETUP_GEOMETRY_RATIO } from '../analytics/setup-comparability.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { normalisePositionsToMetres, type PositionScaledSet } from './position-units.js';
 import type { ExerciseSetupStore, StoredExerciseSetup, StoredSet, StoredSide } from './types.js';
@@ -57,13 +58,13 @@ export const SETUP_CLUSTER_VERSION = 'setup@1.0.0';
  * The VALUE is lower than that rule's 1.8 because it answers a different
  * question. 1.8 separates a positioning pull from real work inside ONE set,
  * where the two differ by roughly double. Here the question is whether two real
- * working sets happened at the same bench, and the protocol's own figure for
- * "the geometry changed" is a sustained 10-15 % move in median concentric ROM
- * (vbt-rir-research-and-protocol.md §4.5, quoted in `exercise-baselines.ts`'s
- * `staleAfterDays` note). 1.15 is the top of that band: below it, two sets are
- * the same setup performed with ordinary rep-to-rep variation.
+ * working sets happened at the same bench.
+ *
+ * It lives in `analytics/setup-comparability.ts` (VW-272), which asks the same
+ * geometry question BETWEEN two limbs rather than between two sets, and cites
+ * where the band comes from. One number, two callers.
  */
-export const SETUP_SPLIT_RATIO = 1.15;
+export const SETUP_SPLIT_RATIO = SETUP_GEOMETRY_RATIO;
 
 /** One set reduced to the single number the clustering reads. */
 export interface SetRomObservation {

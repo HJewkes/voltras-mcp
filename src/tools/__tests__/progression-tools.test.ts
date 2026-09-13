@@ -88,13 +88,13 @@ function makeFakePlaceholders(names: string[]): {
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
-function makeRep(repNumber: number): Rep {
+function makeRep(repNumber: number, romM = 0): Rep {
   const phase = {
     samples: [],
     startTime: 0,
     endTime: 0,
     startPosition: 0,
-    endPosition: 0,
+    endPosition: romM,
     _totalVelocity: 0,
     _totalForce: 0,
     _totalLoad: 0,
@@ -121,10 +121,16 @@ function makeSet(
   sessionId: string,
   weightLbs: number,
   repCount: number,
-  opts: { exerciseId?: string; startedAt?: string; side?: 'left' | 'right' } = {},
+  opts: {
+    exerciseId?: string;
+    startedAt?: string;
+    side?: 'left' | 'right';
+    /** Concentric cable travel per rep, metres — the VW-272 setup signature's input. */
+    romM?: number;
+  } = {},
 ): StoredSet {
   const reps = Array.from({ length: repCount }, (_, i) =>
-    Object.assign(makeRep(i + 1), { id: `${id}-r${i + 1}`, setId: id, index: i }),
+    Object.assign(makeRep(i + 1, opts.romM), { id: `${id}-r${i + 1}`, setId: id, index: i }),
   );
   // `'exerciseId' in opts` (not `opts.exerciseId ?? default`) so a caller can
   // explicitly pass `{ exerciseId: undefined }` to build an UNATTRIBUTED set
@@ -567,6 +573,66 @@ describe('progression.get_for_exercise — side (VMCP-04.09)', () => {
     expect(body.sessions[1].setCount).toBe(2);
     expect(body.sideSplit.left).toEqual({ setCount: 2, lastSessionTopWeightLbs: 35 });
     expect(body.sideSplit.right).toEqual({ setCount: 2, lastSessionTopWeightLbs: 50 });
+  });
+
+  it('gates the split on cable geometry: mismatched signatures are setup_confounded (VW-272)', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left', romM: 0.3 }),
+        makeSet('r1', 's1', 45, 5, { side: 'right', romM: 0.45 }),
+      ],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: 'cable-chest-press' })) as {
+      sideSplit: {
+        left: { lastSessionTopWeightLbs: number };
+        right: { lastSessionTopWeightLbs: number };
+        setupComparability: string;
+        setupSignatures: { left: { medianRomM: number }; right: { medianRomM: number } };
+        setupReason: string;
+      };
+    };
+
+    expect(body.sideSplit.setupComparability).toBe('setup_confounded');
+    expect(body.sideSplit.setupSignatures.left.medianRomM).toBeCloseTo(0.3, 6);
+    expect(body.sideSplit.setupSignatures.right.medianRomM).toBeCloseTo(0.45, 6);
+    expect(body.sideSplit.setupReason).toContain('different joint torque');
+    // The per-side facts still ship — what the gate withholds is reading the
+    // 30 vs 45 lb gap as an imbalance.
+    expect(body.sideSplit.left.lastSessionTopWeightLbs).toBe(30);
+    expect(body.sideSplit.right.lastSessionTopWeightLbs).toBe(45);
+  });
+
+  it('matching cable travel leaves the split comparable (VW-272)', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left', romM: 0.42 }),
+        makeSet('r1', 's1', 45, 5, { side: 'right', romM: 0.4 }),
+      ],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: 'cable-chest-press' })) as {
+      sideSplit: { setupComparability: string };
+    };
+    expect(body.sideSplit.setupComparability).toBe('comparable');
+  });
+
+  it('history with no measurable travel reports setup_unverified, not a mismatch (VW-272)', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left' }),
+        makeSet('r1', 's1', 45, 5, { side: 'right' }),
+      ],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: 'cable-chest-press' })) as {
+      sideSplit: { setupComparability: string; setupReason: string };
+    };
+    expect(body.sideSplit.setupComparability).toBe('setup_unverified');
+    expect(body.sideSplit.setupReason).toContain('could not run');
   });
 
   it('single-arm history (no set carries a side) has no sideSplit', async () => {

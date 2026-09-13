@@ -46,6 +46,13 @@ import {
   type Rep,
 } from '@voltras/workout-analytics';
 import { estimateSetRpe, getSetTempoSeconds } from '@voltras/workout-analytics/view';
+import {
+  compareSetupSignatures,
+  medianRomMetres,
+  type SetupComparabilityVerdict,
+  type SetupSignature,
+} from '../../../analytics/setup-comparability.js';
+import { selectEligibleReps } from '../../../state/rep-eligibility.js';
 import { repMeanVelocityMps, roundMps, type Snapshot, type SnapshotDeviceEntry } from '../adapter';
 import { limbLabel, limbSide } from '../limb';
 import { type LiveViewSources } from './live-view';
@@ -289,30 +296,84 @@ function meanRepVelocityMps(reps: readonly Rep[]): number | null {
 }
 
 /**
- * The L/R imbalance callout, or `null` when it cannot be stated honestly.
- *
- * Null cases, all deliberate: fewer than two live limbs; the live limbs do not
- * resolve to exactly one left and one right (an unbound slot has no side, and we do
- * NOT guess which arm is which); or a side has no finite mean velocity yet. A gap
- * beats a guess.
- *
- * At an exact tie `pct` is 0 and `strongerSide` carries no meaning — the card should
- * read 0% as "balanced", not as a verdict about that side.
+ * The pair of sided limbs the L/R surfaces read, or `null` when there is no pair
+ * to speak of: fewer than two live limbs, or limbs that do not resolve to exactly
+ * one left and one right (an unbound slot has no side, and we do NOT guess which
+ * arm is which).
  */
-function buildAsymmetry(limbs: readonly LiveLimb[]): LimbAsymmetry | null {
+function sidedPair(limbs: readonly LiveLimb[]): { left: LiveLimb; right: LiveLimb } | null {
   if (limbs.length < 2) return null;
   const left = limbs.filter((limb) => limbSide(limb.entry) === 'left');
   const right = limbs.filter((limb) => limbSide(limb.entry) === 'right');
   if (left.length !== 1 || right.length !== 1) return null;
+  return { left: left[0], right: right[0] };
+}
 
-  const leftMps = meanRepVelocityMps(left[0].reps);
-  const rightMps = meanRepVelocityMps(right[0].reps);
+/**
+ * This limb's live setup signature (VW-272) — the same observable the stored
+ * setup clustering reads, taken off the reps already on the wire.
+ *
+ * `selectEligibleReps` first, for the reason `setMedianRomM` gives: the positioning
+ * pull that opens a cable set runs roughly double a working rep, and letting it into
+ * the median moves a side's signature far enough to fabricate a rig difference. No
+ * position normalisation is needed here — WA's ROM accessors return metres and the
+ * live wire never carries device-native positions (see `roundMetres`).
+ *
+ * Only the ROM half of a `SetupSignature` is available live: `setup_id` is stamped
+ * at `set.end`, so a mid-set limb has no cluster and no confirmed label yet.
+ */
+function liveSetupSignature(limb: LiveLimb, side: 'left' | 'right'): SetupSignature {
+  const roms = selectEligibleReps(limb.reps).map((rep: Rep) => getRepRangeOfMotion(rep));
+  const medianRomM = medianRomMetres(roms);
+  return { side, ...(medianRomM !== undefined ? { medianRomM } : {}) };
+}
+
+/**
+ * Whether the two live slots were set up the same way (VW-272), or `null` when
+ * there is no left/right pair to ask about.
+ *
+ * Runs BEFORE {@link buildAsymmetry} and governs it: two units anchored differently
+ * make the same commanded load a different joint torque, so a velocity difference
+ * between them is the rig before it is the athlete.
+ */
+function buildAsymmetrySetup(limbs: readonly LiveLimb[]): SetupComparabilityVerdict | null {
+  const pair = sidedPair(limbs);
+  if (pair === null) return null;
+  return compareSetupSignatures(
+    liveSetupSignature(pair.left, 'left'),
+    liveSetupSignature(pair.right, 'right'),
+  );
+}
+
+/**
+ * The L/R imbalance callout, or `null` when it cannot be stated honestly.
+ *
+ * Null cases, all deliberate: no left/right pair to compare ({@link sidedPair});
+ * a side with no finite mean velocity yet; or a `setup_confounded` geometry gate
+ * (VW-272), where the two slots' cable travel says they are different setups and
+ * the difference on screen would be the rig. The last one is a REFUSAL WITH A
+ * REASON, not a gap — the verdict's own `reason` is what the stage renders in the
+ * callout's place. A gap beats a guess, and a stated reason beats a gap.
+ *
+ * At an exact tie `pct` is 0 and `strongerSide` carries no meaning — the card should
+ * read 0% as "balanced", not as a verdict about that side.
+ */
+function buildAsymmetry(
+  limbs: readonly LiveLimb[],
+  setup: SetupComparabilityVerdict | null,
+): LimbAsymmetry | null {
+  const pair = sidedPair(limbs);
+  if (pair === null) return null;
+  if (setup?.comparability === 'setup_confounded') return null;
+
+  const leftMps = meanRepVelocityMps(pair.left.reps);
+  const rightMps = meanRepVelocityMps(pair.right.reps);
   if (leftMps === null || rightMps === null) return null;
   const reference = Math.max(leftMps, rightMps);
   if (reference <= 0) return null;
 
   const leftIsStronger = leftMps >= rightMps;
-  const stronger = leftIsStronger ? left[0] : right[0];
+  const stronger = leftIsStronger ? pair.left : pair.right;
   return {
     pct: Number(((Math.abs(leftMps - rightMps) / reference) * 100).toFixed(1)),
     strongerSide: leftIsStronger ? 'left' : 'right',
@@ -360,6 +421,9 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
   // tuple's index 2 — is the reference the per-rep tempo-deviation tint compares to.
   const targetConcSec = prescription?.tempo?.[2] ?? null;
+  // VW-272: the geometry gate runs before the imbalance it governs, so the card
+  // carries both the verdict and the reason it was allowed or withheld.
+  const asymmetrySetup = buildAsymmetrySetup(limbs);
 
   return {
     rpe,
@@ -382,7 +446,8 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
     tempoSeconds: getSetTempoSeconds({ reps: reps as Rep[] }),
     targetTempoSeconds: prescription?.tempo ?? null,
     contributingLimbCount: limbs.length,
-    asymmetry: buildAsymmetry(limbs),
+    asymmetrySetup,
+    asymmetry: buildAsymmetry(limbs, asymmetrySetup),
   };
 }
 

@@ -146,6 +146,7 @@ describe('the fatigue mapper against titan’s LiveFatigueModel (VMCP-03.06)', (
       // SPA-only, beyond titan's card — see `fatigue-model.ts`.
       contributingLimbCount: mapped!.contributingLimbCount,
       asymmetry: mapped!.asymmetry,
+      asymmetrySetup: mapped!.asymmetrySetup,
     };
 
     expect(snapshot).toEqual(mapped);

@@ -172,7 +172,9 @@ export interface LivePageProps {
   hero?: DivergingHeroModel;
   /**
    * The L/R imbalance callout, off `mapStoreToFatigueModel`. Null whenever it cannot be
-   * computed honestly, in which case the stage simply declines to draw it.
+   * computed honestly, in which case the stage simply declines to draw it — except on a
+   * `setup_confounded` gate (VW-272), where it renders `fatigue.asymmetrySetup`'s reason
+   * instead.
    */
   asymmetry?: LimbAsymmetry | null;
   /**
@@ -270,6 +272,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
               model={model as LiveDashboardModel}
               hero={hero}
               asymmetry={asymmetry ?? null}
+              asymmetrySetup={fatigue?.asymmetrySetup ?? null}
             />
           ) : model.live !== null && fatigue ? (
             // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.

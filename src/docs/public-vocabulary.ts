@@ -204,6 +204,13 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setting_coerced',
   'settings_update',
   'sideSplit',
+  // VW-272: the cable-geometry gate on `progression.get_for_exercise`'s
+  // `sideSplit`, and the two verdicts it can carry.
+  'setupComparability',
+  'setupReason',
+  'setupSignatures',
+  'setup_confounded',
+  'setup_unverified',
   'state_dump',
   'stopOn',
   'targetReps',
@@ -222,6 +229,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'decay.lastOverFirstEligible',
   'guided_load.phase',
   'nearest.reasons',
+  'sideSplit.setupComparability',
+  'sideSplit.setupReason',
+  'sideSplit.setupSignatures',
   'variance.cv',
   'voiceReady.model',
   'voiceReady.whisperCli',

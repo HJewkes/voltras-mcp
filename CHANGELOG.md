@@ -39,6 +39,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- Cable geometry now gates every left-vs-right read (VW-272). Before the wall's `L/R`
+  callout or `progression.get_for_exercise`'s `sideSplit` compares the two arms, the two
+  slots' median cable travel is compared: more than 1.15x apart and the verdict is
+  `setup_confounded`, both signatures ship with it, and the imbalance is withheld with the
+  reason on screen rather than silently. A cable's resistance moment arm moves with its
+  anchor, so the same weight at a different anchor height is a different joint torque
+  (Keogh, Lake & Swinton 2013) — two units set up differently manufacture an imbalance the
+  athlete does not have. `setup_unverified` means a side recorded no travel, so the check
+  never ran; it withholds nothing.
+
 - `report.weekly` (w3-91) — a coach-readable weekly summary, in markdown or JSON, over a
   date range (default: the last 7 days). Sessions completed, a rolling 28-day
   completed-session count, adherence against the active program with a trend vs. the
