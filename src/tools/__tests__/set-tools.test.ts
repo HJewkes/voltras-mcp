@@ -296,6 +296,24 @@ function parseResult(r: { content: { text: string }[] }): unknown {
   return JSON.parse(r.content[0].text);
 }
 
+interface PublishedEvent {
+  meta: Record<string, string>;
+  content: string;
+}
+
+/** Every published event of one type, in publish order. */
+function eventsOfType(h: Harness, eventType: string): PublishedEvent[] {
+  return h.channels.publish.mock.calls
+    .map((c: unknown[]) => c[0] as PublishedEvent)
+    .filter((e) => e.meta.event_type === eventType);
+}
+
+function firstEventOfType(h: Harness, eventType: string): PublishedEvent {
+  const event = eventsOfType(h, eventType)[0];
+  if (event === undefined) throw new Error(`no ${eventType} event was published`);
+  return event;
+}
+
 function startSession(live: LiveStateType): string {
   const id = 'sess-A';
   live.startSession({
@@ -1231,6 +1249,103 @@ describe('set.end terminal-rep SSE echo (VW-57)', () => {
   });
 });
 
+describe('set close terminal-rep channel event (VMCP-01.40)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = setup({ restTimer: 'off' });
+  });
+
+  /** Reps injected directly, so the bridge's 1..N-1 emissions never run here. */
+  async function startSetWithReps(count: number): Promise<void> {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    for (let n = 1; n <= count; n += 1) h.live.appendRep(makeRep(n));
+    h.channels.publish.mockClear();
+  }
+
+  function repContext(event: PublishedEvent): { rep_count_so_far: number } {
+    return (JSON.parse(event.content) as { set_context: { rep_count_so_far: number } }).set_context;
+  }
+
+  it('publishes exactly one rep_finalized, for rep N, before set_ended', async () => {
+    await startSetWithReps(3);
+
+    await h.invoke('set.end', {});
+
+    const reps = eventsOfType(h, 'rep_finalized');
+    expect(reps).toHaveLength(1);
+    expect(reps[0].meta.rep_count).toBe('3');
+    const order = h.channels.publish.mock.calls.map(
+      (c: unknown[]) => (c[0] as PublishedEvent).meta.event_type,
+    );
+    expect(order.indexOf('rep_finalized')).toBeLessThan(order.indexOf('set_ended'));
+  });
+
+  it('counts the terminal rep itself in rep_count_so_far (there is no in-progress rep to exclude)', async () => {
+    await startSetWithReps(4);
+
+    await h.invoke('set.end', {});
+
+    // The builder's last parameter includes the in-progress rep its mid-set
+    // caller excludes; at close there is none, so all 4 reps count.
+    expect(repContext(firstEventOfType(h, 'rep_finalized')).rep_count_so_far).toBe(4);
+  });
+
+  it('publishes rep 1 for a single-rep set, which the bridge never emits', async () => {
+    // event-bridge's publish is guarded on `set.reps.length >= 2`, so a
+    // one-rep set produced ZERO rep_finalized events before this path existed.
+    await startSetWithReps(1);
+
+    await h.invoke('set.end', {});
+
+    const reps = eventsOfType(h, 'rep_finalized');
+    expect(reps).toHaveLength(1);
+    expect(reps[0].meta.rep_count).toBe('1');
+    expect(repContext(reps[0]).rep_count_so_far).toBe(1);
+  });
+
+  it('publishes nothing for a set that closed with zero reps', async () => {
+    await startSetWithReps(0);
+
+    await h.invoke('set.end', {});
+
+    expect(eventsOfType(h, 'rep_finalized')).toHaveLength(0);
+    expect(eventsOfType(h, 'set_ended')).toHaveLength(1);
+  });
+
+  it('publishes the terminal rep on a force-closed set that kept its trailing rep', async () => {
+    await startSetWithReps(2);
+
+    await finalizeSet(h.state, 'primary', {
+      cause: 'tool',
+      disengageMotor: false,
+      partialReason: 'guided_load_exited',
+    });
+
+    const reps = eventsOfType(h, 'rep_finalized');
+    expect(reps).toHaveLength(1);
+    expect(reps[0].meta.rep_count).toBe('2');
+  });
+
+  it('publishes nothing when the inactivity force-close dropped the trailing rep', async () => {
+    // The dropped rep is the only one the bridge had not published: it emitted
+    // the rep before it when that trailing rep began. Publishing here would be
+    // this path's one chance at a double-emit.
+    await startSetWithReps(3);
+
+    await finalizeSet(h.state, 'primary', {
+      cause: 'tool',
+      disengageMotor: false,
+      partialReason: 'inactivity_timeout',
+    });
+
+    expect(eventsOfType(h, 'rep_finalized')).toHaveLength(0);
+    expect(eventsOfType(h, 'set_ended')).toHaveLength(1);
+  });
+});
+
 describe('set.end', () => {
   let h: Harness;
   beforeEach(() => {
@@ -1756,11 +1871,7 @@ describe('set.end', () => {
     h.channels.publish.mockClear();
 
     await h.invoke('set.end', {});
-    const event = h.channels.publish.mock.calls[0][0] as {
-      meta: Record<string, string>;
-      content: string;
-    };
-    expect(event.meta.event_type).toBe('set_ended');
+    const event = firstEventOfType(h, 'set_ended');
     expect(event.meta.closed_by).toBe('tool');
     expect(event.meta.partial_reason).toBeUndefined();
     const parsed = JSON.parse(event.content) as {
@@ -1789,11 +1900,7 @@ describe('set.end', () => {
     h.channels.publish.mockClear();
 
     await h.invoke('set.end', {});
-    const event = h.channels.publish.mock.calls[0][0] as {
-      meta: Record<string, string>;
-      content: string;
-    };
-    expect(event.meta.event_type).toBe('set_ended');
+    const event = firstEventOfType(h, 'set_ended');
     expect(event.meta.device_rep_count).toBe('2');
     expect(event.meta.device_schema_version).toBe('3');
     const parsed = JSON.parse(event.content) as {
@@ -1812,10 +1919,7 @@ describe('set.end', () => {
     h.channels.publish.mockClear();
 
     await h.invoke('set.end', {});
-    const event = h.channels.publish.mock.calls[0][0] as {
-      meta: Record<string, string>;
-      content: string;
-    };
+    const event = firstEventOfType(h, 'set_ended');
     expect(event.meta.device_rep_count).toBeUndefined();
     expect(event.meta.device_schema_version).toBeUndefined();
     const parsed = JSON.parse(event.content) as { device_summary?: unknown };
@@ -1830,7 +1934,7 @@ describe('set.end', () => {
     h.channels.publish.mockClear();
 
     await h.invoke('set.end', {});
-    const event = h.channels.publish.mock.calls[0][0] as { content: string };
+    const event = firstEventOfType(h, 'set_ended');
     const parsed = JSON.parse(event.content) as {
       reps: unknown[];
       vbt_summary: { velocity_loss_pct: number | null };

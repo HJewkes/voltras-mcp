@@ -53,6 +53,7 @@ import {
 import { roundMps } from '../state/live-signal.js';
 import {
   buildIdleTimeoutPayload,
+  buildRepFinalizedPayload,
   buildSetAbortedByModeRevertPayload,
   buildBilateralDivergencePayload,
   buildSetEndedPayload,
@@ -1020,6 +1021,7 @@ export async function finalizeSet(
     finalized.firmwareTotalRepCount,
   );
   const slotChannels = state.channels.forSlot(slotId);
+  publishTerminalRepFinalized(finalizedForStore, device, slotChannels, dropTrailingInProgress);
   slotChannels.publish(payload);
   // VW-57: the terminal rep (rep N) never fires a phase-transition
   // `rep_finalized`, so event-bridge's `onFrame` SSE tap only ever streams reps
@@ -1083,6 +1085,45 @@ export async function finalizeSet(
     state.restTimers.start(slotId, stored.id, slotChannels);
   }
   return stored;
+}
+
+/**
+ * VMCP-01.40: publish the terminal rep (rep N) on the per-rep channel.
+ *
+ * The bridge's `onFrame` tap emits rep k when rep k+1 BEGINS, so it tops out at
+ * rep N-1 and a single-rep set gets nothing at all (its `>= 2` guard). This is
+ * the one choke point both close paths — tool `set.end` and device
+ * `onSetSummary` — funnel through, so rep N is published here exactly once. The
+ * two ranges are disjoint by construction, not by a de-dup lookup.
+ *
+ * The exception is the inactivity-timeout force-close, which has already
+ * dropped its trailing in-progress rep: the rep left at the end of that array
+ * is one the bridge published when the dropped rep began, so publishing again
+ * would be the only double-emit this path can produce.
+ *
+ * Rep N carries the RAW analytics rep, matching reps 1..N-1 on this same
+ * channel. The persisted set and `set_ended` carry the corrected array
+ * (`finalizeReps`), so rep N can differ between the two streams — a
+ * pre-existing asymmetry this keeps on the channel's side rather than
+ * introducing a third shape.
+ */
+function publishTerminalRepFinalized(
+  set: ActiveSet,
+  device: DeviceSnapshot,
+  channels: ChannelPublisher,
+  droppedTrailingInProgress: boolean,
+): void {
+  if (droppedTrailingInProgress) {
+    return;
+  }
+  const index = set.reps.length - 1;
+  const terminalRep = set.reps[index];
+  if (terminalRep === undefined) {
+    return;
+  }
+  // The builder's last parameter counts the in-progress rep its caller is about
+  // to exclude; at set close there is none, so N reps means N + 1 here.
+  channels.publish(buildRepFinalizedPayload(terminalRep, index, set, device, set.reps.length + 1));
 }
 
 /**

@@ -82,7 +82,7 @@ filters on.
 
 | Event                            | Fires when                                                                                                                                                                                      | Force-closes the set?     |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `rep_finalized`                  | A rep boundary closes the prior rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                                                                                                   | —                         |
+| `rep_finalized`                  | A rep boundary closes the prior rep, or the set closes and publishes its final rep. See [the timing quirk](#the-rep_finalized-timing-quirk).                                                    | —                         |
 | `set_started`                    | `set.start` succeeds, or the server auto-arms on the lifter's own reps (`auto_armed: true`).                                                                                                    | —                         |
 | `set_updated`                    | `set.start` upgraded an auto-armed set in place (`upgraded: true`). See [auto-armed sets](#auto-armed-sets).                                                                                    | —                         |
 | `set_ended`                      | `set.end` succeeds. Carries the full rep array and VBT summary — no follow-up `set.get` needed.                                                                                                 | —                         |
@@ -428,11 +428,23 @@ complete once the following one starts.
 
 Consequences:
 
-- The final rep of a set never sees a closing transition. `set.end` finalizes it, and the
-  `set_ended` event covers it.
+- The final rep of a set never sees a closing transition, so it is published by the set
+  close itself instead — one `rep_finalized` for rep N, immediately before `set_ended` and
+  on the same slot. That ordering is guaranteed: a consumer that reads `rep_finalized` up
+  to `set_ended` has every rep of the set, including a set that only ever had one rep.
+  Both close paths (`set.end` and the device's own end-of-set signal) go through the same
+  choke point, so rep N arrives exactly once — reps 1..N-1 come from the boundary
+  transition and rep N never does.
+  - One exception: an inactivity force-close drops its trailing in-progress rep, and the
+    rep left at the end was already published when that dropped rep began. No extra
+    `rep_finalized` is emitted there.
+  - Rep N carries the same raw per-rep shape as reps 1..N-1. The rep array inside
+    `set_ended` is the stored, corrected one, so a rep can differ slightly between the two
+    events. Within the per-rep stream every rep is consistent; across the two events it is
+    the stored array that is authoritative.
 - Treat each `rep_finalized` as _"the user just started a new rep; here are the previous
   one's metrics"_, not as "the user just finished a rep". Cues written the other way land
-  one rep late.
+  one rep late. Rep N is the exception — it arrives at set close, not one rep late.
 
 If you want cues that don't depend on the model reacting to these events at all, see
 `VMCP_CUES` in the [main README](../README.md#environment-variables). Both cue switches are

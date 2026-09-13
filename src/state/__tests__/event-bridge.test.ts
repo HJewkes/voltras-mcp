@@ -1189,6 +1189,49 @@ describe('wireEventBridge', () => {
       expect(endedIdx).toBeGreaterThan(repIdx);
     });
 
+    it('publishes rep_finalized once per rep across both paths, terminal rep last (VMCP-01.40)', async () => {
+      startActiveSet({ startedAt: '2025-01-01T00:00:00.000Z' });
+
+      // Three full reps through the real frame path: the bridge's onFrame tap
+      // publishes reps 1 and 2 (each when its successor begins) and rep 3 stays
+      // in-progress until the device close, which publishes it.
+      const conEcc = (base: number): void => {
+        client.fire.frame({
+          sequence: base,
+          timestamp: base,
+          phase: 1,
+          position: 0.1,
+          velocity: 400,
+          force: 50,
+        });
+        client.fire.frame({
+          sequence: base + 1,
+          timestamp: base + 1,
+          phase: 3,
+          position: 0.2,
+          velocity: -100,
+          force: 30,
+        });
+      };
+      conEcc(10);
+      conEcc(20);
+      conEcc(30);
+
+      client.fire.setSummary();
+      await flushMicrotasks();
+
+      const published = channels.publish.mock.calls.map((c) => c[0]);
+      const repCounts = published
+        .filter((e) => e.meta.event_type === 'rep_finalized')
+        .map((e) => e.meta.rep_count);
+      // Exactly N=3, no gap and no duplicate: the frame tap tops out at N-1 and
+      // the close path publishes N.
+      expect(repCounts).toEqual(['1', '2', '3']);
+
+      const types = published.map((e) => e.meta.event_type);
+      expect(types.lastIndexOf('rep_finalized')).toBeLessThan(types.indexOf('set_ended'));
+    });
+
     it('onInProgress flood does NOT finalize (regression guard — was the SET_START_GRACE_MS bug)', async () => {
       // The legacy bridge used `onInProgress` outside a 500ms grace as the
       // close signal — broken under fast-tempo WT (sets ended at 1–3s with
