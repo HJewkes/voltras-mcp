@@ -144,6 +144,19 @@ describe('coaching.explain', () => {
     expect(body.caveats?.length).toBeGreaterThan(0);
   });
 
+  it('flags warm-up-velocity readiness as an unvalidated heuristic (VW-269)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'live.readiness_interpretation' }));
+
+    // Assert: the no-validation claim and the light-end citation, not a bare zone
+    expect(body.explanation).toContain('ENGINEERING HEURISTIC');
+    expect(body.explanation).toContain('no published study');
+    expect(body.explanation).toContain('8.3 kg');
+    expect(body.explanation).toContain('32.6 kg');
+    expect(body.sources).toContain('senturk-2026-load-velocity-fatigue-discrimination-bmc-sports');
+    expect(body.caveats?.length).toBeGreaterThan(0);
+  });
+
   // VW-273: the asymmetry topic must never turn a measurement into a
   // prescription. The intervention literature does not support corrective
   // unilateral work, so an entry that recommended it would be telling a coach

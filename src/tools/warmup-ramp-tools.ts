@@ -102,7 +102,12 @@ export const PLAN_WARMUP_RAMP_DESCRIPTION =
   "report `advanced` yet — its derived ceiling stops at `intermediate` — so today you'll see " +
   'the 3-rung or 4-rung shape only. Per-lifter, per-exercise ' +
   'deviations are NOT modelled yet — that needs the exercise baseline at PROVISIONAL — so ' +
-  'treat the count as a population starting point and adjust on what the lifter tells you.';
+  'treat the count as a population starting point and adjust on what the lifter tells you. ' +
+  'RUN THE LAST RUNG (VW-269): the heaviest rung — ~88% of the working load — is what ' +
+  '`metrics.compute` `session.readiness` reads its probe velocity from by default, because a ' +
+  "lighter rung's velocity does not discriminate fatigue as well. Skipping straight to the " +
+  'working load after a lighter rung leaves that pipeline falling back to whatever set it can ' +
+  'find, which degrades the reading rather than improving it.';
 
 export function registerWarmupRampTools(
   _server: McpServer,

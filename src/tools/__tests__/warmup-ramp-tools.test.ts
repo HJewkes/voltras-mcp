@@ -17,7 +17,12 @@ import { estimateE1RMFromReps } from '@voltras/workout-analytics';
 import type { ServerState } from '../../state/server-state.js';
 import type { StoredSet } from '../../store/types.js';
 import { DeviceSetWeightInput } from '../../schemas/device.js';
-import { buildWarmupRamp, loadForReps, rampRows } from '../warmup-ramp-tools.js';
+import {
+  buildWarmupRamp,
+  loadForReps,
+  PLAN_WARMUP_RAMP_DESCRIPTION,
+  rampRows,
+} from '../warmup-ramp-tools.js';
 
 const SESSION_ID = 'session-1';
 const AT = '2026-09-08T12:00:00.000Z';
@@ -226,6 +231,13 @@ describe('loadForReps', () => {
       expect(estimateE1RMFromReps(load, reps).e1RM).toBeCloseTo(e1rm, 1);
       expect(Math.abs(estimateE1RMFromReps(load, reps).e1RM - e1rm)).toBeLessThan(1);
     }
+  });
+});
+
+describe('the description names the readiness link (VW-269)', () => {
+  it('tells the caller the heaviest rung doubles as the readiness probe', () => {
+    expect(PLAN_WARMUP_RAMP_DESCRIPTION).toContain('session.readiness');
+    expect(PLAN_WARMUP_RAMP_DESCRIPTION).toContain('VW-269');
   });
 });
 

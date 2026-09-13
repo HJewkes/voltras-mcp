@@ -39,6 +39,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `metrics.compute` `session.readiness` now labels itself: every response carries
+  `basis: "heuristic"` and a `note` saying plainly that no published study validates
+  fixed-load warm-up velocity as a same-day readiness marker (VW-269). The probe velocity
+  also moves: by default it now reads the heaviest pre-working-load set (the last warm-up
+  rung, at or above ~70% of the day's working load) instead of the session's first, lightest
+  rep, because the light end of a load-velocity profile is the one shown not to discriminate
+  fatigue (Senturk, Kumak & Janicijevic, 2026). Pass `probeLoad: "legacyFirstRep"` for the
+  old behaviour. `coaching.explain` gained `live.readiness_interpretation` with the same
+  citation. `plan.warmup_ramp`'s description now says why running the heaviest rung matters.
+
 - Cable geometry now gates every left-vs-right read (VW-272). Before the wall's `L/R`
   callout or `progression.get_for_exercise`'s `sideSplit` compares the two arms, the two
   slots' median cable travel is compared: more than 1.15x apart and the verdict is

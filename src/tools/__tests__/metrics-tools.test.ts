@@ -91,6 +91,37 @@ function makeSet(id: string, sessionId = 'sess-1', weight = 100): StoredSet {
   };
 }
 
+/**
+ * A set whose FIRST rep carries an exact, real (unmocked) mean concentric
+ * velocity — `getRepMeanVelocity` reads `_totalVelocity / _movementSampleCount`
+ * off the phase, which `makeRep`'s bare `peakVelocity` override leaves at 0.
+ * Used to pin `session.readiness`'s actual numeric output (VW-269) without
+ * mocking `getSetFirstRepVelocity`/`computeReadiness`.
+ */
+function makeSetWithFirstRepVelocity(
+  id: string,
+  sessionId: string,
+  weight: number,
+  meanConcentricVelocity: number,
+): StoredSet {
+  const set = makeSet(id, sessionId, weight);
+  const [first, ...rest] = set.reps;
+  return {
+    ...set,
+    reps: [
+      {
+        ...first!,
+        concentric: {
+          ...first!.concentric,
+          _totalVelocity: meanConcentricVelocity,
+          _movementSampleCount: 1,
+        },
+      },
+      ...rest,
+    ],
+  };
+}
+
 /** A set with no `weightLbs` — e.g. Damper/Band mode, which has no headline weight. */
 function makeWeightlessSet(id: string, sessionId = 'sess-1'): StoredSet {
   return {
@@ -757,6 +788,8 @@ interface GatedReadiness {
   readiness: unknown;
   observed: { actualVelocityMps: number; baselineVelocityMps: number };
   gate: FeatureGateVerdict;
+  basis?: string;
+  note?: string;
 }
 
 describe('metrics.compute — session.readiness baseline gating (B57)', () => {
@@ -864,6 +897,173 @@ describe('metrics.compute — session.readiness baseline gating (B57)', () => {
     expect(body.gate.activation).toBe('withheld');
     expect(body.readiness).toBeNull();
     expect(readinessSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── VW-269: readiness has no primary-literature validation; heavy probe ──
+
+describe('metrics.compute — session.readiness probe selection (VW-269)', () => {
+  let readinessSpy: ReturnType<typeof vi.spyOn>;
+  let velocitySpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    readinessSpy = vi
+      .spyOn(analytics, 'computeReadiness')
+      .mockReturnValue({ zone: 'green' } as never);
+    velocitySpy = vi.spyOn(analytics, 'getSetFirstRepVelocity');
+  });
+  afterEach(() => {
+    readinessSpy.mockRestore();
+    velocitySpy.mockRestore();
+  });
+
+  /** The `setId` of the FIRST set `getSetFirstRepVelocity` was called on. */
+  function firstReadSetId(spy: ReturnType<typeof vi.spyOn>): string | undefined {
+    const call = spy.mock.calls[0] as [{ reps: { setId: string }[] }] | undefined;
+    return call?.[0]?.reps[0]?.setId;
+  }
+
+  it('always reports basis "heuristic" and a non-empty validation note', async () => {
+    // Arrange
+    const target = makeSet('s1', 'sess-target');
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) => [id === 'sess-target' ? target : baseline]),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    const body = parsePayload(
+      await callTool(tools, {
+        pipeline: 'session.readiness',
+        sessionId: 'sess-target',
+        baselineSessionId: 'sess-baseline',
+      }),
+    ) as GatedReadiness;
+
+    // Assert: unconditional, even against a fully CALIBRATED baseline
+    expect(body.basis).toBe('heuristic');
+    expect(body.note?.length).toBeGreaterThan(0);
+    expect(body.note).toContain('no published study');
+  });
+
+  it("defaults to the heaviest pre-working-load warm-up set, not the session's first rep", async () => {
+    // Arrange: performed in order light warm-up -> heavy warm-up -> working set.
+    // Old behaviour would read the light warm-up (index 0); reading the
+    // working set itself would also be wrong — the probe stays PRE-working.
+    const lightWarmup = { ...makeSet('light', 'sess-target', 60), setPurpose: 'warmup' as const };
+    const heavyWarmup = { ...makeSet('heavy', 'sess-target', 88), setPurpose: 'warmup' as const };
+    const working = { ...makeSet('work', 'sess-target', 100), setPurpose: 'working' as const };
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) =>
+        id === 'sess-target' ? [lightWarmup, heavyWarmup, working] : [baseline],
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    await callTool(tools, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+    });
+
+    // Assert
+    expect(firstReadSetId(velocitySpy)).toBe('heavy');
+  });
+
+  it('falls back to the legacy first-rep-of-session probe when probeLoad is "legacyFirstRep"', async () => {
+    // Arrange: same ramp as above.
+    const lightWarmup = { ...makeSet('light', 'sess-target', 60), setPurpose: 'warmup' as const };
+    const heavyWarmup = { ...makeSet('heavy', 'sess-target', 88), setPurpose: 'warmup' as const };
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) =>
+        id === 'sess-target' ? [lightWarmup, heavyWarmup] : [baseline],
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    await callTool(tools, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+      probeLoad: 'legacyFirstRep',
+    });
+
+    // Assert
+    expect(firstReadSetId(velocitySpy)).toBe('light');
+  });
+});
+
+// ─── VW-269 review: pin the legacy path against a real, unmocked computation
+// so `probeLoad: "legacyFirstRep"` is proven equal to the pre-PR reading on
+// the same fixture the new default reads differently from — NEITHER
+// `computeReadiness` NOR `getSetFirstRepVelocity` is mocked here.
+
+describe('metrics.compute — session.readiness pinned values, legacy vs default (VW-269)', () => {
+  // Same ramp shape as the selection tests above (light 60 lb / heavy 88 lb /
+  // working 100 lb), but each first rep carries a REAL mean concentric
+  // velocity instead of the zeroed-out phase `makeRep` produces, so
+  // `computeReadiness` runs its actual zone/ratio/confidence math.
+  const lightWarmup = {
+    ...makeSetWithFirstRepVelocity('light', 'sess-target', 60, 1.2),
+    setPurpose: 'warmup' as const,
+  };
+  const heavyWarmup = {
+    ...makeSetWithFirstRepVelocity('heavy', 'sess-target', 88, 0.6),
+    setPurpose: 'warmup' as const,
+  };
+  const baseline = makeSetWithFirstRepVelocity('base', 'sess-baseline', 100, 1.0);
+
+  function stateFor(): ServerState {
+    return makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) =>
+        id === 'sess-target' ? [lightWarmup, heavyWarmup] : [baseline],
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+  }
+
+  async function run(args: Record<string, unknown>): Promise<GatedReadiness> {
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, stateFor(), makePlaceholders(server));
+    return parsePayload(
+      await callTool(tools, {
+        pipeline: 'session.readiness',
+        sessionId: 'sess-target',
+        baselineSessionId: 'sess-baseline',
+        ...args,
+      }),
+    ) as GatedReadiness;
+  }
+
+  it('legacyFirstRep reproduces the pre-PR first-rep-of-session reading exactly: 1.2/1.0 -> green', async () => {
+    // Arrange / Act: pre-PR code always read the light warm-up (index 0).
+    const body = await run({ probeLoad: 'legacyFirstRep' });
+
+    // Assert: computeReadiness(1.2, 1.0) = ratio 1.2, zone green (>= 0.95),
+    // confidence min(1, 0.6 + min(|1.2-0.95|,|1.2-0.85|)*4) = min(1, 1.6) = 1.
+    expect(body.observed).toEqual({ actualVelocityMps: 1.2, baselineVelocityMps: 1.0 });
+    expect(body.readiness).toEqual({ zone: 'green', velocityRatio: 1.2, confidence: 1 });
+  });
+
+  it('the new default reads the heavy warm-up instead and gets a DIFFERENT verdict: 0.6/1.0 -> red', async () => {
+    // Arrange / Act: no probeLoad — the new default.
+    const body = await run({});
+
+    // Assert: computeReadiness(0.6, 1.0) = ratio 0.6, zone red (< 0.85),
+    // confidence min(1, 0.6 + min(|0.6-0.95|,|0.6-0.85|)*4) = min(1, 1.6) = 1.
+    expect(body.observed).toEqual({ actualVelocityMps: 0.6, baselineVelocityMps: 1.0 });
+    expect(body.readiness).toEqual({ zone: 'red', velocityRatio: 0.6, confidence: 1 });
   });
 });
 

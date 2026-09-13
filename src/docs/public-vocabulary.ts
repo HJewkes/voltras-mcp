@@ -176,6 +176,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'inactivityTimeoutMs',
   'inactivity_timeout',
   'lastOverFirstEligible',
+  // VW-269: `session.readiness`'s `probeLoad` option — the loose params shape
+  // declares it as a bare string (see `registerMetricsTools`), so its
+  // `'legacyFirstRep'` value isn't harvested from an enum the way a real
+  // `z.enum` would be.
+  'legacyFirstRep',
   'load_state',
   'lossPct',
   'matchedProbe',
