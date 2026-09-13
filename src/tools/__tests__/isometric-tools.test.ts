@@ -263,6 +263,22 @@ interface MeasureHoldBody {
   peakForceLbs: number;
 }
 
+describe('the advertised isometric hold default', () => {
+  // The tool descriptions state the default in seconds as a literal, and the
+  // published capability reference is generated from them. Deriving the
+  // expected wording from the constant is what ties the two together: change
+  // the constant alone and the prose no longer describes the tool.
+  it('matches the duration the schema actually defaults to', () => {
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, makeState({ primary: makeFakeClient() }), placeholders);
+
+    expect(DEFAULT_DURATION_MS).toBe(5_000);
+    for (const name of ['isometric.measure_hold', 'isometric.measure_max'] as const) {
+      expect(slots.get(name)!.description).toContain(`default ${DEFAULT_DURATION_MS / 1000}s`);
+    }
+  });
+});
+
 describe('isometric.measure_hold', () => {
   let measureHoldCb: Callback;
   let client: FakeClient;
