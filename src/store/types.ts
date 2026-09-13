@@ -19,6 +19,7 @@
 // task; the alias will be unified once both branches merge.
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
+import type { AccountabilityState } from '../accountability/types.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
@@ -1442,6 +1443,16 @@ export interface SessionStore extends ExerciseSetupStore {
   putTrainingProfile(p: StoredTrainingProfile): Promise<void>;
   /** Look up a user's training background; `undefined` when no row exists. */
   getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined>;
+
+  // --- Accountability protocol state (VW-286) ---
+
+  /** Upsert the coach's protocol position for one user. */
+  putAccountabilityState(s: AccountabilityState): Promise<void>;
+  /**
+   * Look up the protocol position; `undefined` when the user has never been
+   * through the protocol, which is NOT the same as having come out `planned`.
+   */
+  getAccountabilityState(userId: string): Promise<AccountabilityState | undefined>;
 
   // --- Observed diet phase (VW-149 / VW-150) ---
 

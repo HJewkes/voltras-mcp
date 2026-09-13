@@ -158,6 +158,10 @@ export const CORE_TOOL_NAMES = [
   // Coach-readable weekly summary (markdown/JSON) over a date range (w3-91).
   // Read-only and local; see src/tools/report-tools.ts.
   'report.weekly',
+  // The accountability protocol's persisted position plus a dry run of what it
+  // would decide now (VW-286). Read-only: it never sends and never writes.
+  // See src/tools/accountability-tools.ts.
+  'accountability.state',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -346,6 +350,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'report.session_results': 'read',
   // Reads stored sessions/sets/plan tree/self-reports. No device traffic, no row moves.
   'report.weekly': 'read',
+  // Reads one stored row and runs the reducer in memory. Persists nothing.
+  'accountability.state': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

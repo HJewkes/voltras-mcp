@@ -188,6 +188,30 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'isPlateau',
   'plateau.isPlateau',
   'readiness.zone',
+  // VW-286: `accountability.state`'s result — the persisted protocol row plus
+  // the dry-run decision. `action` is `send` or `silent`; `kind` names an
+  // entry in the composer's copy pack, never a state.
+  'protocolState',
+  // The `protocolState` value and the `kind` values, which are snake_case and
+  // so read as protocol-shaped tokens to the guard until they are named here.
+  'realign_needed',
+  'sunday_anchor',
+  'miss_recovery',
+  'ghost_nudge',
+  'realign_opener',
+  'enteredAt',
+  'tick',
+  'reason',
+  'kind',
+  'consecutiveMisses',
+  'lastInboundAt',
+  'holdingUntil',
+  'ghostSendsThisEpisode',
+  'proactiveSendsInWindow',
+  'persisted',
+  'adherenceTrend',
+  'decision',
+  'action',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',
