@@ -56,6 +56,7 @@ function completed(weightLbs: number | null, reps: number[]): CompletedSet {
     repCount: reps.length,
     reps,
     peakForceLbs: null,
+    setPurpose: 'working',
   };
 }
 

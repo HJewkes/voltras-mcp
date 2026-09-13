@@ -23,6 +23,7 @@ import {
   type CompletedSet,
   type DashboardModel,
   type PrescriptionCells,
+  type SetPurpose,
 } from './model';
 import { type MassUnit, formatMass } from './mass';
 
@@ -66,6 +67,24 @@ function justCompletedSet(model: DashboardModel): CompletedSet | null {
   return done.length > 0 ? done[done.length - 1] : null;
 }
 
+/**
+ * The recap table's SET-cell marker for a non-working set (VW-260), or undefined for a
+ * working set — `SetRow`'s own "no marker" case, so a working row's SET cell is unchanged
+ * from before this field existed.
+ */
+function setTypeLabel(purpose: SetPurpose): string | undefined {
+  switch (purpose) {
+    case 'warmup':
+      return 'WARM-UP';
+    case 'probe':
+      return 'PROBE';
+    case 'technique':
+      return 'TECHNIQUE';
+    case 'working':
+      return undefined;
+  }
+}
+
 /** The recap card's rows — one `done` row per logged set of the active exercise. */
 function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
   const { session } = model;
@@ -82,6 +101,7 @@ function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
       // Ratio-of-best, not raw m/s — SetRow's strip bands the same domain SetStrip does.
       velocities: velocityRatios(set.reps),
       // rpe intentionally omitted — the store has none and the specimen's value was invented.
+      setType: setTypeLabel(set.setPurpose),
     };
   });
 }
@@ -218,7 +238,13 @@ function RecapCard({
       <View style={{ borderTopWidth: 1 }}>
         <SetTableHeader unit={heading.unit} showPrevious={false} />
         {rows.map((row, i) => (
-          <SetRow key={i} {...row} />
+          // `SetRow` has no muted variant of its own `done` state (VW-260) — `setType` (set
+          // above) already labels a non-working row, and this opacity wrapper is the extra
+          // "look muted, not just labelled" cue, applied from OUTSIDE the titan component
+          // rather than reimplementing it.
+          <View key={i} style={row.setType !== undefined ? { opacity: 0.55 } : undefined}>
+            <SetRow {...row} />
+          </View>
         ))}
       </View>
     </View>

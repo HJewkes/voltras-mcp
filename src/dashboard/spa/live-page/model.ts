@@ -18,6 +18,11 @@
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 import { type MassUnit, convertMass, formatMass } from './mass';
+// Type-only: erased at build (same rationale as adapter.ts's own import of this) —
+// mirrors the store's four-value set-purpose enum without a runtime dependency.
+import type { SetPurpose } from '../../../store/types.js';
+
+export type { SetPurpose };
 
 // --- Store read-model shapes (mirror voltras-mcp dashboard store) -------------
 
@@ -96,6 +101,14 @@ export interface CompletedSet {
    * — the live overlay's `peakForce` is gone once rest begins). Hidden when null.
    */
   peakForceLbs: number | null;
+  /**
+   * Why this set was performed (VW-260): `'working'`, or one of the three non-working
+   * intents (`'warmup'` / `'probe'` / `'technique'`) stated at `set.start`. Always a
+   * concrete value — the wire's optional field is defaulted to `'working'` at the
+   * mapper boundary (`panels/live-view.ts`'s `mapCompletedSet`), the same treatment
+   * `mode` gets, so nothing downstream has to repeat the fallback.
+   */
+  setPurpose: SetPurpose;
 }
 
 /**
@@ -287,12 +300,34 @@ export function isRealCompletedSet(set: CompletedSet): boolean {
 }
 
 /**
+ * True for a set that counts toward the WORKING-set tally (VW-260) — excludes warmup /
+ * probe / technique sets, which are real, logged, and shown (with a muted treatment and a
+ * label in {@link RestView} and the recap), but are not what a "3/4 sets" pace figure or a
+ * "sets done" count means to the lifter or coach. Distinct from {@link isRealCompletedSet},
+ * which filters a different defect (a 0-rep force-closed set) — a warmup set is a perfectly
+ * real set, just not a WORKING one.
+ */
+export function isWorkingSet(set: CompletedSet): boolean {
+  return set.setPurpose === 'working';
+}
+
+/**
  * The active exercise's completed sets — those tagged with the active exercise's name.
  * Exported so the rest stage recaps the SAME per-exercise slice the rail counts (VW-50)
  * rather than duplicating the filter.
  */
 export function activeCompletedSets(session: SessionModel): CompletedSet[] {
   return session.completedSets.filter((s) => s.exerciseName === session.exerciseName);
+}
+
+/**
+ * The session's WORKING completed sets, session-wide (VW-260) — the tally the rail header's
+ * pace figure ({@link LivePage}'s `setsDone`) counts. Warmup/probe/technique sets are real
+ * and stay in `session.completedSets` for the recap and the log; they just do not advance a
+ * progress figure that means "working sets done".
+ */
+export function workingCompletedSets(session: SessionModel): CompletedSet[] {
+  return session.completedSets.filter(isWorkingSet);
 }
 
 /** Peak of a per-rep velocity array (m/s), or null when the set logged no reps. */
@@ -544,7 +579,9 @@ function buildActiveRow(model: DashboardModel, displayUnit: MassUnit): SessionRa
     // load — rather than the `— × — @ 0` target echo. Honest empties (0 sets, `—` reps, `—`
     // load) when nothing has landed / no weight is set — never a faked 0.
     summary: {
-      sets: done.length + (live ? 1 : 0),
+      // Working sets only (VW-260) — the live overlay carries no purpose of its own yet, so
+      // an in-progress set still counts unconditionally, same as before.
+      sets: done.filter(isWorkingSet).length + (live ? 1 : 0),
       reps: bestRepsSoFar(done, live) ?? NO_VALUE,
       ...summaryLoad(session.weightLbs, displayUnit),
     },

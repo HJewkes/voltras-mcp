@@ -21,6 +21,7 @@ import {
   deriveRailMetrics,
   stageIsEmpty,
   stageIsEnded,
+  workingCompletedSets,
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
@@ -209,7 +210,9 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
   const isometric = useStore(dashboardStore, (s) => s.isometric);
   const exercises = deriveRailExercises(model, displayUnit);
   const metrics = deriveRailMetrics(model, displayUnit);
-  const completedSets = model.session.completedSets.length;
+  // Working sets only (VW-260) — warmup/probe/technique sets are real and logged, but
+  // don't advance the header's "sets done" pace figure.
+  const completedSets = workingCompletedSets(model.session).length;
   const isLive = model.live !== null;
 
   return (

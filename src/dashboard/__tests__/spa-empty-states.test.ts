@@ -43,7 +43,15 @@ function model(over: Partial<DashboardModel> = {}): DashboardModel {
 }
 
 function completed(exerciseName: string, repCount = 8): CompletedSet {
-  return { exerciseName, weightLbs: 140, mode: 'weight', repCount, reps: [], peakForceLbs: null };
+  return {
+    exerciseName,
+    weightLbs: 140,
+    mode: 'weight',
+    repCount,
+    reps: [],
+    peakForceLbs: null,
+    setPurpose: 'working',
+  };
 }
 
 /** A minimal live overlay for the "mid-set" branch. */
