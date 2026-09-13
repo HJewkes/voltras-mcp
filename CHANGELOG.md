@@ -51,6 +51,12 @@ entry is written from the user's point of view is a review question, not a check
   difference found". Delivered as a new `isometric_result` push event, documented in
   `docs/push-events.md`.
 
+- New `accountability.preview` tool (VW-291, #380): runs the same read-only dry run as
+  `accountability.state` and, when the protocol would send something, also renders the
+  actual coach message — the Sunday anchor, a miss-recovery prompt, a ghost nudge, or a
+  realign opener — from live reads (`report.weekly` adherence, `plan.next_workout`, the
+  rolling 28-day count). It sends nothing and writes nothing, so it is safe to call any
+  time to answer "what would the coach say right now".
 - The declared diet phase now moves autoregulation thresholds instead of only sitting
   next to them (VW-277). A fat-loss phase WIDENS the performance dip tolerated before a
   load cut or a plateau call, and the widening grows with weeks in phase; a gain phase

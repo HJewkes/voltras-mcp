@@ -14,3 +14,10 @@ export const AccountabilityStateInput = z
     at: z.string().min(1).optional(),
   })
   .strict();
+
+export const AccountabilityPreviewInput = z
+  .object({
+    /** Same as `accountability.state`'s `at`: evaluate as of this instant instead of now. */
+    at: z.string().min(1).optional(),
+  })
+  .strict();

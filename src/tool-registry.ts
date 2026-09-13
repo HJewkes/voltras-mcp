@@ -162,6 +162,10 @@ export const CORE_TOOL_NAMES = [
   // would decide now (VW-286). Read-only: it never sends and never writes.
   // See src/tools/accountability-tools.ts.
   'accountability.state',
+  // The same dry run as `accountability.state`, plus the composed message
+  // text a `send` decision would carry (VW-291). Read-only: it never sends
+  // and never writes. See src/tools/accountability-tools.ts.
+  'accountability.preview',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -352,6 +356,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'report.weekly': 'read',
   // Reads one stored row and runs the reducer in memory. Persists nothing.
   'accountability.state': 'read',
+  // Same read as `accountability.state`, plus a plan/report read to render
+  // text. Persists nothing and sends nothing.
+  'accountability.preview': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

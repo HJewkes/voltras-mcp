@@ -7,12 +7,11 @@
 // `sources/notes/2026-09-12-accountability-system-plan.md` §2 be asserted on
 // rendered text with no clock, no transport and no database.
 //
-// Input interfaces are declared here rather than imported from the state
-// machine's `types.ts`: the two halves were built in parallel and reconciling
-// them is a later, deliberate step. `AdherenceRead` intentionally mirrors
-// `WeeklyAdherence` (`src/tools/report-tools.ts`) and `NextWorkoutRead`
-// mirrors what `plan.next_workout` returns, so a caller can map either read
-// onto these with no computation of its own.
+// Input interfaces are imported from the state machine's `types.ts` (VW-291):
+// one definition per concept, so a caller (a tool handler) builds an
+// `AdherenceRead` or a `NextWorkoutRead` once and either module can consume
+// it. Re-exported here so existing imports of these names from this module
+// keep working.
 
 import {
   COMMITMENT_LANGUAGE_PLACEHOLDER,
@@ -26,6 +25,23 @@ import {
   SILENCE_MEANS_ON_TRACK_LINE,
   SUNDAY_ANCHOR,
 } from './copy.js';
+import type {
+  AdherenceRead,
+  HoldingRead,
+  MissedSessionFacts,
+  NextWorkoutExercise,
+  NextWorkoutRead,
+  PlannedSlot,
+} from './types.js';
+
+export type {
+  AdherenceRead,
+  HoldingRead,
+  MissedSessionFacts,
+  NextWorkoutExercise,
+  NextWorkoutRead,
+  PlannedSlot,
+} from './types.js';
 
 /**
  * The plan's own illustrative reduced-scope figure ("20 minutes, row and one
@@ -47,42 +63,6 @@ export type CoachMessageKind =
 export interface ComposedMessage {
   kind: CoachMessageKind;
   text: string;
-}
-
-/** Shaped like `WeeklyAdherence` from `report.weekly`'s header. */
-export interface AdherenceRead {
-  planned: number;
-  done: number;
-  trend: 'improving' | 'declining' | 'steady' | 'no-prior-data';
-}
-
-/** One planned day and the fallback day that also counts as done (LIT §3.5). */
-export interface PlannedSlot {
-  day: string;
-  fallbackDay: string;
-}
-
-export interface NextWorkoutExercise {
-  name: string;
-  targetWeightLbs?: number;
-}
-
-/** Shaped like `plan.next_workout`'s result, with exercise ids already resolved to names. */
-export interface NextWorkoutRead {
-  templateName: string;
-  exercises: NextWorkoutExercise[];
-}
-
-export interface MissedSessionFacts {
-  plannedDay: string;
-  fallbackDay: string;
-  exerciseNames: string[];
-}
-
-/** A declared disruption window. `endDate` is whatever the lifter named, rendered as given. */
-export interface HoldingRead {
-  active: boolean;
-  endDate?: string;
 }
 
 export interface SundayAnchorInput {

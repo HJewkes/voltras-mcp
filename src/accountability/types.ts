@@ -105,6 +105,50 @@ export type AccountabilityDecision =
   | { action: 'send'; kind: ProactiveKind; reason: string }
   | { action: 'silent'; reason: string };
 
+/**
+ * Live-read shapes the composer (VW-287) renders from. Declared here, not in
+ * `composer.ts`, so the reducer's `AdherenceTrend` and `ProactiveKind` are the
+ * only definitions of those concepts anywhere in the module — a caller (a
+ * tool handler) builds one of these from a store read or a report and the
+ * composer never touches the store itself.
+ */
+
+/** Shaped like `WeeklyAdherence`'s header (`report.weekly`, `src/tools/report-tools.ts`). */
+export interface AdherenceRead {
+  planned: number;
+  done: number;
+  trend: AdherenceTrend;
+}
+
+export interface NextWorkoutExercise {
+  name: string;
+  targetWeightLbs?: number;
+}
+
+/** Shaped like `plan.next_workout`'s result, with exercise ids already resolved to names. */
+export interface NextWorkoutRead {
+  templateName: string;
+  exercises: NextWorkoutExercise[];
+}
+
+/** One planned day and the fallback day that also counts as done (LIT §3.5). */
+export interface PlannedSlot {
+  day: string;
+  fallbackDay: string;
+}
+
+export interface MissedSessionFacts {
+  plannedDay: string;
+  fallbackDay: string;
+  exerciseNames: string[];
+}
+
+/** A declared disruption window. `endDate` is whatever the lifter named, rendered as given. */
+export interface HoldingRead {
+  active: boolean;
+  endDate?: string;
+}
+
 /** The reducer's return: the next state plus the decision that goes with it. */
 export interface AccountabilityTransition {
   state: AccountabilityState;
