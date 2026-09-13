@@ -266,6 +266,12 @@ entry is written from the user's point of view is a review question, not a check
   The check now accepts any version up through the current one and migrates it forward,
   instead of a hand-maintained list that had to be remembered on every bump.
 
+- Two CI test flakes under runner load, neither an assertion failure, both a 5 s default
+  timeout hit before real work finished (VW-285). The replay-driver integration test now
+  carries an explicit 20 s timeout for its inherent ~550 ms real-time playback wait, and
+  the v6→v7 migration suite — whose `sets` rebuild is real, un-batched disk I/O — now
+  carries an explicit 20 s suite default instead of relying on vitest's 5 s one.
+
 ## [0.5.0] - 2026-09-08
 
 Two waves of work, `#244` through `#310`. The device and recording paths gained real

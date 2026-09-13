@@ -182,7 +182,10 @@ function rawDb(store: SqliteSessionStore): DatabaseSync {
   return (store as unknown as { db: DatabaseSync }).db;
 }
 
-describe('v6 → v7 migration: identity, capture and state', () => {
+// Every test here opens a file-backed v6 DB and runs the full v6→v20 ladder,
+// including the `sets` rebuild's real, un-batched disk I/O (VW-231, VW-285):
+// under CI load a single migration has taken 8.4 s against the 5 s default.
+describe('v6 → v7 migration: identity, capture and state', { timeout: 20_000 }, () => {
   let workdir: string;
   let dbPath: string;
 
@@ -229,8 +232,7 @@ describe('v6 → v7 migration: identity, capture and state', () => {
     }
   });
 
-  // Real disk I/O (dozens of un-batched auto-commits) exposed to CI fsync contention (VW-231).
-  it('de-sentinels training_mode and weight_lbs to NULL', { timeout: 15_000 }, async () => {
+  it('de-sentinels training_mode and weight_lbs to NULL', async () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       // 'Unknown' was never a real training mode and 0 was the missing-snapshot
