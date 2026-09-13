@@ -31,6 +31,7 @@ function sessionModel(): SessionModel {
     plannedSets: null,
     targetReps: null,
     expectedSetupCard: null,
+    sessionPace: null,
   };
 }
 
