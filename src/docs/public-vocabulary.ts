@@ -169,6 +169,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'thresholdLbs',
   'deltaLbs',
   'changed',
+  // VW-280: stored assessments now carry a lifter / exercise / session key, so
+  // the runs that predate it are excluded from both series and counted.
+  'legacyUnkeyed',
   // VW-274: the mount-load envelope check on `isometric.measure_hold`,
   // `isometric.measure_max`, `isometric.measure_imbalance` and
   // `device.set_eccentric`.
