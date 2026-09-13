@@ -213,6 +213,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'adherenceTrend',
   'decision',
   'action',
+  // VW-291: `accountability.preview`'s own result field — the live values a
+  // rendered message read, alongside `accountability.state`'s fields above.
+  'inputsUsed',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',

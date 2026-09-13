@@ -2,13 +2,23 @@
 
 # `accountability.*`
 
-1 tool in the `accountability` namespace.
+2 tools in the `accountability` namespace.
 
 ## `accountability.state`
 
 READ-ONLY.
 
 Report the coach accountability protocol state for the owner and the decision the protocol would make right now, without writing anything and without sending anything. Returns `protocolState` (planned / completed / missed / ghosting / realign_needed / holding), `enteredAt`, `consecutiveMisses`, `lastInboundAt`, `holdingUntil`, `ghostSendsThisEpisode`, `proactiveSendsInWindow` (the rolling 7-day count the 2-message ceiling is enforced against), `persisted` (false when no row exists yet and the defaults are being shown), `evaluatedAt` (the instant the dry run was evaluated at), plus `tick` (`sunday_anchor` on a Sunday, `thursday` on a Thursday, `none` on every other day), `adherenceTrend` read from `report.weekly`, and `decision` — `{action, kind, reason}` where `action` is `send` or `silent` and `reason` always says why, including why it is silent. Pass `at` to evaluate the dry run as of another instant. No device traffic, no network.
+
+**Parameters**
+
+- `at` — `string`, optional.
+
+## `accountability.preview`
+
+READ-ONLY.
+
+Run the same dry evaluation as `accountability.state` and, when the decision is `send`, also render the coach message that decision would carry — from live reads (`report.weekly` adherence, `plan.next_workout`, the rolling 28-day count), never from stored copy. Sends nothing and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, or null when the decision is silent), `text` (the rendered message, or null when silent or when the plan has nothing queued to render from), `inputsUsed` (the adherence, rolling-count and next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass `at` to evaluate as of another instant.
 
 **Parameters**
 

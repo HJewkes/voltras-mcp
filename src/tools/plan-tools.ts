@@ -1008,7 +1008,8 @@ async function resolveCompleteWorkoutBlockBoundary(
   return buildBlockBoundary(orderedBlocks, blockIndex, await readCurrentGoal(state));
 }
 
-async function nextWorkout(
+/** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
+export async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
 ): Promise<
