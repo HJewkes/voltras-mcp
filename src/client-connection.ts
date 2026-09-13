@@ -49,6 +49,7 @@ import { registerBaselineTools } from './tools/baseline-tools.js';
 import { registerDriftGuardTools } from './tools/drift-guard-tools.js';
 import { registerMrvGuardTools } from './tools/mrv-guard-tools.js';
 import { registerCoachingTools } from './tools/coaching-tools.js';
+import { registerRirVelocityTools } from './tools/rir-velocity-tools.js';
 import { registerTrueCoachTools } from './tools/truecoach-tools.js';
 import { registerReportTools } from './tools/report-tools.js';
 import { registerAccountabilityTools } from './tools/accountability-tools.js';
@@ -200,6 +201,7 @@ function registerRealTools(
   registerBaselineTools(server, state, placeholders);
   registerDriftGuardTools(server, state, placeholders);
   registerMrvGuardTools(server, state, placeholders);
+  registerRirVelocityTools(server, state, placeholders);
   registerCoachingTools(server, state, placeholders);
   registerTrueCoachTools(server, state, placeholders);
   registerReportTools(server, state, placeholders);

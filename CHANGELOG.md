@@ -81,6 +81,20 @@ entry is written from the user's point of view is a review question, not a check
   neither axis supports an inference about what the lifter ate. Every existing field on both
   pipelines is unchanged.
 
+- An RIR prescription now converts into a velocity target from the lifter's own fitted
+  curve (VW-298). Two new tools: `rir_velocity.fit` re-fits one lifter's RIR-velocity
+  relationship for one exercise from their working sets that ended at failure in the 70-90%
+  band of estimated 1RM, and `rir_velocity.target` turns a reps-in-reserve number into the
+  velocity that lifter actually moves at. `coaching.explain` on `live.rir_estimation` now
+  takes `exerciseId` and `rir` together and returns the same target inline. Two lifters with
+  different curves get different velocities for the same RIR, which is the point: individual
+  RIR-velocity models predicted a later session within under 2 repetitions of mean error
+  across 70/80/90% 1RM, while general models failed at 70% and were only acceptable at 80-90%
+  (Jukic, Prnjak, Helms & McGuigan, _Physiological Reports_, 2024). A lifter without enough
+  history gets a stated caveat and NO number rather than a group curve that is wrong in the
+  part of the band most working sets sit in. New `rir_velocity_models` table (schema v24);
+  nothing is back-filled, because a fit only exists once it is run.
+
 - `device.set_eccentric`'s description and `coaching.explain` now frame eccentric overload
   as a stimulus-cost knob, not a growth multiplier (VW-303). The largest available synthesis
   (49 studies, 773 participants) found accentuated eccentric loading's chronic strength and

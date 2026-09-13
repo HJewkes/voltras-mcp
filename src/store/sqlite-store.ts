@@ -24,10 +24,17 @@ import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 import { log } from '../logger.js';
 import {
   evaluateFailureCandidate,
+  FAILURE_FILTER_VERSION,
   type FailureCandidateContext,
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
+import { fitRirVelocityModel, type RirVelocityFit } from '../analytics/rir-velocity.js';
+import {
+  referenceOneRepMax,
+  toRirVelocityObservations,
+  type RirAnchorRow,
+} from './rir-velocity-candidates.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
 import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
@@ -77,6 +84,7 @@ import {
   type StoredFailureAnchor,
   type StoredProgramAssignment,
   type StoredRep,
+  type StoredRirVelocityModel,
   type StoredSelfReport,
   type StoredSession,
   type StoredSet,
@@ -90,7 +98,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -126,6 +134,34 @@ const ACCOUNTABILITY_STATE_DDL = `
     last_inbound_at TEXT,
     last_proactive_sends_json TEXT,
     holding_until TEXT
+  );
+`;
+
+/**
+ * One fitted RIR-velocity curve per lifter per exercise (VW-298, v24).
+ *
+ * COMPOSITE PRIMARY KEY, not a generated `id`. Neither column is nullable, so
+ * the pair is a real identity and `ON CONFLICT(user_id, exercise_id)` fires —
+ * unlike `exercise_baselines`, whose UNIQUE constraint includes nullable
+ * columns and therefore needed a separate synthetic key.
+ *
+ * `model_json` holds the whole fitted model rather than one column per
+ * coefficient, because the FORM of the model is part of what is stored: a
+ * later version with a different parameterisation must be readable beside this
+ * one, and `version` inside the JSON says which rules produced it.
+ *
+ * Shared with `migrateV23ToV24` so the fresh-DB shape and the migrated shape
+ * cannot drift apart.
+ */
+const RIR_VELOCITY_MODELS_DDL = `
+  CREATE TABLE IF NOT EXISTS rir_velocity_models (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    model_json TEXT NOT NULL,
+    fitted_at TEXT NOT NULL,
+    sample_size INTEGER NOT NULL,
+    fit_quality REAL,
+    PRIMARY KEY (user_id, exercise_id)
   );
 `;
 
@@ -789,7 +825,8 @@ const SCHEMA_SQL = `
     declared_at TEXT NOT NULL,
     reason TEXT
   );
-${ACCOUNTABILITY_STATE_DDL}`;
+${ACCOUNTABILITY_STATE_DDL}
+${RIR_VELOCITY_MODELS_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1323,6 +1360,16 @@ function migrateV22ToV23(db: DatabaseSync): void {
 }
 
 /**
+ * v23 -> v24: the `rir_velocity_models` table (VW-298). PURELY ADDITIVE — a new
+ * table, no existing column touched and nothing back-filled: a fit is an
+ * optimisation over a selected corpus, so the only honest way to populate a row
+ * is to run the fit, which `rir_velocity.fit` does on demand.
+ */
+function migrateV23ToV24(db: DatabaseSync): void {
+  db.exec(RIR_VELOCITY_MODELS_DDL);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1704,6 +1751,37 @@ interface ExerciseBaselineRow {
   optimal_mvt_sample_size: number | null;
   optimal_mvt_observed_v1rm: number | null;
 }
+
+/** `failure_anchors` reduced to what the RIR-velocity candidate filter reads. */
+interface FailureAnchorVerdictRow {
+  set_id: string | null;
+  filter_verdict: FailureVerdict;
+  self_reported_rir: number | null;
+}
+
+interface RirVelocityModelRow {
+  model_json: string;
+  fitted_at: string;
+  sample_size: number;
+  fit_quality: number | null;
+}
+
+/**
+ * The fit reported when the exercise has no reference 1RM at all — no set
+ * carried both a load and a rep, so nothing could be placed in the intensity
+ * band. Distinct from a failed fit only in its reason; both persist nothing.
+ */
+const EMPTY_RIR_VELOCITY_FIT: RirVelocityFit = {
+  model: null,
+  qualification: {
+    observedSets: 0,
+    qualifyingSets: 0,
+    qualifyingSessions: 0,
+    qualifyingPoints: 0,
+    rirSpread: 0,
+  },
+  reason: 'no recorded set carries both a load and a rep, so there is no reference 1RM',
+};
 
 /** `failure_anchors` joined to its set row for the session bucket. */
 interface FailureAnchorJoinRow {
@@ -3543,6 +3621,107 @@ export class SqliteSessionStore implements SessionStore {
     return out;
   }
 
+  // --- RIR-velocity models (VW-298) ---
+
+  async getRirVelocityModel(
+    userId: string,
+    exerciseId: string,
+  ): Promise<StoredRirVelocityModel | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT model_json, fitted_at, sample_size, fit_quality
+           FROM rir_velocity_models WHERE user_id = ? AND exercise_id = ?`,
+      )
+      .get(userId, exerciseId) as RirVelocityModelRow | undefined;
+    if (row === undefined) return Promise.resolve(undefined);
+    return Promise.resolve({
+      userId,
+      exerciseId,
+      model: JSON.parse(row.model_json) as Record<string, unknown>,
+      fittedAt: row.fitted_at,
+      sampleSize: row.sample_size,
+      fitQuality: row.fit_quality ?? 0,
+    });
+  }
+
+  /**
+   * Re-fit from the lifter's own working sets. Owner-scoped through
+   * `getSetsForExercise`, which filters `lifter IS NULL` — a guest's set on the
+   * same rig never enters the owner's curve, matching the baseline and anchor
+   * reads.
+   */
+  async refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit> {
+    const sets = await this.getSetsForExercise({ userId, exerciseId, purpose: ['working'] });
+    const reference = referenceOneRepMax(sets);
+    const fit =
+      reference === undefined
+        ? EMPTY_RIR_VELOCITY_FIT
+        : fitRirVelocityModel(
+            toRirVelocityObservations(sets, this.rirAnchorRows(userId, exerciseId), reference),
+          );
+    this.persistRirVelocityFit(userId, exerciseId, fit);
+    return fit;
+  }
+
+  /**
+   * `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`: this table sits on the
+   * `users` cascade and a delete-then-insert is the wrong primitive there for
+   * the reason `putSet` spells out (#79). EVERY WRITTEN COLUMN MUST APPEAR IN
+   * BOTH LISTS.
+   */
+  private persistRirVelocityFit(userId: string, exerciseId: string, fit: RirVelocityFit): void {
+    if (fit.model === null) {
+      this.db
+        .prepare(`DELETE FROM rir_velocity_models WHERE user_id = ? AND exercise_id = ?`)
+        .run(userId, exerciseId);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO rir_velocity_models
+           (user_id, exercise_id, model_json, fitted_at, sample_size, fit_quality)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, exercise_id) DO UPDATE SET
+           model_json = excluded.model_json,
+           fitted_at = excluded.fitted_at,
+           sample_size = excluded.sample_size,
+           fit_quality = excluded.fit_quality`,
+      )
+      .run(
+        userId,
+        exerciseId,
+        JSON.stringify(fit.model),
+        new Date().toISOString(),
+        fit.model.pointCount,
+        fit.model.r2,
+      );
+  }
+
+  /**
+   * The anchor verdict for every set of one exercise, keyed by set id. Only the
+   * CURRENT filter version is read: an older row was scored under thresholds
+   * that no longer hold, and mixing the two would build one curve out of two
+   * definitions of failure.
+   */
+  private rirAnchorRows(userId: string, exerciseId: string): Map<string, RirAnchorRow> {
+    const rows = this.db
+      .prepare(
+        `SELECT set_id, filter_verdict, self_reported_rir
+           FROM failure_anchors
+          WHERE user_id = ? AND exercise_id = ? AND lifter IS NULL AND filter_version = ?`,
+      )
+      .all(userId, exerciseId, FAILURE_FILTER_VERSION) as unknown as FailureAnchorVerdictRow[];
+    const out = new Map<string, RirAnchorRow>();
+    for (const row of rows) {
+      if (row.set_id === null) continue;
+      out.set(row.set_id, {
+        verdict: row.filter_verdict,
+        ...(row.self_reported_rir === null ? {} : { selfReportedRir: row.self_reported_rir }),
+      });
+    }
+    return out;
+  }
+
   async close(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.closed = true;
@@ -3723,6 +3902,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 22) {
     migrateV22ToV23(db);
+  }
+  if (current <= 23) {
+    migrateV23ToV24(db);
   }
 }
 

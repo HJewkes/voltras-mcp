@@ -187,7 +187,20 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'exercises. Visible near-failure cues (bar slowdown, near-grind, facial strain, changed ' +
       'breathing, path deviation) combine to roughly 2-4 RIR on average, but fast-twitch lifters ' +
       'look fine until 1 RIR then fail abruptly, while slow-twitch lifters show signs as early ' +
-      'as 8 RIR — a single population threshold misfits both.',
+      'as 8 RIR — a single population threshold misfits both. ' +
+      "An RIR prescription becomes a VELOCITY target only through the lifter's OWN fitted " +
+      'curve. Jukic, Prnjak, Helms & McGuigan (Physiological Reports 12(5), 2024 (10.14814/phy2.15955)) built ' +
+      'individual RIR-velocity models in one session and predicted a later session within under ' +
+      '2 repetitions of mean error across 70/80/90% 1RM; general models were only acceptable at ' +
+      '80-90% and FAILED at 70%, and individual fits were roughly twice as good. So this server ' +
+      'converts an RIR prescription for a named exercise only when that lifter has a fitted ' +
+      'curve, and otherwise says so rather than substituting a group number that is wrong in ' +
+      'the part of the band most working sets sit in. Velocity and perceived RIR stay ' +
+      'COMPLEMENTARY, never interchangeable: at identical measured velocity, lifters used to a ' +
+      'high velocity-loss threshold reported about 0.94 RIR units higher than a low-threshold ' +
+      'group, and each successive set shifted perception by about -0.11 RIR (Paulsen, Myrholt, ' +
+      'Mentzoni & Solberg, PeerJ 13, 2025 (10.7717/peerj.19797)). Keep both reads; do not replace one with ' +
+      'the other.',
     perTier: {
       beginner:
         'Beginner: do not track RIR at all — self-report error runs 5-10 reps. Use ' +
@@ -204,12 +217,19 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'rp-s4-beginner-rir-floor-progression',
       'rp-s7-rir-visual-cues-approaching-failure',
       'rp-s7-rir-vs-rpe-distinction',
+      'Jukic, Prnjak, Helms & McGuigan, Physiological Reports 2024 — 10.14814/phy2.15955',
+      'Paulsen, Myrholt, Mentzoni & Solberg, PeerJ 2025 — 10.7717/peerj.19797',
     ],
     caveats: [
       'Backlog Addendum 2 re-scopes the velocity->RIR detector to a boolean "RIR <= 2" signal, ' +
         'not a continuous integer estimate — literature accuracy is only good near ' +
         'failure/heavy loads, in-session fits look good but fail to hold 72h later, and ' +
         'cable-machine transfer is entirely unstudied.',
+      'The RIR-to-velocity direction (VW-298) is the fitted individual curve and carries its ' +
+        'own error, reported as `rirErrorReps`. The literature it rests on is barbell squat ' +
+        'and bench press in trained men on a fixed external load; transfer to a cable device ' +
+        'with settable eccentric load is unstudied, so read a target as a starting point, not ' +
+        'a constant.',
     ],
   },
   'live.stop_set_signal': {
