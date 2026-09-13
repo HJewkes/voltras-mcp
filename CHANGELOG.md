@@ -39,6 +39,9 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The documentation site renders this changelog at `/changelog` (#348). The page was a
+  stub; it now includes this file verbatim, so there is one copy to read and one to write.
+
 - `profile.set_diet_phase` — the first writer of `diet_phases`, which had DDL and a
   comparability clause but nothing to fill it (VW-149 / VW-150). It records the OBSERVED
   phase (fat-loss / gain / maintenance) as a time range, closes the previous range at the
