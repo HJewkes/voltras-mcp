@@ -161,6 +161,15 @@ entry is written from the user's point of view is a review question, not a check
   points from the programmed one; `null` otherwise. `set_ended` carries the same finding as
   a new `load_drift` block when the just-closed set was performed at that programmed load.
 
+- `session.start` now takes an optional `preSessionCarbs` for recording a self-reported carb
+  context against the session (`{ level: 'low'|'normal'|'high', hoursSinceLastMeal? }`), and
+  `session.checkin` can set or correct it afterward (VW-307). Absent means never reported and
+  is never defaulted. `report.weekly` lists it per session when present; nothing in
+  `metrics.*` or `coaching.*` consumes it yet — the VW-278 research note found the fuel axis
+  is not observable from telemetry, so a recorded n-of-1 context is the only path to using it
+  later. The schema gains `pre_session_carbs_level` and `pre_session_carbs_hours_since_meal`
+  on `sessions` (v25); nothing is back-filled.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own

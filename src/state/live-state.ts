@@ -39,7 +39,7 @@ import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
 import { setPurposeFields } from '../store/set-purpose.js';
-import type { SetPurpose } from '../store/types.js';
+import type { SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
@@ -204,6 +204,13 @@ export interface ActiveSession {
    * start so relabelling never rewrites a set already under way.
    */
   lifter?: string;
+  /**
+   * Optional self-reported pre-session carb context (VW-307), set once at
+   * `session.start`. Snapshotted here (like `lifter`/`exerciseId`) so
+   * `session.end`'s re-put of the session row carries it forward instead of
+   * nulling it out — the DB is not re-read at end.
+   */
+  preSessionCarbs?: StoredPreSessionCarbs;
 }
 
 /** Active set with its live rep buffer. `endedAt`/`partialReason` set on close. */
@@ -738,6 +745,19 @@ export class LiveState {
       delete next.lifter;
     }
     this.session = next;
+  }
+
+  /**
+   * Set the active session's pre-session carb context (VW-307) so a
+   * `session.checkin` update lands in the in-memory copy `session.end`
+   * re-puts from — without this, ending the session would null out a value
+   * set after `session.start` (the DB is not re-read at end).
+   */
+  setSessionPreSessionCarbs(preSessionCarbs: StoredPreSessionCarbs): void {
+    if (this.session === undefined) {
+      return;
+    }
+    this.session = { ...this.session, preSessionCarbs };
   }
 
   /**

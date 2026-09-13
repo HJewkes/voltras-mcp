@@ -408,6 +408,33 @@ describe('report.weekly', () => {
     expect(report.checkIn).toBeNull();
   });
 
+  it('lists preSessionCarbs on the session entry, and omits it when absent (VW-307)', async () => {
+    await store.putSession({
+      id: 'sess-carbs',
+      startedAt: '2026-09-08T12:00:00.000Z',
+      endedAt: '2026-09-08T12:30:00.000Z',
+      preSessionCarbs: { level: 'low', hoursSinceLastMeal: 4 },
+    });
+    await store.putSession({
+      id: 'sess-no-carbs',
+      startedAt: '2026-09-09T12:00:00.000Z',
+      endedAt: '2026-09-09T12:30:00.000Z',
+    });
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-15T00:00:00.000Z',
+    });
+
+    const withCarbs = report.sessions.find((s) => s.sessionId === 'sess-carbs');
+    expect(withCarbs?.preSessionCarbs).toEqual({ level: 'low', hoursSinceLastMeal: 4 });
+    const withoutCarbs = report.sessions.find((s) => s.sessionId === 'sess-no-carbs');
+    expect(withoutCarbs?.preSessionCarbs).toBeUndefined();
+
+    const markdown = renderWeeklyMarkdown(report);
+    expect(markdown).toContain('Pre-session carbs: low (4h since last meal)');
+  });
+
   it('renders markdown that is paste-safe: no HTML tags, no emoji, no wide tables', async () => {
     await store.putSession({
       id: 'sess-1',

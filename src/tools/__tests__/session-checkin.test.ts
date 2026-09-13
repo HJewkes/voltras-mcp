@@ -293,4 +293,34 @@ describe('session.checkin (VMCP-06.12 / B41)', () => {
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
+
+  it('session.checkin sets preSessionCarbs on the active session (VW-307)', async () => {
+    h.store.countSessions.mockResolvedValue(2);
+    await h.invoke('session.start', { exerciseName: 'Bench Press' });
+    const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
+
+    const r = await h.invoke('session.checkin', {
+      answers: [{ code: 'felt', value: 'Solid.' }],
+      preSessionCarbs: { level: 'normal', hoursSinceLastMeal: 3 },
+    });
+    expect(r.isError).toBeUndefined();
+
+    const stored = await h.store.getSession(sessionId);
+    expect(stored?.preSessionCarbs).toEqual({ level: 'normal', hoursSinceLastMeal: 3 });
+  });
+
+  it('preSessionCarbs set via session.checkin survives the later session.end re-put', async () => {
+    h.store.countSessions.mockResolvedValue(2);
+    await h.invoke('session.start', { exerciseName: 'Bench Press' });
+    const sessionId = h.state.slots.get('primary')!.live.session!.sessionId;
+
+    await h.invoke('session.checkin', {
+      answers: [{ code: 'felt', value: 'Solid.' }],
+      preSessionCarbs: { level: 'high' },
+    });
+    await h.invoke('session.end', {});
+
+    const stored = await h.store.getSession(sessionId);
+    expect(stored?.preSessionCarbs).toEqual({ level: 'high' });
+  });
 });
