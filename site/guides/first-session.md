@@ -131,15 +131,16 @@ against the active session. Omit it and nothing is asked; it's never a gate on e
 session.
 
 The question set comes from RP's client check-in: four free-text prompts — how it went,
-how you felt, whether anything felt off, and any questions — plus three questions on RP's
+how you felt, whether anything felt off, and any questions — plus four questions on RP's
 coarse 3-point scale (`low`/`medium`/`high`, never a 5- or 10-point scale): how you're
-feeling about the next session or week, soreness, and joint discomfort. "How did it go?"
-is never actually asked — completion (loads, reps, sets) is already telemetry-derivable,
-so Claude shows you your own numbers back instead, and the code exists only to store
-whatever you volunteer on top of that. The 3-point soreness/joint/motivation questions are
-withheld entirely before your first completed training week, since that early the answers
-are uniformly positive and asking can seed unwarranted concern — RP's cadence otherwise is
-after the very first session, then at the end of every completed week.
+feeling about the next session or week, soreness, joint discomfort, and motivation. "How
+did it go?" is never actually asked — completion (loads, reps, sets) is already
+telemetry-derivable, so Claude shows you your own numbers back instead, and the code
+exists only to store whatever you volunteer on top of that. Of the four 3-point
+questions, soreness, joint discomfort, and motivation are withheld entirely before your
+first completed training week, since that early the answers are uniformly positive and
+asking can seed unwarranted concern — RP's cadence otherwise is after the very first
+session, then at the end of every completed week.
 
 A guest session — one running under [`session.set_lifter`](/reference/session) — writes no
 check-in at all: it's the owner's alone.
