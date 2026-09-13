@@ -157,6 +157,28 @@ describe('coaching.explain', () => {
     expect(body.caveats?.length).toBeGreaterThan(0);
   });
 
+  it('frames eccentric overload as a stimulus-cost knob, never extra growth (VW-303)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'live.eccentric_overload_cost' }));
+
+    // Assert: the null-result citation and the cost framing, never a growth claim
+    expect(body.explanation).toContain('stimulus');
+    expect(body.explanation).toContain('cost');
+    expect(body.explanation).toContain('49 studies');
+    expect(body.explanation).toContain('773 participants');
+    expect(body.sources.some((s) => s.includes('Zhang') && s.includes('2026'))).toBe(true);
+    expect(body.sources.some((s) => s.includes('10.1007/s40279-026-02422-7'))).toBe(true);
+    expect(body.caveats?.length).toBeGreaterThan(0);
+
+    // The entry must state the null result outright, never imply overload
+    // adds hypertrophy or strength beyond a matched constant load.
+    expect(body.explanation).toContain('not a growth multiplier');
+    expect(body.explanation).toContain('none of the outcomes it measured showed an AEL advantage');
+    expect(body.explanation).toContain(
+      'must never be presented as adding extra hypertrophy or extra strength',
+    );
+  });
+
   it('states the diet-phase tolerance rule and cites the S12 notes (VW-277)', async () => {
     // Arrange / Act
     const body = parseResult(await h.invoke({ topic: 'meso.diet_phase_tolerance' }));

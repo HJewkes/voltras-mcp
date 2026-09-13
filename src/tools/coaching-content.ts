@@ -306,6 +306,35 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
         'kilogram figures as not.',
     ],
   },
+  'live.eccentric_overload_cost': {
+    allTiers:
+      'A positive `device.set_eccentric` overload (accentuated eccentric loading, AEL) is a ' +
+      'STIMULUS-COST knob, not a growth multiplier, at every tier — say this plainly before a ' +
+      'lifter equates "extra weight on the eccentric" with "extra gains." The largest available ' +
+      'synthesis (49 studies, 773 participants) found AEL produces chronic adaptations ' +
+      'statistically similar to constant-load training across concentric, eccentric and ' +
+      'isometric strength, countermovement jump, fascicle angle, fascicle length and ' +
+      'cross-sectional area — none of the outcomes it measured showed an AEL advantage, so it ' +
+      'must never be presented as adding extra hypertrophy or extra strength on top of a matched ' +
+      'constant load. What AEL does add is acute cost: higher post-set blood lactate, higher ' +
+      'growth hormone, higher RPE and higher eccentric-phase muscle activation for the same ' +
+      'training result. Frame it to the lifter as a way to vary stimulus and cost, never as a way ' +
+      'to get more out of a set than a matched constant load would give. There is also a ' +
+      'mechanical interaction worth naming: AEL applied to the first rep of a set measurably ' +
+      'slows the very next concentric rep (mean velocity, ES -0.25), an effect gone by the second ' +
+      'and third reps and larger in the squat than the bench press. That slowing is mechanical, ' +
+      'not fatigue, which is why this server excludes the rep immediately following an AEL rep ' +
+      'from `velocity_loss_exceeded` accounting — feeding it in would end sets on a mechanical ' +
+      'artifact rather than a real fatigue signal.',
+    sources: [
+      'Zhang, Weakley, Li, Marcos-Frutos & García-Ramos, Sports Medicine, 2026 — 10.1007/s40279-026-02422-7',
+      'Yang, Nagatani, Comfort, Kendall & Haff, Sports Medicine - Open, 2026 — 10.1186/s40798-026-01031-y',
+    ],
+    caveats: [
+      'This entry cites primary literature rather than the mined RP corpus; its source ids are ' +
+        'author-year citations, not `rp-*` note ids.',
+    ],
+  },
   'meso.deload_trigger': {
     allTiers:
       'Deload triggering is performance-gated, full stop: two CONSECUTIVE sessions of the same ' +

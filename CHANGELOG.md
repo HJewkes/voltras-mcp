@@ -52,6 +52,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `device.set_eccentric`'s description and `coaching.explain` now frame eccentric overload
+  as a stimulus-cost knob, not a growth multiplier (VW-303). The largest available synthesis
+  (49 studies, 773 participants) found accentuated eccentric loading's chronic strength and
+  hypertrophy adaptations statistically similar to constant-load training, while acutely
+  raising lactate, growth hormone, RPE and eccentric-phase muscle activation for the same
+  result (Zhang, Weakley, Li, Marcos-Frutos & García-Ramos, *Sports Medicine*, 2026). New
+  `coaching.explain` topic `live.eccentric_overload_cost` carries the citation and the
+  mechanical caveat that the rep right after an overloaded one runs slower for reasons
+  unrelated to fatigue.
+
 - The wall shows what an isometric assessment measured, once the hold overlay closes
   (VW-264). After `isometric.measure_imbalance` (or `isometric.measure_max`) finishes, a
   card carries each side's peak force, the left/right percentage and the verdict — and
