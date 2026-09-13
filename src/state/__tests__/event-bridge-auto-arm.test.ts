@@ -65,6 +65,7 @@ function makeFakeChannels(): FakeChannels {
 
 function makeFakeClient() {
   let frameCb: (frame: unknown) => void = () => undefined;
+  let settingsCb: (settings: unknown) => void = () => undefined;
   return {
     onFrame: vi.fn((l: (f: unknown) => void) => {
       frameCb = l;
@@ -74,7 +75,10 @@ function makeFakeClient() {
     onInProgress: vi.fn(() => () => undefined),
     onSummary: vi.fn(() => () => undefined),
     onSetSummary: vi.fn(() => () => undefined),
-    onSettingsUpdate: vi.fn(() => () => undefined),
+    onSettingsUpdate: vi.fn((l: (s: unknown) => void) => {
+      settingsCb = l;
+      return () => undefined;
+    }),
     onConnectionStateChange: vi.fn(() => () => undefined),
     onStateDump: vi.fn(() => () => undefined),
     endSet: vi.fn(async () => undefined),
@@ -88,6 +92,7 @@ function makeFakeClient() {
         velocity: number;
         force: number;
       }) => frameCb(f),
+      settingsUpdate: (s: { weight: number }) => settingsCb(s),
     },
   };
 }
@@ -305,6 +310,96 @@ describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
 
     expect(h.live.set).toBeUndefined();
     expect(h.live.idleRepCount).toBe(2);
+  });
+});
+
+// VW-182. The VW-165 refresh keeps the set header tracking the unit until the
+// lifter's first rep closes, then freezes. Its guard was `reps.length > 0`,
+// which auto-arm broke: an auto-armed set is born holding the reps the lifter
+// performed BEFORE it existed, so the guard always skipped and the header froze
+// on the pre-lift weight. Eligibility is now "no rep has closed under this set".
+describe('the pre-first-rep header refresh for an auto-armed set (VW-182)', () => {
+  let h: ReturnType<typeof makeHarness>;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  /** Two working reps, then the frame that closes the second one and arms. */
+  function armWithTwoReps(): void {
+    const next = feedShapedRep(h.client, 1, WORKING_SHAPE);
+    const after = feedShapedRep(h.client, next, WORKING_SHAPE);
+    feedFrame(h.client, after, 1, 0, WORKING_SHAPE.velocityMms);
+  }
+
+  function headerWeight(): number | undefined {
+    const setId = h.live.set!.setId;
+    return (h.state.setStartDeviceSnapshots.get(setId) as { weightLbs?: number } | undefined)
+      ?.weightLbs;
+  }
+
+  it('follows a weight dialled in after the set armed but before a rep closes under it', () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+    armWithTwoReps();
+    expect(headerWeight()).toBe(170);
+
+    h.live.applySettings({ connected: true, weightLbs: 185, trainingMode: 'Weight Training' });
+    h.client.fire.settingsUpdate({ weight: 185 });
+
+    expect(headerWeight()).toBe(185);
+  });
+
+  it('records what the set adopted rather than recorded', () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+
+    armWithTwoReps();
+
+    expect(h.live.set!.adoptedRepCount).toBe(h.live.set!.reps.length);
+  });
+
+  it('freezes as soon as a rep closes UNDER the set — the window is not widened', () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+    armWithTwoReps();
+    const adopted = h.live.set!.reps.length;
+
+    // One more rep, closed inside the set this time.
+    const next = feedShapedRep(h.client, 100, WORKING_SHAPE);
+    feedFrame(h.client, next, 1, 0, WORKING_SHAPE.velocityMms);
+    expect(h.live.set!.reps.length).toBeGreaterThan(adopted);
+
+    h.live.applySettings({ connected: true, weightLbs: 185, trainingMode: 'Weight Training' });
+    h.client.fire.settingsUpdate({ weight: 185 });
+
+    expect(headerWeight()).toBe(170);
+  });
+
+  it('leaves a set that adopted nothing on the original VW-165 rule', () => {
+    // An explicit `set.start`: no adoption, so the guard is `reps.length > 0`
+    // exactly as before — tracks the unit with zero reps, frozen after rep 1.
+    h.live.startSet({
+      setId: 'set-explicit',
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:00.000Z',
+      reps: [],
+      status: 'active',
+    });
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+    h.state.setStartDeviceSnapshots.set('set-explicit', { connected: true, weightLbs: 170 });
+    expect(h.live.set!.adoptedRepCount).toBeUndefined();
+
+    h.live.applySettings({ connected: true, weightLbs: 185, trainingMode: 'Weight Training' });
+    h.client.fire.settingsUpdate({ weight: 185 });
+    expect(headerWeight()).toBe(185);
+
+    const next = feedShapedRep(h.client, 1, WORKING_SHAPE);
+    feedFrame(h.client, next, 1, 0, WORKING_SHAPE.velocityMms);
+    h.live.applySettings({ connected: true, weightLbs: 200, trainingMode: 'Weight Training' });
+    h.client.fire.settingsUpdate({ weight: 200 });
+
+    expect(headerWeight()).toBe(185);
   });
 });
 

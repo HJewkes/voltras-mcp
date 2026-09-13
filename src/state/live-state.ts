@@ -258,6 +258,20 @@ export interface ActiveSet {
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep';
   /**
+   * How many of {@link reps} the set ADOPTED at arm time rather than recorded
+   * (VW-182). Written once by {@link LiveState.adoptIdleTail} from the tail it
+   * actually moved; absent on every set that adopted nothing.
+   *
+   * This is not a second opinion about which reps are real — every rep in
+   * `reps` is real and counts identically everywhere, including the persisted
+   * row, which never sees this field. It records the one thing `reps.length`
+   * cannot express: the boundary between reps the lifter performed BEFORE this
+   * set existed and reps performed under it. The pre-first-rep header refresh
+   * needs that boundary, because "has reps" was standing in for "the lifter has
+   * started" and auto-arm pulled the two apart.
+   */
+  adoptedRepCount?: number;
+  /**
    * When `set.start` upgraded this auto-armed set in place (VW-180) — the
    * agent attaching its warm-up flag and watch config to a set the lifter had
    * already begun. Present ⇒ the upgrade has happened; a second `set.start`
@@ -1297,7 +1311,9 @@ export class LiveState {
     }
     const tail = this._idleAnalyticsSet.reps.slice(-repCount);
     this._analyticsSet = { ...this._idleAnalyticsSet, reps: tail };
-    this.set = { ...this.set, reps: [...tail] };
+    // VW-182: from the tail actually moved, not the count requested — a short
+    // idle pipeline would otherwise overstate what the set adopted.
+    this.set = { ...this.set, reps: [...tail], adoptedRepCount: tail.length };
     this._idleAnalyticsSet = undefined;
   }
 
