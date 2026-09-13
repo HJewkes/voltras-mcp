@@ -200,6 +200,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'ghost_nudge',
   'realign_opener',
   'enteredAt',
+  'evaluatedAt',
   'tick',
   'reason',
   'kind',

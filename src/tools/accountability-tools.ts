@@ -44,7 +44,8 @@ export const ACCOUNTABILITY_STATE_DESCRIPTION =
   'Returns `protocolState` (planned / completed / missed / ghosting / realign_needed / holding), ' +
   '`enteredAt`, `consecutiveMisses`, `lastInboundAt`, `holdingUntil`, `ghostSendsThisEpisode`, ' +
   '`proactiveSendsInWindow` (the rolling 7-day count the 2-message ceiling is enforced against), ' +
-  '`persisted` (false when no row exists yet and the defaults are being shown), plus `tick` ' +
+  '`persisted` (false when no row exists yet and the defaults are being shown), ' +
+  '`evaluatedAt` (the instant the dry run was evaluated at), plus `tick` ' +
   '(`sunday_anchor` on a Sunday, `thursday` on a Thursday, `none` on every other day), ' +
   '`adherenceTrend` read from `report.weekly`, and `decision` — `{action, kind, reason}` where ' +
   '`action` is `send` or `silent` and `reason` always says why, including why it is silent. ' +

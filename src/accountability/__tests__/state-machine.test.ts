@@ -60,6 +60,34 @@ describe('rolling 7-day ceiling', () => {
     const nextWeek = step(miss.state, { type: 'sunday_anchor_tick' }, '2026-09-21T18:00:00.000Z');
     expect(nextWeek.decision).toMatchObject({ action: 'send', kind: 'sunday_anchor' });
   });
+
+  // Pins the window LENGTH, which the 8-days-later case above does not: an
+  // 8-day window would pass that one too. The pair straddles the boundary by
+  // an hour either side of exactly 7 days after the first send.
+  it('refuses an hour before the window clears and allows an hour after', () => {
+    const anchor = step(fresh(), { type: 'sunday_anchor_tick' }, SUNDAY);
+    const spent = step(anchor.state, { type: 'planned_session_missed' }, MONDAY);
+    expect(spent.state.proactiveSends).toHaveLength(2);
+
+    const justInside = step(
+      spent.state,
+      { type: 'sunday_anchor_tick' },
+      '2026-09-20T17:00:00.000Z',
+    );
+    expect(justInside.decision.action).toBe('silent');
+    expect(justInside.decision.reason).toContain(
+      'withheld: already sent 2 proactive messages in the last 7 days',
+    );
+    expect(justInside.state.proactiveSends).toHaveLength(2);
+
+    const justOutside = step(
+      spent.state,
+      { type: 'sunday_anchor_tick' },
+      '2026-09-20T19:00:00.000Z',
+    );
+    expect(justOutside.decision).toMatchObject({ action: 'send', kind: 'sunday_anchor' });
+    expect(justOutside.state.proactiveSends).toHaveLength(3);
+  });
 });
 
 describe('Thursday trigger', () => {
