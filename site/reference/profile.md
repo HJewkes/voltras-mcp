@@ -2,7 +2,7 @@
 
 # `profile.*`
 
-6 tools in the `profile` namespace.
+8 tools in the `profile` namespace.
 
 ## `profile.set_training_background`
 
@@ -68,3 +68,25 @@ Declaring a phase closes the previous one at the same instant, so the timeline n
 
 - `phase` — `fat-loss` | `gain` | `maintenance`, **required**.
 - `startedAt` — `string`, optional.
+
+## `profile.log_bodyweight`
+
+Record a self-reported bodyweight reading: bodyweightLbs (required), measuredAt (optional, defaults to now) and note (optional).
+
+A second call at the same measuredAt UPDATES that reading rather than duplicating it — the supported way to correct one logged in error. Storage only: this tool computes no trend, rate or verdict.
+
+**Parameters**
+
+- `bodyweightLbs` — `number`, **required**.
+- `measuredAt` — `string`, optional.
+- `note` — `string`, optional.
+
+## `profile.get_body_metrics`
+
+Read back logged bodyweight readings, newest-first.
+
+sinceDays optionally limits how far back the returned series goes; omitted returns the whole history. sevenDayMeanBodyweightLbs is the mean of readings from the last 7 days, reported only when there are at least 3 such readings (null otherwise) — advisory context, never a rate-of-change verdict.
+
+**Parameters**
+
+- `sinceDays` — `integer`, optional.

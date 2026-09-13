@@ -25,15 +25,22 @@ import {
   type StartingPrescription,
 } from '../profile/starting-prescription.js';
 import {
+  ProfileGetBodyMetricsInput,
   ProfileGetOnboardingGapsInput,
   ProfileGetStartingPrescriptionInput,
   ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
+  ProfileLogBodyweightInput,
   ProfileSetDietPhaseInput,
   ProfileSetTrainingBackgroundInput,
 } from '../schemas/profile.js';
 import type { ServerState } from '../state/server-state.js';
-import { LOCAL_USER_ID, type StoredDietPhase, type StoredTrainingProfile } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type StoredBodyMetric,
+  type StoredDietPhase,
+  type StoredTrainingProfile,
+} from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
@@ -120,6 +127,19 @@ const SET_DIET_PHASE_DESCRIPTION =
   'visible so a reader can discount a flat stretch themselves — a fat-loss phase can look ' +
   'identical to a real plateau, and only the reader can tell which they are looking at.';
 
+const LOG_BODYWEIGHT_DESCRIPTION =
+  'Record a self-reported bodyweight reading: bodyweightLbs (required), measuredAt (optional, ' +
+  'defaults to now) and note (optional). A second call at the same measuredAt UPDATES that ' +
+  'reading rather than duplicating it — the supported way to correct one logged in error. ' +
+  'Storage only: this tool computes no trend, rate or verdict.';
+
+const GET_BODY_METRICS_DESCRIPTION =
+  'Read back logged bodyweight readings, newest-first. sinceDays optionally limits how far ' +
+  'back the returned series goes; omitted returns the whole history. ' +
+  'sevenDayMeanBodyweightLbs is the mean of readings from the last 7 days, reported only when ' +
+  'there are at least 3 such readings (null otherwise) — advisory context, never a rate-of-' +
+  'change verdict.';
+
 export function registerProfileTools(
   _server: McpServer,
   state: ServerState,
@@ -166,6 +186,20 @@ export function registerProfileTools(
     ProfileSetDietPhaseInput,
     wrapHandler(ProfileSetDietPhaseInput, (input) => setDietPhase(state, input)),
     SET_DIET_PHASE_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.log_bodyweight',
+    ProfileLogBodyweightInput,
+    wrapHandler(ProfileLogBodyweightInput, (input) => logBodyweight(state, input)),
+    LOG_BODYWEIGHT_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.get_body_metrics',
+    ProfileGetBodyMetricsInput,
+    wrapHandler(ProfileGetBodyMetricsInput, (input) => getBodyMetrics(state, input)),
+    GET_BODY_METRICS_DESCRIPTION,
   );
 }
 
@@ -331,4 +365,49 @@ async function setDietPhase(
     declaredAt: now,
   });
   return { declared, timeline: await state.store.listDietPhases(LOCAL_USER_ID) };
+}
+
+/**
+ * `profile.log_bodyweight` (VW-327) — the first writer of `body_metrics`.
+ * Upserts on `measuredAt`, so a re-log for the same instant corrects rather
+ * than duplicates (see `SqliteSessionStore.putBodyMetric`).
+ */
+async function logBodyweight(
+  state: ServerState,
+  input: z.infer<typeof ProfileLogBodyweightInput>,
+): Promise<{ entry: StoredBodyMetric }> {
+  const entry = await state.store.putBodyMetric({
+    userId: LOCAL_USER_ID,
+    measuredAt: input.measuredAt ?? new Date().toISOString(),
+    bodyweightLbs: input.bodyweightLbs,
+    ...(input.note !== undefined ? { note: input.note } : {}),
+  });
+  return { entry };
+}
+
+/** Days a reading must fall within to count toward the 7-day mean. */
+const SEVEN_DAY_MEAN_WINDOW_DAYS = 7;
+/** Minimum reading count before the 7-day mean is reported at all. */
+const SEVEN_DAY_MEAN_MIN_READINGS = 3;
+
+/**
+ * `profile.get_body_metrics` (VW-327) — read-only. `sevenDayMeanBodyweightLbs`
+ * is computed over the trailing 7 days regardless of `sinceDays`, so a caller
+ * asking for a longer series still gets a meaningful recent mean.
+ */
+async function getBodyMetrics(
+  state: ServerState,
+  input: z.infer<typeof ProfileGetBodyMetricsInput>,
+): Promise<{ series: StoredBodyMetric[]; sevenDayMeanBodyweightLbs: number | null }> {
+  const series = await state.store.listBodyMetrics(LOCAL_USER_ID, {
+    ...(input.sinceDays !== undefined ? { sinceDays: input.sinceDays } : {}),
+  });
+  const recent = await state.store.listBodyMetrics(LOCAL_USER_ID, {
+    sinceDays: SEVEN_DAY_MEAN_WINDOW_DAYS,
+  });
+  const sevenDayMeanBodyweightLbs =
+    recent.length >= SEVEN_DAY_MEAN_MIN_READINGS
+      ? recent.reduce((sum, m) => sum + m.bodyweightLbs, 0) / recent.length
+      : null;
+  return { series, sevenDayMeanBodyweightLbs };
 }

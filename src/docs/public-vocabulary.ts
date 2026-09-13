@@ -306,6 +306,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setsByMuscle',
   'setsByTargetMuscle',
   'setsPerExercise',
+  // VW-327: `profile.get_body_metrics`'s trailing 7-day bodyweight mean.
+  'sevenDayMeanBodyweightLbs',
   'setsUnlocked',
   // VW-170: `system.speak`'s report that a queued line was dropped by a later
   // `interrupt: true` call rather than spoken, and `device.set_weight`'s

@@ -527,6 +527,8 @@ const PROFILE_TOOLS = [
   'profile.get_starting_prescription',
   'profile.get_onboarding_gaps',
   'profile.set_diet_phase',
+  'profile.log_bodyweight',
+  'profile.get_body_metrics',
 ];
 
 interface FakeTool {

@@ -123,6 +123,14 @@ entry is written from the user's point of view is a review question, not a check
   and `phaseType`/`weekIndex` are omitted when not set. No migration: the columns already
   existed unused since v6.
 
+- You can now log bodyweight (VW-327). `profile.log_bodyweight` records a reading —
+  `bodyweightLbs`, an optional `measuredAt` (defaults to now) and an optional `note` — and a
+  second reading logged for the same instant corrects the first rather than creating a
+  duplicate. `profile.get_body_metrics` reads the series back newest-first, optionally limited
+  to the last `sinceDays` days, and reports `sevenDayMeanBodyweightLbs` — the mean of the last
+  7 days of readings — once at least 3 of them exist. Storage only: no trend, rate or verdict
+  is computed on top of it.
+
 - `metrics.compute`'s `strength.e1rm` result now reports `isPR` and `priorBest` (VW-314):
   whether the fresh estimate beats this exercise's own best e1RM on record, and what that
   prior best was. It shares its comparison with the dashboard hero card's PR chip through

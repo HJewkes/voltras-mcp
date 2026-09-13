@@ -699,6 +699,32 @@ export interface DeclareDietPhaseInput {
 }
 
 /**
+ * One row of `body_metrics` — a self-reported bodyweight reading (VW-327).
+ * `note` maps to the DDL's `notes` column; `height_in` is untouched by this
+ * ticket and stays absent from this shape.
+ */
+export interface StoredBodyMetric {
+  id: string;
+  userId: string;
+  measuredAt: string;
+  bodyweightLbs: number;
+  note?: string;
+}
+
+/** Arguments to {@link SessionStore.putBodyMetric}. */
+export interface PutBodyMetricInput {
+  userId: string;
+  measuredAt: string;
+  bodyweightLbs: number;
+  note?: string;
+}
+
+/** Filter for {@link SessionStore.listBodyMetrics}. Absent `sinceDays` returns the whole series. */
+export interface ListBodyMetricsFilter {
+  sinceDays?: number;
+}
+
+/**
  * Filter parameters for `listSessions`. `sort` defaults to `'startedAt:desc'`
  * and `limit` defaults to `50` at the implementation layer.
  */
@@ -1620,6 +1646,20 @@ export interface SessionStore extends ExerciseSetupStore {
    * declared anything.
    */
   getSessionDietPhase(sessionId: string): Promise<string | undefined>;
+
+  // --- Body metrics (VW-327) ---
+
+  /**
+   * Upsert a bodyweight reading on `(userId, measuredAt)` — a second reading
+   * logged for the same instant corrects the first rather than duplicating
+   * it. `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE` (see `putSet`
+   * #79). Returns the row as it now stands, which carries the ORIGINAL `id`
+   * across a correcting call.
+   */
+  putBodyMetric(input: PutBodyMetricInput): Promise<StoredBodyMetric>;
+
+  /** A user's bodyweight readings, newest-first. */
+  listBodyMetrics(userId: string, filter?: ListBodyMetricsFilter): Promise<StoredBodyMetric[]>;
 
   // --- Exercise baselines (I5 / B56, VW-116) ---
 
