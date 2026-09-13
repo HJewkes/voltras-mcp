@@ -2020,6 +2020,7 @@ async function rirForSet(
     // otherwise produce a negative or non-finite loss.
     const velocityLossPct =
       baselineMax > 0 ? Math.max(0, ((baselineMax - peak) / baselineMax) * 100) : 0;
+    // VW-302: pre-existing, tracked — `vbt.rir` (VW-134) predates the fitted model.
     const estimate = estimateRIRWithProfile({
       peakVelocity: peak,
       baselineMaxVelocity: baselineMax,

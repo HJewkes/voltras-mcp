@@ -71,6 +71,15 @@ same set. When the RIR-estimate baseline gate has enough history for an exercise
 line follows its result; when it doesn't, the line is simply absent rather than showing a
 guess.
 
+That RIR line is a per-rep estimate (`vbt.rir`), not the same claim as the velocity target
+[`rir_velocity.target`](/reference/rir_velocity) reads back from a lifter's own fitted
+curve. Neither this report nor anything else in this server turns a velocity-loss
+percentage straight into a reps-in-reserve number: Jukic, Prnjak, McGuigan & Helms (_Eur J
+Appl Physiol_, 2023) found the agreement between velocity loss and percentage of max reps
+completed unacceptable at every load tested, with errors over 10%. Read the "velocity-loss
+holds" flag below as a volume-control dial — the set stopped at a threshold — never as a
+proximity-to-failure estimate.
+
 ## Progression suggestions
 
 This section only appears when a session in range trained an exercise that's part of the
