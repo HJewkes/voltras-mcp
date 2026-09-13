@@ -44,8 +44,11 @@ import {
   type LintPlanExercise,
   type PlanWarning,
 } from '../plan/lint-plan.js';
+import { readRomIntegrity } from '../analytics/rom-integrity.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
+import { normalisePositionsToMetres } from '../store/position-units.js';
+import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { selectWorkingSets } from '../store/working-sets.js';
 import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises/movement-class.js';
@@ -161,7 +164,12 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'rep is the finer dial than the load, so the suggestion adds a rep instead of weight. ' +
   '`gates` reports the ordered progression gates (technique, effort, setsUnlocked: whether ' +
   'adding a set is warranted) and `tier` the training-experience signal the gates were read ' +
-  'against. Suggestion only: the coach or lifter accepts or declines it, it is never ' +
+  "against. `technique` is read from the prior session's own working sets, using the same " +
+  "within-set ROM integrity `metrics.compute quality.rom` reports: `unstable` when a set's " +
+  "ROM shrank or its rep-to-rep ROM was erratic, by workout-analytics' own cited cuts. It is " +
+  '`unknown` whenever no set could be judged, and `unknown` never holds the load — an ' +
+  'unproven technique is not a failed one. Every hold says in words which reading caused it. ' +
+  'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
 export function registerPlanTools(
@@ -745,8 +753,10 @@ export interface ProgressionSuggestion {
 /**
  * What the caller knows that the stored sets don't. `tier` is read once by
  * `suggestProgression` and passed in — this function never touches the store.
- * `technique` is the VW-93 (B09 ROM-integrity) input; nothing supplies it yet,
- * so it stays 'unknown', and 'unknown' never blocks.
+ * `technique` is the VW-93 (B09 ROM-integrity) input; a caller that states one
+ * wins, and one that omits it gets the value read off the working sets'
+ * own ROM integrity (see `techniqueFromRomIntegrity`). Either way 'unknown'
+ * never blocks.
  */
 export interface ProgressionContext {
   tier: Tier;
@@ -1228,9 +1238,12 @@ export function computeProgressionDelta(
 
   const workingSets = selectWorkingSets(sets);
   const tally = tallyRepBand(workingSets, planned.targetRepsLow, planned.targetRepsHigh);
-  const gates = computeGates(workingSets, tally, context);
+  // B07's order is technique, then load/reps, then sets — so technique is read
+  // first and every later gate sees its verdict.
+  const technique = resolveTechnique(workingSets, context);
+  const gates = computeGates(workingSets, tally, context, technique.gate);
   const routed = routeSuggestion(tally, gates, context);
-  return { ...enforceTechniqueGate(routed, gates), basedOnSessionId: basisSessionId, gates };
+  return { ...enforceTechniqueGate(routed, technique), basedOnSessionId: basisSessionId, gates };
 }
 
 /** A verdict reached before any set could be scored: no gate has an input. */
@@ -1314,13 +1327,21 @@ function computeGates(
   workingSets: StoredSet[],
   tally: RepBandTally,
   context: ProgressionContext,
+  technique: TechniqueGate,
 ): ProgressionGates {
   const effort = effortGate(workingSets, tally.maxLossPct);
   return {
-    technique: context.technique ?? 'unknown',
+    technique,
     effort,
+    // Technique comes first in B07's order, so an unstable read keeps sets
+    // locked whatever the effort gate found. Reporting both "hold the load,
+    // technique is unstable" and "consider +1 set" is advice that contradicts
+    // itself.
     setsUnlocked:
-      context.tier !== 'beginner' && effort === 'hard' && tally.hitHigh >= tally.majority,
+      technique !== 'unstable' &&
+      context.tier !== 'beginner' &&
+      effort === 'hard' &&
+      tally.hitHigh >= tally.majority,
   };
 }
 
@@ -1421,14 +1442,87 @@ function loadIncrement(
   };
 }
 
+/**
+ * The technique gate plus the words behind it. A hold the caller cannot
+ * explain is the failure mode that makes a coach stop trusting the tool, so an
+ * 'unstable' verdict always carries the reading that produced it.
+ */
+interface TechniqueReading {
+  gate: TechniqueGate;
+  /** The cited ROM finding behind an 'unstable' gate; null for every other verdict. */
+  finding: string | null;
+}
+
+/**
+ * A caller that states a technique verdict wins — it knows things the reps
+ * don't. Otherwise read it off the sets themselves (VMCP-06.07 / B09).
+ */
+function resolveTechnique(workingSets: StoredSet[], context: ProgressionContext): TechniqueReading {
+  if (context.technique !== undefined) return { gate: context.technique, finding: null };
+  return techniqueFromRomIntegrity(workingSets);
+}
+
+/**
+ * B09's technique input, read from the same `readRomIntegrity` entry point
+ * `metrics.compute quality.rom` reads, over the working sets the progression
+ * basis already selected. One implementation, so the gate and the readout
+ * cannot disagree.
+ *
+ * ONLY WHAT THAT READOUT ALREADY CITES COUNTS. A set is unstable when its ROM
+ * decay is `shrinking` or its rep-to-rep variance is `erratic` — the two
+ * verdicts workout-analytics' own published schemes name as a problem. No
+ * decay percentage or variance ceiling is restated here, and the middle
+ * `variable` band is not promoted into a problem it was never cut to mean.
+ *
+ * WORST SET WINS, the same way the effort gate takes the worst velocity loss:
+ * one set of shrinking reps is the signal, not the average of the session.
+ *
+ * A set whose verdicts are both null could not be judged — too few eligible
+ * reps, or no measurable ROM. When no working set could be judged the gate is
+ * 'unknown', which never blocks: this change lets the gate say "technique
+ * degraded", never "technique unproven, therefore hold".
+ */
+function techniqueFromRomIntegrity(workingSets: StoredSet[]): TechniqueReading {
+  const readings = workingSets.map(romFindingForSet);
+  const unstable = readings.find((reading) => reading.finding !== null);
+  if (unstable !== undefined) return { gate: 'unstable', finding: unstable.finding };
+  if (readings.some((reading) => reading.judged)) return { gate: 'stable', finding: null };
+  return { gate: 'unknown', finding: null };
+}
+
+/** One set's ROM integrity, reduced to "was it judged" and "what was wrong". */
+function romFindingForSet(set: StoredSet): { judged: boolean; finding: string | null } {
+  const rom = readRomIntegrity(normalisePositionsToMetres(normaliseVelocityToMps(set)).reps);
+  const judged = rom.decay.verdict !== null || rom.variance.verdict !== null;
+  if (rom.decay.verdict === 'shrinking') {
+    return {
+      judged,
+      finding: `range of motion shrank across the set's own reps (${rom.decay.citation})`,
+    };
+  }
+  if (rom.variance.verdict === 'erratic') {
+    return {
+      judged,
+      finding: `rep-to-rep range of motion was erratic (${rom.variance.citation})`,
+    };
+  }
+  return { judged, finding: null };
+}
+
 /** B07 gate 1: nothing moves while technique is unstable. */
-function enforceTechniqueGate(routed: RoutedSuggestion, gates: ProgressionGates): RoutedSuggestion {
-  if (gates.technique !== 'unstable') return routed;
+function enforceTechniqueGate(
+  routed: RoutedSuggestion,
+  technique: TechniqueReading,
+): RoutedSuggestion {
+  if (technique.gate !== 'unstable') return routed;
   if (routed.delta <= 0 && routed.repDelta <= 0) return routed;
+  const because = technique.finding === null ? '' : `: ${technique.finding}`;
   return {
     delta: Math.min(routed.delta, PROGRESSION_HOLD_LBS),
     repDelta: 0,
-    reasoning: `${routed.reasoning} Technique is unstable — hold load and reps until it stabilises.`,
+    reasoning:
+      `${routed.reasoning} Technique is unstable${because} — ` +
+      'hold load and reps until it stabilises.',
     basis: 'fixed',
   };
 }

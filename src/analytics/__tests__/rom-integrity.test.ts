@@ -139,6 +139,23 @@ describe('readRomIntegrity — rep-to-rep variance', () => {
       citation: null,
     });
   });
+
+  it('reports null, not erratic, for reps that recorded no position at all', () => {
+    // A rep with no position measures NaN, whose CV is NaN — and NaN lands in
+    // the erratic band, the loudest verdict from the least evidence. Both
+    // verdicts stay null so a caller reading them cannot be misled.
+    const positionless = [1, 2, 3].map((repNumber) => {
+      const rep = makeRep(repNumber, 0.5);
+      const strip = (phase: Phase): Phase =>
+        ({ ...phase, startPosition: undefined, endPosition: undefined }) as unknown as Phase;
+      return { ...rep, concentric: strip(rep.concentric), eccentric: strip(rep.eccentric) };
+    });
+
+    const reading = readRomIntegrity(positionless);
+
+    expect(reading.variance).toEqual({ cv: null, verdict: null, citation: null });
+    expect(reading.decay.verdict).toBeNull();
+  });
 });
 
 describe('readRomIntegrity — rep eligibility', () => {
