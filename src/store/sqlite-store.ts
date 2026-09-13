@@ -3347,28 +3347,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 16 = v16 schema; v17 adds `training_profile.injuries_json` /
   //     `.named_program_history` (VW-148) — additive columns, nothing
   //     backfilled (absent injuries means "never asked", not "none").
-  // SCHEMA_VERSION = current. Anything else is an unknown future version
-  // and we refuse to touch it.
-  if (
-    found !== 0 &&
-    found !== 1 &&
-    found !== 2 &&
-    found !== 3 &&
-    found !== 4 &&
-    found !== 5 &&
-    found !== 6 &&
-    found !== 7 &&
-    found !== 8 &&
-    found !== 9 &&
-    found !== 10 &&
-    found !== 11 &&
-    found !== 12 &&
-    found !== 13 &&
-    found !== 14 &&
-    found !== 15 &&
-    found !== 16 &&
-    found !== SCHEMA_VERSION
-  ) {
+  // SCHEMA_VERSION = current. Anything above it is an unknown future version
+  // and we refuse to touch it; anything below 0 or non-integer is malformed.
+  if (found < 0 || found > SCHEMA_VERSION || !Number.isInteger(found)) {
     throw createSchemaIncompatibleError(path, found);
   }
 }

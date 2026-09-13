@@ -212,6 +212,11 @@ entry is written from the user's point of view is a review question, not a check
   working set; `plan.suggest_progression` already excluded it. All three now share the
   one predicate.
 
+- A database last written by an older build no longer gets refused outright if its
+  version happens to fall on a number the schema check forgot to list by hand (VW-288).
+  The check now accepts any version up through the current one and migrates it forward,
+  instead of a hand-maintained list that had to be remembered on every bump.
+
 ## [0.5.0] - 2026-09-08
 
 Two waves of work, `#244` through `#310`. The device and recording paths gained real
