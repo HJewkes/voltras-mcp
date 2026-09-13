@@ -189,7 +189,7 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
-- Added a coach-facing [weekly report guide](site/guides/weekly-report.md) for
+- Added a coach-facing [weekly report guide](/guides/weekly-report) for
   `report.weekly` (VW-292, #378): what the header's rolling 28-day count and adherence trend
   mean, per-session blocks, progression suggestions labelled "not applied", why
   `setting_coerced` never appears in flags, the check-in section, and how the adherence
