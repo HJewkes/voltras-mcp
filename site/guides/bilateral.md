@@ -103,6 +103,19 @@ otherwise draw an empty second column
 (`README.md:280-281`). See the ["Two Voltras, one dashboard"](/guides/#two-voltras-one-dashboard)
 capture in the walkthrough for what the diverging stage actually looks like mid-set.
 
+Here it is moving. The right side starts late and finishes short, so the gap between the
+two columns opens while the set is still running, and each side closes on its own reps
+before the page falls through to rest. Recorded headlessly from two synthetic devices
+through the real tool pipeline — no hardware, and the asymmetry is scripted rather than
+lifted from anyone's training.
+
+<video controls preload="metadata" width="100%" src="/captures/clips/dual-divergence.mp4" title="Two Voltras on the left and right slots diverging through a set, then falling through to rest."></video>
+
+The narration is synthetic speech, generated from a script in this repository. Edit
+[`dual-divergence.narration.txt`](https://github.com/HJewkes/voltras-mcp/blob/main/site/guides/dual-divergence.narration.txt)
+and re-run `npm run docs:captures` to change what it says
+([`docs/screenshot-harness.md`](https://github.com/HJewkes/voltras-mcp/blob/main/docs/screenshot-harness.md)).
+
 ## No hardware, or only one device: the dual mock path
 
 `node scripts/dashboard-mock-drive.mjs --dual` drives two slots through the real MCP tool
