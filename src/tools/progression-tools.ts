@@ -40,6 +40,10 @@ import {
   type SetupSignature,
 } from '../analytics/setup-comparability.js';
 import {
+  chooseSideComparisonMetric,
+  type SideComparisonMetric,
+} from '../analytics/side-comparison.js';
+import {
   compareSetupCards,
   getReferenceSetupCard,
   type SetupCardComparabilityVerdict,
@@ -94,7 +98,12 @@ const PROGRESSION_GET_DESCRIPTION =
   'reference card — the most recently confirmed one, or a digest-seeded default when nothing has ' +
   'been confirmed. `setup_card_mismatch` means a field on the two cards disagrees; say which ' +
   'field, do not treat the load difference as a training effect. `setup_card_unverified` means ' +
-  'the session or the exercise has no card recorded, so the check never ran.';
+  'the session or the exercise has no card recorded, so the check never ran. `sideSplit.comparisonMetric` ' +
+  '(VW-304) names which figure to actually compare between the two sides: `peak_force` when the ' +
+  'last session recorded it on both, else `top_weight` — peak force is preferred because it is the ' +
+  'only metric with good bilateral reliability in unilateral isometric squat testing (Bishop et al. ' +
+  '2021, JSCR 35(2S): CV 5.44-5.70%, ICC 0.93-0.94), a finding this comparison defers to until this ' +
+  "server's own data says otherwise. `sideSplit.comparisonBasis` states why in prose for this call.";
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -369,10 +378,15 @@ function filterSetsBySide(
   );
 }
 
-/** Per-side set count and last-session top load; `undefined` when no set in range has a `side`. */
+/**
+ * Per-side set count and last-session load. `lastSessionPeakForceLbs` is
+ * absent when the last session's sets on this side never had the firmware's
+ * peak force reading (VW-304) — `undefined` when no set in range has a `side`.
+ */
 interface SideSplitSummary {
   setCount: number;
   lastSessionTopWeightLbs: number;
+  lastSessionPeakForceLbs?: number;
 }
 
 /**
@@ -384,6 +398,13 @@ interface SideSplitSummary {
  * `setup_confounded` the load difference is at least partly the rig, so `reason`
  * says so in words rather than leaving the two numbers side by side with nothing
  * between them.
+ *
+ * `comparisonMetric` / `comparisonBasis` (VW-304) name which of the two summaries'
+ * fields a reader should actually compare: peak force when the last session
+ * recorded it on both sides (the only metric with good bilateral reliability —
+ * see `analytics/side-comparison.ts`), top weight otherwise. Present regardless
+ * of `setupComparability`, since which field to read and whether the two sides
+ * may be compared are separate questions.
  */
 interface SideSplitReport {
   left: SideSplitSummary;
@@ -391,6 +412,8 @@ interface SideSplitReport {
   setupComparability: SetupComparability;
   setupSignatures: { left: SetupSignature; right: SetupSignature };
   setupReason: string;
+  comparisonMetric: SideComparisonMetric;
+  comparisonBasis: string;
 }
 
 // VMCP-04.09: derived from the same `setsBySessionId` the aggregator already
@@ -409,12 +432,23 @@ function computeSideSplit(
     storedSetupSignature(allSets, 'left'),
     storedSetupSignature(allSets, 'right'),
   );
+  const left = sideSplitSummary(allSets, lastSessionSets, 'left');
+  const right = sideSplitSummary(allSets, lastSessionSets, 'right');
+  // sideSplit has no velocity-derived figure to fall back to (VW-304) — only
+  // peak force vs. its existing top-weight comparison.
+  const comparison = chooseSideComparisonMetric({
+    peakForce:
+      left.lastSessionPeakForceLbs !== undefined && right.lastSessionPeakForceLbs !== undefined,
+    meanVelocity: false,
+  });
   return {
-    left: sideSplitSummary(allSets, lastSessionSets, 'left'),
-    right: sideSplitSummary(allSets, lastSessionSets, 'right'),
+    left,
+    right,
     setupComparability: gate.comparability,
     setupSignatures: { left: gate.left, right: gate.right },
     setupReason: gate.reason,
+    comparisonMetric: comparison.metric,
+    comparisonBasis: comparison.reason,
   };
 }
 
@@ -445,11 +479,18 @@ function sideSplitSummary(
   lastSessionSets: StoredSet[],
   side: StoredSide,
 ): SideSplitSummary {
-  const lastSessionTopWeightLbs = lastSessionSets
-    .filter((s) => s.side === side)
-    .reduce((max, s) => (s.weightLbs !== undefined && s.weightLbs > max ? s.weightLbs : max), 0);
+  const sideLastSessionSets = lastSessionSets.filter((s) => s.side === side);
+  const lastSessionTopWeightLbs = sideLastSessionSets.reduce(
+    (max, s) => (s.weightLbs !== undefined && s.weightLbs > max ? s.weightLbs : max),
+    0,
+  );
+  const peakForces = sideLastSessionSets
+    .map((s) => s.firmwarePeakForceLbs)
+    .filter((v): v is number => v !== undefined);
+  const lastSessionPeakForceLbs = peakForces.length > 0 ? Math.max(...peakForces) : undefined;
   return {
     setCount: allSets.filter((s) => s.side === side).length,
     lastSessionTopWeightLbs,
+    ...(lastSessionPeakForceLbs !== undefined ? { lastSessionPeakForceLbs } : {}),
   };
 }

@@ -127,6 +127,8 @@ function makeSet(
     side?: 'left' | 'right';
     /** Concentric cable travel per rep, metres — the VW-272 setup signature's input. */
     romM?: number;
+    /** Firmware-reported peak force for the set, lbs — the VW-304 comparison input. */
+    firmwarePeakForceLbs?: number;
   } = {},
 ): StoredSet {
   const reps = Array.from({ length: repCount }, (_, i) =>
@@ -147,6 +149,9 @@ function makeSet(
     weightLbs,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(opts.side !== undefined ? { side: opts.side } : {}),
+    ...(opts.firmwarePeakForceLbs !== undefined
+      ? { firmwarePeakForceLbs: opts.firmwarePeakForceLbs }
+      : {}),
     reps,
   };
 }
@@ -650,6 +655,54 @@ describe('progression.get_for_exercise — side (VMCP-04.09)', () => {
 
     const body = parseResult(r) as { sideSplit?: unknown };
     expect(body.sideSplit).toBeUndefined();
+  });
+
+  it('both sides recording peak force chooses peak_force and reports the per-side figures (VW-304)', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left', firmwarePeakForceLbs: 120 }),
+        makeSet('r1', 's1', 45, 5, { side: 'right', firmwarePeakForceLbs: 150 }),
+      ],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: 'cable-chest-press' })) as {
+      sideSplit: {
+        left: { lastSessionPeakForceLbs?: number };
+        right: { lastSessionPeakForceLbs?: number };
+        comparisonMetric: string;
+        comparisonBasis: string;
+      };
+    };
+
+    expect(body.sideSplit.comparisonMetric).toBe('peak_force');
+    expect(body.sideSplit.comparisonBasis).toContain('bilateral reliability');
+    expect(body.sideSplit.left.lastSessionPeakForceLbs).toBe(120);
+    expect(body.sideSplit.right.lastSessionPeakForceLbs).toBe(150);
+  });
+
+  it('peak force missing on one side falls back to top_weight with a stated reason (VW-304)', async () => {
+    const s1 = makeSession('s1', recentDate(3));
+    const h = setup([s1], {
+      s1: [
+        makeSet('l1', 's1', 30, 5, { side: 'left', firmwarePeakForceLbs: 120 }),
+        makeSet('r1', 's1', 45, 5, { side: 'right' }),
+      ],
+    });
+
+    const body = parseResult(await h.invoke({ exerciseId: 'cable-chest-press' })) as {
+      sideSplit: {
+        left: { lastSessionPeakForceLbs?: number };
+        right: { lastSessionPeakForceLbs?: number };
+        comparisonMetric: string;
+        comparisonBasis: string;
+      };
+    };
+
+    expect(body.sideSplit.comparisonMetric).toBe('top_weight');
+    expect(body.sideSplit.comparisonBasis).toContain('neither peak force nor velocity');
+    expect(body.sideSplit.left.lastSessionPeakForceLbs).toBe(120);
+    expect(body.sideSplit.right.lastSessionPeakForceLbs).toBeUndefined();
   });
 });
 
