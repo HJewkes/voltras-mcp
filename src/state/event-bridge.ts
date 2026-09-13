@@ -746,12 +746,12 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         //     "done" — it sits at index `nextRepCount - 2` while the new
         //     in-progress rep is at `nextRepCount - 1`.
         //   - The terminal rep (rep N) never closes via a phase
-        //     transition; `set.end` -> `completeSet` finalizes it and
-        //     the `set_ended` channel event from set-tools.ts covers
-        //     that case.
-        // Net coverage: reps 1..N-1 emit `rep_finalized` (each fires
-        // when the *next* rep begins — small lag the coaching surface
-        // should expect), and rep N is delivered inside `set_ended`.
+        //     transition; `set.end` -> `completeSet` finalizes it, and
+        //     `finalizeSet` in set-tools.ts now publishes rep N's own
+        //     `rep_finalized` (VMCP-01.40) immediately before `set_ended`.
+        // Net coverage: this bridge emits reps 1..N-1 (each fires when the
+        // *next* rep begins — small lag the coaching surface should expect);
+        // `finalizeSet` emits rep N once; `set_ended` follows.
         // VMCP-02.29 PR5: project onto the configured rep source before
         // reading the finalized rep. Default `'analytics'` returns the
         // snapshot unchanged, so the payload is byte-identical to pre-PR5;
@@ -784,7 +784,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           slotChannels.publish(payload);
           // VMCP-01.59: echo the finalized rep onto the SSE stream as a lean,
           // fitness-units-only signal so the dashboard can update its live
-          // per-rep readout without waiting for the next 500 ms snapshot poll.
+          // per-rep readout without waiting for the next 2000 ms snapshot poll.
           if (liveSignals !== undefined) {
             liveSignals.rep({
               repIndex: finalizedIndex + 1,

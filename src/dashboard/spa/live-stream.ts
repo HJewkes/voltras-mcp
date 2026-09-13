@@ -2,7 +2,8 @@
  * SPA live-overlay slice (VMCP-01.59, Phase 2).
  *
  * An `EventSource` consumer for the sidecar's `GET /api/stream` SSE endpoint,
- * layered ALONGSIDE the authoritative 500 ms `/api/snapshot` poll. The poll
+ * layered ALONGSIDE the authoritative 2000 ms `/api/snapshot` poll (`POLL_INTERVAL_MS`
+ * in `main.tsx`). The poll
  * stays the source of truth for structural state; this slice only adds live
  * phase / velocity smoothness. If the stream never connects (old browser, proxy
  * strips SSE, server predates this build) the slice stays `null` and the UI

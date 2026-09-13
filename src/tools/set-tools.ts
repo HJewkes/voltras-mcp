@@ -1030,7 +1030,7 @@ export async function finalizeSet(
   // the final rep onto the SSE stream here — the ONE choke point both close
   // paths (tool `set.end` and device `onSetSummary`) funnel through — so the
   // dashboard live tiles get rep N's rom/vCon/peakVelocity/peakForce without
-  // waiting for the next 500 ms snapshot poll. Emitted BEFORE the `set ended`
+  // waiting for the next 2000 ms snapshot poll. Emitted BEFORE the `set ended`
   // signal below so the wire order is `rep(N)` -> `set(ended)`. Reuses the exact
   // WA derivations event-bridge uses for reps 1..N-1 (fitness units only — m/s,
   // m, lbs — no protocol bytes). No double-emit: the `onFrame` tap tops out at
