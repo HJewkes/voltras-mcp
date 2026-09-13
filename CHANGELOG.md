@@ -91,7 +91,7 @@ entry is written from the user's point of view is a review question, not a check
   remaining count. No schema change.
 
 - Every coaching line spoken aloud is now captioned on the wall dashboard's rest stage
-  (VW-289). A cue is heard once, from across the room, over whatever else is playing — miss
+  (VW-289, #394). A cue is heard once, from across the room, over whatever else is playing — miss
   it and it was gone. The rest stage now prints the latest line under a fixed dwell, labelled
   `COACH` when the trainer chose to say it and by the cue category when a deterministic cue
   fired it, so a lifter can read what they only half-heard. The caption's height is reserved
