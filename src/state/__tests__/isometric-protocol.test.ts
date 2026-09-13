@@ -13,6 +13,8 @@ import {
   analyzeTrial,
   computeImbalance,
   decideTestOrder,
+  directionOfMeasurement,
+  summarizeDirectionHistory,
   type ForceSample,
   type TrialAnalysis,
 } from '../isometric-protocol.js';
@@ -186,43 +188,152 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
   });
 });
 
-describe('computeImbalance — asymmetry thresholds', () => {
-  it('returns null when either side lacks a mean', () => {
-    const result = computeImbalance({ meanPlateauForceLbs: null }, { meanPlateauForceLbs: 150 });
+// VW-270: the verdict is the athlete's own intra-limb CV, never a constant.
+// The old 10%/15% pair is gone; these cases pin what replaced it.
+describe('computeImbalance — the intra-limb CV gate', () => {
+  it('gives no verdict when either side lacks a mean', () => {
+    const result = computeImbalance(
+      { meanPlateauForceLbs: null, cvPct: null },
+      { meanPlateauForceLbs: 150, cvPct: 2 },
+    );
     expect(result.asymmetryPct).toBeNull();
-    expect(result.strongerSide).toBeNull();
-    expect(result.flagged).toBe(false);
-    expect(result.meaningful).toBe(false);
+    expect(result.direction).toBeNull();
+    expect(result.real).toBe(false);
+    expect(result.interpretation).toContain('fewer than 2 valid trials');
   });
 
-  it('flags asymmetry at the 10% threshold', () => {
-    // 100 vs. 90: (100-90)/100 × 100 = 10%.
-    const result = computeImbalance({ meanPlateauForceLbs: 100 }, { meanPlateauForceLbs: 90 });
+  it('does NOT call a 10% asymmetry real when the limbs vary by 12% themselves', () => {
+    // The retired constant said 10% was noteworthy. Against a 12% intra-limb
+    // CV the same 10% is inside the measurement's own spread.
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 100, cvPct: 12 },
+      { meanPlateauForceLbs: 90, cvPct: 4 },
+    );
     expect(result.asymmetryPct).toBeCloseTo(10, 5);
-    expect(result.flagged).toBe(true);
-    expect(result.meaningful).toBe(false);
-    expect(result.strongerSide).toBe('left');
+    expect(result.noiseFloorCvPct).toBe(12);
+    expect(result.real).toBe(false);
+    expect(result.interpretation).toContain('within');
   });
 
-  it('marks asymmetry meaningful at the 15% threshold', () => {
-    // 100 vs. 85: (100-85)/100 × 100 = 15%.
-    const result = computeImbalance({ meanPlateauForceLbs: 100 }, { meanPlateauForceLbs: 85 });
-    expect(result.asymmetryPct).toBeCloseTo(15, 5);
-    expect(result.flagged).toBe(true);
-    expect(result.meaningful).toBe(true);
+  it('calls a 10% asymmetry real when the limbs vary by 4% themselves', () => {
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 100, cvPct: 4 },
+      { meanPlateauForceLbs: 90, cvPct: 3 },
+    );
+    expect(result.asymmetryPct).toBeCloseTo(10, 5);
+    expect(result.noiseFloorCvPct).toBe(4);
+    expect(result.real).toBe(true);
+    expect(result.direction).toBe('left');
   });
 
-  it('reports tie when sides are within 1% of each other', () => {
-    const result = computeImbalance({ meanPlateauForceLbs: 200 }, { meanPlateauForceLbs: 199 });
-    expect(result.strongerSide).toBe('tie');
-    expect(result.flagged).toBe(false);
+  it('compares against the HIGHER of the two sides CVs', () => {
+    // 5% asymmetry, left steady at 1%, right noisy at 9%: the noisy limb sets
+    // the floor, because the difference has to clear both limbs' own spread.
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 100, cvPct: 1 },
+      { meanPlateauForceLbs: 95, cvPct: 9 },
+    );
+    expect(result.noiseFloorCvPct).toBe(9);
+    expect(result.real).toBe(false);
   });
 
-  it('right side stronger surfaces in strongerSide', () => {
-    const result = computeImbalance({ meanPlateauForceLbs: 100 }, { meanPlateauForceLbs: 130 });
-    expect(result.strongerSide).toBe('right');
-    expect(result.flagged).toBe(true);
-    expect(result.meaningful).toBe(true);
+  it('withholds the verdict when a side has no CV to judge against', () => {
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 100, cvPct: null },
+      { meanPlateauForceLbs: 70, cvPct: 3 },
+    );
+    expect(result.asymmetryPct).toBeCloseTo(30, 5);
+    expect(result.noiseFloorCvPct).toBeNull();
+    expect(result.real).toBe(false);
+  });
+
+  it('names the equation it used', () => {
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 100, cvPct: 2 },
+      { meanPlateauForceLbs: 130, cvPct: 2 },
+    );
+    expect(result.equation).toBe('standard-percentage-difference');
+    expect(result.direction).toBe('right');
+    expect(result.intraLimbCvPct).toEqual({ left: 2, right: 2 });
+  });
+
+  it('reports no direction at an exact tie', () => {
+    const result = computeImbalance(
+      { meanPlateauForceLbs: 200, cvPct: 2 },
+      { meanPlateauForceLbs: 200, cvPct: 2 },
+    );
+    expect(result.direction).toBeNull();
+    expect(result.real).toBe(false);
+  });
+});
+
+describe('summarizeDirectionHistory — direction stability across tests', () => {
+  const at = (day: number, direction: 'left' | 'right' | null) => ({
+    measuredAt: `2026-09-${String(day).padStart(2, '0')}T10:00:00.000Z`,
+    direction,
+  });
+
+  it('withholds a label under three tests with a direction', () => {
+    const result = summarizeDirectionHistory([at(1, 'left'), at(2, 'left')]);
+    expect(result.label).toBe('insufficient-history');
+    expect(result.testsCompared).toBe(2);
+    expect(result.agreementPct).toBeNull();
+  });
+
+  it('calls dominance consistent when the same limb wins every test', () => {
+    const result = summarizeDirectionHistory([at(1, 'left'), at(2, 'left'), at(3, 'left')]);
+    expect(result.label).toBe('consistent-left');
+    expect(result.agreementPct).toBe(100);
+    expect(result.interpretation).toContain('closer look');
+  });
+
+  it('calls dominance fluctuating when the direction flips', () => {
+    const result = summarizeDirectionHistory([at(1, 'left'), at(2, 'right'), at(3, 'left')]);
+    expect(result.label).toBe('fluctuating');
+    expect(result.agreementPct).toBeCloseTo(66.7, 1);
+    expect(result.interpretation).toContain('does not warrant attention');
+  });
+
+  it('does not count a test that produced no direction', () => {
+    const result = summarizeDirectionHistory([at(1, 'right'), at(2, null), at(3, 'right')]);
+    expect(result.testsCompared).toBe(2);
+    expect(result.label).toBe('insufficient-history');
+  });
+
+  it('orders directions newest first regardless of input order', () => {
+    const result = summarizeDirectionHistory([at(2, 'right'), at(9, 'left'), at(5, 'right')]);
+    expect(result.directions).toEqual(['left', 'right', 'right']);
+  });
+});
+
+describe('directionOfMeasurement — direction recomputed from stored trials', () => {
+  const trial = (index: number, plateauForceLbs: number) => ({
+    index,
+    peakForceLbs: plateauForceLbs + 2,
+    plateauForceLbs,
+    plateauStartMs: 1500,
+    plateauEndMs: 2000,
+    valid: true,
+  });
+
+  it('reads the stronger limb off the persisted per-trial forces', () => {
+    const direction = directionOfMeasurement({
+      sides: [
+        { side: 'left', trials: [trial(1, 100), trial(2, 99)] },
+        { side: 'right', trials: [trial(1, 80), trial(2, 81)] },
+      ],
+    });
+    expect(direction).toBe('left');
+  });
+
+  it('returns null when a stored side has too few valid trials', () => {
+    const direction = directionOfMeasurement({
+      sides: [
+        { side: 'left', trials: [trial(1, 100)] },
+        { side: 'right', trials: [trial(1, 80), trial(2, 81)] },
+      ],
+    });
+    expect(direction).toBeNull();
   });
 });
 

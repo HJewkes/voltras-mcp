@@ -1177,6 +1177,29 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       // …and it is not reachable by any device id, including the other side's.
       const forOther = await store.getIsometricMeasurementsForDevice('AA:BB:CC:02');
       expect(forOther.map((x) => x.id)).not.toContain('meas-anon');
+      // The device-less run still reaches the direction series (VW-270), which
+      // is why that series cannot be keyed on a device id.
+      const recent = await store.listRecentIsometricMeasurements();
+      expect(recent.map((x) => x.id)).toContain('meas-anon');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('lists recent measurements newest first, regardless of which unit recorded them', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      await store.putIsometricMeasurement(makeMeasurement('meas-a', '2025-08-01T10:30:00.000Z'));
+      await store.putIsometricMeasurement(makeMeasurement('meas-c', '2025-08-09T10:30:00.000Z'));
+      await store.putIsometricMeasurement(makeMeasurement('meas-b', '2025-08-05T10:30:00.000Z'));
+
+      const all = await store.listRecentIsometricMeasurements();
+      expect(all.map((m) => m.id)).toEqual(['meas-c', 'meas-b', 'meas-a']);
+      // Both limbs come back, so the direction of each past run is computable.
+      expect(all.every((m) => m.sides.length === 2)).toBe(true);
+
+      const limited = await store.listRecentIsometricMeasurements({ limit: 2 });
+      expect(limited.map((m) => m.id)).toEqual(['meas-c', 'meas-b']);
     } finally {
       await store.close();
     }

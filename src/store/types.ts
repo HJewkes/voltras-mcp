@@ -1311,6 +1311,24 @@ export interface SessionStore extends ExerciseSetupStore {
     opts?: { limit?: number },
   ): Promise<StoredIsometricMeasurement[]>;
 
+  /**
+   * The most recent isometric measurements, newest first, regardless of which
+   * units recorded them (VW-270).
+   *
+   * The direction-consistency series needs every past test, and
+   * `getIsometricMeasurementsForDevice` cannot supply it: a run on the mock
+   * adapter, or on a unit that dropped mid-assessment, stores no device id at
+   * all, so keying the series on one device silently drops those runs and
+   * shortens the history that the consistent/fluctuating call is made from.
+   * SCOPE IS THE WHOLE DATABASE, and nothing narrows it. `isometric_measurements`
+   * carries no lifter, exercise or session key, so there is no column to filter
+   * on — a second lifter's assessment, or the same lifter tested at a different
+   * joint, lands in the same series. Callers must say so rather than implying a
+   * per-lifter, per-joint history. A schema change to fix that is filed
+   * separately; this method does not pretend to have one.
+   */
+  listRecentIsometricMeasurements(opts?: { limit?: number }): Promise<StoredIsometricMeasurement[]>;
+
   // --- Block-periodization planning (v3 schema) ---
 
   /** Upsert a training program (top-level planning container). */

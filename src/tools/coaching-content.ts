@@ -454,6 +454,44 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
         'author-year keys, not `rp-*` note ids.',
     ],
   },
+  'meso.asymmetry_interpretation': {
+    allTiers:
+      'A left/right difference is a MEASUREMENT before it is a finding, and at every tier the ' +
+      "first question is whether it clears the athlete's own noise. The rule: treat a " +
+      'between-limb difference as real only when it exceeds the intra-limb variability (CV) of ' +
+      'that same test, and treat a CHANGE in asymmetry as real only when it exceeds the baseline ' +
+      'CV. A 10% difference on a limb whose own trials vary by 12% is the measurement talking. ' +
+      'There is no universal cutoff to fall back on: the widely-quoted 15% strength and 10% ' +
+      'hop-distance cuts come from some studies and not others — across 28 prospective cohorts, ' +
+      'only 8 of 14 strength/power studies found any injury association at all, and the review ' +
+      'authors declined to state a relationship. Asymmetry is also task- and metric-specific, so ' +
+      'a difference found in an isometric hold should not be assumed to appear in a dynamic set ' +
+      'of the same movement. WHAT TO READ INSTEAD IS DIRECTION OVER TIME. Which limb dominates ' +
+      'is only fair-to-substantially repeatable between sessions (isometric squat peak force ' +
+      'Kappa 0.64; impulse 0.29), so one session naming a side says very little. A CONSISTENT ' +
+      'direction across repeated tests may warrant attention — keep testing that limb and watch ' +
+      'it. A FLUCTUATING direction does not: natural between-session variation in limb dominance ' +
+      'is expected, and an athlete showing only that may need no intervention at all. Say the ' +
+      'honest version to the lifter: "your left read higher today, but it read higher only once ' +
+      'in three tests — that\'s normal variation, not a weak side." No published re-test cadence ' +
+      'for asymmetry exists; test often enough to judge whether direction is consistent, which ' +
+      'is a decision rule and not an interval. `isometric.measure_imbalance` applies exactly ' +
+      'this: it reports the percentage with the equation it used, marks it real only above the ' +
+      "athlete's own intra-limb CV, and labels the direction series consistent or fluctuating.",
+    sources: [
+      'bishop-2023-asymmetry-cv-threshold-jscr',
+      'bishop-2019-asymmetry-direction-kappa-sports',
+      'bishop-2018-interlimb-asymmetry-equation-framework-scj',
+      'guan-2022-asymmetry-injury-systematic-review-jcm',
+    ],
+    caveats: [
+      'This entry cites primary literature rather than the mined RP corpus; its source ids are ' +
+        'author-year keys, not `rp-*` note ids.',
+      'The Kappa figures come from an isometric squat, CMJ and drop jump in team-sport athletes. ' +
+        'Voltra tests each limb on its own cable unit, so treat the direction-instability finding ' +
+        'as the right shape rather than a calibrated constant for this device.',
+    ],
+  },
   'diet.phase_coupling': {
     allTiers:
       'Diet phase and training phase are coupled but INDEPENDENT clocks — this is the ' +

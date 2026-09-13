@@ -16,7 +16,7 @@
 //   * Reported value: mean plateau force of the best 2 of 3 trials
 //   * CV across the best 2 trials (sd / mean × 100)
 //   * Asymmetry: (stronger − weaker) / stronger × 100
-//   * Flagged ≥ 10%; meaningful ≥ 15%
+//   * Asymmetry is REAL only above the athlete's own intra-limb CV (VW-270)
 //   * Inferred working weight: 70% of mean plateau, rounded to nearest 5 lb
 
 /** A single force sample captured during an isometric trial. */
@@ -60,17 +60,80 @@ export interface SideAnalysis {
   inferredWorkingWeightLbs: number | null;
 }
 
-/** Asymmetry report between two sides. */
+/**
+ * The asymmetry equation this test type uses, named in the output.
+ *
+ * Bishop et al. (2018) showed nine equations are in circulation and that the
+ * valid one is chosen by the TEST METHOD, so a percentage with no equation
+ * behind it cannot be compared to anything. This protocol tests each limb
+ * separately, which is the unilateral case, and the standard percentage
+ * difference is its equation: (stronger − weaker) / stronger × 100. It is fixed
+ * for this test type and is never a per-call option.
+ */
+export type AsymmetryEquation = 'standard-percentage-difference';
+
+export const ASYMMETRY_EQUATION: AsymmetryEquation = 'standard-percentage-difference';
+
+/** Which limb produced the higher mean plateau force on one test. */
+export type AsymmetryDirection = 'left' | 'right';
+
+/**
+ * Asymmetry report between two sides (VW-270).
+ *
+ * There is no fixed percentage in here. Bishop, de Keijzer, Turner & Beato
+ * (2023) is explicit that a between-limb difference counts as real only when it
+ * exceeds the intra-limb variability of that same test, and that group-level
+ * cutoffs do not transfer to an individual — so the comparison is against the
+ * athlete's own trial-to-trial CV from the very trials being compared, and the
+ * CV is reported next to the verdict so the reader can see what it was judged
+ * against.
+ */
 export interface ImbalanceReport {
-  /** (stronger − weaker) / stronger × 100; null if either side missing a mean. */
+  /** (stronger − weaker) / stronger × 100; null if either side is missing a mean. */
   asymmetryPct: number | null;
-  /** Which side scored higher; 'tie' when within 1% of each other. */
-  strongerSide: 'left' | 'right' | 'tie' | null;
-  /** True when asymmetryPct >= 10 (noteworthy). */
-  flagged: boolean;
-  /** True when asymmetryPct >= 15 (meaningful). */
-  meaningful: boolean;
+  /** The equation `asymmetryPct` came from; fixed for this test type. */
+  equation: AsymmetryEquation;
+  /** Which limb scored higher; null at an exact tie or when a side has no mean. */
+  direction: AsymmetryDirection | null;
+  /** Each side's own trial-to-trial CV across the trials that produced its mean. */
+  intraLimbCvPct: { left: number | null; right: number | null };
+  /**
+   * The noise floor `asymmetryPct` was compared against: the HIGHER of the two
+   * sides' CVs, because a difference smaller than either limb's own spread is
+   * indistinguishable from that spread. Null when a side has no CV.
+   */
+  noiseFloorCvPct: number | null;
+  /** True only when `asymmetryPct` exceeds `noiseFloorCvPct`. */
+  real: boolean;
+  /** Plain-language statement of what was compared and what it means. */
+  interpretation: string;
 }
+
+/** One past test's direction, oldest or newest first — `summarizeDirectionHistory` does not care. */
+export interface DirectionHistoryEntry {
+  measuredAt: string;
+  direction: AsymmetryDirection | null;
+}
+
+/** Whether limb dominance held across repeated tests (VW-270). */
+export interface DirectionHistory {
+  label: 'consistent-left' | 'consistent-right' | 'fluctuating' | 'insufficient-history';
+  /** Tests that produced a direction at all; tests with no direction are not counted. */
+  testsCompared: number;
+  /** Share of `testsCompared` that agreed with the most common direction, or null. */
+  agreementPct: number | null;
+  /** The directions compared, newest first. */
+  directions: AsymmetryDirection[];
+  interpretation: string;
+}
+
+/**
+ * Tests with a direction needed before dominance can be called consistent or
+ * fluctuating. Two tests agreeing is a coin flip; Bishop et al. (2019) measured
+ * limb dominance re-agreement as fair-to-substantial, never assured, so the
+ * answer below this count is "not enough history", not a verdict.
+ */
+const MIN_TESTS_FOR_DIRECTION_LABEL = 3;
 
 /** Window length (ms) used for the plateau-around-peak mean force calculation. */
 const PLATEAU_WINDOW_MS = 500;
@@ -87,15 +150,6 @@ const PLATEAU_PEAK_RATIO = 0.9;
 
 /** A trial whose peak is more than this CV vs. session mean is discarded. */
 const SESSION_OUTLIER_CV_THRESHOLD = 15;
-
-/** Asymmetry threshold (%) for flagging as noteworthy. */
-const ASYMMETRY_FLAGGED_PCT = 10;
-
-/** Asymmetry threshold (%) for flagging as a meaningful deficit. */
-const ASYMMETRY_MEANINGFUL_PCT = 15;
-
-/** Within this absolute %, the two sides are reported as a tie. */
-const ASYMMETRY_TIE_PCT = 1;
 
 /** Inferred working weight ratio (70% for untrained / first session). */
 const WORKING_WEIGHT_RATIO = 0.7;
@@ -279,46 +333,165 @@ export function aggregateSide(trials: TrialAnalysis[]): SideAnalysis {
   };
 }
 
+/** What one side contributes to the asymmetry verdict. */
+export interface ImbalanceSideInput {
+  meanPlateauForceLbs: number | null;
+  cvPct: number | null;
+}
+
 /**
- * Compute the asymmetry report between two sides. Sides are labeled
+ * Compute the asymmetry report between two sides (VW-270). Sides are labeled
  * 'left' / 'right' by the caller; the math is symmetric.
  *
- * Tie semantics: when both sides have a valid mean and the absolute
- * asymmetry is within 1%, `strongerSide` is 'tie'. Otherwise the side
- * with the higher mean wins.
+ * The verdict is `real` only when the between-limb percentage exceeds the
+ * athlete's own intra-limb CV on the same test (Bishop et al., 2023). That
+ * replaces the fixed 10%/15% pair this function used to apply: a 12% difference
+ * on a limb whose own trials vary by 14% is a measurement, not a capacity gap,
+ * and the old constants could not tell those apart.
  *
- * When either side lacks a mean (validTrialCount < 2), `asymmetryPct` is
- * null and `strongerSide` is null.
+ * When either side lacks a mean (fewer than 2 valid trials), `asymmetryPct` is
+ * null and there is no verdict to give — `real` is false because nothing was
+ * shown, which is not the same as a difference shown to be absent.
  */
 export function computeImbalance(
-  left: { meanPlateauForceLbs: number | null },
-  right: { meanPlateauForceLbs: number | null },
+  left: ImbalanceSideInput,
+  right: ImbalanceSideInput,
 ): ImbalanceReport {
+  const intraLimbCvPct = { left: left.cvPct, right: right.cvPct };
   const lMean = left.meanPlateauForceLbs;
   const rMean = right.meanPlateauForceLbs;
   if (lMean === null || rMean === null) {
+    const missing =
+      lMean === null ? (rMean === null ? 'both sides' : 'the left side') : 'the right side';
     return {
       asymmetryPct: null,
-      strongerSide: null,
-      flagged: false,
-      meaningful: false,
+      equation: ASYMMETRY_EQUATION,
+      direction: null,
+      intraLimbCvPct,
+      noiseFloorCvPct: null,
+      real: false,
+      interpretation: `No asymmetry verdict: ${missing} produced fewer than 2 valid trials, so there is no mean to compare.`,
     };
   }
+
   const stronger = Math.max(lMean, rMean);
   const weaker = Math.min(lMean, rMean);
   const asymmetryPct = stronger > 0 ? ((stronger - weaker) / stronger) * 100 : 0;
-  let strongerSide: 'left' | 'right' | 'tie';
-  if (asymmetryPct <= ASYMMETRY_TIE_PCT) {
-    strongerSide = 'tie';
-  } else {
-    strongerSide = lMean > rMean ? 'left' : 'right';
+  const direction: AsymmetryDirection | null =
+    lMean === rMean ? null : lMean > rMean ? 'left' : 'right';
+  const noiseFloorCvPct = higherCv(left.cvPct, right.cvPct);
+
+  if (noiseFloorCvPct === null) {
+    return {
+      asymmetryPct,
+      equation: ASYMMETRY_EQUATION,
+      direction,
+      intraLimbCvPct,
+      noiseFloorCvPct: null,
+      real: false,
+      interpretation: `Asymmetry ${asymmetryPct.toFixed(1)}% measured, but at least one side has no trial-to-trial CV to judge it against, so it is not called real.`,
+    };
   }
+
+  const real = asymmetryPct > noiseFloorCvPct;
+  const side = direction ?? 'neither side';
+  const interpretation = real
+    ? `Asymmetry ${asymmetryPct.toFixed(1)}% exceeds this athlete's own intra-limb CV of ${noiseFloorCvPct.toFixed(1)}% on the same test, so it is larger than the measurement's own spread. ${side === 'neither side' ? '' : `${side} produced more force. `}Direction across repeated tests is the interpretable signal; a single test is not.`
+    : `Asymmetry ${asymmetryPct.toFixed(1)}% sits within this athlete's own intra-limb CV of ${noiseFloorCvPct.toFixed(1)}% on the same test, so it cannot be distinguished from trial-to-trial variation.`;
+
   return {
     asymmetryPct,
-    strongerSide,
-    flagged: asymmetryPct >= ASYMMETRY_FLAGGED_PCT,
-    meaningful: asymmetryPct >= ASYMMETRY_MEANINGFUL_PCT,
+    equation: ASYMMETRY_EQUATION,
+    direction,
+    intraLimbCvPct,
+    noiseFloorCvPct,
+    real,
+    interpretation,
   };
+}
+
+/**
+ * Label limb dominance across repeated tests (VW-270).
+ *
+ * Direction, not magnitude, is what a series of asymmetry tests can support.
+ * Bishop et al. (2019) re-tested limb dominance and found agreement only
+ * fair-to-substantial (isometric squat peak force K = 0.64, impulse K = 0.29),
+ * so one test's percentage says little while the same limb dominating every
+ * time says something. `agreementPct` is that Kappa-style agreement in its
+ * simplest honest form: the share of tests that named the most common limb.
+ *
+ * `consistent-*` requires UNANIMITY, not a majority. Two of three agreeing is
+ * close to what a coin produces, and this label is read as a reason to look
+ * closer at one limb.
+ */
+export function summarizeDirectionHistory(
+  entries: readonly DirectionHistoryEntry[],
+): DirectionHistory {
+  const directions = [...entries]
+    .sort((a, b) => Date.parse(b.measuredAt) - Date.parse(a.measuredAt))
+    .map((e) => e.direction)
+    .filter((d): d is AsymmetryDirection => d !== null);
+
+  const testsCompared = directions.length;
+  if (testsCompared < MIN_TESTS_FOR_DIRECTION_LABEL) {
+    return {
+      label: 'insufficient-history',
+      testsCompared,
+      agreementPct: null,
+      directions,
+      interpretation: `${testsCompared} test(s) with a direction; ${MIN_TESTS_FOR_DIRECTION_LABEL} are needed before limb dominance can be called consistent or fluctuating.`,
+    };
+  }
+
+  const leftCount = directions.filter((d) => d === 'left').length;
+  const rightCount = testsCompared - leftCount;
+  const modalCount = Math.max(leftCount, rightCount);
+  const agreementPct = (modalCount / testsCompared) * 100;
+
+  if (modalCount === testsCompared) {
+    const side = leftCount === testsCompared ? 'left' : 'right';
+    return {
+      label: side === 'left' ? 'consistent-left' : 'consistent-right',
+      testsCompared,
+      agreementPct,
+      directions,
+      interpretation: `The ${side} limb dominated all ${testsCompared} tests. A consistent direction over time may warrant a closer look at that limb; it is still not, on its own, a reason to prescribe corrective work.`,
+    };
+  }
+
+  return {
+    label: 'fluctuating',
+    testsCompared,
+    agreementPct,
+    directions,
+    interpretation: `Dominance changed limbs across ${testsCompared} tests (${agreementPct.toFixed(0)}% agreement with the more common side). A fluctuating direction is normal between-session variation and does not warrant attention.`,
+  };
+}
+
+/**
+ * Direction of one stored measurement, for the history series. Structurally
+ * typed over the stored shape so this module keeps no dependency on the store.
+ *
+ * Recomputed from the persisted per-trial forces rather than read from a stored
+ * verdict, for the reason the store's own note gives: a frozen verdict becomes
+ * indistinguishable from a fresh one the day the rules move, and these rules
+ * just moved.
+ */
+export function directionOfMeasurement(measurement: {
+  sides: readonly { side?: string | undefined; trials: readonly TrialAnalysis[] }[];
+}): AsymmetryDirection | null {
+  const sideOf = (side: 'left' | 'right'): ImbalanceSideInput => {
+    const stored = measurement.sides.find((s) => s.side === side);
+    if (stored === undefined) return { meanPlateauForceLbs: null, cvPct: null };
+    const analysis = aggregateSide(stored.trials.map((t) => ({ ...t })));
+    return { meanPlateauForceLbs: analysis.meanPlateauForceLbs, cvPct: analysis.cvPct };
+  };
+  return computeImbalance(sideOf('left'), sideOf('right')).direction;
+}
+
+function higherCv(left: number | null, right: number | null): number | null {
+  if (left === null || right === null) return null;
+  return Math.max(left, right);
 }
 
 /**

@@ -2363,6 +2363,17 @@ export class SqliteSessionStore implements SessionStore {
     );
   }
 
+  async listRecentIsometricMeasurements(
+    opts: { limit?: number } = {},
+  ): Promise<StoredIsometricMeasurement[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM isometric_measurements ORDER BY measured_at DESC, rowid DESC LIMIT ?`)
+      .all(opts.limit ?? 50) as unknown as IsometricMeasurementRow[];
+    return Promise.resolve(
+      rows.map((row) => rowToIsometricMeasurement(row, this.loadTrialsForMeasurement(row.id))),
+    );
+  }
+
   // --- Block-periodization planning (v3 schema) ---
 
   async putTrainingProgram(p: StoredTrainingProgram): Promise<void> {
