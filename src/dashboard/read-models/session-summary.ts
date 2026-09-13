@@ -33,7 +33,13 @@ import {
 } from '@voltras/workout-analytics';
 
 import { computeProgressionDelta } from '../../tools/plan-tools.js';
+import {
+  historicalRepsToThreshold,
+  repsToThresholdRange,
+  type RepsToThresholdRange,
+} from '../../analytics/reps-to-threshold-range.js';
 import { describeLoad } from '../../state/set-capture.js';
+import { VELOCITY_LOSS_DEFAULT_PCT } from '../../state/velocity-loss-intent.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../../store/set-scope.js';
 import { selectWorkingSets } from '../../store/working-sets.js';
@@ -45,7 +51,13 @@ import type {
   SessionSummarySet,
   SessionSummaryView,
 } from './session-summary-view.js';
-import type { StoredPlannedExercise, StoredSession, StoredSet } from '../../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type ExerciseSetsFilter,
+  type StoredPlannedExercise,
+  type StoredSession,
+  type StoredSet,
+} from '../../store/types.js';
 import { normaliseVelocityToMps } from '../../store/velocity-units.js';
 
 export type {
@@ -65,6 +77,8 @@ export interface DashboardSessionStore {
     offset: number;
     exerciseId?: string;
   }): Promise<StoredSession[]>;
+  /** This lifter's cross-session sets for one exercise — feeds `expectedRepRange` (VW-301). */
+  getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
 }
 
 /** Label for the group holding sets that recorded no exercise. */
@@ -188,7 +202,8 @@ async function buildExerciseSummary(
   },
 ): Promise<SessionSummaryExercise> {
   const { exerciseId, sets, sessionId, programId } = args;
-  const setViews = sets.map(toSetView);
+  const expectedRangeFor = await resolveExpectedRepRanges(deps.store, { exerciseId, programId });
+  const setViews = sets.map((set, index) => toSetView(set, index, expectedRangeFor));
   const weights = sets.map((s) => s.weightLbs).filter((w): w is number => w !== undefined);
   const bestVelocities = setViews
     .map((s) => s.bestRepVelocity)
@@ -284,7 +299,11 @@ function scoreVerdictSet(
   };
 }
 
-function toSetView(set: StoredSet, index: number): SessionSummarySet {
+function toSetView(
+  set: StoredSet,
+  index: number,
+  expectedRangeFor: (set: StoredSet) => RepsToThresholdRange | null,
+): SessionSummarySet {
   const velocity = getSetVelocitySummary(toAnalyticsSet(set));
   return {
     id: set.id,
@@ -297,6 +316,46 @@ function toSetView(set: StoredSet, index: number): SessionSummarySet {
     setPurpose: setPurposeOf(set),
     velocityLossPct: velocity.lossPct ?? null,
     bestRepVelocity: velocity.best ?? null,
+    expectedRepRange: expectedRangeFor(set),
+  };
+}
+
+/**
+ * Per-set lookup for {@link SessionSummarySet.expectedRepRange} (VW-301): one
+ * cross-session history fetch per exercise card, reused for every set on it.
+ *
+ * The threshold pct is the same goal-keyed default `timer.start`'s rest
+ * extension reads (`VELOCITY_LOSS_DEFAULT_PCT`, VW-297) — the planned
+ * exercise's `trainingIntent` when one is prescribed, else the hypertrophy
+ * default — so history and the set it is compared against are always judged
+ * against the same threshold. History is scoped to WORKING sets only
+ * (`setPurposeOf`), matching `scoreVerdictSet`'s own population, and excludes
+ * the set being described from its own history so the range never trivially
+ * contains itself.
+ */
+async function resolveExpectedRepRanges(
+  store: DashboardSessionStore & DashboardPlanStore,
+  args: { exerciseId: string | null; programId: string | undefined },
+): Promise<(set: StoredSet) => RepsToThresholdRange | null> {
+  if (args.exerciseId === null) return () => null;
+  const exerciseId = args.exerciseId;
+  const planned =
+    args.programId === undefined
+      ? undefined
+      : await findPlannedExercise(store, args.programId, exerciseId);
+  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[planned?.trainingIntent ?? 'hypertrophy'];
+  const filter: ExerciseSetsFilter = { userId: LOCAL_USER_ID, exerciseId };
+  const history = (await store.getSetsForExercise(filter)).filter(
+    (s) => setPurposeOf(s) === 'working',
+  );
+  return (set) => {
+    if (set.weightLbs === undefined) return null;
+    const counts = historicalRepsToThreshold(
+      history.filter((h) => h.id !== set.id),
+      set.weightLbs,
+      thresholdPct,
+    );
+    return repsToThresholdRange(counts);
   };
 }
 

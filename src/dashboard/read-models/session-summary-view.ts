@@ -14,6 +14,9 @@ import type { FatigueSummary, FatigueVerdict } from '@voltras/workout-analytics'
 // (see the file banner) — mirrors the store's four-value set-purpose enum, the
 // same treatment `dashboard/spa/live-page/model.ts`'s `CompletedSet` gives it.
 import type { SetPurpose } from '../../store/types.js';
+// Type-only, and itself store/node-free (see its own file banner) — the VW-301
+// expected-rep-range shape.
+import type { RepsToThresholdRange } from '../../analytics/reps-to-threshold-range.js';
 
 /** One completed set, as the summary screen lists it. */
 export interface SessionSummarySet {
@@ -36,6 +39,14 @@ export interface SessionSummarySet {
   /** Peak-to-last concentric velocity loss within the set, %. Null with no velocity telemetry. */
   velocityLossPct: number | null;
   bestRepVelocity: number | null;
+  /**
+   * Expected rep range for a velocity-loss-terminated set at this load, from
+   * this lifter's own history (VW-301) — never a point estimate, because
+   * Jukic et al. 2023 found reps-to-a-fixed-VL-threshold carry 95% limits of
+   * agreement of roughly -5.4/+5.5 reps between sessions at the same
+   * threshold and load. Null below the module's minimum qualifying history.
+   */
+  expectedRepRange: RepsToThresholdRange | null;
 }
 
 /** The `plan.suggest_progression` recommendation, per exercise. */

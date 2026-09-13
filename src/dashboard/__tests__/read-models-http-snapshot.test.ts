@@ -250,6 +250,7 @@ function buildFixtureState(): DashboardServerState {
       getTrainingBlock: () => Promise.resolve(BLOCK),
       getSession: (id) => Promise.resolve(id === SUMMARY_SESSION.id ? SUMMARY_SESSION : undefined),
       getSetsForSession: (id) => Promise.resolve(id === SUMMARY_SESSION.id ? SUMMARY_SETS : []),
+      getSetsForExercise: () => Promise.resolve([]),
       listTrainingPrograms: () => Promise.resolve([PROGRAM]),
       getTrainingProgram: () => Promise.resolve(PROGRAM),
       getTrainingBlocksForProgram: () => Promise.resolve([BLOCK]),

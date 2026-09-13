@@ -171,12 +171,14 @@ function makeSet(
 function makeStore(
   sets: StoredSet[],
   plannedRows: StoredPlannedExercise[],
-  opts: { programs?: StoredTrainingProgram[] } = {},
+  opts: { programs?: StoredTrainingProgram[]; historicalSets?: StoredSet[] } = {},
 ): DashboardSessionStore & DashboardPlanStore {
   const noop = async (): Promise<void> => undefined;
   return {
     getSession: async (id) => (id === SESSION.id ? SESSION : undefined),
     getSetsForSession: async () => sets,
+    getSetsForExercise: async ({ exerciseId }) =>
+      (opts.historicalSets ?? sets).filter((s) => s.exerciseId === exerciseId),
     listSessions: async () => [SESSION],
     listTrainingPrograms: async () => opts.programs ?? [PROGRAM],
     getTrainingProgram: async () => PROGRAM,
@@ -365,6 +367,66 @@ describe('buildSessionSummary', () => {
     const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
     expect(summary?.exercises[0]?.name).toBe('mystery-lift');
   });
+
+  describe('expectedRepRange (VW-301)', () => {
+    // 6 reps decaying 1.0 -> 0.5 m/s crosses 30% loss (the hypertrophy default,
+    // which `planned('cable-row')` carries no `trainingIntent` to override) at
+    // rep 4 (0.7 m/s, exactly 30% down from the 1.0 baseline).
+    const decayingReps = () =>
+      ({ reps: buildDecayingReps(6, 1.0, 0.5) as StoredSet['reps'] }) satisfies Partial<StoredSet>;
+
+    it('reports a range once enough historical sets qualify, excluding the set itself', async () => {
+      const targetSet = makeSet('s1', 'cable-row', 6, decayingReps());
+      const historicalSets = [
+        targetSet,
+        makeSet('h1', 'cable-row', 6, decayingReps()),
+        makeSet('h2', 'cable-row', 6, decayingReps()),
+        makeSet('h3', 'cable-row', 6, decayingReps()),
+      ];
+      const store = makeStore([targetSet], [planned('cable-row')], { historicalSets });
+      const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
+      const range = summary?.exercises[0]?.sets[0]?.expectedRepRange;
+      expect(range).toEqual({
+        expectedLow: 4,
+        expectedHigh: 4,
+        median: 4,
+        n: 3,
+        basis: expect.stringContaining('3 historical sets'),
+      });
+    });
+
+    it('is null below the minimum history floor', async () => {
+      const targetSet = makeSet('s1', 'cable-row', 6, decayingReps());
+      const historicalSets = [targetSet, makeSet('h1', 'cable-row', 6, decayingReps())];
+      const store = makeStore([targetSet], [planned('cable-row')], { historicalSets });
+      const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
+      expect(summary?.exercises[0]?.sets[0]?.expectedRepRange).toBeNull();
+    });
+
+    it('is null for a set with no recorded weight', async () => {
+      const targetSet = makeSet('s1', 'cable-row', 6, { ...decayingReps(), weightLbs: undefined });
+      const historicalSets = [
+        makeSet('h1', 'cable-row', 6, decayingReps()),
+        makeSet('h2', 'cable-row', 6, decayingReps()),
+        makeSet('h3', 'cable-row', 6, decayingReps()),
+      ];
+      const store = makeStore([targetSet], [planned('cable-row')], { historicalSets });
+      const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
+      expect(summary?.exercises[0]?.sets[0]?.expectedRepRange).toBeNull();
+    });
+
+    it('excludes sets at a different load from the load band', async () => {
+      const targetSet = makeSet('s1', 'cable-row', 6, decayingReps());
+      const historicalSets = [
+        makeSet('h1', 'cable-row', 6, { ...decayingReps(), weightLbs: 90 }),
+        makeSet('h2', 'cable-row', 6, { ...decayingReps(), weightLbs: 90 }),
+        makeSet('h3', 'cable-row', 6, { ...decayingReps(), weightLbs: 90 }),
+      ];
+      const store = makeStore([targetSet], [planned('cable-row')], { historicalSets });
+      const summary = await buildSessionSummary({ store, nameOf }, 'sess-1');
+      expect(summary?.exercises[0]?.sets[0]?.expectedRepRange).toBeNull();
+    });
+  });
 });
 
 describe('resolveSummarySessionId', () => {
@@ -373,6 +435,7 @@ describe('resolveSummarySessionId', () => {
     return {
       getSession: async (id) => sessions.find((s) => s.id === id),
       getSetsForSession: async () => [],
+      getSetsForExercise: async () => [],
       listSessions: async ({ limit }) =>
         [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit),
     };

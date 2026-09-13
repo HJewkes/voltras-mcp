@@ -90,6 +90,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         {
           "bestRepVelocity": 0.9,
           "endedAt": "2026-07-30T10:02:00.000Z",
+          "expectedRepRange": null,
           "id": "s0",
           "index": 1,
           "loadLabel": "45 lb",
@@ -102,6 +103,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         {
           "bestRepVelocity": 0.9,
           "endedAt": "2026-07-30T10:02:00.000Z",
+          "expectedRepRange": null,
           "id": "s1",
           "index": 2,
           "loadLabel": "100 lb",
@@ -114,6 +116,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         {
           "bestRepVelocity": 0.9,
           "endedAt": "2026-07-30T10:02:00.000Z",
+          "expectedRepRange": null,
           "id": "s2",
           "index": 3,
           "loadLabel": "120 lb",
@@ -166,6 +169,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         {
           "bestRepVelocity": 0.9,
           "endedAt": "2026-07-30T10:02:00.000Z",
+          "expectedRepRange": null,
           "id": "s3",
           "index": 1,
           "loadLabel": "90 lb",

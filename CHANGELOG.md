@@ -99,6 +99,16 @@ entry is written from the user's point of view is a review question, not a check
   event carries the same line to any channel consumer; `system.speak` and the cue emitter
   share one emission point, so one utterance is one event.
 
+- The session-completion page now shows an expected rep RANGE for a velocity-loss-terminated
+  set, never a single predicted number (VW-301). Each set on `GET /api/session-summary/:id`
+  gains `expectedRepRange` (`expectedLow`/`expectedHigh`/`median`/`n`/`basis`), built from this
+  lifter's own reps-to-threshold history at the exact same exercise and load, once at least 3
+  qualifying historical sets exist — the same evidence floor this server already treats as the
+  minimum for a personalised statistical claim. Jukic et al. 2023 found reps completed to a
+  fixed velocity-loss threshold at a fixed load carry 95% limits of agreement of roughly
+  -5.4/+5.5 reps between sessions, so a point estimate here would overstate how precisely this
+  can be predicted. `null` below the minimum, never a fabricated range.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own

@@ -102,6 +102,8 @@ class FakePlanStore {
   getSession = async (id: string): Promise<StoredSession | undefined> => this.sessions.get(id);
   getSetsForSession = async (sessionId: string): Promise<StoredSet[]> =>
     this.setsBySession.get(sessionId) ?? [];
+  getSetsForExercise = async (filter: { exerciseId: string }): Promise<StoredSet[]> =>
+    [...this.setsBySession.values()].flat().filter((s) => s.exerciseId === filter.exerciseId);
   listSessions = async (filter: {
     sort: 'startedAt:desc' | 'startedAt:asc';
     limit: number;
