@@ -10,6 +10,7 @@
 // Usage: node scripts/gen-tool-reference.mjs [--out site] [--report path.json]
 
 import { spawn, spawnSync } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
@@ -74,10 +75,17 @@ function isolatedEnv(scratchDir) {
 
 function createClient(child) {
   const pending = new Map();
+  // A multi-byte UTF-8 character (e.g. an em dash) can land across two
+  // separate `data` events on a large response — `tools/list` grows with
+  // every tool's schema. `chunk.toString()` decodes each chunk in isolation
+  // and mangles a split character into a replacement-character run;
+  // `StringDecoder` holds back a trailing incomplete sequence until the byte
+  // that completes it arrives, decoding the same as one contiguous buffer.
+  const decoder = new StringDecoder('utf8');
   let buffer = '';
   let nextId = 1;
   child.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
+    buffer += decoder.write(chunk);
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines) {

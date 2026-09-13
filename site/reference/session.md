@@ -8,7 +8,7 @@
 
 Start a workout session, optionally pinned to an exercise (`exerciseId` or `exerciseName`, at least one required if either is given).
 
-`slot` selects which device slot (default 'primary'; use 'left'/'right' for a bilateral rig). A session with no exercise set at start can have one attached later via `session.set_exercise`. `verboseIdleReps` controls whether idle-state rep noise is included in the channel event stream. Two coaching constraints govern the session you are about to run. (1) Cue budget: at most 1–2 coaching cues per interval (pre-set / intra-set / post-set), even when several faults are visible — presenting multiple corrections at once means none of them land, so queue the rest for a later interval rather than spending the budget up front. Cue density is itself tier-split (advanced lifters get silence during the set; beginners tolerate more in-set cueing), so attach the lifter's experience tier to any cue-count guidance you pass on. (2) Warm-up sets are individualized, not templated: warm-up set COUNT varies by lifter and by exercise (2 for a small movement on an already-warm muscle, 4–5 for a large, technically demanding one), and a second exercise for a muscle the first exercise already warmed needs only one brief feel set. Do not emit a fixed warm-up block for every session.
+`slot` selects which device slot (default 'primary'; use 'left'/'right' for a bilateral rig). A session with no exercise set at start can have one attached later via `session.set_exercise`. Optional `preSessionCarbs` (`{ level: 'low'|'normal'|'high', hoursSinceLastMeal? }`) records a self-reported carb context for the session — absent means never reported, never defaulted; correct or add it later via `session.checkin`. Nothing in `metrics.*` or `coaching.*` reads it yet; `report.weekly` lists it per session when present. `verboseIdleReps` controls whether idle-state rep noise is included in the channel event stream. Two coaching constraints govern the session you are about to run. (1) Cue budget: at most 1–2 coaching cues per interval (pre-set / intra-set / post-set), even when several faults are visible — presenting multiple corrections at once means none of them land, so queue the rest for a later interval rather than spending the budget up front. Cue density is itself tier-split (advanced lifters get silence during the set; beginners tolerate more in-set cueing), so attach the lifter's experience tier to any cue-count guidance you pass on. (2) Warm-up sets are individualized, not templated: warm-up set COUNT varies by lifter and by exercise (2 for a small movement on an already-warm muscle, 4–5 for a large, technically demanding one), and a second exercise for a muscle the first exercise already warmed needs only one brief feel set. Do not emit a fixed warm-up block for every session.
 
 **Parameters**
 
@@ -17,6 +17,7 @@ Start a workout session, optionally pinned to an exercise (`exerciseId` or `exer
 - `slot` — `string`, optional. Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises). Must match /^[a-zA-Z][a-zA-Z0-9_-]\*$/ — letters, digits, underscores, and hyphens, leading with a letter.
 - `verboseIdleReps` — `boolean`, optional.
 - `lifter` — `string`, optional.
+- `preSessionCarbs` — `object`, optional.
 
 ## `session.end`
 
@@ -33,7 +34,7 @@ Idempotent-adjacent: ending an already-ended or nonexistent session is a normal,
 
 Record a check-in against a session (RP corpus, "Client Check Ins"): "How did it go?" (`went`), "How did you feel?" (`felt`), "Did anything feel off?" (`off`), "Any questions?" (`questions`) — all free text — and "How are you feeling about the next session/week?" (`next`), plus `soreness`/`joint`/`motivation`, on RP's coarse 3-point scale (`low`/`medium`/`high`, never 5- or 10-point).
 
-Completion (loads, reps, sets) is already telemetry-derivable — show the lifter their own numbers back rather than asking `went` as a prompt; it exists only to store whatever they volunteer, and like every other code it is optional, never required. `soreness`, `joint` and `motivation` are withheld before the lifter's first completed training week (answers are uniformly positive and low-signal that early, and asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in the response's `withheld` array. RP's cadence: after the very first session, then at the end of every completed training week — never mandatory, never a gate on anything. `sessionId` omitted means the slot's active session. A guest session (a named `lifter`) writes nothing: check-ins are the owner's only.
+Completion (loads, reps, sets) is already telemetry-derivable — show the lifter their own numbers back rather than asking `went` as a prompt; it exists only to store whatever they volunteer, and like every other code it is optional, never required. `soreness`, `joint` and `motivation` are withheld before the lifter's first completed training week (answers are uniformly positive and low-signal that early, and asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in the response's `withheld` array. RP's cadence: after the very first session, then at the end of every completed training week — never mandatory, never a gate on anything. `sessionId` omitted means the slot's active session. A guest session (a named `lifter`) writes nothing: check-ins are the owner's only. Optional `preSessionCarbs` (same shape as `session.start`) sets or corrects the target session's carb context from here — useful for a lifter who forgot it at start.
 
 **Parameters**
 
@@ -41,6 +42,7 @@ Completion (loads, reps, sets) is already telemetry-derivable — show the lifte
 - `notes` — `string`, optional.
 - `slot` — `string`, optional. Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises). Must match /^[a-zA-Z][a-zA-Z0-9_-]\*$/ — letters, digits, underscores, and hyphens, leading with a letter.
 - `sessionId` — `string`, optional.
+- `preSessionCarbs` — `object`, optional.
 
 ## `session.set_exercise`
 

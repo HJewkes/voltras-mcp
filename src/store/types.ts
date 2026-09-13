@@ -650,6 +650,24 @@ export interface StoredSession {
    * value; this member is what the row literally says.
    */
   dietPhase?: string;
+  /**
+   * Optional self-reported pre-session carb context (VW-307), set at
+   * `session.start` or corrected via `session.checkin`. Absent means never
+   * reported — NEVER defaulted, because a manufactured 'normal' would read as
+   * a real answer. Nothing in `metrics.*` or `coaching.*` consumes this yet:
+   * the VW-278 research note found the fuel axis is not observable from
+   * telemetry, so a recorded n-of-1 context is the only path to using it, and
+   * that consumer doesn't exist yet. `report.weekly` lists it per session when
+   * present.
+   */
+  preSessionCarbs?: StoredPreSessionCarbs;
+}
+
+/** A session's self-reported pre-session carb context (VW-307). */
+export interface StoredPreSessionCarbs {
+  level: 'low' | 'normal' | 'high';
+  /** Rough self-estimate, not a timestamp. */
+  hoursSinceLastMeal?: number;
 }
 
 /**

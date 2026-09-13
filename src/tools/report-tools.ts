@@ -29,6 +29,7 @@ import { scopeSetsToLifter } from '../store/set-scope.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
+  type StoredPreSessionCarbs,
   type StoredSelfReport,
   type StoredSession,
   type StoredSet,
@@ -308,7 +309,8 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'Sections, each omitted when empty: a header (lifter, range, sessions completed, a rolling ' +
   '28-day completed-session count — never a streak — and adherence `planned N / done M` against ' +
   "the active program's touched week(s), plus a coarse trend vs the previous equal-length range); " +
-  'one block per session (date, template name, the same `report.session_results` strings verbatim, ' +
+  'one block per session (date, template name, the self-reported `preSessionCarbs` line when the ' +
+  'session has one, then the same `report.session_results` strings verbatim, ' +
   'plus an RIR line only when the rir-estimate baseline gate allows it — labelled `fitted` when ' +
   'the lifter has a fitted RIR-velocity curve (VW-298) for the exercise, or `general model, not ' +
   'a proximity-to-failure read` with no such curve (VW-310): Jukic et al. 2023, Eur J Appl ' +
@@ -365,6 +367,12 @@ export interface WeeklySessionEntry {
   date: string;
   templateName: string | null;
   exercises: WeeklySessionExercise[];
+  /**
+   * Self-reported pre-session carb context (VW-307), when the session has
+   * one — verbatim, not consumed or scored. See `StoredSession.preSessionCarbs`
+   * for why nothing downstream reads it yet.
+   */
+  preSessionCarbs?: StoredPreSessionCarbs;
 }
 
 export interface WeeklyProgressionLine {
@@ -498,6 +506,7 @@ async function buildWeeklySessionEntry(
     date: results.date,
     templateName: await resolveTemplateName(state, session.id),
     exercises,
+    ...(session.preSessionCarbs !== undefined ? { preSessionCarbs: session.preSessionCarbs } : {}),
   };
 }
 
@@ -877,6 +886,13 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
         '',
         `### ${session.date}${session.templateName !== null ? ` - ${session.templateName}` : ''}`,
       );
+      if (session.preSessionCarbs !== undefined) {
+        const hours = session.preSessionCarbs.hoursSinceLastMeal;
+        lines.push(
+          `Pre-session carbs: ${session.preSessionCarbs.level}` +
+            (hours !== undefined ? ` (${hours}h since last meal)` : ''),
+        );
+      }
       for (const exercise of session.exercises) {
         lines.push(exercise.exerciseName, exercise.result);
         if (exercise.rir !== null) lines.push(exercise.rir);

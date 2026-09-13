@@ -377,6 +377,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'fatigueAxes',
   'entryDepression',
   'lateSessionDecay',
+  // VW-307: the self-reported pre-session carb context, on `session.start`,
+  // `session.checkin` and `report.weekly`'s per-session entries.
+  'preSessionCarbs',
+  'hoursSinceLastMeal',
 ];
 
 /**

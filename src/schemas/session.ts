@@ -20,6 +20,19 @@ import { IdSchema, SlotIdSchema } from './common.js';
 export const LifterLabel = z.string().min(1).max(40);
 
 /**
+ * Optional self-reported pre-session carbohydrate context (VW-307). RP-style
+ * coarse 3-point scale, same rationale as `CheckinScaleValue`: a finer
+ * gradation would manufacture precision a subjective self-rating doesn't
+ * have. `hoursSinceLastMeal` is a rough self-estimate, not a timestamp.
+ */
+export const PreSessionCarbsLevel = z.enum(['low', 'normal', 'high']);
+
+export const PreSessionCarbsInput = z.object({
+  level: PreSessionCarbsLevel,
+  hoursSinceLastMeal: z.number().min(0).max(72).optional(),
+});
+
+/**
  * `session.checkin` answer codes (VMCP-06.12 / B41), quoted from the RP
  * corpus's five-question check-in (`rp-s10-checkin-question-set`): "How did
  * it go?" (`went`), "How did you feel?" (`felt`), "Did anything feel off?"
@@ -100,6 +113,11 @@ export const SessionStartInput = z
      * owner's own session, which is the overwhelmingly common case.
      */
     lifter: LifterLabel.optional(),
+    /**
+     * VW-307. Optional self-reported carb context for this session — nothing
+     * downstream consumes it yet, see `StoredSession.preSessionCarbs`.
+     */
+    preSessionCarbs: PreSessionCarbsInput.optional(),
   })
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',
@@ -158,6 +176,13 @@ export const SessionEndInput = z.object({
 export const SessionCheckinInput = CheckinPayload.extend({
   slot: SlotIdSchema,
   sessionId: IdSchema.optional(),
+  /**
+   * VW-307. Set or correct the target session's carb context from here too,
+   * for a lifter who didn't have it at `session.start`. Not part of
+   * `CheckinPayload`: it isn't a check-in answer, and `session.end`'s
+   * `checkin` block doesn't take it — the session has already ended by then.
+   */
+  preSessionCarbs: PreSessionCarbsInput.optional(),
 });
 
 /**

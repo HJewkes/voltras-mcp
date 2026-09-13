@@ -417,6 +417,34 @@ describe('session.start', () => {
     expect(h.live.session?.verboseIdleReps).toBeUndefined();
   });
 
+  it('persists preSessionCarbs on the stored session row when given', async () => {
+    const r = await h.invoke('session.start', {
+      exerciseName: 'Test',
+      preSessionCarbs: { level: 'high', hoursSinceLastMeal: 2 },
+    });
+    expect(r.isError).toBeUndefined();
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.preSessionCarbs).toEqual({ level: 'high', hoursSinceLastMeal: 2 });
+    expect(h.live.session?.preSessionCarbs).toEqual({ level: 'high', hoursSinceLastMeal: 2 });
+  });
+
+  it('leaves preSessionCarbs absent (never defaulted) when omitted', async () => {
+    const r = await h.invoke('session.start', { exerciseName: 'Test' });
+    expect(r.isError).toBeUndefined();
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.preSessionCarbs).toBeUndefined();
+    expect('preSessionCarbs' in stored).toBe(false);
+  });
+
+  it('rejects a preSessionCarbs.level outside low/normal/high with INVALID_INPUT', async () => {
+    const r = await h.invoke('session.start', {
+      exerciseName: 'Test',
+      preSessionCarbs: { level: 'medium' },
+    });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
   it('does NOT arm the guard when the device has no recognised training mode', async () => {
     // Fresh device: applySettings has not run yet, so trainingMode is undefined.
     const slot = h.state.slots.get('primary')!;
@@ -536,6 +564,19 @@ describe('session.end', () => {
     const finalRow = h.store.putSession.mock.calls[0][0] as StoredSession;
     expect(finalRow.id).toBe(sessionId);
     expect(typeof finalRow.endedAt).toBe('string');
+  });
+
+  it('carries preSessionCarbs through the session.end re-put (VW-307)', async () => {
+    await h.invoke('session.start', {
+      exerciseId: 'bench-press',
+      preSessionCarbs: { level: 'low' },
+    });
+    h.store.putSession.mockClear();
+
+    const r = await h.invoke('session.end', {});
+    expect(r.isError).toBeUndefined();
+    const finalRow = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(finalRow.preSessionCarbs).toEqual({ level: 'low' });
   });
 
   // ── VMCP-02.50 — session.end's open-set cascade delegates to finalizeSet ──

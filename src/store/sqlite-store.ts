@@ -84,6 +84,7 @@ import {
   type StoredFailureAnchor,
   type StoredProgramAssignment,
   type StoredRep,
+  type StoredPreSessionCarbs,
   type StoredRirVelocityModel,
   type StoredSelfReport,
   type StoredSession,
@@ -98,7 +99,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -200,7 +201,12 @@ const SCHEMA_SQL = `
     -- filters cheaply.
     diet_phase TEXT,
     -- v14 (VW-169): the session's default lifter label. NULL = the owner.
-    lifter TEXT
+    lifter TEXT,
+    -- v25 (VW-307): optional self-reported pre-session carb context, set at
+    -- session.start or corrected via session.checkin. NULL = never reported,
+    -- never defaulted. No index: nothing filters or sorts by it.
+    pre_session_carbs_level TEXT,
+    pre_session_carbs_hours_since_meal REAL
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -1370,6 +1376,17 @@ function migrateV23ToV24(db: DatabaseSync): void {
 }
 
 /**
+ * v24 -> v25: optional self-reported pre-session carb context on `sessions`
+ * (VW-307). ADDITIVE, nothing back-filled: a pre-v25 row was never asked, and
+ * a manufactured 'normal' would read as a real answer, so absent stays
+ * absent. No index: nothing filters or sorts by it.
+ */
+function migrateV24ToV25(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'sessions', 'pre_session_carbs_level', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'pre_session_carbs_hours_since_meal', 'REAL');
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1554,6 +1571,8 @@ interface SessionRow {
   notes: string | null;
   lifter: string | null;
   diet_phase: string | null;
+  pre_session_carbs_level: string | null;
+  pre_session_carbs_hours_since_meal: number | null;
 }
 
 interface DietPhaseRow {
@@ -1941,8 +1960,9 @@ export class SqliteSessionStore implements SessionStore {
     this.db
       .prepare(
         `INSERT INTO sessions
-           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
+            pre_session_carbs_level, pre_session_carbs_hours_since_meal)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
@@ -1950,7 +1970,9 @@ export class SqliteSessionStore implements SessionStore {
            exercise_name = excluded.exercise_name,
            notes = excluded.notes,
            lifter = excluded.lifter,
-           diet_phase = excluded.diet_phase`,
+           diet_phase = excluded.diet_phase,
+           pre_session_carbs_level = excluded.pre_session_carbs_level,
+           pre_session_carbs_hours_since_meal = excluded.pre_session_carbs_hours_since_meal`,
       )
       .run(
         s.id,
@@ -1964,6 +1986,8 @@ export class SqliteSessionStore implements SessionStore {
         // to agree with the table for a session written now, and a tool that
         // could pass its own value would be a second, disagreeing writer.
         this.stampableDietPhase(s),
+        s.preSessionCarbs?.level ?? null,
+        s.preSessionCarbs?.hoursSinceLastMeal ?? null,
       );
     return Promise.resolve();
   }
@@ -3906,6 +3930,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 23) {
     migrateV23ToV24(db);
   }
+  if (current <= 24) {
+    migrateV24ToV25(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -3979,6 +4006,15 @@ function rowToSession(row: SessionRow): StoredSession {
   if (row.lifter !== null) out.lifter = row.lifter;
   // The stamp verbatim, never the resolved phase — see `getSessionDietPhase`.
   if (row.diet_phase !== null) out.dietPhase = row.diet_phase;
+  // VW-307: NEVER defaulted — absent means never reported, not 'normal'.
+  if (row.pre_session_carbs_level !== null) {
+    out.preSessionCarbs = {
+      level: row.pre_session_carbs_level as StoredPreSessionCarbs['level'],
+      ...(row.pre_session_carbs_hours_since_meal !== null
+        ? { hoursSinceLastMeal: row.pre_session_carbs_hours_since_meal }
+        : {}),
+    };
+  }
   return out;
 }
 

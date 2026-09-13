@@ -43,10 +43,12 @@ import {
   SessionSetLifterInput,
   SessionStartInput,
   type CheckinAnswerInput,
+  type PreSessionCarbsInput,
 } from '../schemas/session.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
+  type StoredPreSessionCarbs,
   type StoredSession,
   type StoredSet,
 } from '../store/types.js';
@@ -94,7 +96,11 @@ const SESSION_START_DESCRIPTION =
   'Start a workout session, optionally pinned to an exercise (`exerciseId` or `exerciseName`, ' +
   'at least one required if either is given). `slot` selects which device slot (default ' +
   "'primary'; use 'left'/'right' for a bilateral rig). A session with no exercise set at " +
-  'start can have one attached later via `session.set_exercise`. `verboseIdleReps` controls ' +
+  'start can have one attached later via `session.set_exercise`. Optional `preSessionCarbs` ' +
+  "(`{ level: 'low'|'normal'|'high', hoursSinceLastMeal? }`) records a self-reported carb " +
+  'context for the session — absent means never reported, never defaulted; correct or add it ' +
+  'later via `session.checkin`. Nothing in `metrics.*` or `coaching.*` reads it yet; ' +
+  '`report.weekly` lists it per session when present. `verboseIdleReps` controls ' +
   'whether idle-state rep noise is included in the channel event stream. Two coaching ' +
   'constraints govern the session you are about to run. (1) Cue budget: at most 1–2 coaching ' +
   'cues per interval (pre-set / intra-set / post-set), even when several faults are visible — ' +
@@ -129,7 +135,9 @@ const SESSION_CHECKIN_DESCRIPTION =
   "the response's `withheld` array. RP's cadence: after the very first session, then at the " +
   'end of every completed training week — never mandatory, never a gate on anything. ' +
   "`sessionId` omitted means the slot's active session. A guest session (a named `lifter`) " +
-  "writes nothing: check-ins are the owner's only.";
+  "writes nothing: check-ins are the owner's only. Optional `preSessionCarbs` (same shape as " +
+  "`session.start`) sets or corrects the target session's carb context from here — useful for " +
+  'a lifter who forgot it at start.';
 
 const SESSION_SET_EXERCISE_DESCRIPTION =
   'Attach or change the exercise (`exerciseId` or `exerciseName`) on the active session for a ' +
@@ -242,6 +250,23 @@ function install<S extends z.ZodObject>(
   tool.update(updates as never);
 }
 
+/**
+ * `PreSessionCarbsInput` parses `hoursSinceLastMeal` as `number | undefined`
+ * (an always-present key), which `exactOptionalPropertyTypes` rejects against
+ * `StoredPreSessionCarbs`'s always-absent-when-unset shape. Strips the key
+ * rather than the value.
+ */
+function toStoredPreSessionCarbs(
+  input: z.infer<typeof PreSessionCarbsInput>,
+): StoredPreSessionCarbs {
+  return {
+    level: input.level,
+    ...(input.hoursSinceLastMeal !== undefined
+      ? { hoursSinceLastMeal: input.hoursSinceLastMeal }
+      : {}),
+  };
+}
+
 async function startSession(
   state: ServerState,
   input: z.infer<typeof SessionStartInput>,
@@ -277,6 +302,9 @@ async function startSession(
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.verboseIdleReps === true ? { verboseIdleReps: true } : {}),
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+    ...(input.preSessionCarbs !== undefined
+      ? { preSessionCarbs: toStoredPreSessionCarbs(input.preSessionCarbs) }
+      : {}),
   };
   slot.live.startSession(active);
   // Clear idle-rep accumulators so the PT skill starts each session from a
@@ -290,6 +318,9 @@ async function startSession(
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+    ...(input.preSessionCarbs !== undefined
+      ? { preSessionCarbs: toStoredPreSessionCarbs(input.preSessionCarbs) }
+      : {}),
   };
   await state.store.putSession(stored);
 
@@ -566,6 +597,7 @@ async function endSession(
     ...(active.exerciseId !== undefined ? { exerciseId: active.exerciseId } : {}),
     ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
     ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
+    ...(active.preSessionCarbs !== undefined ? { preSessionCarbs: active.preSessionCarbs } : {}),
   };
   // VMCP-06.12 / B41: write the check-in BEFORE putSession marks this session
   // ended, so the week-1 gate's session count (below, in writeCheckin) never
@@ -708,7 +740,34 @@ async function checkinSession(
   input: z.infer<typeof SessionCheckinInput>,
 ): Promise<CheckinWriteResult> {
   const target = await resolveCheckinTarget(state, input.slot, input.sessionId);
+  if (input.preSessionCarbs !== undefined) {
+    await updatePreSessionCarbs(state, target.sessionId, input.preSessionCarbs);
+  }
   return writeCheckin(state, target, input.answers, input.notes);
+}
+
+/**
+ * Set or correct a session's pre-session carb context from `session.checkin`
+ * (VW-307), after `session.start` — a lifter who forgot it at start, or wants
+ * to correct it. Writes the store row directly (it works on an already-ended
+ * session too), and ALSO syncs any slot whose in-memory `live.session` is
+ * this same session — without that, `session.end`'s re-put (which snapshots
+ * from `live.session`, never re-reading the DB) would null this back out.
+ */
+async function updatePreSessionCarbs(
+  state: ServerState,
+  sessionId: string,
+  preSessionCarbs: z.infer<typeof PreSessionCarbsInput>,
+): Promise<void> {
+  const stored = await state.store.getSession(sessionId);
+  if (stored === undefined) return;
+  const normalized = toStoredPreSessionCarbs(preSessionCarbs);
+  await state.store.putSession({ ...stored, preSessionCarbs: normalized });
+  for (const slot of state.slots.values()) {
+    if (slot.live.session?.sessionId === sessionId) {
+      slot.live.setSessionPreSessionCarbs(normalized);
+    }
+  }
 }
 
 async function listSessions(

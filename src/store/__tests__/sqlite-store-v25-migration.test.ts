@@ -1,8 +1,8 @@
-// Tests for the v23 -> v24 migration: the `rir_velocity_models` table
-// (VW-298), exercised against a genuinely v23-shaped database rather than a
-// fresh current-shape DB with its `user_version` stamp turned back — VW-288
-// found that stamping a current DB backwards proves nothing, because the table
-// under test is already there.
+// Tests for the v24 -> v25 migration: optional self-reported pre-session
+// carb context on `sessions` (VW-307), exercised against a genuinely
+// v24-shaped database rather than a fresh current-shape DB with its
+// `user_version` stamp turned back — VW-288 found that stamping a current DB
+// backwards proves nothing, because the table under test is already there.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,13 +13,14 @@ import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID } from '../types.js';
 
 /**
- * `users`, `sessions`, `exercise_setups` and `exercise_baselines` exactly as
- * they stood after v23 — the four `optimal_mvt*` columns VW-299 added are
- * PRESENT, and there is no `rir_velocity_models`. Spelled out literally rather
- * than derived from the current `SCHEMA_SQL` so the fixture cannot drift
- * forward with the code under test.
+ * `users`, `sessions`, `exercise_baselines` and `rir_velocity_models` exactly
+ * as they stood after v24 — the `rir_velocity_models` table VW-298 added and
+ * the four `optimal_mvt*` columns VW-299 added are PRESENT, and `sessions`
+ * has no `pre_session_carbs_*` columns. Spelled out literally rather than
+ * derived from the current `SCHEMA_SQL` so the fixture cannot drift forward
+ * with the code under test.
  */
-const V23_SCHEMA_SQL = `
+const V24_SCHEMA_SQL = `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
     display_name TEXT,
@@ -31,28 +32,14 @@ const V23_SCHEMA_SQL = `
     ended_at TEXT,
     exercise_id TEXT,
     exercise_name TEXT,
-    notes TEXT
-  );
-  CREATE TABLE exercise_setups (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    exercise_id TEXT NOT NULL,
-    label TEXT,
-    detected_at TEXT NOT NULL,
-    confirmed_at TEXT,
-    cluster_version TEXT,
-    retired_at TEXT,
-    setup_anchor TEXT CHECK (setup_anchor IN ('low','mid','chest','high')),
-    mount_hole INTEGER,
-    cable_length_setting_json TEXT,
-    mode TEXT
+    notes TEXT,
+    lifter TEXT,
+    diet_phase TEXT
   );
   CREATE TABLE exercise_baselines (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     exercise_id TEXT NOT NULL,
-    setup_id TEXT REFERENCES exercise_setups(id) ON DELETE SET NULL,
-    side TEXT CHECK (side IN ('left','right')),
     state TEXT NOT NULL
       CHECK (state IN ('COLD','SHAPE_ONLY','PROVISIONAL','CALIBRATED','STALE')),
     confidence REAL,
@@ -69,23 +56,32 @@ const V23_SCHEMA_SQL = `
     optimal_mvt_error_pct REAL,
     optimal_mvt_sample_size INTEGER,
     optimal_mvt_observed_v1rm REAL,
-    UNIQUE (user_id, exercise_id, setup_id, side)
+    UNIQUE (user_id, exercise_id)
+  );
+  CREATE TABLE rir_velocity_models (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    model_json TEXT NOT NULL,
+    fitted_at TEXT NOT NULL,
+    sample_size INTEGER NOT NULL,
+    fit_quality REAL,
+    PRIMARY KEY (user_id, exercise_id)
   );
 `;
 
 let dir: string;
 let path: string;
 
-function seedV23Database(): void {
+function seedV24Database(): void {
   const db = new DatabaseSync(path);
-  db.exec(V23_SCHEMA_SQL);
+  db.exec(V24_SCHEMA_SQL);
   db.prepare(`INSERT INTO users (id, created_at) VALUES (?, '2026-09-01T00:00:00.000Z')`).run(
     LOCAL_USER_ID,
   );
   db.exec(`
     INSERT INTO sessions (id, started_at) VALUES ('sess-old', '2026-09-01T10:00:00.000Z');
   `);
-  db.exec('PRAGMA user_version = 23');
+  db.exec('PRAGMA user_version = 24');
   db.close();
 }
 
@@ -102,32 +98,24 @@ function columns(db: DatabaseSync, table: string): Set<string> {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'vmcp-v24-'));
-  path = join(dir, 'v23.sqlite');
-  seedV23Database();
+  dir = mkdtempSync(join(tmpdir(), 'vmcp-v25-'));
+  path = join(dir, 'v24.sqlite');
+  seedV24Database();
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('v23 -> v24 migration', () => {
-  it('adds rir_velocity_models on a genuinely v23-shaped database', () => {
+describe('v24 -> v25 migration', () => {
+  it('adds the pre_session_carbs columns on a genuinely v24-shaped database', () => {
     const store = SqliteSessionStore.open(path);
     try {
       const db = new DatabaseSync(path);
       try {
-        expect(tables(db).has('rir_velocity_models')).toBe(true);
-        expect(columns(db, 'rir_velocity_models')).toEqual(
-          new Set([
-            'user_id',
-            'exercise_id',
-            'model_json',
-            'fitted_at',
-            'sample_size',
-            'fit_quality',
-          ]),
-        );
+        const sessionColumns = columns(db, 'sessions');
+        expect(sessionColumns.has('pre_session_carbs_level')).toBe(true);
+        expect(sessionColumns.has('pre_session_carbs_hours_since_meal')).toBe(true);
       } finally {
         db.close();
       }
@@ -136,13 +124,12 @@ describe('v23 -> v24 migration', () => {
     }
   });
 
-  it('leaves the v23 MVT columns alone', () => {
+  it('leaves rir_velocity_models and the v23 MVT columns alone', () => {
     const store = SqliteSessionStore.open(path);
     try {
       const db = new DatabaseSync(path);
       try {
-        // This migration adds a table and touches no existing column, so the
-        // fit VW-299 landed one version earlier must survive it intact.
+        expect(tables(db).has('rir_velocity_models')).toBe(true);
         const baselineColumns = columns(db, 'exercise_baselines');
         for (const column of [
           'optimal_mvt',
@@ -160,13 +147,13 @@ describe('v23 -> v24 migration', () => {
     }
   });
 
-  it('back-fills no curve: a lifter with no fit reads as having none', async () => {
+  it('back-fills nothing: a pre-existing row reads back with the field ABSENT, never defaulted', async () => {
     const store = SqliteSessionStore.open(path);
     try {
-      // Nothing is invented for pre-v24 history. A fit is an optimisation over
-      // a selected corpus, so the only honest way to get a row is to run it.
-      expect(await store.getRirVelocityModel(LOCAL_USER_ID, 'row')).toBeUndefined();
-      expect(await store.getSession('sess-old')).not.toBeUndefined();
+      const session = await store.getSession('sess-old');
+      expect(session).not.toBeUndefined();
+      expect(session?.preSessionCarbs).toBeUndefined();
+      expect('preSessionCarbs' in (session ?? {})).toBe(false);
     } finally {
       await store.close();
     }
