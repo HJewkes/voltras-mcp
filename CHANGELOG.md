@@ -49,6 +49,19 @@ entry is written from the user's point of view is a review question, not a check
 - The documentation site renders this changelog at `/changelog` (#348). The page was a
   stub; it now includes this file verbatim, so there is one copy to read and one to write.
 
+- Every estimated 1RM now arrives with an error band and a `fitFor: "trend"` marker
+  (VW-267). `metrics.compute` `strength.e1rm` attaches the pooled standard error (9.8% of
+  1RM, sized to the estimate) and the 3.7% systematic overestimate — reported, never
+  subtracted — to the two velocity-derived methods; the Epley rep method gets the marker
+  and a note saying why no figure applies to it. `history.trend` with `metric: e1rm` carries
+  the same band, and is the path an e1RM is actually fit for. `plan.suggest_progression`
+  says outright that no gate of its own reads an e1RM: a one-session jump inside the band is
+  noise and moves no load.
+
+- `coaching.explain` topic `meso.e1rm_interpretation` (VW-267) — how to talk about an e1RM
+  that moved, with the reliability figures and their citations. The first topic sourced
+  from primary literature rather than the mined RP corpus.
+
 - `profile.set_diet_phase` — the first writer of `diet_phases`, which had DDL and a
   comparability clause but nothing to fill it (VW-149 / VW-150). It records the OBSERVED
   phase (fat-loss / gain / maintenance) as a time range, closes the previous range at the

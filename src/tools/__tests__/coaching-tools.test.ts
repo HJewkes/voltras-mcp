@@ -129,6 +129,21 @@ describe('coaching.explain', () => {
     expect(withoutCaveat.caveats).toBeUndefined();
   });
 
+  it('explains e1RM as a trend instrument, with its error figures (VW-267)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'meso.e1rm_interpretation' }));
+
+    // Assert: the two pooled figures and the trend-only framing, not a number
+    // a reader could mistake for a measurement.
+    expect(body.explanation).toContain('9.8%');
+    expect(body.explanation).toContain('3.7%');
+    expect(body.explanation).toContain('TREND INSTRUMENT');
+    expect(body.sources).toContain(
+      'greig-2023-load-velocity-1rm-ipd-meta-analysis-sports-medicine',
+    );
+    expect(body.caveats?.length).toBeGreaterThan(0);
+  });
+
   it('rejects an unknown topic', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'not.a.real.topic' });

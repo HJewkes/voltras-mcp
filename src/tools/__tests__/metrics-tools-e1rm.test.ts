@@ -32,6 +32,7 @@ import type {
   StoredRep,
   StoredSet,
 } from '../../store/types.js';
+import { e1rmBand, type E1RMBand } from '../e1rm-band.js';
 import type { ToolResult } from '../helpers.js';
 
 const EMPTY_PHASE: Phase = {
@@ -142,6 +143,7 @@ function parsePayload(result: ToolResult): unknown {
 interface E1RMBody {
   method: 'reps' | 'profile' | 'hybrid';
   estimate: { e1RM: number; confidence: number; method: string } | null;
+  band: E1RMBand | null;
   gate: FeatureGateVerdict | null;
 }
 
@@ -194,6 +196,9 @@ describe('metrics.compute — strength.e1rm', () => {
     expect(parsePayload(result)).toEqual({
       method: 'reps',
       estimate: { e1RM: 116.7, confidence: 0.8, method: 'reps' },
+      // VW-267: the Epley path carries the trend marker and no pooled figure —
+      // the published SEE was measured on load-velocity models, not this one.
+      band: e1rmBand(116.7, 'reps'),
       gate: null,
     });
   });
@@ -217,6 +222,8 @@ describe('metrics.compute — strength.e1rm', () => {
     const body = parsePayload(result) as E1RMBody;
     expect(body.method).toBe('profile');
     expect(body.estimate).toEqual({ e1RM: 220, confidence: 0.7, method: 'profile' });
+    // VW-267: a velocity-derived estimate carries the pooled band, sized to it.
+    expect(body.band).toMatchObject({ fitFor: 'trend', seePct: 9.8, seeLbs: 21.6, biasPct: 3.7 });
     expect(body.gate?.activation).toBe('full');
   });
 
@@ -233,6 +240,7 @@ describe('metrics.compute — strength.e1rm', () => {
     const body = parsePayload(result) as E1RMBody;
     expect(body.method).toBe('profile');
     expect(body.estimate).toBeNull();
+    expect(body.band).toBeNull();
     expect(body.gate?.activation).toBe('withheld');
     expect(body.gate?.userMessage.length).toBeGreaterThan(0);
   });
