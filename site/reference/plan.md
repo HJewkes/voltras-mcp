@@ -182,7 +182,7 @@ Use this to connect what the user is actually doing right now to what the plan p
 
 Get a suggested load/weight-delta for the next occurrence of an exercise, based on the most recently completed session for it (completedSessionId, optional — inferred if omitted) within a program.
 
-Returns `delta` (lb) plus `repDelta` — above a ~15-rep prescription the rep is the finer dial than the load, so the suggestion adds a rep instead of weight. `gates` reports the ordered progression gates (technique, effort, setsUnlocked: whether adding a set is warranted) and `tier` the training-experience signal the gates were read against. Suggestion only: the coach or lifter accepts or declines it, it is never auto-applied, and a declined suggestion is not re-applied.
+Returns `delta` (lb) plus `repDelta` — above a ~15-rep prescription the rep is the finer dial than the load, so the suggestion adds a rep instead of weight. `gates` reports the ordered progression gates (technique, effort, setsUnlocked: whether adding a set is warranted) and `tier` the training-experience signal the gates were read against. `technique` is read from the prior session's own working sets, using the same within-set ROM integrity `metrics.compute quality.rom` reports: `unstable` when a set's ROM shrank or its rep-to-rep ROM was erratic, by workout-analytics' own cited cuts. It is `unknown` whenever no set could be judged, and `unknown` never holds the load — an unproven technique is not a failed one. Every hold says in words which reading caused it. Suggestion only: the coach or lifter accepts or declines it, it is never auto-applied, and a declined suggestion is not re-applied.
 
 **Parameters**
 

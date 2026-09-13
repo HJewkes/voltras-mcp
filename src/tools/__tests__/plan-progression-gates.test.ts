@@ -353,16 +353,124 @@ describe('computeProgressionDelta — B07 gates', () => {
     expect(suggestion.repDelta).toBe(0);
   });
 
-  it('leaves technique unknown, and unblocking, until VW-93 supplies it', () => {
-    // Arrange.
+  it('reads technique off the sets, and a stable read does not block (VMCP-06.07)', () => {
+    // Arrange: every rep measures the same ROM, which is what 'stable' means.
     const sets = [1, 2, 3].map((n) => setWithReps(`s${String(n)}`, 12));
 
     // Act.
     const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
 
     // Assert.
+    expect(suggestion.gates.technique).toBe('stable');
+    expect(suggestion.delta).toBe(5);
+  });
+
+  // ── VMCP-06.07 / B09: the technique gate's real input ────────────────────
+  //
+  // Every set below tops the 8-12 band at a flat velocity, so without the ROM
+  // reading each one would take the +5. What separates them is the shape of
+  // the range of motion across the reps.
+
+  /** A set whose reps measure `roms` metres of concentric ROM, in order. */
+  function setWithRoms(setId: string, roms: number[], velocities?: number[]): StoredSet {
+    const reps = roms.map((rom, i) => {
+      const phase: Phase = {
+        ...EMPTY_PHASE,
+        endPosition: rom,
+        peakVelocity: velocities?.[i] ?? 800,
+        _movementSampleCount: 4,
+      };
+      return {
+        ...({ repNumber: i + 1, concentric: phase, eccentric: { ...phase } } as Rep),
+        id: `${setId}-r${String(i)}`,
+        setId,
+        index: i,
+      } as StoredRep;
+    });
+    return { ...setWithReps(setId, 0), reps };
+  }
+
+  /** 12 reps decaying from 0.40 m to 0.30 m: a last-over-first of 0.75. */
+  const SHRINKING_ROMS = Array.from({ length: 12 }, (_, i) => 0.4 - (0.1 * i) / 11);
+  /** 12 reps alternating 0.30 m and 0.45 m: a CV past the erratic cut. */
+  const ERRATIC_ROMS = Array.from({ length: 12 }, (_, i) => (i % 2 === 0 ? 0.3 : 0.45));
+
+  it('calls technique unstable when a working set’s ROM shrinks, and holds the load', () => {
+    const sets = [setWithRoms('s1', SHRINKING_ROMS)];
+
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
+
+    expect(suggestion.gates.technique).toBe('unstable');
+    expect(suggestion.delta).toBeLessThanOrEqual(0);
+    expect(suggestion.repDelta).toBe(0);
+    // The hold says what it saw, and cites the cut it judged with.
+    expect(suggestion.reasoning).toContain('range of motion shrank');
+    expect(suggestion.reasoning).toContain('DEFAULT_PARTIAL_REP_SCHEME');
+  });
+
+  it('calls technique unstable when rep-to-rep ROM is erratic, and says so', () => {
+    const sets = [setWithRoms('s1', ERRATIC_ROMS)];
+
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
+
+    expect(suggestion.gates.technique).toBe('unstable');
+    expect(suggestion.delta).toBeLessThanOrEqual(0);
+    expect(suggestion.reasoning).toContain('erratic');
+    expect(suggestion.reasoning).toContain('DEFAULT_CONSISTENCY_SCHEME');
+  });
+
+  it('takes the worst working set, the way the effort gate takes the worst loss', () => {
+    const sets = [
+      setWithRoms(
+        's1',
+        Array.from({ length: 12 }, () => 0.4),
+      ),
+      setWithRoms('s2', SHRINKING_ROMS),
+    ];
+
+    expect(computeProgressionDelta(plannedBand(8, 12), sets, BASIS).gates.technique).toBe(
+      'unstable',
+    );
+  });
+
+  it('leaves technique unknown — never blocking — when no set can be judged', () => {
+    // Reps with no measurable ROM. An athlete whose sets cannot be read must
+    // keep progressing; a silent hold on unproven technique would stop every
+    // lifter without position telemetry and give no reason for it.
+    const sets = [1, 2, 3].map((n) => setWithRoms(`s${String(n)}`, Array(12).fill(0)));
+
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS);
+
     expect(suggestion.gates.technique).toBe('unknown');
     expect(suggestion.delta).toBe(5);
+  });
+
+  it('lets a caller-supplied technique verdict win over the reading', () => {
+    const sets = [setWithRoms('s1', SHRINKING_ROMS)];
+
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS, {
+      tier: 'intermediate',
+      technique: 'stable',
+    });
+
+    expect(suggestion.gates.technique).toBe('stable');
+    expect(suggestion.delta).toBe(5);
+  });
+
+  it('blocks on technique before the effort gate can unlock sets (B07 order)', () => {
+    // Same tier and the same near-failure velocity loss that unlocks sets for
+    // an intermediate — but the ROM read comes first and keeps them locked.
+    const sets = [setWithRoms('s1', SHRINKING_ROMS, decayingVelocities(12))];
+
+    const suggestion = computeProgressionDelta(plannedBand(8, 12), sets, BASIS, {
+      tier: 'intermediate',
+    });
+
+    expect(suggestion.gates.technique).toBe('unstable');
+    expect(suggestion.gates.effort).toBe('hard');
+    expect(suggestion.gates.setsUnlocked).toBe(false);
+    expect(suggestion.delta).toBeLessThanOrEqual(0);
+    expect(suggestion.repDelta).toBe(0);
   });
 
   it('never suggests more load or reps while technique is unstable', () => {
@@ -523,7 +631,9 @@ describe('plan.suggest_progression — tier read', () => {
 
     // Assert.
     expect(res.suggestion.tier).toMatchObject({ tier: 'beginner', source: 'declared' });
-    expect(res.suggestion.gates).toMatchObject({ technique: 'unknown', setsUnlocked: false });
+    // VMCP-06.07: the seeded sets' reps all measure the same ROM, so the
+    // technique gate now reads 'stable' where it used to read 'unknown'.
+    expect(res.suggestion.gates).toMatchObject({ technique: 'stable', setsUnlocked: false });
     expect(res.suggestion.repDelta).toBe(0);
   });
 });

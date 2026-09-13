@@ -178,7 +178,7 @@ export function medianEligibleRom(reps: readonly Rep[]): number | null {
 function readDecay(roms: readonly number[], margin: CitedScheme<boolean> | null): RomDecayReading {
   const first = roms[0];
   const last = roms[roms.length - 1];
-  if (roms.length < 2 || first === undefined || last === undefined || first <= 0) {
+  if (roms.length < 2 || !isMeasured(first) || !isMeasured(last) || first <= 0) {
     return { lastOverFirstEligible: null, verdict: null, citation: null };
   }
   const lastOverFirstEligible = last / first;
@@ -200,13 +200,21 @@ function readVariance(
   margin: CitedScheme<RomVarianceVerdict> | null,
 ): RomVarianceReading {
   // A set whose reps all measure zero would otherwise report `cv: 0`, which
-  // `getCV` returns for a zero mean and which reads as perfect consistency.
-  if (roms.length < 2 || Math.max(...roms) <= 0) {
+  // `getCV` returns for a zero mean and which reads as perfect consistency. A
+  // rep carrying no position at all measures NaN, whose CV is NaN and lands in
+  // the `erratic` band — the loudest verdict, from the least evidence.
+  if (roms.length < 2 || !roms.every(isMeasured) || Math.max(...roms) <= 0) {
     return { cv: null, verdict: null, citation: null };
   }
   const cv = getCV(buildDistribution(roms));
+  if (!isMeasured(cv)) return { cv: null, verdict: null, citation: null };
   if (margin === null) return { cv, verdict: null, citation: null };
   return { cv, verdict: classifyByBreakpoints(cv, margin.scheme), citation: margin.citation };
+}
+
+/** A rep with no recorded position measures `NaN`, which is not a small ROM. */
+function isMeasured(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value);
 }
 
 function concentricRom(rep: Rep): number {
