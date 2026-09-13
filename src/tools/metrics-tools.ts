@@ -1533,6 +1533,16 @@ const READINESS_HEURISTIC_NOTE =
  * `sets` MUST be non-empty (callers already guard this) and scoped to one
  * exercise, matching `setsForSessionExercise`'s contract.
  */
+/**
+ * No source pins an exact percentage — this is engineering judgement, not a
+ * cited number. It sits below the RP warm-up ramp's OWN two heaviest rungs
+ * (`rampRows` in `warmup-ramp-tools.ts`: ~70% and ~88% of working load) and
+ * above its lightest (~58%), so it excludes exactly the rung the digest calls
+ * out as the insensitive end (Senturk et al. 2026's v0) while admitting the
+ * rungs closer to L0. Because the selection below always takes the HEAVIEST
+ * set that clears this floor, the floor only decides which rungs are
+ * eligible — it never overrides picking the heaviest one available.
+ */
 const HEAVY_PROBE_MIN_LOAD_FRACTION = 0.7;
 
 function selectReadinessProbeSet(
