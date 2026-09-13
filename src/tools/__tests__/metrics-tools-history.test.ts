@@ -127,16 +127,20 @@ function parsePayload(result: ToolResult): unknown {
   return JSON.parse(result.content[0].text);
 }
 
+interface PlateauBody {
+  isPlateau: boolean;
+  plateauDays: number;
+  varianceThresholdPct: number;
+  reasoning: string;
+  phase: string;
+  verdict: 'plateau' | 'tolerated' | 'none';
+  dietPhaseContext: { phase: string; weeksInPhase: number | null; toleranceApplied: boolean };
+}
+
 interface HistoryTrendBody {
   series: { ts: string; value: number }[];
   trend: { direction: null; directionReason: string; slope: number; slopeUnit: string };
-  plateau: {
-    isPlateau: boolean;
-    plateauDays: number;
-    varianceThresholdPct: number;
-    reasoning: string;
-    phase: string;
-  };
+  plateau: PlateauBody;
   band: { fitFor: string; method: string; seePct: number | null; note: string } | null;
 }
 
@@ -314,21 +318,21 @@ describe('metrics.compute — history.trend diet phase (VW-150)', () => {
     return parsePayload(result) as HistoryTrendBody;
   }
 
-  it('reports the phase covering the plateau window without changing the verdict', async () => {
+  it("reports the phase covering the plateau window and leaves WA's own reading alone", async () => {
     const sets = Array.from({ length: 6 }, (_, i) => makeSet(`s-${i}`, i, 135));
 
     const withoutPhase = await trendWith(sets);
     const withPhase = await trendWith(sets, phase('2026-01-01T00:00:00.000Z'));
 
     expect(withPhase.plateau.phase).toBe('fat-loss');
+    // VW-277 supersedes VW-150's "the phase changes nothing" clause for
+    // `verdict` only. `detectPlateau`'s OWN reading is still untouched by the
+    // phase — compared as a whole object with only this server's own three
+    // fields removed, so whichever field WA adds to `PlateauDetection` next is
+    // still covered.
+    const waOwn = ({ phase: _p, verdict: _v, dietPhaseContext: _c, ...rest }: PlateauBody) => rest;
+    expect(waOwn(withPhase.plateau)).toEqual(waOwn(withoutPhase.plateau));
     expect(withPhase.plateau.isPlateau).toBe(true);
-    // The verdict is the phase's neighbour, never its dependent: B34 states no
-    // correction, so a fat-loss phase suppresses nothing. Compared as a WHOLE
-    // object with only `phase` removed — naming the fields would silently stop
-    // covering whichever field WA adds to `PlateauDetection` next.
-    const { phase: _withPhase, ...verdictWithPhase } = withPhase.plateau;
-    const { phase: _withoutPhase, ...verdictWithoutPhase } = withoutPhase.plateau;
-    expect(verdictWithPhase).toEqual(verdictWithoutPhase);
     expect(withPhase.trend).toEqual(withoutPhase.trend);
     expect(withPhase.series).toEqual(withoutPhase.series);
   });
@@ -368,5 +372,93 @@ describe('metrics.compute — history.trend diet phase (VW-150)', () => {
     );
 
     expect(body.plateau.phase).toBe('unknown');
+  });
+});
+
+// VW-277: the plateau verdict this server owns, after the diet-phase tolerance.
+// `minDays: 30` against the six-week fixture puts the run just past the
+// detector's own floor, which is where the widening decides the answer.
+describe('metrics.compute — history.trend plateau tolerance (VW-277)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function declared(phase: string): StoredDietPhase {
+    return {
+      id: 'dp-1',
+      userId: 'local',
+      phase,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      declaredAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+
+  async function plateauWith(phase?: StoredDietPhase): Promise<PlateauBody> {
+    const sets = Array.from({ length: 6 }, (_, i) => makeSet(`s-${i}`, i, 135));
+    const state = makeState(sets, phase);
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+    const result = await callTool(tools, {
+      pipeline: 'history.trend',
+      exerciseId: 'back-squat',
+      minDays: 30,
+    });
+    expect(result.isError).toBeUndefined();
+    return (parsePayload(result) as HistoryTrendBody).plateau;
+  }
+
+  it('calls a flat run a plateau when no phase is declared', async () => {
+    const plateau = await plateauWith();
+
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('plateau');
+    expect(plateau.dietPhaseContext).toEqual({
+      phase: 'unknown',
+      weeksInPhase: null,
+      toleranceApplied: false,
+    });
+  });
+
+  it('tolerates the same run in a long fat-loss phase', async () => {
+    const plateau = await plateauWith(declared('fat-loss'));
+
+    // WA's own boolean is untouched; only this server's verdict moved.
+    expect(plateau.isPlateau).toBe(true);
+    expect(plateau.verdict).toBe('tolerated');
+    expect(plateau.dietPhaseContext.toleranceApplied).toBe(true);
+    expect(plateau.dietPhaseContext.weeksInPhase).toBeGreaterThan(8);
+  });
+
+  it('still calls it a plateau in a gain phase', async () => {
+    const plateau = await plateauWith(declared('gain'));
+
+    expect(plateau.verdict).toBe('plateau');
+  });
+
+  it('still calls it a plateau at maintenance', async () => {
+    const plateau = await plateauWith(declared('maintenance'));
+
+    expect(plateau.verdict).toBe('plateau');
+    expect(plateau.dietPhaseContext.toleranceApplied).toBe(false);
+  });
+
+  // The asymmetry: a tightened band raises the advice the table reports, but it
+  // never manufactures a finding `detectPlateau` declined to make.
+  it('never invents a plateau in a gain phase when the detector found none', async () => {
+    const sets = Array.from({ length: 8 }, (_, i) => makeSet(`s-${i}`, i, 100 * 1.2 ** i));
+    const state = makeState(sets, declared('gain'));
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'history.trend', exerciseId: 'back-squat' });
+
+    const { plateau } = parsePayload(result) as HistoryTrendBody;
+    expect(plateau.isPlateau).toBe(false);
+    expect(plateau.verdict).toBe('none');
+    expect(plateau.dietPhaseContext.phase).toBe('gain');
   });
 });

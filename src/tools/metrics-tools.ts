@@ -144,7 +144,15 @@ import {
   deriveFeatureGate,
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
-import { isDietPhase, type DietPhase } from '../store/diet-phase.js';
+import { type DietPhase } from '../store/diet-phase.js';
+import {
+  dietPhaseTolerance,
+  toleranceEffect,
+  SMALL_DEVIATION_PCT,
+  type DietPhaseContext,
+  type DietPhaseState,
+} from '../analytics/diet-phase-tolerance.js';
+import { readDietPhaseState } from './diet-phase-state.js';
 import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.js';
 import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import {
@@ -392,13 +400,21 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
         ...enrichedTarget,
         ...enrichedBaseline,
       ]);
+      const readiness =
+        gate.activation === 'withheld' ? null : computeReadiness(actualVel, baselineVel);
+      // VW-277: the phase covering the session being judged, not today's —
+      // a readiness read of a session from two phases ago must not be widened
+      // by the phase the lifter happens to be in now.
+      const probeAt = probeSet.startedAt;
+      const dietState = await readDietPhaseState(state, probeAt);
       const result: GatedReadinessResult = {
-        readiness: gate.activation === 'withheld' ? null : computeReadiness(actualVel, baselineVel),
+        readiness,
         observed,
         gate,
         comparability,
         basis: 'heuristic',
         note: READINESS_HEURISTIC_NOTE,
+        ...readinessZoneVerdict(readiness, dietState),
       };
       return result;
     }
@@ -524,7 +540,19 @@ interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
 interface HistoryTrendResult {
   series: TimeSeries;
   trend: HistoryTrendReadout;
-  plateau: PlateauDetection & { phase: DietPhase | 'unknown' };
+  plateau: PlateauDetection & {
+    phase: DietPhase | 'unknown';
+    /**
+     * VW-277: this server's own answer, with the diet-phase tolerance applied.
+     * `isPlateau` above stays WA's untouched verdict. `'tolerated'` means WA
+     * found a plateau and the declared phase explains a run that short — a
+     * deficit is expected to cost bar speed, so widen before flagging a stall.
+     * The tolerance never runs the other way here: it cannot turn a
+     * `'none'` into a `'plateau'` WA did not find.
+     */
+    verdict: 'plateau' | 'tolerated' | 'none';
+    dietPhaseContext: DietPhaseContext;
+  };
   /**
    * VW-267: the e1RM error band, non-null only for `metric: 'e1rm'` — the
    * other two metrics are recorded loads, not estimates, and need no band.
@@ -567,16 +595,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * A window straddling two declared phases has no single covering phase and
  * reports `'unknown'`: "half fat-loss" is not an answer a reader can use.
  *
- * REPORTED ALONGSIDE THE VERDICT, NEVER FOLDED INTO IT. `detectPlateau` has
- * already run and its result is untouched. B34 says a fat-loss phase LOOKS
- * like a plateau; it states no correction, so a fat-loss phase suppresses
- * nothing, discounts nothing and moves no threshold here.
+ * `isPlateau` IS STILL UNTOUCHED. `detectPlateau` has already run and its own
+ * boolean is reported verbatim. VW-277 adds a SECOND field, `verdict`, which is
+ * this server's answer after the diet-phase tolerance; the two are deliberately
+ * separate so a reader can always see what the detector itself said.
  */
-async function plateauWindowPhase(
+async function plateauWindowDietState(
   state: ServerState,
   series: TimeSeries,
   plateau: PlateauDetection,
-): Promise<DietPhase | 'unknown'> {
+): Promise<DietPhaseState> {
   // `TimeSeries` degrades to `any[]` through the package's .d.ts (the same
   // NodeNext-resolution note `computeHistoryTrend` carries), so the accumulator
   // is annotated rather than inferred.
@@ -585,9 +613,48 @@ async function plateauWindowPhase(
     series[0]!,
   );
   const from = new Date(new Date(last.ts).getTime() - plateau.plateauDays * DAY_MS).toISOString();
-  const covering = await state.store.getDietPhaseCovering(LOCAL_USER_ID, from, last.ts);
-  if (covering === undefined || !isDietPhase(covering.phase)) return 'unknown';
-  return covering.phase;
+  return readDietPhaseState(state, from, last.ts);
+}
+
+/**
+ * `detectPlateau`'s `minDays` floor, restated here only because WA does not
+ * report the value it used back on `PlateauDetection`. Kept in sync by
+ * `computeHistoryTrend` passing `input.minDays` through when the caller set one.
+ */
+const WA_DEFAULT_PLATEAU_MIN_DAYS = 14;
+
+/**
+ * VW-277 consumer 3 of 3: does the declared diet phase explain a plateau this
+ * short?
+ *
+ * THE DEVIATION IS THE PLATEAU'S RUN LENGTH, mapped onto the table's percent
+ * axis so `minDays` — the detector's own point of concern — lands exactly on
+ * the small/moderate edge. A run at the floor therefore sits where a widened
+ * band can cover it and an unwidened one cannot; a run twice the floor is past
+ * every widening this table grants. The sign is negative because a plateau is a
+ * lifter behind plan, not ahead of it.
+ *
+ * THE SLOPE AXIS IS `'flat'` BY CONSTRUCTION, and that is WA's determination,
+ * not a label invented here: `detectPlateau` returning `isPlateau` IS the flat
+ * finding. VW-230 withheld `analyzeTrend`'s own up/down/flat `direction` for
+ * want of a citable load threshold, and nothing here reinstates it.
+ */
+function plateauVerdict(
+  plateau: PlateauDetection,
+  dietState: DietPhaseState,
+  minDays: number,
+): { verdict: 'plateau' | 'tolerated' | 'none'; dietPhaseContext: DietPhaseContext } {
+  const tolerance = dietPhaseTolerance(
+    dietState,
+    -SMALL_DEVIATION_PCT * (plateau.plateauDays / minDays),
+    'flat',
+  );
+  if (!plateau.isPlateau) return { verdict: 'none', dietPhaseContext: tolerance.context };
+  const softened = toleranceEffect(tolerance) === 'softened' && tolerance.magnitude === 'none';
+  return {
+    verdict: softened ? 'tolerated' : 'plateau',
+    dietPhaseContext: tolerance.context,
+  };
 }
 
 /**
@@ -674,14 +741,19 @@ async function computeHistoryTrend(
   // Omitted thresholdPct/minDays pass through as `undefined`, which is WA's
   // own signal to use its defaults (5, 14) — never redeclared here.
   const plateau = detectPlateau(series, input.thresholdPct, input.minDays);
+  // VW-150: the phase the window fell in, so a reader can tell a fat-loss
+  // stretch from a true plateau (B34). VW-277: the same read now also carries
+  // weeks-in-phase and drives `verdict`.
+  const dietState = await plateauWindowDietState(state, series, plateau);
   return {
     series,
     trend,
     band: historyTrendBand(input.metric ?? 'topLoad', series),
-    // VW-150: the phase the window fell in, so a reader can tell a fat-loss
-    // stretch from a true plateau (B34). It qualifies the verdict; it does
-    // not change it.
-    plateau: { ...plateau, phase: await plateauWindowPhase(state, series, plateau) },
+    plateau: {
+      ...plateau,
+      phase: dietState.phase,
+      ...plateauVerdict(plateau, dietState, input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS),
+    },
   };
 }
 
@@ -1496,6 +1568,47 @@ interface GatedReadinessResult {
   comparability: ComparabilityReport;
   basis: 'heuristic';
   note: string;
+  /**
+   * VW-277: `'tolerated'` when the velocity dip behind a yellow/red zone is
+   * inside what the lifter's declared diet phase earns — a deficit is expected
+   * to cost bar speed, so the zone is qualified rather than relayed as a stall.
+   * `readiness.zone` above is left as WA computed it; this is the sibling
+   * verdict, never a rewrite.
+   */
+  zoneVerdict: 'as-read' | 'tolerated';
+  dietPhaseContext: DietPhaseContext;
+}
+
+/**
+ * VW-277 consumer 2 of 3. The deviation maps 1:1: `velocityRatio` is
+ * actual-over-baseline, so a ratio of 0.93 is a 7% dip behind plan.
+ *
+ * SLOPE IS `'flat'` — `session.readiness` compares TWO sessions, which is a
+ * difference and not a trend. rp-s12-trend-slope-overrides-raw-deviation is
+ * explicit that an unmeasured slope must not be assumed favourable.
+ *
+ * A WITHHELD ZONE IS NEVER TOLERATED INTO ANYTHING. When the B57 gate already
+ * declined to interpret, there is no verdict for a diet phase to soften, and
+ * the phase is reported for context alone.
+ */
+function readinessZoneVerdict(
+  readiness: ReadinessEstimate | null,
+  dietState: DietPhaseState,
+): { zoneVerdict: 'as-read' | 'tolerated'; dietPhaseContext: DietPhaseContext } {
+  const tolerance = dietPhaseTolerance(
+    dietState,
+    readiness === null ? 0 : 100 * (readiness.velocityRatio - 1),
+    'flat',
+  );
+  const softened =
+    readiness !== null &&
+    readiness.zone !== 'green' &&
+    toleranceEffect(tolerance) === 'softened' &&
+    tolerance.magnitude === 'none';
+  return {
+    zoneVerdict: softened ? 'tolerated' : 'as-read',
+    dietPhaseContext: tolerance.context,
+  };
 }
 
 /**
@@ -1535,13 +1648,14 @@ const READINESS_HEURISTIC_NOTE =
  */
 /**
  * No source pins an exact percentage — this is engineering judgement, not a
- * cited number. It sits below the RP warm-up ramp's OWN two heaviest rungs
- * (`rampRows` in `warmup-ramp-tools.ts`: ~70% and ~88% of working load) and
- * above its lightest (~58%), so it excludes exactly the rung the digest calls
- * out as the insensitive end (Senturk et al. 2026's v0) while admitting the
- * rungs closer to L0. Because the selection below always takes the HEAVIEST
- * set that clears this floor, the floor only decides which rungs are
- * eligible — it never overrides picking the heaviest one available.
+ * cited number. The RP warm-up ramp's own rungs (`rampRows` in
+ * `warmup-ramp-tools.ts`) are ~58%, ~70% and ~88% of working load, so 0.7 sits
+ * AT the middle rung — which a `>=` test clears by equality — and below the
+ * heaviest. It therefore excludes exactly the rung the digest calls out as the
+ * insensitive end (Senturk et al. 2026's v0) while admitting the two closer to
+ * L0. Because the selection below always takes the HEAVIEST set that clears
+ * this floor, the floor only decides which rungs are eligible — it never
+ * overrides picking the heaviest one available.
  */
 const HEAVY_PROBE_MIN_LOAD_FRACTION = 0.7;
 
@@ -1906,6 +2020,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   'picked by the like-vs-like predicate (VW-94) and reported in `comparability`: `comparedTo` ' +
   'names the set used, while `noValidComparison` with a `nearest` candidate means the comparison ' +
   'still ran against a set that is NOT like-for-like — relay those reasons rather than the zone alone. ' +
+  "`zoneVerdict` (VW-277) is `'tolerated'` when the velocity dip behind a yellow or red zone is " +
+  "inside what the lifter's declared diet phase earns — a deficit is EXPECTED to cost bar speed, " +
+  "so say that rather than relaying a stall — and `'as-read'` otherwise. `readiness.zone` itself " +
+  'is never rewritten, and a gain phase never turns a green zone into a problem. ' +
+  '`dietPhaseContext` carries the phase covering the probe set, weeks elapsed in it, and whether ' +
+  'the tolerance actually moved a threshold. ' +
   '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
   'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
   'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
@@ -1984,10 +2104,14 @@ const METRICS_COMPUTE_DESCRIPTION =
   '`band.note` says why. ' +
   '`plateau.phase` (VW-150) is the OBSERVED diet phase covering the plateau ' +
   "window, from `profile.set_diet_phase`, or `'unknown'` when no single declared phase covers " +
-  'it. Read it ALONGSIDE the verdict: a fat-loss phase can look identical to a true plateau, ' +
-  'so a flat stretch under `fat-loss` is worth discounting by hand — but the verdict itself ' +
-  'is unchanged by the phase, and no threshold moved. A window with no working sets is ' +
-  'NOT_FOUND. ' +
+  "it. `plateau.verdict` (VW-277) is this server's own answer with that phase applied: " +
+  "`'plateau'`, `'none'`, or `'tolerated'` — the detector found a plateau and the declared " +
+  'phase explains a run that short, because a fat-loss phase can look identical to a true ' +
+  'plateau. `plateau.isPlateau` is left exactly as the detector reported it, so the two are ' +
+  'always comparable, and the tolerance only ever SOFTENS: a gain phase never manufactures a ' +
+  'plateau the detector did not find. `plateau.dietPhaseContext` carries the phase, the ' +
+  'weeks elapsed in it and whether the tolerance actually moved a threshold. A window with no ' +
+  'working sets is NOT_FOUND. ' +
   '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
   "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +

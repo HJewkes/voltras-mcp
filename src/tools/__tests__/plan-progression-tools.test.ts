@@ -16,7 +16,7 @@
 // `findPlannedExerciseInProgram` / `findPlannedExerciseById` walk the
 // program tree, the test fixtures pre-load the right rows into the in-memory
 // stubs so the walk resolves deterministically.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ServerState, SlotState } from '../../state/server-state.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import type {
@@ -169,6 +169,10 @@ function makeStore(): SessionStore & {
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
     getAssignmentsForTemplate: vi.fn(async () => []),
+    // VW-277: suggest_progression reads the declared diet phase. `undefined`
+    // models a lifter who has declared none, which is the pre-VW-277 case —
+    // every number in this file is pinned against that.
+    getDietPhaseCovering: vi.fn(async () => undefined),
     close: vi.fn(async () => {}),
   };
 }
@@ -1170,5 +1174,183 @@ describe('plan.suggest_progression', () => {
     expect(body.suggestion.basedOnSessionId).toBe('sess-explicit');
     expect(body.suggestion.delta).toBe(5);
     expect(h.store.listSessions).not.toHaveBeenCalled();
+  });
+});
+
+// ─── VW-277: diet-phase-aware progression tolerance ────────────────────────
+//
+// The whole feature turns on one fixture: the SAME rep shortfall, judged under
+// each phase. A 14-rep set against a 15-20 band is 6.7% short — inside the
+// tolerance a mid-length cut earns (5% x 1.75 = 8.75%), outside the one a gain
+// earns (5% x 0.75 = 3.75%) and outside the unwidened 5%.
+describe('plan.suggest_progression diet-phase tolerance (VW-277)', () => {
+  const NOW = new Date('2026-09-13T12:00:00.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const PE_ENDURANCE: StoredPlannedExercise = {
+    id: 'pe-row',
+    workoutTemplateId: 'tmpl-1',
+    exerciseId: 'cable-row',
+    orderIndex: 0,
+    targetSets: 3,
+    targetRepsLow: 15,
+    targetRepsHigh: 20,
+    targetWeightLbs: 100,
+  };
+
+  function setWithReps(setId: string, repCount: number): StoredSet {
+    return {
+      id: setId,
+      sessionId: 'sess-prior',
+      startedAt: '2026-09-12T00:00:00.000Z',
+      endedAt: '2026-09-12T00:01:00.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 100,
+      reps: Array.from(
+        { length: repCount },
+        (_, i) =>
+          ({
+            id: `r${i}`,
+            setId,
+            index: i,
+            concentric: { peakVelocity: 800 },
+          }) as StoredSet['reps'][number],
+      ),
+    };
+  }
+
+  function daysAgo(days: number): string {
+    return new Date(NOW.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  interface SuggestionBody {
+    suggestion: {
+      delta: number;
+      reasoning: string;
+      dietPhaseContext: { phase: string; weeksInPhase: number | null; toleranceApplied: boolean };
+    };
+  }
+
+  /** The shared fixture: two sets one rep short of a 15-rep floor. */
+  async function suggestUnderPhase(
+    phase?: { phase: string; startedAt: string },
+    reps = 14,
+  ): Promise<SuggestionBody> {
+    const h = setup();
+    h.store.getTrainingProgram.mockResolvedValueOnce(PROGRAM_A);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1]);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([PE_ENDURANCE]);
+    h.store.getMostRecentSessionIdForExercise.mockResolvedValueOnce('sess-prior');
+    h.store.getSetsForSession.mockResolvedValueOnce([
+      setWithReps('s1', reps),
+      setWithReps('s2', reps),
+    ]);
+    if (phase !== undefined) {
+      h.store.getDietPhaseCovering.mockResolvedValueOnce({
+        id: 'dp-1',
+        userId: LOCAL_USER_ID,
+        phase: phase.phase,
+        startedAt: phase.startedAt,
+        declaredAt: phase.startedAt,
+      });
+    }
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'cable-row',
+    });
+    expect(r.isError).toBeUndefined();
+    return parseResult(r) as SuggestionBody;
+  }
+
+  it('backs the load off when no phase is declared — the pre-VW-277 number', async () => {
+    const body = await suggestUnderPhase();
+
+    expect(body.suggestion.delta).toBe(-5);
+    expect(body.suggestion.dietPhaseContext).toEqual({
+      phase: 'unknown',
+      weeksInPhase: null,
+      toleranceApplied: false,
+    });
+    // Nothing is appended to the reasoning when nothing was declared.
+    expect(body.suggestion.reasoning).not.toContain('phase');
+  });
+
+  it('leaves a maintenance phase on that same number', async () => {
+    const body = await suggestUnderPhase({ phase: 'maintenance', startedAt: daysAgo(38) });
+
+    expect(body.suggestion.delta).toBe(-5);
+    expect(body.suggestion.dietPhaseContext.toleranceApplied).toBe(false);
+  });
+
+  it('holds instead of backing off in week 6 of a cut', async () => {
+    const body = await suggestUnderPhase({ phase: 'fat-loss', startedAt: daysAgo(38) });
+
+    expect(body.suggestion.delta).toBe(0);
+    expect(body.suggestion.dietPhaseContext).toEqual({
+      phase: 'fat-loss',
+      weeksInPhase: 6,
+      toleranceApplied: true,
+    });
+    expect(body.suggestion.reasoning).toContain('hold the load rather than backing off');
+  });
+
+  // The contract fixture: identical sets, opposite advice.
+  it('still backs off on the SAME dip in a gain phase', async () => {
+    const cut = await suggestUnderPhase({ phase: 'fat-loss', startedAt: daysAgo(38) });
+    const gain = await suggestUnderPhase({ phase: 'gain', startedAt: daysAgo(38) });
+
+    expect(cut.suggestion.delta).toBe(0);
+    expect(gain.suggestion.delta).toBe(-5);
+    expect(gain.suggestion.dietPhaseContext.phase).toBe('gain');
+  });
+
+  // rp-s12-two-week-cap-for-slow-signal-situations: weeks 1-2 are the
+  // slow-signal window, so week 1 has not yet earned week 6's widening.
+  it('does not yet hold in week 1 of the same cut', async () => {
+    const body = await suggestUnderPhase({ phase: 'fat-loss', startedAt: daysAgo(3) });
+
+    expect(body.suggestion.dietPhaseContext.weeksInPhase).toBe(1);
+    expect(body.suggestion.delta).toBe(-5);
+  });
+
+  it('surfaces the three ahead-of-schedule options when the lifter beats the band', async () => {
+    const body = await suggestUnderPhase({ phase: 'fat-loss', startedAt: daysAgo(38) }, 26);
+
+    expect(body.suggestion.reasoning).toContain('running ahead of plan');
+    expect(body.suggestion.reasoning).toContain('bank the extra progress');
+  });
+
+  // VW-169: the owner's declaration is a claim about the owner's eating.
+  it('never widens a named guest lifter on the owner declaration', async () => {
+    const h = setup();
+    h.store.getTrainingProgram.mockResolvedValueOnce(PROGRAM_A);
+    h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([BLOCK_1]);
+    h.store.getTrainingWeeksForBlock.mockResolvedValueOnce([WEEK_1]);
+    h.store.getWorkoutTemplatesForWeek.mockResolvedValueOnce([TMPL_1]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([PE_ENDURANCE]);
+    h.store.getMostRecentSessionIdForExercise.mockResolvedValueOnce('sess-prior');
+    h.store.getSetsForSession.mockResolvedValueOnce([setWithReps('s1', 14), setWithReps('s2', 14)]);
+
+    const r = await h.invoke('plan.suggest_progression', {
+      programId: 'prog-a',
+      exerciseId: 'cable-row',
+      lifter: 'guest',
+    });
+
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as SuggestionBody;
+    expect(body.suggestion.delta).toBe(-5);
+    expect(body.suggestion.dietPhaseContext.phase).toBe('unknown');
+    expect(h.store.getDietPhaseCovering).not.toHaveBeenCalled();
   });
 });

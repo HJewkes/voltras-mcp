@@ -45,6 +45,13 @@ import {
   type PlanWarning,
 } from '../plan/lint-plan.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
+import {
+  dietPhaseTolerance,
+  toleranceEffect,
+  type DietPhaseContext,
+  type DietPhaseState,
+} from '../analytics/diet-phase-tolerance.js';
+import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
@@ -187,6 +194,15 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'isometric maximum: no study validates a cable-device isometric max against dynamic cable ' +
   'loads, and what one predicts is dominated by the joint angle it was held at (Lum et al. ' +
   '2020, r 0.864 at 90 degrees vs 0.597 at 120). ' +
+  'THE DECLARED DIET PHASE MOVES THE LINE (VW-277). `dietPhaseContext` reports the phase ' +
+  'covering today (from `profile.set_diet_phase`), the weeks elapsed in it, and whether the ' +
+  'tolerance actually moved a threshold. A fat-loss phase WIDENS the rep shortfall tolerated ' +
+  'before a back-off is suggested — reduced performance in a deficit is expected, not a stall — ' +
+  'and the widening grows with weeks in phase. A gain phase tightens it, and surfaces the ' +
+  'ahead-of-schedule decision sooner. Maintenance, and no declared phase, leave every number ' +
+  'exactly where it was. When the phase changed the answer the `reasoning` string says so in a ' +
+  'clause; relay that clause, never the bare delta. A named guest lifter always gets the ' +
+  "unknown phase: the owner's declaration is a claim about the owner's eating. " +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
@@ -767,6 +783,13 @@ export interface ProgressionSuggestion {
   gates: ProgressionGates;
   /** Which load-increment rule produced `delta`; 'percent' only when B23's cited percent is set. */
   basis: 'percent' | 'fixed';
+  /**
+   * VW-277: the declared diet phase this suggestion was judged under, and
+   * whether it moved the line. Always present, `phase: 'unknown'` when nothing
+   * is declared — a caller relaying a back-off needs to know the phase was
+   * CHECKED, not guess from a missing field.
+   */
+  dietPhaseContext: DietPhaseContext;
 }
 
 /**
@@ -788,6 +811,13 @@ export interface ProgressionContext {
    * input schema; test-only injection point.
    */
   incrementPercent?: number | null;
+  /**
+   * VW-277: the lifter's declared diet phase and weeks in it, read once by
+   * `suggestProgression` and passed in — this function stays store-free, the
+   * same way `tier` is. Omitted means "not looked up", which resolves to the
+   * unknown state and leaves every threshold where it was.
+   */
+  dietPhase?: DietPhaseState;
 }
 
 export const DEFAULT_PROGRESSION_CONTEXT: ProgressionContext = {
@@ -1157,6 +1187,7 @@ async function suggestProgression(
         basedOnSessionId: null,
         gates: { technique: 'unknown', effort: 'unknown', setsUnlocked: false },
         basis: 'fixed',
+        dietPhaseContext: { ...UNKNOWN_DIET_PHASE_STATE, toleranceApplied: false },
         tier,
       },
     };
@@ -1175,8 +1206,16 @@ async function suggestProgression(
     input.lifter,
   );
   const sets = scopeSessionSetsToExerciseId(sessionSets, input.exerciseId);
+  // VW-277 consumer 1 of 3, read the same way the tier is: once, here, and
+  // passed into the store-free heuristic. A named guest lifter gets the unknown
+  // state — the owner's declared phase is a claim about the OWNER's eating
+  // (VW-169), and widening somebody else's thresholds with it would be a
+  // fabrication about a person who declared nothing.
+  const dietPhase =
+    input.lifter === undefined ? await readDietPhaseState(state) : UNKNOWN_DIET_PHASE_STATE;
   const suggestion = computeProgressionDelta(planned, sets, basisSessionId, {
     tier: tierSignal.tier,
+    dietPhase,
   });
   return { plannedExercise: planned, suggestion: { ...suggestion, tier } };
 }
@@ -1262,7 +1301,73 @@ export function computeProgressionDelta(
   const technique = resolveTechnique(workingSets, context);
   const gates = computeGates(workingSets, tally, context, technique.gate);
   const routed = routeSuggestion(tally, gates, context);
-  return { ...enforceTechniqueGate(routed, technique), basedOnSessionId: basisSessionId, gates };
+  const tolerated = applyDietPhaseTolerance(routed, tally, context);
+  return {
+    ...enforceTechniqueGate(tolerated.routed, technique),
+    basedOnSessionId: basisSessionId,
+    gates,
+    dietPhaseContext: tolerated.dietPhaseContext,
+  };
+}
+
+/**
+ * VW-277: let the declared diet phase decide whether this session's rep
+ * deviation is big enough to act on.
+ *
+ * SLOPE IS ALWAYS `'flat'` HERE. `suggestProgression` reads ONE basis session,
+ * so there is no trend to fit — and rp-s12-trend-slope-overrides-raw-deviation
+ * is explicit that a slope you have not measured must not be assumed
+ * favourable. `metrics.compute history.trend` is the consumer that passes a
+ * real slope.
+ *
+ * ONLY A DIFFERENCE ACTS. The table runs twice inside `dietPhaseTolerance` —
+ * once under the declared phase, once under none — and this function moves the
+ * delta only when the two disagree. An undeclared phase, and a maintenance
+ * phase (multiplier 1), therefore return the pre-VW-277 suggestion unchanged,
+ * reasoning string included.
+ */
+function applyDietPhaseTolerance(
+  routed: RoutedSuggestion,
+  tally: RepBandTally,
+  context: ProgressionContext,
+): { routed: RoutedSuggestion; dietPhaseContext: DietPhaseContext } {
+  const state = context.dietPhase ?? UNKNOWN_DIET_PHASE_STATE;
+  const verdict = dietPhaseTolerance(state, tally.deviationPct, 'flat');
+  if (verdict.context.phase === 'unknown') return { routed, dietPhaseContext: verdict.context };
+  const effect = toleranceEffect(verdict);
+  if (effect === 'softened' && routed.delta < 0 && verdict.magnitude === 'none') {
+    return {
+      routed: {
+        delta: PROGRESSION_HOLD_LBS,
+        repDelta: 0,
+        reasoning:
+          `${routed.reasoning} That dip is inside the tolerance a ${verdict.context.phase} ` +
+          `phase earns (${verdict.rationale}) — hold the load rather than backing off.`,
+        basis: 'fixed',
+      },
+      dietPhaseContext: verdict.context,
+    };
+  }
+  if (verdict.aheadOptions.length > 0) {
+    return {
+      routed: {
+        ...routed,
+        reasoning:
+          `${routed.reasoning} You are running ahead of plan (${verdict.rationale}); ` +
+          `that is a decision, not silence: ${verdict.aheadOptions.join('; ')}.`,
+      },
+      dietPhaseContext: verdict.context,
+    };
+  }
+  if (effect === 'none') return { routed, dietPhaseContext: verdict.context };
+  return {
+    routed: { ...routed, reasoning: `${routed.reasoning} ${capitalise(verdict.rationale)}.` },
+    dietPhaseContext: verdict.context,
+  };
+}
+
+function capitalise(clause: string): string {
+  return clause.charAt(0).toUpperCase() + clause.slice(1);
 }
 
 /** A verdict reached before any set could be scored: no gate has an input. */
@@ -1279,6 +1384,12 @@ function ungatedSuggestion(
     basedOnSessionId: basisSessionId,
     gates: { technique: context.technique ?? 'unknown', effort: 'unknown', setsUnlocked: false },
     basis: 'fixed',
+    // No set was scored, so there is no deviation for the VW-277 table to
+    // judge. The phase is still reported: "checked, nothing to apply it to".
+    dietPhaseContext: {
+      ...(context.dietPhase ?? UNKNOWN_DIET_PHASE_STATE),
+      toleranceApplied: false,
+    },
   };
 }
 
@@ -1295,6 +1406,13 @@ interface RepBandTally {
   maxLossPct: number;
   /** The load `workingSets` were taken at; undefined for an unweighted exercise. */
   topLoadLbs: number | undefined;
+  /**
+   * VW-277's deviation axis: the mean per-set distance from the prescribed
+   * band, as a percentage of the band edge it missed or beat. Negative is
+   * behind the band, positive is past its top, and a set inside the band
+   * contributes zero — the band is the plan, so landing in it is no deviation.
+   */
+  deviationPct: number;
 }
 
 function tallyRepBand(
@@ -1324,7 +1442,20 @@ function tallyRepBand(
       targetRepsLow === repsHigh ? `${targetRepsLow} reps` : `${targetRepsLow}-${repsHigh} reps`,
     maxLossPct: Math.max(0, ...workingSets.map(setVelocityLossPct)),
     topLoadLbs: topLoadOf(workingSets),
+    deviationPct: bandDeviationPct(workingSets, targetRepsLow, repsHigh),
   };
+}
+
+/** See {@link RepBandTally.deviationPct}. Empty input is zero deviation, not NaN. */
+function bandDeviationPct(workingSets: StoredSet[], repsLow: number, repsHigh: number): number {
+  if (workingSets.length === 0) return 0;
+  const total = workingSets.reduce((sum, set) => {
+    const count = set.reps.length;
+    if (count > repsHigh) return sum + (count - repsHigh) / repsHigh;
+    if (count < repsLow) return sum + (count - repsLow) / repsLow;
+    return sum;
+  }, 0);
+  return (100 * total) / workingSets.length;
 }
 
 /**

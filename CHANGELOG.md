@@ -39,6 +39,21 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The declared diet phase now moves autoregulation thresholds instead of only sitting
+  next to them (VW-277). A fat-loss phase WIDENS the performance dip tolerated before a
+  load cut or a plateau call, and the widening grows with weeks in phase; a gain phase
+  tightens it and surfaces the ahead-of-schedule decision sooner; maintenance and an
+  undeclared phase leave every number exactly where it was. The same two-axis table
+  (deviation size × trend slope, from RP S12's own 0-10 / 10-20 / 20-40% bands) drives all
+  three reads: `plan.suggest_progression` can now hold instead of backing off and reports
+  `dietPhaseContext` with a rationale clause in its `reasoning`, `metrics.compute`
+  `history.trend` gains `plateau.verdict` (`plateau` / `tolerated` / `none`) beside the
+  detector's untouched `isPlateau`, and `session.readiness` gains `zoneVerdict`
+  (`as-read` / `tolerated`) beside the zone. The tolerance only ever SOFTENS a verdict:
+  a gain phase never manufactures a plateau the detector did not find. `coaching.explain`
+  gained `meso.diet_phase_tolerance` with the RP S12 note ids and the caveat that the
+  corpus is about calories while this applies the shape to training load.
+
 - `metrics.compute` `session.readiness` now labels itself: every response carries
   `basis: "heuristic"` and a `note` saying plainly that no published study validates
   fixed-load warm-up velocity as a same-day readiness marker (VW-269). The probe velocity
