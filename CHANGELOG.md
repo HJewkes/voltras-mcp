@@ -101,6 +101,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `coaching.explain` gains a `meso.goal_setting` topic (VW-357): how a goal is set from
+  stated priorities (specialize / maintain / deprioritize) rather than a typed number, why
+  the coach's proposed band shows `committed` as its low edge and `stretch` as its high edge
+  with neither shaded, the specialization mechanics (how long a priority is held, why a
+  fat-loss phase disables it except for beginners, why recomposition runs on maintenance
+  calories), the 3-month re-ask horizon, why targets are fixed for the mesocycle with
+  programming adapting around them instead, the quiet-per-set/loud-per-meso praise cadence,
+  and why a technique reform resets old PRs to "don't count".
+
 - `sessions.catalog_version` is now stamped at `session.start` (VW-328, B1 of the body-map
   plan, #401): every new session records which version of the catalog-to-titan muscle map
   (`src/exercises/muscle-map.ts`) was in effect, so a future re-classification is
