@@ -304,6 +304,66 @@ describe('registerExerciseTools', () => {
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).code).toBe('INVALID_INPUT');
     });
+
+    it('records the setup card (VW-275) alongside the label', async () => {
+      harness.getExerciseSetup.mockResolvedValue(detected);
+
+      const result = await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: 'bench at 30 degrees',
+        card: { anchor: 'mid', mountHole: 3, cableLengthSetting: '36 in', mode: 'Normal' },
+      });
+
+      const written = harness.putExerciseSetup.mock.calls[0][0] as StoredExerciseSetup;
+      expect(written.card).toEqual({
+        anchor: 'mid',
+        mountHole: 3,
+        cableLengthSetting: '36 in',
+        mode: 'Normal',
+      });
+      expect(result.isError).toBeUndefined();
+    });
+
+    it('records a partial card — only anchor is required', async () => {
+      harness.getExerciseSetup.mockResolvedValue(detected);
+
+      await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: 'bench at 30 degrees',
+        card: { anchor: 'low' },
+      });
+
+      const written = harness.putExerciseSetup.mock.calls[0][0] as StoredExerciseSetup;
+      expect(written.card).toEqual({ anchor: 'low' });
+    });
+
+    it('returns INVALID_INPUT for a card with an unknown anchor', async () => {
+      const result = await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: 'bench at 30 degrees',
+        card: { anchor: 'overhead' },
+      });
+
+      expect(harness.getExerciseSetup).not.toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).code).toBe('INVALID_INPUT');
+    });
+
+    it('leaves an existing card untouched when confirming without one', async () => {
+      harness.getExerciseSetup.mockResolvedValue({
+        ...detected,
+        card: { anchor: 'high' },
+        confirmedAt: '2026-09-01T00:00:00.000Z',
+      });
+
+      await harness.invoke('exercise.confirm_setup', {
+        setupId: detected.id,
+        label: 'renamed',
+      });
+
+      const written = harness.putExerciseSetup.mock.calls[0][0] as StoredExerciseSetup;
+      expect(written.card).toEqual({ anchor: 'high' });
+    });
   });
 
   describe('registration wiring', () => {

@@ -110,11 +110,15 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../state/live-state.js';
-import type {
-  StoredSession,
-  StoredPlannedExercise,
-  StoredProgramAssignment,
+import {
+  LOCAL_USER_ID,
+  type StoredSession,
+  type StoredPlannedExercise,
+  type StoredProgramAssignment,
+  type StoredExerciseSetup,
+  type SetupCard,
 } from '../store/types.js';
+import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -181,6 +185,16 @@ export interface DashboardServerState {
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     /** Plan assignments attached to a session — feeds the active-exercise prescription. */
     getAssignmentsForSession?(sessionId: string): Promise<StoredProgramAssignment[]>;
+    /**
+     * The active exercise's confirmed setup cards (VW-275), read for the
+     * `expectedSetupCard` snapshot field. Optional for the same reason the plan
+     * methods are — a fake without it degrades to the digest-seeded default
+     * (or nothing) rather than failing.
+     */
+    listExerciseSetups?(filter: {
+      userId: string;
+      exerciseId: string;
+    }): Promise<StoredExerciseSetup[]>;
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore>;
   /**
@@ -198,6 +212,8 @@ export interface DashboardServerState {
           muscleGroups: string[];
           secondaryMuscleGroups?: string[];
           movementPattern?: string;
+          /** Feeds the digest-seeded {@link SetupCard} default (VW-275) when nothing is confirmed. */
+          cableSetup?: { cablePath: string };
         }
       | undefined;
     /**
@@ -418,7 +434,7 @@ async function handleRequest(
     return;
   }
   if (pathname === '/api/snapshot') {
-    sendJson(res, 200, buildSnapshotWithRev(state));
+    sendJson(res, 200, await buildSnapshotWithRev(state));
     return;
   }
   if (pathname === '/api/stream') {
@@ -743,7 +759,7 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
   // session's completed sets without waiting for the next `set` boundary — SSE
   // has no event backlog, so without this a client that connects between sets
   // sees only heartbeats until the next set starts.
-  writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
+  pushSnapshot(res, state);
 
   const unsubscribe = state.liveSignals?.subscribe((event) => {
     // Verbatim forwarder. The originating slot (VW-48) is already a field ON
@@ -756,7 +772,7 @@ function serveStream(res: ServerResponse, state: DashboardServerState): void {
     // A set lifecycle boundary is a structural transition: push the fresh
     // snapshot so the client updates structure without waiting for the poll.
     if (event.type === 'set') {
-      writeSseEvent(res, 'snapshot', buildSnapshotWithRev(state));
+      pushSnapshot(res, state);
     }
   });
   const heartbeat = setInterval(() => {
@@ -777,12 +793,32 @@ function writeSseEvent(res: ServerResponse, event: string, data: unknown): void 
 }
 
 /**
- * Gather the live device/session/set state (and the active exercise's catalog
- * entry) from every slot, then delegate all shaping to the pure snapshot
- * read-model. This is the I/O boundary — reading the live-state map and the
- * exercise catalog — while `buildSnapshotView` owns the (testable) output shape.
+ * Fire-and-forget a `snapshot` SSE push. `buildSnapshotWithRev` is async (the
+ * VW-275 setup-card lookup), but the stream itself is not — a socket-open
+ * callback returns immediately and this write lands whenever the snapshot
+ * resolves, same as any other out-of-band push on this connection.
  */
-function buildSnapshot(state: DashboardServerState): SnapshotResponse {
+function pushSnapshot(res: ServerResponse, state: DashboardServerState): void {
+  void buildSnapshotWithRev(state).then((snapshot) => writeSseEvent(res, 'snapshot', snapshot));
+}
+
+/** The synchronous slice of `buildSnapshotWithRev` — everything but the setup-card lookup. */
+interface GatheredSnapshotState {
+  devices: DeviceEntry[];
+  session: ActiveSession | undefined;
+  activeSet: ActiveSet | undefined;
+  completedSets: CompletedSetRecord[];
+  activeExercise: ReturnType<NonNullable<DashboardServerState['exercises']>['getById']>;
+  exerciseId: string | undefined;
+}
+
+/**
+ * Gather the live device/session/set state (and the active exercise's catalog
+ * entry) from every slot. Synchronous and side-effect-free over `state.slots`,
+ * which is what lets `buildSnapshotWithRev` stamp `rev` immediately after this
+ * runs — see its own docstring for why that ordering matters.
+ */
+function gatherSnapshotState(state: DashboardServerState): GatheredSnapshotState {
   const devices: DeviceEntry[] = [];
   let session: ActiveSession | undefined;
   let activeSet: ActiveSet | undefined;
@@ -820,25 +856,59 @@ function buildSnapshot(state: DashboardServerState): SnapshotResponse {
   const exerciseId = session?.exerciseId;
   const activeExercise =
     exerciseId && state.exercises ? state.exercises.getById(exerciseId) : undefined;
-  return buildSnapshotView({ devices, session, activeSet, completedSets, activeExercise });
+  return { devices, session, activeSet, completedSets, activeExercise, exerciseId };
+}
+
+/**
+ * The active exercise's reference setup card at exercise start (VW-275).
+ * `undefined` with no active exercise, no wired `listExerciseSetups`, or no
+ * catalog lookup — the snapshot then shows no card rather than a fabricated one.
+ */
+async function resolveExpectedSetupCard(
+  state: DashboardServerState,
+  exerciseId: string | undefined,
+): Promise<SetupCard | undefined> {
+  if (exerciseId === undefined) return undefined;
+  // Bound rather than destructured: `SqliteSessionStore#listExerciseSetups` reads
+  // `this.db`, so calling the detached method loses its receiver.
+  const listExerciseSetups = state.store.listExerciseSetups?.bind(state.store);
+  if (listExerciseSetups === undefined || state.exercises === undefined) return undefined;
+  return getReferenceSetupCard({ listExerciseSetups }, state.exercises, {
+    userId: LOCAL_USER_ID,
+    exerciseId,
+  });
 }
 
 /**
  * Monotonic send-order sequence stamped on every snapshot the server hands out —
- * over both `/api/snapshot` (poll) and the `snapshot` SSE push. Because it is
- * assigned synchronously at send time and JS is single-threaded, a higher `rev`
- * was built no earlier, so it reflects equal-or-fresher state. The client keeps
- * the last `rev` it applied and drops anything not strictly newer, so a slow
- * in-flight poll can never clobber a fresh push (or vice-versa), and the
- * completed-set fold never sees a set boundary twice.
+ * over both `/api/snapshot` (poll) and the `snapshot` SSE push. Assigned
+ * synchronously, immediately after {@link gatherSnapshotState} runs and BEFORE
+ * the async setup-card lookup — JS is single-threaded, so nothing can interleave
+ * between gathering the live state and stamping `rev` for it, and a higher `rev`
+ * therefore always reflects live state gathered no earlier. (The setup-card
+ * lookup below is the one part of this response NOT captured by that ordering —
+ * confirmed setups change far less often than device/session state, so a rare
+ * stale card is the acceptable side of that trade.) The client keeps the last
+ * `rev` it applied and drops anything not strictly newer, so a slow in-flight
+ * poll can never clobber a fresh push (or vice-versa), and the completed-set
+ * fold never sees a set boundary twice.
  */
 let snapshotRev = 0;
 
 /** The authoritative snapshot plus its ordering stamp — the shape both channels send. */
 type RevSnapshot = SnapshotResponse & { rev: number };
 
-function buildSnapshotWithRev(state: DashboardServerState): RevSnapshot {
-  return { ...buildSnapshot(state), rev: ++snapshotRev };
+async function buildSnapshotWithRev(state: DashboardServerState): Promise<RevSnapshot> {
+  const gathered = gatherSnapshotState(state);
+  const rev = ++snapshotRev;
+  const expectedSetupCard = await resolveExpectedSetupCard(state, gathered.exerciseId);
+  return {
+    ...buildSnapshotView({
+      ...gathered,
+      ...(expectedSetupCard !== undefined ? { expectedSetupCard } : {}),
+    }),
+    rev,
+  };
 }
 
 async function fetchHistory(

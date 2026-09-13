@@ -216,6 +216,12 @@ function makeStore(
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     // VW-150: no declared phase, so the phase clause stays unchecked here.
     getSessionDietPhase: vi.fn(async () => undefined),
+    // VW-275: no fixture confirms a setup card, so the gate degrades to
+    // setup_card_unverified rather than throwing on a missing store method.
+    getExerciseSetup: vi.fn(async () => undefined),
+    listExerciseSetups: vi.fn(async () => []),
+    putExerciseSetup: vi.fn(async () => {}),
+    stampSetSetup: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
   };
 }
@@ -657,6 +663,84 @@ interface ComparabilityBody {
     nearest?: { setId: string; reasons: string[] };
   };
 }
+
+describe('progression.get_for_exercise — setupCard (VW-275)', () => {
+  it('reports setup_card_unverified when the latest session has no stamped setup', async () => {
+    const s1 = makeSession('s1', recentDate(7));
+    const h = setup([s1], { s1: [makeSet('a1', 's1', 80, 5)] });
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as { setupCard: { comparability: string } };
+
+    expect(body.setupCard.comparability).toBe('setup_card_unverified');
+  });
+
+  it('reports comparable when the latest session card matches the confirmed reference', async () => {
+    const s1 = makeSession('s1', recentDate(7));
+    const stampedSet = { ...makeSet('a1', 's1', 80, 5), setupId: 'setup-1' };
+    const h = setup([s1], { s1: [stampedSet] });
+    const card = { anchor: 'mid' as const, mountHole: 3 };
+    h.store.getExerciseSetup.mockResolvedValue({
+      id: 'setup-1',
+      userId: 'local',
+      exerciseId: 'cable-chest-press',
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      confirmedAt: '2026-01-02T00:00:00.000Z',
+      card,
+    });
+    h.store.listExerciseSetups.mockResolvedValue([
+      {
+        id: 'setup-1',
+        userId: 'local',
+        exerciseId: 'cable-chest-press',
+        detectedAt: '2026-01-01T00:00:00.000Z',
+        confirmedAt: '2026-01-02T00:00:00.000Z',
+        card,
+      },
+    ]);
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as { setupCard: { comparability: string } };
+
+    expect(body.setupCard.comparability).toBe('comparable');
+  });
+
+  it('reports setup_card_mismatch when the latest session card disagrees with the reference', async () => {
+    const s1 = makeSession('s1', recentDate(14));
+    const s2 = makeSession('s2', recentDate(7));
+    const earlier = { ...makeSet('a1', 's1', 80, 5), setupId: 'setup-1' };
+    const latest = { ...makeSet('a2', 's2', 80, 5), setupId: 'setup-2' };
+    const h = setup([s1, s2], { s1: [earlier], s2: [latest] });
+    h.store.getExerciseSetup.mockImplementation(async (id: string) =>
+      id === 'setup-2'
+        ? {
+            id: 'setup-2',
+            userId: 'local',
+            exerciseId: 'cable-chest-press',
+            detectedAt: '2026-01-01T00:00:00.000Z',
+            confirmedAt: '2026-02-01T00:00:00.000Z',
+            card: { anchor: 'high' },
+          }
+        : undefined,
+    );
+    h.store.listExerciseSetups.mockResolvedValue([
+      {
+        id: 'setup-1',
+        userId: 'local',
+        exerciseId: 'cable-chest-press',
+        detectedAt: '2026-01-01T00:00:00.000Z',
+        confirmedAt: '2026-01-02T00:00:00.000Z',
+        card: { anchor: 'low' },
+      },
+    ]);
+
+    const r = await h.invoke({ exerciseId: 'cable-chest-press' });
+    const body = parseResult(r) as { setupCard: { comparability: string; reason: string } };
+
+    expect(body.setupCard.comparability).toBe('setup_card_mismatch');
+    expect(body.setupCard.reason).toContain('anchor');
+  });
+});
 
 describe('progression.get_for_exercise — comparability basis (VW-94)', () => {
   it('picks the most recent earlier session that is like-vs-like with the latest', async () => {

@@ -28,6 +28,9 @@ import type { Device, DeviceRowState, SessionState } from '@titan-design/react-u
 // (VMCP-02.84) without pulling the store's runtime (sqlite, node:sqlite) into
 // this browser bundle.
 import type { SetPurpose } from '../../store/types.js';
+// Type-only, same rationale: the declared setup card (VW-275) mirrors
+// `store/types.ts`'s `SetupCard` without a runtime dependency.
+import type { SetupCard } from '../../store/types.js';
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
@@ -237,6 +240,12 @@ export interface Snapshot {
   sets: { active: SnapshotActiveSet | null; completed?: SnapshotCompletedSet[] };
   /** Target muscles for the active exercise; null when idle / unknown. */
   activeExercise?: SnapshotActiveExercise | null;
+  /**
+   * The active exercise's reference setup card at exercise start (VW-275) —
+   * the most recently confirmed card, or a digest-seeded landmark default.
+   * Null with no active exercise or no card resolved either way.
+   */
+  expectedSetupCard?: SetupCard | null;
   /**
    * Monotonic server send-order stamp (VMCP-03.04). Present on both the poll
    * response and the `snapshot` SSE push; the store applies a snapshot only when

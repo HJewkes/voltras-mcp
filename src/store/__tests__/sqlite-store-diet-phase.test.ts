@@ -208,7 +208,7 @@ describe('file-backed database', () => {
 
     const after = readUserVersion(path);
     expect(after).toBe(before);
-    expect(after).toBe(18);
+    expect(after).toBe(19);
   });
 
   it('falls back to the stamp when no range covers the session any more', async () => {

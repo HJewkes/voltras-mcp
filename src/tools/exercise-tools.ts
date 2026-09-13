@@ -40,7 +40,7 @@ import {
   ExerciseSearchInput,
 } from '../schemas/exercise.js';
 import type { ServerState } from '../state/server-state.js';
-import type { StoredExerciseSetup } from '../store/types.js';
+import type { SetupCard, StoredExerciseSetup } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 /**
@@ -90,7 +90,15 @@ const CONFIRM_SETUP_DESCRIPTION =
   'moved the cable different distances; it cannot tell what the difference was, which is the ' +
   'entire reason this tool exists. Ask, then record what they say. Do not infer a label from ' +
   'the range of motion, the exercise name or the weight, and do not offer a guess for them to ' +
-  'confirm — a plausible wrong name is worse than "setup 1", because it reads as a measurement.';
+  'confirm — a plausible wrong name is worse than "setup 1", because it reads as a measurement. ' +
+  "Optional `card` (VW-275) records the rig's declared configuration: `anchor` " +
+  '(low/mid/chest/high — a landmark, never a measurement, because no numeric anchor height is ' +
+  'published for the device), `mountHole` (the rack hole index, when the mount indexes to one), ' +
+  "`cableLengthSetting` (the device's Settings > Cable length value, exactly as shown on its " +
+  'screen), and `mode` (the resistance mode by its on-device menu name). Same rule as `label`: ' +
+  'these are the answers the lifter gives, never a guess offered for confirmation. The wall ' +
+  "shows this exercise's most recently confirmed card at exercise start, and a later session " +
+  'whose own card disagrees with it is flagged rather than silently compared.';
 
 /**
  * Build the `exercise.get` callback. Cannot use `wrapHandler` because the
@@ -165,7 +173,27 @@ async function confirmSetup(
     ...existing,
     label: input.label,
     confirmedAt: new Date().toISOString(),
+    ...(input.card !== undefined ? { card: cleanSetupCard(input.card) } : {}),
   };
   await state.store.putExerciseSetup(confirmed);
   return confirmed;
+}
+
+/**
+ * Zod leaves an unset optional field as `undefined` rather than absent, which
+ * `exactOptionalPropertyTypes` treats as a distinct (disallowed) value for
+ * {@link StoredExerciseSetup}'s optional fields. Rebuild the card with only
+ * the keys actually given.
+ */
+function cleanSetupCard(
+  card: NonNullable<z.infer<typeof ExerciseConfirmSetupInput>['card']>,
+): SetupCard {
+  return {
+    anchor: card.anchor,
+    ...(card.mountHole !== undefined ? { mountHole: card.mountHole } : {}),
+    ...(card.cableLengthSetting !== undefined
+      ? { cableLengthSetting: card.cableLengthSetting }
+      : {}),
+    ...(card.mode !== undefined ? { mode: card.mode } : {}),
+  };
 }

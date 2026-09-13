@@ -32,7 +32,13 @@ import { getRepRangeOfMotion, type Rep } from '@voltras/workout-analytics';
 import { SETUP_GEOMETRY_RATIO } from '../analytics/setup-comparability.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { normalisePositionsToMetres, type PositionScaledSet } from './position-units.js';
-import type { ExerciseSetupStore, StoredExerciseSetup, StoredSet, StoredSide } from './types.js';
+import type {
+  ExerciseSetupStore,
+  SetupCard,
+  StoredExerciseSetup,
+  StoredSet,
+  StoredSide,
+} from './types.js';
 
 /**
  * Stamped onto every row this module writes, and part of every setup id. Bump
@@ -103,6 +109,8 @@ export interface InferredSetup {
   setCount: number;
   /** A human named this setup via `exercise.confirm_setup`. */
   confirmed: boolean;
+  /** Set only by `exercise.confirm_setup`, carried forward across re-inference. */
+  card?: SetupCard;
 }
 
 /** What one `inferExerciseSetups` pass did. */
@@ -275,6 +283,7 @@ async function persistSetup(
     detectedAt: existing?.detectedAt ?? now,
     clusterVersion: SETUP_CLUSTER_VERSION,
     ...(existing?.confirmedAt !== undefined ? { confirmedAt: existing.confirmedAt } : {}),
+    ...(existing?.card !== undefined ? { card: existing.card } : {}),
   };
   await store.putExerciseSetup(row);
   return {
@@ -284,6 +293,7 @@ async function persistSetup(
     centreRomM: cluster.centreRomM,
     setCount: cluster.setIds.length,
     confirmed,
+    ...(existing?.card !== undefined ? { card: existing.card } : {}),
   };
 }
 

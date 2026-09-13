@@ -59,6 +59,16 @@ entry is written from the user's point of view is a review question, not a check
   rating configured, all four report `mountLoadWarning` saying the envelope is UNKNOWN — a
   warning, never a refusal, and never silence.
 
+- `exercise.confirm_setup` now accepts an optional setup card — anchor landmark
+  (low/mid/chest/high), rack mount hole, the device's cable-length setting, and resistance
+  mode (VW-275). `progression.get_for_exercise` compares the most recent session's card
+  against the exercise's reference card (the most recently confirmed one, or a
+  digest-seeded landmark default when nothing has been confirmed yet) and reports
+  `setupCard: { comparability: 'setup_card_mismatch' | 'setup_card_unverified' | 'comparable', ... }`
+  alongside the existing left/right geometry gate — a mount-hole or cable-length change
+  between sessions is now visible instead of silently changing what a load comparison
+  means.
+
 - Cable geometry now gates every left-vs-right read (VW-272). Before the wall's `L/R`
   callout or `progression.get_for_exercise`'s `sideSplit` compares the two arms, the two
   slots' median cable travel is compared: more than 1.15x apart and the verdict is
