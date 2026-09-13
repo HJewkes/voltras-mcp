@@ -579,7 +579,39 @@ export interface StoredIsometricMeasurement {
   restMs: number;
   /** Rest between sides, in ms. Absent for a single-side measurement. */
   betweenSidesRestMs?: number;
+  /**
+   * Who was tested (VW-280): the session's lifter label when a guest was
+   * working, otherwise {@link LOCAL_USER_ID}. Absent ONLY on a row written
+   * before v21 gave the table a key — see {@link IsometricMeasurementHistory}.
+   */
+  userId?: string;
+  /** The exercise active on the tested slot. Absent when no session named one. */
+  exerciseId?: string;
+  /** The session the test ran inside. Absent when no session was open. */
+  sessionId?: string;
   sides: StoredIsometricSideMeasurement[];
+}
+
+/** Narrows an isometric history to one lifter's tests of one exercise (VW-280). */
+export interface IsometricHistoryFilter {
+  /** The lifter label, or {@link LOCAL_USER_ID} for the owner. */
+  userId: string;
+  /** `null` matches the runs captured with no active exercise, never every exercise. */
+  exerciseId: string | null;
+}
+
+/** A filtered page of isometric history, plus what the filter could not reach. */
+export interface IsometricMeasurementHistory {
+  measurements: StoredIsometricMeasurement[];
+  /**
+   * Stored assessments carrying no lifter key, so no filter can ever place
+   * them in a lifter's series (VW-280). They are excluded from every
+   * aggregate and reported instead of silently dropped: a short series is
+   * read differently once you know tests exist that could not join it.
+   * Counted over the whole table, independent of `limit`; `0` when no filter
+   * was given, because then nothing was excluded.
+   */
+  legacyUnkeyed: number;
 }
 
 /**
@@ -1352,14 +1384,17 @@ export interface SessionStore extends ExerciseSetupStore {
    * adapter, or on a unit that dropped mid-assessment, stores no device id at
    * all, so keying the series on one device silently drops those runs and
    * shortens the history that the consistent/fluctuating call is made from.
-   * SCOPE IS THE WHOLE DATABASE, and nothing narrows it. `isometric_measurements`
-   * carries no lifter, exercise or session key, so there is no column to filter
-   * on — a second lifter's assessment, or the same lifter tested at a different
-   * joint, lands in the same series. Callers must say so rather than implying a
-   * per-lifter, per-joint history. A schema change to fix that is filed
-   * separately; this method does not pretend to have one.
+   * `filter` narrows the series to one lifter's tests of one exercise (VW-280);
+   * without it the scope is the whole database, which is what the device-id
+   * series above cannot supply and what a diagnostic dump wants. Rows written
+   * before v21 carry no lifter key, so a filtered read can never include them:
+   * they are excluded and counted in `legacyUnkeyed` rather than folded in
+   * under a guessed owner.
    */
-  listRecentIsometricMeasurements(opts?: { limit?: number }): Promise<StoredIsometricMeasurement[]>;
+  listRecentIsometricMeasurements(opts?: {
+    limit?: number;
+    filter?: IsometricHistoryFilter;
+  }): Promise<IsometricMeasurementHistory>;
 
   // --- Block-periodization planning (v3 schema) ---
 

@@ -57,6 +57,8 @@ import {
   type SetupCard,
   type SetupCardAnchor,
   type StoredIdleRep,
+  type IsometricHistoryFilter,
+  type IsometricMeasurementHistory,
   type StoredIsometricMeasurement,
   type StoredIsometricSideMeasurement,
   type StoredIsometricTrial,
@@ -85,7 +87,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -415,6 +417,16 @@ const SCHEMA_SQL = `
   --
   -- device_id lives on the TRIAL row and is the join key; side is the limb as
   -- declared for the run; slot is diagnostic only (see the v5 note on sets).
+  --
+  -- v21 (VW-280): user_id / exercise_id / session_id say WHO was tested, on
+  -- WHAT, and during which session. Without them every test on the rig fell
+  -- into one series. All three are nullable and none carries a REFERENCES
+  -- clause: user_id holds the session's lifter LABEL when a guest was working
+  -- (see sessions.lifter), which has no users row, and a pre-v21 row has no
+  -- key at all. Callers exclude the unkeyed rows rather than guessing.
+  -- The (user_id, exercise_id, measured_at) index is created in
+  -- migrateV20ToV21, not here — it names columns a pre-v21 table lacks at the
+  -- moment this SQL runs.
 
   CREATE TABLE IF NOT EXISTS isometric_measurements (
     id TEXT PRIMARY KEY,
@@ -424,7 +436,10 @@ const SCHEMA_SQL = `
     duration_ms INTEGER NOT NULL,
     trials_requested INTEGER NOT NULL,
     rest_ms INTEGER NOT NULL,
-    between_sides_rest_ms INTEGER
+    between_sides_rest_ms INTEGER,
+    user_id TEXT,
+    exercise_id TEXT,
+    session_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_isometric_measurements_measured_at
     ON isometric_measurements(measured_at);
@@ -1238,6 +1253,28 @@ function migrateV19ToV20(db: DatabaseSync): void {
 }
 
 /**
+ * v20 -> v21: identity on `isometric_measurements` (VW-280) — `user_id`,
+ * `exercise_id` and `session_id`. ADDITIVE COLUMNS, nothing back-filled: a
+ * pre-v21 row records a test whose lifter and joint were never written down,
+ * and attributing it to the owner would invent the very fact that is missing.
+ * Reads that aggregate across runs exclude those rows and count them.
+ *
+ * The index lives here rather than in `SCHEMA_SQL` because `SCHEMA_SQL` runs
+ * BEFORE the migrations: on an existing v20 database the columns it names do
+ * not exist yet at that point. Same reason `idx_sets_exercise_session` sits in
+ * `migrateV9ToV10`.
+ */
+function migrateV20ToV21(db: DatabaseSync): void {
+  for (const column of ['user_id', 'exercise_id', 'session_id'] as const) {
+    addColumnIfMissing(db, 'isometric_measurements', column, 'TEXT');
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_isometric_measurements_keyed
+       ON isometric_measurements(user_id, exercise_id, measured_at)`,
+  );
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1520,6 +1557,9 @@ interface IsometricMeasurementRow {
   trials_requested: number;
   rest_ms: number;
   between_sides_rest_ms: number | null;
+  user_id: string | null;
+  exercise_id: string | null;
+  session_id: string | null;
 }
 
 interface IsometricTrialRow {
@@ -2353,8 +2393,9 @@ export class SqliteSessionStore implements SessionStore {
     const upsertMeasurement = this.db.prepare(
       `INSERT INTO isometric_measurements
          (id, measured_at, analysis_version, first_side_tested,
-          duration_ms, trials_requested, rest_ms, between_sides_rest_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          duration_ms, trials_requested, rest_ms, between_sides_rest_ms,
+          user_id, exercise_id, session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          measured_at = excluded.measured_at,
          analysis_version = excluded.analysis_version,
@@ -2362,7 +2403,10 @@ export class SqliteSessionStore implements SessionStore {
          duration_ms = excluded.duration_ms,
          trials_requested = excluded.trials_requested,
          rest_ms = excluded.rest_ms,
-         between_sides_rest_ms = excluded.between_sides_rest_ms`,
+         between_sides_rest_ms = excluded.between_sides_rest_ms,
+         user_id = excluded.user_id,
+         exercise_id = excluded.exercise_id,
+         session_id = excluded.session_id`,
     );
     // Trials are replaced wholesale on a re-put, exactly like `putSet` does
     // with reps: the trial array is the measurement's content, not an
@@ -2387,6 +2431,9 @@ export class SqliteSessionStore implements SessionStore {
         m.trialsRequested,
         m.restMs,
         m.betweenSidesRestMs ?? null,
+        m.userId ?? null,
+        m.exerciseId ?? null,
+        m.sessionId ?? null,
       );
       deleteTrials.run(m.id);
       for (const side of m.sides) {
@@ -2447,14 +2494,33 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async listRecentIsometricMeasurements(
-    opts: { limit?: number } = {},
-  ): Promise<StoredIsometricMeasurement[]> {
+    opts: { limit?: number; filter?: IsometricHistoryFilter } = {},
+  ): Promise<IsometricMeasurementHistory> {
+    const { filter } = opts;
+    // `exercise_id IS ?` rather than `= ?`: a filter naming no exercise means
+    // "the runs captured with no exercise either", and `= NULL` matches nothing.
+    const where = filter === undefined ? '' : `WHERE user_id = ? AND exercise_id IS ?`;
+    const params = filter === undefined ? [] : [filter.userId, filter.exerciseId];
     const rows = this.db
-      .prepare(`SELECT * FROM isometric_measurements ORDER BY measured_at DESC, rowid DESC LIMIT ?`)
-      .all(opts.limit ?? 50) as unknown as IsometricMeasurementRow[];
-    return Promise.resolve(
-      rows.map((row) => rowToIsometricMeasurement(row, this.loadTrialsForMeasurement(row.id))),
-    );
+      .prepare(
+        `SELECT * FROM isometric_measurements ${where}
+         ORDER BY measured_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(...params, opts.limit ?? 50) as unknown as IsometricMeasurementRow[];
+    return Promise.resolve({
+      measurements: rows.map((row) =>
+        rowToIsometricMeasurement(row, this.loadTrialsForMeasurement(row.id)),
+      ),
+      legacyUnkeyed: filter === undefined ? 0 : this.countUnkeyedIsometricMeasurements(),
+    });
+  }
+
+  /** Rows written before VW-280 gave the table a lifter key. Whole table, not windowed. */
+  private countUnkeyedIsometricMeasurements(): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM isometric_measurements WHERE user_id IS NULL`)
+      .get() as { n: number };
+    return row.n;
   }
 
   // --- Block-periodization planning (v3 schema) ---
@@ -3558,6 +3624,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 19) {
     migrateV19ToV20(db);
   }
+  if (current <= 20) {
+    migrateV20ToV21(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -3836,6 +3905,11 @@ function rowToIsometricMeasurement(
     out.firstSideTested = row.first_side_tested;
   }
   if (row.between_sides_rest_ms !== null) out.betweenSidesRestMs = row.between_sides_rest_ms;
+  // Absent, never defaulted (VW-280): a pre-v21 row does not know whose test
+  // it was, and reading it back as the owner's would invent that fact.
+  if (row.user_id !== null) out.userId = row.user_id;
+  if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  if (row.session_id !== null) out.sessionId = row.session_id;
   return out;
 }
 

@@ -109,13 +109,13 @@ describe('v19 -> v20 migration', () => {
     }
   });
 
-  it('stamps user_version at 20 and keeps the pre-existing rows', () => {
+  it('stamps user_version at SCHEMA_VERSION and keeps the pre-existing rows', () => {
     const store = SqliteSessionStore.open(path);
     try {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(20);
+        expect(version.user_version).toBe(21);
         const program = db.prepare('SELECT name FROM training_programs').get() as { name: string };
         expect(program.name).toBe('Base Strength');
         const setup = db.prepare('SELECT setup_anchor, mount_hole FROM exercise_setups').get() as {

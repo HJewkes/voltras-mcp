@@ -50,6 +50,7 @@ import type { z } from 'zod';
 import { log } from '../logger.js';
 import {
   LOCAL_USER_ID,
+  type IsometricMeasurementHistory,
   type StoredIsometricMeasurement,
   type StoredIsometricSideMeasurement,
 } from '../store/types.js';
@@ -169,10 +170,10 @@ const MEASURE_MAX_DESCRIPTION = [
   'thresholdLbs (deltaLbs is the signed difference); thresholdLbs is the',
   'ADJUSTED SEM, semLbs x sqrt(2) (Weakley et al. 2024) — a change score',
   'carries error from both occasions being compared, not just the new one.',
-  'SCOPE LIMIT: the baseline pools every isometric occasion in this database',
-  '(no lifter, exercise or session key exists to narrow it — same limit',
-  'isometric.measure_imbalance documents for directionHistory), so it is',
-  'meaningful only when one lifter has been testing one joint on this rig.',
+  'KEYED (VW-280): every stored assessment records the lifter, the exercise and',
+  "the session it was captured under, so the baseline pools only this lifter's",
+  'own past occasions of this exercise, and legacyUnkeyed counts the older',
+  'assessments that carry no key and are therefore excluded from it.',
   '',
   'VERIFIED IMTP-style PROTOCOL DETAILS THIS IMPLEMENTS: the 5 s hold',
   '(default, clamp 3-10s) and >=2 trials (default 3, clamp 2-5) an applied',
@@ -247,13 +248,10 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'dominance is only fair-to-substantial (Bishop et al. 2019). A consistent',
   'direction may warrant a closer look; a fluctuating one does not.',
   '',
-  'SCOPE LIMIT on directionHistory: stored assessments carry no lifter,',
-  'exercise or session key, so the series is EVERY isometric assessment in this',
-  'database, not this lifter tested on this joint. It is meaningful only when',
-  'one lifter has been testing one joint on this rig. A second lifter, or the',
-  'same lifter tested at a different joint, mixes into the same series and its',
-  'consistent / fluctuating label stops meaning anything. Read testsCompared',
-  'against what you know was actually tested before trusting the label.',
+  'KEYED (VW-280): every stored assessment records the lifter, the exercise and',
+  'the session it was captured under, so the series is this lifter tested on',
+  'this exercise, and legacyUnkeyed counts the older assessments that carry no',
+  'key and are therefore excluded from it.',
   '',
   'DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK OFF THIS RESULT (VW-273). The',
   'intervention literature does not support it: unilateral training beats',
@@ -276,8 +274,8 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   "its own changeFromBaseline against it, with changed true only when this run's peak",
   'force differs from meanLbs by more than thresholdLbs (deltaLbs is the',
   'signed difference) — thresholdLbs is the adjusted SEM, semLbs x sqrt(2)',
-  '(Weakley et al. 2024). The same pooled-database scope limit as',
-  'directionHistory above applies to the baseline too.',
+  '(Weakley et al. 2024). The baseline reads through the same key',
+  'directionHistory above does.',
   '',
   'MOUNT LOAD (VW-274): each side runs the same single-unit isometric hold',
   'isometric.measure_max does, up to 400 lb per unit regardless of the',
@@ -433,6 +431,14 @@ interface MeasureMaxResult {
   peakForceBaseline: PeakForceBaseline | null;
   /** Whether this run's peak force clears the adjusted SEM; null with no baseline yet. */
   changeFromBaseline: PeakForceChangeVerdict | null;
+  /**
+   * Stored assessments that predate the VW-280 keying and so carry no lifter,
+   * exercise or session. They are excluded from `peakForceBaseline` — nothing
+   * says whose tests they were — and counted here instead of dropped
+   * silently, because a thin baseline reads differently once you know older
+   * tests exist that could not join it.
+   */
+  legacyUnkeyed: number;
   /** Id of the persisted `isometric_measurements` row, or `null` when the write failed. */
   measurementId: string | null;
   /**
@@ -491,20 +497,29 @@ interface MeasureImbalanceResult {
   /** Why the gate landed where it did — the wording `compareSetupSignatures` itself produced. */
   setupReason: string;
   /**
-   * Whether the same limb dominated across recent tests, recomputed from the
-   * stored trials of this run and the ones before it. `null` only when the
-   * history could not be read at all — distinct from `insufficient-history`,
-   * which is a real answer about a short series.
+   * Whether the same limb dominated across this lifter's recent tests of this
+   * exercise, recomputed from the stored trials of this run and the ones
+   * before it. `null` only when the history could not be read at all —
+   * distinct from `insufficient-history`, which is a real answer about a short
+   * series.
    */
   directionHistory: DirectionHistory | null;
   /** What each side's inferred weight is and is not; see {@link INFERRED_WORKING_WEIGHT_BASIS}. */
   inferredWorkingWeightBasis: string;
   /**
-   * This athlete's pooled peak-force mean/SEM/CV over past occasions, read
-   * before this run's own trials were persisted; null under 3 occasions
-   * (VW-271). Shared by both sides' `changeFromBaseline`.
+   * This athlete's peak-force mean/SEM/CV over their own past occasions of
+   * this exercise, read before this run's own trials were persisted; null
+   * under 3 occasions (VW-271). Shared by both sides' `changeFromBaseline`.
    */
   peakForceBaseline: PeakForceBaseline | null;
+  /**
+   * Stored assessments that predate the VW-280 keying and so carry no lifter,
+   * exercise or session. They are excluded from `directionHistory` and
+   * `peakForceBaseline` — nothing says whose tests they were — and counted
+   * here instead of dropped silently, because a three-test series reads
+   * differently once you know nine older tests could not join it.
+   */
+  legacyUnkeyed: number;
   /**
    * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
    * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
@@ -614,15 +629,17 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
     runSideProtocol(state, slotId, input, leaseFence),
   );
+  const keys = measurementKeys(state, slotId);
   // Read BEFORE persisting, so this run's own result never leaks into its own
-  // baseline (VW-271) — the opposite of `readDirectionHistory`, which wants
+  // baseline (VW-271) — the opposite of the direction history, which wants
   // the current run included.
-  const peakForceBaseline = await readPeakForceBaseline(state);
+  const history = await readKeyedHistory(state, keys, 'isometric.measure_max');
+  const peakForceBaseline = baselineFrom(history);
   const changeFromBaseline =
     peakForceBaseline !== null && result.analysis.meanPeakForceLbs !== null
       ? evaluatePeakForceChange(result.analysis.meanPeakForceLbs, peakForceBaseline)
       : null;
-  const measurementId = await persistMeasurement(state, {
+  const measurementId = await persistMeasurement(state, keys, {
     durationMs: input.durationMs,
     trialsRequested: input.trials,
     restMs: input.restMs,
@@ -640,6 +657,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
     changeFromBaseline,
+    legacyUnkeyed: history?.legacyUnkeyed ?? 0,
     measurementId,
     mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
@@ -701,10 +719,13 @@ async function measureImbalance(
   const leftSlotId = slotForSide.left;
   const rightSlotId = slotForSide.right;
 
+  const keys = measurementKeys(state, input.primarySlot);
   // Read BEFORE persisting, so this run's own result never leaks into its own
-  // baseline (VW-271) — the opposite of `readDirectionHistory` below, which
+  // baseline (VW-271) — the opposite of the direction history below, which
   // wants the current run included.
-  const peakForceBaseline = await readPeakForceBaseline(state);
+  const peakForceBaseline = baselineFrom(
+    await readKeyedHistory(state, keys, 'isometric.measure_imbalance'),
+  );
   const left: SideSummary = sideAsSummary(leftSlotId, leftAnalysis, peakForceBaseline);
   const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis, peakForceBaseline);
 
@@ -718,7 +739,7 @@ async function measureImbalance(
       ? withholdImbalanceVerdict(rawImbalance, setupGate)
       : rawImbalance;
 
-  const measurementId = await persistMeasurement(state, {
+  const measurementId = await persistMeasurement(state, keys, {
     firstSideTested: order[0],
     durationMs: input.durationMs,
     trialsRequested: input.trials,
@@ -738,6 +759,9 @@ async function measureImbalance(
     setup: setupGate,
   });
 
+  // Re-read AFTER persisting so the run just completed is in its own series.
+  const directionRead = await readKeyedHistory(state, keys, 'isometric.measure_imbalance');
+
   return {
     ok: true,
     testOrder: order as TestOrder,
@@ -747,9 +771,10 @@ async function measureImbalance(
     setupComparability: setupGate.comparability,
     setupSignatures: { left: setupGate.left, right: setupGate.right },
     setupReason: setupGate.reason,
-    directionHistory: await readDirectionHistory(state),
+    directionHistory: summarizeDirection(directionRead),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
+    legacyUnkeyed: directionRead?.legacyUnkeyed ?? 0,
     mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
@@ -764,37 +789,47 @@ async function measureImbalance(
 const DIRECTION_HISTORY_LIMIT = 20;
 
 /**
- * Summarize limb dominance over the stored assessments, including the one this
- * run just wrote (VW-270).
+ * The recent assessments for ONE lifter's tests of ONE exercise (VW-280).
  *
- * SCOPE LIMIT, stated in the tool description too: `isometric_measurements` has
- * no lifter, exercise or session key, so this aggregates every assessment in
- * the database. It answers "has the same limb dominated on this rig" and NOT
- * "has it dominated for this lifter on this joint" — a second lifter, or the
- * same lifter tested at a different joint, mixes in and the label degrades.
- * The fix is a schema change, filed as its own task; nothing here fakes the
- * filter it does not have.
+ * Every cross-run aggregate below reads through this, so none of them can mix
+ * two lifters or two joints the way the unfiltered read did. Assessments
+ * stored before the keying landed carry no lifter and cannot join any series;
+ * `legacyUnkeyed` reports how many, because a three-test history reads
+ * differently once you know nine older tests exist that could not be placed.
  *
  * Never throws, for the same reason `persistMeasurement` does not: the
  * measurement in hand cost the athlete ten-plus minutes of maximal effort and
  * must not be lost to a read that failed. A `null` says the history is unknown,
  * which the caller can tell apart from a short-but-read history.
  */
-async function readDirectionHistory(state: ServerState): Promise<DirectionHistory | null> {
+async function readKeyedHistory(
+  state: ServerState,
+  keys: MeasurementKeys,
+  tool: string,
+): Promise<IsometricMeasurementHistory | null> {
   try {
-    const measurements = await state.store.listRecentIsometricMeasurements({
+    return await state.store.listRecentIsometricMeasurements({
       limit: DIRECTION_HISTORY_LIMIT,
+      filter: { userId: keys.userId, exerciseId: keys.exerciseId },
     });
-    return summarizeDirectionHistory(
-      measurements.map((m) => ({
-        measuredAt: m.measuredAt,
-        direction: directionOfMeasurement(m),
-      })),
-    );
   } catch (err) {
-    log.warn('isometric.measure_imbalance: reading the direction history failed', err);
+    log.warn(`${tool}: reading the keyed isometric history failed`, err);
     return null;
   }
+}
+
+/**
+ * Summarize limb dominance over this lifter's stored assessments of this
+ * exercise, including the one this run just wrote (VW-270/VW-280).
+ */
+function summarizeDirection(history: IsometricMeasurementHistory | null): DirectionHistory | null {
+  if (history === null) return null;
+  return summarizeDirectionHistory(
+    history.measurements.map((m) => ({
+      measuredAt: m.measuredAt,
+      direction: directionOfMeasurement(m),
+    })),
+  );
 }
 
 /**
@@ -891,24 +926,47 @@ function withholdImbalanceVerdict(
 }
 
 /**
- * This athlete's peak-force baseline over past test occasions (VW-271).
- *
- * SCOPE LIMIT, same as `readDirectionHistory`: `isometric_measurements` has no
- * lifter, exercise or session key, so this pools every occasion in the
- * database — meaningful only when one lifter has been testing one joint on
- * this rig. Never throws, for the same reason `readDirectionHistory` does
- * not: a read failure must not take down the measurement just produced.
+ * This athlete's peak-force baseline over their own past occasions of this
+ * exercise (VW-271/VW-280) — the SEM it yields is a claim about one athlete's
+ * measurement spread, so pooling a second lifter's pulls into it inflated the
+ * spread and hid real changes.
  */
-async function readPeakForceBaseline(state: ServerState): Promise<PeakForceBaseline | null> {
-  try {
-    const measurements = await state.store.listRecentIsometricMeasurements({
-      limit: DIRECTION_HISTORY_LIMIT,
-    });
-    return computePeakForceBaseline(occasionPeakForcesLbs(measurements));
-  } catch (err) {
-    log.warn('isometric: reading the peak-force baseline failed', err);
-    return null;
-  }
+function baselineFrom(history: IsometricMeasurementHistory | null): PeakForceBaseline | null {
+  if (history === null) return null;
+  return computePeakForceBaseline(occasionPeakForcesLbs(history.measurements));
+}
+
+/**
+ * Who is being tested, on what, during which session (VW-280) — stamped on the
+ * stored row and used as the filter for every cross-run read in the same call.
+ */
+interface MeasurementKeys {
+  userId: string;
+  exerciseId: string | null;
+  sessionId: string | null;
+}
+
+/**
+ * Resolve the keys off the slot's own live session.
+ *
+ * `userId` follows VW-169's identity split: a guest working in carries the
+ * session's lifter LABEL, and the owner is {@link LOCAL_USER_ID}, so a guest's
+ * assessments never join the owner's series. No open session means the owner
+ * tested themselves off the books — the exercise and session stay null rather
+ * than being invented, and the run still keys to a lifter so it is not written
+ * as another unreadable legacy row.
+ *
+ * `measure_imbalance` resolves from its PRIMARY slot: both slots run one
+ * assessment of one movement, and the primary slot is the one whose side the
+ * caller declared.
+ */
+function measurementKeys(state: ServerState, slotId: string): MeasurementKeys {
+  const session = getSlot(state, slotId).live.session;
+  return {
+    userId: session?.lifter ?? LOCAL_USER_ID,
+    exerciseId: session?.exerciseId ?? null,
+    sessionId: session?.sessionId ?? null,
+  };
 }
 
 interface PersistSideInput {
@@ -935,7 +993,12 @@ interface PersistSideInput {
  * current thresholds. A stored verdict would be indistinguishable from a fresh
  * one the day the thresholds move.
  *
- * Identity: each side's trials carry the DEVICE ID read from that slot's
+ * Identity, run level (VW-280): `user_id` / `exercise_id` / `session_id` say
+ * who was tested, on what, and during which session — see
+ * {@link measurementKeys}. They are what makes a stored assessment joinable to
+ * a series at all; without them every test on the rig fell into one.
+ *
+ * Identity, side level: each side's trials carry the DEVICE ID read from that slot's
  * connected client at measurement time. That is the join key. `slot` rides
  * along for diagnostics only — `slot.swap` reassigns slot ids between physical
  * units, so a series keyed on slot would flip limbs mid-history with nothing
@@ -949,6 +1012,7 @@ interface PersistSideInput {
  */
 async function persistMeasurement(
   state: ServerState,
+  keys: MeasurementKeys,
   args: {
     firstSideTested?: 'left' | 'right';
     durationMs: number;
@@ -962,6 +1026,9 @@ async function persistMeasurement(
     id: randomUUID(),
     measuredAt: new Date().toISOString(),
     analysisVersion: ISOMETRIC_ANALYSIS_VERSION,
+    userId: keys.userId,
+    ...(keys.exerciseId !== null ? { exerciseId: keys.exerciseId } : {}),
+    ...(keys.sessionId !== null ? { sessionId: keys.sessionId } : {}),
     ...(args.firstSideTested !== undefined ? { firstSideTested: args.firstSideTested } : {}),
     durationMs: args.durationMs,
     trialsRequested: args.trialsRequested,

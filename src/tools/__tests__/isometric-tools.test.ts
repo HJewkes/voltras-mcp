@@ -39,7 +39,10 @@ import type { TelemetryFrame } from '@voltras/node-sdk';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
 import type { Rep } from '@voltras/workout-analytics';
+import { LOCAL_USER_ID } from '../../store/types.js';
 import type {
+  IsometricHistoryFilter,
+  IsometricMeasurementHistory,
   StoredExerciseSetup,
   StoredIsometricMeasurement,
   StoredSet,
@@ -139,7 +142,14 @@ function makeFakeClient(opts: { isConnected: boolean } = { isConnected: true }):
 interface FakeSlot {
   slotId: string;
   client: FakeClient;
-  live: { session?: { exerciseId?: string } };
+  live: { session?: FakeSession };
+}
+
+/** The live session fields the tools read: the VW-284 exercise and the VW-280 keys. */
+interface FakeSession {
+  sessionId?: string;
+  exerciseId?: string;
+  lifter?: string;
 }
 
 /**
@@ -150,7 +160,10 @@ interface FakeSlot {
 interface FakeStore {
   putIsometricMeasurement: Mock<(m: StoredIsometricMeasurement) => Promise<void>>;
   listRecentIsometricMeasurements: Mock<
-    (opts?: { limit?: number }) => Promise<StoredIsometricMeasurement[]>
+    (opts?: {
+      limit?: number;
+      filter?: IsometricHistoryFilter;
+    }) => Promise<IsometricMeasurementHistory>
   >;
   written: StoredIsometricMeasurement[];
   /** Measurements already on disk before this run; the direction series reads them. */
@@ -184,11 +197,25 @@ function makeFakeStore(): FakeStore {
     return Promise.resolve();
   });
   store.listRecentIsometricMeasurements = vi.fn(
-    async (opts: { limit?: number } = {}): Promise<StoredIsometricMeasurement[]> => {
+    async (
+      opts: { limit?: number; filter?: IsometricHistoryFilter } = {},
+    ): Promise<IsometricMeasurementHistory> => {
       const all = [...store.seeded, ...store.written].sort(
         (a, b) => Date.parse(b.measuredAt) - Date.parse(a.measuredAt),
       );
-      return Promise.resolve(all.slice(0, opts.limit ?? 50));
+      const { filter } = opts;
+      // Mirrors the SQLite half (VW-280): a filter naming no exercise matches
+      // the runs captured with no exercise, never every exercise.
+      const matched =
+        filter === undefined
+          ? all
+          : all.filter(
+              (m) => m.userId === filter.userId && (m.exerciseId ?? null) === filter.exerciseId,
+            );
+      return Promise.resolve({
+        measurements: matched.slice(0, opts.limit ?? 50),
+        legacyUnkeyed: filter === undefined ? 0 : all.filter((m) => m.userId === undefined).length,
+      });
     },
   );
   store.listExerciseSetups = vi.fn(async (f: { exerciseId: string }) =>
@@ -271,11 +298,17 @@ function makeExerciseSet(
  * A past assessment on disk, reduced to what the direction series reads: two
  * valid trials per side at the given plateau forces. `aggregateSide` needs two
  * valid trials before a side has a mean at all.
+ *
+ * Keyed to the owner with no exercise by default (VW-280), which is what a run
+ * on a slot with no open session resolves to — so a plain seed lands in the
+ * series of a plain run. `keys` places a seed in someone else's series; omit
+ * `userId` outright for a row written before the keying existed.
  */
 function seededMeasurement(
   measuredAt: string,
   leftLbs: number,
   rightLbs: number,
+  keys: { userId?: string; exerciseId?: string } = { userId: LOCAL_USER_ID },
 ): StoredIsometricMeasurement {
   const trials = (lbs: number) =>
     [1, 2].map((index) => ({
@@ -288,7 +321,7 @@ function seededMeasurement(
       valid: true,
     }));
   return {
-    id: `seed-${measuredAt}`,
+    id: `seed-${measuredAt}-${keys.userId ?? 'unkeyed'}-${keys.exerciseId ?? 'none'}`,
     measuredAt,
     analysisVersion: 1,
     firstSideTested: 'left',
@@ -296,6 +329,8 @@ function seededMeasurement(
     trialsRequested: 2,
     restMs: 30_000,
     betweenSidesRestMs: 60_000,
+    ...(keys.userId !== undefined ? { userId: keys.userId } : {}),
+    ...(keys.exerciseId !== undefined ? { exerciseId: keys.exerciseId } : {}),
     sides: [
       { side: 'left', slot: 'left', trials: trials(leftLbs) },
       { side: 'right', slot: 'right', trials: trials(rightLbs) },
@@ -335,6 +370,8 @@ function makeState(
     mountRatingLbs?: number;
     /** Per-slot active-session exerciseId, for the VW-284 setup gate. */
     exerciseIds?: Record<string, string | undefined>;
+    /** Per-slot active session, for the VW-280 keys. Wins over `exerciseIds`. */
+    sessions?: Record<string, FakeSession | undefined>;
   } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
@@ -344,11 +381,9 @@ function makeState(
     (client as unknown as { connectedDeviceId: string | null }).connectedDeviceId =
       opts.deviceIds?.[slotId] ?? null;
     const exerciseId = opts.exerciseIds?.[slotId];
-    slotMap.set(slotId, {
-      slotId,
-      client,
-      live: { session: exerciseId !== undefined ? { exerciseId } : undefined },
-    });
+    const session =
+      opts.sessions?.[slotId] ?? (exerciseId !== undefined ? { exerciseId } : undefined);
+    slotMap.set(slotId, { slotId, client, live: { session } });
   }
   return {
     slots: slotMap,
@@ -1531,5 +1566,218 @@ describe('the lease fence over an isometric assessment', () => {
     expect(body.validTrialCount).toBe(2);
     expect(leaseLostEvents()).toHaveLength(0);
     expect(client.writes).toEqual([]);
+  });
+});
+
+// VW-280: `isometric_measurements` now records who was tested, on what, and
+// during which session. Before that, every test on the rig fell into one
+// series — a guest's pull and the owner's pull at a different joint decided
+// each other's dominance label and each other's SEM.
+describe('isometric — the lifter / exercise / session key (VW-280)', () => {
+  let measureMaxCb: Callback;
+  let measureImbalanceCb: Callback;
+  let leftClient: FakeClient;
+  let rightClient: FakeClient;
+  let store: FakeStore;
+
+  /** Register the tools with the given per-slot live sessions. */
+  function register(sessions: Record<string, FakeSession | undefined>): void {
+    const state = makeState(
+      { primary: leftClient, left: leftClient, right: rightClient },
+      { store, deviceIds: { left: 'AA:BB:CC:01', right: 'AA:BB:CC:02' }, sessions },
+    );
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureMaxCb = slots.get('isometric.measure_max')!.callback;
+    measureImbalanceCb = slots.get('isometric.measure_imbalance')!.callback;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    leftClient = makeFakeClient();
+    rightClient = makeFakeClient();
+    store = makeFakeStore();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Drive a full 2-trial-per-side imbalance run with left stronger than right. */
+  async function runImbalance(): Promise<Record<string, unknown>> {
+    const promise = measureImbalanceCb({
+      primarySlot: 'left',
+      secondarySlot: 'right',
+      primarySide: 'left',
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      betweenSidesRestMs: 60_000,
+      testNonDominantFirst: false,
+      dominantSide: 'unknown',
+    });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    return payload(await promise) as Record<string, unknown>;
+  }
+
+  /** Drive a 2-trial `measure_max` run on the primary slot at ~200 lb. */
+  async function runMax(): Promise<MeasureMaxBody & { legacyUnkeyed: number }> {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 200);
+    return payload(await promise) as MeasureMaxBody & { legacyUnkeyed: number };
+  }
+
+  it('stamps the active lifter, exercise and session at capture', async () => {
+    register({
+      left: { sessionId: 'sess-1', exerciseId: 'seated-row', lifter: 'Jordan' },
+      right: { sessionId: 'sess-1', exerciseId: 'seated-row', lifter: 'Jordan' },
+    });
+    await runImbalance();
+
+    expect(store.written[0]).toMatchObject({
+      userId: 'Jordan',
+      exerciseId: 'seated-row',
+      sessionId: 'sess-1',
+    });
+  });
+
+  it('keys an off-the-books test to the owner, with no exercise or session', async () => {
+    // No open session: the owner tested themselves between programs. The
+    // exercise and the session stay absent rather than being invented, but the
+    // run is still keyed, so it does not land as another unreadable row.
+    register({});
+    await runMax();
+
+    expect(store.written[0]!.userId).toBe(LOCAL_USER_ID);
+    expect(store.written[0]).not.toHaveProperty('exerciseId');
+    expect(store.written[0]).not.toHaveProperty('sessionId');
+  });
+
+  it('never mixes two lifters into one direction history or baseline', async () => {
+    // The guest's three past tests are all RIGHT-dominant and pull ~100 lb.
+    // Unkeyed, they would have decided the owner's label and the owner's SEM.
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 130, { userId: 'Jordan' }),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 131, { userId: 'Jordan' }),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 99, 129, { userId: 'Jordan' }),
+    ];
+    register({});
+    const body = (await runImbalance()) as unknown as {
+      directionHistory: { label: string; testsCompared: number };
+      peakForceBaseline: unknown;
+      legacyUnkeyed: number;
+    };
+
+    // Only this run, which is left-dominant: the guest's right-dominant series
+    // is out of scope entirely.
+    expect(body.directionHistory.testsCompared).toBe(1);
+    expect(body.directionHistory.label).toBe('insufficient-history');
+    expect(body.peakForceBaseline).toBeNull();
+    // Excluded by the key, not by the legacy gap — they carry a lifter.
+    expect(body.legacyUnkeyed).toBe(0);
+  });
+
+  it('never mixes two exercises into one direction history or baseline', async () => {
+    // Same lifter, a different joint. Joint angle dominates what an isometric
+    // maximum means, so pooling the two makes both numbers meaningless.
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 130, {
+        userId: LOCAL_USER_ID,
+        exerciseId: 'overhead-press',
+      }),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 131, {
+        userId: LOCAL_USER_ID,
+        exerciseId: 'overhead-press',
+      }),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 99, 129, {
+        userId: LOCAL_USER_ID,
+        exerciseId: 'overhead-press',
+      }),
+    ];
+    register({
+      left: { sessionId: 'sess-2', exerciseId: 'seated-row' },
+      right: { sessionId: 'sess-2', exerciseId: 'seated-row' },
+    });
+    const body = (await runImbalance()) as unknown as {
+      directionHistory: { testsCompared: number };
+      peakForceBaseline: unknown;
+    };
+
+    expect(body.directionHistory.testsCompared).toBe(1);
+    expect(body.peakForceBaseline).toBeNull();
+  });
+
+  it('reads the series for the lifter and exercise that are actually active', async () => {
+    // The same seeds as the two cases above, now keyed to THIS run's lifter
+    // and exercise: the filter includes as well as it excludes.
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 130, 100, {
+        userId: 'Jordan',
+        exerciseId: 'seated-row',
+      }),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 131, 101, {
+        userId: 'Jordan',
+        exerciseId: 'seated-row',
+      }),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 129, 99, {
+        userId: 'Jordan',
+        exerciseId: 'seated-row',
+      }),
+    ];
+    register({
+      left: { sessionId: 'sess-3', exerciseId: 'seated-row', lifter: 'Jordan' },
+      right: { sessionId: 'sess-3', exerciseId: 'seated-row', lifter: 'Jordan' },
+    });
+    const body = (await runImbalance()) as unknown as {
+      directionHistory: { label: string; testsCompared: number };
+      peakForceBaseline: { sampleSize: number } | null;
+    };
+
+    // Three seeded left-dominant tests plus this run, also left-dominant.
+    expect(body.directionHistory.testsCompared).toBe(4);
+    expect(body.directionHistory.label).toBe('consistent-left');
+    expect(body.peakForceBaseline!.sampleSize).toBe(6); // 3 occasions × 2 sides
+  });
+
+  it('excludes pre-keying assessments from both series and counts them', async () => {
+    // No userId at all: rows written before the keying landed. Nothing says
+    // whose tests they were, so no filter can place them in anyone's series.
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 130, {}),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 131, {}),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 99, 129, {}),
+    ];
+    register({});
+    const body = (await runImbalance()) as unknown as {
+      directionHistory: { testsCompared: number };
+      peakForceBaseline: unknown;
+      legacyUnkeyed: number;
+    };
+
+    expect(body.directionHistory.testsCompared).toBe(1);
+    expect(body.peakForceBaseline).toBeNull();
+    // Counted rather than dropped silently: a one-test series reads
+    // differently once you know three older tests could not join it.
+    expect(body.legacyUnkeyed).toBe(3);
+  });
+
+  it('measure_max reports the legacy count alongside its own baseline', async () => {
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 100, {}),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 101, {}),
+    ];
+    register({});
+    const body = await runMax();
+
+    expect(body.peakForceBaseline).toBeNull();
+    expect(body.legacyUnkeyed).toBe(2);
   });
 });

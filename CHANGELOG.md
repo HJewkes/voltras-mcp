@@ -37,6 +37,19 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Changed
+
+- Isometric history is now per lifter and per exercise (VW-280). Every stored assessment
+  records who was tested, on what, and during which session, so `directionHistory` on
+  `isometric.measure_imbalance` and the peak-force baseline on both it and
+  `isometric.measure_max` read one lifter's own tests of one exercise. Before this, a
+  guest's pull and the owner's pull at a different joint decided each other's
+  consistent/fluctuating label and inflated each other's SEM, which made a real strength
+  change harder to detect. Assessments recorded before this change carry no lifter, so
+  they cannot join anyone's series: they are excluded from both reads and reported in a
+  new `legacyUnkeyed` count rather than dropped silently. The schema gains the three key
+  columns on `isometric_measurements` (v21); nothing is back-filled.
+
 ### Added
 
 - The wall shows what an isometric assessment measured, once the hold overlay closes

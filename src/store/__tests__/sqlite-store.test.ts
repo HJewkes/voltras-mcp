@@ -392,9 +392,9 @@ describe('SqliteSessionStore.open() error paths', () => {
     // matches anywhere in the message — including the random temp path inside
     // `dbPath` — so `toContain('3')` passed by accident on macOS (long
     // `/var/folders/...` paths nearly always contain a '3') while failing on
-    // CI's short `/tmp/...`. It had also gone stale before: SCHEMA_VERSION is 20.
+    // CI's short `/tmp/...`. It had also gone stale before: SCHEMA_VERSION is 21.
     expect(e.message).toContain('user_version=99');
-    expect(e.message).toMatch(/expected 20\b/);
+    expect(e.message).toMatch(/expected 21\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -436,7 +436,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(20);
+      expect(version.user_version).toBe(21);
     } finally {
       await store.close();
     }
@@ -473,7 +473,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       );
       expect(names).toContain('is_warmup');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(20);
+      expect(version.user_version).toBe(21);
       // The pre-flag row backfills as a working set (no isWarmup key on read).
       expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
@@ -644,7 +644,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
       // A v4 DB runs the whole forward chain in one open, so it lands on the
       // CURRENT version, not on v5. v5 is a waypoint, never a resting state.
-      expect(version.user_version).toBe(20);
+      expect(version.user_version).toBe(21);
     } finally {
       await store.close();
     }
@@ -947,6 +947,16 @@ function makeTrial(idPrefix: string, index: number, plateauForceLbs: number) {
 }
 
 /** A two-sided assessment: left on device 01, right on device 02. */
+/** A measurement carrying the VW-280 keys, which `makeMeasurement` deliberately omits. */
+function keyed(id: string, userId: string, exerciseId: string | null): StoredIsometricMeasurement {
+  return {
+    ...makeMeasurement(id, '2025-08-20T10:30:00.000Z'),
+    userId,
+    ...(exerciseId !== null ? { exerciseId } : {}),
+    sessionId: `sess-${id}`,
+  };
+}
+
 function makeMeasurement(id: string, measuredAt: string): StoredIsometricMeasurement {
   return {
     id,
@@ -1004,7 +1014,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       expect(tables).toContain('isometric_measurements');
       expect(tables).toContain('isometric_trials');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(20);
+      expect(version.user_version).toBe(21);
     } finally {
       await store.close();
     }
@@ -1180,7 +1190,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       // The device-less run still reaches the direction series (VW-270), which
       // is why that series cannot be keyed on a device id.
       const recent = await store.listRecentIsometricMeasurements();
-      expect(recent.map((x) => x.id)).toContain('meas-anon');
+      expect(recent.measurements.map((x) => x.id)).toContain('meas-anon');
     } finally {
       await store.close();
     }
@@ -1194,12 +1204,63 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       await store.putIsometricMeasurement(makeMeasurement('meas-b', '2025-08-05T10:30:00.000Z'));
 
       const all = await store.listRecentIsometricMeasurements();
-      expect(all.map((m) => m.id)).toEqual(['meas-c', 'meas-b', 'meas-a']);
+      expect(all.measurements.map((m) => m.id)).toEqual(['meas-c', 'meas-b', 'meas-a']);
       // Both limbs come back, so the direction of each past run is computable.
-      expect(all.every((m) => m.sides.length === 2)).toBe(true);
+      expect(all.measurements.every((m) => m.sides.length === 2)).toBe(true);
+      // Unfiltered: nothing was excluded, so nothing is counted as excluded.
+      expect(all.legacyUnkeyed).toBe(0);
 
       const limited = await store.listRecentIsometricMeasurements({ limit: 2 });
-      expect(limited.map((m) => m.id)).toEqual(['meas-c', 'meas-b']);
+      expect(limited.measurements.map((m) => m.id)).toEqual(['meas-c', 'meas-b']);
+    } finally {
+      await store.close();
+    }
+  });
+
+  // VW-280: before the keys existed every test on the rig fell into one series.
+  it('keeps two lifters and two exercises out of each other series', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      await store.putIsometricMeasurement(keyed('own-row', 'local', 'seated-row'));
+      await store.putIsometricMeasurement(keyed('own-press', 'local', 'overhead-press'));
+      await store.putIsometricMeasurement(keyed('guest-row', 'Jordan', 'seated-row'));
+
+      const owner = await store.listRecentIsometricMeasurements({
+        filter: { userId: 'local', exerciseId: 'seated-row' },
+      });
+      expect(owner.measurements.map((m) => m.id)).toEqual(['own-row']);
+
+      const guest = await store.listRecentIsometricMeasurements({
+        filter: { userId: 'Jordan', exerciseId: 'seated-row' },
+      });
+      expect(guest.measurements.map((m) => m.id)).toEqual(['guest-row']);
+
+      // A filter naming no exercise means the runs captured with no exercise,
+      // never every exercise — `exercise_id = NULL` would match nothing at all.
+      await store.putIsometricMeasurement(keyed('own-loose', 'local', null));
+      const loose = await store.listRecentIsometricMeasurements({
+        filter: { userId: 'local', exerciseId: null },
+      });
+      expect(loose.measurements.map((m) => m.id)).toEqual(['own-loose']);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('excludes pre-v21 rows from every filtered series and counts them', async () => {
+    const store = SqliteSessionStore.open(dbPath);
+    try {
+      // No user_id: a row written before the keying, whose lifter was never
+      // recorded. Attributing it to the owner would invent the missing fact.
+      await store.putIsometricMeasurement(makeMeasurement('legacy-1', '2025-08-01T10:30:00.000Z'));
+      await store.putIsometricMeasurement(makeMeasurement('legacy-2', '2025-08-02T10:30:00.000Z'));
+      await store.putIsometricMeasurement(keyed('own-row', 'local', 'seated-row'));
+
+      const owner = await store.listRecentIsometricMeasurements({
+        filter: { userId: 'local', exerciseId: 'seated-row' },
+      });
+      expect(owner.measurements.map((m) => m.id)).toEqual(['own-row']);
+      expect(owner.legacyUnkeyed).toBe(2);
     } finally {
       await store.close();
     }
