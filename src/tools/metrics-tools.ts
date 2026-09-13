@@ -98,6 +98,7 @@ import {
   getRepMeanVelocity,
   getRepPeakVelocity,
   getSetFatigueIndex,
+  getSetFatigueVerdict,
   getSetFirstRepVelocity,
   getSetMeanVelocity,
   getSetVelocitySummary,
@@ -284,6 +285,12 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       const set = await state.store.getSet(input.setId);
       if (!set) throw notFound(`set '${input.setId}' not found`);
       return getSetFatigueIndex(toAnalyticsSet(set));
+    }
+
+    case 'fatigue.verdict': {
+      const set = await state.store.getSet(input.setId);
+      if (!set) throw notFound(`set '${input.setId}' not found`);
+      return getSetFatigueVerdict(toAnalyticsSet(set));
     }
 
     case 'vbt.rir': {
@@ -2150,13 +2157,21 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 16 literals) to a single analytics function; each pipeline takes different ' +
+  'field (one of 17 literals) to a single analytics function; each pipeline takes different ' +
   'input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +
   'and, if targetVelocity is given, inverts it to a recommended load + confidence (null if the ' +
   'fit is flat/non-invertible — never a fabricated number). ' +
   '`fatigue.set` (setId) — within-set fatigue index for one set. ' +
+  "`fatigue.verdict` (VW-313) (setId) — the same multi-dimension fatigue verdict the SPA's " +
+  'live fatigue card renders, verbatim: an aggregate `state` (good/slowing/grinding/' +
+  'form-breakdown), an aggregate `tone`, and three per-dimension tones under `dimensions` ' +
+  '(`velocityLoss`/`rom`/`tempo`). A ROM or tempo alarm OVERRIDES a clean-looking velocity ' +
+  'reading into form-breakdown by strict precedence — a cheat rep props velocity up by ' +
+  'cutting ROM and dropping the eccentric, and this is the one signal that catches it. ' +
+  '`null` below 2 reps (no baseline yet to judge a rep against). Prefer this over ' +
+  '`fatigue.set`, whose FatigueIndex is DEPRECATED upstream. ' +
   '`vbt.rir` (setId, optional targetReps) — per-rep reps-in-reserve, plus the final rep as the ' +
   "headline. `basis` (VW-310) names which curve answered: `'fitted'` reads the lifter's own " +
   "RIR-velocity curve (VW-298) when one exists for this exercise; `'profile-estimate'` is the " +

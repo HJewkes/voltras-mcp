@@ -273,6 +273,7 @@ const PIPELINE_TO_ANALYTICS_FN: Record<
   'vbt.set': 'getSetVelocitySummary',
   'vbt.profile': 'buildProfile',
   'fatigue.set': 'getSetFatigueIndex',
+  'fatigue.verdict': 'getSetFatigueVerdict',
   'vbt.rir': 'estimateRIRWithProfile',
   'session.volume': 'computeVolume',
   'session.fatigue': 'computeSessionFatigue',
@@ -565,6 +566,52 @@ describe('metrics.compute — fatigue.set', () => {
     registerMetricsTools(server, state, placeholders);
 
     const result = await callTool(tools, { pipeline: 'fatigue.set', setId: 'nope' });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect((parsePayload(result) as { code: string }).code).toBe('NOT_FOUND');
+  });
+});
+
+describe('metrics.compute — fatigue.verdict', () => {
+  let spy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    spy = vi.spyOn(analytics, 'getSetFatigueVerdict').mockReturnValue({
+      state: 'good',
+      tone: 'ok',
+      dimensions: { velocityLoss: 'ok', rom: 'ok', tempo: 'ok' },
+    });
+  });
+  afterEach(() => spy.mockRestore());
+
+  it('fetches the set and dispatches to getSetFatigueVerdict', async () => {
+    const set = makeSet('set-x', 'sess-1', 200);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async (id: string) => (id === 'set-x' ? set : undefined)),
+    });
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'fatigue.verdict', setId: 'set-x' });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith({ reps: set.reps });
+    expect(result.isError).toBeUndefined();
+    expect(parsePayload(result)).toEqual({
+      state: 'good',
+      tone: 'ok',
+      dimensions: { velocityLoss: 'ok', rom: 'ok', tempo: 'ok' },
+    });
+  });
+
+  it('EC-07: missing set → NOT_FOUND', async () => {
+    const state = makeStateWithStore();
+    const { server, tools } = makeFakeServer();
+    const placeholders = makePlaceholders(server);
+    registerMetricsTools(server, state, placeholders);
+
+    const result = await callTool(tools, { pipeline: 'fatigue.verdict', setId: 'nope' });
 
     expect(spy).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
