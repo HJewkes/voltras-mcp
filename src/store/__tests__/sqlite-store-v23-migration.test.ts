@@ -142,7 +142,7 @@ describe('v22 -> v23 migration', () => {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(23);
+        expect(version.user_version).toBe(24);
         const row = db.prepare('SELECT COUNT(*) AS n FROM exercise_baselines').get() as {
           n: number;
         };

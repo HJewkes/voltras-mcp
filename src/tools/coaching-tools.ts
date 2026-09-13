@@ -20,6 +20,7 @@ import { CoachingExplainInput } from '../schemas/coaching.js';
 import type { ServerState } from '../state/server-state.js';
 import { COACHING_CONTENT } from './coaching-content.js';
 import { wrapHandler } from './helpers.js';
+import { resolveRirVelocityTarget, type RirVelocityTargetResult } from './rir-velocity-tools.js';
 
 interface PlaceholderTools {
   get(name: string): RegisteredTool | undefined;
@@ -44,7 +45,12 @@ const COACHING_EXPLAIN_DESCRIPTION =
   '`meso.asymmetry_interpretation` (VW-270), `live.readiness_interpretation` (VW-269) and ' +
   '`live.eccentric_overload_cost` (VW-303, for a request mentioning eccentric overload or ' +
   'accentuated eccentric loading) — ' +
-  'so their `sources` are author-year keys and their `caveats` say so.';
+  'so their `sources` are author-year keys and their `caveats` say so. ' +
+  'Pass `exerciseId` and `rir` TOGETHER on `live.rir_estimation` to translate an RIR ' +
+  "prescription into this lifter's own velocity target: the response gains " +
+  '`rirVelocityTarget`, carrying `velocityTargetMps` from their fitted curve, or a null ' +
+  'target and the stated general-model `caveat` when they have no curve yet (VW-298). Other ' +
+  'topics ignore the two fields.';
 
 /**
  * Hot-swap the `coaching.*` placeholder with its real handler. Mirrors the
@@ -52,14 +58,14 @@ const COACHING_EXPLAIN_DESCRIPTION =
  */
 export function registerCoachingTools(
   _server: McpServer,
-  _state: ServerState,
+  state: ServerState,
   placeholders: PlaceholderTools,
 ): void {
   install(
     placeholders,
     'coaching.explain',
     CoachingExplainInput,
-    wrapHandler(CoachingExplainInput, (input) => Promise.resolve(explain(input))),
+    wrapHandler(CoachingExplainInput, (input) => explain(state, input)),
     COACHING_EXPLAIN_DESCRIPTION,
   );
 }
@@ -85,19 +91,48 @@ function install<S extends z.ZodObject>(
   tool.update(updates as never);
 }
 
-function explain(input: z.infer<typeof CoachingExplainInput>): {
+interface CoachingExplanation {
   topic: string;
   explanation: string;
   sources: string[];
   caveats?: string[];
-} {
+  /**
+   * The lifter's own velocity for the requested reps-in-reserve, or the
+   * general-model caveat when they have no fitted curve (VW-298). Present only
+   * when the caller named an exercise and an RIR on an RIR topic.
+   */
+  rirVelocityTarget?: RirVelocityTargetResult;
+}
+
+async function explain(
+  state: ServerState,
+  input: z.infer<typeof CoachingExplainInput>,
+): Promise<CoachingExplanation> {
   const content = COACHING_CONTENT[input.topic];
   const perTierValue = input.tier !== undefined ? content.perTier?.[input.tier] : undefined;
-  const explanation = perTierValue ?? content.allTiers;
+  const target = await rirVelocityTargetFor(state, input);
   return {
     topic: input.topic,
-    explanation,
+    explanation: perTierValue ?? content.allTiers,
     sources: content.sources,
     ...(content.caveats !== undefined ? { caveats: content.caveats } : {}),
+    ...(target !== undefined ? { rirVelocityTarget: target } : {}),
   };
+}
+
+/**
+ * The velocity half of an RIR answer, when the caller asked for one.
+ *
+ * Scoped to `live.rir_estimation` because that is the topic whose prose
+ * prescribes an RIR. A caller passing lifter context alongside an unrelated
+ * topic gets the prose and no target rather than an error — the fields are
+ * additional context, not a mode switch.
+ */
+async function rirVelocityTargetFor(
+  state: ServerState,
+  input: z.infer<typeof CoachingExplainInput>,
+): Promise<RirVelocityTargetResult | undefined> {
+  if (input.topic !== 'live.rir_estimation') return undefined;
+  if (input.exerciseId === undefined || input.rir === undefined) return undefined;
+  return resolveRirVelocityTarget(state.store, input.exerciseId, input.rir);
 }

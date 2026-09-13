@@ -14,6 +14,8 @@
 
 import { z } from 'zod';
 
+import { RepsInReserve } from './rir-velocity.js';
+
 export const CoachingTopic = z.enum([
   // Session 0 / onboarding
   'onboarding.tier_inference',
@@ -58,5 +60,18 @@ export const CoachingExplainInput = z
      * whose content does not vary by tier ignore this field.
      */
     tier: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
+    /**
+     * Translate an RIR prescription into this lifter's own velocity target
+     * (VW-298). Both fields or neither: a target is a claim about ONE exercise
+     * at ONE reps-in-reserve, and half of that pair answers nothing. Only
+     * `live.rir_estimation` consumes them; other topics ignore them rather
+     * than erroring, so a caller passing lifter context to every lookup is
+     * not punished for it.
+     */
+    exerciseId: z.string().min(1).optional(),
+    rir: RepsInReserve.optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => (v.exerciseId === undefined) === (v.rir === undefined), {
+    message: 'pass `exerciseId` and `rir` together, or neither',
+  });

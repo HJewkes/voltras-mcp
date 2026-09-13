@@ -142,6 +142,14 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'seeLbs',
   'seePct',
   'seePctCi',
+  // VW-298: the RIR-velocity curve's own fields, on `rir_velocity.target` and
+  // on `coaching.explain`'s `rirVelocityTarget`. The velocity is not readable
+  // without knowing whether it extrapolates, and the fit's error is quoted in
+  // reps because that is the unit the source paper reports.
+  'rirErrorReps',
+  'rirVelocityTarget',
+  'velocityTargetMps',
+  'withinFittedRange',
   // VW-270: the asymmetry verdict's own fields, on
   // `isometric.measure_imbalance`. The percentage is meaningless without the
   // CVs it was judged against, so the description names all of them and every

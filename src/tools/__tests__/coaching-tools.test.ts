@@ -7,7 +7,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  fitRirVelocityModel,
+  GENERAL_MODEL_CAVEAT,
+  type RirVelocityModel,
+  type RirVelocityObservation,
+} from '../../analytics/rir-velocity.js';
 import { CoachingTopic } from '../../schemas/coaching.js';
+import type { SessionStore } from '../../store/types.js';
 import { COACHING_CONTENT } from '../coaching-content.js';
 import { registerCoachingTools } from '../coaching-tools.js';
 
@@ -29,7 +36,7 @@ interface Harness {
   description: () => string | undefined;
 }
 
-function setup(): Harness {
+function setup(store?: SessionStore): Harness {
   const placeholders = new Map<string, FakeRegisteredTool>();
   let installedDescription: string | undefined;
   const tool: FakeRegisteredTool = {
@@ -45,7 +52,7 @@ function setup(): Harness {
 
   registerCoachingTools(
     undefined as unknown as Parameters<typeof registerCoachingTools>[0],
-    undefined as unknown as Parameters<typeof registerCoachingTools>[1],
+    { store } as unknown as Parameters<typeof registerCoachingTools>[1],
     placeholders as unknown as Parameters<typeof registerCoachingTools>[2],
   );
 
@@ -63,8 +70,52 @@ function parseResult(r: ToolResult): {
   explanation: string;
   sources: string[];
   caveats?: string[];
+  rirVelocityTarget?: {
+    velocityTargetMps: number | null;
+    withinFittedRange: boolean | null;
+    caveat: string | null;
+  };
 } {
   return JSON.parse(r.content[0].text);
+}
+
+/** A store holding one fitted curve per exercise id, and nothing else. */
+function storeWithCurves(curves: Record<string, RirVelocityModel>): SessionStore {
+  return {
+    getRirVelocityModel: (userId: string, exerciseId: string) => {
+      const model = curves[exerciseId];
+      return Promise.resolve(
+        model === undefined
+          ? undefined
+          : {
+              userId,
+              exerciseId,
+              model: model as unknown as Record<string, unknown>,
+              fittedAt: '2026-09-10T00:00:00.000Z',
+              sampleSize: model.pointCount,
+              fitQuality: model.r2,
+            },
+      );
+    },
+  } as unknown as SessionStore;
+}
+
+/** A fitted curve from three sessions of six-rep sets on a known line. */
+function curve(intercept: number, slope: number): RirVelocityModel {
+  const observations: RirVelocityObservation[] = ['s1', 's2', 's3'].map((sessionId, i) => ({
+    setId: `set-${String(i)}`,
+    sessionId,
+    performedAt: `2026-09-0${String(i + 1)}T10:00:00.000Z`,
+    relativeIntensity: 0.8,
+    anchorSource: 'failure',
+    points: Array.from({ length: 6 }, (_, r) => ({
+      rir: 5 - r,
+      velocityMps: intercept + slope * (5 - r),
+    })),
+  }));
+  const model = fitRirVelocityModel(observations).model;
+  if (model === null) throw new Error('fixture corpus should fit');
+  return model;
 }
 
 describe('coaching.explain', () => {
@@ -307,6 +358,76 @@ describe('coaching.explain', () => {
   it('rejects an invalid tier value', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'live.cue_budget', tier: 'expert' });
+
+    // Assert
+    expect(r.isError).toBe(true);
+  });
+});
+
+// VW-298: translating an RP RIR prescription into a velocity is what makes the
+// prescription actionable on this device, and it is only defensible off the
+// lifter's OWN curve.
+describe('coaching.explain — RIR to velocity', () => {
+  it('gives two lifters with different curves different targets for the same RIR', async () => {
+    // Arrange: one lifter grinds slowly, the other moves fast and decays hard.
+    const slow = setup(storeWithCurves({ row: curve(0.15, 0.03) }));
+    const fast = setup(storeWithCurves({ row: curve(0.35, 0.09) }));
+    const args = { topic: 'live.rir_estimation', exerciseId: 'row', rir: 2 };
+
+    // Act
+    const slowBody = parseResult(await slow.invoke(args));
+    const fastBody = parseResult(await fast.invoke(args));
+
+    // Assert
+    expect(slowBody.rirVelocityTarget?.velocityTargetMps).toBeCloseTo(0.21, 2);
+    expect(fastBody.rirVelocityTarget?.velocityTargetMps).toBeCloseTo(0.53, 2);
+    expect(slowBody.explanation).toEqual(fastBody.explanation);
+  });
+
+  it('returns the stated general-model caveat when the lifter has no curve', async () => {
+    // Arrange
+    const h = setup(storeWithCurves({}));
+
+    // Act
+    const body = parseResult(
+      await h.invoke({ topic: 'live.rir_estimation', exerciseId: 'row', rir: 2 }),
+    );
+
+    // Assert
+    expect(body.rirVelocityTarget?.velocityTargetMps).toBeNull();
+    expect(body.rirVelocityTarget?.caveat).toBe(GENERAL_MODEL_CAVEAT);
+  });
+
+  it('omits the target when no exercise is named', async () => {
+    // Arrange
+    const h = setup(storeWithCurves({ row: curve(0.2, 0.05) }));
+
+    // Act
+    const body = parseResult(await h.invoke({ topic: 'live.rir_estimation' }));
+
+    // Assert: the prose still answers the question asked.
+    expect(body.rirVelocityTarget).toBeUndefined();
+    expect(body.explanation).toContain('RIR');
+  });
+
+  it('ignores the pair on a topic that prescribes no RIR', async () => {
+    // Arrange
+    const h = setup(storeWithCurves({ row: curve(0.2, 0.05) }));
+
+    // Act
+    const body = parseResult(
+      await h.invoke({ topic: 'live.cue_budget', exerciseId: 'row', rir: 2 }),
+    );
+
+    // Assert
+    expect(body.rirVelocityTarget).toBeUndefined();
+    expect(body.topic).toBe('live.cue_budget');
+  });
+
+  it('rejects an exercise with no reps-in-reserve beside it', async () => {
+    // Arrange / Act: half a target claim answers nothing.
+    const h = setup(storeWithCurves({}));
+    const r = await h.invoke({ topic: 'live.rir_estimation', exerciseId: 'row' });
 
     // Assert
     expect(r.isError).toBe(true);

@@ -144,6 +144,12 @@ export const CORE_TOOL_NAMES = [
   // same stance as `driftguard.check` (VW-131 decision): no internal wiring
   // yet. See src/tools/mrv-guard-tools.ts.
   'mrvguard.check',
+  // Per-lifter, per-exercise RIR-velocity curve (VW-298). `fit` recomputes and
+  // stores it; `target` converts an RIR prescription into that lifter's own
+  // velocity, or returns the general-model caveat when no curve exists. See
+  // src/tools/rir-velocity-tools.ts.
+  'rir_velocity.fit',
+  'rir_velocity.target',
   // RP-derived knowledge/prose lookup (VW-136/VW-137). A genuinely new
   // namespace per the locked consolidation design — kept to ONE tool with a
   // bounded topic enum, not one tool per topic. See src/tools/coaching-tools.ts.
@@ -344,6 +350,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'driftguard.check': 'read',
   'mrvguard.check': 'read',
+  // `write`: it rewrites (or deletes) the stored curve in SQLite.
+  'rir_velocity.fit': 'write',
+  'rir_velocity.target': 'read',
   'coaching.explain': 'read',
 
   // `write`: it upserts the plan tree in SQLite. `dryRun: true` writes

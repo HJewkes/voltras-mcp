@@ -19,6 +19,7 @@
 // task; the alias will be unified once both branches merge.
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
+import type { RirVelocityFit } from '../analytics/rir-velocity.js';
 import type { AccountabilityState } from '../accountability/types.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
@@ -1202,6 +1203,29 @@ export interface StoredFailureAnchor {
   selfReportedRir?: number;
 }
 
+/**
+ * One lifter's fitted RIR-velocity curve for one exercise (VW-298).
+ *
+ * The MODEL is persisted here, unlike `exercise_baselines`, which stores state
+ * only. The distinction is what the row costs to reproduce: a baseline's values
+ * are a formula away from reps that are still on disk, while a fit is an
+ * optimisation over a selected corpus, and re-running it on every read would
+ * give a different answer as soon as the selection rules changed. `version`
+ * inside `model` names the rules in force, so a stale fit is identifiable
+ * rather than silently re-interpreted.
+ */
+export interface StoredRirVelocityModel {
+  userId: string;
+  exerciseId: string;
+  /** The fitted `RirVelocityModel`, as stored JSON. */
+  model: Record<string, unknown>;
+  fittedAt: string;
+  /** Reps the fit was taken over. */
+  sampleSize: number;
+  /** The fit's R². */
+  fitQuality: number;
+}
+
 /** Verdict tally from a reharvest pass over one key's sets. */
 export interface FailureHarvestCounts {
   failure: number;
@@ -1631,6 +1655,23 @@ export interface SessionStore extends ExerciseSetupStore {
    * repeat.
    */
   reharvestExercise(key: BaselineKey): Promise<FailureHarvestCounts>;
+
+  /** The stored RIR-velocity fit for one lifter and exercise, if one exists. */
+  getRirVelocityModel(
+    userId: string,
+    exerciseId: string,
+  ): Promise<StoredRirVelocityModel | undefined>;
+
+  /**
+   * Re-fit one lifter's RIR-velocity curve for one exercise from their own
+   * stored sets, persisting the result.
+   *
+   * A fit that does not clear its minimums DELETES any stored row rather than
+   * leaving the previous one in place: the corpus it was fitted over is the
+   * corpus that just failed to qualify, so keeping the old curve would answer
+   * with a model the current rules say cannot be built.
+   */
+  refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;
