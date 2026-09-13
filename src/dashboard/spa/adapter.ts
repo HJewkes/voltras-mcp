@@ -31,6 +31,9 @@ import type { SetPurpose } from '../../store/types.js';
 // Type-only, same rationale: the declared setup card (VW-275) mirrors
 // `store/types.ts`'s `SetupCard` without a runtime dependency.
 import type { SetupCard } from '../../store/types.js';
+// Type-only, same rationale: the session-pace estimate (VW-290) is computed
+// server-side and shipped whole; the client only needs its shape.
+import type { SessionPaceView } from '../read-models/session-pace.js';
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
@@ -252,6 +255,12 @@ export interface Snapshot {
    * Null with no active exercise or no card resolved either way.
    */
   expectedSetupCard?: SetupCard | null;
+  /**
+   * The session's pace against its attached plan (VW-290). Null — and absent on
+   * an older server or a hand-built test snapshot — when no plan is attached;
+   * the rail footer then stays hidden rather than showing an invented budget.
+   */
+  sessionPace?: SessionPaceView | null;
   /**
    * Monotonic server send-order stamp (VMCP-03.04). Present on both the poll
    * response and the `snapshot` SSE push; the store applies a snapshot only when

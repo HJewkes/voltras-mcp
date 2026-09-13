@@ -25,8 +25,10 @@ import { type MassUnit, convertMass, formatMass } from './mass';
 import type { SetPurpose } from '../../../store/types.js';
 // Type-only, same rationale: the declared setup card (VW-275).
 import type { SetupCard } from '../../../store/types.js';
+// Type-only, same rationale: the server-computed session pace (VW-290).
+import type { SessionPaceView } from '../../read-models/session-pace.js';
 
-export type { SetPurpose, SetupCard };
+export type { SetPurpose, SetupCard, SessionPaceView };
 
 // --- Store read-model shapes (mirror voltras-mcp dashboard store) -------------
 
@@ -202,6 +204,12 @@ export interface SessionModel {
    * confirmed card and no digest-seeded default resolve for this exercise.
    */
   expectedSetupCard: SetupCard | null;
+  /**
+   * The session's pace against its attached plan (VW-290), computed server-side.
+   * Null when no plan is attached — the rail's pace footer then stays hidden
+   * rather than pacing the lifter against a budget nobody prescribed.
+   */
+  sessionPace: SessionPaceView | null;
 }
 
 /**
@@ -804,4 +812,33 @@ export function deriveMissedSetsMetric(model: DashboardModel): MetricTileData | 
     (set) => completedSetVerdict(set, model.session) === 'miss',
   ).length;
   return missed > 0 ? { label: 'Missed', value: String(missed) } : null;
+}
+
+/**
+ * The rail's pace footer tiles (VW-290): how many planned sets are left and when
+ * the plan projects the session to end. Empty without a `sessionPace` — a session
+ * with no attached plan shows no footer at all rather than a guessed finish time.
+ *
+ * The planned/elapsed MINUTES of the same estimate are not tiles: they go to the
+ * rail's own `elapsedMs` / `budgetMs`, which draw the header clock and its pace
+ * marker. Two tiles keep the row readable at the rail's width.
+ */
+export function derivePaceMetrics(pace: SessionPaceView | null): MetricTileData[] {
+  if (pace === null) return [];
+  return [
+    {
+      label: 'Left',
+      value: `${pace.plannedSetsRemaining} ${pluralSets(pace.plannedSetsRemaining)}`,
+    },
+    { label: 'ETA', value: formatClockTime(pace.projectedEndAt) },
+  ];
+}
+
+function pluralSets(count: number): string {
+  return count === 1 ? 'set' : 'sets';
+}
+
+/** An ISO timestamp as the wall clock reads it, e.g. `"6:42 PM"`. */
+function formatClockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }

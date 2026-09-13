@@ -119,6 +119,34 @@ describe('buildSnapshotView', () => {
     expect(view.expectedSetupCard).toBeNull();
   });
 
+  // VW-290: the plan-derived session pace the rail footer renders.
+  it('carries the resolved session pace through', () => {
+    const sessionPace = {
+      plannedMinutes: 62,
+      elapsedMinutes: 18,
+      plannedSetsRemaining: 9,
+      projectedEndAt: '2026-05-09T13:02:00.000Z',
+    };
+    const view = buildSnapshotView({
+      devices: [],
+      session: session(),
+      activeSet: undefined,
+      activeExercise: undefined,
+      sessionPace,
+    });
+    expect(view.sessionPace).toEqual(sessionPace);
+  });
+
+  it('reports sessionPace=null for a session with no plan attached', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session(),
+      activeSet: undefined,
+      activeExercise: undefined,
+    });
+    expect(view.sessionPace).toBeNull();
+  });
+
   // VW-70: completed sets are a durable wire field so a consumer that didn't
   // watch the live active→null transition can still render the rail/recap.
   it('defaults sets.completed to [] when no completed sets are supplied', () => {

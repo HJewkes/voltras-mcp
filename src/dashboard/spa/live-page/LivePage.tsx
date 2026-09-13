@@ -20,6 +20,7 @@ import { IsometricVerdictCard } from './IsometricVerdictCard';
 import { deriveIsometricVerdictCard } from './isometric-verdict-model';
 import {
   deriveMissedSetsMetric,
+  derivePaceMetrics,
   deriveRailExercises,
   deriveRailMetrics,
   stageIsEmpty,
@@ -113,6 +114,8 @@ export type LivePageVariant = 'live' | 'live-dual';
 const PANEL_MIN_WIDTH = 390;
 /** Rail title fallback — a generic label, never an invented session name (VW-43). */
 const UNTITLED_SESSION = 'Session';
+/** The pace read-model speaks in minutes; `SessionRail` takes milliseconds. */
+const MS_PER_MINUTE = 60_000;
 
 // The panel's own geometry (chrome, body default, column widths) now lives in
 // `panel-geometry.ts` — the IDLE stage prefigures this exact skeleton and the two must not
@@ -203,7 +206,10 @@ export interface LivePageProps {
  *     a fabricated or mirrored limb. It replaced a stacked two-`LiveView` stage that
  *     duplicated every shared read-out and scrolled on a short wall.
  *
- * The rail footer pace read-out is intentionally OMITTED (no store field).
+ * The rail footer pace read-out IS now wired (VW-290): the snapshot carries a
+ * plan-derived `sessionPace`, so the rail shows sets left, a projected finish, and
+ * a clock against the planned budget. A session with no plan attached carries no
+ * pace, and the footer stays as absent as it was before.
  */
 export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: LivePageProps) {
   // The wall's DISPLAY unit (VW-63) — a store slice so it persists across reloads
@@ -229,9 +235,14 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
   // least one set missed its rep floor — appended, never replacing, so a
   // session with nothing to flag keeps the plain rollup.
   const missedTile = deriveMissedSetsMetric(model);
+  // The plan-derived pace footer (VW-290) — "Left" / "ETA" tiles, and the
+  // minutes half of the same estimate as the rail's own clock + budget below.
+  // Empty with no plan attached, which is what keeps the footer hidden.
+  const pace = model.session.sessionPace;
   const metrics = [
     ...(deriveRailMetrics(model, displayUnit) ?? []),
     ...(missedTile ? [missedTile] : []),
+    ...derivePaceMetrics(pace),
   ];
   // Working sets only (VW-260) — warmup/probe/technique sets are real and logged, but
   // don't advance the header's "sets done" pace figure.
@@ -251,6 +262,15 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
         setsDone={completedSets + liveSetProgress(model)}
         running={isLive}
         width={272}
+        // The pace estimate's minutes half (VW-290): the header's ⏱ readout and
+        // its pace marker. Both omitted without a plan, so the rail renders
+        // exactly as it did before rather than clocking against nothing.
+        {...(pace
+          ? {
+              elapsedMs: pace.elapsedMinutes * MS_PER_MINUTE,
+              budgetMs: pace.plannedMinutes * MS_PER_MINUTE,
+            }
+          : {})}
         // Session rollup tiles (Volume / Load), folded from the exercise-tagged set log
         // (VW-52). Undefined before the first set closes, so the header hides them rather
         // than showing zeros. No Fatigue tile — no honest session-wide signal to source it.

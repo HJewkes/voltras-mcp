@@ -7,6 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import { createRep } from '@voltras/workout-analytics';
 
 import {
   DEFAULT_DASHBOARD_HOST,
@@ -85,6 +86,75 @@ function makeFakeState(
   return {
     slots: slotMap,
     store: { listSessions: listMock, getSetsForSession: setsMock },
+  };
+}
+
+/** A sample-less rep — enough to make a set non-empty, which is all the pace reads. */
+function oneRep(): ActiveSet['reps'][number] {
+  return createRep(1);
+}
+
+/** One finished set on the primary slot, in the shape the snapshot gathers (VW-290). */
+function completedRecord(
+  setId: string,
+  over: Partial<ActiveSet> = {},
+): { set: ActiveSet; device: DeviceSnapshot } {
+  return {
+    set: {
+      setId,
+      sessionId: 'sess-PACE',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      status: 'ended',
+      reps: [],
+      ...over,
+    } as ActiveSet,
+    device: { connected: true },
+  };
+}
+
+/**
+ * A session with a six-set workout template attached (VW-290), plus whatever
+ * sets have already closed on it. The template is two exercises so the pace
+ * costs more than one exercise's rest.
+ */
+function paceState(completed: ReturnType<typeof completedRecord>[]): DashboardServerState {
+  const session: ActiveSession = {
+    sessionId: 'sess-PACE',
+    startedAt: '2026-05-09T12:00:00.000Z',
+    exerciseId: 'bench',
+    setIds: [],
+    status: 'active',
+  };
+  return {
+    slots: new Map([
+      [
+        'primary',
+        {
+          live: {
+            snapshotDevice: () => ({ connected: true }),
+            snapshotSession: () => session,
+            snapshotSet: () => undefined,
+            snapshotCompletedSets: () => completed,
+          },
+        },
+      ],
+    ]),
+    store: {
+      listSessions: async () => [],
+      getSetsForSession: async () => [],
+      getAssignmentsForSession: async () => [
+        {
+          id: 'asg-1',
+          sessionId: 'sess-PACE',
+          workoutTemplateId: 't1',
+          assignedAt: '2026-05-09T12:00:00.000Z',
+        },
+      ],
+      getPlannedExercisesForTemplate: async () => [
+        { id: 'pe1', workoutTemplateId: 't1', exerciseId: 'bench', orderIndex: 0, targetSets: 3 },
+        { id: 'pe2', workoutTemplateId: 't1', exerciseId: 'row', orderIndex: 1, targetSets: 3 },
+      ],
+    },
   };
 }
 
@@ -348,6 +418,40 @@ describe('GET /api/snapshot', () => {
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
     const body = JSON.parse(res.body) as { expectedSetupCard: unknown };
     expect(body.expectedSetupCard).toBeNull();
+  });
+
+  // VW-290: the snapshot's plan-derived pace, and the two set kinds that must
+  // NOT burn a planned set down.
+  it('serves the plan-derived sessionPace for a session with a template attached', async () => {
+    const handle = await startWithFake(paceState([]));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { sessionPace: { plannedSetsRemaining: number } | null };
+    expect(body.sessionPace?.plannedSetsRemaining).toBe(6);
+  });
+
+  it('counts only working sets with reps against the remaining planned sets', async () => {
+    const handle = await startWithFake(
+      paceState([
+        completedRecord('s1', { setPurpose: 'working', reps: [oneRep()] }),
+        completedRecord('s2', { setPurpose: 'warmup', reps: [oneRep()] }),
+        completedRecord('s3', { setPurpose: 'working', reps: [] }),
+      ]),
+    );
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { sessionPace: { plannedSetsRemaining: number } | null };
+    // Only `s1` counts: the warm-up and the 0-rep set leave the plan untouched.
+    expect(body.sessionPace?.plannedSetsRemaining).toBe(5);
+  });
+
+  it('reports sessionPace=null when no plan is attached to the session', async () => {
+    const state = paceState([]);
+    const handle = await startWithFake({
+      ...state,
+      store: { ...state.store, getAssignmentsForSession: async () => [] },
+    });
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { sessionPace: unknown };
+    expect(body.sessionPace).toBeNull();
   });
 
   it('lists every slot in devices[]', async () => {

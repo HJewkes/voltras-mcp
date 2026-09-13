@@ -44,7 +44,16 @@ import {
   SessionStartInput,
   type CheckinAnswerInput,
 } from '../schemas/session.js';
-import { LOCAL_USER_ID, type StoredSession, type StoredSet } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type StoredPlannedExercise,
+  type StoredSession,
+  type StoredSet,
+} from '../store/types.js';
+import {
+  buildSessionPaceView,
+  type SessionPaceView,
+} from '../dashboard/read-models/session-pace.js';
 import type { ActiveSession } from '../state/live-state.js';
 import {
   aggregateSession,
@@ -146,7 +155,11 @@ const SESSION_LIST_DESCRIPTION =
 const SESSION_GET_DESCRIPTION =
   'Fetch one full session by id, including its sets. Can be large for a long session — prefer ' +
   '`session.list` for browsing/filtering and only call this for a session you already intend ' +
-  'to inspect in full.';
+  'to inspect in full. A session with a workout template attached also carries `sessionPace`: ' +
+  'the plan-derived `plannedMinutes` / `elapsedMinutes` / `plannedSetsRemaining` / ' +
+  '`projectedEndAt` estimate, costing every planned set at its rep target and tempo plus its ' +
+  'rest (the goal default when the coach set none). It is an estimate from the plan, never a ' +
+  'measurement, and it is absent entirely for a session with no plan attached.';
 
 export function registerSessionTools(
   _server: McpServer,
@@ -743,15 +756,22 @@ interface CheckinReadModel {
 async function getSession(
   state: ServerState,
   input: z.infer<typeof SessionGetInput>,
-): Promise<{ session: StoredSession; sets: StoredSet[]; checkin?: CheckinReadModel }> {
+): Promise<{
+  session: StoredSession;
+  sets: StoredSet[];
+  checkin?: CheckinReadModel;
+  sessionPace?: SessionPaceView;
+}> {
   const session = await state.store.getSession(input.id);
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${input.id}" exists.`);
   }
   const sets = await state.store.getSetsForSession(input.id);
+  const pace = await resolveSessionPace(state, session, sets);
+  const paceField = pace !== null ? { sessionPace: pace } : {};
   const reports = await state.store.getSelfReportsForSession(input.id, 'checkin');
   if (reports.length === 0) {
-    return { session, sets };
+    return { session, sets, ...paceField };
   }
   const notesRow = reports.find((r) => r.questionCode === 'notes');
   const answers = reports
@@ -764,5 +784,45 @@ async function getSession(
       answers,
       ...(notesRow !== undefined ? { notes: notesRow.valueText ?? '' } : {}),
     },
+    ...paceField,
   };
+}
+
+/**
+ * The session's pace against its attached plan (VW-290), or null when no
+ * workout template is attached — there is then no plan to estimate a length,
+ * a remaining set count, or an end time from.
+ *
+ * The clock is the session's own `endedAt` for a finished session, so reading
+ * an old session back reports the pace it ran at rather than one that keeps
+ * growing with today's wall clock.
+ */
+async function resolveSessionPace(
+  state: ServerState,
+  session: StoredSession,
+  sets: readonly StoredSet[],
+): Promise<SessionPaceView | null> {
+  const assignments = await state.store.getAssignmentsForSession(session.id);
+  const planned: StoredPlannedExercise[] = [];
+  for (const assignment of assignments) {
+    if (assignment.workoutTemplateId === undefined) continue;
+    planned.push(
+      ...(await state.store.getPlannedExercisesForTemplate(assignment.workoutTemplateId)),
+    );
+  }
+  const endedMs = session.endedAt !== undefined ? Date.parse(session.endedAt) : NaN;
+  return buildSessionPaceView(
+    {
+      startedAt: session.startedAt,
+      nowMs: Number.isFinite(endedMs) ? endedMs : Date.now(),
+      planned,
+      // Warm-up / probe / technique rungs are real and stored but do not advance
+      // the plan (VW-260), and neither does a 0-rep set the watchdog force-closed.
+      completedWorkingSets: sets.filter(
+        (set) =>
+          set.reps.length > 0 && (set.setPurpose === undefined || set.setPurpose === 'working'),
+      ).length,
+    },
+    state.exercises,
+  );
 }
