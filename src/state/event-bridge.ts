@@ -1746,7 +1746,8 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
 }
 
 /**
- * Re-take the open set's start snapshot while it still has no reps (VW-165).
+ * Re-take the open set's start snapshot while no rep has closed under it yet
+ * (VW-165, VW-182).
  *
  * The header weight is snapshotted at `set.start`, so pre-arming — arm, then
  * dial the weight in on the unit, then lift — logged the PREVIOUS weight on
@@ -1758,10 +1759,18 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
  * tension (dogfood item 10: peak force stayed at 31 lb for a full set after
  * setting 45) — so following it would make the header describe a load nobody
  * lifted. Everything after rep 1 keeps the existing snapshot-at-start rule.
+ *
+ * VW-182: eligibility is "no rep has CLOSED under this set", not "the set has
+ * no reps". Those were the same thing until auto-arm (VW-164), which adopts the
+ * reps the lifter performed before the set existed — so an auto-armed set began
+ * life with reps already in it and this refresh never once ran for one, freezing
+ * its header on the pre-lift weight. Adopted reps do not count as the lifter
+ * having started under this set; the first rep to close after that does, and
+ * from there the freeze is exactly as strict as it was.
  */
 function refreshPreFirstRepSnapshot(state: ServerState, live: LiveState): void {
   const set = live.snapshotSet();
-  if (set === undefined || set.reps.length > 0) return;
+  if (set === undefined || set.reps.length > (set.adoptedRepCount ?? 0)) return;
   state.setStartDeviceSnapshots.set(set.setId, live.snapshotDevice());
 }
 
