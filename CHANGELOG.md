@@ -51,6 +51,15 @@ entry is written from the user's point of view is a review question, not a check
   warm-up pull is a cue, not a controlled variable. See the [isometric guide](/guides/isometric#warm-up-ramp-measure-max-only)
   for the full sequence.
 
+- Spoken output no longer plays over itself (VW-170). `system.speak` and the automatic
+  coaching cues now share one queue, so a cue that fires while the trainer is mid-sentence
+  waits its turn instead of layering on top and making both unintelligible. A `system.speak`
+  call therefore returns when its line starts, which may be after the line ahead of it has
+  finished. `interrupt: true` is unchanged and still immediate: it cuts off what is playing,
+  drops what is queued, and speaks now — which is what keeps the spoken "stopping" ack on the
+  voice safety phrase instant. A line dropped that way reports `spoken: false` rather than
+  failing.
+
 - `metrics.compute strength.e1rm` now solves for the load at a minimum velocity threshold
   fitted to your own history, where one exists, instead of the same 0.17 m/s for everybody
   (VW-299). `baselines.recalc` searches for the threshold that would have made the fewest
@@ -89,6 +98,15 @@ entry is written from the user's point of view is a review question, not a check
   measurement, and a session with no plan attached gets no pace and no footer at all rather
   than a budget nobody prescribed. Warm-up, probe and technique sets do not burn down the
   remaining count. No schema change.
+
+- Changing the weight while the cable is under tension now says so (VW-170). On 2026-09-07 a
+  set was run at 31 lb after 45 lb was asked for and confirmed: the firmware keeps the load it
+  engaged until the cable next goes slack, and nothing reported the gap — the tool said `ok`
+  and `device.get_state` read back the new number. `device.set_weight` now returns a
+  `weightChangeWarning` sentence, and the spoken weight fast-path puts the same sentence on its
+  `voice_command_applied` event, whenever a set is open or the cable reads loaded. The change
+  still goes through; this is a warning, never a refusal, because adjusting mid-set is a normal
+  drop-set move.
 
 - Every coaching line spoken aloud is now captioned on the wall dashboard's rest stage
   (VW-289, #394). A cue is heard once, from across the room, over whatever else is playing — miss

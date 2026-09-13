@@ -60,13 +60,16 @@ function slotSpec(
 
 function buildHarness(
   slots: ReturnType<typeof slotSpec>[],
-  opts: { setWeight?: Mock<(slot: string, lbs: number) => Promise<void>> } = {},
+  opts: {
+    setWeight?: Mock<(slot: string, lbs: number) => Promise<void>>;
+    weightChangeWarning?: (slot: string) => string | null;
+  } = {},
 ): Harness {
   const events: Published[] = [];
   const channels = { publish: (event: Published) => events.push(event) };
   const setWeight = opts.setWeight ?? vi.fn(async () => undefined);
   const live = [...slots];
-  const context = { slots: () => live, setWeight };
+  const context = { slots: () => live, setWeight, weightChangeWarning: opts.weightChangeWarning };
   const handler = createWeightFastPath(channels as never, context as never);
   return {
     events,
@@ -219,6 +222,24 @@ describe('createWeightFastPath — applying', () => {
     await h.handle('left to 40', { kind: 'absolute', lbs: 40, slot: 'left' });
     expect(h.setWeight).toHaveBeenCalledWith('left', 40);
   });
+
+  // VW-170: the spoken path is the one an athlete uses mid-set, so it has to
+  // carry the same under-tension caveat the tool does.
+  it('carries the under-tension warning into voice_command_applied', async () => {
+    const h = buildHarness([slotSpec('primary')], {
+      weightChangeWarning: () => 'held until the cable goes slack',
+    });
+    await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
+    expect(body(h.events[0]).weightChangeWarning).toBe('held until the cable goes slack');
+    expect(String(body(h.events[0]).summary)).toContain('held until the cable goes slack');
+    expect(body(h.events[0]).applied).toBe(true);
+  });
+
+  it('reports a null warning when the cable is slack and no set is open', async () => {
+    const h = buildHarness([slotSpec('primary')], { weightChangeWarning: () => null });
+    await h.handle('set it to 70', { kind: 'absolute', lbs: 70 });
+    expect(body(h.events[0]).weightChangeWarning).toBeNull();
+  });
 });
 
 describe('createWeightFastPath — undo', () => {
@@ -354,6 +375,22 @@ describe('makeVoiceWeight', () => {
   it('reports a null weight when the slot has never published one', () => {
     const state = fakeState([{ slotId: 'right' }]);
     expect(makeVoiceWeight(state as never).slots()[0].currentWeightLbs).toBeNull();
+  });
+
+  // VW-170: the hook is wired to the same derivation `device.set_weight` uses,
+  // so the spoken path cannot drift from the tool's answer.
+  it('exposes the under-tension warning for a slot with an active set', () => {
+    const state = fakeState([{ slotId: 'right' }]);
+    const slot = state.slots.get('right') as Record<string, unknown>;
+    slot.client = {
+      isConnected: true,
+      guidedLoadState: { phase: 'idle', countdownRemainingMs: null, fitnessModeRaw: null },
+      isRowingActive: false,
+    };
+
+    const warning = makeVoiceWeight(state as never).weightChangeWarning?.('right');
+
+    expect(String(warning)).toContain('a set is active');
   });
 });
 

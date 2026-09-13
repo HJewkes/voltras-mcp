@@ -298,6 +298,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setsByTargetMuscle',
   'setsPerExercise',
   'setsUnlocked',
+  // VW-170: `system.speak`'s report that a queued line was dropped by a later
+  // `interrupt: true` call rather than spoken, and `device.set_weight`'s
+  // warning that the firmware will hold the old load until the cable slackens.
+  'spoken',
+  'weightChangeWarning',
   'set_boundary',
   // A documented variant of the `set_ended` event, distinguished by a
   // `meta.closed_by` discriminator rather than by its own `event_type`, so the

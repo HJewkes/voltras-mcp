@@ -45,6 +45,11 @@ export interface VoiceWeightContext {
   /** Connected slots only, in slot-map order. */
   slots(): VoiceWeightSlot[];
   setWeight(slot: string, lbs: number): Promise<void>;
+  /**
+   * The under-tension caveat for a change about to be made on this slot, or
+   * null (VW-170). Optional: a context without it simply reports no warning.
+   */
+  weightChangeWarning?(slot: string): string | null;
 }
 
 export interface VoiceCommandEvent {
@@ -154,6 +159,9 @@ async function applyWeight(
   },
 ): Promise<void> {
   const { event, slot, plan } = args;
+  // Read the tension state before the write, for the same reason the tool
+  // does: it describes the moment the change was asked for (VW-170).
+  const weightChangeWarning = readWeightChangeWarning(context, slot.slot);
   try {
     await context.setWeight(slot.slot, plan.lbs);
   } catch (err) {
@@ -169,8 +177,18 @@ async function applyWeight(
       previousLbs: slot.currentWeightLbs,
       transcript: event.transcript,
       clamped: plan.clamped,
+      weightChangeWarning,
     }),
   );
+}
+
+/** A throwing or absent hook degrades to "no warning", never to a crash. */
+function readWeightChangeWarning(context: VoiceWeightContext, slot: string): string | null {
+  try {
+    return context.weightChangeWarning?.(slot) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** One deep: an undo spends the entry rather than becoming its own undo point. */
