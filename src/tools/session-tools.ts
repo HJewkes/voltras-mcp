@@ -34,14 +34,17 @@ import { type TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
 
 import { type ServerState, type SlotState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import {
+  CHECKIN_GATED_CODES,
+  SessionCheckinInput,
   SessionEndInput,
   SessionGetInput,
   SessionListInput,
   SessionSetExerciseInput,
   SessionSetLifterInput,
   SessionStartInput,
+  type CheckinAnswerInput,
 } from '../schemas/session.js';
-import type { StoredSession, StoredSet } from '../store/types.js';
+import { LOCAL_USER_ID, type StoredSession, type StoredSet } from '../store/types.js';
 import type { ActiveSession } from '../state/live-state.js';
 import {
   aggregateSession,
@@ -98,7 +101,26 @@ const SESSION_START_DESCRIPTION =
 const SESSION_END_DESCRIPTION =
   'End the active session on a slot and return its summary. Idempotent-adjacent: ending an ' +
   'already-ended or nonexistent session is a normal, checkable outcome, not necessarily an ' +
-  'error — check the response shape rather than assuming a throw.';
+  'error — check the response shape rather than assuming a throw. Optional `checkin` block ' +
+  '(`{ answers, notes? }`, same shape as `session.checkin`) records a check-in atomically with ' +
+  'the close — see that tool for the question set, scale and gating. Omitted changes nothing: ' +
+  'no prompt, no block.';
+
+const SESSION_CHECKIN_DESCRIPTION =
+  'Record a check-in against a session (RP corpus, "Client Check Ins"): "How did it go?" ' +
+  '(`went`), "How did you feel?" (`felt`), "Did anything feel off?" (`off`), "Any questions?" ' +
+  '(`questions`) — all free text — and "How are you feeling about the next session/week?" ' +
+  "(`next`), plus `soreness`/`joint`/`motivation`, on RP's coarse 3-point scale (`low`/`medium`/" +
+  '`high`, never 5- or 10-point). Completion (loads, reps, sets) is already telemetry-derivable ' +
+  '— show the lifter their own numbers back rather than asking `went` as a prompt; it exists ' +
+  'only to store whatever they volunteer, and like every other code it is optional, never ' +
+  "required. `soreness`, `joint` and `motivation` are withheld before the lifter's first " +
+  'completed training week (answers are uniformly positive and low-signal that early, and ' +
+  'asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in ' +
+  "the response's `withheld` array. RP's cadence: after the very first session, then at the " +
+  'end of every completed training week — never mandatory, never a gate on anything. ' +
+  "`sessionId` omitted means the slot's active session. A guest session (a named `lifter`) " +
+  "writes nothing: check-ins are the owner's only.";
 
 const SESSION_SET_EXERCISE_DESCRIPTION =
   'Attach or change the exercise (`exerciseId` or `exerciseName`) on the active session for a ' +
@@ -142,8 +164,15 @@ export function registerSessionTools(
     placeholders,
     'session.end',
     SessionEndInput,
-    wrapHandler(SessionEndInput, (input) => endSession(state, input.slot)),
+    wrapHandler(SessionEndInput, (input) => endSession(state, input.slot, input.checkin)),
     SESSION_END_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'session.checkin',
+    SessionCheckinInput,
+    wrapHandler(SessionCheckinInput, (input) => checkinSession(state, input)),
+    SESSION_CHECKIN_DESCRIPTION,
   );
   install(
     placeholders,
@@ -476,7 +505,11 @@ function trainingModeFromSnapshot(name: string | undefined): TrainingMode | unde
   return undefined;
 }
 
-async function endSession(state: ServerState, slotId: string | undefined): Promise<{ ok: true }> {
+async function endSession(
+  state: ServerState,
+  slotId: string | undefined,
+  checkin: z.infer<typeof SessionEndInput>['checkin'],
+): Promise<{ ok: true; checkin?: CheckinWriteResult }> {
   const resolvedSlotId = slotId ?? PRIMARY_SLOT;
   const slot = getSlot(state, resolvedSlotId);
   const active = slot.live.session;
@@ -521,13 +554,148 @@ async function endSession(state: ServerState, slotId: string | undefined): Promi
     ...(active.exerciseName !== undefined ? { exerciseName: active.exerciseName } : {}),
     ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
   };
+  // VMCP-06.12 / B41: write the check-in BEFORE putSession marks this session
+  // ended, so the week-1 gate's session count (below, in writeCheckin) never
+  // counts the very session it is gating.
+  let checkinResult: CheckinWriteResult | undefined;
+  if (checkin !== undefined) {
+    checkinResult = await writeCheckin(
+      state,
+      {
+        sessionId: active.sessionId,
+        ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
+      },
+      checkin.answers,
+      checkin.notes,
+    );
+  }
   await state.store.putSession(stored);
   // Strictly after the session row lands: the outbox renders from the store,
   // so it has to read the ended session, and it must never be able to fail a
   // close that already succeeded (it swallows its own errors).
   await writeSessionOutbox(state, active.sessionId);
   void finalizedSession; // referenced via `active` snapshot for upsert payload
-  return { ok: true };
+  return checkinResult !== undefined ? { ok: true, checkin: checkinResult } : { ok: true };
+}
+
+interface CheckinTarget {
+  sessionId: string;
+  lifter?: string;
+}
+
+interface CheckinWriteResult {
+  sessionId: string;
+  written: number;
+  withheld: string[];
+}
+
+const CHECKIN_GATED_CODE_SET: ReadonlySet<string> = new Set(CHECKIN_GATED_CODES);
+
+/**
+ * The one writer of `self_reports` (VMCP-06.12 / B41), shared by
+ * `session.checkin` and `session.end`'s `checkin` block.
+ *
+ * Guest sessions write NOTHING (VW-169): rows are keyed by the owner only, so
+ * a second person's subjective ratings never land in the owner's history.
+ *
+ * Week-1 gating consults the owner's completed-session count: fewer than one
+ * finished session means no training week has completed yet, so the
+ * fatigue/joint/motivation codes are withheld (backlog idea 15 — answers are
+ * uniformly positive and low-signal that early, and asking can seed
+ * unwarranted concern). Called before the target session's own `endedAt`
+ * lands in the store (see `endSession`), so the count never includes the
+ * session being gated.
+ */
+async function writeCheckin(
+  state: ServerState,
+  target: CheckinTarget,
+  answers: z.infer<typeof CheckinAnswerInput>[],
+  notes: string | undefined,
+): Promise<CheckinWriteResult> {
+  if (target.lifter !== undefined) {
+    return { sessionId: target.sessionId, written: 0, withheld: [] };
+  }
+
+  const priorCompletedSessions = await state.store.countSessions({ endedOnly: true });
+  const weekOne = priorCompletedSessions < 1;
+
+  const withheld: string[] = [];
+  const toWrite = answers.filter((answer) => {
+    if (weekOne && CHECKIN_GATED_CODE_SET.has(answer.code)) {
+      withheld.push(answer.code);
+      return false;
+    }
+    return true;
+  });
+
+  const recordedAt = new Date().toISOString();
+  for (const answer of toWrite) {
+    await state.store.putSelfReport({
+      id: randomUUID(),
+      userId: LOCAL_USER_ID,
+      sessionId: target.sessionId,
+      kind: 'checkin',
+      questionCode: answer.code,
+      valueText: answer.value,
+      recordedAt,
+    });
+  }
+  if (notes !== undefined) {
+    await state.store.putSelfReport({
+      id: randomUUID(),
+      userId: LOCAL_USER_ID,
+      sessionId: target.sessionId,
+      kind: 'checkin',
+      questionCode: 'notes',
+      valueText: notes,
+      recordedAt,
+    });
+  }
+
+  return {
+    sessionId: target.sessionId,
+    written: toWrite.length + (notes !== undefined ? 1 : 0),
+    withheld,
+  };
+}
+
+/**
+ * Resolve which session a `session.checkin` call targets: the given
+ * `sessionId`, looked up in the store, or the slot's active session when
+ * omitted.
+ */
+async function resolveCheckinTarget(
+  state: ServerState,
+  slotId: string | undefined,
+  sessionId: string | undefined,
+): Promise<CheckinTarget> {
+  if (sessionId !== undefined) {
+    const stored = await state.store.getSession(sessionId);
+    if (stored === undefined) {
+      throw new ToolError('NOT_FOUND', `No session with id "${sessionId}" exists.`);
+    }
+    return {
+      sessionId: stored.id,
+      ...(stored.lifter !== undefined ? { lifter: stored.lifter } : {}),
+    };
+  }
+  const slot = getSlot(state, slotId);
+  const active = slot.live.session;
+  if (active === undefined) {
+    throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
+  }
+  return {
+    sessionId: active.sessionId,
+    ...(active.lifter !== undefined ? { lifter: active.lifter } : {}),
+  };
+}
+
+async function checkinSession(
+  state: ServerState,
+  input: z.infer<typeof SessionCheckinInput>,
+): Promise<CheckinWriteResult> {
+  const target = await resolveCheckinTarget(state, input.slot, input.sessionId);
+  return writeCheckin(state, target, input.answers, input.notes);
 }
 
 async function listSessions(
@@ -567,14 +735,34 @@ async function listSessions(
   return results as SessionListEntrySummary[] | SessionListEntryFull[];
 }
 
+interface CheckinReadModel {
+  answers: { code: string; value: string }[];
+  notes?: string;
+}
+
 async function getSession(
   state: ServerState,
   input: z.infer<typeof SessionGetInput>,
-): Promise<{ session: StoredSession; sets: StoredSet[] }> {
+): Promise<{ session: StoredSession; sets: StoredSet[]; checkin?: CheckinReadModel }> {
   const session = await state.store.getSession(input.id);
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${input.id}" exists.`);
   }
   const sets = await state.store.getSetsForSession(input.id);
-  return { session, sets };
+  const reports = await state.store.getSelfReportsForSession(input.id, 'checkin');
+  if (reports.length === 0) {
+    return { session, sets };
+  }
+  const notesRow = reports.find((r) => r.questionCode === 'notes');
+  const answers = reports
+    .filter((r) => r.questionCode !== undefined && r.questionCode !== 'notes')
+    .map((r) => ({ code: r.questionCode!, value: r.valueText ?? '' }));
+  return {
+    session,
+    sets,
+    checkin: {
+      answers,
+      ...(notesRow !== undefined ? { notes: notesRow.valueText ?? '' } : {}),
+    },
+  };
 }

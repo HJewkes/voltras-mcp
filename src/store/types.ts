@@ -476,6 +476,27 @@ export interface StoredIdleRep {
 }
 
 /**
+ * One row of `self_reports` (VMCP-06.12 / B41) — a subjective answer the
+ * hardware cannot measure. `kind` names the reporting instrument
+ * (`'checkin'` is the only writer so far); `questionCode` distinguishes rows
+ * within one kind. `muscleGroup` and `setId` are here for a future per-set
+ * report kind and are absent on every `'checkin'` row, which is session-
+ * scoped, not set-scoped.
+ */
+export interface StoredSelfReport {
+  id: string;
+  userId: string;
+  sessionId?: string;
+  setId?: string;
+  muscleGroup?: string;
+  kind: string;
+  questionCode?: string;
+  valueNum?: number;
+  valueText?: string;
+  recordedAt: string;
+}
+
+/**
  * One isometric trial as measured (VMCP-04.11). Mirrors `TrialAnalysis` in
  * `state/isometric-protocol.ts` field-for-field so a stored trial can be fed
  * straight back into `aggregateSide` without translation.
@@ -1189,6 +1210,24 @@ export interface SessionStore extends ExerciseSetupStore {
     userId: string;
     exerciseId: string;
   }): Promise<string | null>;
+
+  // --- Self-reports (VMCP-06.12 / B41) ---
+
+  /**
+   * Persist one self-report row. `session.checkin` (and `session.end`'s
+   * `checkin` block, which calls the same writer) is the first caller: one
+   * row per answer, `kind: 'checkin'`, `questionCode` naming the answer.
+   * Every write generates a fresh id, so there is no legitimate re-put path
+   * the way there is for `putSession`/`putSet` — a plain `INSERT` is enough.
+   */
+  putSelfReport(r: StoredSelfReport): Promise<void>;
+
+  /**
+   * Every self-report row for a session, oldest-first, optionally narrowed
+   * to one `kind` (`session.get` passes `'checkin'` to compose the read
+   * side without pulling in other report kinds a later feature might add).
+   */
+  getSelfReportsForSession(sessionId: string, kind?: string): Promise<StoredSelfReport[]>;
 
   // --- Idle reps (v7 schema) ---
 

@@ -129,6 +129,7 @@ function makeStore(): SessionStore & {
     getSetsForSession: vi.fn(async (sessionId: string) =>
       SETS.filter((s) => s.sessionId === sessionId),
     ),
+    getSelfReportsForSession: vi.fn(async () => []),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
     listTrainingPrograms: vi.fn(async () => []),
@@ -151,6 +152,7 @@ function makeStore(): SessionStore & {
 const TOOL_NAMES = [
   'session.start',
   'session.end',
+  'session.checkin',
   'session.set_exercise',
   'session.set_lifter',
   'session.list',

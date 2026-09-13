@@ -68,6 +68,7 @@ import {
   type StoredFailureAnchor,
   type StoredProgramAssignment,
   type StoredRep,
+  type StoredSelfReport,
   type StoredSession,
   type StoredSet,
   type StoredSide,
@@ -1416,6 +1417,19 @@ interface IdleRepRow {
   payload: string | null;
 }
 
+interface SelfReportRow {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  set_id: string | null;
+  muscle_group: string | null;
+  kind: string;
+  question_code: string | null;
+  value_num: number | null;
+  value_text: string | null;
+  recorded_at: string;
+}
+
 interface IsometricMeasurementRow {
   id: string;
   measured_at: string;
@@ -2162,6 +2176,47 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(sql)
       .all(...params, filter.limit ?? IDLE_REP_LIST_DEFAULT_LIMIT) as unknown as IdleRepRow[];
     return Promise.resolve(rows.map(rowToIdleRep));
+  }
+
+  // --- Self-reports (VMCP-06.12 / B41) ---
+
+  async putSelfReport(r: StoredSelfReport): Promise<void> {
+    // Plain INSERT, unlike putSession/putSet/putIdleRep's upserts: every
+    // write generates a fresh id (one row per check-in answer), so there is
+    // no legitimate re-put path to guard against.
+    this.db
+      .prepare(
+        `INSERT INTO self_reports
+           (id, user_id, session_id, set_id, muscle_group, kind, question_code,
+            value_num, value_text, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        r.id,
+        r.userId,
+        r.sessionId ?? null,
+        r.setId ?? null,
+        r.muscleGroup ?? null,
+        r.kind,
+        r.questionCode ?? null,
+        r.valueNum ?? null,
+        r.valueText ?? null,
+        r.recordedAt,
+      );
+    return Promise.resolve();
+  }
+
+  async getSelfReportsForSession(sessionId: string, kind?: string): Promise<StoredSelfReport[]> {
+    const rows = (kind === undefined
+      ? this.db
+          .prepare(`SELECT * FROM self_reports WHERE session_id = ? ORDER BY recorded_at ASC`)
+          .all(sessionId)
+      : this.db
+          .prepare(
+            `SELECT * FROM self_reports WHERE session_id = ? AND kind = ? ORDER BY recorded_at ASC`,
+          )
+          .all(sessionId, kind)) as unknown as SelfReportRow[];
+    return Promise.resolve(rows.map(rowToSelfReport));
   }
 
   // --- Isometric assessments (v6 schema) ---
@@ -3510,6 +3565,22 @@ function rowToIdleRep(row: IdleRepRow): StoredIdleRep {
     const rep = parseRepPayload(row.payload, row.id);
     if (rep !== undefined) out.rep = rep;
   }
+  return out;
+}
+
+function rowToSelfReport(row: SelfReportRow): StoredSelfReport {
+  const out: StoredSelfReport = {
+    id: row.id,
+    userId: row.user_id,
+    kind: row.kind,
+    recordedAt: row.recorded_at,
+  };
+  if (row.session_id !== null) out.sessionId = row.session_id;
+  if (row.set_id !== null) out.setId = row.set_id;
+  if (row.muscle_group !== null) out.muscleGroup = row.muscle_group;
+  if (row.question_code !== null) out.questionCode = row.question_code;
+  if (row.value_num !== null) out.valueNum = row.value_num;
+  if (row.value_text !== null) out.valueText = row.value_text;
   return out;
 }
 
