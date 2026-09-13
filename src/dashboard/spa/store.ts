@@ -4,7 +4,7 @@
  * Replaces the 13-`useState` `useDashboardModel` god-hook (and the live overlay's
  * own `useState`/`useRef` set) with ONE vanilla zustand store carrying these slices:
  *
- *   - **snapshot** — the authoritative 500 ms `/api/snapshot` poll + the client-side
+ *   - **snapshot** — the authoritative 2000 ms `/api/snapshot` poll + the client-side
  *     completed-set fold (`reduceSnapshot`, now the `applySnapshot` action) + the 1 s
  *     staleness tick.
  *   - **historical** — the slow (~15 s) `/api/session-plan` prescription refetch.
