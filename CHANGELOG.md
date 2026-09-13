@@ -60,6 +60,19 @@ entry is written from the user's point of view is a review question, not a check
   voice safety phrase instant. A line dropped that way reports `spoken: false` rather than
   failing.
 
+- `vbt.rir` and the weekly report's `RIR (final rep, ...)` line now read a lifter's own
+  fitted RIR-velocity curve (VW-298) when one exists for the exercise, instead of always
+  running the general `estimateRIRWithProfile` regression (VW-310). Every result now names
+  its `basis`: `'fitted'` reads the individually-validated curve — two lifters with
+  different curves get different RIR for the same velocity — or `'profile-estimate'` with
+  no such curve, which now carries the same caveat `rir_velocity.target` already returns
+  with no fitted curve, and is labelled so in the report line rather than reading as a
+  precise number. Jukic, Prnjak, McGuigan & Helms (_Eur J Appl Physiol_, 2023) found
+  velocity-loss-to-RIR agreement unacceptable at every load tested, so the general model was
+  never a proximity-to-failure claim; the labels now say so. The repo-wide guard from VW-302
+  now passes with zero tracked exceptions: both call sites route through
+  `rir-velocity-tools.ts`, the one path already licensed to relate a velocity to RIR.
+
 - `metrics.compute strength.e1rm` now solves for the load at a minimum velocity threshold
   fitted to your own history, where one exists, instead of the same 0.17 m/s for everybody
   (VW-299). `baselines.recalc` searches for the threshold that would have made the fewest

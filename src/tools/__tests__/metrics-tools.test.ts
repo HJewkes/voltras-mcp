@@ -205,6 +205,7 @@ interface StoreStub {
   getDietPhaseCovering: ReturnType<typeof vi.fn>;
   putSession: ReturnType<typeof vi.fn>;
   putSet: ReturnType<typeof vi.fn>;
+  getRirVelocityModel: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
 }
 
@@ -232,6 +233,9 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
     getDietPhaseCovering: vi.fn(async () => undefined),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
+    // VW-310: no fitted RIR-velocity curve by default, so `vbt.rir` falls
+    // back to the profile estimate unless a test overrides this.
+    getRirVelocityModel: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -1212,6 +1216,8 @@ interface RirPayload {
   perRep: RirRep[];
   baselineMaxVelocity: number;
   repsInSet: { value: number; source: string };
+  basis: string;
+  caveat: string | null;
   confidence: {
     modelCalibration: RirAxis;
     inputDomain: RirAxis;
@@ -1402,6 +1408,91 @@ describe('metrics.compute — vbt.rir', () => {
     // A set cut short of its target is not read as one taken to the end, so
     // the rep-progress term differs and the estimate moves.
     expect(targeted.final.rir).not.toBeCloseTo(implied.final.rir, 6);
+  });
+
+  // VW-310: the two `vbt.rir` cases pinned BEFORE the fitted-model routing
+  // landed, so a regression here means the no-row path moved.
+  it('pins the profile-estimate numbers for the no-fitted-row case (VW-310 baseline)', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({ getSet: vi.fn(async () => set) });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.basis).toBe('profile-estimate');
+    expect(body.caveat).toContain('no fitted RIR-velocity curve');
+    expect(body.final.rir).toBeCloseTo(1.09375, 6);
+    expect(body.final.range).toEqual({ low: 0, high: 3 });
+    expect(body.final.confidence).toBe('high');
+  });
+
+  /** A `StoredRirVelocityModel`-shaped row, deliberately untyped like the store returns it. */
+  function fittedRirRow(
+    interceptMps: number,
+    slopeMpsPerRir: number,
+  ): { model: Record<string, unknown> } {
+    return {
+      model: {
+        form: 'linear',
+        version: 'rir-velocity@1.0.0',
+        interceptMps,
+        slopeMpsPerRir,
+        r2: 0.9,
+        seeMps: 0.05,
+        rirErrorReps: 0.5,
+        pointCount: 12,
+        setCount: 3,
+        sessionCount: 2,
+        rirRange: [0, 5],
+        intensityRange: [0.7, 0.9],
+        anchorSources: { failure: 2, selfReport: 1 },
+        observedFrom: '2026-08-01T00:00:00.000Z',
+        observedTo: '2026-09-01T00:00:00.000Z',
+      },
+    };
+  }
+
+  it('VW-310: routes through the fitted curve when one exists, and reports basis "fitted"', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05)),
+    });
+    const tools = registerAndCapture(state);
+
+    const body = parsePayload(
+      await callTool(tools, { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(body.basis).toBe('fitted');
+    expect(body.caveat).toBeNull();
+    // Final rep peaks at 0.45 m/s: (0.45 - 0.3) / 0.05 = 3.
+    expect(body.final.rir).toBeCloseTo(3, 6);
+  });
+
+  it('VW-310: two lifters with different fitted curves get different RIR for the same velocity', async () => {
+    const set = decayingSet('set-rir', PEAKS);
+    const lifterA = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05)),
+    });
+    const lifterB = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getRirVelocityModel: vi.fn(async () => fittedRirRow(0.2, 0.1)),
+    });
+
+    const bodyA = parsePayload(
+      await callTool(registerAndCapture(lifterA), { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+    const bodyB = parsePayload(
+      await callTool(registerAndCapture(lifterB), { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    expect(bodyA.basis).toBe('fitted');
+    expect(bodyB.basis).toBe('fitted');
+    expect(bodyA.final.rir).not.toBeCloseTo(bodyB.final.rir, 6);
   });
 
   it('returns NOT_FOUND for a missing set, and for a set with no reps', async () => {

@@ -93,7 +93,6 @@ import {
   estimateE1RMFromProfile,
   estimateE1RMFromReps,
   estimateHybridE1RM,
-  estimateRIRWithProfile,
   getPhaseDuration,
   getPhaseRangeOfMotion,
   getRepMeanVelocity,
@@ -163,9 +162,12 @@ import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.
 import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import {
   RIR_MODEL_CALIBRATION_CONFIDENCE,
+  RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE,
   rirInputDomainConfidence,
   type ConfidenceIndicator,
 } from '../store/confidence-indicator.js';
+import { GENERAL_MODEL_CAVEAT, type RirVelocityModel } from '../analytics/rir-velocity.js';
+import { estimateRepRir, type RirEstimateBasis } from './rir-velocity-tools.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import {
   groupBySessionId,
@@ -1946,16 +1948,27 @@ interface RepRIREstimate {
  *
  * THREE CONFIDENCE AXES, NAMED AND SEPARATE (VW-151). They answer different
  * questions and are never merged into a single score:
- *   - `modelCalibration` — is the MODEL trustworthy? Always `low`; the shipped
- *     coefficients are placeholders. Identical for every user and every set.
+ *   - `modelCalibration` — is the MODEL trustworthy? `low` on the `basis:
+ *     'profile-estimate'` fallback (the shipped coefficients are
+ *     placeholders); `high` on `basis: 'fitted'` (VW-298's own fit,
+ *     individually validated per Jukic et al. 2024). Identical for every rep
+ *     within one set, since both bases are set-level, not per-rep.
  *   - `inputDomain` — is THIS REP inside the model's fitted range? Varies per
- *     rep; taken from workout-analytics' own per-estimate grade.
+ *     rep; taken from whichever basis produced the estimate.
  *   - `baselineMaturity` — do we know THIS USER on THIS EXERCISE well enough
  *     to interpret the number? B57's verdict, unchanged.
  *
  * Per B57's advisory-only rule the estimate SHIPS at every gate activation —
  * `baselineMaturity.activation === 'withheld'` hedges the reading, it does not
  * blank it. Silence reads as breakage; a hedge reads as honesty.
+ *
+ * `basis` (VW-310) names which curve answered: `'fitted'` reads off the
+ * lifter's own RIR-velocity curve (VW-298) when one exists for this
+ * exercise; `'profile-estimate'` is the `estimateRIRWithProfile` fallback,
+ * which carries `caveat` — {@link GENERAL_MODEL_CAVEAT} — because no group
+ * model is a defensible proximity-to-failure claim (Jukic et al. 2023 found
+ * velocity-loss-to-RIR agreement unacceptable at every load). `caveat` is
+ * `null` exactly when `basis` is `'fitted'`.
  */
 interface SetRIRResult {
   /** The set's final rep — the "how much did you leave in the tank" headline. */
@@ -1966,6 +1979,10 @@ interface SetRIRResult {
   baselineMaxVelocity: number;
   /** What the model was told the set's length was, and whether that was supplied. */
   repsInSet: { value: number; source: 'targetReps' | 'actualRepCount' };
+  /** Which curve produced every rep's estimate — set-level, not per-rep. */
+  basis: RirEstimateBasis;
+  /** The general-model caveat, present exactly when `basis` is `'profile-estimate'`. */
+  caveat: string | null;
   confidence: {
     modelCalibration: ConfidenceIndicator;
     inputDomain: ConfidenceIndicator;
@@ -2014,21 +2031,27 @@ async function rirForSet(
   );
   const repsInSet = targetReps ?? peaks.length;
 
+  // One lookup per set, not per rep (VW-310): the fitted-vs-fallback choice
+  // is the same for every rep here, since it depends only on this lifter and
+  // this exercise.
+  const model = await fittedRirModel(state, set.exerciseId);
+  const basis: RirEstimateBasis = model === undefined ? 'profile-estimate' : 'fitted';
+
   const perRep: RepRIREstimate[] = peaks.map((peak: number, i: number) => {
     // Clamped at 0: a rep faster than the set's fastest is impossible by
     // construction here, but a 0 baseline (a set that never moved) would
     // otherwise produce a negative or non-finite loss.
     const velocityLossPct =
       baselineMax > 0 ? Math.max(0, ((baselineMax - peak) / baselineMax) * 100) : 0;
-    // VW-302: pre-existing, tracked — `vbt.rir` (VW-134) predates the fitted model.
-    const estimate = estimateRIRWithProfile({
+    const estimateInput = {
       peakVelocity: peak,
       baselineMaxVelocity: baselineMax,
       velLossPct: velocityLossPct,
       repIndex: i + 1,
       repsInSet,
-    });
-    return { ...estimate, repIndex: i + 1, peakVelocity: peak, velocityLossPct };
+    };
+    const { rir, range, confidence } = estimateRepRir(model, estimateInput);
+    return { rir, range, confidence, repIndex: i + 1, peakVelocity: peak, velocityLossPct };
   });
 
   const final = perRep[perRep.length - 1]!;
@@ -2040,14 +2063,29 @@ async function rirForSet(
       value: repsInSet,
       source: targetReps === undefined ? 'actualRepCount' : 'targetReps',
     },
+    basis,
+    caveat: basis === 'profile-estimate' ? GENERAL_MODEL_CAVEAT : null,
     confidence: {
-      modelCalibration: RIR_MODEL_CALIBRATION_CONFIDENCE,
+      modelCalibration:
+        basis === 'fitted'
+          ? RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE
+          : RIR_MODEL_CALIBRATION_CONFIDENCE,
       // The headline number is the final rep's, so the input-domain axis grades
       // that same rep — a per-rep axis on a per-rep value.
       inputDomain: rirInputDomainConfidence(final.confidence),
       baselineMaturity: await rirGate(state, set),
     },
   };
+}
+
+/** The lifter's own fitted RIR-velocity curve for `exerciseId`, if one exists (VW-298/VW-310). */
+async function fittedRirModel(
+  state: ServerState,
+  exerciseId: string | undefined,
+): Promise<RirVelocityModel | undefined> {
+  if (exerciseId === undefined) return undefined;
+  const stored = await state.store.getRirVelocityModel(LOCAL_USER_ID, exerciseId);
+  return stored === undefined ? undefined : (stored.model as unknown as RirVelocityModel);
 }
 
 /**
@@ -2119,13 +2157,20 @@ const METRICS_COMPUTE_DESCRIPTION =
   'and, if targetVelocity is given, inverts it to a recommended load + confidence (null if the ' +
   'fit is flat/non-invertible — never a fabricated number). ' +
   '`fatigue.set` (setId) — within-set fatigue index for one set. ' +
-  '`vbt.rir` (setId, optional targetReps) — per-rep reps-in-reserve from the VBT §5.3 ' +
-  'regression, plus the final rep as the headline. Carries THREE separately named confidence ' +
-  'axes and never a bare number: model-calibration (always low — the coefficients are ' +
-  'placeholders pending real-device calibration), input-domain (is this rep inside the fitted ' +
-  'range), and baseline-maturity (B57). Relay the estimate WITH its caveats; do not present it ' +
-  'as a precise rep count. Its velocity loss is peak-based by model contract and will not equal ' +
-  "`vbt.set`'s mean-based lossPct. " +
+  '`vbt.rir` (setId, optional targetReps) — per-rep reps-in-reserve, plus the final rep as the ' +
+  "headline. `basis` (VW-310) names which curve answered: `'fitted'` reads the lifter's own " +
+  "RIR-velocity curve (VW-298) when one exists for this exercise; `'profile-estimate'` is the " +
+  'VBT §5.3 regression fallback with NO fitted curve, and carries a non-null `caveat` — relay ' +
+  'it verbatim, because a general model is NOT a proximity-to-failure claim: Jukic et al. 2023 ' +
+  '(Eur J Appl Physiol) found velocity-loss-to-RIR agreement unacceptable at every load tested. ' +
+  'Carries THREE ' +
+  'separately named confidence axes and never a bare number: model-calibration (low on ' +
+  '`profile-estimate` — the coefficients are placeholders pending real-device calibration; high ' +
+  "on `fitted` — the lifter's own individually-validated curve), input-domain (is this rep " +
+  'inside the answering model’s fitted range), and baseline-maturity (B57). Relay the estimate ' +
+  'WITH its caveats; do not present it as a precise rep count, and never present the ' +
+  '`profile-estimate` basis as measuring proximity to failure. Its velocity loss is peak-based ' +
+  "by model contract and will not equal `vbt.set`'s mean-based lossPct. " +
   '`session.volume` (sessionId) — `{ tonnageLbs, setsByMuscle, model }`. Tonnage is ' +
   'whole-session, deliberately NOT narrowed to one exercise (a session may span several). ' +
   "`setsByMuscle` counts the owner's working sets under each exercise's PRIMARY muscle group " +

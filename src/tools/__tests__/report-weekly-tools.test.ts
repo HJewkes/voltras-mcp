@@ -126,6 +126,37 @@ function calibrateRirBaseline(store: SqliteSessionStore): void {
     .run(id, LOCAL_USER_ID, EXERCISE_ID, '2026-09-08T00:00:00.000Z');
 }
 
+/** Inserts a fitted RIR-velocity curve (VW-298) for `EXERCISE_ID`, VW-310's fitted-path fixture. */
+function fitRirVelocityRow(
+  store: SqliteSessionStore,
+  { interceptMps, slopeMpsPerRir }: { interceptMps: number; slopeMpsPerRir: number },
+): void {
+  const model = {
+    form: 'linear',
+    version: 'rir-velocity@1.0.0',
+    interceptMps,
+    slopeMpsPerRir,
+    r2: 0.9,
+    seeMps: 0.05,
+    rirErrorReps: 0.5,
+    pointCount: 12,
+    setCount: 3,
+    sessionCount: 2,
+    rirRange: [0, 5],
+    intensityRange: [0.7, 0.9],
+    anchorSources: { failure: 2, selfReport: 1 },
+    observedFrom: '2026-08-01T00:00:00.000Z',
+    observedTo: '2026-09-01T00:00:00.000Z',
+  };
+  rawDb(store)
+    .prepare(
+      `INSERT INTO rir_velocity_models
+        (user_id, exercise_id, model_json, fitted_at, sample_size, fit_quality)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(LOCAL_USER_ID, EXERCISE_ID, JSON.stringify(model), '2026-09-08T00:00:00.000Z', 12, 0.9);
+}
+
 describe('report.weekly', () => {
   let store: SqliteSessionStore;
 
@@ -278,7 +309,7 @@ describe('report.weekly', () => {
     expect(report.sessions[0]?.exercises[0]?.rir).toBeNull();
   });
 
-  it('includes the RIR line only once the rir-estimate gate is CALIBRATED', async () => {
+  it('includes the RIR line only once the rir-estimate gate is CALIBRATED, general-model labelled (VW-310)', async () => {
     calibrateRirBaseline(store);
     await store.putSession({
       id: 'sess-1',
@@ -292,7 +323,31 @@ describe('report.weekly', () => {
       to: '2026-09-15T00:00:00.000Z',
     });
 
-    expect(report.sessions[0]?.exercises[0]?.rir).toMatch(/^RIR \(final rep, est\.\): -?\d+\.\d$/);
+    // Pinned pre-VW-310: no fitted curve exists, so the number itself is
+    // unchanged from the plain `estimateRIRWithProfile` fallback — only the
+    // label changed, to stop a coach reading it as proximity to failure.
+    expect(report.sessions[0]?.exercises[0]?.rir).toBe(
+      'RIR (final rep, general model, not a proximity-to-failure read): 3.5',
+    );
+  });
+
+  it('labels the RIR line "fitted" once the lifter has a fitted RIR-velocity curve (VW-310)', async () => {
+    calibrateRirBaseline(store);
+    fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
+    await store.putSession({
+      id: 'sess-1',
+      startedAt: '2026-09-08T12:00:00.000Z',
+      endedAt: '2026-09-08T12:30:00.000Z',
+    });
+    await store.putSet(makeSet({ id: 's1' }));
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-15T00:00:00.000Z',
+    });
+
+    // Final rep peaks at 0.6 m/s: (0.6 - 0.3) / 0.15 = 2.
+    expect(report.sessions[0]?.exercises[0]?.rir).toBe('RIR (final rep, fitted): 2.0');
   });
 
   it('clusters repeated check-in text and surfaces repeated off-code muscle groups', async () => {
