@@ -179,6 +179,19 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
     expect(result.validTrialCount).toBe(3);
   });
 
+  it('ranks by PEAK force, not plateau force, when the two disagree on which trials win', () => {
+    // Peak ranking: trial1(200) > trial2(190) > trial3(180) -> best 2 = 1+2, mean 195.
+    // Plateau ranking: trial2(200) > trial3(195) > trial1(100) -> best 2 = 2+3, mean 197.5.
+    // A plateau-based aggregation would pick trial2+trial3 and report 197.5;
+    // a peak-based one picks trial1+trial2 and reports 195. The two headline
+    // means, and the two SETS of trials selected, differ — this is the case
+    // "picks the highest 2 peak forces" above cannot distinguish, because
+    // that fixture keeps peak and plateau in the same rank order.
+    const trials = [validTrial(1, 200, 100), validTrial(2, 190, 200), validTrial(3, 180, 195)];
+    const result = aggregateSide(trials);
+    expect(result.meanPeakForceLbs).toBeCloseTo(195, 5);
+  });
+
   it('computes CV across the 2 best trials as sd / mean × 100', () => {
     // Best 2 = 200 and 180; mean = 190.
     // Sample SD with n=2 = |200-180| × √(1/2) = 14.142...
