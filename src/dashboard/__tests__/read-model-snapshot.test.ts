@@ -94,6 +94,29 @@ describe('buildSnapshotView', () => {
     expect(view.sets.active).toBeNull();
     expect(view.activeExercise).toBeNull();
     expect(view.devices).toHaveLength(1);
+    expect(view.expectedSetupCard).toBeNull();
+  });
+
+  // VW-275: the expected setup card at exercise start.
+  it('carries the resolved expected setup card through', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session(),
+      activeSet: undefined,
+      activeExercise: undefined,
+      expectedSetupCard: { anchor: 'mid', mountHole: 3 },
+    });
+    expect(view.expectedSetupCard).toEqual({ anchor: 'mid', mountHole: 3 });
+  });
+
+  it('defaults expectedSetupCard to null when none was resolved', () => {
+    const view = buildSnapshotView({
+      devices: [],
+      session: session(),
+      activeSet: undefined,
+      activeExercise: undefined,
+    });
+    expect(view.expectedSetupCard).toBeNull();
   });
 
   // VW-70: completed sets are a durable wire field so a consumer that didn't

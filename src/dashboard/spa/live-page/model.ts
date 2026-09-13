@@ -23,8 +23,10 @@ import { type MassUnit, convertMass, formatMass } from './mass';
 // Type-only: erased at build (same rationale as adapter.ts's own import of this) —
 // mirrors the store's four-value set-purpose enum without a runtime dependency.
 import type { SetPurpose } from '../../../store/types.js';
+// Type-only, same rationale: the declared setup card (VW-275).
+import type { SetupCard } from '../../../store/types.js';
 
-export type { SetPurpose };
+export type { SetPurpose, SetupCard };
 
 // --- Store read-model shapes (mirror voltras-mcp dashboard store) -------------
 
@@ -184,6 +186,12 @@ export interface SessionModel {
    * Null when no target is configured (an AMRAP/untargeted set).
    */
   targetReps: number | null;
+  /**
+   * The active exercise's reference setup card at exercise start (VW-275) —
+   * anchor landmark, mount hole, cable-length setting, mode. Null when no
+   * confirmed card and no digest-seeded default resolve for this exercise.
+   */
+  expectedSetupCard: SetupCard | null;
 }
 
 /**

@@ -22,13 +22,32 @@ export const ExerciseGetInput = z.object({
 });
 
 /**
+ * The declared setup card (VW-275): anchor landmark, rack mount hole, the
+ * device's Settings > Cable length value, and resistance mode. All optional
+ * except `anchor` — a caller may know the mode but not the mount hole, and a
+ * partial card is still worth recording rather than forcing an all-or-nothing
+ * answer.
+ */
+const SetupCardInput = z
+  .object({
+    anchor: z.enum(['low', 'mid', 'chest', 'high']),
+    mountHole: z.number().int().positive().optional(),
+    cableLengthSetting: z.union([z.string().min(1), z.number()]).optional(),
+    mode: z.string().min(1).optional(),
+  })
+  .strict();
+
+/**
  * Input for `exercise.confirm_setup`. `setupId` is a generated clustering id,
  * so it can only come from a `baselines.recalc { inferSetups: true }` response;
  * `label` is the human's own words for the setup and is stored verbatim.
+ * `card` is optional and, when given, is stored verbatim too — same rule as
+ * `label`, nothing here is inferred from the clustering.
  */
 export const ExerciseConfirmSetupInput = z
   .object({
     setupId: z.string().min(1),
     label: z.string().min(1).max(120),
+    card: SetupCardInput.optional(),
   })
   .strict();

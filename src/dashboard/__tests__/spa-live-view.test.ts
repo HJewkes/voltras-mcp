@@ -46,6 +46,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     restSec: null,
     plannedSets: null,
     targetReps: null,
+    expectedSetupCard: null,
     ...over,
   };
 }
@@ -276,6 +277,22 @@ describe('mapStoreToDashboardModel', () => {
     it('leaves the list empty when the session carries no plan', () => {
       const model = mapStoreToDashboardModel(sources());
       expect(model?.session.plannedExercises).toEqual([]);
+    });
+  });
+
+  describe('expectedSetupCard (VW-275)', () => {
+    it('carries the snapshot card through to the session read-model', () => {
+      const model = mapStoreToDashboardModel(
+        sources({
+          snapshot: { ...snapshot(), expectedSetupCard: { anchor: 'mid', mountHole: 3 } },
+        }),
+      );
+      expect(model?.session.expectedSetupCard).toEqual({ anchor: 'mid', mountHole: 3 });
+    });
+
+    it('defaults to null when the snapshot carries none', () => {
+      const model = mapStoreToDashboardModel(sources());
+      expect(model?.session.expectedSetupCard).toBeNull();
     });
   });
 });

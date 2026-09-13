@@ -23,6 +23,7 @@ import {
 } from '../server.js';
 import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
 import type { StoredSession, StoredSet } from '../../store/types.js';
+import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LiveSignalHub } from '../../state/live-signal.js';
 
 // Track every handle a test acquires so `afterEach` can close stragglers.
@@ -246,6 +247,107 @@ describe('GET /api/snapshot', () => {
     const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
     const body = JSON.parse(res.body) as { activeExercise: unknown };
     expect(body.activeExercise).toBeNull();
+  });
+
+  it('reports the confirmed reference card as expectedSetupCard (VW-275)', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-M',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable-chest-press',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const handle = await startWithFake({
+      ...base,
+      store: {
+        ...base.store,
+        listExerciseSetups: async () => [
+          {
+            id: 'setup@1.0.0:local/cable-chest-press/both#0',
+            userId: 'local',
+            exerciseId: 'cable-chest-press',
+            detectedAt: '2026-01-01T00:00:00.000Z',
+            confirmedAt: '2026-01-02T00:00:00.000Z',
+            card: { anchor: 'mid', mountHole: 3 },
+          },
+        ],
+      },
+      exercises: { getById: () => ({ muscleGroups: ['chest'] }) },
+    });
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { expectedSetupCard: unknown };
+    expect(body.expectedSetupCard).toEqual({ anchor: 'mid', mountHole: 3 });
+  });
+
+  it('falls back to the digest-seeded default when no card is confirmed', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-N',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'lat-pulldown',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const handle = await startWithFake({
+      ...base,
+      store: { ...base.store, listExerciseSetups: async () => [] },
+      exercises: {
+        getById: () => ({ muscleGroups: ['lats'], cableSetup: { cablePath: 'high' } }),
+      },
+    });
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { expectedSetupCard: unknown };
+    expect(body.expectedSetupCard).toEqual({ anchor: 'high' });
+  });
+
+  // Regression: calling `listExerciseSetups` off `state.store` via a destructured
+  // reference (`const { listExerciseSetups } = state.store`) loses its `this`
+  // binding — the real method reads `this.db` — and throws. A vi.fn() fake store
+  // cannot catch that class of bug (arrow functions don't have a `this` to lose),
+  // so this test wires the REAL `SqliteSessionStore` in as `state.store`, exactly
+  // how `src/server.ts` wires the real `ServerState.store` into the dashboard.
+  it('reads a confirmed card off a real SqliteSessionStore without losing method binding', async () => {
+    const store = SqliteSessionStore.open(':memory:');
+    await store.putExerciseSetup({
+      id: 'setup@1.0.0:local/cable-chest-press/both#0',
+      userId: LOCAL_USER_ID,
+      exerciseId: 'cable-chest-press',
+      detectedAt: '2026-01-01T00:00:00.000Z',
+      confirmedAt: '2026-01-02T00:00:00.000Z',
+      card: { anchor: 'mid', mountHole: 3 },
+    });
+    const session: ActiveSession = {
+      sessionId: 'sess-P',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable-chest-press',
+      setIds: [],
+      status: 'active',
+    };
+    const base = makeFakeState({ primary: { session } });
+    const handle = await startWithFake({
+      ...base,
+      store,
+      exercises: { getById: () => ({ muscleGroups: ['chest'] }) },
+    });
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body) as { expectedSetupCard: unknown };
+    expect(body.expectedSetupCard).toEqual({ anchor: 'mid', mountHole: 3 });
+  });
+
+  it('reports expectedSetupCard=null when listExerciseSetups is not wired', async () => {
+    const session: ActiveSession = {
+      sessionId: 'sess-O',
+      startedAt: '2026-05-09T12:00:00.000Z',
+      exerciseId: 'cable-chest-press',
+      setIds: [],
+      status: 'active',
+    };
+    const handle = await startWithFake(makeFakeState({ primary: { session } }));
+    const res = await fetchPath(DEFAULT_DASHBOARD_HOST, handle.port, '/api/snapshot');
+    const body = JSON.parse(res.body) as { expectedSetupCard: unknown };
+    expect(body.expectedSetupCard).toBeNull();
   });
 
   it('lists every slot in devices[]', async () => {

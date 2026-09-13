@@ -282,6 +282,9 @@ function mapSession(
     // set count rather than implying a one-set prescription.
     plannedSets: prescription?.sets ?? null,
     targetReps,
+    // VW-275: null with no active exercise, or if neither a confirmed nor a
+    // digest-seeded card resolved for it server-side.
+    expectedSetupCard: snapshot.expectedSetupCard ?? null,
   };
 }
 

@@ -28,9 +28,10 @@ Returns NOT_FOUND if the id does not exist — use `exercise.search` first if yo
 
 Name an inferred physical setup (VW-119) — the bench height, attachment or stance a group of sets was performed at — and mark it confirmed.
 
-`setupId` comes from a `baselines.recalc { inferSetups: true }` response; NOT_FOUND if no such setup exists. THE LABEL MUST BE THE USER'S OWN ANSWER. The clustering can tell that two groups of sets moved the cable different distances; it cannot tell what the difference was, which is the entire reason this tool exists. Ask, then record what they say. Do not infer a label from the range of motion, the exercise name or the weight, and do not offer a guess for them to confirm — a plausible wrong name is worse than "setup 1", because it reads as a measurement.
+`setupId` comes from a `baselines.recalc { inferSetups: true }` response; NOT_FOUND if no such setup exists. THE LABEL MUST BE THE USER'S OWN ANSWER. The clustering can tell that two groups of sets moved the cable different distances; it cannot tell what the difference was, which is the entire reason this tool exists. Ask, then record what they say. Do not infer a label from the range of motion, the exercise name or the weight, and do not offer a guess for them to confirm — a plausible wrong name is worse than "setup 1", because it reads as a measurement. Optional `card` (VW-275) records the rig's declared configuration: `anchor` (low/mid/chest/high — a landmark, never a measurement, because no numeric anchor height is published for the device), `mountHole` (the rack hole index, when the mount indexes to one), `cableLengthSetting` (the device's Settings > Cable length value, exactly as shown on its screen), and `mode` (the resistance mode by its on-device menu name). Same rule as `label`: these are the answers the lifter gives, never a guess offered for confirmation. The wall shows this exercise's most recently confirmed card at exercise start, and a later session whose own card disagrees with it is flagged rather than silently compared.
 
 **Parameters**
 
 - `setupId` — `string`, **required**.
 - `label` — `string`, **required**.
+- `card` — `object`, optional.

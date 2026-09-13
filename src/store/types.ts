@@ -951,6 +951,35 @@ export interface StoredTrainingProfile {
 }
 
 /**
+ * Where the cable anchors for a setup, as the lifter would name it off the
+ * rig (VW-275). Landmarks only — no numeric heights are published for the
+ * device, so none are recorded here (see the layout digest cited in
+ * `analytics/setup-cards.ts`).
+ *
+ * NOT the failure-anchor concept in `exercise-baselines.ts` (`anchorCount` /
+ * `anchorSpread`) — that "anchor" is a stall event; this one is a mount point.
+ * Same word, unrelated meaning, kept apart deliberately in field names below.
+ */
+export type SetupCardAnchor = 'low' | 'mid' | 'chest' | 'high';
+
+/**
+ * The physical/device configuration for one confirmed setup (VW-275):
+ * anchor landmark, rack mount hole, the device's persisted cable-length
+ * setting, and resistance mode. Written only by `exercise.confirm_setup`,
+ * alongside `label` and `confirmedAt` — a human states what the rig was set
+ * to, the same way they state what to call it; nothing here is inferred.
+ */
+export interface SetupCard {
+  anchor: SetupCardAnchor;
+  /** Rack hole index, when the mount indexes to one. */
+  mountHole?: number;
+  /** The device's Settings > Cable length value, as shown on its screen. */
+  cableLengthSetting?: string | number;
+  /** Resistance mode by its on-device menu name (e.g. "Normal", "Isokinetic"). */
+  mode?: string;
+}
+
+/**
  * A persisted `exercise_setups` row — one inferred physical configuration
  * (bench height, attachment, stance) for one (user, exercise, side) (VW-119).
  *
@@ -977,6 +1006,8 @@ export interface StoredExerciseSetup {
   clusterVersion?: string;
   /** No longer inferred (a version bump, or its sets moved). Never deleted — it is an FK parent. */
   retiredAt?: string;
+  /** Set only by `exercise.confirm_setup`, carried forward on re-inference like `label`. */
+  card?: SetupCard;
 }
 
 /** Key for `listExerciseSetups`: the dimensions a setup row is filed under. */

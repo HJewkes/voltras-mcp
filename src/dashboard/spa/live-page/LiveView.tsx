@@ -19,6 +19,7 @@ import {
 import {
   type DashboardModel,
   type LiveDashboardModel,
+  type SetupCard,
   deriveActiveSetStates,
   derivePrescription,
   stageIsEnded,
@@ -255,6 +256,26 @@ const HEADER_NAME_SIZE = 30;
 const HEADER_STRIP_HEIGHT = 10;
 /** Tempo digit size in the header — the rail's compact chip, raised for the wall read. */
 const HEADER_TEMPO_FONT = 13;
+const SETUP_CARD_ANCHOR_LABEL: Record<SetupCard['anchor'], string> = {
+  low: 'Low',
+  mid: 'Mid',
+  chest: 'Chest',
+  high: 'High',
+};
+
+/**
+ * The expected setup card as one line: `Anchor: Mid · Hole 3 · Cable 36 · Normal`.
+ * Only `anchor` is guaranteed — the rest are joined in only when present, so a
+ * digest-seeded default (anchor only) reads as a short hint, not a padded row.
+ */
+function formatSetupCard(card: SetupCard): string {
+  const parts = [`Anchor: ${SETUP_CARD_ANCHOR_LABEL[card.anchor]}`];
+  if (card.mountHole !== undefined) parts.push(`Hole ${card.mountHole}`);
+  if (card.cableLengthSetting !== undefined) parts.push(`Cable ${card.cableLengthSetting}`);
+  if (card.mode !== undefined) parts.push(card.mode);
+  return parts.join(' · ');
+}
+
 /**
  * The workout title + targets — the exercise being performed, independent of how many
  * voltras drive it, so it lives at the TOP OF THE PAGE (above the live stage) and stays
@@ -390,6 +411,23 @@ export function ExerciseHeader({
           />
         )}
       </View>
+      {/* The expected setup card at exercise start (VW-275) — anchor/mount/cable-length/mode,
+          shown as a hint to check the rig before the first rep, never as a measurement of the
+          set in progress. Hidden entirely with no session or no card resolved, same as the
+          plan-title row above. */}
+      {session.hasSession && session.expectedSetupCard != null && (
+        <Text
+          testID="expected-setup-card"
+          style={{
+            color: lifterColor,
+            fontSize: Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO),
+            fontFamily: '"Space Grotesk", sans-serif',
+            fontWeight: '600',
+          }}
+        >
+          {formatSetupCard(session.expectedSetupCard)}
+        </Text>
+      )}
       {/* Strip + tempo. The whole row goes when it would carry neither, so the header
           collapses back to its one-line form rather than leaving a hairline of padding. */}
       {(setStates.length > 0 || session.tempo) && (

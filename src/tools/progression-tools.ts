@@ -39,6 +39,11 @@ import {
   type SetupComparability,
   type SetupSignature,
 } from '../analytics/setup-comparability.js';
+import {
+  compareSetupCards,
+  getReferenceSetupCard,
+  type SetupCardComparabilityVerdict,
+} from '../analytics/setup-cards.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
 import { setMedianRomM } from '../store/exercise-setups.js';
@@ -83,7 +88,13 @@ const PROGRESSION_GET_DESCRIPTION =
   'the same nominal load at a different anchor height is a different joint torque (Keogh, Lake & ' +
   'Swinton 2013). On that verdict do NOT read the left/right load difference as an imbalance — ' +
   "relay `sideSplit.setupReason` and `sideSplit.setupSignatures` (both sides' travel medians) " +
-  'instead. `setup_unverified` means neither side recorded travel, so the check never ran.';
+  'instead. `setup_unverified` means neither side recorded travel, so the check never ran. ' +
+  '`setupCard` (VW-275) is a SEPARATE gate on the DECLARED setup: it compares the most recent ' +
+  "session's confirmed card (anchor/mountHole/cableLengthSetting/mode) against the exercise's " +
+  'reference card — the most recently confirmed one, or a digest-seeded default when nothing has ' +
+  'been confirmed. `setup_card_mismatch` means a field on the two cards disagrees; say which ' +
+  'field, do not treat the load difference as a training effect. `setup_card_unverified` means ' +
+  'the session or the exercise has no card recorded, so the check never ran.';
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -219,7 +230,55 @@ async function getProgressionForExercise(
     ...(input.side === undefined
       ? { sideSplit: computeSideSplit(limitedSessionIds, exerciseScopedSetsBySessionId) }
       : {}),
+    setupCard: await computeSetupCardVerdict(
+      state,
+      input.exerciseId,
+      limitedSessionIds,
+      exerciseScopedSetsBySessionId,
+    ),
   };
+}
+
+/**
+ * VW-275: the DECLARED-setup gate, orthogonal to `sideSplit.setupComparability`
+ * (VW-272's ROM-inferred geometry check between two limbs). This one compares
+ * the most recent session's own confirmed card against the exercise's
+ * reference card, regardless of side.
+ */
+async function computeSetupCardVerdict(
+  state: ServerState,
+  exerciseId: string,
+  sessionIdsOldestFirst: readonly string[],
+  setsBySessionId: Map<string, StoredSet[]>,
+): Promise<SetupCardComparabilityVerdict> {
+  const latestId = sessionIdsOldestFirst[sessionIdsOldestFirst.length - 1];
+  const setupId =
+    latestId === undefined ? undefined : dominantSetupId(setsBySessionId.get(latestId) ?? []);
+  const sessionSetup =
+    setupId === undefined ? undefined : await state.store.getExerciseSetup(setupId);
+  const reference = await getReferenceSetupCard(state.store, state.exercises, {
+    userId: LOCAL_USER_ID,
+    exerciseId,
+  });
+  return compareSetupCards(sessionSetup?.card, reference);
+}
+
+/** The most-repeated non-undefined `setupId` among `sets`, or `undefined` if none carries one. */
+function dominantSetupId(sets: readonly StoredSet[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const set of sets) {
+    if (set.setupId === undefined) continue;
+    counts.set(set.setupId, (counts.get(set.setupId) ?? 0) + 1);
+  }
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const [id, count] of counts) {
+    if (count > bestCount) {
+      best = id;
+      bestCount = count;
+    }
+  }
+  return best;
 }
 
 /** The like-vs-like basis for the window, or why the window has none. */

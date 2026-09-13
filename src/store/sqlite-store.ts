@@ -53,6 +53,8 @@ import {
   type SessionListFilter,
   type SessionStore,
   type SetCountFilter,
+  type SetupCard,
+  type SetupCardAnchor,
   type StoredIdleRep,
   type StoredIsometricMeasurement,
   type StoredIsometricSideMeasurement,
@@ -82,7 +84,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -475,6 +477,10 @@ const SCHEMA_SQL = `
   );
 
   -- Physical setup, INFERRED from ROM clustering rather than declared.
+  -- setup_anchor/mount_hole/cable_length_setting_json/mode (v19, VW-275) are
+  -- the DECLARED setup card, written only by exercise.confirm_setup, same as
+  -- label/confirmed_at. setup_anchor is named for the mount landmark, not the
+  -- unrelated failure-anchor concept in exercise_baselines below.
   CREATE TABLE IF NOT EXISTS exercise_setups (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -483,7 +489,11 @@ const SCHEMA_SQL = `
     detected_at TEXT NOT NULL,
     confirmed_at TEXT,
     cluster_version TEXT,
-    retired_at TEXT
+    retired_at TEXT,
+    setup_anchor TEXT CHECK (setup_anchor IN ('low','mid','chest','high')),
+    mount_hole INTEGER,
+    cable_length_setting_json TEXT,
+    mode TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_exercise_setups_user_exercise
     ON exercise_setups(user_id, exercise_id);
@@ -1170,6 +1180,29 @@ function migrateV17ToV18(db: DatabaseSync): void {
 }
 
 /**
+ * v18 -> v19: the declared setup card (VW-275) — `exercise_setups.setup_anchor`
+ * / `.mount_hole` / `.cable_length_setting_json` / `.mode`. Pre-v19 rows read
+ * as no card recorded, which is what they are: nothing asked for one before
+ * `exercise.confirm_setup` grew the `card` argument.
+ */
+function migrateV18ToV19(db: DatabaseSync): void {
+  const existing = columnNames(db, 'exercise_setups');
+  if (!existing.has('setup_anchor')) {
+    db.exec(
+      `ALTER TABLE exercise_setups ADD COLUMN setup_anchor TEXT ` +
+        `CHECK (setup_anchor IN ('low','mid','chest','high'))`,
+    );
+  }
+  for (const [column, ddl] of [
+    ['mount_hole', 'INTEGER'],
+    ['cable_length_setting_json', 'TEXT'],
+    ['mode', 'TEXT'],
+  ] as const) {
+    addColumnIfMissing(db, 'exercise_setups', column, ddl);
+  }
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1508,6 +1541,10 @@ interface ExerciseSetupRow {
   confirmed_at: string | null;
   cluster_version: string | null;
   retired_at: string | null;
+  setup_anchor: SetupCardAnchor | null;
+  mount_hole: number | null;
+  cable_length_setting_json: string | null;
+  mode: string | null;
 }
 
 interface ExerciseBaselineRow {
@@ -2864,8 +2901,9 @@ export class SqliteSessionStore implements SessionStore {
       .prepare(
         `INSERT INTO exercise_setups
            (id, user_id, exercise_id, label, detected_at, confirmed_at,
-            cluster_version, retired_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            cluster_version, retired_at, setup_anchor, mount_hole,
+            cable_length_setting_json, mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            user_id = excluded.user_id,
            exercise_id = excluded.exercise_id,
@@ -2873,7 +2911,11 @@ export class SqliteSessionStore implements SessionStore {
            detected_at = excluded.detected_at,
            confirmed_at = excluded.confirmed_at,
            cluster_version = excluded.cluster_version,
-           retired_at = excluded.retired_at`,
+           retired_at = excluded.retired_at,
+           setup_anchor = excluded.setup_anchor,
+           mount_hole = excluded.mount_hole,
+           cable_length_setting_json = excluded.cable_length_setting_json,
+           mode = excluded.mode`,
       )
       .run(
         setup.id,
@@ -2884,6 +2926,12 @@ export class SqliteSessionStore implements SessionStore {
         setup.confirmedAt ?? null,
         setup.clusterVersion ?? null,
         setup.retiredAt ?? null,
+        setup.card?.anchor ?? null,
+        setup.card?.mountHole ?? null,
+        setup.card?.cableLengthSetting !== undefined
+          ? JSON.stringify(setup.card.cableLengthSetting)
+          : null,
+        setup.card?.mode ?? null,
       );
     return Promise.resolve();
   }
@@ -3347,6 +3395,9 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 16 = v16 schema; v17 adds `training_profile.injuries_json` /
   //     `.named_program_history` (VW-148) — additive columns, nothing
   //     backfilled (absent injuries means "never asked", not "none").
+  // 18 = v18 schema; v19 adds `exercise_setups.setup_anchor` / `.mount_hole` /
+  //     `.cable_length_setting_json` / `.mode` (VW-275) — additive columns,
+  //     nothing backfilled (absent card means "never confirmed with one").
   // SCHEMA_VERSION = current. Anything above it is an unknown future version
   // and we refuse to touch it; anything below 0 or non-integer is malformed.
   if (found < 0 || found > SCHEMA_VERSION || !Number.isInteger(found)) {
@@ -3413,6 +3464,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 17) {
     migrateV17ToV18(db);
+  }
+  if (current <= 18) {
+    migrateV18ToV19(db);
   }
 }
 
@@ -3825,7 +3879,21 @@ function rowToExerciseSetup(row: ExerciseSetupRow): StoredExerciseSetup {
   if (row.confirmed_at !== null) out.confirmedAt = row.confirmed_at;
   if (row.cluster_version !== null) out.clusterVersion = row.cluster_version;
   if (row.retired_at !== null) out.retiredAt = row.retired_at;
+  const card = rowToSetupCard(row);
+  if (card !== undefined) out.card = card;
   return out;
+}
+
+/** `undefined` unless a card was ever confirmed — `setup_anchor` is its required field. */
+function rowToSetupCard(row: ExerciseSetupRow): SetupCard | undefined {
+  if (row.setup_anchor === null) return undefined;
+  const card: SetupCard = { anchor: row.setup_anchor };
+  if (row.mount_hole !== null) card.mountHole = row.mount_hole;
+  if (row.cable_length_setting_json !== null) {
+    card.cableLengthSetting = JSON.parse(row.cable_length_setting_json) as string | number;
+  }
+  if (row.mode !== null) card.mode = row.mode;
+  return card;
 }
 
 function rowToTrainingBlock(row: TrainingBlockRow): StoredTrainingBlock {

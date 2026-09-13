@@ -33,6 +33,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     restSec: null,
     plannedSets: null,
     targetReps: null,
+    expectedSetupCard: null,
     ...over,
   };
 }

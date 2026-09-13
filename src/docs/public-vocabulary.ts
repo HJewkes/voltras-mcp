@@ -237,6 +237,14 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setupSignatures',
   'setup_confounded',
   'setup_unverified',
+  // VW-275: the declared setup card (anchor/mountHole/cableLengthSetting/mode)
+  // on `exercise.confirm_setup` and the card gate on
+  // `progression.get_for_exercise`'s `setupCard`.
+  'setupCard',
+  'mountHole',
+  'cableLengthSetting',
+  'setup_card_mismatch',
+  'setup_card_unverified',
   'state_dump',
   'stopOn',
   'targetReps',

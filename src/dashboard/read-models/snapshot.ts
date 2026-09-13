@@ -19,6 +19,7 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../../state/live-state.js';
+import type { SetupCard } from '../../store/types.js';
 
 /** One slot's device snapshot, tagged with its slot id. */
 export interface DeviceEntry {
@@ -57,6 +58,13 @@ export interface SnapshotResponse {
    */
   sets: { active: ActiveSet | null; completed: CompletedSetRecord[] };
   activeExercise: ActiveExerciseMuscles | null;
+  /**
+   * The active exercise's reference setup card (VW-275) — the most recently
+   * confirmed card for this exercise, or a digest-seeded landmark default when
+   * none has been confirmed. Null with no active session/exercise, same as
+   * {@link activeExercise}.
+   */
+  expectedSetupCard: SetupCard | null;
 }
 
 /**
@@ -87,6 +95,8 @@ export interface SnapshotInput {
   completedSets?: CompletedSetRecord[];
   /** The catalog entry for the active session's exercise, if resolved. */
   activeExercise: ExerciseMeta | undefined;
+  /** The active exercise's reference setup card (VW-275), if one was resolved. */
+  expectedSetupCard?: SetupCard;
 }
 
 /**
@@ -138,5 +148,6 @@ export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
     devices: input.devices,
     sets: { active: input.activeSet ?? null, completed: input.completedSets ?? [] },
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),
+    expectedSetupCard: input.expectedSetupCard ?? null,
   };
 }
