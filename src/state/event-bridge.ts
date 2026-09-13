@@ -131,6 +131,7 @@ import type {
 } from './live-state.js';
 import {
   LiveSignalEmitter,
+  type LiveSignalHub,
   mapPhase,
   mmsToMps,
   mmToM,
@@ -141,6 +142,7 @@ import { getDebugBuffers } from './debug-buffer.js';
 import { getSessionRecorder } from './session-recorder.js';
 import type { ChannelPublisher } from './channel-publisher.js';
 import {
+  buildCoachLinePayload,
   buildConnectionChangedPayload,
   buildPendingDisconnectNotice,
   buildGuidedLoadStatePayload,
@@ -155,6 +157,7 @@ import {
   triggerDedupeKey,
   velocityLossBaseline,
   type ActiveSetAtDisconnect,
+  type CoachLinePayloadInput,
   type CoercionSetContext,
   type SettingsUpdateAll,
   type SettingsUpdateField,
@@ -422,6 +425,29 @@ function persistIdleRep(
   } catch (err) {
     log.warn(`idle-rep persist threw on slot ${slotId}: ${String(err)}`);
   }
+}
+
+/** What {@link publishCoachLine} needs off the server state — nothing device-shaped. */
+export interface CoachLineTarget {
+  channels: ChannelPublisher;
+  liveSignals?: LiveSignalHub;
+}
+
+/**
+ * Publish a `coach_line` push event (VW-289) for a line the trainer just spoke,
+ * and echo it to the dashboard's live-signal hub so the wall can caption it.
+ *
+ * Called from the ONE `speak()` both `system.speak` and the cue emitter go
+ * through, so one utterance produces exactly one event. Unlike every other
+ * signal on the hub this has no device origin to be teed off, which is why it
+ * emits here directly instead of decoding its own channel event back out.
+ *
+ * The text is whatever the trainer chose to say; nothing device-derived reaches
+ * it, and no slot is stamped — a spoken line addresses the person.
+ */
+export function publishCoachLine(target: CoachLineTarget, line: CoachLinePayloadInput): void {
+  target.channels.publish(buildCoachLinePayload(line));
+  target.liveSignals?.emit({ type: 'coach_line', data: { ...line } });
 }
 
 /**

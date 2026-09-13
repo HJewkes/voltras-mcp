@@ -27,7 +27,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { configureLogger, log } from './logger.js';
 import { bootstrapState, type ServerState } from './state/server-state.js';
-import { wireEventBridge } from './state/event-bridge.js';
+import { publishCoachLine, wireEventBridge } from './state/event-bridge.js';
 import { installIsometricLiveTee } from './state/isometric-live-signal-tee.js';
 import { installCueTee } from './voice/cue-emitter.js';
 import {
@@ -91,6 +91,9 @@ function wireProcessState(state: ServerState, connection: ClientConnection): voi
   state.channels = installCueTee(connection.channels, {
     settings: state.cueSettings,
     voiceListenerRef: state.voice,
+    // Reads `state.channels` at call time, so a cue spoken later publishes
+    // through the FULLY teed publisher rather than the one being wrapped here.
+    coachLine: (line) => publishCoachLine(state, line),
   });
   // Also tee isometric_phase pushes into the dashboard's live-signal hub (VW-198), so
   // the wall SPA can drive a hold walkthrough off the SAME channel events the cue tee

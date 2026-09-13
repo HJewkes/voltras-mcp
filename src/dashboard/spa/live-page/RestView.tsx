@@ -1,6 +1,7 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
 import { type ReactElement } from 'react';
 import { View, Text } from 'react-native';
+import { useStore } from 'zustand';
 import {
   RestTimer,
   TimerReadout,
@@ -30,6 +31,8 @@ import {
   type SetPurpose,
 } from './model';
 import { type MassUnit, formatMass } from './mass';
+import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
+import { dashboardStore } from '../store';
 
 /*
  * ⚠ PORTING RULE (see LivePage.tsx): layout via `style`, colour via the on-surface context.
@@ -55,6 +58,13 @@ import { type MassUnit, formatMass } from './mass';
 
 /** Rest countdown ring diameter (px) — the across-the-room wall treatment. */
 const RING_SIZE = 220;
+
+/**
+ * Height the coach caption always occupies (px), spoken line or not. RESERVED, not
+ * conditional: a caption that appeared and vanished would shove the rest timer down and
+ * back up mid-rest, and a timer that jumps is worse than a gap that is sometimes empty.
+ */
+const CAPTION_HEIGHT = 72;
 
 /** A verdict metric to render, or null to hide it (no honest source). */
 type MetricSpec = Pick<MetricProps, 'value' | 'unit' | 'label' | 'trend'> | null;
@@ -227,6 +237,44 @@ function RestCountdown({ model }: { model: DashboardModel }): ReactElement | nul
 }
 
 /**
+ * The last thing the trainer said (VW-289), in a box whose height is reserved either way.
+ *
+ * Pure props, like `IsometricVerdictCard`: whether there is anything to caption is
+ * {@link deriveCoachLineCaption}'s decision, made once by {@link RestView} off the store.
+ */
+export function CoachCaption({ caption }: { caption: CoachLineCaption | null }): ReactElement {
+  const textColor = useOnSurfaceColor('primary');
+  const labelColor = useOnSurfaceColor('tertiary');
+  return (
+    <View style={{ height: CAPTION_HEIGHT }}>
+      {caption && (
+        <Surface
+          raise={1}
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            paddingHorizontal: 16,
+          }}
+          testID="coach-caption"
+        >
+          <Text style={{ color: labelColor, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
+            {caption.label}
+          </Text>
+          <Text
+            numberOfLines={2}
+            style={{ color: textColor, flex: 1, fontSize: 18, lineHeight: 22 }}
+          >
+            {caption.text}
+          </Text>
+        </Surface>
+      )}
+    </View>
+  );
+}
+
+/**
  * The recap card: the prescription heading over the logged `done` rows.
  *
  * Composed from titan's standalone parts rather than `ExerciseCard` (VMCP-03.05).
@@ -299,6 +347,10 @@ export function RestView({
   displayUnit?: MassUnit;
 }): ReactElement {
   const { session } = model;
+  // SSE-fed independently of `model` (VW-289), like the isometric walkthrough a level up:
+  // the store's 1 s tick is what expires the caption, so no timer lives in the component.
+  const coachLine = useStore(dashboardStore, (s) => s.coachLine);
+  const nowMs = useStore(dashboardStore, (s) => s.nowMs);
   const set = justCompletedSet(model);
   const rows = recapRows(model, displayUnit);
   const metrics = set
@@ -314,6 +366,7 @@ export function RestView({
     <Surface level="base" style={{ flex: 1, flexDirection: 'row', padding: 20, gap: 20 }}>
       {/* left: the countdown + the just-completed exercise recap. */}
       <View style={{ flex: 2, gap: 20 }}>
+        <CoachCaption caption={deriveCoachLineCaption({ line: coachLine, nowMs })} />
         <RestCountdown model={model} />
         {rows.length > 0 && (
           <View style={{ gap: 8 }}>

@@ -12,7 +12,12 @@
 import { spawn } from 'node:child_process';
 
 import type { ChannelEvent, ChannelPublisher } from '../state/channel-publisher.js';
-import { speak, type SpeakDeps, type VoiceListenerRef } from '../tools/tts-tools.js';
+import {
+  speak,
+  type CoachLineSink,
+  type SpeakDeps,
+  type VoiceListenerRef,
+} from '../tools/tts-tools.js';
 import { decideCue, type CueDecision } from './cue-policy.js';
 import type { CueSettings } from './cue-settings.js';
 import { CueSelector, slotFill } from './cue-templates.js';
@@ -90,6 +95,9 @@ export class CueEmitter {
         blocking: false,
       },
       this.speakDeps,
+      // The cue category is what the wall caption names as the line's source
+      // (VW-289) — `speak` there would claim the model chose to say this.
+      decision.category,
     ).catch(() => {
       // Best-effort: a failed cue must not surface as an unhandled rejection.
     });
@@ -137,12 +145,15 @@ export function installCueTee(
     /** Live settings object, shared with `system.set_cues`. */
     settings: CueSettings;
     voiceListenerRef: VoiceListenerRef | null;
+    /** Where a spoken cue goes to be captioned on the wall (VW-289). */
+    coachLine?: CoachLineSink | null;
   },
 ): ChannelPublisher {
   const speakDeps: SpeakDeps = {
     platform: process.platform,
     spawn: spawn as SpeakDeps['spawn'],
     voiceListenerRef: opts.voiceListenerRef,
+    coachLine: opts.coachLine ?? null,
   };
   return new CueTeePublisher(inner, new CueEmitter({ speakDeps, settings: opts.settings }));
 }

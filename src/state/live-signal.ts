@@ -200,6 +200,21 @@ export interface LiveIsometricResultSignal {
 }
 
 /**
+ * Live echo of a `coach_line` channel event (VW-289) — the sentence the trainer just
+ * spoke aloud, so the wall can caption it.
+ *
+ * Carries no `slot`: a spoken line is addressed to the person, not to a device.
+ */
+export interface LiveCoachLineSignal {
+  /** Exactly the sentence that was spoken. */
+  text: string;
+  /** The cue category that produced it, or `speak` for a `system.speak` call. */
+  source: string;
+  /** When it was spoken, ms since epoch — the caption's dwell clock. */
+  occurredAt: number;
+}
+
+/**
  * The phase payloads as {@link PhaseClock} derives them — before a slot is
  * known. The clock is pure phase math over one device's frames and has no
  * concept of slots; {@link LiveSignalEmitter} stamps its own `slot` on the way
@@ -227,6 +242,9 @@ export type LiveSetSignalCore = Omit<LiveSetSignal, 'slot'>;
  * rather than emitted by `LiveSignalEmitter`, but the verbatim-by-`type` forwarder needs
  * no per-type awareness of that, so it just works. `isometric_result` (VW-264) is teed in the
  * same way, from the event that closes the assessment rather than a phase of it.
+ *
+ * `coach_line` (VW-289) has no device origin at all — it is emitted alongside the channel
+ * event by `publishCoachLine` when the trainer speaks. Same verbatim forwarding.
  */
 export type LiveSignalEvent =
   | { type: 'phase'; data: LivePhaseSignal }
@@ -234,7 +252,8 @@ export type LiveSignalEvent =
   | { type: 'rep'; data: LiveRepSignal }
   | { type: 'set'; data: LiveSetSignal }
   | { type: 'isometric'; data: LiveIsometricSignal }
-  | { type: 'isometric_result'; data: LiveIsometricResultSignal };
+  | { type: 'isometric_result'; data: LiveIsometricResultSignal }
+  | { type: 'coach_line'; data: LiveCoachLineSignal };
 
 export type LiveSignalListener = (event: LiveSignalEvent) => void;
 

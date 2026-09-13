@@ -133,6 +133,7 @@ function useDashboardController(): void {
         (snap) => dashboardStore.getState().applySnapshot(snap, Date.now()),
         (signal, slot) => dashboardStore.getState().setIsometric(signal, slot),
         (result) => dashboardStore.getState().setIsometricResult(result),
+        (line) => dashboardStore.getState().setCoachLine(line),
       ),
     [],
   );

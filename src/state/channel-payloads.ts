@@ -2537,6 +2537,46 @@ export function buildIsometricResultPayload(input: IsometricResultPayloadInput):
   return { meta, content };
 }
 
+export interface CoachLinePayloadInput {
+  /** Exactly the sentence that was spoken. */
+  text: string;
+  /** The cue category that produced it, or `speak` for a `system.speak` call. */
+  source: string;
+  /** When it was spoken, ms since epoch — the wall caption's dwell clock. */
+  occurredAt: number;
+}
+
+/**
+ * Build the meta + content for a `coach_line` channel event (VW-289).
+ *
+ * The lifter hears a coaching line once, from across the room, over whatever
+ * else is playing. This puts the same sentence on the push surface so the wall
+ * can caption it — a missed cue becomes readable instead of gone.
+ *
+ * No `slot`: a spoken line is addressed to the person, not to a device. Both
+ * `system.speak` and the cue emitter reach this through the single `speak()`
+ * they share, so one utterance is one event.
+ */
+export function buildCoachLinePayload(input: CoachLinePayloadInput): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'coach_line',
+    line_source: input.source,
+  };
+  const content = JSON.stringify({
+    summary: `spoken (${input.source}): ${input.text}`,
+    coach_line: {
+      text: input.text,
+      source: input.source,
+      occurredAt: input.occurredAt,
+    },
+  });
+  return { meta, content };
+}
+
 /**
  * Build the meta + content for a `lease_lost` channel event (VMCP-01.65).
  *

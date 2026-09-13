@@ -90,6 +90,15 @@ entry is written from the user's point of view is a review question, not a check
   than a budget nobody prescribed. Warm-up, probe and technique sets do not burn down the
   remaining count. No schema change.
 
+- Every coaching line spoken aloud is now captioned on the wall dashboard's rest stage
+  (VW-289, #394). A cue is heard once, from across the room, over whatever else is playing — miss
+  it and it was gone. The rest stage now prints the latest line under a fixed dwell, labelled
+  `COACH` when the trainer chose to say it and by the cue category when a deterministic cue
+  fired it, so a lifter can read what they only half-heard. The caption's height is reserved
+  whether or not anything was said, so the rest timer never jumps. A new `coach_line` push
+  event carries the same line to any channel consumer; `system.speak` and the cue emitter
+  share one emission point, so one utterance is one event.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own
