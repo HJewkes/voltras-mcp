@@ -236,6 +236,7 @@ function makeState(
     deviceIds?: Record<string, string | null>;
     channels?: ChannelPublisher;
     lease?: FakeLease;
+    mountRatingLbs?: number;
   } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
@@ -251,6 +252,9 @@ function makeState(
     store: opts.store,
     channels: opts.channels ?? noopChannelPublisher,
     lease: opts.lease ?? makeFakeLease(),
+    // Unconfigured (VW-274) by default — most tests do not care about the
+    // mount-rating gate and get the warning-only path automatically.
+    config: { mountRatingLbs: opts.mountRatingLbs },
   } as unknown as ServerState;
 }
 
@@ -440,6 +444,90 @@ describe('isometric.measure_hold', () => {
     // A `ready` push for a hold that can never happen would signal the athlete
     // to get set for nothing.
     expect(published).toEqual([]);
+  });
+});
+
+// VW-274: no wall/rack anchor rating is published for any mount, so isometric
+// max force (up to 400 lb per unit) must be gated against a configured
+// rating, refused before any hold begins when it exceeds one, and flagged as
+// UNKNOWN — not safe — when no rating is configured.
+describe('isometric mount-load gate — measure_hold and measure_max', () => {
+  let client: FakeClient;
+
+  function build(mountRatingLbs: number | undefined): {
+    measureHoldCb: Callback;
+    measureMaxCb: Callback;
+  } {
+    vi.useFakeTimers();
+    client = makeFakeClient();
+    const state = makeState({ primary: client }, { mountRatingLbs });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    return {
+      measureHoldCb: slots.get('isometric.measure_hold')!.callback,
+      measureMaxCb: slots.get('isometric.measure_max')!.callback,
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('measure_hold: proceeds and reports the peak when the rating covers it', async () => {
+    const { measureHoldCb } = build(500);
+    const promise = measureHoldCb({ holdMs: 3000 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody & { mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toBeNull();
+  });
+
+  it('measure_hold: refuses INVALID_INPUT before any hold when the rating is exceeded', async () => {
+    const { measureHoldCb } = build(350);
+    const result = await measureHoldCb({ holdMs: 3000 });
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    // Refused before the hold: no subscription, no phase push at all.
+    expect(client.subscribeCount).toBe(0);
+  });
+
+  it('measure_hold: warns, and still proceeds, when no rating is configured', async () => {
+    const { measureHoldCb } = build(undefined);
+    const promise = measureHoldCb({ holdMs: 3000 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody & { mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toContain('UNKNOWN');
+  });
+
+  it('measure_max: proceeds and reports null warning when the rating covers it', async () => {
+    const { measureMaxCb } = build(500);
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    const body = payload(await promise) as { ok: boolean; mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toBeNull();
+  });
+
+  it('measure_max: refuses INVALID_INPUT before any trial when the rating is exceeded', async () => {
+    const { measureMaxCb } = build(350);
+    const result = await measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(client.subscribeCount).toBe(0);
+  });
+
+  it('measure_max: warns, and still proceeds, when no rating is configured', async () => {
+    const { measureMaxCb } = build(undefined);
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    const body = payload(await promise) as { ok: boolean; mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toContain('UNKNOWN');
   });
 });
 

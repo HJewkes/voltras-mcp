@@ -17,12 +17,15 @@
 //   - VMCP_TRUECOACH_OUTBOX_DIR        — outbox root, default ~/.voltras/truecoach-outbox.
 //   - VMCP_TRUECOACH_SUBMIT_ON_END     — 'on' | 'off', default 'off'.
 //   - VMCP_TRUECOACH_*                 — read-only TrueCoach pull, see TrueCoachConfig.
+//   - VMCP_MOUNT_RATING_LBS            — the anchor's pull-out load rating, in
+//     pounds; unset (default) means the rating is UNKNOWN, not unlimited (VW-274).
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
-// VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE or
-// VMCP_AUTO_ARM is set to an unrecognized value so the failure surfaces before
-// bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws on the same terms.
+// VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE,
+// VMCP_AUTO_ARM or VMCP_MOUNT_RATING_LBS is set to an unrecognized value so the
+// failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
+// on the same terms.
 
 import { homedir } from 'node:os';
 
@@ -210,6 +213,13 @@ export interface Config {
   readonly trueCoachOutboxDir: string;
   readonly trueCoachSubmitOnEnd: TrueCoachSubmitOnEndMode;
   readonly trueCoach: TrueCoachConfig;
+  /**
+   * The mount's pull-out load rating in pounds (VW-274), or `undefined` when
+   * unconfigured. No mount rating is published by Beyond Power for any of
+   * its accessories, so `undefined` means UNKNOWN, never "no limit" — a tool
+   * gating on it must say the envelope is unknown, not treat the load as safe.
+   */
+  readonly mountRatingLbs: number | undefined;
 }
 
 function loadTrueCoachConfig(env: NodeJS.ProcessEnv, home: string): TrueCoachConfig {
@@ -275,6 +285,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `Invalid VMCP_TRUECOACH_SUBMIT_ON_END="${trueCoachSubmitOnEnd}". Must be "off" or "on".`,
     );
   }
+  const mountRatingLbs = parseMountRatingLbs(env.VMCP_MOUNT_RATING_LBS);
   // HOME is normally set on every supported platform but is typed as
   // possibly-undefined; fall back to os.homedir() when absent.
   const home = env.HOME ?? homedir();
@@ -294,5 +305,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trueCoachOutboxDir: env.VMCP_TRUECOACH_OUTBOX_DIR ?? `${home}/.voltras/truecoach-outbox`,
     trueCoachSubmitOnEnd,
     trueCoach: loadTrueCoachConfig(env, home),
+    mountRatingLbs,
   }) satisfies Config;
+}
+
+/** `undefined` when unset; throws on anything that is not a positive finite number. */
+function parseMountRatingLbs(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Invalid VMCP_MOUNT_RATING_LBS="${raw}". Must be a positive number.`);
+  }
+  return value;
 }
