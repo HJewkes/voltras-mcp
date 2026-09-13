@@ -225,6 +225,18 @@ export function stageIsEmpty(model: DashboardModel): boolean {
   );
 }
 
+/**
+ * True right after `session.end`: no session is open anymore, but the model still has
+ * something to show for it (a logged set, or a rest clock that had been running) — proof
+ * a session just closed rather than the wall never having seen one. Distinguishes the
+ * post-session state from the true cold start ({@link stageIsEmpty}, where `hasSession` is
+ * also false but nothing was ever recorded) so the wall can route the lifter to the
+ * summary instead of falling back to the idle or rest stage (VW-261).
+ */
+export function stageIsEnded(model: DashboardModel): boolean {
+  return !model.session.hasSession && !stageIsEmpty(model);
+}
+
 // --- Derived projections (store read-model → titan presentational props) -------
 
 /** Arithmetic mean of a per-rep velocity array (m/s). */

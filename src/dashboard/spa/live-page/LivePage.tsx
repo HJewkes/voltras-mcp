@@ -14,12 +14,13 @@ import { ExerciseHeader } from './LiveView';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
-import { EmptyLiveView } from './EmptyLiveView';
+import { EmptyLiveView, SessionEndedView } from './EmptyLiveView';
 import { IsometricWalkthrough } from './IsometricWalkthrough';
 import {
   deriveRailExercises,
   deriveRailMetrics,
   stageIsEmpty,
+  stageIsEnded,
   type DashboardModel,
   type LiveDashboardModel,
 } from './model';
@@ -275,11 +276,16 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
             // Nothing streaming, logged, or resting ⇒ the designed idle stage, not a blank
             // RestView (the barren no-session / pre-first-set view).
             <EmptyLiveView model={model} />
+          ) : stageIsEnded(model) ? (
+            // The session that produced this recap has since ended (VW-261) ⇒ route to the
+            // summary instead of leaving the rest recap on screen with no session behind it.
+            <SessionEndedView />
           ) : (
-            // No OPEN set ⇒ the rest stage: recap of the set just finished + countdown.
-            // Reachable again as of this change: while the stage was gated on the stale
-            // `model.live` overlay, this branch was effectively dead between sets and the
-            // wall showed a frozen velocity stage for the whole rest period instead.
+            // No OPEN set, session still open ⇒ the rest stage: recap of the set just
+            // finished + countdown. Reachable again as of an earlier change: while the stage
+            // was gated on the stale `model.live` overlay, this branch was effectively dead
+            // between sets and the wall showed a frozen velocity stage for the whole rest
+            // period instead.
             <RestView model={model} displayUnit={displayUnit} />
           )}
         </View>

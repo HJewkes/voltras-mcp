@@ -21,6 +21,7 @@ import {
   type LiveDashboardModel,
   deriveActiveSetStates,
   derivePrescription,
+  stageIsEnded,
   verdictFromLoss,
 } from './model';
 import { type MassUnit } from './mass';
@@ -301,7 +302,13 @@ export function ExerciseHeader({
   // Keep the region rather than removing it — the wall's layout should not jump when a session
   // opens — but show the same idle copy EmptyLiveView's stage uses rather than the `Exercise N`
   // ordinal, which exists to name a genuinely open session and would misdescribe an idle wall.
-  const headingText = session.hasSession ? session.exerciseName : 'Waiting for a set';
+  // A session that just ENDED (VW-261) gets its own heading rather than reusing the idle
+  // "Waiting for a set" copy, which would misdescribe a wall that just finished a workout.
+  const headingText = stageIsEnded(model)
+    ? 'Session complete'
+    : session.hasSession
+      ? session.exerciseName
+      : 'Waiting for a set';
 
   if (disconnected) return null;
 
