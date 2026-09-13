@@ -504,7 +504,11 @@ function hasPlanStore(
 function hasSessionStore(
   store: DashboardServerState['store'],
 ): store is DashboardServerState['store'] & DashboardSessionStore {
-  return typeof store.getSession === 'function' && typeof store.getSetsForSession === 'function';
+  return (
+    typeof store.getSession === 'function' &&
+    typeof store.getSetsForSession === 'function' &&
+    typeof store.getSetsForExercise === 'function'
+  );
 }
 
 /** Catalog name lookup handed to the plan read-models. */

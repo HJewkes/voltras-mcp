@@ -286,6 +286,7 @@ function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummaryS
     setPurpose: 'working',
     velocityLossPct: 12,
     bestRepVelocity: 0.8,
+    expectedRepRange: null,
     ...overrides,
   };
 }
