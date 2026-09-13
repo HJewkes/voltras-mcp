@@ -18,7 +18,8 @@ describe('loadConfig', () => {
       logLevel: 'debug',
       repSource: 'analytics',
       restTimer: 'off',
-      repCorrections: 'off',
+      repUnrackDrop: 'off',
+      repEccentricTruncate: 'on',
       cues: 'off',
       cuesMidSet: 'off',
       autoArm: 'on',
@@ -130,20 +131,48 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_REST_TIMER: 'yes' })).toThrow(/on/);
   });
 
-  it('defaults VMCP_REP_CORRECTIONS to "off"', () => {
+  it('defaults the un-rack drop off and the eccentric truncation on', () => {
     const cfg = loadConfig({ HOME: '/home/test' });
-    expect(cfg.repCorrections).toBe('off');
+    expect(cfg.repUnrackDrop).toBe('off');
+    expect(cfg.repEccentricTruncate).toBe('on');
   });
 
-  it('honors VMCP_REP_CORRECTIONS="on" when explicitly set', () => {
+  it('honors VMCP_REP_CORRECTIONS="on" as both halves on', () => {
     const cfg = loadConfig({ VMCP_REP_CORRECTIONS: 'on', HOME: '/home/test' });
-    expect(cfg.repCorrections).toBe('on');
+    expect(cfg.repUnrackDrop).toBe('on');
+    expect(cfg.repEccentricTruncate).toBe('on');
   });
 
-  it('throws on invalid VMCP_REP_CORRECTIONS, naming the bad value and listing valid options', () => {
-    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/yes/);
-    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/off/);
-    expect(() => loadConfig({ VMCP_REP_CORRECTIONS: 'yes' })).toThrow(/on/);
+  it('honors an explicit VMCP_REP_CORRECTIONS="off" as both halves off', () => {
+    // An existing opt-out must not be silently overridden by the new default.
+    const cfg = loadConfig({ VMCP_REP_CORRECTIONS: 'off', HOME: '/home/test' });
+    expect(cfg.repUnrackDrop).toBe('off');
+    expect(cfg.repEccentricTruncate).toBe('off');
+  });
+
+  it('lets each half override the coarse flag', () => {
+    const cfg = loadConfig({
+      VMCP_REP_CORRECTIONS: 'off',
+      VMCP_REP_ECC_TRUNCATE: 'on',
+      HOME: '/home/test',
+    });
+    expect(cfg.repUnrackDrop).toBe('off');
+    expect(cfg.repEccentricTruncate).toBe('on');
+  });
+
+  it('honors VMCP_REP_UNRACK_DROP="on" without touching the truncation', () => {
+    const cfg = loadConfig({ VMCP_REP_UNRACK_DROP: 'on', HOME: '/home/test' });
+    expect(cfg.repUnrackDrop).toBe('on');
+    expect(cfg.repEccentricTruncate).toBe('on');
+  });
+
+  it('throws on an invalid rep-correction flag, naming the bad value and listing valid options', () => {
+    for (const name of ['VMCP_REP_CORRECTIONS', 'VMCP_REP_UNRACK_DROP', 'VMCP_REP_ECC_TRUNCATE']) {
+      expect(() => loadConfig({ [name]: 'yes' })).toThrow(/yes/);
+      expect(() => loadConfig({ [name]: 'yes' })).toThrow(new RegExp(name));
+      expect(() => loadConfig({ [name]: 'yes' })).toThrow(/off/);
+      expect(() => loadConfig({ [name]: 'yes' })).toThrow(/on/);
+    }
   });
 
   it('defaults VMCP_CUES to "off"', () => {

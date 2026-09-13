@@ -196,7 +196,9 @@ this table adds three diagnostic variables that are read in code but not in that
 | `VMCP_REST_TIMER`                                  | `off`                             | Auto-arm the rest-status push cycle on set close.                                                                                                                                            |
 | `VMCP_AUTO_ARM`                                    | `on`                              | Open a set on the server's own initiative when reps are detected.                                                                                                                            |
 | `VMCP_REP_SOURCE`                                  | `analytics`                       | `analytics` \| `firmware`.                                                                                                                                                                   |
-| `VMCP_REP_CORRECTIONS`                             | `off`                             | Movement-class-dependent rep-segmentation corrections.                                                                                                                                       |
+| `VMCP_REP_UNRACK_DROP`                             | `off`                             | Drop the un-rack artifact rep at set close. Changes the persisted rep count; dark pending movement-class validation.                                                                         |
+| `VMCP_REP_ECC_TRUNCATE`                            | `on`                              | Truncate the final rep's parked idle tail off its eccentric at set close.                                                                                                                    |
+| `VMCP_REP_CORRECTIONS`                             | _unset_                           | Legacy coarse switch over both of the above; either one's own variable overrides it.                                                                                                         |
 | `VMCP_SLOT_BINDINGS_PATH`                          | `~/.voltras/slot-bindings.json`   | Device ↔ left/right side bindings.                                                                                                                                                           |
 | `VMCP_DEBUG_BUFFER_SIZE`                           | `256`                             | Capacity of the diagnostic ring buffer.                                                                                                                                                      |
 | `VMCP_TRUECOACH_USERNAME`                          | _unset_                           | TrueCoach account email.                                                                                                                                                                     |
@@ -213,6 +215,7 @@ this table adds three diagnostic variables that are read in code but not in that
 | `VOLTRAS_VAD_MODEL` _(diagnostic, undocumented)_   | built-in model                    | Overrides the Silero VAD model path used by the local voice listener. ([`src/voice/vad.ts:100`](https://github.com/HJewkes/voltras-mcp/blob/main/src/voice/vad.ts#L100))                     |
 
 `VOLTRA_ADAPTER`, `VMCP_REP_SOURCE`, `VMCP_REST_TIMER`, `VMCP_REP_CORRECTIONS`,
+`VMCP_REP_UNRACK_DROP`, `VMCP_REP_ECC_TRUNCATE`,
 `VMCP_AUTO_ARM`, `VMCP_TRUECOACH_OUTBOX`, `VMCP_TRUECOACH_SUBMIT_ON_END`, and `VMCP_CUES`
 throw synchronously at startup on an unrecognized value.
 ([README.md § Environment variables](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#environment-variables))

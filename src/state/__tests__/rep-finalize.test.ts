@@ -56,20 +56,20 @@ describe('finalizeReps — VMCP-02.66 segmentation', () => {
     const real1 = cleanRep(2, 100);
     const real2 = cleanRep(3, 200);
 
-    const out = finalizeReps([unrack, real1, real2], { segmentationCorrections: true });
+    const out = finalizeReps([unrack, real1, real2], { dropUnrackArtifact: true });
 
     expect(out.map((r) => r.repNumber)).toEqual([2, 3]);
   });
 
   it('preserves a zero-displacement rep (empty / single-sample) — not the artifact', () => {
     const empty = rep(1, phaseFrom([]), phaseFrom([]));
-    const out = finalizeReps([empty], { segmentationCorrections: true });
+    const out = finalizeReps([empty], { dropUnrackArtifact: true });
     expect(out).toHaveLength(1);
   });
 
   it('keeps every rep with a positive-net-ROM concentric', () => {
     const out = finalizeReps([cleanRep(1, 0), cleanRep(2, 100)], {
-      segmentationCorrections: true,
+      dropUnrackArtifact: true,
     });
     expect(out).toHaveLength(2);
   });
@@ -89,7 +89,7 @@ describe('finalizeReps — VMCP-02.65 eccentric idle-tail truncate', () => {
     }
     const finalRep = rep(1, conc, phaseFrom(eccSamples));
 
-    const out = finalizeReps([finalRep], { segmentationCorrections: true });
+    const out = finalizeReps([finalRep], { truncateFinalEccentric: true });
 
     expect(out[0].eccentric.samples.length).toBe(3);
     expect(out[0].eccentric.samples.at(-1)?.velocity).toBe(120);
@@ -97,7 +97,7 @@ describe('finalizeReps — VMCP-02.65 eccentric idle-tail truncate', () => {
 
   it('leaves a clean eccentric (no idle tail) untouched', () => {
     const before = cleanRep(1, 0);
-    const out = finalizeReps([before], { segmentationCorrections: true });
+    const out = finalizeReps([before], { truncateFinalEccentric: true });
     expect(out[0].eccentric.samples.length).toBe(before.eccentric.samples.length);
   });
 });
@@ -131,30 +131,110 @@ describe('finalizeReps — VMCP-02.69a peak recompute', () => {
   });
 });
 
-describe('finalizeReps — VMCP_REP_CORRECTIONS dark switch', () => {
-  it('skips the segmentation corrections (02.66/02.65) by default', () => {
-    // Same fixtures the 02.66/02.65 tests use, but without opting in: the
-    // un-rack rep survives and the idle tail is left intact.
-    const unrackConc = phaseFrom([sample(0, CONCENTRIC, 609, -5), sample(1, CONCENTRIC, 592, -3)]);
-    const unrack = rep(1, unrackConc, phaseFrom([]));
-    const eccSamples: WorkoutSample[] = [sample(2, ECCENTRIC, 0.5, 300)];
-    for (let i = 0; i < 200; i++) {
-      eccSamples.push(sample(3 + i, ECCENTRIC, 0.1, 0));
-    }
-    const finalRep = rep(2, cleanRep(2, 100).concentric, phaseFrom(eccSamples));
+/** The un-rack artifact: a "concentric" that ends below where it began. */
+function unrackRep(repNumber: number): Rep {
+  const conc = phaseFrom([sample(0, CONCENTRIC, 609, -5), sample(1, CONCENTRIC, 592, -3)]);
+  return rep(repNumber, conc, phaseFrom([]));
+}
 
-    const out = finalizeReps([unrack, finalRep]);
+/** A rep whose eccentric holds `movement` real samples then a long parked tail. */
+function repWithIdleTail(repNumber: number, base: number, movement: number): Rep {
+  const eccSamples: WorkoutSample[] = [];
+  for (let i = 0; i < movement; i++) {
+    eccSamples.push(sample(base + i, ECCENTRIC, 0.5 - i * 0.1, 300 - i * 100));
+  }
+  for (let i = 0; i < 200; i++) {
+    eccSamples.push(sample(base + movement + i, ECCENTRIC, 0.1, 0));
+  }
+  return rep(repNumber, cleanRep(repNumber, base + 500).concentric, phaseFrom(eccSamples));
+}
 
-    expect(out.map((r) => r.repNumber)).toEqual([1, 2]); // un-rack NOT dropped
-    expect(out[1].eccentric.samples.length).toBe(eccSamples.length); // tail NOT trimmed
+describe('finalizeReps — the 02.66 / 02.65 combination matrix', () => {
+  // Each half is now gated separately, so all four combinations are reachable.
+  // 02.69a runs in every one of them. The dependency order (02.66 filter
+  // before 02.65 truncate) must hold in each, which is what the "both on" case
+  // asserts by naming which rep got trimmed.
+  const cases = [
+    { drop: false, truncate: false, repNumbers: [1, 2], tailTrimmed: false },
+    { drop: true, truncate: false, repNumbers: [2], tailTrimmed: false },
+    { drop: false, truncate: true, repNumbers: [1, 2], tailTrimmed: true },
+    { drop: true, truncate: true, repNumbers: [2], tailTrimmed: true },
+  ];
+
+  for (const { drop, truncate, repNumbers, tailTrimmed } of cases) {
+    it(`drop=${drop} truncate=${truncate} keeps reps [${repNumbers.join(',')}], tail trimmed=${tailTrimmed}`, () => {
+      const stale = repWithIdleTail(2, 100, 3);
+      const withStalePeak: Rep = {
+        ...stale,
+        concentric: { ...stale.concentric, peakVelocity: 11 },
+      };
+
+      const out = finalizeReps([unrackRep(1), withStalePeak], {
+        dropUnrackArtifact: drop,
+        truncateFinalEccentric: truncate,
+      });
+
+      expect(out.map((r) => r.repNumber)).toEqual(repNumbers);
+      const last = out[out.length - 1];
+      expect(last.eccentric.samples.length).toBe(tailTrimmed ? 3 : 203);
+      expect(last.concentric.peakVelocity).toBe(600); // 02.69a, ungated
+    });
+  }
+
+  it('runs the 02.66 filter BEFORE the 02.65 truncate', () => {
+    // Order discriminator: the phantom is the LAST rep and carries its own idle
+    // tail. Filter-then-truncate drops it and trims rep 1; the reverse order
+    // trims the doomed phantom and leaves rep 1's tail on the persisted set.
+    const real = repWithIdleTail(1, 100, 3);
+    const phantom = rep(2, unrackRep(2).concentric, repWithIdleTail(2, 400, 3).eccentric);
+
+    const out = finalizeReps([real, phantom], {
+      dropUnrackArtifact: true,
+      truncateFinalEccentric: true,
+    });
+
+    expect(out.map((r) => r.repNumber)).toEqual([1]);
+    expect(out[0].eccentric.samples.length).toBe(3);
+  });
+});
+
+describe('finalizeReps — truncation with a phantom un-rack rep present', () => {
+  // Newly reachable by default: 02.65 on with 02.66 off. The truncation only
+  // ever touches the LAST rep, and the un-rack artifact is a LEADING rep, so
+  // leaving the phantom in place does not move the truncation's target.
+  it('trims the same rep whether or not the leading phantom was dropped', () => {
+    const real = repWithIdleTail(2, 100, 3);
+
+    const withPhantom = finalizeReps([unrackRep(1), real], { truncateFinalEccentric: true });
+    const withoutPhantom = finalizeReps([unrackRep(1), real], {
+      dropUnrackArtifact: true,
+      truncateFinalEccentric: true,
+    });
+
+    expect(withPhantom[1].eccentric.samples).toEqual(withoutPhantom[0].eccentric.samples);
+    expect(withPhantom[1].eccentric.samples.length).toBe(3);
   });
 
-  it('still recomputes signed peaks (02.69a) when segmentation corrections are off', () => {
+  it('leaves a phantom-only set at one rep and touches no other rep', () => {
+    // Degenerate case: the phantom IS the last rep. Its empty eccentric has no
+    // movement sample to anchor on, so the truncation is a documented no-op.
+    const out = finalizeReps([unrackRep(1)], { truncateFinalEccentric: true });
+
+    expect(out.map((r) => r.repNumber)).toEqual([1]);
+    expect(out[0].eccentric.samples).toEqual([]);
+  });
+});
+
+describe('finalizeReps — 02.69a is gated by neither flag', () => {
+  it('recomputes peaks with both segmentation corrections off', () => {
     const conc = phaseFrom([sample(0, CONCENTRIC, 0.1, 300), sample(1, CONCENTRIC, 0.5, 747)]);
     const stale: Phase = { ...conc, peakVelocity: 11 };
     const finalRep = rep(1, stale, phaseFrom([sample(2, ECCENTRIC, 0.1, 100)]));
 
-    const out = finalizeReps([finalRep], { segmentationCorrections: false });
+    const out = finalizeReps([finalRep], {
+      dropUnrackArtifact: false,
+      truncateFinalEccentric: false,
+    });
 
     expect(out[0].concentric.peakVelocity).toBe(747);
   });

@@ -25,6 +25,20 @@ Entries name the pull request that shipped them. Anything not listed did not cha
 
 ### Changed
 
+- The rep-corrections gate is split in two (VMCP-02.65). `VMCP_REP_UNRACK_DROP` (default `off`)
+  gates the un-rack drop, which is unchanged and still dark behind VW-16; `VMCP_REP_ECC_TRUNCATE`
+  (default **`on`**) gates the final-eccentric idle-tail truncation, which is now applied by
+  default. `VMCP_REP_CORRECTIONS` still sets both halves when it is set, so an existing `on` or an
+  explicit `off` behaves exactly as before.
+
+  What moves: on the FINAL rep of a set only, and only in the persisted set and the `set_ended`
+  payload, `tempo_ratio` and eccentric mean velocity now exclude the parked-cable samples that
+  trail the last real movement. On the observed case that motivated this, last-rep `tempo_ratio`
+  read 35.1 where the movement it describes is nearer 1-3, and eccentric mean velocity read
+  ~0.002 m/s. Persisted values for newly recorded sets will therefore differ from historical ones
+  for that rep. Existing stored sets are NOT rewritten. No rep is added or removed, no raw sample
+  is altered, and the live per-rep `rep_finalized` event still carries the raw analytics rep.
+
 - The comparability predicate's training-phase clause is live: it reads the observed phase
   of each set's session instead of being unchecked on every pair. A pair with no phase on
   either side still passes with a note, so pre-existing history compares as before.
