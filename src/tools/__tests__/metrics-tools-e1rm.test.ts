@@ -28,6 +28,7 @@ import type { ServerState } from '../../state/server-state.js';
 import type { FeatureGateVerdict } from '../../store/baseline-gate.js';
 import type {
   BaselineState,
+  ExerciseSetsFilter,
   StoredExerciseBaseline,
   StoredRep,
   StoredSet,
@@ -118,7 +119,7 @@ function makePlaceholders(server: McpServer): Map<string, RegisteredTool> {
 }
 
 interface StoreOverrides {
-  getSetsForExercise?: (filter: { exerciseId: string }) => Promise<StoredSet[]>;
+  getSetsForExercise?: (filter: ExerciseSetsFilter) => Promise<StoredSet[]>;
   getBaseline?: () => Promise<StoredExerciseBaseline | undefined>;
 }
 
@@ -146,6 +147,8 @@ interface E1RMBody {
   band: E1RMBand | null;
   gate: FeatureGateVerdict | null;
   mvtBasis: 'optimal' | 'observed' | 'default' | null;
+  isPR: boolean;
+  priorBest: number | null;
 }
 
 describe('metrics.compute — strength.e1rm', () => {
@@ -203,6 +206,9 @@ describe('metrics.compute — strength.e1rm', () => {
       gate: null,
       // VW-299: Epley extrapolates to no velocity, so no threshold was chosen.
       mvtBasis: null,
+      // VW-314: no `exerciseId` on this shape, so no history to compare against.
+      isPR: false,
+      priorBest: null,
     });
   });
 
@@ -407,5 +413,109 @@ describe('metrics.compute — strength.e1rm', () => {
 
     expect(result.isError).toBe(true);
     expect((parsePayload(result) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('metrics.compute — strength.e1rm PR verdict (VW-314)', () => {
+  let repsSpy: ReturnType<typeof vi.spyOn>;
+  let profileSpy: ReturnType<typeof vi.spyOn>;
+  let buildSpy: ReturnType<typeof vi.spyOn>;
+  let velSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // The historical series (`priorBestE1RM`) and the fresh Epley estimate
+    // both route through this same mocked `estimateE1RMFromReps` — fixed at
+    // 116.7 lb, so any exercise with recorded history has that as its prior
+    // best, deterministically, regardless of the fixture's own weight/reps.
+    repsSpy = vi
+      .spyOn(analytics, 'estimateE1RMFromReps')
+      .mockReturnValue({ e1RM: 116.7, confidence: 0.8, method: 'reps' });
+    profileSpy = vi
+      .spyOn(analytics, 'estimateE1RMFromProfile')
+      .mockReturnValue({ e1RM: 220, confidence: 0.7, method: 'profile' });
+    buildSpy = vi.spyOn(analytics, 'buildProfile').mockReturnValue({
+      dataPoints: [],
+      slope: -0.01,
+      intercept: 1.2,
+      rSquared: 0.95,
+      estimated1RM: 220,
+      confidence: 'high',
+      mvt: 0.17,
+    });
+    velSpy = vi.spyOn(analytics, 'getSetMeanVelocity').mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    repsSpy.mockRestore();
+    profileSpy.mockRestore();
+    buildSpy.mockRestore();
+    velSpy.mockRestore();
+  });
+
+  it('a fresh estimate that beats the prior best → isPR true, priorBest set', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const state = makeState({
+      getSetsForExercise: async () => sets,
+      getBaseline: async () => makeBaselineRow('CALIBRATED'),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    const body = parsePayload(result) as E1RMBody;
+    expect(body.estimate?.e1RM).toBe(220);
+    expect(body.priorBest).toBe(116.7);
+    expect(body.isPR).toBe(true);
+  });
+
+  it('a fresh estimate that does not beat the prior best → isPR false, priorBest still set', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const state = makeState({
+      getSetsForExercise: async () => sets,
+      getBaseline: async () => makeBaselineRow('CALIBRATED'),
+    });
+    profileSpy.mockReturnValueOnce({ e1RM: 100, confidence: 0.7, method: 'profile' });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    const body = parsePayload(result) as E1RMBody;
+    expect(body.estimate?.e1RM).toBe(100);
+    expect(body.priorBest).toBe(116.7);
+    expect(body.isPR).toBe(false);
+  });
+
+  it('no recorded history for the exercise → isPR false, priorBest null', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const state = makeState({
+      // The profile build filters on `purpose`; the history lookback does
+      // not (see `historyTrendSessions`) — this fixture has working sets to
+      // build a profile from but no history to compare it against.
+      getSetsForExercise: async (filter) => (filter.purpose ? sets : []),
+      getBaseline: async () => makeBaselineRow('CALIBRATED'),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    const body = parsePayload(result) as E1RMBody;
+    expect(body.estimate?.e1RM).toBe(220);
+    expect(body.priorBest).toBeNull();
+    expect(body.isPR).toBe(false);
+  });
+
+  it('reps-only shape (no exerciseId) → isPR false, priorBest null, no history lookup', async () => {
+    const state = makeState();
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', load: 135, reps: 5 });
+
+    expect(state.store.getSetsForExercise).not.toHaveBeenCalled();
+    const body = parsePayload(result) as E1RMBody;
+    expect(body.priorBest).toBeNull();
+    expect(body.isPR).toBe(false);
   });
 });
