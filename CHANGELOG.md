@@ -12,9 +12,55 @@ version, which consumers must bump-and-reinstall to pick up launcher changes.
 
 Entries name the pull request that shipped them. Anything not listed did not change.
 
+## How to write an entry
+
+Entries are hand-written. There is no generator, no changeset tooling and no release
+workflow: this file is the record a reader trusts, so a human writes it.
+
+- Write what a **user** can now do, now sees, or no longer has to work around. Not which
+  file changed and not how it was implemented. "The rest timer now announces the last ten
+  seconds" is an entry; "refactored `timer-tools.ts`" is not.
+- Put it under `## [Unreleased]`, grouped **Added / Changed / Fixed / Removed**. Add only
+  the groups the release actually has.
+- Name the pull request that shipped it, as `(#123)`, or the ticket and the PR when both
+  exist.
+- **A change with no user-visible effect gets no entry, and that is fine.** Refactors,
+  test-only changes and internal renames belong in `git log`, not here. Padding this file
+  to prove work happened makes it useless for the thing it is for.
+- On release, rename `[Unreleased]` to the new version with its date, bump
+  `package.json`, and open a fresh empty `[Unreleased]`.
+
+`npm run changelog:check` enforces the mechanical half of this in CI: the version in
+`package.json` has a section, sections run newest first, and no released section is empty.
+An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
+entry is written from the user's point of view is a review question, not a check.
+
 ## [Unreleased]
 
 ### Added
+
+- `report.weekly` (w3-91) — a coach-readable weekly summary, in markdown or JSON, over a
+  date range (default: the last 7 days). Sessions completed, a rolling 28-day
+  completed-session count, adherence against the active program with a trend vs. the
+  previous range, per-session results plus a gated RIR line, `plan.suggest_progression`
+  suggestions, flags (force-implied weight mismatches, inactivity-timeout closes,
+  velocity-loss holds), and a check-in section read from `self_reports`.
+
+- The documentation site renders this changelog at `/changelog` (#348). The page was a
+  stub; it now includes this file verbatim, so there is one copy to read and one to write.
+
+- Every estimated 1RM now arrives with an error band and a `fitFor: "trend"` marker
+  (VW-267). `metrics.compute` `strength.e1rm` attaches the pooled standard error (9.8% of
+  1RM, sized to the estimate) and the 3.7% systematic overestimate — reported, never
+  subtracted — to the two velocity-derived methods; the Epley rep method gets the marker
+  and a note saying why no figure applies to it. `history.trend` with `metric: e1rm` carries
+  the same band, and is the path an e1RM is actually fit for. `plan.suggest_progression`
+  says outright that no gate of its own reads an e1RM: a one-session jump inside the band is
+  noise and moves no load.
+
+- `coaching.explain` topic `meso.e1rm_interpretation` (VW-267) — how to talk about an e1RM
+  that moved, with the reliability figures and their citations. The first topic sourced
+  from primary literature rather than the mined RP corpus.
 
 - `profile.set_diet_phase` — the first writer of `diet_phases`, which had DDL and a
   comparability clause but nothing to fill it (VW-149 / VW-150). It records the OBSERVED
@@ -25,6 +71,11 @@ Entries name the pull request that shipped them. Anything not listed did not cha
 
 ### Changed
 
+- Requires `@voltras/workout-analytics` 3.x (#353). No behavior change: `history.trend`
+  already discards `analyzeTrend`'s categorical verdict and reports its own explicit
+  `null` direction (VW-230), and this server does not call `findOutlierReps`,
+  `updateBaselineWithPoint`, or reference `FatigueSchemes.outlier` — the surfaces 3.0.0
+  changed or removed.
 - The rep-corrections gate is split in two (VMCP-02.65). `VMCP_REP_UNRACK_DROP` (default `off`)
   gates the un-rack drop, which is unchanged and still dark behind VW-16; `VMCP_REP_ECC_TRUNCATE`
   (default **`on`**) gates the final-eccentric idle-tail truncation, which is now applied by
@@ -47,6 +98,14 @@ Entries name the pull request that shipped them. Anything not listed did not cha
   single declared phase covers the window. The plateau verdict itself is unchanged: a
   fat-loss phase looks like a plateau (B34), and B34 states no correction, so none is
   applied — the phase is there for a reader to discount by hand.
+
+### Fixed
+
+- A set run with the eccentric loaded above the concentric no longer gets a velocity-loss
+  stop cue about a rep early (VW-268, #354). Rep 1 of such a set is the only rep with no
+  overloaded eccentric before it, so it was the fastest rep in the set for mechanical
+  reasons and became the baseline the rest were judged against. The stop now measures from
+  rep 3, and the `velocity_loss_exceeded` event says which reps it left out and why.
 
 ## [0.5.0] - 2026-09-08
 

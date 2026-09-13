@@ -2,7 +2,7 @@
 
 # `report.*`
 
-1 tool in the `report` namespace.
+2 tools in the `report` namespace.
 
 ## `report.session_results`
 
@@ -13,3 +13,17 @@ Working sets only, by the same warm-up-then-top-load rule `plan.suggest_progress
 **Parameters**
 
 - `sessionId` — `string`, **required**.
+
+## `report.weekly`
+
+Coach-readable weekly summary over a date range (default: the last 7 days), in markdown (default) or JSON — both render from the same data tree, so the numbers always agree.
+
+Sections, each omitted when empty: a header (lifter, range, sessions completed, a rolling 28-day completed-session count — never a streak — and adherence `planned N / done M` against the active program's touched week(s), plus a coarse trend vs the previous equal-length range); one block per session (date, template name, the same `report.session_results` strings verbatim, plus an RIR line only when the rir-estimate baseline gate allows it); one progression-suggestion line per exercise from the same heuristic `plan.suggest_progression` uses, labelled "suggestion for the coach, not applied"; flags (force-implied weight/header mismatches, sets closed by an inactivity timeout with reps recorded, and velocity-loss holds at the VL30 stop point — `setting_coerced` is never included: it is a live-only signal with no persisted record, so there is nothing to read back after the session ends); and a check-in section built from recorded self-reports, falling back to the `notes` input as a lifter note when none exist. Read-only and local: no network call, and it writes nothing.
+
+**Parameters**
+
+- `from` — `string`, optional.
+- `to` — `string`, optional.
+- `format` — `markdown` | `json`, optional.
+- `lifter` — `string`, optional.
+- `notes` — `string`, optional.

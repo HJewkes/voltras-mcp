@@ -39,6 +39,9 @@ export const CORE_TOOL_NAMES = [
   'slot.swap',
   'session.start',
   'session.end',
+  // First writer of `self_reports` (VMCP-06.12 / B41). See
+  // src/tools/session-tools.ts.
+  'session.checkin',
   'session.set_exercise',
   'session.set_lifter',
   'session.list',
@@ -152,6 +155,9 @@ export const CORE_TOOL_NAMES = [
   // Per-exercise result strings for one ended session, in the free-text idiom
   // a coach reads (see src/tools/report-tools.ts). Read-only and local.
   'report.session_results',
+  // Coach-readable weekly summary (markdown/JSON) over a date range (w3-91).
+  // Read-only and local; see src/tools/report-tools.ts.
+  'report.weekly',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -222,6 +228,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'session.start': 'write',
   'session.end': 'write',
+  'session.checkin': 'write',
   'session.set_exercise': 'write',
   'session.set_lifter': 'write',
   'session.list': 'read',
@@ -337,6 +344,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   // Reads stored sets and returns strings. No device traffic, no row moves.
   'report.session_results': 'read',
+  // Reads stored sessions/sets/plan tree/self-reports. No device traffic, no row moves.
+  'report.weekly': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

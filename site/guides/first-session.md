@@ -50,7 +50,12 @@ Power the device on and wake its screen — a sleeping unit doesn't advertise
 in full but count toward nothing of yours — not your baselines, failure anchors,
 progression, or session history. If a set already ran under the wrong name,
 `set.update {setId, lifter}` moves it and re-derives your baseline for that exercise
-(`README.md`).
+(`README.md`). On the wall dashboard, their name shows next to the exercise name for as
+long as they're set as the lifter — the header is yours by default, so a name only
+appears while someone else is actually on the cable, and it goes back to showing nothing
+extra the moment you clear it.
+
+<!-- src/dashboard/spa/live-page/LiveView.tsx:360-374 -->
 
 Afterwards: [`session.list`](/reference/session) / `session.get` for history, `set.get`
 for one set's full rep detail, [`metrics.compute`](/reference/metrics) for the analytics
@@ -117,6 +122,28 @@ bug, and the rep count is still accurate.
 piece of set-level intent the device can't infer on its own — a warm-up, a probe, and a
 working set look identical to the hardware — and it decides whether the set counts toward
 progression.
+
+## Check-in at the end of a session
+
+[`session.end`](/reference/session) takes an optional `checkin` block, recorded atomically
+with the close — or call [`session.checkin`](/reference/session) on its own at any point
+against the active session. Omit it and nothing is asked; it's never a gate on ending a
+session.
+
+The question set comes from RP's client check-in: four free-text prompts — how it went,
+how you felt, whether anything felt off, and any questions — plus four questions on RP's
+coarse 3-point scale (`low`/`medium`/`high`, never a 5- or 10-point scale): how you're
+feeling about the next session or week, soreness, joint discomfort, and motivation. "How
+did it go?" is never actually asked — completion (loads, reps, sets) is already
+telemetry-derivable, so Claude shows you your own numbers back instead, and the code
+exists only to store whatever you volunteer on top of that. Of the four 3-point
+questions, soreness, joint discomfort, and motivation are withheld entirely before your
+first completed training week, since that early the answers are uniformly positive and
+asking can seed unwarranted concern — RP's cadence otherwise is after the very first
+session, then at the end of every completed week.
+
+A guest session — one running under [`session.set_lifter`](/reference/session) — writes no
+check-in at all: it's the owner's alone.
 
 ## What to read next
 

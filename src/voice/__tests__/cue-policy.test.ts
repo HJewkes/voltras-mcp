@@ -16,6 +16,7 @@ import {
   buildVelocityLossExceededPayload,
 } from '../../state/channel-payloads.js';
 import type { ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
+import { NO_VELOCITY_LOSS_EXCLUSION } from '../../state/rep-eligibility.js';
 import type { StoredSet } from '../../store/types.js';
 import { decideCue } from '../cue-policy.js';
 
@@ -154,7 +155,17 @@ describe('decideCue — set_target_reached → target_hit', () => {
 describe('decideCue — velocity_loss_exceeded → slowdown (urgent)', () => {
   it('extracts pct + rep and marks the cue urgent', () => {
     const set = activeSet([makeRep(1, 850, 500), makeRep(2, 550, 400)]);
-    const event = buildVelocityLossExceededPayload(set, device, 25, 35.3, 850, 550, 1, 2);
+    const event = buildVelocityLossExceededPayload(
+      set,
+      device,
+      25,
+      35.3,
+      850,
+      550,
+      1,
+      2,
+      NO_VELOCITY_LOSS_EXCLUSION,
+    );
     expect(decideCue(event)).toEqual({
       category: 'slowdown',
       slots: { pct: 35.3, rep: 2 },

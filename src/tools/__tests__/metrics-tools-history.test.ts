@@ -137,6 +137,7 @@ interface HistoryTrendBody {
     reasoning: string;
     phase: string;
   };
+  band: { fitFor: string; method: string; seePct: number | null; note: string } | null;
 }
 
 describe('metrics.compute — history.trend', () => {
@@ -248,6 +249,25 @@ describe('metrics.compute — history.trend direction (VW-230)', () => {
       expect(body.trend.directionReason.length).toBeGreaterThan(0);
     });
   }
+
+  it('attaches the trend-only e1RM band to an e1rm series, and to no other metric', async () => {
+    // Arrange: the same six weeks read three ways.
+    const sets = Array.from({ length: 6 }, (_, i) => makeSet(`s-${i}`, i, 100 + 5 * i));
+
+    // Act.
+    const [topLoad, e1rm, volume] = await Promise.all([
+      trendFor(sets, 'topLoad'),
+      trendFor(sets, 'e1rm'),
+      trendFor(sets, 'volume'),
+    ]);
+
+    // Assert: VW-267. The series is Epley-derived, so the pooled
+    // load-velocity figure is withheld and the note says why.
+    expect(e1rm.band).toMatchObject({ fitFor: 'trend', method: 'reps', seePct: null });
+    expect(e1rm.band?.note).toContain('Epley');
+    expect(topLoad.band).toBeNull();
+    expect(volume.band).toBeNull();
+  });
 
   it('withholds direction on a rise too small for any load threshold to mean anything', async () => {
     // A top weight creeping one pound per YEAR. The velocity-derived flat band

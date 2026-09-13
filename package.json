@@ -40,7 +40,9 @@
     "docs:dev": "vitepress dev site",
     "docs:build": "vitepress build site",
     "docs:reference": "node scripts/gen-tool-reference.mjs",
-    "docs:captures": "node scripts/capture-screens.mjs"
+    "docs:captures": "node scripts/capture-screens.mjs",
+    "changelog:check": "node scripts/check-changelog.mjs",
+    "docs:check": "node scripts/check-docs.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -48,7 +50,7 @@
     "@fontsource/space-grotesk": "^5.2.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@voltras/node-sdk": "^0.14.0",
-    "@voltras/workout-analytics": "^2.3.0",
+    "@voltras/workout-analytics": "^3.0.0",
     "node-record-lpcm16": "^1.0.1",
     "nodejs-whisper": "^0.3.0",
     "onnxruntime-node": "^1.27.0",

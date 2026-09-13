@@ -156,6 +156,7 @@ import {
 } from '../store/types.js';
 import { normalisePositionsToMetres } from '../store/position-units.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
+import { e1rmBand, type E1RMBand } from './e1rm-band.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 type MetricsComputeInputType = z.infer<typeof MetricsComputeInput>;
@@ -506,11 +507,38 @@ interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
   slopeUnit: string;
 }
 
-/** `history.trend`'s response (VW-144/VW-145/VW-150/VW-230). */
+/** `history.trend`'s response (VW-144/VW-145/VW-150/VW-230/VW-267). */
 interface HistoryTrendResult {
   series: TimeSeries;
   trend: HistoryTrendReadout;
   plateau: PlateauDetection & { phase: DietPhase | 'unknown' };
+  /**
+   * VW-267: the e1RM error band, non-null only for `metric: 'e1rm'` — the
+   * other two metrics are recorded loads, not estimates, and need no band.
+   * This is the path an e1RM is fit for: a multi-session slope, not a
+   * session-to-session delta.
+   */
+  band: E1RMBand | null;
+}
+
+/**
+ * The band for an `e1rm` series, sized off its most recent point (the band is
+ * a percentage, so it scales with the estimate). `'reps'` is not a guess: the
+ * `estimated_1rm` values `buildTimeSeries` reads are written by
+ * `store/processed-session-mapper.ts`, which fills them from
+ * `estimateE1RMFromReps` — the Epley formula, not a velocity fit.
+ */
+function historyTrendBand(
+  metric: NonNullable<HistoryTrendInput['metric']>,
+  series: TimeSeries,
+): E1RMBand | null {
+  if (metric !== 'e1rm' || series.length === 0) return null;
+  // `TimeSeries` degrades to `any[]` through the package's .d.ts (the same
+  // NodeNext-resolution note `plateauWindowPhase` carries), so the reduce
+  // parameters are annotated rather than inferred.
+  type Point = { ts: string; value: number };
+  const latest = series.reduce((a: Point, b: Point) => (b.ts > a.ts ? b : a));
+  return e1rmBand(latest.value, 'reps');
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -636,6 +664,7 @@ async function computeHistoryTrend(
   return {
     series,
     trend,
+    band: historyTrendBand(input.metric ?? 'topLoad', series),
     // VW-150: the phase the window fell in, so a reader can tell a fat-loss
     // stretch from a true plateau (B34). It qualifies the verdict; it does
     // not change it.
@@ -1001,10 +1030,16 @@ function sessionIdsNewestFirst(rows: readonly StoredSet[]): string[] {
  * `strength.e1rm`'s response (VW-142). `estimate` is WA's own `E1RMEstimate`,
  * unchanged; `null` only when a `profile`/`hybrid` read is gated `withheld`
  * (`reps` never gates — the Epley formula needs no baseline evidence).
+ *
+ * VW-267: `band` travels with the estimate and is null only when the estimate
+ * is. It carries `fitFor: 'trend'` on every method — an e1RM is evidence across
+ * sessions, never within one — plus the pooled error figures where they were
+ * actually measured. See `e1rm-band.ts`.
  */
 interface E1RMResult {
   method: 'reps' | 'profile' | 'hybrid';
   estimate: E1RMEstimate | null;
+  band: E1RMBand | null;
   gate: FeatureGateVerdict | null;
 }
 
@@ -1082,17 +1117,31 @@ async function profileE1RM(
 async function computeE1RM(state: ServerState, input: E1RMInput): Promise<E1RMResult> {
   const shape = e1rmShape(input);
   if (shape.kind === 'reps') {
-    return { method: 'reps', estimate: estimateE1RMFromReps(shape.load, shape.reps), gate: null };
+    return bandedE1RM('reps', estimateE1RMFromReps(shape.load, shape.reps), null);
   }
   const { profile, gate } = await profileE1RM(state, shape.exerciseId);
   const profileEstimate = gate.activation === 'withheld' ? null : estimateE1RMFromProfile(profile);
   if (shape.kind === 'profile') {
-    return { method: 'profile', estimate: profileEstimate, gate };
+    return bandedE1RM('profile', profileEstimate, gate);
   }
   const repsEstimate = estimateE1RMFromReps(shape.load, shape.reps);
   const estimate =
     profileEstimate === null ? null : estimateHybridE1RM(profileEstimate, repsEstimate);
-  return { method: 'hybrid', estimate, gate };
+  return bandedE1RM('hybrid', estimate, gate);
+}
+
+/** VW-267: no e1RM leaves this pipeline without its band. */
+function bandedE1RM(
+  method: E1RMResult['method'],
+  estimate: E1RMEstimate | null,
+  gate: FeatureGateVerdict | null,
+): E1RMResult {
+  return {
+    method,
+    estimate,
+    band: estimate === null ? null : e1rmBand(estimate.e1RM, method),
+    gate,
+  };
 }
 
 /** Grouping key for sets whose exercise is unrecorded, and for an unknown muscle. */
@@ -1809,17 +1858,33 @@ const METRICS_COMPUTE_DESCRIPTION =
   'as `estimate` (`e1RM`, `confidence`, `method`) alongside the top-level `method` and `gate`; ' +
   '`estimate` is null only when a `profile`/`hybrid` read is gated `withheld` — `gate` still ' +
   "carries the reason. This answers VW-135's MCP-agent-parity question for e1RM: yes, via this " +
-  'pipeline. ' +
+  'pipeline. AN e1RM IS A TREND INSTRUMENT, NEVER A MEASUREMENT (VW-267), and `band` says so on ' +
+  'every response that carries an estimate: `fitFor` is always `trend`. For the two ' +
+  'velocity-derived methods `band` also carries the pooled error — `seePct` 9.8 (95% CI 7.4 to ' +
+  '12.2) with `seeLbs`/`lowLbs`/`highLbs` sized to this estimate, and `biasPct` 3.7, a ' +
+  'systematic 4.5 kg OVERESTIMATE that is reported and never subtracted (a pooled correction ' +
+  'does not describe one lifter on one exercise). `citation` names the source. The `reps` ' +
+  "method's band is all nulls on purpose: the Epley formula touches no velocity, so the pooled " +
+  'load-velocity figures do not describe its error and no source here states one that does — ' +
+  '`note` says exactly that. Either way: a session-to-session e1RM change smaller than the band ' +
+  'is indistinguishable from estimation error. Read the multi-session slope from ' +
+  '`history.trend` below, and never move load on one session. ' +
   '`history.trend` (VW-144/VW-145) (exerciseId, optional weeks [default 12], metric ' +
   "[`topLoad`|`e1rm`|`volume`, default `topLoad`], thresholdPct, minDays) — this exercise's " +
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +
-  "trend, plateau }`. `trend`/`plateau` are WA's own `analyzeTrend`/`detectPlateau`; omitted " +
+  "trend, plateau, band }`. `trend`/`plateau` are WA's own `analyzeTrend`/`detectPlateau`; " +
+  'omitted ' +
   "`thresholdPct`/`minDays` use WA's OWN defaults (5%, 14 days — never redeclared here), not " +
   "this server's. The trend's `direction` is ALWAYS null (VW-230) — every metric here is a " +
   'load (`topLoad`/`e1rm` in lb, `volume` in lb of volume-load) and no citable up/down/flat ' +
   'band exists for a load trend, so no verdict is invented; `directionReason` says so in ' +
   'words. Read the raw fit instead: `slope` is the per-day change in `slopeUnit`, beside ' +
-  '`rSquared`, `percentChange`, `windowDays` and `confidence`. ' +
+  '`rSquared`, `percentChange`, `windowDays` and `confidence`. `band` (VW-267) is non-null only ' +
+  'for `metric: e1rm` — the other two metrics are recorded loads, not estimates. THIS IS THE ' +
+  'PATH AN e1RM IS FIT FOR: a slope over several sessions, never a session-to-session delta. ' +
+  'The series is built from the Epley rep estimate, so the pooled load-velocity error figures ' +
+  'do not describe it and its numeric fields are null; `band.fitFor` is still `trend` and ' +
+  '`band.note` says why. ' +
   '`plateau.phase` (VW-150) is the OBSERVED diet phase covering the plateau ' +
   "window, from `profile.set_diet_phase`, or `'unknown'` when no single declared phase covers " +
   'it. Read it ALONGSIDE the verdict: a fat-loss phase can look identical to a true plateau, ' +

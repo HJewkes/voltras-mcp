@@ -1679,9 +1679,12 @@ describe('wireEventBridge', () => {
      */
     function startWatchedSet(
       watch?: WatchSpec,
-      opts: { movementClass?: MovementClass } = {},
+      opts: { movementClass?: MovementClass; eccentricPercentTenths?: number } = {},
     ): void {
       live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+      if (opts.eccentricPercentTenths !== undefined) {
+        live.applyStateDump({ eccentricPercentTenths: opts.eccentricPercentTenths });
+      }
       live.startSession({
         sessionId: 'sess-trig',
         startedAt: '2025-01-01T00:00:00.000Z',
@@ -2017,6 +2020,65 @@ describe('wireEventBridge', () => {
         expect(losses).toHaveLength(2);
         const thresholds = losses.map((e) => e.meta.threshold_pct).sort();
         expect(thresholds).toEqual(['15', '35']);
+      });
+    });
+
+    // VW-268. Yang 2026: an overloaded eccentric slows the concentric that
+    // follows it (ES -0.25) for mechanical reasons, not fatigue. The two cases
+    // below replay the SAME five rep velocities — 1.00, 0.78, 0.76, 0.75, 0.50
+    // m/s — past the same 20% threshold, and differ only in whether the device
+    // was carrying an eccentric overload. Without one, rep 2's 22% drop is read
+    // as fatigue and the set is cut there.
+    describe('eccentric-overload exclusion on velocity_loss_exceeded', () => {
+      function driveAelSet(opts: { eccentricPercentTenths?: number }): void {
+        startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 20 }] }, opts);
+        driveRep(1, 1.0);
+        driveRep(2, 0.78);
+        driveRep(3, 0.76);
+        driveRep(4, 0.75);
+        driveRep(5, 0.5);
+        startNextRep(6, 0.5);
+      }
+
+      function lossEvents(): Array<{ meta: Record<string, string>; content: string }> {
+        return channels.publish.mock.calls
+          .map((c) => c[0])
+          .filter((e) => e.meta.event_type === 'velocity_loss_exceeded');
+      }
+
+      it('without eccentric overload, the post-AEL-shaped rep 2 stops the set early', async () => {
+        driveAelSet({});
+        await flushMicrotasks();
+
+        const losses = lossEvents();
+        expect(losses).toHaveLength(1);
+        // Baseline rep 1 (1.00) vs rep 2 (0.78) = 22% ≥ 20%.
+        expect(losses[0].meta.rep_count_at_threshold).toBe('2');
+        expect(losses[0].meta.excluded_lead_in_reps).toBe('0');
+      });
+
+      it('with eccentric overload, the same set runs to the genuinely fatigued rep', async () => {
+        driveAelSet({ eccentricPercentTenths: 250 });
+        await flushMicrotasks();
+
+        const losses = lossEvents();
+        expect(losses).toHaveLength(1);
+        // Reps 1-2 are out of both baseline and comparison, so the baseline is
+        // rep 3 (0.76) and nothing fires until rep 5 drops to 0.50 — a 34% loss
+        // measured entirely inside the overloaded regime.
+        expect(losses[0].meta.rep_count_at_threshold).toBe('5');
+        expect(parseFloat(losses[0].meta.velocity_loss_pct)).toBeCloseTo(34.2, 1);
+        expect(losses[0].meta).toMatchObject({
+          excluded_lead_in_reps: '2',
+          exclusion_reason: 'eccentric_overload',
+        });
+      });
+
+      it('an observed eccentric setting of zero excludes nothing — it is not an overload', async () => {
+        driveAelSet({ eccentricPercentTenths: 0 });
+        await flushMicrotasks();
+
+        expect(lossEvents()[0]?.meta.rep_count_at_threshold).toBe('2');
       });
     });
 

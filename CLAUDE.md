@@ -44,7 +44,6 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/store/` — `node:sqlite`-backed `SessionStore`
 - `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, and the screenshot definition behind `npm run docs:captures`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
-- `src/types/` — non-test type-only modules (excluded from coverage)
 - `eslint-rules/` — repo-local ESLint rules loaded by `eslint.config.mjs`
 
 ## Confidentiality / Privacy

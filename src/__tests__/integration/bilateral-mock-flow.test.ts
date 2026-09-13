@@ -214,6 +214,7 @@ const CORE_TOOL_NAMES = [
   'device.get_state',
   'session.start',
   'session.end',
+  'session.checkin',
   'session.set_exercise',
   'session.set_lifter',
   'session.list',

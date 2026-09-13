@@ -386,6 +386,41 @@ same window, and so does `metrics.compute {pipeline: 'vbt.rir'}`, so the trigger
 summary and the RIR estimate always agree about which reps were work. `last_rep_v` is
 always the set's actual final rep: a short or slow last rep is the fatigue signal itself.
 
+### The eccentric-overload lead-in
+
+When the set's eccentric is loaded ABOVE its concentric, the trigger's window also drops
+the set's first two reps. Rep 1 is the only rep with no overloaded eccentric before it, so
+it is the fastest rep in the set for mechanical reasons rather than freshness; rep 2 is the
+first concentric that follows an overloaded eccentric, and that impairment is gone by the
+second or third rep. Reading either as fatigue ends the set about a rep early.
+
+Two reps from the head of the set, not "the rep after each overloaded eccentric": the
+device carries one set-level eccentric setting and no per-rep record of which eccentrics
+were overloaded, so "after each" would exclude every rep but the first. From rep 3 on,
+every rep sits in the same mechanical regime and the differences between them are fatigue.
+
+While the set is still inside those reps there is no window, so no threshold can fire.
+Every `velocity_loss_exceeded` event says what was left out:
+
+```jsonc
+{
+  "trigger": {
+    "type": "velocity_loss_exceeded",
+    "excluded_lead_in_reps": 2, // 0 on a set with no eccentric overload
+    "exclusion_reason": "eccentric_overload", // null when nothing was excluded
+  },
+}
+```
+
+Both also ride in `meta` as `excluded_lead_in_reps` (always present) and
+`exclusion_reason` (present only when reps were excluded), and the `summary` prose names
+the exclusion so a consumer reading only the sentence still learns of it.
+
+This window is the trigger's alone. `set_ended`'s `vbt_summary` still reads every eligible
+rep, so on an eccentric-overload set its `peak_rep_v` and `velocity_loss_pct` may be taken
+over reps the trigger excluded — the summary describes the set, the trigger drives a
+decision.
+
 ## The movement-class gate
 
 `set_started` and `velocity_loss_exceeded` both carry a `movement_class` meta key: the
