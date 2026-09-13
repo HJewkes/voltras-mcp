@@ -58,6 +58,7 @@ import {
 
 import { dashboardStore } from '../store';
 import { convertMass, type MassUnit } from '../live-page/mass';
+import { isWarmupSet } from '../../../store/working-sets.js';
 import { fetchSessionSummary } from './planner-client';
 import {
   e1rmChangePct,
@@ -354,7 +355,7 @@ function SetTable(props: {
           <div style={{ flex: '1 1 0', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <Typography variant="body2">{setLine(set, props.displayUnit)}</Typography>
           </div>
-          {set.isWarmup && <Caption color="tertiary">warm-up</Caption>}
+          {isWarmupSet(set) && <Caption color="tertiary">warm-up</Caption>}
           <div style={{ width: 110 }}>
             <Caption color="tertiary">
               loss {set.velocityLossPct === null ? '—' : `${formatNumber(set.velocityLossPct)}%`}

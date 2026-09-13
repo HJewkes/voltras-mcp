@@ -283,7 +283,7 @@ function summarySet(overrides: Partial<SessionSummarySet> = {}): SessionSummaryS
     weightLbs: 135,
     loadLabel: '135 lb',
     repCount: 10,
-    isWarmup: false,
+    setPurpose: 'working',
     velocityLossPct: 12,
     bestRepVelocity: 0.8,
     ...overrides,
@@ -324,7 +324,7 @@ describe('e1rmSeries', () => {
     const series = e1rmSeries(
       summaryExercise({
         sets: [
-          summarySet({ id: 'w', index: 1, isWarmup: true }),
+          summarySet({ id: 'w', index: 1, setPurpose: 'warmup' }),
           summarySet({ id: 'n', index: 2, weightLbs: null }),
           summarySet({ id: 'z', index: 3, repCount: 0 }),
           summarySet({ id: 'ok', index: 4 }),
