@@ -54,6 +54,17 @@ entry is written from the user's point of view is a review question, not a check
   MCP pipeline and dashboard, off-hardware, using the SDK's `ReplayBLEAdapter` and
   `loadCaptureFrames`. See `docs/dashboard-drivers.md`.
 
+- `isometric.measure_max`, `measure_hold` and `measure_imbalance` now headline peak force,
+  not plateau force (VW-271) — peak force is the metric the reliability literature actually
+  validated (unilateral IMTP peak force ICC 0.89-0.97, CV 3.4-4.9%). RFD and impulse-to-peak
+  move to a per-trial `diagnostic` block, labelled diagnostic-only: early-phase force CV runs
+  5.5-23.3% and Weakley et al. (2024) call RFD "not recommended" for monitoring change.
+  `measure_max` and `measure_imbalance` now also persist and read back a per-athlete
+  `peakForceBaseline` (mean, SEM and CV over past test occasions) and flag
+  `changeFromBaseline` only when a result clears the adjusted SEM (SEM × √2) — the same
+  noise-floor discipline VW-270 applied to asymmetry, applied here to a single limb's own
+  trend over time.
+
 - `report.weekly` (w3-91) — a coach-readable weekly summary, in markdown or JSON, over a
   date range (default: the last 7 days). Sessions completed, a rolling 28-day
   completed-session count, adherence against the active program with a trend vs. the

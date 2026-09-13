@@ -12,8 +12,11 @@ import {
   aggregateSide,
   analyzeTrial,
   computeImbalance,
+  computePeakForceBaseline,
   decideTestOrder,
   directionOfMeasurement,
+  evaluatePeakForceChange,
+  occasionPeakForcesLbs,
   summarizeDirectionHistory,
   type ForceSample,
   type TrialAnalysis,
@@ -108,12 +111,48 @@ describe('analyzeTrial — validity gates', () => {
   });
 });
 
+// VW-271: RFD and impulse-to-peak are DIAGNOSTIC ONLY — Grgic et al. (2022)
+// puts early-phase force CV at 5.5-23.3% and Weakley et al. (2024) calls RFD
+// "not recommended" for monitoring change, so nothing downstream may trend
+// these, but they are still computed for every trial the same way peak and
+// plateau force are.
+describe('analyzeTrial — diagnostic-only RFD and impulse', () => {
+  it('computes RFD and impulse-to-peak from onset to peak on a valid trial', () => {
+    // plateauTrace ramps linearly 0 -> 200 lb over the first 2000ms of a
+    // 5000ms trial, then holds flat — peak first occurs at t=2000ms.
+    const samples = plateauTrace(5000, 200);
+    const result = analyzeTrial(samples, 1);
+    expect(result.valid).toBe(true);
+    // RFD = peak force / time-to-peak = 200 lb / 2s = 100 lb/s.
+    expect(result.diagnostic.rfdLbPerS).toBeCloseTo(100, 1);
+    // Impulse under a linear ramp to peak = triangle area = 0.5 x 2s x 200 lb.
+    expect(result.diagnostic.impulseLbS).toBeCloseTo(200, 0);
+  });
+
+  it('computes diagnostics even when the trial fails a validity gate', () => {
+    // Peak at 500ms (fails the peak-after-1s gate), ramping 0 -> 200 lb.
+    const samples = buildTrace(5000, (t) => {
+      if (t < 0.1) return 200 * (t / 0.1);
+      return 200 * Math.max(0, 1 - (t - 0.1) * 1.2);
+    });
+    const result = analyzeTrial(samples, 1);
+    expect(result.valid).toBe(false);
+    expect(result.diagnostic.rfdLbPerS).toBeGreaterThan(0);
+    expect(result.diagnostic.impulseLbS).toBeGreaterThan(0);
+  });
+
+  it('returns zero diagnostics for an empty trial', () => {
+    const result = analyzeTrial([], 1);
+    expect(result.diagnostic).toEqual({ rfdLbPerS: 0, impulseLbS: 0 });
+  });
+});
+
+// VW-271: aggregation picks and averages by PEAK force, not plateau force —
+// peak is the metric the reliability literature validated. `plateauLbs`
+// defaults to the peak value so a test that doesn't care about the
+// distinction can pass one number.
 describe('aggregateSide — best-2-of-3 selection and CV', () => {
-  function validTrial(
-    idx: number,
-    plateauLbs: number,
-    peakLbs: number = plateauLbs,
-  ): TrialAnalysis {
+  function validTrial(idx: number, peakLbs: number, plateauLbs: number = peakLbs): TrialAnalysis {
     return {
       index: idx,
       peakForceLbs: peakLbs,
@@ -126,18 +165,31 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
 
   it('returns null mean when fewer than 2 valid trials', () => {
     const result = aggregateSide([validTrial(1, 150)]);
-    expect(result.meanPlateauForceLbs).toBeNull();
+    expect(result.meanPeakForceLbs).toBeNull();
     expect(result.cvPct).toBeNull();
     expect(result.inferredWorkingWeightLbs).toBeNull();
   });
 
-  it('picks the highest 2 plateau forces from 3 valid trials', () => {
+  it('picks the highest 2 peak forces from 3 valid trials', () => {
     // Three trials within ~10% of each other so the session-mean CV gate
     // (15%) does not discard any. Best 2 = 200 and 195; mean = 197.5.
     const trials = [validTrial(1, 190), validTrial(2, 200), validTrial(3, 195)];
     const result = aggregateSide(trials);
-    expect(result.meanPlateauForceLbs).toBeCloseTo(197.5, 5);
+    expect(result.meanPeakForceLbs).toBeCloseTo(197.5, 5);
     expect(result.validTrialCount).toBe(3);
+  });
+
+  it('ranks by PEAK force, not plateau force, when the two disagree on which trials win', () => {
+    // Peak ranking: trial1(200) > trial2(190) > trial3(180) -> best 2 = 1+2, mean 195.
+    // Plateau ranking: trial2(200) > trial3(195) > trial1(100) -> best 2 = 2+3, mean 197.5.
+    // A plateau-based aggregation would pick trial2+trial3 and report 197.5;
+    // a peak-based one picks trial1+trial2 and reports 195. The two headline
+    // means, and the two SETS of trials selected, differ — this is the case
+    // "picks the highest 2 peak forces" above cannot distinguish, because
+    // that fixture keeps peak and plateau in the same rank order.
+    const trials = [validTrial(1, 200, 100), validTrial(2, 190, 200), validTrial(3, 180, 195)];
+    const result = aggregateSide(trials);
+    expect(result.meanPeakForceLbs).toBeCloseTo(195, 5);
   });
 
   it('computes CV across the 2 best trials as sd / mean × 100', () => {
@@ -149,7 +201,7 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
     expect(result.cvPct).toBeCloseTo(7.44, 1);
   });
 
-  it('inferred working weight is 70% of mean plateau, rounded to 5 lb', () => {
+  it('inferred working weight is 70% of mean peak force, rounded to 5 lb', () => {
     // Best 2 = 200 and 195; mean = 197.5; 70% = 138.25; rounded to 5 = 140.
     const trials = [validTrial(1, 190), validTrial(2, 200), validTrial(3, 195)];
     const result = aggregateSide(trials);
@@ -157,7 +209,7 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
   });
 
   it('clamps inferred working weight up to the 5 lb device minimum', () => {
-    // Arrange: two very low plateaus (~3 lb). 70% = 2.1, which rounds to 0 —
+    // Arrange: two very low peaks (~3 lb). 70% = 2.1, which rounds to 0 —
     // below the device set_weight floor of 5 lb.
     const trials = [validTrial(1, 3), validTrial(2, 3)];
     // Act
@@ -171,13 +223,13 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
     // Two strong trials at 200 and one outlier at 50 — session mean ≈ 150,
     // outlier diverges ~66.7% so it gets re-marked invalid. Two strong
     // trials remain valid; the best-2 mean = 200.
-    const trials = [validTrial(1, 200, 200), validTrial(2, 200, 200), validTrial(3, 50, 50)];
+    const trials = [validTrial(1, 200), validTrial(2, 200), validTrial(3, 50)];
     const result = aggregateSide(trials);
     const trial3 = result.trials.find((t) => t.index === 3)!;
     expect(trial3.valid).toBe(false);
     expect(trial3.invalidReason).toContain('diverges');
     expect(result.validTrialCount).toBe(2);
-    expect(result.meanPlateauForceLbs).toBeCloseTo(200, 5);
+    expect(result.meanPeakForceLbs).toBeCloseTo(200, 5);
   });
 
   it('keeps all 3 valid when peaks cluster within 15% of the median', () => {
@@ -193,8 +245,8 @@ describe('aggregateSide — best-2-of-3 selection and CV', () => {
 describe('computeImbalance — the intra-limb CV gate', () => {
   it('gives no verdict when either side lacks a mean', () => {
     const result = computeImbalance(
-      { meanPlateauForceLbs: null, cvPct: null },
-      { meanPlateauForceLbs: 150, cvPct: 2 },
+      { meanPeakForceLbs: null, cvPct: null },
+      { meanPeakForceLbs: 150, cvPct: 2 },
     );
     expect(result.asymmetryPct).toBeNull();
     expect(result.direction).toBeNull();
@@ -206,8 +258,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
     // The retired constant said 10% was noteworthy. Against a 12% intra-limb
     // CV the same 10% is inside the measurement's own spread.
     const result = computeImbalance(
-      { meanPlateauForceLbs: 100, cvPct: 12 },
-      { meanPlateauForceLbs: 90, cvPct: 4 },
+      { meanPeakForceLbs: 100, cvPct: 12 },
+      { meanPeakForceLbs: 90, cvPct: 4 },
     );
     expect(result.asymmetryPct).toBeCloseTo(10, 5);
     expect(result.noiseFloorCvPct).toBe(12);
@@ -217,8 +269,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
 
   it('calls a 10% asymmetry real when the limbs vary by 4% themselves', () => {
     const result = computeImbalance(
-      { meanPlateauForceLbs: 100, cvPct: 4 },
-      { meanPlateauForceLbs: 90, cvPct: 3 },
+      { meanPeakForceLbs: 100, cvPct: 4 },
+      { meanPeakForceLbs: 90, cvPct: 3 },
     );
     expect(result.asymmetryPct).toBeCloseTo(10, 5);
     expect(result.noiseFloorCvPct).toBe(4);
@@ -230,8 +282,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
     // 5% asymmetry, left steady at 1%, right noisy at 9%: the noisy limb sets
     // the floor, because the difference has to clear both limbs' own spread.
     const result = computeImbalance(
-      { meanPlateauForceLbs: 100, cvPct: 1 },
-      { meanPlateauForceLbs: 95, cvPct: 9 },
+      { meanPeakForceLbs: 100, cvPct: 1 },
+      { meanPeakForceLbs: 95, cvPct: 9 },
     );
     expect(result.noiseFloorCvPct).toBe(9);
     expect(result.real).toBe(false);
@@ -239,8 +291,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
 
   it('withholds the verdict when a side has no CV to judge against', () => {
     const result = computeImbalance(
-      { meanPlateauForceLbs: 100, cvPct: null },
-      { meanPlateauForceLbs: 70, cvPct: 3 },
+      { meanPeakForceLbs: 100, cvPct: null },
+      { meanPeakForceLbs: 70, cvPct: 3 },
     );
     expect(result.asymmetryPct).toBeCloseTo(30, 5);
     expect(result.noiseFloorCvPct).toBeNull();
@@ -249,8 +301,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
 
   it('names the equation it used', () => {
     const result = computeImbalance(
-      { meanPlateauForceLbs: 100, cvPct: 2 },
-      { meanPlateauForceLbs: 130, cvPct: 2 },
+      { meanPeakForceLbs: 100, cvPct: 2 },
+      { meanPeakForceLbs: 130, cvPct: 2 },
     );
     expect(result.equation).toBe('standard-percentage-difference');
     expect(result.direction).toBe('right');
@@ -259,8 +311,8 @@ describe('computeImbalance — the intra-limb CV gate', () => {
 
   it('reports no direction at an exact tie', () => {
     const result = computeImbalance(
-      { meanPlateauForceLbs: 200, cvPct: 2 },
-      { meanPlateauForceLbs: 200, cvPct: 2 },
+      { meanPeakForceLbs: 200, cvPct: 2 },
+      { meanPeakForceLbs: 200, cvPct: 2 },
     );
     expect(result.direction).toBeNull();
     expect(result.real).toBe(false);
@@ -334,6 +386,84 @@ describe('directionOfMeasurement — direction recomputed from stored trials', (
       ],
     });
     expect(direction).toBeNull();
+  });
+});
+
+// VW-271: a per-athlete peak-force baseline, and the adjusted-SEM change check
+// (SEM x sqrt(2), Weakley et al. 2024) it drives.
+describe('computePeakForceBaseline — per-athlete mean/SEM/CV over past occasions', () => {
+  it('returns null under 3 occasions', () => {
+    expect(computePeakForceBaseline([100, 105])).toBeNull();
+  });
+
+  it('returns null for an empty series', () => {
+    expect(computePeakForceBaseline([])).toBeNull();
+  });
+
+  it('derives mean, SEM (sample SD) and CV from 3+ occasions', () => {
+    // Mean = 100; sample SD (n-1) of [95,100,105] = 5; CV = 5/100 x 100 = 5%.
+    const baseline = computePeakForceBaseline([95, 100, 105]);
+    expect(baseline).not.toBeNull();
+    expect(baseline!.sampleSize).toBe(3);
+    expect(baseline!.meanLbs).toBeCloseTo(100, 5);
+    expect(baseline!.semLbs).toBeCloseTo(5, 5);
+    expect(baseline!.cvPct).toBeCloseTo(5, 5);
+  });
+});
+
+describe('evaluatePeakForceChange — the adjusted-SEM (SEM x sqrt(2)) threshold', () => {
+  const baseline = { sampleSize: 3, meanLbs: 100, semLbs: 5, cvPct: 5 };
+
+  it('does not flag a change within the adjusted SEM', () => {
+    // Adjusted SEM = 5 x sqrt(2) ≈ 7.07. A 107 lb result is 7 lb off — inside it.
+    const result = evaluatePeakForceChange(107, baseline);
+    expect(result.changed).toBe(false);
+    expect(result.deltaLbs).toBeCloseTo(7, 5);
+    expect(result.thresholdLbs).toBeCloseTo(7.071, 2);
+    expect(result.interpretation).toContain('cannot be distinguished');
+  });
+
+  it('flags a change once it clears the adjusted SEM', () => {
+    const result = evaluatePeakForceChange(115, baseline);
+    expect(result.changed).toBe(true);
+    expect(result.deltaLbs).toBeCloseTo(15, 5);
+    expect(result.interpretation).toContain('likely a real');
+  });
+
+  it('flags a drop the same way it flags a gain', () => {
+    const result = evaluatePeakForceChange(85, baseline);
+    expect(result.changed).toBe(true);
+    expect(result.deltaLbs).toBeCloseTo(-15, 5);
+  });
+});
+
+describe('occasionPeakForcesLbs — pooled per-side peak forces for the baseline', () => {
+  const trial = (index: number, peakForceLbs: number) => ({
+    index,
+    peakForceLbs,
+    plateauForceLbs: peakForceLbs,
+    plateauStartMs: 1500,
+    plateauEndMs: 2000,
+    valid: true,
+  });
+
+  it('pools one value per side per occasion that has a mean', () => {
+    const peaks = occasionPeakForcesLbs([
+      {
+        sides: [
+          { trials: [trial(1, 100), trial(2, 102)] },
+          { trials: [trial(1, 80), trial(2, 82)] },
+        ],
+      },
+      { sides: [{ trials: [trial(1, 110), trial(2, 108)] }] },
+    ]);
+    expect(peaks).toHaveLength(3);
+    expect(peaks.every((p) => p > 0)).toBe(true);
+  });
+
+  it('skips a side with fewer than 2 valid trials', () => {
+    const peaks = occasionPeakForcesLbs([{ sides: [{ trials: [trial(1, 100)] }] }]);
+    expect(peaks).toEqual([]);
   });
 });
 

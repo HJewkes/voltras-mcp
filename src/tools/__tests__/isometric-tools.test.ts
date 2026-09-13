@@ -447,12 +447,17 @@ describe('isometric.measure_max', () => {
   let measureMaxCb: Callback;
   let client: FakeClient;
   let published: PublishedEvent[];
+  let store: FakeStore;
 
   beforeEach(() => {
     vi.useFakeTimers();
     client = makeFakeClient();
     published = [];
-    const state = makeState({ primary: client }, { channels: makeChannels(published) });
+    store = makeFakeStore();
+    const state = makeState(
+      { primary: client },
+      { channels: makeChannels(published), store, deviceIds: { primary: 'device-1' } },
+    );
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
     measureMaxCb = slots.get('isometric.measure_max')!.callback;
@@ -462,7 +467,29 @@ describe('isometric.measure_max', () => {
     vi.useRealTimers();
   });
 
-  it('happy path: returns valid trials, mean plateau, inferred working weight', async () => {
+  interface MeasureMaxBody {
+    ok: boolean;
+    slot: string;
+    trials: Array<{
+      valid: boolean;
+      peakForceLbs: number;
+      plateauForceLbs: number;
+      diagnostic: { rfdLbPerS: number; impulseLbS: number };
+    }>;
+    validTrialCount: number;
+    meanPeakForceLbs: number | null;
+    inferredWorkingWeightLbs: number | null;
+    peakForceBaseline: {
+      sampleSize: number;
+      meanLbs: number;
+      semLbs: number;
+      cvPct: number;
+    } | null;
+    changeFromBaseline: { changed: boolean; deltaLbs: number; thresholdLbs: number } | null;
+    measurementId: string | null;
+  }
+
+  it('happy path: returns valid trials, mean peak force, inferred working weight', async () => {
     // Use minimum-allowed durations to keep the test fast even at fake-time
     // resolution (3s × 2 trials, 30s rest = 36s of fake time).
     const promise = measureMaxCb({
@@ -479,28 +506,63 @@ describe('isometric.measure_max', () => {
     await pumpTrialFrames(client, 3000, 195);
 
     const result = await promise;
-    const body = payload(result) as {
-      ok: boolean;
-      slot: string;
-      trials: Array<{ valid: boolean; peakForceLbs: number; plateauForceLbs: number }>;
-      validTrialCount: number;
-      meanPlateauForceLbs: number | null;
-      inferredWorkingWeightLbs: number | null;
-    };
+    const body = payload(result) as MeasureMaxBody;
     expect(body.ok).toBe(true);
     expect(body.slot).toBe('primary');
     expect(body.trials).toHaveLength(2);
     expect(body.trials.every((t) => t.valid)).toBe(true);
     expect(body.validTrialCount).toBe(2);
-    // Plateau window of ±250ms around peak picks up some ramp samples on a
-    // 3s trial (ramp ends at 1.2s, peak at ~1.6s); mean is below the
-    // peak-lbs ceiling.
-    expect(body.meanPlateauForceLbs).toBeGreaterThan(170);
-    expect(body.meanPlateauForceLbs).toBeLessThan(205);
+    expect(body.meanPeakForceLbs).toBeGreaterThan(170);
+    expect(body.meanPeakForceLbs).toBeLessThanOrEqual(200);
     expect(body.inferredWorkingWeightLbs).toBeGreaterThan(110);
+    // Every trial reports diagnostic-only RFD/impulse alongside peak/plateau.
+    for (const trial of body.trials) {
+      expect(trial.diagnostic.rfdLbPerS).toBeGreaterThan(0);
+      expect(trial.diagnostic.impulseLbS).toBeGreaterThan(0);
+    }
     // Two onFrame subscriptions, two unsubscribe calls — no listener leak.
     expect(client.subscribeCount).toBe(2);
     expect(client.unsubscribeCount).toBe(2);
+  });
+
+  it('persists the run and reports null baseline with fewer than 3 past occasions', async () => {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    const body = payload(await promise) as MeasureMaxBody;
+
+    expect(body.measurementId).not.toBeNull();
+    expect(store.written).toHaveLength(1);
+    expect(store.written[0]!.sides).toHaveLength(1);
+    expect(store.written[0]!.sides[0]!.side).toBeUndefined();
+    expect(store.written[0]!.sides[0]!.deviceId).toBe('device-1');
+    expect(body.peakForceBaseline).toBeNull();
+    expect(body.changeFromBaseline).toBeNull();
+  });
+
+  it('flags a change against the baseline only when it clears the adjusted SEM', async () => {
+    // Seed 3 past occasions around 100 lb (tight spread) so the baseline is
+    // established before this run, which pulls to ~200 lb — far outside any
+    // plausible adjusted SEM off a ~100 lb baseline.
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 100),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 101),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 99, 99),
+    ];
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureMaxBody;
+
+    expect(body.peakForceBaseline).not.toBeNull();
+    expect(body.peakForceBaseline!.sampleSize).toBe(6); // 3 occasions × 2 sides, pooled
+    expect(body.changeFromBaseline).not.toBeNull();
+    expect(body.changeFromBaseline!.changed).toBe(true);
+    // This run's own trials must not have leaked into the baseline it was
+    // judged against — it was read before persisting.
+    expect(body.peakForceBaseline!.meanLbs).toBeLessThan(150);
   });
 
   it('runs N holds over the same primitive, one phase cycle per trial', async () => {
@@ -540,11 +602,11 @@ describe('isometric.measure_max', () => {
     const result = await promise;
     const body = payload(result) as {
       validTrialCount: number;
-      meanPlateauForceLbs: number | null;
+      meanPeakForceLbs: number | null;
       inferredWorkingWeightLbs: number | null;
     };
     expect(body.validTrialCount).toBe(0);
-    expect(body.meanPlateauForceLbs).toBeNull();
+    expect(body.meanPeakForceLbs).toBeNull();
     expect(body.inferredWorkingWeightLbs).toBeNull();
   });
 
@@ -643,14 +705,14 @@ describe('isometric.measure_imbalance', () => {
     const body = payload(result) as {
       ok: boolean;
       testOrder: string[];
-      left: { meanPlateauForceLbs: number | null };
-      right: { meanPlateauForceLbs: number | null };
+      left: { meanPeakForceLbs: number | null };
+      right: { meanPeakForceLbs: number | null };
       imbalance: { direction: string | null; equation: string; real: boolean };
     };
     expect(body.ok).toBe(true);
     expect(body.testOrder).toEqual(['left', 'right']);
-    expect(body.left.meanPlateauForceLbs).toBeGreaterThan(170);
-    expect(body.right.meanPlateauForceLbs).toBeGreaterThan(150);
+    expect(body.left.meanPeakForceLbs).toBeGreaterThan(170);
+    expect(body.right.meanPeakForceLbs).toBeGreaterThan(150);
     expect(body.imbalance.direction).toBe('left');
     expect(body.imbalance.equation).toBe('standard-percentage-difference');
     // No listener leaks on either client (2 trials × 1 sub each).
@@ -857,14 +919,19 @@ describe('isometric.measure_imbalance', () => {
   });
 
   it('reports the measurement when the history read fails', async () => {
-    store.listRecentIsometricMeasurements.mockRejectedValueOnce(new Error('database is locked'));
+    // Rejects every call: `measureImbalance` reads the store twice now — the
+    // peak-force baseline (before persisting) and the direction history
+    // (after) — and both must degrade to null independently.
+    store.listRecentIsometricMeasurements.mockRejectedValue(new Error('database is locked'));
     const body = (await runImbalance()) as {
       ok: boolean;
       directionHistory: unknown;
+      peakForceBaseline: unknown;
       measurementId: string | null;
     };
     expect(body.ok).toBe(true);
     expect(body.measurementId).not.toBeNull();
+    expect(body.peakForceBaseline).toBeNull();
     // `null` says the history is unknown — distinct from a short-but-read one.
     expect(body.directionHistory).toBeNull();
   });
