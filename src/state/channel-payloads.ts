@@ -36,6 +36,7 @@ import type { ActiveSet, DeviceSnapshot, IdleRep, PendingDisconnectNotice } from
 import { isTrailingRepIncomplete } from './live-state.js';
 import { activeMode } from './active-mode.js';
 import { deriveRepCountDisagreement } from './rep-count-disagreement.js';
+import type { LoadDriftFlag } from '../analytics/load-drift.js';
 import type { MovementClass } from '../exercises/movement-class.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
@@ -587,6 +588,14 @@ export interface DeviceSetSummaryBlock {
  * set's rep counts differ (VMCP-02.59). It names each count and its
  * provenance and reports the gaps; it never says which count is right. A set
  * whose counts agree carries no such block.
+ *
+ * Content also gains a `load_drift` block whenever `loadDrift` is supplied
+ * non-null (VW-300): this WORKING set, performed at the exercise's programmed
+ * absolute load, implies a %1RM that has drifted materially from the
+ * programmed one per the lifter's own load-velocity profile. The caller
+ * (`tools/set-tools.ts`) resolves it — this builder only serializes it — so a
+ * set with no exercise, no plan match, or too little profile history carries
+ * no block at all rather than a noisy null.
  */
 export function buildSetEndedPayload(
   stored: StoredSet,
@@ -594,6 +603,7 @@ export function buildSetEndedPayload(
   deviceSummary?: DeviceSummaryBlock,
   deviceSetSummary?: DeviceSetSummaryBlock,
   firmwareReconciledTotal?: number,
+  loadDrift?: LoadDriftFlag | null,
 ): {
   meta: Record<string, string>;
   content: string;
@@ -702,6 +712,16 @@ export function buildSetEndedPayload(
         }
       : {}),
     ...(repCountDisagreement !== undefined ? { rep_count_disagreement: repCountDisagreement } : {}),
+    ...(loadDrift !== null && loadDrift !== undefined
+      ? {
+          load_drift: {
+            programmed_pct: loadDrift.programmedPct,
+            implied_pct: loadDrift.impliedPct,
+            delta_pct: loadDrift.deltaPct,
+            reason: loadDrift.reason,
+          },
+        }
+      : {}),
     ...(deviceSetSummary !== undefined
       ? {
           device_set_summary: {

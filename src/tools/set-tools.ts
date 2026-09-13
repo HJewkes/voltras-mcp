@@ -44,6 +44,12 @@ import {
   VELOCITY_LOSS_NO_THRESHOLD_MESSAGE,
 } from '../state/velocity-loss-intent.js';
 import { planTrainingIntentFor } from './plan-tools.js';
+import { resolvePlannedExercise } from './timer-tools.js';
+import {
+  checkLoadDrift,
+  loadMatchesPrescription,
+  type LoadDriftFlag,
+} from '../analytics/load-drift.js';
 import { inferExerciseSetups } from '../store/exercise-setups.js';
 import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
 import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
@@ -1070,12 +1076,14 @@ export async function finalizeSet(
   // skip the set.get + metrics.compute vbt.set retrieval calls that almost
   // every set close currently triggers. Slot-scoped publisher so meta
   // carries `slot: slotId` for bilateral consumers.
+  const loadDrift = await resolveLoadDriftForClose(state, stored);
   const payload = buildSetEndedPayload(
     stored,
     opts.cause,
     deviceSummary,
     deviceSetSummary,
     finalized.firmwareTotalRepCount,
+    loadDrift,
   );
   const slotChannels = state.channels.forSlot(slotId);
   publishTerminalRepFinalized(finalizedForStore, device, slotChannels, dropTrailingInProgress);
@@ -1291,6 +1299,31 @@ async function recalcBaselineForSet(state: ServerState, stored: StoredSet): Prom
   } catch (err) {
     log.warn(`baseline harvest/recalc failed for exercise ${stored.exerciseId}`, err);
   }
+}
+
+/**
+ * VW-300: whether this just-closed WORKING set, performed at the exercise's
+ * programmed absolute load, still sits at the %1RM it was prescribed as. See
+ * `analytics/load-drift.ts` for the check itself.
+ *
+ * `null` — nothing to flag, not an error — when the set carries no exercise,
+ * isn't a working set, nothing is prescribed for this exercise in the
+ * attached plan, the set's own load doesn't match the prescribed one, or the
+ * lifter's profile can't anchor an e1RM yet.
+ */
+async function resolveLoadDriftForClose(
+  state: ServerState,
+  stored: StoredSet,
+): Promise<LoadDriftFlag | null> {
+  if (stored.exerciseId === undefined || setPurposeOf(stored) !== 'working') return null;
+  const planned = await resolvePlannedExercise(state, stored.sessionId, stored.exerciseId);
+  if (planned?.targetWeightLbs === undefined) return null;
+  if (!loadMatchesPrescription(stored.weightLbs, planned.targetWeightLbs)) return null;
+  return checkLoadDrift(state.store, {
+    exerciseId: stored.exerciseId,
+    prescribedLoadLbs: planned.targetWeightLbs,
+    measuredSet: stored,
+  });
 }
 
 /**

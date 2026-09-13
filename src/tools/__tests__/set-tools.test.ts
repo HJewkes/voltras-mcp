@@ -134,6 +134,7 @@ function makeStore(): SessionStore & {
   harvestFailureAnchor: ReturnType<typeof vi.fn>;
   recalcBaseline: ReturnType<typeof vi.fn>;
   getSetsForExercise: ReturnType<typeof vi.fn>;
+  getBaseline: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -164,6 +165,8 @@ function makeStore(): SessionStore & {
     // VW-204: set close infers the setup before harvesting, so these two are
     // what the clustering pass touches on the way past.
     getSetsForExercise: vi.fn(async () => []),
+    // VW-300: the load-drift check's own profile source.
+    getBaseline: vi.fn(async () => undefined),
     listExerciseSetups: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
@@ -193,6 +196,16 @@ function makeRep(n: number): Rep {
 function makeRepWithForce(n: number, peakForce: number): Rep {
   const base = makeRep(n);
   return { ...base, concentric: { ...base.concentric, peakForce } };
+}
+
+// Like makeRep, but with a concentric mean velocity `getSetMeanVelocity`
+// reads back exactly (a single movement sample carrying the whole velocity
+// total) — VW-300's load-drift check needs a real number to compare, not the
+// all-zero phase `makeRep` gives every other test in this file.
+function makeRepAtVelocity(n: number, velocity: number): Rep {
+  const base = makeRep(n);
+  const phase = { ...base.concentric, _totalVelocity: velocity, _movementSampleCount: 1 };
+  return { repNumber: n, concentric: phase, eccentric: phase };
 }
 
 const TOOL_NAMES = ['set.start', 'set.end', 'set.live_metrics', 'set.update', 'set.get'];
@@ -1467,6 +1480,115 @@ describe('set close terminal-rep channel event (VMCP-01.40)', () => {
 
     expect(eventsOfType(h, 'rep_finalized')).toHaveLength(0);
     expect(eventsOfType(h, 'set_ended')).toHaveLength(1);
+  });
+});
+
+describe('set close load_drift push event (VW-300)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = setup({ restTimer: 'off' });
+  });
+
+  interface LoadDriftBlock {
+    programmed_pct: number;
+    implied_pct: number;
+    delta_pct: number;
+    reason: string;
+  }
+
+  function loadDriftBlock(): LoadDriftBlock | undefined {
+    const content = firstEventOfType(h, 'set_ended').content;
+    return (JSON.parse(content) as { load_drift?: LoadDriftBlock }).load_drift;
+  }
+
+  /**
+   * Calibration history for 'bench-press' at 100/150/200 lbs, velocities
+   * 0.70/0.50/0.30 m/s — a clean line that solves to e1RM 232.5 lbs at the
+   * default 0.17 m/s MVT (no stored baseline). 186 lbs is 80% of that e1RM,
+   * the load a Jimenez-Reyes-style fixed-absolute-load prescription programs.
+   */
+  function seedPlanAndProfile(): void {
+    h.store.getAssignmentsForSession.mockResolvedValue([
+      {
+        id: 'a1',
+        sessionId: 'sess-A',
+        workoutTemplateId: 'tpl-1',
+        assignedAt: '2025-01-01T00:00:00.000Z',
+      },
+    ]);
+    h.store.getPlannedExercisesForTemplate.mockResolvedValue([
+      {
+        id: 'pe-1',
+        workoutTemplateId: 'tpl-1',
+        exerciseId: 'bench-press',
+        orderIndex: 0,
+        targetSets: 3,
+        targetWeightLbs: 186,
+      },
+    ]);
+    const calibration: [number, number][] = [
+      [100, 0.7],
+      [150, 0.5],
+      [200, 0.3],
+    ];
+    h.store.getSetsForExercise.mockResolvedValue(
+      calibration.map(([weightLbs, velocity], i) => ({
+        id: `cal-${i}`,
+        sessionId: 'sess-cal',
+        exerciseId: 'bench-press',
+        startedAt: '2025-01-01T00:00:00.000Z',
+        endedAt: '2025-01-01T00:01:00.000Z',
+        partial: false,
+        weightLbs,
+        reps: [makeRepAtVelocity(1, velocity)].map((r, idx) => ({
+          ...r,
+          id: `cal-${i}-r${idx}`,
+          setId: `cal-${i}`,
+          index: idx,
+        })),
+      })) as unknown as StoredSet[],
+    );
+  }
+
+  async function closeAtProgrammedLoad(velocity: number): Promise<void> {
+    startSession(h.live);
+    h.live.setSessionExercise('bench-press', 'Bench Press');
+    h.live.applySettings({ connected: true, weightLbs: 186, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRepAtVelocity(1, velocity));
+    await h.invoke('set.end', {});
+  }
+
+  it('fires on the Jimenez-Reyes pattern: programmed 80%, measured velocity implies ~64%', async () => {
+    seedPlanAndProfile();
+
+    // What the calibration line says a 64%-e1RM load would move at.
+    await closeAtProgrammedLoad(0.5048);
+
+    const block = loadDriftBlock();
+    expect(block).toBeDefined();
+    expect(block?.programmed_pct).toBeCloseTo(80, 1);
+    expect(block?.implied_pct).toBeCloseTo(64, 1);
+    expect(block?.reason).toContain('Jimenez-Reyes');
+  });
+
+  it('does not fire on a matched-intensity replay at the same programmed load', async () => {
+    seedPlanAndProfile();
+
+    // What the calibration line says the programmed 80%-e1RM load itself moves at.
+    await closeAtProgrammedLoad(0.356);
+
+    expect(loadDriftBlock()).toBeUndefined();
+  });
+
+  it('does not fire with no plan attached to the session', async () => {
+    // getAssignmentsForSession defaults to [] — nothing prescribed.
+    h.store.getSetsForExercise.mockResolvedValue([]);
+
+    await closeAtProgrammedLoad(0.5048);
+
+    expect(loadDriftBlock()).toBeUndefined();
   });
 });
 

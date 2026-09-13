@@ -308,7 +308,7 @@ function completedSetsForExercise(
  * `report-tools.ts`'s `loadPlannedExercises` resolves an assignment: a whole
  * template, or a single planned exercise.
  */
-async function resolvePlannedExercise(
+export async function resolvePlannedExercise(
   state: ServerState,
   sessionId: string,
   exerciseId: string,

@@ -73,6 +73,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         "rpe": 7.333333333333334,
         "velocityLossPct": 33.333333333333336,
       },
+      "loadDrift": null,
       "maxVelocityLossPct": 33.333333333333336,
       "name": "Bench Press",
       "progression": {
@@ -152,6 +153,7 @@ exports[`dashboard route JSON — byte-identical before/after the read-model ext
         "rpe": 7.333333333333334,
         "velocityLossPct": 33.333333333333336,
       },
+      "loadDrift": null,
       "maxVelocityLossPct": 33.333333333333336,
       "name": "row",
       "progression": {

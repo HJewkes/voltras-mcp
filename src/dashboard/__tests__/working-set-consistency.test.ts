@@ -124,6 +124,7 @@ describe('working-set count parity across the wall, the summary page and progres
       getSession: async (id) => (id === SESSION.id ? SESSION : undefined),
       getSetsForSession: async () => sets,
       getSetsForExercise: async () => sets,
+      getBaseline: async () => undefined,
       listSessions: async () => [SESSION],
       listTrainingPrograms: async () => [],
       getTrainingProgram: async () => undefined,

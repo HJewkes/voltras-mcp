@@ -179,6 +179,7 @@ function makeStore(
     getSetsForSession: async () => sets,
     getSetsForExercise: async ({ exerciseId }) =>
       (opts.historicalSets ?? sets).filter((s) => s.exerciseId === exerciseId),
+    getBaseline: async () => undefined,
     listSessions: async () => [SESSION],
     listTrainingPrograms: async () => opts.programs ?? [PROGRAM],
     getTrainingProgram: async () => PROGRAM,
@@ -427,6 +428,78 @@ describe('buildSessionSummary', () => {
       expect(summary?.exercises[0]?.sets[0]?.expectedRepRange).toBeNull();
     });
   });
+
+  // VW-300. Calibration sets at 100/150/200 lbs, velocities 0.70/0.50/0.30
+  // m/s, fit a clean load-velocity line (`v = -0.004*load + 1.10`) that
+  // solves to e1RM 232.5 lbs at the default 0.17 m/s MVT. 186 lbs (80% of
+  // that e1RM) is what a Jimenez-Reyes-style fixed-absolute-load prescription
+  // would program.
+  const calibration = [
+    makeSet('cal-1', 'cable-row', 3, {
+      weightLbs: 100,
+      reps: buildDecayingReps(3, 0.7, 0.7) as StoredSet['reps'],
+    }),
+    makeSet('cal-2', 'cable-row', 3, {
+      weightLbs: 150,
+      reps: buildDecayingReps(3, 0.5, 0.5) as StoredSet['reps'],
+    }),
+    makeSet('cal-3', 'cable-row', 3, {
+      weightLbs: 200,
+      reps: buildDecayingReps(3, 0.3, 0.3) as StoredSet['reps'],
+    }),
+  ];
+
+  /**
+   * The calibration history lives in prior sessions, so it must reach
+   * `getSetsForExercise` (the profile's own source) WITHOUT also reaching
+   * `getSetsForSession` for THIS session — otherwise `selectWorkingSets`'
+   * top-load ramp rule reads the 200 lb calibration set as the session's own
+   * working weight and discards the 186 lb measured set as a warm-up.
+   */
+  function loadDriftStore(measured: StoredSet, targetWeightLbs: number) {
+    const store = makeStore([measured], [planned('cable-row', { targetWeightLbs })]);
+    store.getSetsForExercise = async () => [...calibration, measured];
+    return store;
+  }
+
+  it('flags load drift on the Jimenez-Reyes pattern: programmed 80%, measured velocity implies ~64%', async () => {
+    const measured = makeSet('measured', 'cable-row', 3, {
+      weightLbs: 186,
+      // What the calibration line says a 64%-e1RM load would move at.
+      reps: buildDecayingReps(3, 0.5048, 0.5048) as StoredSet['reps'],
+    });
+    const summary = await buildSessionSummary(
+      { store: loadDriftStore(measured, 186), nameOf },
+      'sess-1',
+    );
+    const loadDrift = summary?.exercises[0]?.loadDrift;
+    expect(loadDrift).not.toBeNull();
+    expect(loadDrift?.programmedPct).toBeCloseTo(80, 1);
+    expect(loadDrift?.impliedPct).toBeCloseTo(64, 1);
+    expect(loadDrift?.reason).toContain('Jimenez-Reyes');
+  });
+
+  it('does not flag a matched-intensity replay at the same programmed load', async () => {
+    const measured = makeSet('measured', 'cable-row', 3, {
+      weightLbs: 186,
+      // What the calibration line says the programmed 80%-e1RM load itself moves at.
+      reps: buildDecayingReps(3, 0.356, 0.356) as StoredSet['reps'],
+    });
+    const summary = await buildSessionSummary(
+      { store: loadDriftStore(measured, 186), nameOf },
+      'sess-1',
+    );
+    expect(summary?.exercises[0]?.loadDrift).toBeNull();
+  });
+
+  it('is null when no set in the session matches the prescribed load', async () => {
+    const measured = makeSet('s1', 'cable-row', 3, { weightLbs: 90 });
+    const summary = await buildSessionSummary(
+      { store: loadDriftStore(measured, 186), nameOf },
+      'sess-1',
+    );
+    expect(summary?.exercises[0]?.loadDrift).toBeNull();
+  });
 });
 
 describe('resolveSummarySessionId', () => {
@@ -436,6 +509,7 @@ describe('resolveSummarySessionId', () => {
       getSession: async (id) => sessions.find((s) => s.id === id),
       getSetsForSession: async () => [],
       getSetsForExercise: async () => [],
+      getBaseline: async () => undefined,
       listSessions: async ({ limit }) =>
         [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit),
     };

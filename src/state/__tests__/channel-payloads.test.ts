@@ -1986,3 +1986,69 @@ describe('buildIsometricPhasePayload', () => {
     expect(parsed.summary).toBe('Isometric hold 3: get set.');
   });
 });
+
+describe('buildSetEndedPayload — load_drift (VW-300)', () => {
+  function buildStored(): StoredSet {
+    const reps = [makeRep(1, 800, 500)];
+    return {
+      id: 'set-ld',
+      sessionId: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      endedAt: '2025-01-01T00:01:30.000Z',
+      partial: false,
+      trainingMode: 'WeightTraining',
+      weightLbs: 186,
+      reps: reps.map((r, i) => ({ ...r, id: `r${i}`, setId: 'set-ld', index: i })),
+    };
+  }
+
+  const FLAG = {
+    programmedPct: 80,
+    impliedPct: 64,
+    deltaPct: -16,
+    reason:
+      'Measured velocity implies 64% 1RM, 16 points below the 80% this load was programmed as.',
+  };
+
+  it('serializes the block when the caller supplies a flag', () => {
+    const { content } = buildSetEndedPayload(
+      buildStored(),
+      'tool',
+      undefined,
+      undefined,
+      undefined,
+      FLAG,
+    );
+    const parsed = JSON.parse(content) as {
+      load_drift?: {
+        programmed_pct: number;
+        implied_pct: number;
+        delta_pct: number;
+        reason: string;
+      };
+    };
+    expect(parsed.load_drift).toEqual({
+      programmed_pct: 80,
+      implied_pct: 64,
+      delta_pct: -16,
+      reason: FLAG.reason,
+    });
+  });
+
+  it('omits the block when no flag is supplied', () => {
+    const { content } = buildSetEndedPayload(buildStored());
+    expect(JSON.parse(content)).not.toHaveProperty('load_drift');
+  });
+
+  it('omits the block when the caller explicitly passes null (nothing to flag)', () => {
+    const { content } = buildSetEndedPayload(
+      buildStored(),
+      'tool',
+      undefined,
+      undefined,
+      undefined,
+      null,
+    );
+    expect(JSON.parse(content)).not.toHaveProperty('load_drift');
+  });
+});

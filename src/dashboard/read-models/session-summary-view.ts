@@ -10,6 +10,7 @@
 // Confidentiality: fitness units and plan metadata only — no protocol data (NF-07).
 
 import type { FatigueSummary, FatigueVerdict } from '@voltras/workout-analytics';
+import type { LoadDriftFlag } from '../../analytics/load-drift.js';
 // Type-only: erased at build, so this stays free of a runtime store dependency
 // (see the file banner) — mirrors the store's four-value set-purpose enum, the
 // same treatment `dashboard/spa/live-page/model.ts`'s `CompletedSet` gives it.
@@ -92,6 +93,14 @@ export interface SessionSummaryExercise {
   progression: SessionSummaryProgression | null;
   /** Why `progression` is null, when it is. */
   progressionNote: string | null;
+  /**
+   * VW-300: set when a WORKING set at this exercise's programmed absolute
+   * load implies a %1RM that has drifted materially from the programmed one,
+   * per the lifter's own load-velocity profile. Null when nothing is
+   * prescribed, no set matched the prescribed load, or the drift (if any) is
+   * under threshold. See `analytics/load-drift.ts`.
+   */
+  loadDrift: LoadDriftFlag | null;
 }
 
 export interface SessionSummaryView {

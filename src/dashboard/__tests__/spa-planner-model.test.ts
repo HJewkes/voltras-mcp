@@ -190,6 +190,7 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
     sets: [],
     progression: progression(),
     progressionNote: null,
+    loadDrift: null,
     ...overrides,
   };
 }
