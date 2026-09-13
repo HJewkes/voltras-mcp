@@ -49,6 +49,11 @@ entry is written from the user's point of view is a review question, not a check
   athlete does not have. `setup_unverified` means a side recorded no travel, so the check
   never ran; it withholds nothing.
 
+- `scripts/dashboard-replay-drive.mjs` (VW-256) — the fifth rung of the dashboard driver
+  ladder: replays a flight-recorder capture (`VMCP_RECORD_SESSION=1`) through the real
+  MCP pipeline and dashboard, off-hardware, using the SDK's `ReplayBLEAdapter` and
+  `loadCaptureFrames`. See `docs/dashboard-drivers.md`.
+
 - `report.weekly` (w3-91) — a coach-readable weekly summary, in markdown or JSON, over a
   date range (default: the last 7 days). Sessions completed, a rolling 28-day
   completed-session count, adherence against the active program with a trend vs. the
@@ -156,7 +161,7 @@ entry is written from the user's point of view is a review question, not a check
   number the caller typed (VW-266). A `velocity_loss_exceeded` trigger now takes an
   `intent` — `strength` 20%, `hypertrophy` 30%, `power` 10% — or takes it from the planned
   exercise's new `trainingIntent`, and `coaching.explain {topic:
-  "live.velocity_loss_threshold"}` returns the published bands with their citations. An
+"live.velocity_loss_threshold"}` returns the published bands with their citations. An
   explicit `pct` still wins and behaves exactly as before; a trigger with no threshold from
   any of the three is refused rather than registering a watch that can never fire. The
   fired event says which source supplied its number, and a goal-derived one carries the
