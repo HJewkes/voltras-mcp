@@ -757,6 +757,8 @@ interface GatedReadiness {
   readiness: unknown;
   observed: { actualVelocityMps: number; baselineVelocityMps: number };
   gate: FeatureGateVerdict;
+  basis?: string;
+  note?: string;
 }
 
 describe('metrics.compute — session.readiness baseline gating (B57)', () => {
@@ -864,6 +866,110 @@ describe('metrics.compute — session.readiness baseline gating (B57)', () => {
     expect(body.gate.activation).toBe('withheld');
     expect(body.readiness).toBeNull();
     expect(readinessSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── VW-269: readiness has no primary-literature validation; heavy probe ──
+
+describe('metrics.compute — session.readiness probe selection (VW-269)', () => {
+  let readinessSpy: ReturnType<typeof vi.spyOn>;
+  let velocitySpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    readinessSpy = vi
+      .spyOn(analytics, 'computeReadiness')
+      .mockReturnValue({ zone: 'green' } as never);
+    velocitySpy = vi.spyOn(analytics, 'getSetFirstRepVelocity');
+  });
+  afterEach(() => {
+    readinessSpy.mockRestore();
+    velocitySpy.mockRestore();
+  });
+
+  /** The `setId` of the FIRST set `getSetFirstRepVelocity` was called on. */
+  function firstReadSetId(spy: ReturnType<typeof vi.spyOn>): string | undefined {
+    const call = spy.mock.calls[0] as [{ reps: { setId: string }[] }] | undefined;
+    return call?.[0]?.reps[0]?.setId;
+  }
+
+  it('always reports basis "heuristic" and a non-empty validation note', async () => {
+    // Arrange
+    const target = makeSet('s1', 'sess-target');
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) => [id === 'sess-target' ? target : baseline]),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    const body = parsePayload(
+      await callTool(tools, {
+        pipeline: 'session.readiness',
+        sessionId: 'sess-target',
+        baselineSessionId: 'sess-baseline',
+      }),
+    ) as GatedReadiness;
+
+    // Assert: unconditional, even against a fully CALIBRATED baseline
+    expect(body.basis).toBe('heuristic');
+    expect(body.note?.length).toBeGreaterThan(0);
+    expect(body.note).toContain('no published study');
+  });
+
+  it("defaults to the heaviest pre-working-load warm-up set, not the session's first rep", async () => {
+    // Arrange: performed in order light warm-up -> heavy warm-up -> working set.
+    // Old behaviour would read the light warm-up (index 0); reading the
+    // working set itself would also be wrong — the probe stays PRE-working.
+    const lightWarmup = { ...makeSet('light', 'sess-target', 60), setPurpose: 'warmup' as const };
+    const heavyWarmup = { ...makeSet('heavy', 'sess-target', 88), setPurpose: 'warmup' as const };
+    const working = { ...makeSet('work', 'sess-target', 100), setPurpose: 'working' as const };
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) =>
+        id === 'sess-target' ? [lightWarmup, heavyWarmup, working] : [baseline],
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    await callTool(tools, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+    });
+
+    // Assert
+    expect(firstReadSetId(velocitySpy)).toBe('heavy');
+  });
+
+  it('falls back to the legacy first-rep-of-session probe when probeLoad is "legacyFirstRep"', async () => {
+    // Arrange: same ramp as above.
+    const lightWarmup = { ...makeSet('light', 'sess-target', 60), setPurpose: 'warmup' as const };
+    const heavyWarmup = { ...makeSet('heavy', 'sess-target', 88), setPurpose: 'warmup' as const };
+    const baseline = makeSet('s1', 'sess-baseline');
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) =>
+        id === 'sess-target' ? [lightWarmup, heavyWarmup] : [baseline],
+      ),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    // Act
+    await callTool(tools, {
+      pipeline: 'session.readiness',
+      sessionId: 'sess-target',
+      baselineSessionId: 'sess-baseline',
+      probeLoad: 'legacyFirstRep',
+    });
+
+    // Assert
+    expect(firstReadSetId(velocitySpy)).toBe('light');
   });
 });
 

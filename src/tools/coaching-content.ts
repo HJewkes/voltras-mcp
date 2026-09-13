@@ -273,6 +273,39 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
         'thresholds, so the same percentage is not the same set across loads or lifters.',
     ],
   },
+  'live.readiness_interpretation': {
+    allTiers:
+      'Warm-up-velocity readiness is an ENGINEERING HEURISTIC, not a validated measure, at every ' +
+      'tier: no published study has tested fixed-load warm-up velocity as a same-day readiness ' +
+      'marker, and the searches that exist return coach-education and vendor content on the ' +
+      'point, not primary research. Say so plainly rather than presenting a zone as measured. ' +
+      'The strongest directly relevant finding cuts against reading readiness off a LIGHT probe ' +
+      'rep: v0, the light-load/high-velocity end of the load-velocity profile, failed to ' +
+      'discriminate control, moderate and high fatigue states at all, while L0, the heavy end, ' +
+      'fell 8.3 kg under moderate fatigue and 32.6 kg under high fatigue. That is why the probe ' +
+      'this server reads defaults to the heaviest available pre-working-load set — the last ' +
+      "warm-up rung before the working sets, at or above roughly 70% of that day's working load " +
+      '— rather than the first, lightest rep of the session. A second reason to hedge every ' +
+      'reading: velocity at a given load has a between-session CV around 22.5% in the free-weight ' +
+      'back squat, so day-to-day differences smaller than that are indistinguishable from ' +
+      'measurement noise unless the lifter has enough same-load history to know their own band. ' +
+      'Treat a readiness zone as a conversation starter — "your bar speed at this load is down ' +
+      'from last time, how does the session feel" — never as a stop/go verdict on its own, and ' +
+      'never let a green zone override what the lifter reports feeling.',
+    sources: [
+      'senturk-2026-load-velocity-fatigue-discrimination-bmc-sports',
+      'banyard-2017-1rm-and-velocity-reliability-jscr',
+    ],
+    caveats: [
+      'This entry cites primary literature rather than the mined RP corpus; its source ids are ' +
+        'author-year keys, not `rp-*` note ids.',
+      'The load-velocity literature behind this is almost entirely free-weight barbell squat and ' +
+        'bench press in young trained men on a fixed external load. Voltra is an electromagnetic ' +
+        'cable device with independently settable eccentric load, so treat the shape of the ' +
+        'finding — light-load velocity is the insensitive end — as transferable, and the specific ' +
+        'kilogram figures as not.',
+    ],
+  },
   'meso.deload_trigger': {
     allTiers:
       'Deload triggering is performance-gated, full stop: two CONSECUTIVE sessions of the same ' +

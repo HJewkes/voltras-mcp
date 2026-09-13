@@ -71,14 +71,22 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: computeVolume(session) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('session.volume'), sessionId: IdSchema }),
 
-  // Session readiness score. Requires a baseline session whose first
-  // set's first rep mean velocity is the reference; the handler reads
-  // the same metric off the target session and calls
-  // computeReadiness(actualVel, baselineVel).
+  // Session readiness score. Requires a baseline session; the handler picks
+  // one probe set from each session (see `probeLoad`) and calls
+  // computeReadiness(actualVel, baselineVel) on their first-rep velocities.
+  //
+  // `probeLoad` (VW-269, default `'heavy'`) selects WHICH set the probe
+  // velocity is read from. The light end of a load-velocity profile does not
+  // discriminate fatigue (Senturk et al. 2026), so the default reads the
+  // heaviest pre-working-load set at or above ~70% of the session's own
+  // working load — the last warm-up rung before the working sets, not the
+  // first rep of the session. `'legacyFirstRep'` restores the original
+  // first-set-of-session probe for a caller that needs it.
   z.object({
     pipeline: z.literal('session.readiness'),
     sessionId: IdSchema,
     baselineSessionId: IdSchema,
+    probeLoad: z.enum(['heavy', 'legacyFirstRep']).optional(),
   }),
 
   // Session fatigue accumulation.

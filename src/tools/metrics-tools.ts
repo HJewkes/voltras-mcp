@@ -53,14 +53,25 @@
 // analytics package owns the per-rep comparison logic.
 //
 // `session.readiness` resolves `actualVelocity`/`baselineVelocity` from the
-// first-rep concentric velocity of each session's first set OF THE SESSION'S
-// OWN EXERCISE — see `setsForSessionExercise`. Baseline-confidence gating
-// (B57/VW-90, PR #232) LANDED 2026-08-11: below CALIBRATED the readiness zone
-// is withheld while the raw observed velocities still ship. `vbt.rir` (VW-134)
-// is gated the same way, on the `rir-estimate` feature.
+// first-rep concentric velocity of a chosen PROBE set of each session's own
+// exercise — see `setsForSessionExercise` and `selectReadinessProbeSet`.
+// Baseline-confidence gating (B57/VW-90, PR #232) LANDED 2026-08-11: below
+// CALIBRATED the readiness zone is withheld while the raw observed velocities
+// still ship. `vbt.rir` (VW-134) is gated the same way, on the `rir-estimate`
+// feature.
 //
 // GATES DEGRADE, THEY NEVER BLOCK. A `withheld` activation hedges a claim; it
 // does not empty the response. See `store/baseline-gate.ts`'s header.
+//
+// VW-269: no published study validates fixed-load warm-up velocity as a
+// same-day readiness marker, and the light end of a load-velocity profile
+// (v0) is the one shown NOT to discriminate fatigue at all — the heavy end
+// (L0) is (Senturk, Kumak & Janicijevic, 2026, doi:10.1186/s13102-026-01615-x).
+// So `readiness` always carries `basis: 'heuristic'` and a `note` saying so,
+// independently of the B57 gate above (which is about baseline confidence,
+// not about whether the underlying signal is validated at all), and the probe
+// set defaults to the heaviest pre-working-load set rather than the first
+// rep of the session — see `selectReadinessProbeSet`.
 
 import {
   analyzeTrend,
@@ -135,7 +146,7 @@ import {
 } from '../store/baseline-gate.js';
 import { isDietPhase, type DietPhase } from '../store/diet-phase.js';
 import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.js';
-import { selectWorkingSets } from '../store/working-sets.js';
+import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import {
   RIR_MODEL_CALIBRATION_CONFIDENCE,
   rirInputDomainConfidence,
@@ -348,18 +359,17 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       if (baseline.length === 0) {
         throw notFound(`baseline session '${input.baselineSessionId}' has no sets`);
       }
-      // Per the analytics signature: actualVelocity = the first-rep concentric
-      // velocity of the current session's first set OF ITS EXERCISE;
-      // baselineVelocity = the same metric from the baseline session. This pins
-      // both values to a directly comparable measurement (the first rep is
-      // canonical for "fresh" velocity).
+      // Per the analytics signature: actualVelocity/baselineVelocity are each
+      // a PROBE set's first-rep concentric velocity (see
+      // `selectReadinessProbeSet` — VW-269, default the heaviest
+      // pre-working-load set rather than the session's first rep).
       //
-      // VW-94: WHICH baseline set is now the predicate's call — the first set
-      // of that session in the order it was performed that is like-vs-like with
-      // the target anchor, rather than its first set unconditionally. With none
-      // comparable the first set is still used and the response says so; a
-      // readiness pipeline that answered with silence would be a worse product
-      // than one that answers with a caveat.
+      // VW-94: WHICH baseline set is now the predicate's call — the set of
+      // that session, in the order it was performed, that is like-vs-like
+      // with the target probe, rather than its first set unconditionally.
+      // With none comparable the first set is still used and the response
+      // says so; a readiness pipeline that answered with silence would be a
+      // worse product than one that answers with a caveat.
       //
       // VW-211: `target` and `baseline` are each one exercise's sets within
       // one session, so they enrich as two separate groups.
@@ -367,9 +377,10 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
         [target, baseline],
         comparabilitySubjectFetchers(state),
       );
-      const comparability = chooseComparisonPartner(enrichedTarget[0]!, enrichedBaseline);
+      const probeSet = selectReadinessProbeSet(enrichedTarget, input.probeLoad);
+      const comparability = chooseComparisonPartner(probeSet, enrichedBaseline);
       const baselineSet = partnerOrFirst(comparability, enrichedBaseline);
-      const actualVel = getSetFirstRepVelocity(toAnalyticsSet(enrichedTarget[0]!));
+      const actualVel = getSetFirstRepVelocity(toAnalyticsSet(probeSet));
       const baselineVel = getSetFirstRepVelocity(toAnalyticsSet(baselineSet));
       const observed = { actualVelocityMps: actualVel, baselineVelocityMps: baselineVel };
 
@@ -386,6 +397,8 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
         observed,
         gate,
         comparability,
+        basis: 'heuristic',
+        note: READINESS_HEURISTIC_NOTE,
       };
       return result;
     }
@@ -1468,6 +1481,12 @@ function mean(xs: number[]): number {
  * it just declines to interpret. `observed` carries the two velocities either
  * way: those are measurements, not claims, and a caller that wants to show a
  * bare ratio is entitled to them at any baseline tier.
+ *
+ * `basis`/`note` (VW-269) are unconditional, unlike `gate`: they say the
+ * READING ITSELF has no direct primary-literature validation, which is true
+ * whether or not this lifter's baseline happens to be calibrated. `gate`
+ * answers "is this baseline mature enough to trust a zone"; `basis`/`note`
+ * answer "is warm-up-velocity readiness a validated measure at all" — no.
  */
 interface GatedReadinessResult {
   readiness: ReadinessEstimate | null;
@@ -1475,6 +1494,68 @@ interface GatedReadinessResult {
   gate: FeatureGateVerdict;
   /** VW-94: which baseline set was compared, or why none was like-vs-like. */
   comparability: ComparabilityReport;
+  basis: 'heuristic';
+  note: string;
+}
+
+/**
+ * VW-269: no published study validates fixed-load warm-up velocity as a
+ * same-day readiness marker. The strongest directly relevant finding cuts
+ * against the light-load probe this pipeline used to read: v0, the light-load
+ * end of the load-velocity profile, failed to discriminate control/moderate/
+ * high fatigue states at all, while L0 (the heavy end) fell 8.3 kg (moderate)
+ * to 32.6 kg (high fatigue) (Senturk, Kumak & Janicijevic, 2026,
+ * doi:10.1186/s13102-026-01615-x). Hence `selectReadinessProbeSet` defaulting
+ * to the heaviest pre-working-load set rather than the session's first rep.
+ */
+const READINESS_HEURISTIC_NOTE =
+  'This reading is an engineering heuristic, not a validated daily marker: no published study has ' +
+  'tested fixed-load warm-up velocity as a same-day readiness signal. The probe favours the ' +
+  'heaviest available pre-working-load set (moving toward the L0/heavy end of the load-velocity ' +
+  'profile) because Senturk, Kumak & Janicijevic (2026, doi:10.1186/s13102-026-01615-x) found the ' +
+  'light-load end (v0) failed to discriminate fatigue states at all, while the heavy end (L0) fell ' +
+  '8.3-32.6 kg under fatigue. Pass `probeLoad: "legacyFirstRep"` to read the original first-rep-of-' +
+  'session probe instead.';
+
+/**
+ * Which of a session's own-exercise sets `session.readiness` reads its probe
+ * velocity from (VW-269).
+ *
+ * DEFAULT (`'heavy'`): the heaviest set at or above
+ * `HEAVY_PROBE_MIN_LOAD_FRACTION` of the session's own working load — the
+ * last warm-up rung before the working sets, not the first rep of the
+ * session. Warm-up-purpose sets are preferred over the working sets
+ * themselves when both qualify, so the read stays a PRE-working-set probe
+ * rather than folding in a set the working-set comparison already covers
+ * (`session.strength`, `session.perturbation`). `'legacyFirstRep'` restores
+ * the original first-set-of-session probe.
+ *
+ * `sets` MUST be non-empty (callers already guard this) and scoped to one
+ * exercise, matching `setsForSessionExercise`'s contract.
+ */
+const HEAVY_PROBE_MIN_LOAD_FRACTION = 0.7;
+
+function selectReadinessProbeSet(
+  sets: readonly StoredSet[],
+  probeLoad: 'heavy' | 'legacyFirstRep' | undefined,
+): StoredSet {
+  const first = sets[0]!;
+  if (probeLoad === 'legacyFirstRep') return first;
+
+  const loads = sets.map((s) => s.weightLbs).filter((w): w is number => w !== undefined);
+  if (loads.length === 0) return first;
+  const workingLoad = Math.max(...loads);
+  const threshold = workingLoad * HEAVY_PROBE_MIN_LOAD_FRACTION;
+  const qualifies = (s: StoredSet): boolean =>
+    s.weightLbs !== undefined && s.weightLbs >= threshold;
+
+  const heavyWarmups = sets.filter((s) => isWarmupSet(s) && qualifies(s));
+  const pool = heavyWarmups.length > 0 ? heavyWarmups : sets.filter(qualifies);
+  if (pool.length === 0) return first;
+
+  return pool.reduce((heaviest, s) =>
+    (s.weightLbs ?? 0) > (heaviest.weightLbs ?? 0) ? s : heaviest,
+  );
 }
 
 /**
@@ -1803,12 +1884,18 @@ const METRICS_COMPUTE_DESCRIPTION =
   'and whether the rest of the session is like-vs-like with it. ' +
   '`quality.rep` (setId, baselineSetId) — per-rep technique quality against a caller-supplied ' +
   'baseline set (a real prior set, not an invented target). ' +
-  '`session.readiness` (sessionId, baselineSessionId) — compares first-rep velocity between two ' +
-  'sessions of the same exercise; treat the result as provisional unless the exercise baseline ' +
-  'is CALIBRATED (see `baselines.get`). The baseline set is picked by the like-vs-like predicate ' +
-  '(VW-94) and reported in `comparability`: `comparedTo` names the set used, while ' +
-  '`noValidComparison` with a `nearest` candidate means the comparison still ran against a set ' +
-  'that is NOT like-for-like — relay those reasons rather than the zone alone. ' +
+  '`session.readiness` (sessionId, baselineSessionId, optional probeLoad) — compares first-rep ' +
+  'velocity between a probe set of each session of the same exercise; treat the result as ' +
+  'provisional unless the exercise baseline is CALIBRATED (see `baselines.get`). ALWAYS carries ' +
+  '`basis: "heuristic"` and a `note`: no published study validates fixed-load warm-up velocity as ' +
+  'a same-day readiness marker, and this is true regardless of baseline maturity — relay the note, ' +
+  'do not present the zone as measured. `probeLoad` (default `"heavy"`) picks which set the probe ' +
+  'velocity comes from: the heaviest pre-working-load set is read by default, because the light ' +
+  'end of a load-velocity profile is the one shown NOT to discriminate fatigue (Senturk et al. ' +
+  '2026); pass `"legacyFirstRep"` for the original first-set-of-session probe. The baseline set is ' +
+  'picked by the like-vs-like predicate (VW-94) and reported in `comparability`: `comparedTo` ' +
+  'names the set used, while `noValidComparison` with a `nearest` candidate means the comparison ' +
+  'still ran against a set that is NOT like-for-like — relay those reasons rather than the zone alone. ' +
   '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
   'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
   'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
@@ -1932,6 +2019,7 @@ export function registerMetricsTools(
     sessionId: z.string().optional(),
     baselineSetId: z.string().optional(),
     baselineSessionId: z.string().optional(),
+    probeLoad: z.string().optional(),
     exerciseId: z.string().optional(),
     load: z.number().optional(),
     reps: z.number().optional(),
