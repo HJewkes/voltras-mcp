@@ -13,11 +13,20 @@
 //   * Rest between sides: 120s
 //   * Test non-dominant side first
 //   * Trial validity gates (continuous rise, peak after 1s, plateau ≥90% peak)
-//   * Reported value: mean plateau force of the best 2 of 3 trials
+//   * Reported value: mean PEAK force of the best 2 of 3 trials (VW-271) — peak
+//     force is the metric the reliability literature actually validated (ICC
+//     0.73-0.99, CV 0.7-11.1%); plateau force stays in the trial record for the
+//     validity gate only and is never the headline
+//   * RFD and impulse-to-peak are computed per trial as DIAGNOSTIC-ONLY figures
+//     (VW-271): early-phase force CV runs 5.5-23.3%, too noisy to monitor change
 //   * CV across the best 2 trials (sd / mean × 100)
 //   * Asymmetry: (stronger − weaker) / stronger × 100
 //   * Asymmetry is REAL only above the athlete's own intra-limb CV (VW-270)
-//   * Inferred working weight: 70% of mean plateau, rounded to nearest 5 lb
+//   * Inferred working weight: 70% of mean peak force, rounded to nearest 5 lb
+//   * A per-athlete peak-force baseline (mean + SEM + CV across past test
+//     occasions) flags a new result as changed only when it clears the
+//     ADJUSTED SEM (SEM × √2) — a single-occasion SEM understates the error in
+//     a change score, which carries noise from both occasions (VW-271)
 
 /** A single force sample captured during an isometric trial. */
 export interface ForceSample {
@@ -27,13 +36,27 @@ export interface ForceSample {
   forceLbs: number;
 }
 
+/**
+ * RFD and impulse-to-peak for one trial (VW-271). DIAGNOSTIC ONLY: Grgic et
+ * al. (2022) found early-phase force CV of 5.5-23.3% and Weakley et al. (2024)
+ * calls RFD "not recommended" for monitoring change because its variability
+ * makes a real change undetectable. Computed for every trial regardless of
+ * validity, the same as peak/plateau force.
+ */
+export interface TrialDiagnostic {
+  /** Mean rate of force development from onset to peak: peak force / time-to-peak. */
+  rfdLbPerS: number;
+  /** Trapezoidal impulse (area under the force-time curve) from onset to peak. */
+  impulseLbS: number;
+}
+
 /** Per-trial validity outcome and computed metrics. */
 export interface TrialAnalysis {
   /** 1-indexed trial number within the side. */
   index: number;
-  /** Instantaneous peak force across the entire trial. */
+  /** Instantaneous peak force across the entire trial. THE headline metric (VW-271). */
   peakForceLbs: number;
-  /** Mean force across the 500 ms window centered on peak. */
+  /** Mean force across the 500 ms window centered on peak. Feeds the plateau validity gate only. */
   plateauForceLbs: number;
   /** Trial-relative milliseconds at which the plateau window starts. */
   plateauStartMs: number;
@@ -43,18 +66,26 @@ export interface TrialAnalysis {
   valid: boolean;
   /** Set when `valid === false`; explains which gate failed. */
   invalidReason?: string;
+  /**
+   * RFD and impulse-to-peak; diagnostic-only, see {@link TrialDiagnostic}.
+   * Always populated by `analyzeTrial`. Optional only because it is not
+   * persisted (VW-271 keeps it out of `StoredIsometricTrial` — it is never
+   * used for monitoring, so there is nothing to trend), so a trial
+   * reconstituted from storage for recomputation carries none.
+   */
+  diagnostic?: TrialDiagnostic;
 }
 
 /** Aggregate analysis across all trials for one side. */
 export interface SideAnalysis {
   trials: TrialAnalysis[];
   validTrialCount: number;
-  /** Mean of the best 2 valid trials by plateauForceLbs; null if fewer than 2 valid. */
-  meanPlateauForceLbs: number | null;
-  /** Coefficient of variation across the 2 best trials' plateau forces. */
+  /** Mean of the best 2 valid trials by peakForceLbs; null if fewer than 2 valid (VW-271). */
+  meanPeakForceLbs: number | null;
+  /** Coefficient of variation across the 2 best trials' peak forces. */
   cvPct: number | null;
   /**
-   * 0.70 × meanPlateauForceLbs, rounded to nearest 5 lb and clamped up to the
+   * 0.70 × meanPeakForceLbs, rounded to nearest 5 lb and clamped up to the
    * device minimum (5 lb) so it is always a settable target; null when no mean.
    */
   inferredWorkingWeightLbs: number | null;
@@ -185,6 +216,7 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
       plateauEndMs: 0,
       valid: false,
       invalidReason: 'no samples captured',
+      diagnostic: { rfdLbPerS: 0, impulseLbS: 0 },
     };
   }
 
@@ -196,6 +228,7 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
       peakIdx = i;
     }
   }
+  const diagnostic = computeDiagnostic(samples, peakIdx);
 
   const peakAtMs = samples[peakIdx].tMs;
   const halfWindow = PLATEAU_WINDOW_MS / 2;
@@ -226,6 +259,7 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
         plateauEndMs,
         valid: false,
         invalidReason: 'force did not rise continuously from onset',
+        diagnostic,
       };
     }
   }
@@ -240,6 +274,7 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
       plateauEndMs,
       valid: false,
       invalidReason: `peak occurred at ${peakAtMs}ms (expected > ${PEAK_AFTER_MS}ms)`,
+      diagnostic,
     };
   }
 
@@ -253,6 +288,7 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
       plateauEndMs,
       valid: false,
       invalidReason: `plateau ${plateauForce.toFixed(1)} lb below 90% of peak ${peakForce.toFixed(1)} lb`,
+      diagnostic,
     };
   }
 
@@ -263,12 +299,34 @@ export function analyzeTrial(samples: ForceSample[], index: number): TrialAnalys
     plateauStartMs,
     plateauEndMs,
     valid: true,
+    diagnostic,
   };
 }
 
 /**
+ * RFD and impulse from onset (`samples[0]`) to `peakIdx`, trapezoidal (VW-271).
+ * Pure and gate-independent: computed the same way whether the trial ends up
+ * valid or not, exactly like peak/plateau force above it.
+ */
+function computeDiagnostic(samples: ForceSample[], peakIdx: number): TrialDiagnostic {
+  const onset = samples[0];
+  const peak = samples[peakIdx];
+  const riseMs = peak.tMs - onset.tMs;
+  const rfdLbPerS = riseMs > 0 ? (peak.forceLbs - onset.forceLbs) / (riseMs / 1000) : 0;
+
+  let impulseLbMs = 0;
+  for (let i = 1; i <= peakIdx; i++) {
+    const dtMs = samples[i].tMs - samples[i - 1].tMs;
+    const avgForceLbs = (samples[i].forceLbs + samples[i - 1].forceLbs) / 2;
+    impulseLbMs += avgForceLbs * dtMs;
+  }
+  return { rfdLbPerS, impulseLbS: impulseLbMs / 1000 };
+}
+
+/**
  * Aggregate per-trial analyses into the side-level summary. Picks the best
- * 2 valid trials by plateau force, computes their mean and CV, and infers
+ * 2 valid trials by PEAK force (VW-271 — peak, not plateau, is the metric the
+ * reliability literature validated), computes their mean and CV, and infers
  * a starting working weight.
  *
  * Session-level outlier discard (CV > 15% vs. session mean) is applied
@@ -309,25 +367,25 @@ export function aggregateSide(trials: TrialAnalysis[]): SideAnalysis {
     return {
       trials: filtered,
       validTrialCount,
-      meanPlateauForceLbs: null,
+      meanPeakForceLbs: null,
       cvPct: null,
       inferredWorkingWeightLbs: null,
     };
   }
 
-  const sorted = [...validTrials].sort((a, b) => b.plateauForceLbs - a.plateauForceLbs);
-  const best2 = [sorted[0].plateauForceLbs, sorted[1].plateauForceLbs];
-  const meanPlateau = mean(best2);
+  const sorted = [...validTrials].sort((a, b) => b.peakForceLbs - a.peakForceLbs);
+  const best2 = [sorted[0].peakForceLbs, sorted[1].peakForceLbs];
+  const meanPeak = mean(best2);
   const cvPct = coefficientOfVariation(best2);
   const inferredWorkingWeightLbs = Math.max(
     DEVICE_MIN_WORKING_WEIGHT_LBS,
-    roundToStep(meanPlateau * WORKING_WEIGHT_RATIO, WORKING_WEIGHT_ROUND_STEP),
+    roundToStep(meanPeak * WORKING_WEIGHT_RATIO, WORKING_WEIGHT_ROUND_STEP),
   );
 
   return {
     trials: filtered,
     validTrialCount,
-    meanPlateauForceLbs: meanPlateau,
+    meanPeakForceLbs: meanPeak,
     cvPct,
     inferredWorkingWeightLbs,
   };
@@ -335,7 +393,7 @@ export function aggregateSide(trials: TrialAnalysis[]): SideAnalysis {
 
 /** What one side contributes to the asymmetry verdict. */
 export interface ImbalanceSideInput {
-  meanPlateauForceLbs: number | null;
+  meanPeakForceLbs: number | null;
   cvPct: number | null;
 }
 
@@ -358,8 +416,8 @@ export function computeImbalance(
   right: ImbalanceSideInput,
 ): ImbalanceReport {
   const intraLimbCvPct = { left: left.cvPct, right: right.cvPct };
-  const lMean = left.meanPlateauForceLbs;
-  const rMean = right.meanPlateauForceLbs;
+  const lMean = left.meanPeakForceLbs;
+  const rMean = right.meanPeakForceLbs;
   if (lMean === null || rMean === null) {
     const missing =
       lMean === null ? (rMean === null ? 'both sides' : 'the left side') : 'the right side';
@@ -482,9 +540,9 @@ export function directionOfMeasurement(measurement: {
 }): AsymmetryDirection | null {
   const sideOf = (side: 'left' | 'right'): ImbalanceSideInput => {
     const stored = measurement.sides.find((s) => s.side === side);
-    if (stored === undefined) return { meanPlateauForceLbs: null, cvPct: null };
+    if (stored === undefined) return { meanPeakForceLbs: null, cvPct: null };
     const analysis = aggregateSide(stored.trials.map((t) => ({ ...t })));
-    return { meanPlateauForceLbs: analysis.meanPlateauForceLbs, cvPct: analysis.cvPct };
+    return { meanPeakForceLbs: analysis.meanPeakForceLbs, cvPct: analysis.cvPct };
   };
   return computeImbalance(sideOf('left'), sideOf('right')).direction;
 }
@@ -492,6 +550,98 @@ export function directionOfMeasurement(measurement: {
 function higherCv(left: number | null, right: number | null): number | null {
   if (left === null || right === null) return null;
   return Math.max(left, right);
+}
+
+/**
+ * Test occasions required before a peak-force baseline is established
+ * (VW-271). Two occasions can only agree or disagree; three is the floor for
+ * a variance-based spread, matching {@link MIN_TESTS_FOR_DIRECTION_LABEL}'s
+ * reasoning.
+ */
+export const MIN_TESTS_FOR_PEAK_FORCE_BASELINE = 3;
+
+/**
+ * A per-athlete peak-force baseline derived from past test occasions
+ * (VW-271). `semLbs` is the between-occasion standard deviation of this
+ * athlete's own mean-peak-force results — a practical single-subject
+ * stand-in for a measurement-theory SEM, which needs a controlled test-retest
+ * reliability study this rig has never run. `cvPct` is the same spread
+ * relative to the mean, comparable to the published between-day CV
+ * references (IMTP peak force ~3.5%, Weakley et al. 2024).
+ */
+export interface PeakForceBaseline {
+  sampleSize: number;
+  meanLbs: number;
+  semLbs: number;
+  cvPct: number;
+}
+
+/**
+ * Derive a peak-force baseline from past occasion means. `null` below
+ * {@link MIN_TESTS_FOR_PEAK_FORCE_BASELINE} occasions or a non-positive mean —
+ * not enough history to say what this athlete's own spread is.
+ */
+export function computePeakForceBaseline(
+  occasionPeakForcesLbs: readonly number[],
+): PeakForceBaseline | null {
+  if (occasionPeakForcesLbs.length < MIN_TESTS_FOR_PEAK_FORCE_BASELINE) return null;
+  const values = [...occasionPeakForcesLbs];
+  const meanLbs = mean(values);
+  if (meanLbs <= 0) return null;
+  const semLbs = sampleStandardDeviation(values, meanLbs);
+  return { sampleSize: values.length, meanLbs, semLbs, cvPct: (semLbs / meanLbs) * 100 };
+}
+
+/**
+ * Whether a new peak-force result is distinguishable from this athlete's own
+ * baseline noise (VW-271). The threshold is the ADJUSTED SEM — SEM × √2, per
+ * Weakley et al. (2024) — because a change score carries measurement error
+ * from BOTH occasions being compared, not just the new one.
+ */
+export interface PeakForceChangeVerdict {
+  changed: boolean;
+  deltaLbs: number;
+  thresholdLbs: number;
+  interpretation: string;
+}
+
+export function evaluatePeakForceChange(
+  currentPeakLbs: number,
+  baseline: PeakForceBaseline,
+): PeakForceChangeVerdict {
+  const thresholdLbs = baseline.semLbs * Math.SQRT2;
+  const deltaLbs = currentPeakLbs - baseline.meanLbs;
+  const changed = Math.abs(deltaLbs) > thresholdLbs;
+  const interpretation = changed
+    ? `Peak force ${currentPeakLbs.toFixed(1)} lb differs from this athlete's baseline mean ` +
+      `${baseline.meanLbs.toFixed(1)} lb (n=${baseline.sampleSize}) by ${Math.abs(deltaLbs).toFixed(1)} lb, ` +
+      `which exceeds the adjusted SEM (SEM x sqrt(2) = ${thresholdLbs.toFixed(1)} lb) — likely a real ` +
+      'change, not measurement noise.'
+    : `Peak force ${currentPeakLbs.toFixed(1)} lb is within ${thresholdLbs.toFixed(1)} lb (the adjusted ` +
+      `SEM, SEM x sqrt(2)) of this athlete's baseline mean ${baseline.meanLbs.toFixed(1)} lb ` +
+      `(n=${baseline.sampleSize}), so it cannot be distinguished from trial-to-trial variation.`;
+  return { changed, deltaLbs, thresholdLbs, interpretation };
+}
+
+/**
+ * Pooled per-side mean peak forces from stored isometric measurements, one
+ * value per side per occasion that had a mean at all (VW-271).
+ *
+ * SCOPE LIMIT, same as {@link summarizeDirectionHistory}: `isometric_measurements`
+ * carries no lifter, exercise or session key, so this pools every occasion in
+ * the database, not this lifter tested on this joint. Callers must say so.
+ */
+export function occasionPeakForcesLbs(
+  measurements: readonly { sides: readonly { trials: readonly TrialAnalysis[] }[] }[],
+): number[] {
+  const peaks: number[] = [];
+  for (const measurement of measurements) {
+    for (const side of measurement.sides) {
+      const analysis = aggregateSide(side.trials.map((t) => ({ ...t })));
+      if (analysis.meanPeakForceLbs !== null) peaks.push(analysis.meanPeakForceLbs);
+    }
+  }
+  return peaks;
 }
 
 /**
@@ -536,15 +686,18 @@ function coefficientOfVariation(xs: number[]): number {
   if (xs.length === 0) return 0;
   const m = mean(xs);
   if (m === 0) return 0;
+  return (sampleStandardDeviation(xs, m) / m) * 100;
+}
+
+/** Sample standard deviation (n-1) when n>1; 0 for a single value. */
+function sampleStandardDeviation(xs: number[], m: number): number {
   let sqSum = 0;
   for (const x of xs) {
     const d = x - m;
     sqSum += d * d;
   }
-  // Sample standard deviation (n-1) when n>1; fallback to 0 otherwise.
   const variance = xs.length > 1 ? sqSum / (xs.length - 1) : 0;
-  const sd = Math.sqrt(variance);
-  return (sd / m) * 100;
+  return Math.sqrt(variance);
 }
 
 function roundToStep(value: number, step: number): number {

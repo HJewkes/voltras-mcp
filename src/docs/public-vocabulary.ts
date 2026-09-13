@@ -152,6 +152,23 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'directionHistory',
   'testsCompared',
   'agreementPct',
+  // VW-271: peak force as the isometric headline, RFD/impulse as
+  // diagnostic-only, and the per-athlete peak-force baseline / adjusted-SEM
+  // change check on `isometric.measure_max` and `isometric.measure_imbalance`.
+  'meanPeakForceLbs',
+  'diagnostic',
+  'rfdLbPerS',
+  'impulseLbS',
+  'plateauForceLbs',
+  'peakForceBaseline',
+  'changeFromBaseline',
+  'sampleSize',
+  'meanLbs',
+  'semLbs',
+  'cvPct',
+  'thresholdLbs',
+  'deltaLbs',
+  'changed',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',

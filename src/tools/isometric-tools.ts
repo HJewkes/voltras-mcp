@@ -62,12 +62,17 @@ import {
   aggregateSide,
   analyzeTrial,
   computeImbalance,
+  computePeakForceBaseline,
   decideTestOrder,
   directionOfMeasurement,
+  evaluatePeakForceChange,
+  occasionPeakForcesLbs,
   summarizeDirectionHistory,
   PEAK_AFTER_MS,
   type DirectionHistory,
   type ForceSample,
+  type PeakForceBaseline,
+  type PeakForceChangeVerdict,
   type SideAnalysis,
   type TrialAnalysis,
 } from '../state/isometric-protocol.js';
@@ -100,9 +105,13 @@ const MEASURE_HOLD_DESCRIPTION = [
   '',
   'Returns the per-hold analysis (peak and plateau force, plateau window, the',
   'validity flags) plus peakForceLbs at the top level, which is readable even',
-  'when the hold fails a validity gate. Phase pushes (isometric_phase: ready,',
-  'go, hold, stop) are emitted on the channel so a dashboard or cue surface can',
-  'signal the athlete while the hold runs.',
+  'when the hold fails a validity gate. peakForceLbs is the headline number',
+  '(VW-271) — it is the metric the reliability literature actually validated.',
+  "Each trial's diagnostic block carries rfdLbPerS and impulseLbS: DIAGNOSTIC ONLY, never for",
+  'monitoring change — early-phase force CV runs 5.5-23.3% (Grgic et al. 2022),',
+  'too noisy to tell a real change from measurement error. Phase pushes',
+  '(isometric_phase: ready, go, hold, stop) are emitted on the channel so a',
+  'dashboard or cue surface can signal the athlete while the hold runs.',
   '',
   'For the full 3-trial protocol with rests and best-2-of-N aggregation, use',
   'isometric.measure_max; for bilateral asymmetry, isometric.measure_imbalance.',
@@ -115,19 +124,54 @@ const MEASURE_MAX_DESCRIPTION = [
   'device into Isometric mode and set resistance to a low value (or 0 lb if',
   'supported) before invoking — this tool does NOT change device settings.',
   '',
-  'Returns per-trial peak/plateau forces, validity flags (continuous rise,',
-  'peak after 1s, plateau ≥ 90% of peak), and the mean plateau force of',
-  'the best 2 of N valid trials. The mean drives a 70% inferred working',
-  'weight (rounded to 5 lb).',
+  'PEAK FORCE IS THE HEADLINE METRIC (VW-271): meanPeakForceLbs is the mean',
+  'of the best 2 of N valid trials by peakForceLbs, and drives the 70%',
+  'inferred working weight (rounded to 5 lb) and the SEM-based change check',
+  'below. Peak force is what the reliability literature actually validated —',
+  'unilateral IMTP peak force ICC 0.89-0.97, CV 3.4-4.9% (Grgic et al. 2022) —',
+  'and plateauForceLbs on each trial exists only to feed the plateau-≥90%-of-',
+  'peak validity gate, never as a reported average.',
   '',
-  'THAT INFERRED WEIGHT IS A HEURISTIC, NOT A VALIDATED CONVERSION (VW-273).',
-  'No study validates a cable-device isometric maximum as a predictor of',
-  'dynamic cable loads, and nothing here treats it as a 1RM proxy. Joint angle',
-  'dominates what an isometric maximum predicts at all: an isometric squat',
-  'predicted the full squat at r 0.864 at 90 degrees of knee flexion but only',
-  'r 0.597 at 120 degrees (Lum et al. 2020), so the number means something only',
-  'when the hold was held at the angle where the exercise peaks. Treat it as a',
-  'starting point a coach adjusts against what the athlete actually lifts.',
+  'Each trial also returns a diagnostic block (rfdLbPerS, impulseLbS):',
+  'DIAGNOSTIC ONLY, NEVER FOR MONITORING CHANGE. Early-phase force CV runs',
+  '5.5-23.3% (Grgic et al. 2022) and Weakley et al. (2024) call RFD "not',
+  'recommended" for monitoring because its variability makes a real change',
+  'undetectable. Read them as a single-test curiosity, not a trend.',
+  '',
+  'changeFromBaseline answers "is this different from what this athlete',
+  'usually pulls": peakForceBaseline carries this athlete\'s meanLbs, semLbs',
+  'and cvPct over sampleSize past test occasions, and is null under 3',
+  'occasions — not enough history for a spread. The changed field on',
+  "changeFromBaseline is true only when this run's peak force differs from meanLbs by more than",
+  'thresholdLbs (deltaLbs is the signed difference); thresholdLbs is the',
+  'ADJUSTED SEM, semLbs x sqrt(2) (Weakley et al. 2024) — a change score',
+  'carries error from both occasions being compared, not just the new one.',
+  'SCOPE LIMIT: the baseline pools every isometric occasion in this database',
+  '(no lifter, exercise or session key exists to narrow it — same limit',
+  'isometric.measure_imbalance documents for directionHistory), so it is',
+  'meaningful only when one lifter has been testing one joint on this rig.',
+  '',
+  'VERIFIED IMTP-style PROTOCOL DETAILS THIS IMPLEMENTS: the 5 s hold',
+  '(default, clamp 3-10s) and >=2 trials (default 3, clamp 2-5) an applied',
+  'IMTP study used (Yeh et al., PMC13541152). NOT IMPLEMENTED, AND WHY: that',
+  "study's 2 min inter-trial rest — this tool defaults restMs to 90s (clamp",
+  '30s-5min); pass restMs 120000 to match it. Its repeat-trial rule (repeat',
+  'when two trials differ by more than 250 N) — this tool instead discards a',
+  'trial whose peak diverges more than 15% from the session median, a',
+  'percentage rule already established here and left unchanged. Its 40 N-',
+  'above-bodyweight onset threshold — this tool has no bodyweight/resting-',
+  'tension reading to threshold against, so onset is instead bounded',
+  'structurally by the continuous-rise-from-zero and peak-after-1s gates.',
+  '',
+  'THE INFERRED WORKING WEIGHT IS A HEURISTIC, NOT A VALIDATED CONVERSION',
+  '(VW-273). No study validates a cable-device isometric maximum as a',
+  'predictor of dynamic cable loads, and nothing here treats it as a 1RM',
+  'proxy. Joint angle dominates what an isometric maximum predicts at all:',
+  'an isometric squat predicted the full squat at r 0.864 at 90 degrees of',
+  'knee flexion but only r 0.597 at 120 degrees (Lum et al. 2020), so the',
+  'number means something only when the hold was held at the angle where the',
+  'exercise peaks. Treat it as a starting point a coach adjusts against what',
+  'the athlete actually lifts.',
   '',
   'For bilateral assessment + asymmetry detection, prefer',
   'isometric.measure_imbalance which composes this tool with the standard',
@@ -177,6 +221,19 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'asymmetry is consistent strength training over time. Each side also reports',
   'an inferred working weight; it is the same heuristic isometric.measure_max',
   'labels, carries the same joint-angle caveat, and is never a 1RM proxy.',
+  '',
+  "PEAK FORCE IS THE HEADLINE METRIC (VW-271): each side's meanPeakForceLbs",
+  '(and the asymmetry math above) is the mean of the best 2 valid trials by',
+  'peakForceLbs, not plateau force. Each trial also carries a diagnostic',
+  'block (rfdLbPerS, impulseLbS) that is DIAGNOSTIC ONLY, NEVER FOR',
+  'MONITORING CHANGE — early-phase force CV runs 5.5-23.3% (Grgic et al.',
+  '2022). peakForceBaseline (meanLbs, semLbs, cvPct over sampleSize past',
+  'occasions; null under 3) is shared by both sides; each side reports its own',
+  "changeFromBaseline against it, with changed true only when this run's peak",
+  'force differs from meanLbs by more than thresholdLbs (deltaLbs is the',
+  'signed difference) — thresholdLbs is the adjusted SEM, semLbs x sqrt(2)',
+  '(Weakley et al. 2024). The same pooled-database scope limit as',
+  'directionHistory above applies to the baseline too.',
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -296,7 +353,7 @@ interface MeasureHoldResult {
  * predicts at all is dominated by the joint angle it was held at.
  */
 const INFERRED_WORKING_WEIGHT_BASIS =
-  'HEURISTIC, not a validated conversion. 70% of the mean plateau force, rounded to 5 lb. ' +
+  'HEURISTIC, not a validated conversion. 70% of the mean peak force, rounded to 5 lb. ' +
   'No study validates a cable-device isometric maximum as a predictor of dynamic cable ' +
   'loads, and this is never a 1RM proxy. Joint angle dominates: an isometric squat ' +
   'predicted the full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at ' +
@@ -308,20 +365,28 @@ interface MeasureMaxResult {
   slot: string;
   trials: TrialAnalysis[];
   validTrialCount: number;
-  meanPlateauForceLbs: number | null;
+  meanPeakForceLbs: number | null;
   cvPct: number | null;
   inferredWorkingWeightLbs: number | null;
   /** What that weight is and is not; see {@link INFERRED_WORKING_WEIGHT_BASIS}. */
   inferredWorkingWeightBasis: string;
+  /** This athlete's peak-force mean/SEM/CV over past occasions; null under 3 (VW-271). */
+  peakForceBaseline: PeakForceBaseline | null;
+  /** Whether this run's peak force clears the adjusted SEM; null with no baseline yet. */
+  changeFromBaseline: PeakForceChangeVerdict | null;
+  /** Id of the persisted `isometric_measurements` row, or `null` when the write failed. */
+  measurementId: string | null;
   totalElapsedMs: number;
 }
 
 interface SideSummary {
   slot: string;
-  meanPlateauForceLbs: number | null;
+  meanPeakForceLbs: number | null;
   inferredWorkingWeightLbs: number | null;
   cvPct: number | null;
   validTrialCount: number;
+  /** This side's change against the shared `peakForceBaseline`; null with no baseline yet. */
+  changeFromBaseline: PeakForceChangeVerdict | null;
 }
 
 type TestOrder = ['left', 'right'] | ['right', 'left'];
@@ -341,6 +406,12 @@ interface MeasureImbalanceResult {
   directionHistory: DirectionHistory | null;
   /** What each side's inferred weight is and is not; see {@link INFERRED_WORKING_WEIGHT_BASIS}. */
   inferredWorkingWeightBasis: string;
+  /**
+   * This athlete's pooled peak-force mean/SEM/CV over past occasions, read
+   * before this run's own trials were persisted; null under 3 occasions
+   * (VW-271). Shared by both sides' `changeFromBaseline`.
+   */
+  peakForceBaseline: PeakForceBaseline | null;
   totalElapsedMs: number;
   /**
    * Id of the persisted `isometric_measurements` row, or `null` when the write
@@ -420,15 +491,32 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
     runSideProtocol(state, slotId, input, leaseFence),
   );
+  // Read BEFORE persisting, so this run's own result never leaks into its own
+  // baseline (VW-271) — the opposite of `readDirectionHistory`, which wants
+  // the current run included.
+  const peakForceBaseline = await readPeakForceBaseline(state);
+  const changeFromBaseline =
+    peakForceBaseline !== null && result.analysis.meanPeakForceLbs !== null
+      ? evaluatePeakForceChange(result.analysis.meanPeakForceLbs, peakForceBaseline)
+      : null;
+  const measurementId = await persistMeasurement(state, {
+    durationMs: input.durationMs,
+    trialsRequested: input.trials,
+    restMs: input.restMs,
+    sides: [{ slotId, trials: result.analysis.trials }],
+  });
   return {
     ok: true,
     slot: slotId,
     trials: result.analysis.trials,
     validTrialCount: result.analysis.validTrialCount,
-    meanPlateauForceLbs: result.analysis.meanPlateauForceLbs,
+    meanPeakForceLbs: result.analysis.meanPeakForceLbs,
     cvPct: result.analysis.cvPct,
     inferredWorkingWeightLbs: result.analysis.inferredWorkingWeightLbs,
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
+    peakForceBaseline,
+    changeFromBaseline,
+    measurementId,
     totalElapsedMs: Date.now() - startedAt,
   };
 }
@@ -482,13 +570,20 @@ async function measureImbalance(
   const leftSlotId = slotForSide.left;
   const rightSlotId = slotForSide.right;
 
-  const left: SideSummary = sideAsSummary(leftSlotId, leftAnalysis);
-  const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis);
+  // Read BEFORE persisting, so this run's own result never leaks into its own
+  // baseline (VW-271) — the opposite of `readDirectionHistory` below, which
+  // wants the current run included.
+  const peakForceBaseline = await readPeakForceBaseline(state);
+  const left: SideSummary = sideAsSummary(leftSlotId, leftAnalysis, peakForceBaseline);
+  const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis, peakForceBaseline);
   const imbalance = computeImbalance(left, right);
 
   const measurementId = await persistMeasurement(state, {
     firstSideTested: order[0],
-    input,
+    durationMs: input.durationMs,
+    trialsRequested: input.trials,
+    restMs: input.restMs,
+    betweenSidesRestMs: input.betweenSidesRestMs,
     sides: [
       { side: 'left', slotId: leftSlotId, trials: leftAnalysis?.trials ?? [] },
       { side: 'right', slotId: rightSlotId, trials: rightAnalysis?.trials ?? [] },
@@ -503,6 +598,7 @@ async function measureImbalance(
     imbalance,
     directionHistory: await readDirectionHistory(state),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
+    peakForceBaseline,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
   };
@@ -549,8 +645,30 @@ async function readDirectionHistory(state: ServerState): Promise<DirectionHistor
   }
 }
 
+/**
+ * This athlete's peak-force baseline over past test occasions (VW-271).
+ *
+ * SCOPE LIMIT, same as `readDirectionHistory`: `isometric_measurements` has no
+ * lifter, exercise or session key, so this pools every occasion in the
+ * database — meaningful only when one lifter has been testing one joint on
+ * this rig. Never throws, for the same reason `readDirectionHistory` does
+ * not: a read failure must not take down the measurement just produced.
+ */
+async function readPeakForceBaseline(state: ServerState): Promise<PeakForceBaseline | null> {
+  try {
+    const measurements = await state.store.listRecentIsometricMeasurements({
+      limit: DIRECTION_HISTORY_LIMIT,
+    });
+    return computePeakForceBaseline(occasionPeakForcesLbs(measurements));
+  } catch (err) {
+    log.warn('isometric: reading the peak-force baseline failed', err);
+    return null;
+  }
+}
+
 interface PersistSideInput {
-  side: 'left' | 'right';
+  /** Absent for a single-slot `measure_max` run, which declares no limb. */
+  side?: 'left' | 'right';
   slotId: string;
   trials: TrialAnalysis[];
 }
@@ -559,23 +677,27 @@ interface PersistSideInput {
  * Write the assessment to the store (VMCP-04.11). Until this landed the tool
  * computed a real left/right asymmetry and dropped it on the floor, so nothing
  * about limb asymmetry survived the response — the one question bilateral
- * training exists to answer had no history behind it.
+ * training exists to answer had no history behind it. `isometric.measure_max`
+ * writes through the same path (VW-271) with a single, side-less entry — the
+ * `sides` array shape was chosen for exactly this so no schema change was
+ * needed when it landed.
  *
  * What goes in: the per-trial measurements, plus the protocol parameters they
  * were collected under. What stays out: the asymmetry percentage and its
- * flagged/meaningful verdicts. Those are conclusions — one division and two
- * threshold comparisons away from the stored trials — and `computeImbalance`
- * recomputes them on read for free, always against current thresholds. A stored
- * verdict would be indistinguishable from a fresh one the day the thresholds
- * move.
+ * flagged/meaningful verdicts, and the peak-force baseline verdict. Those are
+ * conclusions — arithmetic away from the stored trials — and `computeImbalance`
+ * / `computePeakForceBaseline` recompute them on read for free, always against
+ * current thresholds. A stored verdict would be indistinguishable from a fresh
+ * one the day the thresholds move.
  *
  * Identity: each side's trials carry the DEVICE ID read from that slot's
  * connected client at measurement time. That is the join key. `slot` rides
  * along for diagnostics only — `slot.swap` reassigns slot ids between physical
  * units, so a series keyed on slot would flip limbs mid-history with nothing
  * erroring. `side` is the limb the caller declared for this run (the whole
- * premise of the call: `primarySide` says which slot is on which limb), and it
- * is frozen at write time for the same reason `set.end` freezes it.
+ * premise of the call: `primarySide` says which slot is on which limb), absent
+ * for a single-slot `measure_max` run, and frozen at write time for the same
+ * reason `set.end` freezes it.
  *
  * Never throws. See `measurementId` on the result for why a store failure must
  * not take the measurement down with it.
@@ -583,8 +705,11 @@ interface PersistSideInput {
 async function persistMeasurement(
   state: ServerState,
   args: {
-    firstSideTested: 'left' | 'right';
-    input: MeasureImbalanceInput;
+    firstSideTested?: 'left' | 'right';
+    durationMs: number;
+    trialsRequested: number;
+    restMs: number;
+    betweenSidesRestMs?: number;
     sides: PersistSideInput[];
   },
 ): Promise<string | null> {
@@ -592,18 +717,20 @@ async function persistMeasurement(
     id: randomUUID(),
     measuredAt: new Date().toISOString(),
     analysisVersion: ISOMETRIC_ANALYSIS_VERSION,
-    firstSideTested: args.firstSideTested,
-    durationMs: args.input.durationMs,
-    trialsRequested: args.input.trials,
-    restMs: args.input.restMs,
-    betweenSidesRestMs: args.input.betweenSidesRestMs,
+    ...(args.firstSideTested !== undefined ? { firstSideTested: args.firstSideTested } : {}),
+    durationMs: args.durationMs,
+    trialsRequested: args.trialsRequested,
+    restMs: args.restMs,
+    ...(args.betweenSidesRestMs !== undefined
+      ? { betweenSidesRestMs: args.betweenSidesRestMs }
+      : {}),
     sides: args.sides.map((s) => toStoredSide(state, s)),
   };
   try {
     await state.store.putIsometricMeasurement(measurement);
     return measurement.id;
   } catch (err) {
-    log.warn('isometric.measure_imbalance: persisting the measurement failed', err);
+    log.warn('isometric: persisting the measurement failed', err);
     return null;
   }
 }
@@ -616,7 +743,7 @@ function toStoredSide(state: ServerState, side: PersistSideInput): StoredIsometr
   // series it landed in.
   const deviceId = getSlot(state, side.slotId).client.connectedDeviceId;
   return {
-    side: side.side,
+    ...(side.side !== undefined ? { side: side.side } : {}),
     ...(typeof deviceId === 'string' ? { deviceId } : {}),
     slot: side.slotId,
     trials: side.trials.map((t) => ({
@@ -827,21 +954,30 @@ function ensureSlotConnected(slotId: string, slot: ReturnType<typeof getSlot>): 
   }
 }
 
-function sideAsSummary(slotId: string, analysis: SideAnalysis | undefined): SideSummary {
+function sideAsSummary(
+  slotId: string,
+  analysis: SideAnalysis | undefined,
+  peakForceBaseline: PeakForceBaseline | null,
+): SideSummary {
   if (analysis === undefined) {
     return {
       slot: slotId,
-      meanPlateauForceLbs: null,
+      meanPeakForceLbs: null,
       inferredWorkingWeightLbs: null,
       cvPct: null,
       validTrialCount: 0,
+      changeFromBaseline: null,
     };
   }
   return {
     slot: slotId,
-    meanPlateauForceLbs: analysis.meanPlateauForceLbs,
+    meanPeakForceLbs: analysis.meanPeakForceLbs,
     inferredWorkingWeightLbs: analysis.inferredWorkingWeightLbs,
     cvPct: analysis.cvPct,
     validTrialCount: analysis.validTrialCount,
+    changeFromBaseline:
+      peakForceBaseline !== null && analysis.meanPeakForceLbs !== null
+        ? evaluatePeakForceChange(analysis.meanPeakForceLbs, peakForceBaseline)
+        : null,
   };
 }
