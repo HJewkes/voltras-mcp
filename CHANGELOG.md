@@ -54,6 +54,19 @@ entry is written from the user's point of view is a review question, not a check
   gained `meso.diet_phase_tolerance` with the RP S12 note ids and the caveat that the
   corpus is about calories while this applies the shape to training load.
 
+- `accountability.state` reports the coach protocol's position and the decision it would
+  make right now, read-only (VW-286, #373). It answers "why has the coach been quiet" with a
+  `reason` rather than a shrug: the state (`planned` / `completed` / `missed` / `ghosting`
+  / `realign_needed` / `holding`), how many proactive messages have gone out in the rolling
+  7-day window the 2-message ceiling is enforced against, and whether today's Sunday or
+  Thursday tick would send or stay silent. The Thursday touch fires only on a missed Monday
+  or Tuesday session, a flat or worsening adherence direction from `report.weekly`, or a
+  skipped session paired with silence since Sunday — otherwise nothing is sent, because
+  silence through the week means the plan is on track. Ghosting spends exactly 2 messages a
+  week for 2 weeks and then stops for good; any reply, at any latency, clears it and
+  re-arms normal cadence. Nothing sends a message yet: the transport is an interface with an
+  in-memory implementation, and the schema gains an `accountability_state` table (v20).
+
 - `metrics.compute` `session.readiness` now labels itself: every response carries
   `basis: "heuristic"` and a `note` saying plainly that no published study validates
   fixed-load warm-up velocity as a same-day readiness marker (VW-269). The probe velocity

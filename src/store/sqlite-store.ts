@@ -29,6 +29,7 @@ import {
   type FailureVerdict,
 } from './failure-harvest.js';
 import type { TrainingIntent } from '../schemas/set.js';
+import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
   baselineRowId,
@@ -84,7 +85,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -98,6 +99,30 @@ export { LOCAL_USER_ID };
  * explicit rather than absent.
  */
 const IDLE_REP_LIST_DEFAULT_LIMIT = 100;
+
+/**
+ * The coach's protocol position for one user (VW-286). One row per user: this
+ * is a CURRENT-STATE record, not a log. The two JSON columns hold the send
+ * history the cadence ceilings are counted against — `ghost_sends_json` is the
+ * current ghost episode only (any inbound reply clears it), and
+ * `last_proactive_sends_json` is the recent proactive sends the rolling 7-day
+ * ceiling reads.
+ *
+ * Shared with `migrateV19ToV20` so the fresh-DB shape and the migrated shape
+ * cannot drift apart.
+ */
+const ACCOUNTABILITY_STATE_DDL = `
+  CREATE TABLE IF NOT EXISTS accountability_state (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    state TEXT NOT NULL,
+    entered_at TEXT NOT NULL,
+    consecutive_misses INTEGER NOT NULL DEFAULT 0,
+    ghost_sends_json TEXT,
+    last_inbound_at TEXT,
+    last_proactive_sends_json TEXT,
+    holding_until TEXT
+  );
+`;
 
 const SCHEMA_SQL = `
   -- ── Identity (v6) ────────────────────────────────────────────────────
@@ -728,7 +753,7 @@ const SCHEMA_SQL = `
     declared_at TEXT NOT NULL,
     reason TEXT
   );
-`;
+${ACCOUNTABILITY_STATE_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1203,6 +1228,16 @@ function migrateV18ToV19(db: DatabaseSync): void {
 }
 
 /**
+ * v19 -> v20: `accountability_state` (VW-286). ADDITIVE TABLE, nothing
+ * back-filled — a user with no row has never been through the protocol, which
+ * is not the same as having been through it and come out `planned`. The
+ * reducer seeds the first row itself.
+ */
+function migrateV19ToV20(db: DatabaseSync): void {
+  db.exec(ACCOUNTABILITY_STATE_DDL);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1508,6 +1543,17 @@ interface TrainingProgramRow {
   description: string | null;
   created_at: string;
   archived_at: string | null;
+}
+
+interface AccountabilityStateRow {
+  user_id: string;
+  state: string;
+  entered_at: string;
+  consecutive_misses: number;
+  ghost_sends_json: string | null;
+  last_inbound_at: string | null;
+  last_proactive_sends_json: string | null;
+  holding_until: string | null;
 }
 
 interface TrainingProfileRow {
@@ -2789,6 +2835,45 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve();
   }
 
+  async putAccountabilityState(s: AccountabilityState): Promise<void> {
+    // `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`, for the reason the
+    // rest of this file gives: a delete-then-insert would cascade to any
+    // future child of this row.
+    this.db
+      .prepare(
+        `INSERT INTO accountability_state
+           (user_id, state, entered_at, consecutive_misses, ghost_sends_json,
+            last_inbound_at, last_proactive_sends_json, holding_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           state = excluded.state,
+           entered_at = excluded.entered_at,
+           consecutive_misses = excluded.consecutive_misses,
+           ghost_sends_json = excluded.ghost_sends_json,
+           last_inbound_at = excluded.last_inbound_at,
+           last_proactive_sends_json = excluded.last_proactive_sends_json,
+           holding_until = excluded.holding_until`,
+      )
+      .run(
+        s.userId,
+        s.state,
+        s.enteredAt,
+        s.consecutiveMisses,
+        JSON.stringify(s.ghostSends),
+        s.lastInboundAt,
+        JSON.stringify(s.proactiveSends),
+        s.holdingUntil,
+      );
+    return Promise.resolve();
+  }
+
+  async getAccountabilityState(userId: string): Promise<AccountabilityState | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM accountability_state WHERE user_id = ?`)
+      .get(userId) as AccountabilityStateRow | undefined;
+    return Promise.resolve(row ? rowToAccountabilityState(row) : undefined);
+  }
+
   async getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined> {
     const row = this.db.prepare(`SELECT * FROM training_profile WHERE user_id = ?`).get(userId) as
       | TrainingProfileRow
@@ -3470,6 +3555,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 18) {
     migrateV18ToV19(db);
   }
+  if (current <= 19) {
+    migrateV19ToV20(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -3768,6 +3856,30 @@ function rowToTrainingProgram(row: TrainingProgramRow): StoredTrainingProgram {
  */
 function isEffortTolerance(value: string | null): value is EffortTolerance {
   return value === 'low' || value === 'moderate' || value === 'high';
+}
+
+function rowToAccountabilityState(row: AccountabilityStateRow): AccountabilityState {
+  return {
+    userId: row.user_id,
+    state: row.state as AccountabilityState['state'],
+    enteredAt: row.entered_at,
+    consecutiveMisses: row.consecutive_misses,
+    ghostSends: parseJsonArray<string>(row.ghost_sends_json),
+    lastInboundAt: row.last_inbound_at,
+    proactiveSends: parseJsonArray<ProactiveSend>(row.last_proactive_sends_json),
+    holdingUntil: row.holding_until,
+  };
+}
+
+/** A malformed or absent JSON column reads as "nothing recorded", never as a throw. */
+function parseJsonArray<T>(json: string | null): T[] {
+  if (json === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {

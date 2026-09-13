@@ -88,6 +88,10 @@
     "link": "/reference/report"
   },
   {
+    "text": "accountability.*",
+    "link": "/reference/accountability"
+  },
+  {
     "text": "mock.*",
     "link": "/reference/mock"
   },
