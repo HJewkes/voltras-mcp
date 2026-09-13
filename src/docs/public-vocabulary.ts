@@ -387,6 +387,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // `session.checkin` and `report.weekly`'s per-session entries.
   'preSessionCarbs',
   'hoursSinceLastMeal',
+  // VW-314: the shared e1RM-PR verdict on `metrics.compute`'s `strength.e1rm`
+  // result.
+  'isPR',
+  'priorBest',
 ];
 
 /**
@@ -440,6 +444,7 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'classifyWeeklyVolume',
   'detectPlateau',
   'e1RM',
+  'evaluateE1RMPr',
   'exitWorkout',
   'FatigueIndex',
   'getVolumeByMuscleGroup',

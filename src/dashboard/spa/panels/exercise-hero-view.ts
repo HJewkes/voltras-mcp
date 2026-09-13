@@ -16,7 +16,6 @@ import {
   estimateSetRpe,
   getSetRepPeakVelocities,
   getSetTempoSeconds,
-  isNewE1RM,
 } from '@voltras/workout-analytics/view';
 import type {
   ExerciseCardProps,
@@ -24,6 +23,7 @@ import type {
   StatusPillStatus,
   TempoDisplayProps,
 } from '@titan-design/react-ui';
+import { evaluateE1RMPr } from '../../../analytics/e1rm-pr';
 import { type WorkoutSetView } from '../adapter';
 import { convertMass, type MassUnit } from '../live-page/mass';
 
@@ -184,11 +184,12 @@ export function toLiveTempoSeconds(view: WorkoutSetView | null): TempoDisplayPro
  * dropped the numeric e1RM badge, so the dashboard no longer surfaces the
  * projected-1RM value — but PR *detection* still rides the same WA estimate:
  * `bestE1RMAcrossSets` (Epley, per-set primitive `estimateE1RMFromReps`) is
- * compared to the exercise's prior historical best via `isNewE1RM`. Never true
- * without a baseline (the first-ever session isn't a PR) or before a set has a
- * positive load + >=1 captured rep.
+ * compared to the exercise's prior historical best via `evaluateE1RMPr`
+ * (VW-314 — the same shared verdict `metrics.compute strength.e1rm` reports as
+ * `isPR`/`priorBest`). Never true without a baseline (the first-ever session
+ * isn't a PR) or before a set has a positive load + >=1 captured rep.
  */
 export function toExerciseIsPR(views: WorkoutSetView[], historyBestE1rm: number | null): boolean {
   const value = bestE1RMAcrossSets(views.map((v) => ({ load: v.weightLbs, reps: v.reps.length })));
-  return isNewE1RM(value, historyBestE1rm);
+  return evaluateE1RMPr(value, historyBestE1rm).isPR;
 }

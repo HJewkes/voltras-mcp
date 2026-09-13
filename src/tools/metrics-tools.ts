@@ -130,6 +130,7 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
+import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
 import {
@@ -1143,6 +1144,14 @@ function sessionIdsNewestFirst(rows: readonly StoredSet[]): string[] {
  * is. It carries `fitFor: 'trend'` on every method — an e1RM is evidence across
  * sessions, never within one — plus the pooled error figures where they were
  * actually measured. See `e1rm-band.ts`.
+ *
+ * VW-314: `isPR`/`priorBest` are the same PR verdict the SPA hero card's
+ * `toExerciseIsPR` computes, through the shared `evaluateE1RMPr` (`analytics/
+ * e1rm-pr.ts`). `priorBest` is the exercise's own best e1RM from
+ * `history.trend`'s own lookback window, `null` when there is no prior
+ * session to beat (including the `reps` shape with no `exerciseId` to look
+ * one up against) — `isPR` is then always `false`, mirroring `isNewE1RM`'s
+ * own no-baseline contract.
  */
 interface E1RMResult {
   method: 'reps' | 'profile' | 'hybrid';
@@ -1155,6 +1164,8 @@ interface E1RMResult {
    * velocity at all.
    */
   mvtBasis: MvtBasis | null;
+  isPR: boolean;
+  priorBest: number | null;
 }
 
 type E1RMInput = Extract<MetricsComputeInputType, { pipeline: 'strength.e1rm' }>;
@@ -1247,18 +1258,59 @@ async function storedBaseline(
 async function computeE1RM(state: ServerState, input: E1RMInput): Promise<E1RMResult> {
   const shape = e1rmShape(input);
   if (shape.kind === 'reps') {
-    return bandedE1RM('reps', estimateE1RMFromReps(shape.load, shape.reps), null, null);
+    // No `exerciseId` on this shape, so no history to compare against —
+    // `evaluateE1RMPr` reports `isPR: false` / `priorBest: null` the same way
+    // it would for a first-ever session (VW-314).
+    const estimate = estimateE1RMFromReps(shape.load, shape.reps);
+    return bandedE1RM('reps', estimate, null, null, evaluateE1RMPr(estimate.e1RM, null));
   }
   const { profile, gate, mvt } = await profileE1RM(state, shape.exerciseId);
+  const priorBest = await priorBestE1RM(state, shape.exerciseId);
   const profileEstimate =
     gate.activation === 'withheld' ? null : estimateE1RMFromProfile(profile, mvt.mvt);
   if (shape.kind === 'profile') {
-    return bandedE1RM('profile', profileEstimate, gate, mvt.basis);
+    return bandedE1RM(
+      'profile',
+      profileEstimate,
+      gate,
+      mvt.basis,
+      evaluateE1RMPr(profileEstimate?.e1RM ?? null, priorBest),
+    );
   }
   const repsEstimate = estimateE1RMFromReps(shape.load, shape.reps);
   const estimate =
     profileEstimate === null ? null : estimateHybridE1RM(profileEstimate, repsEstimate);
-  return bandedE1RM('hybrid', estimate, gate, mvt.basis);
+  return bandedE1RM(
+    'hybrid',
+    estimate,
+    gate,
+    mvt.basis,
+    evaluateE1RMPr(estimate?.e1RM ?? null, priorBest),
+  );
+}
+
+/**
+ * VW-314: this exercise's own best e1RM from its recorded history — the same
+ * lookback window `history.trend`(metric: e1rm) reads, over the estimated_1rm
+ * series `store/processed-session-mapper.ts` builds from `estimateE1RMFromReps`.
+ * `null` when there is no prior session to beat, so the fresh estimate cannot
+ * be a PR.
+ */
+async function priorBestE1RM(state: ServerState, exerciseId: string): Promise<number | null> {
+  const fromIso = weeksAgoIso(HISTORY_DEFAULT_WEEKS);
+  const sessions = await historyTrendSessions(state, exerciseId, fromIso);
+  if (sessions.length === 0) return null;
+  const built = buildTimeSeries(sessions, {
+    metric: 'estimated_1rm',
+    exerciseId,
+    bucketBy: 'week',
+    fromTs: fromIso,
+  });
+  if (built.points.length === 0) return null;
+  // `points` degrades to `any[]` through the package's .d.ts here (same
+  // NodeNext-resolution note as `computeHistoryTrend`'s), so the element type
+  // is annotated explicitly rather than inferred.
+  return Math.max(...built.points.map((p: MetricTimeSeriesPoint) => p.value));
 }
 
 /** VW-267: no e1RM leaves this pipeline without its band. */
@@ -1267,6 +1319,7 @@ function bandedE1RM(
   estimate: E1RMEstimate | null,
   gate: FeatureGateVerdict | null,
   mvtBasis: MvtBasis | null,
+  pr: E1RMPrVerdict,
 ): E1RMResult {
   return {
     method,
@@ -1274,6 +1327,8 @@ function bandedE1RM(
     band: estimate === null ? null : e1rmBand(estimate.e1RM, method),
     gate,
     mvtBasis,
+    isPR: pr.isPR,
+    priorBest: pr.priorBest,
   };
 }
 
@@ -2292,7 +2347,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   'cut absolute error to 2.8% against 4.9-5.5% for a general or individually observed threshold ' +
   '(Fitas et al. 2024). A `default` basis is not an error — say that the estimate rests on a ' +
   'population threshold rather than this lifter, and that `baselines.recalc` fits one once the ' +
-  'exercise has sets to failure across three sessions. ' +
+  'exercise has sets to failure across three sessions. `isPR` (VW-314) is true when this ' +
+  "estimate beats the exercise's own best e1RM over `history.trend`'s lookback window, echoed " +
+  'as `priorBest` — the same PR verdict the dashboard hero card computes through the shared ' +
+  '`evaluateE1RMPr` helper. `priorBest` is `null` and `isPR` is always false when there is no ' +
+  'prior session to beat, including the `reps` shape with no `exerciseId` to look one up ' +
+  'against — the first-ever session of an exercise is never a PR. ' +
   '`history.trend` (VW-144/VW-145) (exerciseId, optional weeks [default 12], metric ' +
   "[`topLoad`|`e1rm`|`volume`, default `topLoad`], thresholdPct, minDays) — this exercise's " +
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +

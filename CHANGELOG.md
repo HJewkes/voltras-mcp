@@ -101,6 +101,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `metrics.compute`'s `strength.e1rm` result now reports `isPR` and `priorBest` (VW-314):
+  whether the fresh estimate beats this exercise's own best e1RM on record, and what that
+  prior best was. It shares its comparison with the dashboard hero card's PR chip through
+  one helper, so the two never disagree about what counts as a PR. `priorBest` is `null`
+  and `isPR` is always `false` when there is no prior session to beat — including the first
+  time this exercise is estimated, or a bare `{ load, reps }` call with no `exerciseId` to
+  look history up against. No schema change.
+
 - `metrics.compute` gains a `fatigue.verdict` pipeline (VW-313): the same multi-dimension
   fatigue verdict the live dashboard's fatigue card renders — an aggregate state
   (good/slowing/grinding/form-breakdown), an aggregate tone, and per-dimension tones for
