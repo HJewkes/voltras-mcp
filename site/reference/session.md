@@ -86,7 +86,7 @@ List past sessions, optionally filtered by date range (`from`/`to`) and/or `exer
 
 Fetch one full session by id, including its sets.
 
-Can be large for a long session — prefer `session.list` for browsing/filtering and only call this for a session you already intend to inspect in full.
+Can be large for a long session — prefer `session.list` for browsing/filtering and only call this for a session you already intend to inspect in full. A session with a workout template attached also carries `sessionPace`: the plan-derived `plannedMinutes` / `elapsedMinutes` / `plannedSetsRemaining` / `projectedEndAt` estimate, costing every planned set at its rep target and tempo plus its rest (the goal default when the coach set none). It is an estimate from the plan, never a measurement, and it is absent entirely for a session with no plan attached.
 
 **Parameters**
 

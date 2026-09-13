@@ -81,12 +81,14 @@ import {
   buildHistoryView,
   buildSessionPlanView,
   buildSessionSummary,
+  buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
   resolveSummarySessionId,
   type DashboardSessionStore,
   type DeviceEntry,
   type PrescriptionView,
+  type SessionPaceView,
   type SessionPlanRows,
   type SnapshotResponse,
 } from './read-models/index.js';
@@ -880,6 +882,58 @@ async function resolveExpectedSetupCard(
 }
 
 /**
+ * The session's pace against its attached plan (VW-290). `undefined` — and so a
+ * null `sessionPace` and a hidden rail footer — whenever there is nothing to
+ * estimate from: no session, no planning store wired, or no template attached.
+ *
+ * Only TEMPLATE assignments are costed, the same ones `fetchSessionPlan`
+ * prescribes from: a lone planned-exercise assignment prescribes one exercise,
+ * which is not a session's worth of plan to pace against.
+ */
+async function resolveSessionPace(
+  state: DashboardServerState,
+  gathered: GatheredSnapshotState,
+): Promise<SessionPaceView | undefined> {
+  const { session, completedSets } = gathered;
+  const { getAssignmentsForSession, getPlannedExercisesForTemplate } = state.store;
+  if (session === undefined || !getAssignmentsForSession || !getPlannedExercisesForTemplate) {
+    return undefined;
+  }
+  const assignments = await getAssignmentsForSession.call(state.store, session.sessionId);
+  const planned: StoredPlannedExercise[] = [];
+  for (const assignment of assignments) {
+    if (assignment.workoutTemplateId === undefined) continue;
+    planned.push(
+      ...(await getPlannedExercisesForTemplate.call(state.store, assignment.workoutTemplateId)),
+    );
+  }
+  const pace = buildSessionPaceView(
+    {
+      startedAt: session.startedAt,
+      nowMs: Date.now(),
+      planned,
+      completedWorkingSets: countWorkingSets(completedSets),
+    },
+    state.exercises,
+  );
+  return pace ?? undefined;
+}
+
+/**
+ * Logged sets that advance the plan. Warm-up / probe / technique rungs do not
+ * (VW-260), and neither does a 0-rep set — an armed-then-abandoned set the
+ * inactivity watchdog force-closed, which the rail already drops from its own
+ * "sets done" tally. Counting one would make the two disagree.
+ */
+function countWorkingSets(completed: readonly CompletedSetRecord[]): number {
+  return completed.filter(
+    (record) =>
+      record.set.reps.length > 0 &&
+      (record.set.setPurpose === undefined || record.set.setPurpose === 'working'),
+  ).length;
+}
+
+/**
  * Monotonic send-order sequence stamped on every snapshot the server hands out —
  * over both `/api/snapshot` (poll) and the `snapshot` SSE push. Assigned
  * synchronously, immediately after {@link gatherSnapshotState} runs and BEFORE
@@ -902,10 +956,12 @@ async function buildSnapshotWithRev(state: DashboardServerState): Promise<RevSna
   const gathered = gatherSnapshotState(state);
   const rev = ++snapshotRev;
   const expectedSetupCard = await resolveExpectedSetupCard(state, gathered.exerciseId);
+  const sessionPace = await resolveSessionPace(state, gathered);
   return {
     ...buildSnapshotView({
       ...gathered,
       ...(expectedSetupCard !== undefined ? { expectedSetupCard } : {}),
+      ...(sessionPace !== undefined ? { sessionPace } : {}),
     }),
     rev,
   };

@@ -20,6 +20,7 @@ import type {
   CompletedSetRecord,
 } from '../../state/live-state.js';
 import type { SetupCard } from '../../store/types.js';
+import type { SessionPaceView } from './session-pace.js';
 
 /** One slot's device snapshot, tagged with its slot id. */
 export interface DeviceEntry {
@@ -65,6 +66,13 @@ export interface SnapshotResponse {
    * {@link activeExercise}.
    */
   expectedSetupCard: SetupCard | null;
+  /**
+   * The session's pace against its attached plan (VW-290) — planned vs elapsed
+   * minutes, planned sets left, and the projected end. Null whenever the caller
+   * resolved no pace: no session, or no plan attached to estimate from. The rail
+   * footer renders only when this is present, never from a fabricated budget.
+   */
+  sessionPace: SessionPaceView | null;
 }
 
 /**
@@ -97,6 +105,8 @@ export interface SnapshotInput {
   activeExercise: ExerciseMeta | undefined;
   /** The active exercise's reference setup card (VW-275), if one was resolved. */
   expectedSetupCard?: SetupCard;
+  /** The session's plan-derived pace (VW-290), if one was resolved. */
+  sessionPace?: SessionPaceView;
 }
 
 /**
@@ -149,5 +159,6 @@ export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
     sets: { active: input.activeSet ?? null, completed: input.completedSets ?? [] },
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),
     expectedSetupCard: input.expectedSetupCard ?? null,
+    sessionPace: input.sessionPace ?? null,
   };
 }

@@ -67,6 +67,17 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall dashboard's session rail now shows how the session is tracking against its plan
+  (VW-290). When a workout template is attached, the rail reports how many planned sets are
+  left, the clock time the plan projects you to finish at, and the elapsed time against the
+  planned budget. `session.get` returns the same estimate as `sessionPace`. Every planned set
+  is costed at its rep target and target tempo plus its own rest, falling back to the rest
+  default for its training goal when the coach set none, and the rest after the last set is
+  not counted — the session ends on the last rep. It is an estimate from the plan, never a
+  measurement, and a session with no plan attached gets no pace and no footer at all rather
+  than a budget nobody prescribed. Warm-up, probe and technique sets do not burn down the
+  remaining count. No schema change.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own

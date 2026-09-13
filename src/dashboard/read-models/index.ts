@@ -57,3 +57,10 @@ export {
 } from './session-plan.js';
 
 export { buildHistoryView, type HistoryRows } from './history.js';
+
+export {
+  buildSessionPaceView,
+  DEFAULT_SET_WORK_SECONDS,
+  type SessionPaceInput,
+  type SessionPaceView,
+} from './session-pace.js';

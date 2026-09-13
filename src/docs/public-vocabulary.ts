@@ -266,6 +266,13 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'noValidComparison',
   'no_active_set',
   'notifyOn',
+  // VW-290: `session.get`'s plan-derived pace estimate and its own fields, also
+  // carried on the dashboard snapshot the wall rail reads.
+  'sessionPace',
+  'plannedMinutes',
+  'elapsedMinutes',
+  'plannedSetsRemaining',
+  'projectedEndAt',
   'perRep',
   'pauseBottom',
   'pauseTop',

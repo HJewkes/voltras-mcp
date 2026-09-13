@@ -288,6 +288,8 @@ function mapSession(
     // VW-275: null with no active exercise, or if neither a confirmed nor a
     // digest-seeded card resolved for it server-side.
     expectedSetupCard: snapshot.expectedSetupCard ?? null,
+    // VW-290: null with no plan attached — the rail footer then stays hidden.
+    sessionPace: snapshot.sessionPace ?? null,
   };
 }
 
