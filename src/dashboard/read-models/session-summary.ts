@@ -36,6 +36,7 @@ import { computeProgressionDelta } from '../../tools/plan-tools.js';
 import { describeLoad } from '../../state/set-capture.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../../store/set-scope.js';
+import { selectWorkingSets } from '../../store/working-sets.js';
 import type { DashboardPlanStore } from '../plan-api.js';
 import type { ExerciseNameLookup } from './plan-tree.js';
 import type {
@@ -260,9 +261,12 @@ function scoreVerdictSet(
   maxVelocityLossPct: number | null;
 } {
   const paired = sets.map((set, index) => ({ set, view: views[index] }));
-  // VMCP-02.84: the verdict is scored against WORKING sets. A probe or a
-  // technique rung is no more scorable here than a warm-up is.
-  const working = paired.filter((p) => setPurposeOf(p.set) === 'working');
+  // VMCP-02.84: the verdict is scored against WORKING sets, by the SAME
+  // `selectWorkingSets` predicate the wall and `plan.suggest_progression`
+  // use (VW-283) — a probe, a technique rung, and an unflagged heavy-primer
+  // warm-up are all excluded the same way everywhere.
+  const workingSetIds = new Set(selectWorkingSets(sets));
+  const working = paired.filter((p) => workingSetIds.has(p.set));
   const scoped = working.length > 0 ? working : paired;
   let worst: (typeof scoped)[number] | undefined;
   for (const candidate of scoped) {
@@ -290,7 +294,7 @@ function toSetView(set: StoredSet, index: number): SessionSummarySet {
     weightLbs: set.weightLbs ?? null,
     loadLabel: describeLoad(set),
     repCount: set.reps.length,
-    isWarmup: set.isWarmup === true,
+    setPurpose: setPurposeOf(set),
     velocityLossPct: velocity.lossPct ?? null,
     bestRepVelocity: velocity.best ?? null,
   };

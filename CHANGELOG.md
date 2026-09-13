@@ -160,6 +160,12 @@ entry is written from the user's point of view is a review question, not a check
   reasons and became the baseline the rest were judged against. The stop now measures from
   rep 3, and the `velocity_loss_exceeded` event says which reps it left out and why.
 
+- The wall's "sets done" tally and the session-completion page's "N / target sets" count
+  now agree with `plan.suggest_progression` on which sets are working (VW-283). Both
+  previously counted an unflagged heavy-primer set below the session's top load as a
+  working set; `plan.suggest_progression` already excluded it. All three now share the
+  one predicate.
+
 ## [0.5.0] - 2026-09-08
 
 Two waves of work, `#244` through `#310`. The device and recording paths gained real

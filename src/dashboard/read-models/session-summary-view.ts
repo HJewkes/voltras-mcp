@@ -10,6 +10,10 @@
 // Confidentiality: fitness units and plan metadata only — no protocol data (NF-07).
 
 import type { FatigueSummary, FatigueVerdict } from '@voltras/workout-analytics';
+// Type-only: erased at build, so this stays free of a runtime store dependency
+// (see the file banner) — mirrors the store's four-value set-purpose enum, the
+// same treatment `dashboard/spa/live-page/model.ts`'s `CompletedSet` gives it.
+import type { SetPurpose } from '../../store/types.js';
 
 /** One completed set, as the summary screen lists it. */
 export interface SessionSummarySet {
@@ -27,7 +31,8 @@ export interface SessionSummarySet {
    */
   loadLabel: string;
   repCount: number;
-  isWarmup: boolean;
+  /** Why this set was performed — the same enum `CompletedSet.setPurpose` carries (VW-283). */
+  setPurpose: SetPurpose;
   /** Peak-to-last concentric velocity loss within the set, %. Null with no velocity telemetry. */
   velocityLossPct: number | null;
   bestRepVelocity: number | null;
@@ -52,7 +57,7 @@ export interface SessionSummaryExercise {
   /** Catalog name, the raw id when the catalog has no entry, or `'Unattributed'` for null. */
   name: string;
   setCount: number;
-  /** Sets not flagged `isWarmup`. */
+  /** Count from the shared `selectWorkingSets` predicate (VW-283). */
   workingSetCount: number;
   totalReps: number;
   /** Σ weight × reps. Null when NO set recorded a load — a gap, never a 0. */

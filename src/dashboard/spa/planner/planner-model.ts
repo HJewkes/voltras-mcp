@@ -10,6 +10,7 @@
 import { estimateE1RMFromReps } from '@voltras/workout-analytics';
 
 import { formatMass, type MassUnit } from '../live-page/mass';
+import { selectWorkingSets } from '../../../store/working-sets.js';
 import type { PlanExerciseView, PlanTemplateView, PlanTreeView } from '../../read-models/plan-tree';
 import type {
   SessionSummaryExercise,
@@ -176,9 +177,12 @@ export interface E1RMPoint {
  * `@voltras/workout-analytics`'s `estimateE1RMFromReps`, the same estimator the
  * rest of the system uses, rather than a second Epley formula transcribed here.
  *
- * Warm-ups are excluded (they are not evidence about strength) and so is any set
- * with no recorded load or no reps — an e1RM from a missing weight is a fabricated
- * number, so those sets simply have no point rather than a zero one.
+ * Non-working sets are excluded via the shared `selectWorkingSets` predicate
+ * (VW-283) — a warm-up, probe or technique rung is not evidence about strength,
+ * and neither is an unflagged heavy-primer at working weight. A working set
+ * with no recorded load or no reps is dropped too — an e1RM from a missing
+ * weight is a fabricated number, so those sets simply have no point rather
+ * than a zero one.
  *
  * `isPR` marks the session's best point, which is what the chart's ★ means here:
  * best OF THIS SESSION. It deliberately does NOT claim an all-time PR — this page
@@ -186,8 +190,7 @@ export interface E1RMPoint {
  */
 export function e1rmSeries(exercise: SessionSummaryExercise): E1RMPoint[] {
   const points: E1RMPoint[] = [];
-  for (const set of exercise.sets) {
-    if (set.isWarmup) continue;
+  for (const set of selectWorkingSets(exercise.sets)) {
     if (set.weightLbs === null || set.weightLbs <= 0 || set.repCount <= 0) continue;
     points.push({
       date: set.startedAt,

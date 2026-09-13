@@ -55,10 +55,14 @@ function completed(setPurpose: SetPurpose, repCount = 8): CompletedSet {
 
 describe('isWorkingSet / workingCompletedSets (VW-260)', () => {
   it('counts a working set but not warmup/probe/technique sets', () => {
-    expect(isWorkingSet(completed('working'))).toBe(true);
-    expect(isWorkingSet(completed('warmup'))).toBe(false);
-    expect(isWorkingSet(completed('probe'))).toBe(false);
-    expect(isWorkingSet(completed('technique'))).toBe(false);
+    const working = completed('working');
+    const warmup = completed('warmup');
+    const probe = completed('probe');
+    const technique = completed('technique');
+    expect(isWorkingSet(working, [working])).toBe(true);
+    expect(isWorkingSet(warmup, [warmup])).toBe(false);
+    expect(isWorkingSet(probe, [probe])).toBe(false);
+    expect(isWorkingSet(technique, [technique])).toBe(false);
   });
 
   it('excludes non-working sets from the session-wide tally, keeping them in the log', () => {
