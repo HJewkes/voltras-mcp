@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aggregateSide,
   analyzeTrial,
+  asymmetryEquationFor,
   computeImbalance,
   computePeakForceBaseline,
   decideTestOrder,
@@ -316,6 +317,18 @@ describe('computeImbalance — the intra-limb CV gate', () => {
     );
     expect(result.direction).toBeNull();
     expect(result.real).toBe(false);
+  });
+});
+
+describe('asymmetryEquationFor — fixed per test type (VW-295)', () => {
+  it('always returns the same label for the same test type', () => {
+    expect(asymmetryEquationFor('bilateral-imbalance')).toBe('standard-percentage-difference');
+    expect(asymmetryEquationFor('bilateral-imbalance')).toBe('standard-percentage-difference');
+  });
+
+  it('names no equation for a unilateral-max run, which computes no comparison', () => {
+    expect(asymmetryEquationFor('unilateral-max')).toBeNull();
+    expect(asymmetryEquationFor('unilateral-max')).toBeNull();
   });
 });
 

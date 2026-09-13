@@ -21,6 +21,7 @@ import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
 import type { AccountabilityState } from '../accountability/types.js';
 import type { TrainingIntent } from '../schemas/set.js';
+import type { AsymmetryEquation } from '../state/isometric-protocol.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
 
@@ -589,6 +590,14 @@ export interface StoredIsometricMeasurement {
   exerciseId?: string;
   /** The session the test ran inside. Absent when no session was open. */
   sessionId?: string;
+  /**
+   * The asymmetry equation this row was computed under, fixed by test type
+   * (VW-295) — see `asymmetryEquationFor`. Absent for a `measure_max` row
+   * (no comparison, so no equation applies) and for any row written before
+   * this landed. A read that pools across rows excludes one whose equation is
+   * SET and differs from the current one; absent never counts as different.
+   */
+  asymmetryEquation?: AsymmetryEquation;
   sides: StoredIsometricSideMeasurement[];
 }
 

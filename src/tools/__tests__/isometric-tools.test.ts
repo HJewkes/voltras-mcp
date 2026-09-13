@@ -308,7 +308,9 @@ function seededMeasurement(
   measuredAt: string,
   leftLbs: number,
   rightLbs: number,
-  keys: { userId?: string; exerciseId?: string } = { userId: LOCAL_USER_ID },
+  keys: { userId?: string; exerciseId?: string; asymmetryEquation?: string } = {
+    userId: LOCAL_USER_ID,
+  },
 ): StoredIsometricMeasurement {
   const trials = (lbs: number) =>
     [1, 2].map((index) => ({
@@ -331,6 +333,12 @@ function seededMeasurement(
     betweenSidesRestMs: 60_000,
     ...(keys.userId !== undefined ? { userId: keys.userId } : {}),
     ...(keys.exerciseId !== undefined ? { exerciseId: keys.exerciseId } : {}),
+    ...(keys.asymmetryEquation !== undefined
+      ? {
+          asymmetryEquation:
+            keys.asymmetryEquation as StoredIsometricMeasurement['asymmetryEquation'],
+        }
+      : {}),
     sides: [
       { side: 'left', slot: 'left', trials: trials(leftLbs) },
       { side: 'right', slot: 'right', trials: trials(rightLbs) },
@@ -1128,10 +1136,15 @@ describe('isometric.measure_imbalance', () => {
     // The asymmetry %, the direction and the real/not-real call are recomputed
     // from the stored trials on read. Persisting them would freeze a verdict
     // that the rules can move out from under — as VW-270 just moved them.
+    //
+    // `asymmetryEquation` (VW-295) is the one exception — it names which
+    // equation the verdict was computed under, not the verdict itself, and is
+    // excluded from this leak check for exactly that reason.
     const body = (await runImbalance()) as { imbalance: { direction: string } };
     expect(body.imbalance.direction).toBe('left');
 
-    const written = JSON.stringify(store.written[0]);
+    const { asymmetryEquation: _equation, ...rest } = store.written[0];
+    const written = JSON.stringify(rest);
     for (const leaked of ['asymmetry', 'direction', 'real', 'noiseFloor', 'inferred']) {
       expect(written).not.toContain(leaked);
     }
@@ -1779,5 +1792,127 @@ describe('isometric — the lifter / exercise / session key (VW-280)', () => {
 
     expect(body.peakForceBaseline).toBeNull();
     expect(body.legacyUnkeyed).toBe(2);
+  });
+});
+
+describe('isometric — the persisted asymmetry equation (VW-295)', () => {
+  let measureMaxCb: Callback;
+  let measureImbalanceCb: Callback;
+  let leftClient: FakeClient;
+  let rightClient: FakeClient;
+  let store: FakeStore;
+
+  function register(sessions: Record<string, FakeSession | undefined>): void {
+    const state = makeState(
+      { primary: leftClient, left: leftClient, right: rightClient },
+      { store, deviceIds: { left: 'AA:BB:CC:01', right: 'AA:BB:CC:02' }, sessions },
+    );
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureMaxCb = slots.get('isometric.measure_max')!.callback;
+    measureImbalanceCb = slots.get('isometric.measure_imbalance')!.callback;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    leftClient = makeFakeClient();
+    rightClient = makeFakeClient();
+    store = makeFakeStore();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function runImbalance(): Promise<Record<string, unknown>> {
+    const promise = measureImbalanceCb({
+      primarySlot: 'left',
+      secondarySlot: 'right',
+      primarySide: 'left',
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      betweenSidesRestMs: 60_000,
+      testNonDominantFirst: false,
+      dominantSide: 'unknown',
+    });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    return payload(await promise) as Record<string, unknown>;
+  }
+
+  async function runMax(): Promise<Record<string, unknown>> {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 200);
+    return payload(await promise) as Record<string, unknown>;
+  }
+
+  it('measure_imbalance always persists the same fixed equation label', async () => {
+    register({});
+    await runImbalance();
+    await runImbalance();
+
+    expect(store.written).toHaveLength(2);
+    expect(store.written[0].asymmetryEquation).toBe('standard-percentage-difference');
+    expect(store.written[1].asymmetryEquation).toBe('standard-percentage-difference');
+  });
+
+  it('measure_max persists no equation — it computes no comparison to name one for', async () => {
+    register({});
+    await runMax();
+
+    expect(store.written).toHaveLength(1);
+    expect(store.written[0]).not.toHaveProperty('asymmetryEquation');
+  });
+
+  it('excludes a stored occasion computed under a different equation from directionHistory', async () => {
+    store.seeded = [
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 130, {
+        userId: LOCAL_USER_ID,
+        asymmetryEquation: 'standard-percentage-difference',
+      }),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 131, {
+        userId: LOCAL_USER_ID,
+        asymmetryEquation: 'some-other-equation',
+      }),
+      seededMeasurement('2026-09-05T00:00:00.000Z', 99, 129, {
+        userId: LOCAL_USER_ID,
+        asymmetryEquation: 'standard-percentage-difference',
+      }),
+    ];
+    register({});
+    const body = (await runImbalance()) as unknown as {
+      directionHistory: { testsCompared: number };
+      otherEquation: number;
+    };
+
+    // 2 matching-equation seeds + this run = 3; the mismatched seed is out.
+    expect(body.directionHistory.testsCompared).toBe(3);
+    expect(body.otherEquation).toBe(1);
+  });
+
+  it('does not treat an unkeyed-equation row (measure_max) as an equation mismatch', async () => {
+    store.seeded = [
+      // No asymmetryEquation at all — a measure_max row, or a pre-VW-295 row.
+      // Its peak forces still belong in the pooled baseline.
+      seededMeasurement('2026-09-01T00:00:00.000Z', 100, 100, { userId: LOCAL_USER_ID }),
+      seededMeasurement('2026-09-03T00:00:00.000Z', 101, 101, { userId: LOCAL_USER_ID }),
+    ];
+    register({});
+    const body = (await runMax()) as unknown as {
+      peakForceBaseline: { sampleSize: number } | null;
+      otherEquation: number;
+    };
+
+    expect(body.otherEquation).toBe(0);
+    // 2 seeded occasions × 2 sides each.
+    expect(body.peakForceBaseline?.sampleSize).toBe(4);
   });
 });

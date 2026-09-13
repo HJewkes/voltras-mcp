@@ -30,6 +30,7 @@ import {
 } from './failure-harvest.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
+import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
   baselineRowId,
@@ -87,7 +88,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -427,6 +428,13 @@ const SCHEMA_SQL = `
   -- The (user_id, exercise_id, measured_at) index is created in
   -- migrateV20ToV21, not here — it names columns a pre-v21 table lacks at the
   -- moment this SQL runs.
+  --
+  -- v22 (VW-295): asymmetry_equation names the equation a row's asymmetry
+  -- percentage was computed under, fixed per test type (see
+  -- asymmetryEquationFor). Nullable and additive, same posture as the v21
+  -- keys: a measure_max row computes no comparison at all, and a pre-v22
+  -- row never named one. A read that pools across rows excludes one whose
+  -- equation is SET and differs from the current one.
 
   CREATE TABLE IF NOT EXISTS isometric_measurements (
     id TEXT PRIMARY KEY,
@@ -439,7 +447,8 @@ const SCHEMA_SQL = `
     between_sides_rest_ms INTEGER,
     user_id TEXT,
     exercise_id TEXT,
-    session_id TEXT
+    session_id TEXT,
+    asymmetry_equation TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_isometric_measurements_measured_at
     ON isometric_measurements(measured_at);
@@ -1275,6 +1284,19 @@ function migrateV20ToV21(db: DatabaseSync): void {
 }
 
 /**
+ * v21 -> v22: `asymmetry_equation` on `isometric_measurements` (VW-295) — the
+ * equation label a row's asymmetry percentage was computed under, fixed by
+ * test type (see `asymmetryEquationFor`). ADDITIVE, nothing back-filled: a
+ * pre-v22 row never named an equation, and a `measure_max` row names none by
+ * design (no comparison), so both read back the same as "no equation" — the
+ * exclusion a caller applies is on a MISMATCHED equation, not an absent one.
+ * No index: nothing filters or sorts by this column.
+ */
+function migrateV21ToV22(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'isometric_measurements', 'asymmetry_equation', 'TEXT');
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1560,6 +1582,7 @@ interface IsometricMeasurementRow {
   user_id: string | null;
   exercise_id: string | null;
   session_id: string | null;
+  asymmetry_equation: string | null;
 }
 
 interface IsometricTrialRow {
@@ -2394,8 +2417,8 @@ export class SqliteSessionStore implements SessionStore {
       `INSERT INTO isometric_measurements
          (id, measured_at, analysis_version, first_side_tested,
           duration_ms, trials_requested, rest_ms, between_sides_rest_ms,
-          user_id, exercise_id, session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          user_id, exercise_id, session_id, asymmetry_equation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          measured_at = excluded.measured_at,
          analysis_version = excluded.analysis_version,
@@ -2406,7 +2429,8 @@ export class SqliteSessionStore implements SessionStore {
          between_sides_rest_ms = excluded.between_sides_rest_ms,
          user_id = excluded.user_id,
          exercise_id = excluded.exercise_id,
-         session_id = excluded.session_id`,
+         session_id = excluded.session_id,
+         asymmetry_equation = excluded.asymmetry_equation`,
     );
     // Trials are replaced wholesale on a re-put, exactly like `putSet` does
     // with reps: the trial array is the measurement's content, not an
@@ -2434,6 +2458,7 @@ export class SqliteSessionStore implements SessionStore {
         m.userId ?? null,
         m.exerciseId ?? null,
         m.sessionId ?? null,
+        m.asymmetryEquation ?? null,
       );
       deleteTrials.run(m.id);
       for (const side of m.sides) {
@@ -3627,6 +3652,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 20) {
     migrateV20ToV21(db);
   }
+  if (current <= 21) {
+    migrateV21ToV22(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -3910,6 +3938,12 @@ function rowToIsometricMeasurement(
   if (row.user_id !== null) out.userId = row.user_id;
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
   if (row.session_id !== null) out.sessionId = row.session_id;
+  // Narrow on read, same treatment `first_side_tested` gets above: the column
+  // is free text at the SQLite level, and a value this build does not
+  // recognize reads back as no equation rather than as a bogus label.
+  if (row.asymmetry_equation === ASYMMETRY_EQUATION) {
+    out.asymmetryEquation = row.asymmetry_equation;
+  }
   return out;
 }
 

@@ -82,6 +82,18 @@ entry is written from the user's point of view is a review question, not a check
   `prevRepsToThreshold`, `currRepsToThreshold`, `extensionSeconds`) so the basis for the
   duration is always visible; an explicit `durationMs` is never overridden.
 
+- Every stored isometric assessment now names the equation its asymmetry math used
+  (VW-295). Bishop et al. (2018) found nine asymmetry equations in circulation with no
+  consistent test-to-equation mapping, so a percentage with no equation behind it is not
+  comparable to anything read later. The equation is fixed by which tool ran — never a
+  per-call choice — and is stamped on the row at write time: `isometric.measure_imbalance`
+  writes `standard-percentage-difference`, and `isometric.measure_max` writes none, since
+  it computes no comparison to name one for. `directionHistory` and the peak-force
+  baseline on both tools now exclude a stored occasion computed under a different
+  equation from the one read, counting it in a new `otherEquation`, alongside
+  `legacyUnkeyed`. The schema gains `asymmetry_equation` on `isometric_measurements`
+  (v22); nothing is back-filled.
+
 - The wall shows what an isometric assessment measured, once the hold overlay closes
   (VW-264). After `isometric.measure_imbalance` (or `isometric.measure_max`) finishes, a
   card carries each side's peak force, the left/right percentage and the verdict — and

@@ -105,6 +105,31 @@ export type AsymmetryEquation = 'standard-percentage-difference';
 
 export const ASYMMETRY_EQUATION: AsymmetryEquation = 'standard-percentage-difference';
 
+/**
+ * Which measurement flow produced a stored row (VW-295) — the sole input to
+ * {@link asymmetryEquationFor}. Named for the tool's own comparison shape
+ * (two slots vs. one), not Bishop et al.'s "unilateral testing method" sense
+ * the doc comment above already uses for a different distinction.
+ */
+export type IsometricTestType = 'bilateral-imbalance' | 'unilateral-max';
+
+/**
+ * The equation to stamp on a stored row for a given test type (VW-295) — fixed
+ * by test type and never a per-call choice, the same rule `ASYMMETRY_EQUATION`
+ * already states for the imbalance verdict. Persisting it lets a future read
+ * refuse to compare a percentage against one computed under a different
+ * equation.
+ *
+ * `bilateral-imbalance` (`isometric.measure_imbalance`) runs `computeImbalance`
+ * over two sides and reuses `ASYMMETRY_EQUATION`. `unilateral-max`
+ * (`isometric.measure_max`) computes no comparison at all — one side, no
+ * asymmetry — so there is no equation to name, and this returns `null` rather
+ * than a label that would describe nothing.
+ */
+export function asymmetryEquationFor(testType: IsometricTestType): AsymmetryEquation | null {
+  return testType === 'bilateral-imbalance' ? ASYMMETRY_EQUATION : null;
+}
+
 /** Which limb produced the higher mean plateau force on one test. */
 export type AsymmetryDirection = 'left' | 'right';
 
