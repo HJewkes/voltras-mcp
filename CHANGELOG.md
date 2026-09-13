@@ -128,6 +128,17 @@ entry is written from the user's point of view is a review question, not a check
   can be predicted. `null` below the minimum, never a fabricated range. Live-rail rendering
   deferred: needs a distinct titan affordance, tracked separately.
 
+- A working set at a prescribed absolute load now gets checked for %1RM drift against the
+  lifter's own load-velocity profile (VW-300). A fixed-load prescription is only worth what
+  it was programmed as while the lifter's own strength stays put — Jimenez-Reyes et al. 2021
+  (PeerJ, DOI 10.7717/peerj.10942) tracked a fixed-absolute-load group programmed at 80% 1RM
+  drift, with no velocity check in the loop, to ~64% 1RM over 8 weeks, with the load on the
+  plan never changing. The session-completion screen's per-exercise card gains `loadDrift`
+  (`programmedPct`, `impliedPct`, `deltaPct`, `reason`), set when the measured velocity at
+  the exercise's programmed load implies a %1RM that has drifted 10 or more percentage
+  points from the programmed one; `null` otherwise. `set_ended` carries the same finding as
+  a new `load_drift` block when the just-closed set was performed at that programmed load.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own

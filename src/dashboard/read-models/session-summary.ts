@@ -43,6 +43,12 @@ import { VELOCITY_LOSS_DEFAULT_PCT } from '../../state/velocity-loss-intent.js';
 import { setPurposeOf } from '../../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId } from '../../store/set-scope.js';
 import { selectWorkingSets } from '../../store/working-sets.js';
+import {
+  checkLoadDrift,
+  loadMatchesPrescription,
+  type LoadDriftFlag,
+  type LoadDriftStore,
+} from '../../analytics/load-drift.js';
 import type { DashboardPlanStore } from '../plan-api.js';
 import type { ExerciseNameLookup } from './plan-tree.js';
 import type {
@@ -68,7 +74,7 @@ export type {
 };
 
 /** The `SessionStore` slice the summary needs beyond the planning methods. */
-export interface DashboardSessionStore {
+export interface DashboardSessionStore extends LoadDriftStore {
   getSession(id: string): Promise<StoredSession | undefined>;
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
   listSessions(filter: {
@@ -216,6 +222,7 @@ async function buildExerciseSummary(
     sessionId,
     programId,
   });
+  const loadDrift = await resolveLoadDrift(deps.store, { exerciseId, sets, programId });
 
   return {
     exerciseId,
@@ -240,6 +247,7 @@ async function buildExerciseSummary(
     sets: setViews,
     progression,
     progressionNote,
+    loadDrift,
   };
 }
 
@@ -407,6 +415,29 @@ async function resolveProgression(
     },
     progressionNote: null,
   };
+}
+
+/**
+ * VW-300: whether this exercise's WORKING set at its programmed absolute load
+ * still sits at the %1RM it was prescribed as. `null` — nothing to flag, not
+ * an error — when the exercise isn't prescribed in the current program, no
+ * set in THIS session matches the prescribed load, or the lifter's own
+ * profile can't anchor an e1RM yet. See `analytics/load-drift.ts`.
+ */
+async function resolveLoadDrift(
+  store: DashboardPlanStore & LoadDriftStore,
+  args: { exerciseId: string | null; sets: StoredSet[]; programId: string | undefined },
+): Promise<LoadDriftFlag | null> {
+  if (args.exerciseId === null || args.programId === undefined) return null;
+  const planned = await findPlannedExercise(store, args.programId, args.exerciseId);
+  const prescribedLoadLbs = planned?.targetWeightLbs;
+  if (prescribedLoadLbs === undefined) return null;
+  const workingIds = new Set(selectWorkingSets(args.sets));
+  const measuredSet = args.sets.find(
+    (s) => workingIds.has(s) && loadMatchesPrescription(s.weightLbs, prescribedLoadLbs),
+  );
+  if (measuredSet === undefined) return null;
+  return checkLoadDrift(store, { exerciseId: args.exerciseId, prescribedLoadLbs, measuredSet });
 }
 
 /**
