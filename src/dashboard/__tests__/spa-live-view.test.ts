@@ -57,7 +57,15 @@ function railModel(session: SessionModel): DashboardModel {
 
 /** A completed set tagged with the exercise that owned it (VW-50). */
 function completed(exerciseName: string, repCount: number, weightLbs = 100): CompletedSet {
-  return { exerciseName, weightLbs, mode: 'weight', repCount, reps: [], peakForceLbs: null };
+  return {
+    exerciseName,
+    weightLbs,
+    mode: 'weight',
+    repCount,
+    reps: [],
+    peakForceLbs: null,
+    setPurpose: 'working',
+  };
 }
 
 /** A snapshot with an active session and no device/set activity. */
@@ -433,6 +441,7 @@ describe('mapCompletedSet (VW-61 / VW-62)', () => {
       bestPeakVelocityMps: null,
       peakForceLbs,
       reps,
+      setPurpose: 'working',
     };
   }
 
@@ -503,6 +512,7 @@ describe('0-rep force-closed sets are filtered from the wall (bench finding)', (
       bestPeakVelocityMps: null,
       peakForceLbs: null,
       reps: [],
+      setPurpose: 'working',
     };
   }
 
@@ -737,6 +747,7 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             repCount: 3,
             reps: [0.8, 0.6, 0.4],
             peakForceLbs: null,
+            setPurpose: 'working',
           },
         ],
       }),
@@ -759,6 +770,7 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             repCount: 2,
             reps: [1, 0.5],
             peakForceLbs: null,
+            setPurpose: 'working',
           },
           {
             exerciseName: 'Cable Chest Press',
@@ -767,6 +779,7 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             repCount: 2,
             reps: [0.4, 0.2],
             peakForceLbs: null,
+            setPurpose: 'working',
           },
         ],
       }),
@@ -788,6 +801,7 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             repCount: 2,
             reps: [0, 0],
             peakForceLbs: null,
+            setPurpose: 'working',
           },
         ],
       }),
@@ -807,6 +821,7 @@ describe('mapCompletedSet mode labels (VW-59)', () => {
       bestPeakVelocityMps: null,
       peakForceLbs: null,
       reps: [],
+      setPurpose: 'working',
     };
     const accumulator = { ...initialAccumulatorState(), setLog: [set] };
     return mapStoreToDashboardModel(sources({ accumulator }))!.session.completedSets[0].mode;

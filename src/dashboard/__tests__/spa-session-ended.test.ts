@@ -39,7 +39,15 @@ function model(over: Partial<DashboardModel> = {}): DashboardModel {
 }
 
 function completed(exerciseName: string, repCount = 8): CompletedSet {
-  return { exerciseName, weightLbs: 140, mode: 'weight', repCount, reps: [], peakForceLbs: null };
+  return {
+    exerciseName,
+    weightLbs: 140,
+    mode: 'weight',
+    repCount,
+    reps: [],
+    peakForceLbs: null,
+    setPurpose: 'working',
+  };
 }
 
 describe('stageIsEnded (VW-261)', () => {

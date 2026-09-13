@@ -400,6 +400,8 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       // Full WA reps retained (source of truth) so the shared mappers can derive
       // RPE / per-rep velocity for the hero.
       reps: [rep(1, 900), rep(2, 800)],
+      // No `setPurpose` on this snapshot's `activeSet` → defaults to 'working' (VW-260).
+      setPurpose: 'working',
     });
     expect(state.restStartMs).toBe(2_000);
   });

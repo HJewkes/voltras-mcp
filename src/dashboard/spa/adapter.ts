@@ -24,6 +24,10 @@ import {
 // otherwise WA-only pure module (safe under the node/vitest test env — no import
 // is emitted). These are the shell TopBar's device/state contracts.
 import type { Device, DeviceRowState, SessionState } from '@titan-design/react-ui';
+// Type-only, same rationale: mirrors the store's four-value set-purpose enum
+// (VMCP-02.84) without pulling the store's runtime (sqlite, node:sqlite) into
+// this browser bundle.
+import type { SetPurpose } from '../../store/types.js';
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
@@ -176,6 +180,13 @@ export interface SnapshotActiveSet {
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
   /** Who is performing this set, when it is not the owner (VW-169). */
   lifter?: string;
+  /**
+   * Why this set is being performed (VMCP-02.84), stated at `set.start`. Already on the
+   * wire — the server ships the whole `ActiveSet` untouched (`buildSnapshotView`) — this
+   * just declares the field so the client can read it. Undefined ⇒ a working set; see
+   * `summariseClosedSet`'s default (VW-260).
+   */
+  setPurpose?: SetPurpose;
 }
 
 /**
@@ -567,6 +578,12 @@ export interface CompletedSet {
    * scalar summary fields structurally cannot.
    */
   reps: Rep[];
+  /**
+   * Why this set was performed (VW-260), defaulted from the wire-optional
+   * `SnapshotActiveSet.setPurpose` at this boundary so every consumer reads a
+   * concrete value — the same "resolve once, read a value" treatment `mode` gets.
+   */
+  setPurpose: SetPurpose;
 }
 
 export interface AccumulatorState {
@@ -621,6 +638,7 @@ function summariseClosedSet(
     bestPeakVelocityMps: bestPeak,
     peakForceLbs: peakForce,
     reps: [...reps],
+    setPurpose: set.setPurpose ?? 'working',
   };
 }
 

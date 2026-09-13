@@ -208,6 +208,7 @@ function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
     repCount: set.repCount,
     reps: repVelocitiesMps(set.reps),
     peakForceLbs: set.peakForceLbs,
+    setPurpose: set.setPurpose,
   };
 }
 
