@@ -30,6 +30,7 @@ import {
 } from './failure-harvest.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
+import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
@@ -38,6 +39,7 @@ import {
   selectSetupAnchors,
   summarizeSets,
   toBaselineRow,
+  toMvtObservations,
   type AnchorObservation,
   type AnchorSelection,
   type AnchorSelectionReport,
@@ -88,7 +90,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -547,10 +549,14 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_exercise_setups_user_exercise
     ON exercise_setups(user_id, exercise_id);
 
-  -- STATE ONLY. No baseline VALUES live here: median ROM, tempo mean and decay
-  -- slope are computed from stored reps, because a value persisted from a
-  -- formula that later changes becomes a silent lie. Adding value columns
-  -- later is a pure ALTER, so the reversible choice is the empty one.
+  -- STATE, plus ONE fitted value. Median ROM, tempo mean and decay slope are
+  -- still computed from stored reps rather than cached, because a value
+  -- persisted from a formula that later changes becomes a silent lie.
+  -- optimal_mvt (v23, VW-299) is the exception and carries its own audit with
+  -- it: the error it achieved, the sample it was measured over, and the
+  -- observed V1RM it replaced, all rewritten by the same recalc that writes
+  -- the state. A fit is a search over the whole history, not a formula over
+  -- one set, which is why it is stored at all.
   CREATE TABLE IF NOT EXISTS exercise_baselines (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -573,6 +579,12 @@ const SCHEMA_SQL = `
     invalidated_at TEXT,
     invalidation_reason TEXT,
     algorithm_version TEXT NOT NULL,
+    -- v23 (VW-299): the error-minimising MVT and its audit. NULL throughout
+    -- when the history cannot support a fit.
+    optimal_mvt REAL,
+    optimal_mvt_error_pct REAL,
+    optimal_mvt_sample_size INTEGER,
+    optimal_mvt_observed_v1rm REAL,
     UNIQUE (user_id, exercise_id, setup_id, side)
   );
 
@@ -1297,6 +1309,20 @@ function migrateV21ToV22(db: DatabaseSync): void {
 }
 
 /**
+ * v22 -> v23: the fitted MVT and its audit on `exercise_baselines` (VW-299).
+ * ADDITIVE, nothing back-filled: a pre-v23 row was never fitted, and the next
+ * recalc of that key writes all four columns or leaves them NULL together. A
+ * NULL `optimal_mvt` reads as "no fit", which is what every consumer already
+ * falls back from. No index: nothing filters or sorts by a threshold.
+ */
+function migrateV22ToV23(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'exercise_baselines', 'optimal_mvt', 'REAL');
+  addColumnIfMissing(db, 'exercise_baselines', 'optimal_mvt_error_pct', 'REAL');
+  addColumnIfMissing(db, 'exercise_baselines', 'optimal_mvt_sample_size', 'INTEGER');
+  addColumnIfMissing(db, 'exercise_baselines', 'optimal_mvt_observed_v1rm', 'REAL');
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1673,6 +1699,10 @@ interface ExerciseBaselineRow {
   invalidated_at: string | null;
   invalidation_reason: string | null;
   algorithm_version: string;
+  optimal_mvt: number | null;
+  optimal_mvt_error_pct: number | null;
+  optimal_mvt_sample_size: number | null;
+  optimal_mvt_observed_v1rm: number | null;
 }
 
 /** `failure_anchors` joined to its set row for the session bucket. */
@@ -3180,10 +3210,36 @@ export class SqliteSessionStore implements SessionStore {
       ...summarizeSets(sets),
       anchors: this.selectAnchors(key).anchors,
     };
+    // VW-299: the MVT fit reads the same working sets the state machine does,
+    // so the threshold and the confidence behind it describe one corpus.
+    const fit = fitOptimalMvt(toMvtObservations(sets, this.failureSetIds(key)));
     const now = new Date();
-    const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString());
+    const row = toBaselineRow(key, deriveBaselineState(observations, now), now.toISOString(), fit);
     this.upsertBaseline(row);
     return row;
+  }
+
+  /**
+   * Set ids this key's harvest filter ACCEPTED as failures — the sets that
+   * anchor a reference 1RM for the MVT fit (VW-299). Same pool `selectAnchors`
+   * reads (owner-only, accepted verdicts), narrowed to ids because the fit
+   * needs the set's own load and velocity, which the anchor row does not carry
+   * on the scale the rest of the fit uses.
+   */
+  private failureSetIds(key: BaselineKey): ReadonlySet<string> {
+    const where = ['user_id = ?', 'exercise_id = ?', 'lifter IS NULL', 'set_id IS NOT NULL'];
+    const params: string[] = [key.userId, key.exerciseId];
+    if (key.side !== undefined) {
+      where.push('side = ?');
+      params.push(key.side);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT set_id FROM failure_anchors
+          WHERE ${where.join(' AND ')} AND filter_verdict = 'failure'`,
+      )
+      .all(...params) as unknown as { set_id: string }[];
+    return new Set(rows.map((row) => row.set_id));
   }
 
   /**
@@ -3296,8 +3352,10 @@ export class SqliteSessionStore implements SessionStore {
            (id, user_id, exercise_id, setup_id, side, state, confidence,
             observed_sessions, anchor_count, anchor_spread, last_anchor_at,
             first_observed_at,
-            updated_at, invalidated_at, invalidation_reason, algorithm_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            updated_at, invalidated_at, invalidation_reason, algorithm_version,
+            optimal_mvt, optimal_mvt_error_pct, optimal_mvt_sample_size,
+            optimal_mvt_observed_v1rm)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            state = excluded.state,
            confidence = excluded.confidence,
@@ -3309,7 +3367,11 @@ export class SqliteSessionStore implements SessionStore {
            updated_at = excluded.updated_at,
            invalidated_at = excluded.invalidated_at,
            invalidation_reason = excluded.invalidation_reason,
-           algorithm_version = excluded.algorithm_version`,
+           algorithm_version = excluded.algorithm_version,
+           optimal_mvt = excluded.optimal_mvt,
+           optimal_mvt_error_pct = excluded.optimal_mvt_error_pct,
+           optimal_mvt_sample_size = excluded.optimal_mvt_sample_size,
+           optimal_mvt_observed_v1rm = excluded.optimal_mvt_observed_v1rm`,
       )
       .run(
         b.id,
@@ -3328,6 +3390,10 @@ export class SqliteSessionStore implements SessionStore {
         b.invalidatedAt ?? null,
         b.invalidationReason ?? null,
         b.algorithmVersion,
+        b.optimalMvt ?? null,
+        b.optimalMvtErrorPct ?? null,
+        b.optimalMvtSampleSize ?? null,
+        b.optimalMvtObservedV1rm ?? null,
       );
   }
 
@@ -3654,6 +3720,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 21) {
     migrateV21ToV22(db);
+  }
+  if (current <= 22) {
+    migrateV22ToV23(db);
   }
 }
 
@@ -4087,6 +4156,14 @@ function rowToExerciseBaseline(row: ExerciseBaselineRow): StoredExerciseBaseline
   if (row.first_observed_at !== null) out.firstObservedAt = row.first_observed_at;
   if (row.invalidated_at !== null) out.invalidatedAt = row.invalidated_at;
   if (row.invalidation_reason !== null) out.invalidationReason = row.invalidation_reason;
+  if (row.optimal_mvt !== null) out.optimalMvt = row.optimal_mvt;
+  if (row.optimal_mvt_error_pct !== null) out.optimalMvtErrorPct = row.optimal_mvt_error_pct;
+  if (row.optimal_mvt_sample_size !== null) {
+    out.optimalMvtSampleSize = row.optimal_mvt_sample_size;
+  }
+  if (row.optimal_mvt_observed_v1rm !== null) {
+    out.optimalMvtObservedV1rm = row.optimal_mvt_observed_v1rm;
+  }
   return out;
 }
 
