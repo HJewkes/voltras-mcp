@@ -103,6 +103,16 @@ entry is written from the user's point of view is a review question, not a check
   fat-loss phase looks like a plateau (B34), and B34 states no correction, so none is
   applied — the phase is there for a reader to discount by hand.
 
+- The velocity-loss stop threshold is keyed to the training goal instead of being whatever
+  number the caller typed (VW-266). A `velocity_loss_exceeded` trigger now takes an
+  `intent` — `strength` 20%, `hypertrophy` 30%, `power` 10% — or takes it from the planned
+  exercise's new `trainingIntent`, and `coaching.explain {topic:
+  "live.velocity_loss_threshold"}` returns the published bands with their citations. An
+  explicit `pct` still wins and behaves exactly as before; a trigger with no threshold from
+  any of the three is refused rather than registering a watch that can never fire. The
+  fired event says which source supplied its number, and a goal-derived one carries the
+  caveat that velocity loss is a volume dial, not a reps-in-reserve estimate.
+
 ### Fixed
 
 - A set run with the eccentric loaded above the concentric no longer gets a velocity-loss

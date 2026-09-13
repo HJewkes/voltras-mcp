@@ -29,17 +29,18 @@ const COACHING_EXPLAIN_DESCRIPTION =
   'Look up RP-derived coaching knowledge by topic, grouped by conversation type: ' +
   'onboarding.* (tier inference, frequency negotiation, goal/commitment alignment, injury ' +
   'intake), live.* (cue budget, cue delivery, warmup protocol, RIR estimation, stop-set ' +
-  'signal), meso.* (deload trigger, deload ladder, volume progression, post-deload restart, ' +
-  'exercise rotation, e1RM interpretation), diet.* (phase coupling, phase durations, ' +
-  'disruption handling). ' +
+  'signal, velocity-loss threshold), meso.* (deload trigger, deload ladder, volume ' +
+  'progression, post-deload restart, exercise rotation, e1RM interpretation), diet.* ' +
+  '(phase coupling, phase durations, disruption handling). ' +
   'Every response states tier-specific values INLINE in `explanation` — an unqualified number ' +
   'from this corpus is meaningless, so never strip the tier qualifier when relaying it. Pass ' +
   '`tier` to narrow a tier-split topic to one tier; omit it to get every applicable tier at ' +
   "once (safe default when the lifter's tier is not yet known). `sources` cites the mined " +
   'note ids a response draws from; a `caveats` array, when present, flags topics whose own ' +
   'source material self-contradicts — quote those as ranges, not resolved single numbers. ' +
-  'One topic, `meso.e1rm_interpretation` (VW-267), draws on primary literature rather than the ' +
-  'RP corpus, so its `sources` are author-year keys and its `caveats` say so.';
+  'Two topics draw on primary literature rather than the RP corpus — ' +
+  '`meso.e1rm_interpretation` (VW-267) and `live.velocity_loss_threshold` (VW-266) — so ' +
+  'their `sources` are author-year keys with DOIs and their `caveats` say so.';
 
 /**
  * Hot-swap the `coaching.*` placeholder with its real handler. Mirrors the

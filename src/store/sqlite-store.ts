@@ -28,6 +28,7 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
+import type { TrainingIntent } from '../schemas/set.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
   baselineRowId,
@@ -81,7 +82,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -353,6 +354,10 @@ const SCHEMA_SQL = `
     target_tempo_json TEXT,
     target_rom_m REAL,
     target_rir REAL,
+    -- v18. Why this exercise is programmed: strength | hypertrophy | power.
+    -- Feeds the velocity-loss stop threshold (VW-266). NULL where the coach
+    -- did not say, which is a gap, never an implied 'strength'.
+    training_intent TEXT,
     -- v14. tc:item:<id> for a TrueCoach import; see workout_templates above.
     external_id TEXT
   );
@@ -1157,6 +1162,14 @@ function migrateV16ToV17(db: DatabaseSync): void {
 }
 
 /**
+ * v17 -> v18: `planned_exercises.training_intent` (VW-266). Pre-v18 rows read
+ * as no intent stated, which is what they are — nothing asked the coach.
+ */
+function migrateV17ToV18(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'planned_exercises', 'training_intent', 'TEXT');
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1562,8 +1575,8 @@ const WORKOUT_TEMPLATE_UPSERT_SQL = `INSERT INTO workout_templates
 const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    (id, workout_template_id, exercise_id, order_index, target_sets,
     target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
-    rest_sec, notes, target_tempo_json, external_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    rest_sec, notes, target_tempo_json, training_intent, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(id) DO UPDATE SET
    workout_template_id = excluded.workout_template_id,
    exercise_id = excluded.exercise_id,
@@ -1576,6 +1589,7 @@ const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    rest_sec = excluded.rest_sec,
    notes = excluded.notes,
    target_tempo_json = excluded.target_tempo_json,
+   training_intent = excluded.training_intent,
    external_id = excluded.external_id`;
 
 interface WorkoutTemplateRow {
@@ -1601,6 +1615,7 @@ interface PlannedExerciseRow {
   rest_sec: number | null;
   notes: string | null;
   target_tempo_json: string | null;
+  training_intent: string | null;
   external_id: string | null;
 }
 
@@ -2491,6 +2506,7 @@ export class SqliteSessionStore implements SessionStore {
         e.restSec ?? null,
         e.notes ?? null,
         e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
+        e.trainingIntent ?? null,
         e.externalId ?? null,
       );
     return Promise.resolve();
@@ -2605,6 +2621,9 @@ export class SqliteSessionStore implements SessionStore {
       next.restSec ?? null,
       next.notes ?? null,
       existing?.target_tempo_json ?? null,
+      // Same reasoning as tempo: the importer is not a source of training
+      // intent, so an existing local value survives a re-import.
+      existing?.training_intent ?? null,
       next.externalId ?? null,
     );
   }
@@ -3400,6 +3419,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 16) {
     migrateV16ToV17(db);
   }
+  if (current <= 17) {
+    migrateV17ToV18(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -3947,8 +3969,19 @@ function rowToPlannedExercise(row: PlannedExerciseRow): StoredPlannedExercise {
   if (row.rest_sec !== null) out.restSec = row.rest_sec;
   if (row.notes !== null) out.notes = row.notes;
   if (row.target_tempo_json !== null) out.targetTempo = tempoFromJson(row.target_tempo_json);
+  if (isTrainingIntent(row.training_intent)) out.trainingIntent = row.training_intent;
   if (row.external_id !== null) out.externalId = row.external_id;
   return out;
+}
+
+/**
+ * A stored `training_intent` is only honoured when it is one of the three the
+ * schema names. A row carrying anything else reads as "no intent stated": the
+ * velocity-loss threshold it would feed has no safe interpretation for an
+ * unknown goal, and guessing one is how a bad value becomes a stop cue.
+ */
+function isTrainingIntent(value: string | null): value is TrainingIntent {
+  return value === 'strength' || value === 'hypertrophy' || value === 'power';
 }
 
 function rowToProgramAssignment(row: ProgramAssignmentRow): StoredProgramAssignment {

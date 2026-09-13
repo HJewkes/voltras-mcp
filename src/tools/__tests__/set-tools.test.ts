@@ -154,6 +154,7 @@ function makeStore(): SessionStore & {
     getWorkoutTemplate: vi.fn(async () => undefined),
     getWorkoutTemplatesForWeek: vi.fn(async () => []),
     putPlannedExercise: vi.fn(async () => {}),
+    getPlannedExercise: vi.fn(async () => undefined),
     getPlannedExercisesForTemplate: vi.fn(async () => []),
     putProgramAssignment: vi.fn(async () => {}),
     getAssignmentsForSession: vi.fn(async () => []),
@@ -496,13 +497,134 @@ describe('set.start', () => {
     });
     expect(r.isError).toBeUndefined();
     expect(h.live.set?.watch).toBeDefined();
+    // VW-266: the installed spec carries the resolved threshold's provenance.
+    // `explicit` is the caller's own number, which is what was passed here.
     expect(h.live.set?.watch?.notifyOn).toEqual([
       { type: 'rep_count_reached', value: 8 },
-      { type: 'velocity_loss_exceeded', pct: 25 },
+      { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' },
     ]);
     // A fresh dedupe ledger is provisioned alongside the watch config.
     expect(h.live.set?.firedTriggers).toBeInstanceOf(Set);
     expect(h.live.set?.firedTriggers?.size).toBe(0);
+  });
+
+  // VW-266. Each case drives set.start and reads the threshold the server
+  // pinned onto the installed spec — the number the gate will compare against
+  // for the rest of the set.
+  describe('velocity-loss threshold resolution (VW-266)', () => {
+    async function startWithSpec(
+      spec: Record<string, unknown>,
+    ): Promise<ReturnType<Harness['invoke']> extends Promise<infer R> ? R : never> {
+      startSession(h.live);
+      h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+      return h.invoke('set.start', {
+        watch: { notifyOn: [{ type: 'velocity_loss_exceeded', ...spec }] },
+      });
+    }
+
+    function installedSpec(): Record<string, unknown> | undefined {
+      return h.live.set?.watch?.notifyOn[0] as Record<string, unknown> | undefined;
+    }
+
+    it('strength intent installs 20%', async () => {
+      expect((await startWithSpec({ intent: 'strength' })).isError).toBeUndefined();
+      expect(installedSpec()).toMatchObject({
+        pct: 20,
+        intent: 'strength',
+        thresholdSource: 'set_intent',
+      });
+    });
+
+    it('hypertrophy intent installs 30%', async () => {
+      expect((await startWithSpec({ intent: 'hypertrophy' })).isError).toBeUndefined();
+      expect(installedSpec()).toMatchObject({ pct: 30, thresholdSource: 'set_intent' });
+    });
+
+    it('power intent installs 10%', async () => {
+      expect((await startWithSpec({ intent: 'power' })).isError).toBeUndefined();
+      expect(installedSpec()).toMatchObject({ pct: 10, thresholdSource: 'set_intent' });
+    });
+
+    it("an explicit pct still wins, and is not relabelled as the intent's", async () => {
+      expect((await startWithSpec({ pct: 12, intent: 'hypertrophy' })).isError).toBeUndefined();
+      expect(installedSpec()).toMatchObject({ pct: 12, thresholdSource: 'explicit' });
+    });
+
+    it("takes the planned exercise's intent when the spec states neither", async () => {
+      h.store.getAssignmentsForSession.mockResolvedValueOnce([
+        {
+          id: 'a1',
+          sessionId: 'sess-A',
+          workoutTemplateId: 'tpl-1',
+          assignedAt: '2025-01-01T00:00:00.000Z',
+        },
+      ]);
+      h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([
+        {
+          id: 'pe-1',
+          workoutTemplateId: 'tpl-1',
+          exerciseId: 'bench-press',
+          orderIndex: 0,
+          targetSets: 3,
+          trainingIntent: 'power',
+        },
+      ]);
+      startSession(h.live);
+      h.live.setSessionExercise('bench-press', 'Bench Press');
+      h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+      const r = await h.invoke('set.start', {
+        watch: { notifyOn: [{ type: 'velocity_loss_exceeded' }] },
+      });
+
+      expect(r.isError).toBeUndefined();
+      expect(installedSpec()).toMatchObject({
+        pct: 10,
+        intent: 'power',
+        thresholdSource: 'plan_intent',
+      });
+    });
+
+    it('ignores a plan intent recorded against a DIFFERENT exercise', async () => {
+      h.store.getAssignmentsForSession.mockResolvedValueOnce([
+        {
+          id: 'a1',
+          sessionId: 'sess-A',
+          workoutTemplateId: 'tpl-1',
+          assignedAt: '2025-01-01T00:00:00.000Z',
+        },
+      ]);
+      h.store.getPlannedExercisesForTemplate.mockResolvedValueOnce([
+        {
+          id: 'pe-1',
+          workoutTemplateId: 'tpl-1',
+          exerciseId: 'squat',
+          orderIndex: 0,
+          targetSets: 3,
+          trainingIntent: 'power',
+        },
+      ]);
+      startSession(h.live);
+      h.live.setSessionExercise('bench-press', 'Bench Press');
+      h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+      const r = await h.invoke('set.start', {
+        watch: { notifyOn: [{ type: 'velocity_loss_exceeded' }] },
+      });
+
+      expect(r.isError).toBe(true);
+      expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+    });
+
+    it('refuses the set rather than registering a watch that can never fire', async () => {
+      const r = await startWithSpec({});
+      expect(r.isError).toBe(true);
+      const err = parseResult(r) as { code: string; message: string };
+      expect(err.code).toBe('INVALID_INPUT');
+      expect(err.message).toContain('intent');
+      // Nothing was engaged and nothing was installed.
+      expect(h.live.set).toBeUndefined();
+    });
   });
 
   it('rejects an invalid watch spec via INVALID_INPUT (out-of-range pct)', async () => {
@@ -708,7 +830,9 @@ describe('set.start — upgrading an auto-armed set (VW-180)', () => {
     expect(r.isError).toBeUndefined();
     expect(parseResult(r)).toEqual({ setId: 'set-armed', upgraded: true, adoptedReps: 2 });
     expect(h.live.set?.isWarmup).toBe(true);
-    expect(h.live.set?.watch?.notifyOn).toEqual([{ type: 'velocity_loss_exceeded', pct: 25 }]);
+    expect(h.live.set?.watch?.notifyOn).toEqual([
+      { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' },
+    ]);
     expect(h.live.set?.reps).toHaveLength(2);
     expect(h.live.set?.startedAt).toBe(ARMED_AT);
   });

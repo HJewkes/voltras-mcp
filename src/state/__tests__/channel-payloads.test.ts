@@ -34,6 +34,7 @@ import {
 } from '../channel-payloads.js';
 import type { PendingCoercionCheck } from '../coercion-watch.js';
 import { NO_VELOCITY_LOSS_EXCLUSION } from '../rep-eligibility.js';
+import type { ResolvedVelocityLossSpec } from '../../schemas/set.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
 import { mmsToMps } from '../live-signal.js';
@@ -936,7 +937,7 @@ describe('buildVelocityLossExceededPayload', () => {
     const { meta, content } = buildVelocityLossExceededPayload(
       set,
       device,
-      25,
+      { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' },
       35.3,
       0.85,
       0.55,
@@ -976,7 +977,7 @@ describe('buildVelocityLossExceededPayload', () => {
     const { meta, content } = buildVelocityLossExceededPayload(
       set,
       device,
-      25,
+      { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' },
       35.3,
       0.85,
       0.55,
@@ -999,6 +1000,81 @@ describe('buildVelocityLossExceededPayload', () => {
     // A consumer reading only the prose must still learn which reps are out.
     expect(parsed.summary).toContain('exclude the first 2 reps');
     expect(parsed.summary).toContain('eccentric loaded above the concentric');
+  });
+
+  /** The resolved spec every VW-266 case below varies one field of. */
+  function spec(over: Partial<ResolvedVelocityLossSpec>): ResolvedVelocityLossSpec {
+    return { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit', ...over };
+  }
+
+  function build(resolved: ResolvedVelocityLossSpec): {
+    meta: Record<string, string>;
+    content: string;
+  } {
+    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 550, 400)]);
+    return buildVelocityLossExceededPayload(
+      set,
+      device,
+      resolved,
+      35.3,
+      0.85,
+      0.55,
+      1,
+      2,
+      NO_VELOCITY_LOSS_EXCLUSION,
+    );
+  }
+
+  it('VW-266: reports an intent-derived threshold with the volume-dial band', () => {
+    const { meta, content } = build(
+      spec({ pct: 30, intent: 'hypertrophy', thresholdSource: 'set_intent' }),
+    );
+    expect(meta).toMatchObject({
+      threshold_pct: '30',
+      threshold_source: 'set_intent',
+      training_intent: 'hypertrophy',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.trigger).toMatchObject({
+      threshold_source: 'set_intent',
+      training_intent: 'hypertrophy',
+    });
+    expect(parsed.summary).toContain('the stated hypertrophy intent');
+    // Velocity loss is a volume dial. Copy that states a goal-keyed threshold
+    // must carry the band, or a reader converts it into reps in reserve.
+    expect(parsed.summary).toContain('not a reps-in-reserve estimate');
+    expect(parsed.summary).toContain('+/-5');
+  });
+
+  it('VW-266: a plan-derived threshold names the plan as the source', () => {
+    const { meta, content } = build(
+      spec({ pct: 20, intent: 'strength', thresholdSource: 'plan_intent' }),
+    );
+    expect(meta.threshold_source).toBe('plan_intent');
+    expect(JSON.parse(content).summary).toContain("the plan's strength intent");
+  });
+
+  // The pre-VW-266 summary, verbatim. An EXACT match, not `toContain`: this is
+  // the sentence every existing consumer already reads, and the fact that the
+  // threshold was not goal-derived rides in `meta.threshold_source` rather than
+  // in prose, so the common path is byte-identical to before the change.
+  const LEGACY_SUMMARY = 'Velocity dropped 35.3% (0.85 -> 0.55 m/s) on rep 2. Threshold: 25%.';
+
+  it('VW-266: a bare explicit pct leaves the summary exactly as it was', () => {
+    const { meta, content } = build(spec({}));
+    expect(meta.threshold_source).toBe('explicit');
+    expect(meta.training_intent).toBeUndefined();
+    expect(JSON.parse(content).summary).toBe(LEGACY_SUMMARY);
+  });
+
+  it('VW-266: an explicit pct alongside an intent is still the caller’s number', () => {
+    const { meta, content } = build(spec({ intent: 'hypertrophy' }));
+    expect(meta).toMatchObject({ threshold_pct: '25', threshold_source: 'explicit' });
+    // The intent is reported, but it did not supply the number, so the prose
+    // must not credit it — and the volume-dial band belongs to goal-derived
+    // copy, which this is not.
+    expect(meta.training_intent).toBe('hypertrophy');
+    expect(JSON.parse(content).summary).toBe(LEGACY_SUMMARY);
   });
 });
 

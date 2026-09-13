@@ -26,6 +26,7 @@ export const CoachingTopic = z.enum([
   'live.warmup_protocol',
   'live.rir_estimation',
   'live.stop_set_signal',
+  'live.velocity_loss_threshold',
   // Mesocycle planning
   'meso.deload_trigger',
   'meso.deload_ladder',

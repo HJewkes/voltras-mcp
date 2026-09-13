@@ -37,7 +37,7 @@ import {
 import type { RepSource } from '../config.js';
 import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
-import type { WatchConfig } from '../schemas/set.js';
+import type { ResolvedWatchConfig } from '../schemas/set.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { SetPurpose } from '../store/types.js';
 
@@ -333,7 +333,7 @@ export interface ActiveSet {
    * `idle_timeout_ms` specs to a per-set timer in `state.setWatchdog`.
    * Undefined for sets started without a `watch` arg.
    */
-  watch?: WatchConfig;
+  watch?: ResolvedWatchConfig;
   /**
    * Dedupe ledger for trigger firings. Keys take the form
    * `${type}:${value or pct}` so identical specs collapse to one event,
@@ -791,7 +791,7 @@ export class LiveState {
    */
   upgradeActiveSet(patch: {
     setPurpose?: SetPurpose;
-    watch?: WatchConfig;
+    watch?: ResolvedWatchConfig;
     exerciseId?: string;
     movementClass?: MovementClass;
     lifter?: string;

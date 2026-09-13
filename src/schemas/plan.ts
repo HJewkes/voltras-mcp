@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { IdSchema, SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
+import { TrainingIntent } from './set.js';
 
 // --- programs ---
 
@@ -136,6 +137,15 @@ export const PlanExerciseCreateInput = z
     restSec: z.number().int().min(0).optional(),
     notes: z.string().optional(),
     targetTempo: PlanExerciseTargetTempoInput.optional(),
+    /**
+     * Why this exercise is programmed (VW-266): `strength`, `hypertrophy` or
+     * `power`. A set trained against this planned exercise takes its
+     * velocity-loss stop threshold from here when `set.start` states none.
+     *
+     * Omit it when the goal is genuinely not decided. Nothing infers an intent
+     * from rep range or load — a guess here becomes a stop cue at the wrong rep.
+     */
+    trainingIntent: TrainingIntent.optional(),
   })
   .strict();
 

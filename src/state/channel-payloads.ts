@@ -40,7 +40,7 @@ import type { MovementClass } from '../exercises/movement-class.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
-import type { TriggerSpec } from '../schemas/set.js';
+import type { ResolvedTriggerSpec, ResolvedVelocityLossSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
 import { selectEligibleReps, type VelocityLossExclusion } from './rep-eligibility.js';
 import type { WeightImpliedResult } from './weight-implied-watch.js';
@@ -1035,7 +1035,7 @@ export function buildSetTargetReachedPayload(
 export function buildVelocityLossExceededPayload(
   set: ActiveSet,
   device: DeviceSnapshot,
-  threshold: number,
+  spec: ResolvedVelocityLossSpec,
   pct: number,
   baseline: number,
   current: number,
@@ -1049,6 +1049,7 @@ export function buildVelocityLossExceededPayload(
   // unit-invariant so the caller's pre-computed `pct` is passed through.
   const baselineMps = roundMps(baseline);
   const currentMps = roundMps(current);
+  const threshold = spec.pct;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'velocity_loss_exceeded',
@@ -1056,6 +1057,11 @@ export function buildVelocityLossExceededPayload(
     session_id: set.sessionId,
     velocity_loss_pct: pct.toFixed(1),
     threshold_pct: String(threshold),
+    // VW-266: where the threshold came from. `explicit` with no
+    // `training_intent` is the pre-VW-266 path — a number the caller typed,
+    // with no goal behind it.
+    threshold_source: spec.thresholdSource ?? 'explicit',
+    ...(spec.intent !== undefined ? { training_intent: spec.intent } : {}),
     baseline_velocity: baselineMps.toFixed(3),
     current_velocity: currentMps.toFixed(3),
     rep_count_at_threshold: String(actualReps),
@@ -1068,7 +1074,8 @@ export function buildVelocityLossExceededPayload(
   };
   const summary =
     `Velocity dropped ${pct.toFixed(1)}% (${baselineMps.toFixed(2)} -> ` +
-    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%.` +
+    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%` +
+    `${describeThresholdProvenance(spec)}.` +
     describeVelocityLossExclusion(exclusion);
   const content = JSON.stringify({
     summary,
@@ -1081,10 +1088,38 @@ export function buildVelocityLossExceededPayload(
       baseline_rep_number: baselineRepNumber,
       excluded_lead_in_reps: exclusion.leadInReps,
       exclusion_reason: exclusion.reason,
+      threshold_source: spec.thresholdSource ?? 'explicit',
+      training_intent: spec.intent ?? null,
     },
     set_so_far: summarizeSetForTrigger(set, device),
   });
   return { meta, content };
+}
+
+/**
+ * How the threshold in a velocity-loss summary was arrived at (VW-266).
+ *
+ * EMPTY FOR AN EXPLICIT THRESHOLD, which is every pre-VW-266 caller: the number
+ * came from whoever asked for it, the summary said so by quoting it, and adding
+ * prose to that sentence would change the text every existing consumer already
+ * reads. `meta.threshold_source` carries the fact for anyone who needs it.
+ *
+ * The volume-dial band rides with the intent-derived cases only, because those
+ * are the ones whose copy names a GOAL. A reader who sees "hypertrophy intent"
+ * is being told the stop is a volume decision and will otherwise read it as
+ * proximity to failure. Velocity loss is a poor proximity estimate: reps
+ * completed to a fixed threshold vary by roughly +/-5 across sessions
+ * (Jukic 2023).
+ */
+function describeThresholdProvenance(spec: ResolvedVelocityLossSpec): string {
+  if (spec.thresholdSource !== 'set_intent' && spec.thresholdSource !== 'plan_intent') {
+    return '';
+  }
+  const where = spec.thresholdSource === 'plan_intent' ? "the plan's" : 'the stated';
+  return (
+    ` (${where} ${spec.intent ?? 'unknown'} intent; a volume dial, not a reps-in-reserve ` +
+    'estimate — reps to a fixed threshold vary about +/-5 between sessions)'
+  );
 }
 
 /**
@@ -1363,7 +1398,7 @@ export function buildGuidedLoadStatePayload(input: GuidedLoadStatePayloadInput):
  * `tryFireTrigger` ledger so identical specs in `notifyOn` collapse to
  * one event while distinct thresholds fire independently.
  */
-export function triggerDedupeKey(spec: TriggerSpec): string {
+export function triggerDedupeKey(spec: ResolvedTriggerSpec): string {
   switch (spec.type) {
     case 'rep_count_reached':
       return `${spec.type}:${spec.value}`;

@@ -62,6 +62,7 @@ import {
   SELECTABLE_MODE_NAMES,
 } from '../schemas/device.js';
 import { SlotIdSchema } from '../schemas/common.js';
+import type { ResolvedWatchConfig, WatchConfig } from '../schemas/set.js';
 import {
   type ServerState,
   type SlotState,
@@ -98,6 +99,10 @@ import {
   type PassiveScanContext,
 } from '../state/passive-scanner.js';
 import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
+import {
+  resolveVelocityLossSpec,
+  VELOCITY_LOSS_NO_THRESHOLD_MESSAGE,
+} from '../state/velocity-loss-intent.js';
 import { fence, type LeaseFence } from '../state/lease-fence.js';
 import type { ClientId } from '../client-connection.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
@@ -201,6 +206,29 @@ const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
  */
 function weightTrainingName(): string {
   return TrainingModeNames[TrainingMode.WeightTraining];
+}
+
+/**
+ * Pin the velocity-loss thresholds on a guided-load watch (VW-266).
+ *
+ * The bridge mints the guided-load set inside a device event handler, which has
+ * nowhere to report a refusal, so resolution happens here where the caller is
+ * still listening. No plan intent is reachable: the session is auto-created on
+ * `armed`, after this call, so a spec on this path must carry its own `pct` or
+ * `intent`.
+ */
+function resolveGuidedLoadWatch(watch: WatchConfig): ResolvedWatchConfig {
+  return {
+    ...watch,
+    notifyOn: watch.notifyOn.map((spec) => {
+      if (spec.type !== 'velocity_loss_exceeded') return spec;
+      const resolved = resolveVelocityLossSpec(spec, undefined);
+      if (resolved === undefined) {
+        throwSdkLike('INVALID_INPUT', VELOCITY_LOSS_NO_THRESHOLD_MESSAGE);
+      }
+      return resolved;
+    }),
+  };
 }
 
 const DeviceUnloadInput = z
@@ -1141,8 +1169,13 @@ export function registerDeviceTools(
       } else {
         delete slot.pendingGuidedLoadIsWarmup;
       }
+      // VW-266: pin the velocity-loss thresholds here, at the tool boundary,
+      // rather than in the bridge that mints the set — the bridge runs inside a
+      // device event handler with no place to report a refusal. No plan intent
+      // is available on this path: the session is auto-created on `armed`, after
+      // this call, so a spec here must carry its own `pct` or `intent`.
       if (input.watch !== undefined) {
-        slot.pendingGuidedLoadWatch = input.watch;
+        slot.pendingGuidedLoadWatch = resolveGuidedLoadWatch(input.watch);
       } else {
         delete slot.pendingGuidedLoadWatch;
       }

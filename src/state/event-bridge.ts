@@ -1523,7 +1523,7 @@ function evaluateRepTriggers(
       const payload = buildVelocityLossExceededPayload(
         set,
         device,
-        spec.pct,
+        spec,
         lossPct,
         baseline,
         current,

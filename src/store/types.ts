@@ -19,6 +19,7 @@
 // task; the alias will be unified once both branches merge.
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
+import type { TrainingIntent } from '../schemas/set.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
 
@@ -828,6 +829,15 @@ export interface StoredPlannedExercise {
   notes?: string;
   /** Coach-set tempo override; absent when the coach left it unset (VW-46). */
   targetTempo?: StoredTargetTempo;
+  /**
+   * Why this exercise is programmed (VW-266). Supplies the velocity-loss stop
+   * threshold for sets trained against it when the caller states none.
+   *
+   * Absent means the coach did not say, and nothing downstream may read that
+   * as an implied `strength`: a wrong intent here becomes a stop cue at the
+   * wrong rep.
+   */
+  trainingIntent?: TrainingIntent;
   /** Stable authoring key (`tc:item:<id>`), UNIQUE where present. See `StoredWorkoutTemplate`. */
   externalId?: string;
 }

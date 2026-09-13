@@ -136,6 +136,7 @@ This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps
 - `restSec` — `integer` (min 0), optional.
 - `notes` — `string`, optional.
 - `targetTempo` — `object`, optional.
+- `trainingIntent` — `strength` | `hypertrophy` | `power`, optional.
 
 ## `plan.exercise.list_for_template`
 

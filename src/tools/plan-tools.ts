@@ -45,6 +45,7 @@ import {
   type PlanWarning,
 } from '../plan/lint-plan.js';
 import { readRomIntegrity } from '../analytics/rom-integrity.js';
+import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
 import { normalisePositionsToMetres } from '../store/position-units.js';
@@ -525,6 +526,7 @@ async function createPlannedExercise(
     ...(input.restSec !== undefined ? { restSec: input.restSec } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     ...(input.targetTempo !== undefined ? { targetTempo: input.targetTempo } : {}),
+    ...(input.trainingIntent !== undefined ? { trainingIntent: input.trainingIntent } : {}),
   };
   await state.store.putPlannedExercise(plannedExercise);
   const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
@@ -1619,4 +1621,46 @@ async function findPlannedExerciseById(
     }
   }
   return undefined;
+}
+
+/**
+ * The training intent the attached plan prescribes for `exerciseId` in this
+ * session (VW-266), or undefined when nothing states one.
+ *
+ * Both assignment shapes are read: a session bound to ONE planned exercise,
+ * and a session bound to a whole workout template whose planned exercises are
+ * searched for the one the session is currently on.
+ *
+ * The exercise must MATCH. An intent read off a different exercise in the same
+ * workout would be a stop threshold borrowed from another lift, which is worse
+ * than having none — a session with no match returns undefined and the caller
+ * asks for an explicit one.
+ */
+export async function planTrainingIntentFor(
+  state: ServerState,
+  sessionId: string,
+  exerciseId: string | undefined,
+): Promise<TrainingIntent | undefined> {
+  if (exerciseId === undefined) return undefined;
+  for (const assignment of await state.store.getAssignmentsForSession(sessionId)) {
+    const planned = await plannedExercisesForAssignment(state, assignment);
+    const match = planned.find((p) => p.exerciseId === exerciseId);
+    if (match?.trainingIntent !== undefined) return match.trainingIntent;
+  }
+  return undefined;
+}
+
+/** The planned exercises one assignment points at: exactly one, or a template's. */
+async function plannedExercisesForAssignment(
+  state: ServerState,
+  assignment: StoredProgramAssignment,
+): Promise<StoredPlannedExercise[]> {
+  if (assignment.plannedExerciseId !== undefined) {
+    const one = await state.store.getPlannedExercise(assignment.plannedExerciseId);
+    return one === undefined ? [] : [one];
+  }
+  if (assignment.workoutTemplateId !== undefined) {
+    return state.store.getPlannedExercisesForTemplate(assignment.workoutTemplateId);
+  }
+  return [];
 }
