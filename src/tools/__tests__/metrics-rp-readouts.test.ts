@@ -97,6 +97,8 @@ interface SetSpec {
   lifter?: string;
   firmwarePeakForceLbs?: number;
   deviceNative?: boolean;
+  restBeforeSec?: number;
+  eccentricPct?: number;
 }
 
 function makeStoredSet(spec: SetSpec): StoredSet {
@@ -116,6 +118,8 @@ function makeStoredSet(spec: SetSpec): StoredSet {
     ...(spec.firmwarePeakForceLbs !== undefined
       ? { firmwarePeakForceLbs: spec.firmwarePeakForceLbs }
       : {}),
+    ...(spec.restBeforeSec !== undefined ? { restBeforeSec: spec.restBeforeSec } : {}),
+    ...(spec.eccentricPct !== undefined ? { eccentricPct: spec.eccentricPct } : {}),
     reps: spec.reps.map((rep, i) => makeRep(spec.id, i, rep, scale)),
   };
 }
@@ -164,6 +168,8 @@ function makeTool(state: ServerState): Handler {
 interface StateSpec {
   sets: StoredSet[];
   baseline?: StoredExerciseBaseline;
+  /** Sets from EARLIER sessions, the reference VW-306's entry axis reads. */
+  priorSets?: StoredSet[];
 }
 
 function makeState(spec: StateSpec): ServerState {
@@ -173,6 +179,9 @@ function makeState(spec: StateSpec): ServerState {
       getSetsForSession: vi.fn(async () => spec.sets),
       getSession: vi.fn(async (id: string) => ({ id, startedAt: '2026-09-08T18:00:00.000Z' })),
       getBaseline: vi.fn(async () => spec.baseline),
+      getSetsForExercise: vi.fn(async ({ exerciseId }: { exerciseId: string }) =>
+        (spec.priorSets ?? []).filter((s) => (s.exerciseId ?? 'unknown') === exerciseId),
+      ),
     },
   } as unknown as ServerState;
 }
@@ -346,6 +355,152 @@ describe('metrics.compute — session.perturbation', () => {
     expect(all.exercises.map((e) => e.exerciseId)).toEqual(['cable-row', 'chest-press']);
     expect(narrowed.exerciseId).toBe('chest-press');
     expect(narrowed.meanVelocityDropPct).toBeCloseTo(20, 6);
+  });
+});
+
+// ─── VW-306: the two fatigue axes on the fatigue pipelines ────────────────
+
+interface FatigueAxisReading {
+  value: number | null;
+  confidence: number;
+  controlledConfounders: string[];
+  uncontrolled: string[];
+  setsCompared: number;
+  basis: string;
+}
+
+interface FatigueAxesReading {
+  entryDepression: FatigueAxisReading;
+  lateSessionDecay: FatigueAxisReading;
+  note: string;
+}
+
+/** A prior session at the same load, opening at 1.0 m/s — the lifter's norm. */
+function referenceSession(): StoredSet[] {
+  return [
+    makeStoredSet({
+      id: 'r0',
+      sessionId: 'sess-0',
+      reps: flatReps(12, 1.4),
+      isWarmup: true,
+      weightLbs: 60,
+    }),
+    makeStoredSet({ id: 'r1', sessionId: 'sess-0', reps: flatReps(10, 1.0), restBeforeSec: 180 }),
+    makeStoredSet({ id: 'r2', sessionId: 'sess-0', reps: flatReps(9, 0.95), restBeforeSec: 180 }),
+  ];
+}
+
+describe('metrics.compute — fatigueAxes (VW-306)', () => {
+  it('leaves every pre-VW-306 perturbation field exactly as it was', async () => {
+    const state = makeState({
+      sets: decayingSession(),
+      baseline: makeBaselineRow('COLD'),
+      priorSets: referenceSession(),
+    });
+
+    const { fatigueAxes, ...preExisting } = perturbationOf(
+      await invoke(state, { pipeline: 'session.perturbation', sessionId: 'sess-1' }),
+    ) as Perturbation & { fatigueAxes: FatigueAxesReading };
+
+    expect(Object.keys(preExisting).sort()).toEqual([
+      'exerciseId',
+      'gate',
+      'interpretation',
+      'interpretationNote',
+      'meanVelocityDropPct',
+      'peakForceDropPct',
+      'repDrop',
+      'workingSets',
+    ]);
+    // The pre-PR numbers on this fixture, unmoved by the axes beside them.
+    expect(preExisting.workingSets).toBe(3);
+    expect(preExisting.meanVelocityDropPct).toBeCloseTo(30, 6);
+    expect(preExisting.peakForceDropPct).toBeCloseTo(20, 6);
+    expect(preExisting.repDrop).toBe(2);
+    expect(preExisting.interpretation).toBeNull();
+    expect(fatigueAxes).toBeDefined();
+  });
+
+  it('separates a depressed entry with flat decay from a normal entry with steep decay', async () => {
+    const depressed = [
+      makeStoredSet({ id: 'w0', reps: flatReps(12, 1.4), isWarmup: true, weightLbs: 60 }),
+      makeStoredSet({ id: 'w1', reps: flatReps(10, 0.8), restBeforeSec: 180 }),
+      makeStoredSet({ id: 'w2', reps: flatReps(9, 0.79), restBeforeSec: 180 }),
+      makeStoredSet({ id: 'w3', reps: flatReps(8, 0.78), restBeforeSec: 180 }),
+    ];
+    const steep = [
+      makeStoredSet({ id: 'w0', reps: flatReps(12, 1.4), isWarmup: true, weightLbs: 60 }),
+      makeStoredSet({ id: 'w1', reps: flatReps(10, 1.0), restBeforeSec: 180 }),
+      makeStoredSet({ id: 'w2', reps: flatReps(9, 0.9), restBeforeSec: 180 }),
+      makeStoredSet({ id: 'w3', reps: flatReps(8, 0.8), restBeforeSec: 180 }),
+    ];
+    const axesFor = async (sets: StoredSet[]): Promise<FatigueAxesReading> =>
+      (
+        perturbationOf(
+          await invoke(makeState({ sets, priorSets: referenceSession() }), {
+            pipeline: 'session.perturbation',
+            sessionId: 'sess-1',
+          }),
+        ) as Perturbation & { fatigueAxes: FatigueAxesReading }
+      ).fatigueAxes;
+
+    const depressedAxes = await axesFor(depressed);
+    const steepAxes = await axesFor(steep);
+
+    expect(depressedAxes.entryDepression.value).toBeCloseTo(17.95, 2);
+    expect(depressedAxes.lateSessionDecay.value).toBeCloseTo(1.25, 2);
+    expect(steepAxes.entryDepression.value).toBeCloseTo(-2.56, 2);
+    expect(steepAxes.lateSessionDecay.value).toBeCloseTo(10, 2);
+  });
+
+  it('names the confounders the comparison held, and reports rest as uncontrolled when it varied', async () => {
+    const varyingRest = [
+      makeStoredSet({ id: 'w0', reps: flatReps(12, 1.4), isWarmup: true, weightLbs: 60 }),
+      makeStoredSet({ id: 'w1', reps: flatReps(10, 1.0), restBeforeSec: 180 }),
+      makeStoredSet({ id: 'w2', reps: flatReps(9, 0.9), restBeforeSec: 320 }),
+      makeStoredSet({ id: 'w3', reps: flatReps(8, 0.8), restBeforeSec: 90 }),
+    ];
+
+    const { fatigueAxes } = perturbationOf(
+      await invoke(makeState({ sets: varyingRest, priorSets: referenceSession() }), {
+        pipeline: 'session.perturbation',
+        sessionId: 'sess-1',
+      }),
+    ) as Perturbation & { fatigueAxes: FatigueAxesReading };
+
+    expect(fatigueAxes.lateSessionDecay.uncontrolled).toContain('rest');
+    expect(fatigueAxes.lateSessionDecay.controlledConfounders).toContain('load');
+    expect(fatigueAxes.lateSessionDecay.controlledConfounders).toContain('warmupState');
+    // The device recorded no eccentric setting on this fixture, so it is
+    // unknown rather than "none".
+    expect(fatigueAxes.lateSessionDecay.uncontrolled).toContain('eccentricSetting');
+  });
+
+  it('reports entry depression as unmeasurable, not zero, when the lifter has no prior session', async () => {
+    const { fatigueAxes } = perturbationOf(
+      await invoke(makeState({ sets: decayingSession() }), {
+        pipeline: 'session.perturbation',
+        sessionId: 'sess-1',
+      }),
+    ) as Perturbation & { fatigueAxes: FatigueAxesReading };
+
+    expect(fatigueAxes.entryDepression.value).toBeNull();
+    expect(fatigueAxes.entryDepression.confidence).toBe(0);
+    expect(fatigueAxes.lateSessionDecay.value).not.toBeNull();
+  });
+
+  it('carries both axes on `session.fatigue` too, beside its unchanged blended level', async () => {
+    const state = makeState({ sets: decayingSession(), priorSets: referenceSession() });
+
+    const result = (await invoke(state, {
+      pipeline: 'session.fatigue',
+      sessionId: 'sess-1',
+    })) as { level: number; withinSetFatigue: unknown; fatigueAxes: FatigueAxesReading };
+
+    expect(result.level).toBeGreaterThan(0);
+    expect(result.withinSetFatigue).toBeDefined();
+    expect(result.fatigueAxes.entryDepression.value).toBeCloseTo(-2.56, 2);
+    expect(result.fatigueAxes.lateSessionDecay.value).toBeCloseTo(15, 2);
   });
 });
 

@@ -52,12 +52,26 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `metrics.compute` now reports fatigue on two separately named axes instead of one blended
+  number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
+  `entryDepression` — how far the session's opening working set sat below the lifter's own
+  prior sets at the same load, a recovery-state read — beside `lateSessionDecay`, the slope
+  across that session's matched-load sets, which is the cost of work already done. A depressed
+  entry with a flat decay and a normal entry with a steep decay are opposite situations that
+  the single decay number read as nearly the same, and they call for opposite advice. Each axis
+  carries its own confidence and names which of rest, load, eccentric setting and warm-up state
+  its comparison actually held fixed, so an unmatched comparison is visible rather than
+  silently averaged in; an axis with nothing to compare reports `null`, never `0`. New
+  `coaching.explain` topic `live.fatigue_axes` carries the citations and states plainly that
+  neither axis supports an inference about what the lifter ate. Every existing field on both
+  pipelines is unchanged.
+
 - `device.set_eccentric`'s description and `coaching.explain` now frame eccentric overload
   as a stimulus-cost knob, not a growth multiplier (VW-303). The largest available synthesis
   (49 studies, 773 participants) found accentuated eccentric loading's chronic strength and
   hypertrophy adaptations statistically similar to constant-load training, while acutely
   raising lactate, growth hormone, RPE and eccentric-phase muscle activation for the same
-  result (Zhang, Weakley, Li, Marcos-Frutos & García-Ramos, *Sports Medicine*, 2026). New
+  result (Zhang, Weakley, Li, Marcos-Frutos & García-Ramos, _Sports Medicine_, 2026). New
   `coaching.explain` topic `live.eccentric_overload_cost` carries the citation and the
   mechanical caveat that the rep right after an overloaded one runs slower for reasons
   unrelated to fatigue.

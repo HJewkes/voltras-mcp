@@ -339,6 +339,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'prevRepsToThreshold',
   'currRepsToThreshold',
   'extensionSeconds',
+  // VW-306: the two fatigue axes, on `metrics.compute`'s
+  // `session.perturbation` and `session.fatigue` results.
+  'fatigueAxes',
+  'entryDepression',
+  'lateSessionDecay',
 ];
 
 /**

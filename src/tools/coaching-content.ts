@@ -689,4 +689,54 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'adherence failure.',
     sources: ['rp-s11-unplanned-disruption-protocol', 'rp-s11-chronic-plan-abandonment-response'],
   },
+  // A `live.*` topic appended out of group order (VW-306): three agents were
+  // editing this file in parallel and the end is the one place a new entry
+  // does not collide. `COACHING_CONTENT` is a Record, so order is cosmetic.
+  'live.fatigue_axes': {
+    allTiers:
+      'Fatigue reads on TWO separately named axes, and which one moved changes the advice. ' +
+      "ENTRY DEPRESSION measures the session's opening working set at a given load against the " +
+      "same lifter's own prior sets at that load. It is a recovery-state read, and it is the axis " +
+      'with evidence behind it: the heavy (L0) end of the load-velocity profile fell 8.3 kg under ' +
+      'moderate and 32.6 kg under high fatigue, while the light (v0) end failed to discriminate ' +
+      'fatigue states at all. LATE-SESSION DECAY is the slope of velocity across matched-load ' +
+      'working sets inside one session. It measures the cost of work already done and says ' +
+      'nothing about how the lifter arrived. A depressed entry with a flat decay and a normal ' +
+      'entry with a steep decay are opposite situations: the first argues for cutting the ' +
+      'session short or coming back better rested, the second for the session having landed the ' +
+      'work it was for. A single blended decay number cannot separate them, which is why these ' +
+      'ship as two fields rather than one. Quote both at every tier as conversation starters, ' +
+      'never as verdicts: velocity at a fixed load carries a between-session CV around 22.5% in ' +
+      "the free-weight back squat, so a move smaller than the lifter's own band is measurement " +
+      'noise. Each axis carries its own confidence and names which confounders — rest, load, ' +
+      'eccentric setting, warm-up state — its comparison actually held fixed, so read the ' +
+      'uncontrolled list before quoting a number.',
+    sources: [
+      'senturk-2026-load-velocity-fatigue-discrimination-bmc-sports',
+      'thomassen-2025-substrate-depletion-time-to-failure-front-physiol',
+      'vargas-molina-2024-ketogenic-diet-velocity-loss-jissn',
+      'chung-2026-set-to-set-velocity-decline-applied-sciences',
+      'banyard-2017-1rm-and-velocity-reliability-jscr',
+    ],
+    caveats: [
+      'A non-zero late-session decay is what a working session looks like, not a finding. ' +
+        'Trained athletes doing two sets of five back squats at 60% 1RM showed a steeper ' +
+        'intra-set slope in set 2 than set 1 with no manipulation of any kind (Chung 2026), so ' +
+        'set-to-set steepening is the baseline expectation and only an unusually large value is ' +
+        'worth raising.',
+      'NEITHER AXIS ATTRIBUTES A CAUSE, and neither one is evidence about what the lifter ate. ' +
+        'Where a glycogen contrast is large enough to matter at all it changes how LONG work is ' +
+        'sustained, not how fast each contraction decays: time to task failure ran 65% longer on ' +
+        'the loaded leg while MVC, twitch force and RFD were unaffected (Thomassen 2025). ' +
+        'This server stops sets at a velocity-loss threshold, so it never observes the variable ' +
+        'that moves. The one study to measure squat velocity loss under six weeks of ' +
+        'carbohydrate restriction found no change in it (p = 0.591, Vargas-Molina 2024). ' +
+        'Do not offer a nutrition reading of either axis: carbohydrate adequacy stays a ' +
+        'self-report and a diet-phase covariate, with no telemetry claim behind it.',
+      'This entry cites primary literature rather than the mined RP corpus, so its source ids ' +
+        'are author-year keys and not `rp-*` note ids. The two axes are also not independent ' +
+        'measurements of one thing: they answer different questions off overlapping sets, and a ' +
+        'lifter can legitimately be high on both.',
+    ],
+  },
 };
