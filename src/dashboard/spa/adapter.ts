@@ -626,6 +626,14 @@ export interface AccumulatorState {
   setLog: CompletedSet[];
   /** Unix-ms when the current rest period began (last set ended); null if none. */
   restStartMs: number | null;
+  /**
+   * Unix-ms when the set currently open began; null while none is. The mirror image of
+   * {@link restStartMs}, and read by anything that has to dismiss itself when the lifter
+   * goes back to work — the isometric verdict card (VW-264) is the first such consumer.
+   * Observed, not authoritative: it is the tick the transition was SEEN on, so a client
+   * that joined mid-set has none until the next set starts.
+   */
+  setStartMs: number | null;
 }
 
 export function initialAccumulatorState(): AccumulatorState {
@@ -637,6 +645,7 @@ export function initialAccumulatorState(): AccumulatorState {
     lastSessionId: null,
     setLog: [],
     restStartMs: null,
+    setStartMs: null,
   };
 }
 
@@ -726,6 +735,11 @@ export function reduceSnapshot(
   if (state.prevSetActive && !setIsActive) restStartMs = nowMs;
   if (!state.prevSetActive && setIsActive && restStartMs !== null) restStartMs = null;
 
+  // Set-start clock, the mirror of the rest clock above.
+  let setStartMs = state.setStartMs;
+  if (!state.prevSetActive && setIsActive) setStartMs = nowMs;
+  if (state.prevSetActive && !setIsActive) setStartMs = null;
+
   return {
     prevSetActive: setIsActive,
     lastActiveSet,
@@ -734,5 +748,6 @@ export function reduceSnapshot(
     lastSessionId,
     setLog,
     restStartMs,
+    setStartMs,
   };
 }

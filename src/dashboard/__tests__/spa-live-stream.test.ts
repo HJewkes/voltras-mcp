@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLiveStreamController, type LiveModel } from '../spa/live-stream.js';
 import type {
+  LiveIsometricResultSignal,
   LiveIsometricSignal,
   LivePhaseSignal,
   LiveRepSignal,
@@ -176,6 +177,43 @@ describe('createLiveStreamController — isometric echo (VW-198)', () => {
     const dispose = createLiveStreamController(() => {});
     const es = MockEventSource.instances.at(-1)!;
     expect(() => es.emit('isometric', isometricSignal())).not.toThrow();
+    dispose();
+  });
+});
+
+describe('createLiveStreamController — isometric result echo (VW-264)', () => {
+  const resultSignal: LiveIsometricResultSignal = {
+    tool: 'isometric.measure_imbalance',
+    sides: [
+      { side: 'left', slot: 'left', peakForceLbs: 180.4 },
+      { side: 'right', slot: 'right', peakForceLbs: 151.2 },
+    ],
+    asymmetryPct: 16.2,
+    verdict: 'meaningful',
+    reason: 'Asymmetry exceeds this athlete’s own intra-limb CV.',
+    comparability: null,
+    setupReason: null,
+    occurredAt: 1_700_000_000_000,
+  };
+
+  it('forwards the isometric_result echo verbatim', () => {
+    const results: LiveIsometricResultSignal[] = [];
+    const dispose = createLiveStreamController(
+      () => {},
+      undefined,
+      undefined,
+      (result) => results.push(result),
+    );
+    const es = MockEventSource.instances.at(-1)!;
+    es.emit('isometric_result', resultSignal);
+    expect(results).toEqual([resultSignal]);
+    dispose();
+  });
+
+  it('never calls onIsometricResult when the controller is started without one', () => {
+    const dispose = createLiveStreamController(() => {});
+    const es = MockEventSource.instances.at(-1)!;
+    expect(() => es.emit('isometric_result', resultSignal)).not.toThrow();
     dispose();
   });
 });

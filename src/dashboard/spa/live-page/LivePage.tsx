@@ -16,6 +16,8 @@ import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
 import { EmptyLiveView, SessionEndedView } from './EmptyLiveView';
 import { IsometricWalkthrough } from './IsometricWalkthrough';
+import { IsometricVerdictCard } from './IsometricVerdictCard';
+import { deriveIsometricVerdictCard } from './isometric-verdict-model';
 import {
   deriveMissedSetsMetric,
   deriveRailExercises,
@@ -211,6 +213,17 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
   // The isometric walkthrough is SSE-fed independently of `model` (VW-198) — it hides
   // itself when no hold is in progress, so it's safe to always mount here.
   const isometric = useStore(dashboardStore, (s) => s.isometric);
+  // The verdict card (VW-264) is SSE-fed the same way, and dwells on its own clock — the
+  // store's 1 s tick is what expires it, so no timer lives in the component.
+  const isometricResult = useStore(dashboardStore, (s) => s.isometricResult);
+  const nowMs = useStore(dashboardStore, (s) => s.nowMs);
+  const setStartMs = useStore(dashboardStore, (s) => s.accumulator.setStartMs);
+  const verdict = deriveIsometricVerdictCard({
+    result: isometricResult,
+    hold: isometric,
+    setStartMs,
+    nowMs,
+  });
   const exercises = deriveRailExercises(model, displayUnit);
   // Volume/Tonnage rollup (VW-52), plus a "Missed: N" tile (VW-262) when at
   // least one set missed its rep floor — appended, never replacing, so a
@@ -307,6 +320,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
       {/* Subtle wall-corner unit toggle — overlays the stage, out of the reading path. */}
       <UnitToggle unit={displayUnit} onChange={setDisplayUnit} />
       <IsometricWalkthrough signal={isometric} />
+      <IsometricVerdictCard card={verdict.visible ? verdict.card : null} />
     </Surface>
   );
 }

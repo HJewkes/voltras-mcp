@@ -409,6 +409,21 @@ function phasesOf(published: PublishedEvent[]): string[] {
   return published.filter((e) => e.meta.event_type === 'isometric_phase').map((e) => e.meta.phase);
 }
 
+/** The `isometric_result` push body (VW-264), as a consumer reads it off `content`. */
+interface IsometricResultBody {
+  tool: string;
+  sides: { side: string | null; slot: string; peakForceLbs: number | null }[];
+  asymmetryPct: number | null;
+  verdict: string | null;
+  comparability: string | null;
+  setupReason: string | null;
+}
+
+/** Trial numbers off the phase pushes only — `isometric_result` belongs to no trial. */
+function trialsOf(published: PublishedEvent[]): string[] {
+  return published.filter((e) => e.meta.event_type === 'isometric_phase').map((e) => e.meta.trial);
+}
+
 interface MeasureHoldBody {
   ok: boolean;
   slot: string;
@@ -776,7 +791,25 @@ describe('isometric.measure_max', () => {
       'hold',
       'stop',
     ]);
-    expect(published.map((e) => e.meta.trial)).toEqual(['1', '1', '1', '1', '2', '2', '2', '2']);
+    expect(trialsOf(published)).toEqual(['1', '1', '1', '1', '2', '2', '2', '2']);
+  });
+
+  it('publishes one isometric_result after the last trial (VW-264)', async () => {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    await promise;
+
+    const results = published.filter((e) => e.meta.event_type === 'isometric_result');
+    expect(results).toHaveLength(1);
+    // Single-sided: one peak, no asymmetry to report and so no verdict to give.
+    const body = (JSON.parse(results[0].content) as { isometric_result: Record<string, unknown> })
+      .isometric_result;
+    expect(body.tool).toBe('isometric.measure_max');
+    expect(body.asymmetryPct).toBeNull();
+    expect(body.verdict).toBeNull();
+    expect(body.sides).toHaveLength(1);
   });
 
   it('returns null mean when fewer than 2 trials are valid', async () => {
@@ -850,15 +883,21 @@ describe('isometric.measure_imbalance', () => {
   let leftClient: FakeClient;
   let rightClient: FakeClient;
   let store: FakeStore;
+  let published: PublishedEvent[];
 
   beforeEach(() => {
     vi.useFakeTimers();
     leftClient = makeFakeClient();
     rightClient = makeFakeClient();
     store = makeFakeStore();
+    published = [];
     const state = makeState(
       { left: leftClient, right: rightClient },
-      { store, deviceIds: { left: 'AA:BB:CC:01', right: 'AA:BB:CC:02' } },
+      {
+        store,
+        deviceIds: { left: 'AA:BB:CC:01', right: 'AA:BB:CC:02' },
+        channels: makeChannels(published),
+      },
     );
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
@@ -911,6 +950,20 @@ describe('isometric.measure_imbalance', () => {
     expect(leftClient.unsubscribeCount).toBe(2);
     expect(rightClient.subscribeCount).toBe(2);
     expect(rightClient.unsubscribeCount).toBe(2);
+
+    // VW-264: one result push, after both sides ran, carrying both peaks and the
+    // same verdict the tool result reports. No slot on the envelope — a two-slot
+    // answer cannot honestly be stamped with either one.
+    const results = published.filter((e) => e.meta.event_type === 'isometric_result');
+    expect(results).toHaveLength(1);
+    expect(results[0].meta).not.toHaveProperty('slot');
+    const pushed = (JSON.parse(results[0].content) as { isometric_result: IsometricResultBody })
+      .isometric_result;
+    expect(pushed.tool).toBe('isometric.measure_imbalance');
+    expect(pushed.verdict).toBe(body.imbalance.real ? 'meaningful' : 'flagged');
+    expect(pushed.sides.map((s) => s.side)).toEqual(['left', 'right']);
+    expect(pushed.sides[0].peakForceLbs).toBeGreaterThan(170);
+    expect(pushed.asymmetryPct).toBeGreaterThan(0);
   });
 
   it('testNonDominantFirst with primary=left + dominantSide=left swaps test order', async () => {
@@ -1137,6 +1190,7 @@ describe('isometric.measure_imbalance — setup geometry gate (VW-284)', () => {
   let rightClient: FakeClient;
   let store: FakeStore;
   let measureImbalanceCb: Callback;
+  let published: PublishedEvent[];
 
   const EXERCISE_ID = 'cable-row';
 
@@ -1145,7 +1199,11 @@ describe('isometric.measure_imbalance — setup geometry gate (VW-284)', () => {
     leftClient = makeFakeClient();
     rightClient = makeFakeClient();
     store = makeFakeStore();
-    const state = makeState({ left: leftClient, right: rightClient }, { store, exerciseIds });
+    published = [];
+    const state = makeState(
+      { left: leftClient, right: rightClient },
+      { store, exerciseIds, channels: makeChannels(published) },
+    );
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
     measureImbalanceCb = slots.get('isometric.measure_imbalance')!.callback;
@@ -1233,6 +1291,18 @@ describe('isometric.measure_imbalance — setup geometry gate (VW-284)', () => {
     expect(body.imbalance.asymmetryPct).not.toBeNull();
     expect(body.left.meanPeakForceLbs).toBeGreaterThan(170);
     expect(body.right.meanPeakForceLbs).toBeGreaterThan(150);
+
+    // VW-264: the wall is told the same thing the tool result says. The gate's BARE
+    // wording rides as `setupReason` so the card can prefix it without doubling up.
+    const pushed = (
+      JSON.parse(published.filter((e) => e.meta.event_type === 'isometric_result')[0].content) as {
+        isometric_result: IsometricResultBody;
+      }
+    ).isometric_result;
+    expect(pushed.verdict).toBeNull();
+    expect(pushed.comparability).toBe('setup_confounded');
+    expect(pushed.setupReason).toBe(body.setupReason);
+    expect(pushed.asymmetryPct).not.toBeNull();
   });
 
   it('one side has no confirmed setup: setup_unverified, verdict still reported', async () => {

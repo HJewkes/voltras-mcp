@@ -1,6 +1,6 @@
-// Tees `isometric_phase` channel events into the live-signal hub (VW-198) so the
-// dashboard's existing SSE stream can drive an isometric-hold walkthrough without a
-// second push transport or any change to `isometric-tools.ts`. Passthrough is
+// Tees `isometric_phase` (VW-198) and `isometric_result` (VW-264) channel events into
+// the live-signal hub so the dashboard's existing SSE stream can drive an isometric-hold
+// walkthrough and its verdict card without a second push transport. Passthrough is
 // byte-identical to the undecorated publisher; the hub itself is a no-op fan-out when
 // no dashboard is subscribed (`LiveSignalHub.emit` over an empty listener set).
 //
@@ -10,6 +10,7 @@
 import type { ChannelEvent, ChannelPublisher } from './channel-publisher.js';
 import {
   type LiveIsometricPhase,
+  type LiveIsometricResultSignal,
   type LiveIsometricSignal,
   type LiveSignalHub,
 } from './live-signal.js';
@@ -47,8 +48,31 @@ function decodeIsometricSignal(
 }
 
 /**
+ * Decode an `isometric_result` channel event (VW-264) into the live-signal shape.
+ *
+ * Unlike the phase decoder above this reads the CONTENT rather than `meta`: the payload
+ * is a nested object (per-side peaks) and `meta` is flat strings, so re-flattening it
+ * there only to re-parse it here would be two lossy conversions instead of one exact
+ * one. Same additive posture — anything unrecognised returns null and the wall simply
+ * never shows a card.
+ */
+function decodeIsometricResult(event: ChannelEvent): LiveIsometricResultSignal | null {
+  if (event.meta.event_type !== 'isometric_result') return null;
+  try {
+    const parsed = JSON.parse(event.content) as { isometric_result?: LiveIsometricResultSignal };
+    const result = parsed.isometric_result;
+    if (result === undefined || !Array.isArray(result.sides)) return null;
+    if (typeof result.tool !== 'string' || typeof result.occurredAt !== 'number') return null;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Channel publisher decorator that forwards every event to `inner` unchanged, then
- * feeds `isometric_phase` events into the live-signal hub as an `isometric` signal.
+ * feeds `isometric_phase` events into the live-signal hub as an `isometric` signal and
+ * `isometric_result` events as an `isometric_result` signal.
  */
 export class IsometricLiveTeePublisher implements ChannelPublisher {
   constructor(
@@ -62,6 +86,8 @@ export class IsometricLiveTeePublisher implements ChannelPublisher {
     this.inner.publish(event);
     const signal = decodeIsometricSignal(event, this.slotId);
     if (signal !== null) this.hub.emit({ type: 'isometric', data: signal });
+    const result = decodeIsometricResult(event);
+    if (result !== null) this.hub.emit({ type: 'isometric_result', data: result });
   }
 
   forSlot(slotId: string): ChannelPublisher {

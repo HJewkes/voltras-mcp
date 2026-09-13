@@ -1,9 +1,10 @@
-// Unit tests for the isometric_phase → live-signal tee (VW-198).
+// Unit tests for the isometric_phase (VW-198) / isometric_result (VW-264)
+// → live-signal tee.
 
 import { describe, expect, it } from 'vitest';
 
 import type { ChannelEvent, ChannelPublisher } from '../channel-publisher.js';
-import { buildIsometricPhasePayload } from '../channel-payloads.js';
+import { buildIsometricPhasePayload, buildIsometricResultPayload } from '../channel-payloads.js';
 import { installIsometricLiveTee } from '../isometric-live-signal-tee.js';
 import { LiveSignalHub, type LiveSignalEvent } from '../live-signal.js';
 
@@ -135,5 +136,76 @@ describe('installIsometricLiveTee', () => {
       ),
     ).not.toThrow();
     expect(published).toHaveLength(1);
+  });
+});
+
+describe('installIsometricLiveTee — isometric_result (VW-264)', () => {
+  const RESULT_INPUT: Parameters<typeof buildIsometricResultPayload>[0] = {
+    tool: 'isometric.measure_imbalance',
+    sides: [
+      { side: 'left', slot: 'left', peakForceLbs: 180.44 },
+      { side: 'right', slot: 'right', peakForceLbs: 151.2 },
+    ],
+    asymmetryPct: 16.1789,
+    verdict: 'meaningful',
+    reason: 'Asymmetry 16.2% exceeds this athlete’s own intra-limb CV.',
+    occurredAt: 1_700_000_000_000,
+  };
+
+  it('decodes a result event into an isometric_result live-signal, rounded to one place', () => {
+    const { publisher } = fakePublisher();
+    const hub = new LiveSignalHub();
+    const emitted = collectEmitted(hub);
+    const tee = installIsometricLiveTee(publisher, hub);
+    tee.publish(buildIsometricResultPayload(RESULT_INPUT));
+    expect(emitted).toEqual([
+      {
+        type: 'isometric_result',
+        data: {
+          tool: 'isometric.measure_imbalance',
+          sides: [
+            { side: 'left', slot: 'left', peakForceLbs: 180.4 },
+            { side: 'right', slot: 'right', peakForceLbs: 151.2 },
+          ],
+          asymmetryPct: 16.2,
+          verdict: 'meaningful',
+          reason: RESULT_INPUT.reason,
+          comparability: null,
+          setupReason: null,
+          occurredAt: 1_700_000_000_000,
+        },
+      },
+    ]);
+  });
+
+  it('carries the setup gate through untouched when the assessment reports one', () => {
+    const { publisher } = fakePublisher();
+    const hub = new LiveSignalHub();
+    const emitted = collectEmitted(hub);
+    const tee = installIsometricLiveTee(publisher, hub);
+    tee.publish(
+      buildIsometricResultPayload({
+        ...RESULT_INPUT,
+        verdict: null,
+        comparability: 'setup_confounded',
+        setupReason: 'cable travel differs between the sides',
+      }),
+    );
+    const [event] = emitted;
+    expect(event?.type).toBe('isometric_result');
+    expect(event?.type === 'isometric_result' && event.data.comparability).toBe('setup_confounded');
+    expect(event?.type === 'isometric_result' && event.data.setupReason).toBe(
+      'cable travel differs between the sides',
+    );
+  });
+
+  it('ignores a result event whose content is not parseable', () => {
+    const { publisher } = fakePublisher();
+    const hub = new LiveSignalHub();
+    const emitted = collectEmitted(hub);
+    const tee = installIsometricLiveTee(publisher, hub);
+    tee.publish({ meta: { event_type: 'isometric_result' }, content: 'not json' });
+    tee.publish({ meta: { event_type: 'isometric_result' }, content: '{"isometric_result":{}}' });
+    expect(emitted).toEqual([]);
   });
 });

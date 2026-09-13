@@ -65,6 +65,10 @@ which is worse than an absent one:
 - `voltras_available` — fires while scanning, before any device is bound to a slot.
 - `debug.push_test_channel`'s probe — a diagnostic round-trip that echoes back exactly
   the caller's own `meta` plus a `nonce`; it gets `at`, but never a synthesized `slot`.
+- `isometric_result` — a bilateral assessment is ONE answer about TWO slots, so either
+  slot stamped on the envelope would misattribute the other. Each side names its own slot
+  inside the payload's `sides` array instead. The single-sided `isometric.measure_max`
+  form publishes the same way, so the event has one shape rather than two.
 
 Two more events carry slot information, but not under the `slot` key, so a consumer
 filtering on `slot` silently drops them even though each one knows exactly which
@@ -98,6 +102,7 @@ filters on.
 | `voice_command_applied`          | The voice fast-path already changed the weight locally. See [the voice fast-path](#the-voice-fast-path).                                                                                        | —                         |
 | `voice_command_rejected`         | A spoken weight command was recognized but not applied; rides alongside a `voice_input`.                                                                                                        | —                         |
 | `isometric_phase`                | An isometric hold moves between phases. See [isometric hold phases](#isometric-hold-phases).                                                                                                    | —                         |
+| `isometric_result`               | An isometric assessment finished computing its answer. See [the isometric result](#the-isometric-result).                                                                                       | —                         |
 | `lease_lost`                     | A multi-step device write stopped partway because another client took the lease. See [below](#lease_lost).                                                                                      | —                         |
 
 This table covers the events a coaching flow is built around; it is not guaranteed
@@ -153,7 +158,11 @@ whenever two of the counts it knows about differ:
     "counts": [
       { "source": "analytics_reps", "count": 13, "provenance": "reps this server segmented ..." },
       { "source": "device_total", "count": 14, "provenance": "the device's own running rep ..." },
-      { "source": "device_set_summary", "count": 12, "provenance": "the count on the device's ..." },
+      {
+        "source": "device_set_summary",
+        "count": 12,
+        "provenance": "the count on the device's ...",
+      },
     ],
     "deltas": [
       { "between": ["analytics_reps", "device_total"], "difference": 1 },
@@ -167,12 +176,12 @@ whenever two of the counts it knows about differ:
 
 The four sources, and where each number already appears on the payload:
 
-| `source`             | Is                                                                | Also visible as                           |
-| -------------------- | ----------------------------------------------------------------- | ----------------------------------------- |
-| `analytics_reps`     | Reps this server segmented out of the telemetry stream            | `meta.rep_count`, `content.reps.length`   |
-| `device_total`       | The device's own running rep total, verbatim                      | `meta.device_rep_count`                   |
-| `device_set_summary` | The count on the device's end-of-set summary, as it arrived        | `content.device_set_summary.rep_count`    |
-| `device_summary`     | The count on the device's end-of-workout summary, as it arrived    | `content.device_summary.rep_count`        |
+| `source`             | Is                                                              | Also visible as                         |
+| -------------------- | --------------------------------------------------------------- | --------------------------------------- |
+| `analytics_reps`     | Reps this server segmented out of the telemetry stream          | `meta.rep_count`, `content.reps.length` |
+| `device_total`       | The device's own running rep total, verbatim                    | `meta.device_rep_count`                 |
+| `device_set_summary` | The count on the device's end-of-set summary, as it arrived     | `content.device_set_summary.rep_count`  |
+| `device_summary`     | The count on the device's end-of-workout summary, as it arrived | `content.device_summary.rep_count`      |
 
 Read it as a signal, not an error. The device counts reps and this server only
 enriches them, so a split means something about the derivation or the capture
@@ -230,6 +239,68 @@ All three `isometric.*` tools emit these, because `measure_max` and `measure_imb
 run the same single hold N times; `trial` counts the holds within a side, so a
 three-trial run emits twelve events. The events are text on the channel — voicing them
 is a cue-surface decision, not something the server does.
+
+## The isometric result
+
+The phase events walk the athlete through a hold; nothing told them what the hold
+MEASURED. The tool result goes back to the MCP client only, so a lifter standing at the
+rig learned their own asymmetry from a spoken cue the model chose to give, or not at all.
+`isometric_result` (VW-264) carries the finished numbers onto the same push surface the
+phases already ride, once per assessment, after the result is computed.
+
+```jsonc
+{
+  "summary": "isometric.measure_imbalance: Asymmetry 16.2% exceeds this athlete's own intra-limb CV of 4.1% on the same test.",
+  "isometric_result": {
+    "tool": "isometric.measure_imbalance",
+    "sides": [
+      { "side": "left", "slot": "left", "peakForceLbs": 180.4 },
+      { "side": "right", "slot": "right", "peakForceLbs": 151.2 },
+    ],
+    "asymmetryPct": 16.2,
+    "verdict": "meaningful",
+    "reason": "Asymmetry 16.2% exceeds this athlete's own intra-limb CV of 4.1% on the same test.",
+    "comparability": "comparable", // the setup gate's answer; null for measure_max
+    "setupReason": "both sides' confirmed setups agree on cable travel",
+    "occurredAt": 1757740000000,
+  },
+}
+```
+
+`meta` carries `event_type: isometric_result` and `tool`, plus `verdict` and
+`comparability` when each has a value, and the usual `at`. It carries no `slot` — see
+the [slot-exception list](#events) above for why.
+
+`verdict` has three values, and the third one is the absence of the other two:
+
+| `verdict`    | Means                                                                              |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `meaningful` | The between-limb percentage exceeds this athlete's own intra-limb CV on this test. |
+| `flagged`    | A difference was measured, but it sits inside that CV. Shown, not concluded from.  |
+| `null`       | No verdict at all. See below.                                                      |
+
+There is no fixed asymmetry threshold behind any of this: the comparison is always
+against the athlete's own trial-to-trial spread on the same test, which is the whole
+point of `isometric.measure_imbalance`'s report and is unchanged by this event.
+
+A `null` verdict is three different silences, and the `reason` says which: a side
+produced fewer than 2 valid trials so there is no mean to compare, the run was
+single-sided (`isometric.measure_max`, whose `sides` has one entry and whose
+`asymmetryPct` is always `null`), or the setup-geometry gate withheld it. Only the last
+carries `comparability: setup_confounded`; the wall renders that one as a withheld
+verdict naming `setupReason`, never as "no difference found".
+
+`comparability` is the same `setupComparability` the `isometric.measure_imbalance` tool
+result reports (VW-284) — `comparable`, `setup_confounded` or `setup_unverified` — and is
+`null` only on the single-sided `isometric.measure_max`, which has no two setups to
+compare. `setup_unverified` does NOT withhold: the gate could not run, which is a
+different claim from a mismatch, so the verdict rides unchanged and `setupReason` says
+what went unchecked. `setupReason` is the gate's bare wording, without the
+"Verdict withheld:" prefix the tool result's `interpretation` carries, so a surface can
+frame it however it frames things.
+
+`peakForceLbs` is the mean of that side's best two valid trials, in pounds, or `null`
+under two valid trials. Forces and percentages are rounded to one decimal place.
 
 ## The voice fast-path
 
@@ -310,11 +381,11 @@ A `velocity_loss_exceeded` spec does not have to carry a number. The threshold i
 to the training goal, and `set.start` resolves it once, at set start, from the first of
 these that is available:
 
-| source        | spec carries         | threshold                                     |
-| ------------- | -------------------- | --------------------------------------------- |
-| `explicit`    | `pct`                | that number, unchanged                        |
-| `set_intent`  | `intent`             | strength 20%, hypertrophy 30%, power 10%      |
-| `plan_intent` | neither              | the planned exercise's `trainingIntent`, same defaults |
+| source        | spec carries | threshold                                              |
+| ------------- | ------------ | ------------------------------------------------------ |
+| `explicit`    | `pct`        | that number, unchanged                                 |
+| `set_intent`  | `intent`     | strength 20%, hypertrophy 30%, power 10%               |
+| `plan_intent` | neither      | the planned exercise's `trainingIntent`, same defaults |
 
 With none of the three the call is refused rather than registering a watch that can never
 fire. The defaults sit in published bands — strength 10-20%, hypertrophy 25-40%, power 10%
