@@ -95,9 +95,17 @@ Pulling a coach's assigned workouts the other direction — TrueCoach into the l
 tree — is a different, already-read-only tool: see
 [`truecoach.import_week`](/reference/truecoach).
 
+## Weekly
+
+[`report.weekly`](/reference/report) rolls per-session results like the ones above up over
+a date range — sessions completed, a rolling 28-day count, adherence and its trend,
+progression suggestions, flags, and a check-in section. See the
+[weekly report guide](/guides/weekly-report) for what each part means and how to call it.
+
 ## What to read next
 
 - The [`report.*` reference](/reference/report) for the tool's full schema.
+- The [weekly report guide](/guides/weekly-report) for the rolled-up multi-session view.
 - The [`truecoach.*` reference](/reference/truecoach) for the read-only pull path.
 - [The planned-session guide](/guides/planned-session) for what makes a set count toward
   `missed:`.
