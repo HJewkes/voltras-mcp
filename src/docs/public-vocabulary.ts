@@ -142,6 +142,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'seeLbs',
   'seePct',
   'seePctCi',
+  // VW-270: the asymmetry verdict's own fields, on
+  // `isometric.measure_imbalance`. The percentage is meaningless without the
+  // CVs it was judged against, so the description names all of them and every
+  // one is a number a caller reads off the result.
+  'asymmetryPct',
+  'intraLimbCvPct',
+  'noiseFloorCvPct',
+  'directionHistory',
+  'testsCompared',
+  'agreementPct',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',

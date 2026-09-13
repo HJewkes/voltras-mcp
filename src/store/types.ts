@@ -1320,8 +1320,12 @@ export interface SessionStore extends ExerciseSetupStore {
    * adapter, or on a unit that dropped mid-assessment, stores no device id at
    * all, so keying the series on one device silently drops those runs and
    * shortens the history that the consistent/fluctuating call is made from.
-   * Scope is the database, which is one athlete's — `VMCP_DB_PATH` is per
-   * process and per lifter.
+   * SCOPE IS THE WHOLE DATABASE, and nothing narrows it. `isometric_measurements`
+   * carries no lifter, exercise or session key, so there is no column to filter
+   * on — a second lifter's assessment, or the same lifter tested at a different
+   * joint, lands in the same series. Callers must say so rather than implying a
+   * per-lifter, per-joint history. A schema change to fix that is filed
+   * separately; this method does not pretend to have one.
    */
   listRecentIsometricMeasurements(opts?: { limit?: number }): Promise<StoredIsometricMeasurement[]>;
 

@@ -150,16 +150,31 @@ words what was compared.
 
 `directionHistory` then reports whether the same limb dominated across recent tests:
 `consistent-left`, `consistent-right`, `fluctuating`, or `insufficient-history` under three
-tests with a direction (`src/state/isometric-protocol.ts:427-475`). A consistent direction
-may warrant a closer look at that limb; a fluctuating one is ordinary between-session
-variation. `directionHistory` is `null` only when the history could not be read at all,
-which is not the same answer as a short history
-(`src/tools/isometric-tools.ts:474-490`).
+tests with a direction (`src/state/isometric-protocol.ts:427-475`). `testsCompared` says how
+many stored tests carried a direction at all, and `agreementPct` the share of those that
+named the more common limb. A consistent direction may warrant a closer look at that limb; a
+fluctuating one is ordinary between-session variation. `directionHistory` is `null` only when
+the history could not be read at all, which is not the same answer as a short history
+(`src/tools/isometric-tools.ts:493-508`).
+
+### What `directionHistory` is actually a history of
+
+Read the scope limit before trusting the label. `isometric_measurements` carries **no
+lifter, exercise or session key**, so there is no column to filter the series on — it
+aggregates every isometric assessment stored in this database. It answers "has the same limb
+dominated on this rig", not "has it dominated for this lifter on this joint".
+
+That makes it meaningful only when one lifter has been testing one joint against this
+store. A second lifter's assessment, or the same lifter tested at a different joint, lands
+in the same series, and a `consistent-left` built out of two people's tests means nothing.
+Check `testsCompared` against what you know was actually tested before acting on the
+label. A schema change to key these rows properly is filed as its own task; nothing in the
+current code fakes a filter it does not have.
 
 Each side's per-trial measurements are persisted, keyed on the connected device's own id so
 the series survives a `slot.swap` — no verdict is stored. The percentage, the direction and
 the real/not-real call are recomputed from the stored trials on every read, against whatever
-rules are current at read time (`src/tools/isometric-tools.ts:498-521`), which is what let
+rules are current at read time (`src/tools/isometric-tools.ts:517-540`), which is what let
 VW-270 change the rules without stranding a single stored row. The write is best-effort: a
 store failure returns `measurementId: null` rather than discarding a result that just cost
 the athlete real effort to produce (`src/tools/isometric-tools.ts:293-301`).

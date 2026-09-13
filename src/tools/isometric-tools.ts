@@ -132,23 +132,33 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'known and testNonDominantFirst is true (default), the non-dominant side',
   'is tested first to control for within-session fatigue.',
   '',
-  'THERE IS NO FIXED ASYMMETRY THRESHOLD HERE (VW-270). The asymmetry',
-  'percentage is the standard percentage difference,',
-  '(stronger − weaker) / stronger × 100, and the equation is named in the',
-  'output because the valid equation is chosen by the test method (Bishop et al.',
-  '2018) and percentages from different equations are not comparable. The',
-  "difference is marked real ONLY when it exceeds this athlete's own intra-limb",
-  'CV across the very trials being compared (Bishop et al. 2023) — a difference',
-  "smaller than a limb's own trial-to-trial spread is a measurement, not a",
-  "capacity gap. Both sides' CVs and the noise floor used are returned next to",
-  'the verdict.',
+  'THERE IS NO FIXED ASYMMETRY THRESHOLD HERE (VW-270). asymmetryPct is the',
+  'standard percentage difference, (stronger − weaker) / stronger × 100, and',
+  'the equation it came from is named in the output because the valid equation',
+  'is chosen by the test method (Bishop et al. 2018) and percentages from',
+  'different equations are not comparable. The difference is marked real ONLY',
+  "when asymmetryPct exceeds this athlete's own intra-limb CV across the very",
+  'trials being compared (Bishop et al. 2023) — a difference smaller than a',
+  "limb's own trial-to-trial spread is a measurement, not a capacity gap. Read",
+  "intraLimbCvPct for each side's own CV and noiseFloorCvPct for the one it was",
+  'judged against (the higher of the two, because the difference has to clear',
+  'both limbs).',
   '',
-  'The direction summary reports whether the SAME limb dominated across recent',
-  'tests: consistent-left / consistent-right / fluctuating, or',
-  'insufficient-history under 3 tests. Direction, not one magnitude, is the',
-  'interpretable signal — re-test agreement on limb dominance is only',
-  'fair-to-substantial (Bishop et al. 2019). A consistent direction may warrant',
-  'a closer look; a fluctuating one does not.',
+  'directionHistory reports whether the SAME limb dominated across recent tests:',
+  'consistent-left / consistent-right / fluctuating, or insufficient-history',
+  'under 3 tests, with testsCompared for how many tests carried a direction and',
+  'agreementPct for the share that named the more common limb. Direction, not',
+  'one magnitude, is the interpretable signal — re-test agreement on limb',
+  'dominance is only fair-to-substantial (Bishop et al. 2019). A consistent',
+  'direction may warrant a closer look; a fluctuating one does not.',
+  '',
+  'SCOPE LIMIT on directionHistory: stored assessments carry no lifter,',
+  'exercise or session key, so the series is EVERY isometric assessment in this',
+  'database, not this lifter tested on this joint. It is meaningful only when',
+  'one lifter has been testing one joint on this rig. A second lifter, or the',
+  'same lifter tested at a different joint, mixes into the same series and its',
+  'consistent / fluctuating label stops meaning anything. Read testsCompared',
+  'against what you know was actually tested before trusting the label.',
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -466,6 +476,14 @@ const DIRECTION_HISTORY_LIMIT = 20;
 /**
  * Summarize limb dominance over the stored assessments, including the one this
  * run just wrote (VW-270).
+ *
+ * SCOPE LIMIT, stated in the tool description too: `isometric_measurements` has
+ * no lifter, exercise or session key, so this aggregates every assessment in
+ * the database. It answers "has the same limb dominated on this rig" and NOT
+ * "has it dominated for this lifter on this joint" — a second lifter, or the
+ * same lifter tested at a different joint, mixes in and the label degrades.
+ * The fix is a schema change, filed as its own task; nothing here fakes the
+ * filter it does not have.
  *
  * Never throws, for the same reason `persistMeasurement` does not: the
  * measurement in hand cost the athlete ten-plus minutes of maximal effort and
