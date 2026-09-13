@@ -109,6 +109,17 @@ Once at least 2 trials are valid, the tool takes the best 2 by plateau force and
 - **`inferredWorkingWeightLbs`** — 70% of the mean, rounded to the nearest 5 lb and clamped
   up to 5 lb (the device's own settable floor) so it's always a value the device will
   accept.
+- **`inferredWorkingWeightBasis`** — what that weight is and is not, shipped with the number
+  rather than only in the tool description (`src/tools/isometric-tools.ts:278-294`).
+
+That last field exists because the weight is a **heuristic, not a validated conversion**
+(VW-273). No study validates a cable-device isometric maximum as a predictor of dynamic
+cable loads, no `plan.*` or `progression.*` path consumes one, and it is never a 1RM proxy.
+Joint angle dominates what an isometric maximum predicts at all: an isometric squat predicted
+the full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum
+et al., _Sports_ 2020). Held at the wrong angle for the exercise you mean to load, the number
+means very little. A description is read once when the model picks the tool; the number is
+read every time the result is, so the caveat travels with the number.
 
 ## What the wall shows during a hold
 
@@ -178,6 +189,29 @@ rules are current at read time (`src/tools/isometric-tools.ts:517-540`), which i
 VW-270 change the rules without stranding a single stored row. The write is best-effort: a
 store failure returns `measurementId: null` rather than discarding a result that just cost
 the athlete real effort to produce (`src/tools/isometric-tools.ts:293-301`).
+
+### What the result does not license
+
+**No corrective unilateral work is prescribed from a detected asymmetry** — not here, not by
+`coaching.explain`, not by `plan.suggest_progression`. The intervention literature does not
+support it. Meta-analysed against bilateral training, unilateral training was clearly better
+for unilateral jump (ES 0.89, 95% CI 0.52-1.26) and worse for bilateral strength (ES -0.43,
+CI -0.71 to -0.14), while unilateral strength, bilateral jump, sprint and change of direction
+were all non-significant (Liao et al., _Biology of Sport_ 2022). Unilateral work is
+goal-specific: prescribe it when single-limb capacity is the goal. The evidence that any
+method reduces asymmetry at all is thin — a seven-week bilateral back-squat block moved
+isometric peak-force asymmetry only in the subgroup that started weaker, and several combined
+and flywheel programmes improved performance while leaving asymmetry untouched (Bishop et al.
+2023). The stated answer to a detected difference is consistent strength training over time.
+Ask `coaching.explain` for `meso.asymmetry_interpretation` to get this with its citations.
+
+**There is no published re-test cadence for asymmetry, and this server invents none.** No
+interval appears anywhere in these tools, and none should be read into the
+`insufficient-history` threshold — three tests is the point at which a direction label
+becomes possible, not a schedule. The defensible rule is a decision rule: test often enough
+to judge whether limb dominance is consistent across sessions. See
+[the bilateral guide](/guides/bilateral#what-a-detected-asymmetry-does-not-license) for the
+same two statements alongside the slot-pairing they apply to.
 
 ## The calibration caveat
 

@@ -118,7 +118,16 @@ const MEASURE_MAX_DESCRIPTION = [
   'Returns per-trial peak/plateau forces, validity flags (continuous rise,',
   'peak after 1s, plateau ≥ 90% of peak), and the mean plateau force of',
   'the best 2 of N valid trials. The mean drives a 70% inferred working',
-  'weight (rounded to 5 lb) for downstream programming.',
+  'weight (rounded to 5 lb).',
+  '',
+  'THAT INFERRED WEIGHT IS A HEURISTIC, NOT A VALIDATED CONVERSION (VW-273).',
+  'No study validates a cable-device isometric maximum as a predictor of',
+  'dynamic cable loads, and nothing here treats it as a 1RM proxy. Joint angle',
+  'dominates what an isometric maximum predicts at all: an isometric squat',
+  'predicted the full squat at r 0.864 at 90 degrees of knee flexion but only',
+  'r 0.597 at 120 degrees (Lum et al. 2020), so the number means something only',
+  'when the hold was held at the angle where the exercise peaks. Treat it as a',
+  'starting point a coach adjusts against what the athlete actually lifts.',
   '',
   'For bilateral assessment + asymmetry detection, prefer',
   'isometric.measure_imbalance which composes this tool with the standard',
@@ -159,6 +168,15 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'same lifter tested at a different joint, mixes into the same series and its',
   'consistent / fluctuating label stops meaning anything. Read testsCompared',
   'against what you know was actually tested before trusting the label.',
+  '',
+  'DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK OFF THIS RESULT (VW-273). The',
+  'intervention literature does not support it: unilateral training beats',
+  'bilateral for unilateral jump and loses to it for bilateral strength, with',
+  'everything else non-significant (Liao et al. 2022), so unilateral work is',
+  'goal-specific rather than corrective. The stated answer to a detected',
+  'asymmetry is consistent strength training over time. Each side also reports',
+  'an inferred working weight; it is the same heuristic isometric.measure_max',
+  'labels, carries the same joint-angle caveat, and is never a 1RM proxy.',
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -267,6 +285,24 @@ interface MeasureHoldResult {
   totalElapsedMs: number;
 }
 
+/**
+ * What `inferredWorkingWeightLbs` is, shipped WITH the number rather than only
+ * in the tool description (VW-273).
+ *
+ * A description is read once, when the model picks the tool; the number is read
+ * every time the result is. An unlabelled load off an isometric hold is exactly
+ * the thing the literature does not support — no study validates a cable-device
+ * isometric maximum against dynamic cable loads, and what an isometric maximum
+ * predicts at all is dominated by the joint angle it was held at.
+ */
+const INFERRED_WORKING_WEIGHT_BASIS =
+  'HEURISTIC, not a validated conversion. 70% of the mean plateau force, rounded to 5 lb. ' +
+  'No study validates a cable-device isometric maximum as a predictor of dynamic cable ' +
+  'loads, and this is never a 1RM proxy. Joint angle dominates: an isometric squat ' +
+  'predicted the full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at ' +
+  '120 degrees (Lum et al. 2020), so this figure means something only when the hold was ' +
+  'held at the angle where the exercise peaks. A starting point a coach adjusts, nothing more.';
+
 interface MeasureMaxResult {
   ok: true;
   slot: string;
@@ -275,6 +311,8 @@ interface MeasureMaxResult {
   meanPlateauForceLbs: number | null;
   cvPct: number | null;
   inferredWorkingWeightLbs: number | null;
+  /** What that weight is and is not; see {@link INFERRED_WORKING_WEIGHT_BASIS}. */
+  inferredWorkingWeightBasis: string;
   totalElapsedMs: number;
 }
 
@@ -301,6 +339,8 @@ interface MeasureImbalanceResult {
    * which is a real answer about a short series.
    */
   directionHistory: DirectionHistory | null;
+  /** What each side's inferred weight is and is not; see {@link INFERRED_WORKING_WEIGHT_BASIS}. */
+  inferredWorkingWeightBasis: string;
   totalElapsedMs: number;
   /**
    * Id of the persisted `isometric_measurements` row, or `null` when the write
@@ -388,6 +428,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     meanPlateauForceLbs: result.analysis.meanPlateauForceLbs,
     cvPct: result.analysis.cvPct,
     inferredWorkingWeightLbs: result.analysis.inferredWorkingWeightLbs,
+    inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     totalElapsedMs: Date.now() - startedAt,
   };
 }
@@ -461,6 +502,7 @@ async function measureImbalance(
     right,
     imbalance,
     directionHistory: await readDirectionHistory(state),
+    inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
   };

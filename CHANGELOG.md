@@ -88,6 +88,22 @@ entry is written from the user's point of view is a review question, not a check
   `useTheme`, `Pill`, or the `Shell` family, so none of this release's removals or shape
   changes land on the wall. The live-page screenshot at rest and mid-set is unchanged.
 
+- A detected asymmetry no longer reads as a reason to prescribe single-limb work anywhere in
+  the server (VW-273). `coaching.explain` `meso.asymmetry_interpretation` says so outright and
+  gives the evidence: unilateral training beats bilateral for unilateral jump and loses to it
+  for bilateral strength, with everything else non-significant, so unilateral work is
+  goal-specific rather than corrective, and the stated answer to a difference is consistent
+  strength training over time. `plan.suggest_progression` says the same in its own
+  description, and neither it nor any `progression.*` path reads a left/right difference.
+  The bilateral guide carries both statements.
+
+- The inferred working weight from an isometric hold is now labelled in the RESULT, not only
+  in the tool description (VW-273). `isometric.measure_max` and `isometric.measure_imbalance`
+  both return `inferredWorkingWeightBasis`, which says it is a heuristic rather than a
+  validated conversion and carries the joint-angle caveat: an isometric squat predicted the
+  full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees. A
+  description is read once; the number is read every time.
+
 - `isometric.measure_imbalance` no longer calls an asymmetry noteworthy at 10% or meaningful
   at 15% (VW-270). Both constants are gone. It reports `asymmetryPct` with the `equation` it
   came from, each limb's own trial-to-trial CV, and marks the difference `real` only when it

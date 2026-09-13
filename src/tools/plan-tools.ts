@@ -178,6 +178,15 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   'step this tool suggests — so a one-session e1RM jump is noise, not evidence, and would move ' +
   'the load for no reason. e1RM is a trend instrument: read it as a multi-session slope from ' +
   '`metrics.compute` `history.trend` with `metric: e1rm`, which carries the band. ' +
+  'NO CORRECTIVE UNILATERAL WORK IS PRESCRIBED FROM AN ASYMMETRY HERE (VW-273). This tool ' +
+  'reads no left/right difference, and a detected asymmetry is not a reason to add ' +
+  'single-limb work: unilateral training beats bilateral for unilateral jump (ES 0.89) and ' +
+  'loses to it for bilateral strength (ES -0.43), with unilateral strength, bilateral jump, ' +
+  'sprint and change of direction all non-significant (Liao et al., Biology of Sport 2022), ' +
+  'so unilateral work is goal-specific, not corrective. Nor does any gate here read an ' +
+  'isometric maximum: no study validates a cable-device isometric max against dynamic cable ' +
+  'loads, and what one predicts is dominated by the joint angle it was held at (Lum et al. ' +
+  '2020, r 0.864 at 90 degrees vs 0.597 at 120). ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 

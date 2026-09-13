@@ -144,6 +144,97 @@ describe('coaching.explain', () => {
     expect(body.caveats?.length).toBeGreaterThan(0);
   });
 
+  // VW-273: the asymmetry topic must never turn a measurement into a
+  // prescription. The intervention literature does not support corrective
+  // unilateral work, so an entry that recommended it would be telling a coach
+  // something the citations underneath it contradict.
+  describe('no corrective unilateral work from a detected asymmetry', () => {
+    // The banned sentence is one that TELLS a coach to add single-limb work
+    // BECAUSE a difference was detected. Prescribing unilateral work because
+    // single-limb capacity is the goal is fine and is what the evidence
+    // supports, so all three parts have to co-occur in one sentence.
+    //
+    // Each part is spelled widely, because the first version of this guard
+    // matched only the words already in the corpus and a reviewer walked three
+    // ordinary rewordings straight past it — "consider adding single-arm work",
+    // "prescribe one-arm rows", "warrant adding some single-leg work". Those
+    // three are fixtures below. A guard that only recognises the phrasing
+    // already written is a guard against nothing.
+    const PRESCRIBING =
+      /\b(?:add|adds|adding|added|prescrib(?:e|es|ing|ed)|assign(?:s|ing|ed)?|program(?:me)?(?:s|ming|med)?|introduc(?:e|es|ing|ed)|start(?:s|ing|ed)?)\b/i;
+    const SINGLE_LIMB =
+      /\b(?:unilateral|single[ -](?:limb|arm|leg|side)|one[ -](?:arm|leg|side)|per[ -]limb)\b/i;
+    const A_DETECTED_DIFFERENCE =
+      /\b(?:asymmetr\w*|imbalance[sd]?|difference[sd]?|(?:weaker|weak|lagging|underperforming|deficit|dominant|non-dominant)\s+(?:side|limb|arm|leg))\b/i;
+    /** A negation only excuses the sentence when it attaches to the verb itself. */
+    const NEGATED_VERB = /\b(?:do not|does not|never|not|rather than|instead of|no)\s+\S{0,20}$/i;
+
+    /**
+     * True when `sentence` prescribes single-limb work as the answer to a
+     * detected difference. The verb and the limb term have to sit within one
+     * clause of each other, in either order — "prescribe one-arm rows" and
+     * "single-leg work is worth adding" are the same recommendation.
+     */
+    function prescribesCorrectiveSingleLimbWork(sentence: string): boolean {
+      if (!A_DETECTED_DIFFERENCE.test(sentence)) return false;
+      const limb = SINGLE_LIMB.exec(sentence);
+      if (limb === null) return false;
+      // EVERY verb, not the first: "do not add load; prescribe one-arm rows
+      // for the weaker limb" negates the first one and prescribes on the second.
+      for (const verb of sentence.matchAll(new RegExp(PRESCRIBING.source, 'gi'))) {
+        if (Math.abs(verb.index - limb.index) > 60) continue;
+        if (NEGATED_VERB.test(sentence.slice(0, verb.index))) continue;
+        return true;
+      }
+      return false;
+    }
+
+    // The reviewer's three rewordings, none of which the first guard caught.
+    it.each([
+      'Consider adding single-arm work for the lagging side.',
+      'If a difference is found, prescribe one-arm dumbbell rows for the underperforming limb.',
+      'A consistent asymmetry may warrant adding some single-leg work to that side.',
+      'Do not add load; prescribe one-arm rows for the weaker limb.',
+    ])('flags the recommendation however it is worded: %s', (sentence) => {
+      expect(prescribesCorrectiveSingleLimbWork(sentence)).toBe(true);
+    });
+
+    // …while the sentences the corpus is supposed to be allowed to say pass.
+    it.each([
+      'DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK OFF A DETECTED ASYMMETRY.',
+      'Never add single-leg work because an asymmetry was measured.',
+      'So prescribe unilateral work when single-limb capacity is the GOAL.',
+      'Answer a detected difference with consistent strength training over time.',
+    ])('leaves a legitimate sentence alone: %s', (sentence) => {
+      expect(prescribesCorrectiveSingleLimbWork(sentence)).toBe(false);
+    });
+
+    it('states the rule outright in the asymmetry topic', async () => {
+      const body = parseResult(await h.invoke({ topic: 'meso.asymmetry_interpretation' }));
+      expect(body.explanation).toContain('DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK');
+      // …and says what to do instead, so the rule is not just a prohibition.
+      expect(body.explanation).toContain('consistent strength training over time');
+      expect(body.explanation).toContain('GOAL-SPECIFIC');
+      expect(body.sources).toContain(
+        'liao-2022-unilateral-vs-bilateral-training-meta-analysis-biology-of-sport',
+      );
+    });
+
+    it('recommends it nowhere in the corpus', () => {
+      const offenders: string[] = [];
+      for (const topic of CoachingTopic.options) {
+        const content = COACHING_CONTENT[topic];
+        const text = [content.allTiers, ...Object.values(content.perTier ?? {})].join(' ');
+        for (const sentence of text.split(/(?<=\.)\s+/)) {
+          if (prescribesCorrectiveSingleLimbWork(sentence)) {
+            offenders.push(`${topic}: ${sentence.trim()}`);
+          }
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
   it('rejects an unknown topic', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'not.a.real.topic' });

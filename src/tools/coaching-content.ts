@@ -477,12 +477,26 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'for asymmetry exists; test often enough to judge whether direction is consistent, which ' +
       'is a decision rule and not an interval. `isometric.measure_imbalance` applies exactly ' +
       'this: it reports the percentage with the equation it used, marks it real only above the ' +
-      "athlete's own intra-limb CV, and labels the direction series consistent or fluctuating.",
+      "athlete's own intra-limb CV, and labels the direction series consistent or fluctuating. " +
+      'DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK OFF A DETECTED ASYMMETRY. Nothing in this ' +
+      'server does, and the evidence does not support it at any tier. The training literature ' +
+      'is thin on reducing asymmetry at all: a seven-week bilateral back-squat block moved ' +
+      'isometric peak-force asymmetry only in the subgroup that started weaker (90 degrees: ' +
+      '3.9% to 1.9%; 120 degrees: 4.6% to 3.9%), and several combined and flywheel programmes ' +
+      'improved performance while leaving asymmetry where it was. Unilateral work is ' +
+      'GOAL-SPECIFIC, not corrective: meta-analysed against bilateral training it was clearly ' +
+      'better for unilateral jump (ES 0.89, 95% CI 0.52-1.26) while bilateral training was ' +
+      'better for bilateral strength (ES -0.43, CI -0.71 to -0.14), and unilateral strength, ' +
+      'bilateral jump, sprint and change-of-direction were all non-significant. So prescribe ' +
+      'unilateral work when single-limb capacity is the GOAL. Answer a detected difference ' +
+      "with consistent strength training over time — the authors' own recommendation over " +
+      'any targeted anti-asymmetry protocol.',
     sources: [
       'bishop-2023-asymmetry-cv-threshold-jscr',
       'bishop-2019-asymmetry-direction-kappa-sports',
       'bishop-2018-interlimb-asymmetry-equation-framework-scj',
       'guan-2022-asymmetry-injury-systematic-review-jcm',
+      'liao-2022-unilateral-vs-bilateral-training-meta-analysis-biology-of-sport',
     ],
     caveats: [
       'This entry cites primary literature rather than the mined RP corpus; its source ids are ' +
