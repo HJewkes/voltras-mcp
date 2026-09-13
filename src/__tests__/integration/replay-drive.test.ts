@@ -141,75 +141,81 @@ describe('replay driver (VW-256)', () => {
     VoltraManager.forMock = originalForMock;
   });
 
-  it('replays a synthetic capture through the real pipeline into a persisted set', async () => {
-    const REP_COUNT = 3;
-    const PLAYBACK_SPEED = 40;
-    const jsonl = buildSyntheticReplayCapture(REP_COUNT);
-    const skips: unknown[] = [];
-    const frames = loadCaptureFrames(jsonl, { onSkip: (skip) => skips.push(skip) });
-    expect(skips).toEqual([]);
-    expect(frames.length).toBe(REP_COUNT * 8);
+  // Explicit budget above the ~550 ms nominal wait below (VW-285): under CI load the
+  // default 5 s timeout has been hit even though that wait is real but short.
+  it(
+    'replays a synthetic capture through the real pipeline into a persisted set',
+    { timeout: 20_000 },
+    async () => {
+      const REP_COUNT = 3;
+      const PLAYBACK_SPEED = 40;
+      const jsonl = buildSyntheticReplayCapture(REP_COUNT);
+      const skips: unknown[] = [];
+      const frames = loadCaptureFrames(jsonl, { onSkip: (skip) => skips.push(skip) });
+      expect(skips).toEqual([]);
+      expect(frames.length).toBe(REP_COUNT * 8);
 
-    // Exactly what `scripts/replay-preload.mjs` does to the real MCP server
-    // process: swap the mock manager's adapter for a replay of loaded frames.
-    // `autoStart: false` because playback has to start once a SET is open to
-    // receive samples, not the instant the device connects — the driver
-    // triggers it explicitly (here, via a captured handle; over there, via
-    // the preload's loopback `/play` route) right after `set.start`.
-    let adapter: ReplayBLEAdapter | undefined;
-    VoltraManager.forMock = (): VoltraManager =>
-      new VoltraManager({
-        platform: 'mock',
-        adapterFactory: () => {
-          adapter = new ReplayBLEAdapter({
-            frames,
-            playbackSpeed: PLAYBACK_SPEED,
-            autoStart: false,
-          });
-          return adapter;
-        },
-      });
+      // Exactly what `scripts/replay-preload.mjs` does to the real MCP server
+      // process: swap the mock manager's adapter for a replay of loaded frames.
+      // `autoStart: false` because playback has to start once a SET is open to
+      // receive samples, not the instant the device connects — the driver
+      // triggers it explicitly (here, via a captured handle; over there, via
+      // the preload's loopback `/play` route) right after `set.start`.
+      let adapter: ReplayBLEAdapter | undefined;
+      VoltraManager.forMock = (): VoltraManager =>
+        new VoltraManager({
+          platform: 'mock',
+          adapterFactory: () => {
+            adapter = new ReplayBLEAdapter({
+              frames,
+              playbackSpeed: PLAYBACK_SPEED,
+              autoStart: false,
+            });
+            return adapter;
+          },
+        });
 
-    const h = await buildHarness();
-    try {
-      const scan = await call(h.client, 'device.scan', {});
-      expect(scan.isError).toBeUndefined();
-      const deviceId = (scan.payload.devices as Array<{ id: string }>)[0]?.id;
-      expect(typeof deviceId).toBe('string');
+      const h = await buildHarness();
+      try {
+        const scan = await call(h.client, 'device.scan', {});
+        expect(scan.isError).toBeUndefined();
+        const deviceId = (scan.payload.devices as Array<{ id: string }>)[0]?.id;
+        expect(typeof deviceId).toBe('string');
 
-      const connect = await call(h.client, 'device.connect', { deviceId });
-      expect(connect.isError).toBeUndefined();
+        const connect = await call(h.client, 'device.connect', { deviceId });
+        expect(connect.isError).toBeUndefined();
 
-      const sessionStart = await call(h.client, 'session.start', { exerciseName: 'Bench Press' });
-      expect(sessionStart.isError).toBeUndefined();
+        const sessionStart = await call(h.client, 'session.start', { exerciseName: 'Bench Press' });
+        expect(sessionStart.isError).toBeUndefined();
 
-      const setStart = await call(h.client, 'set.start');
-      expect(setStart.isError).toBeUndefined();
-      const setId = setStart.payload.setId as string;
+        const setStart = await call(h.client, 'set.start');
+        expect(setStart.isError).toBeUndefined();
+        const setId = setStart.payload.setId as string;
 
-      adapter?.play();
-      // Let the replay drain: the last frame lands at `frames.at(-1).timestamp`
-      // ms of capture time, compressed by `PLAYBACK_SPEED`.
-      const lastTs = frames.at(-1)?.timestamp ?? 0;
-      await sleep(lastTs / PLAYBACK_SPEED + 500);
+        adapter?.play();
+        // Let the replay drain: the last frame lands at `frames.at(-1).timestamp`
+        // ms of capture time, compressed by `PLAYBACK_SPEED`.
+        const lastTs = frames.at(-1)?.timestamp ?? 0;
+        await sleep(lastTs / PLAYBACK_SPEED + 500);
 
-      const setEnd = await call(h.client, 'set.end');
-      expect(setEnd.isError).toBeUndefined();
-      expect(setEnd.payload).toEqual({ ok: true, reps: REP_COUNT });
+        const setEnd = await call(h.client, 'set.end');
+        expect(setEnd.isError).toBeUndefined();
+        expect(setEnd.payload).toEqual({ ok: true, reps: REP_COUNT });
 
-      const persisted = await h.state.store.getSet(setId);
-      expect(persisted?.reps.length).toBe(REP_COUNT);
+        const persisted = await h.state.store.getSet(setId);
+        expect(persisted?.reps.length).toBe(REP_COUNT);
 
-      const sessionEnd = await call(h.client, 'session.end');
-      expect(sessionEnd.isError).toBeUndefined();
+        const sessionEnd = await call(h.client, 'session.end');
+        expect(sessionEnd.isError).toBeUndefined();
 
-      // Disconnect while the server transport is still open, so the SDK's
-      // async connection-state notification has somewhere to land — closing
-      // the transport first turns that notification into an unhandled
-      // rejection (`Server.notification: Not connected`).
-      await call(h.client, 'device.disconnect');
-    } finally {
-      await h.cleanup();
-    }
-  });
+        // Disconnect while the server transport is still open, so the SDK's
+        // async connection-state notification has somewhere to land — closing
+        // the transport first turns that notification into an unhandled
+        // rejection (`Server.notification: Not connected`).
+        await call(h.client, 'device.disconnect');
+      } finally {
+        await h.cleanup();
+      }
+    },
+  );
 });
