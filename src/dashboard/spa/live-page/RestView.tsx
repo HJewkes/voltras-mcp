@@ -16,6 +16,7 @@ import {
 } from '@titan-design/react-ui';
 import {
   activeCompletedSets,
+  completedSetVerdict,
   deriveRecapPrescription,
   velocityLossPct,
   velocityRatios,
@@ -23,6 +24,7 @@ import {
   type CompletedSet,
   type DashboardModel,
   type PrescriptionCells,
+  type SessionModel,
   type SetPurpose,
 } from './model';
 import { type MassUnit, formatMass } from './mass';
@@ -114,12 +116,19 @@ function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
  * verdict is the top-line summary, not the full analytics. Entries the store cannot source
  * are null → hidden (a 1-rep set has no velocity loss, so Vloss/Fatg fall away honestly).
  */
-function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] {
+function verdictMetrics(
+  set: CompletedSet,
+  session: SessionModel,
+  displayUnit: MassUnit,
+): MetricSpec[] {
   const loss = velocityLossPct(set.reps);
   const verdict = loss === null ? null : verdictFromLoss(loss);
   // The load's UNIT is its label (e.g. value "20", label "lbs"/"kg") — no separate "Load"
   // caption. Converted to the client display unit (VW-63); the store stays lbs.
   const load = set.weightLbs !== null ? formatMass(set.weightLbs, displayUnit) : null;
+  // Same rule `report.session_results`' "missed: X of Y" line uses (VW-262);
+  // `no-target` (no plan attached, or an untargeted exercise) hides the tile.
+  const target = completedSetVerdict(set, session);
   return [
     { value: String(set.repCount), label: 'Reps' },
     load !== null ? { value: String(load.value), label: load.unit } : null,
@@ -130,6 +139,9 @@ function verdictMetrics(set: CompletedSet, displayUnit: MassUnit): MetricSpec[] 
           label: 'Fatigue',
           trend: verdict === 'productive' ? 'up' : 'neutral',
         }
+      : null,
+    target !== 'no-target'
+      ? { value: target === 'miss' ? 'MISS' : 'HIT', label: 'Target', trend: 'neutral' }
       : null,
   ];
 }
@@ -269,7 +281,9 @@ export function RestView({
   const set = justCompletedSet(model);
   const rows = recapRows(model, displayUnit);
   const metrics = set
-    ? verdictMetrics(set, displayUnit).filter((m): m is NonNullable<MetricSpec> => m !== null)
+    ? verdictMetrics(set, session, displayUnit).filter(
+        (m): m is NonNullable<MetricSpec> => m !== null,
+      )
     : [];
   const heading = deriveRecapPrescription(session, rows.length, displayUnit);
 
