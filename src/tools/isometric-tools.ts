@@ -63,7 +63,10 @@ import {
   analyzeTrial,
   computeImbalance,
   decideTestOrder,
+  directionOfMeasurement,
+  summarizeDirectionHistory,
   PEAK_AFTER_MS,
+  type DirectionHistory,
   type ForceSample,
   type SideAnalysis,
   type TrialAnalysis,
@@ -129,9 +132,23 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'known and testNonDominantFirst is true (default), the non-dominant side',
   'is tested first to control for within-session fatigue.',
   '',
-  'Asymmetry is reported as (stronger − weaker) / stronger × 100. Per the',
-  'protocol brief, ≥ 10% is flagged as noteworthy and ≥ 15% is flagged as',
-  'a meaningful deficit; within 1% is reported as a tie.',
+  'THERE IS NO FIXED ASYMMETRY THRESHOLD HERE (VW-270). The asymmetry',
+  'percentage is the standard percentage difference,',
+  '(stronger − weaker) / stronger × 100, and the equation is named in the',
+  'output because the valid equation is chosen by the test method (Bishop et al.',
+  '2018) and percentages from different equations are not comparable. The',
+  "difference is marked real ONLY when it exceeds this athlete's own intra-limb",
+  'CV across the very trials being compared (Bishop et al. 2023) — a difference',
+  "smaller than a limb's own trial-to-trial spread is a measurement, not a",
+  "capacity gap. Both sides' CVs and the noise floor used are returned next to",
+  'the verdict.',
+  '',
+  'The direction summary reports whether the SAME limb dominated across recent',
+  'tests: consistent-left / consistent-right / fluctuating, or',
+  'insufficient-history under 3 tests. Direction, not one magnitude, is the',
+  'interpretable signal — re-test agreement on limb dominance is only',
+  'fair-to-substantial (Bishop et al. 2019). A consistent direction may warrant',
+  'a closer look; a fluctuating one does not.',
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -139,8 +156,8 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'The per-trial measurements are persisted (keyed on the device id of the',
   'unit that recorded them) so asymmetry can be trended across sessions;',
   'the response carries the resulting measurementId, or null if the write',
-  'failed. The asymmetry percentage itself is not stored — it is recomputed',
-  'from the stored trials.',
+  'failed. No verdict is stored — the percentage, the direction and the',
+  'real/not-real call are all recomputed from the stored trials on read.',
 ].join(' ');
 
 /**
@@ -267,6 +284,13 @@ interface MeasureImbalanceResult {
   left: SideSummary;
   right: SideSummary;
   imbalance: ReturnType<typeof computeImbalance>;
+  /**
+   * Whether the same limb dominated across recent tests, recomputed from the
+   * stored trials of this run and the ones before it. `null` only when the
+   * history could not be read at all — distinct from `insufficient-history`,
+   * which is a real answer about a short series.
+   */
+  directionHistory: DirectionHistory | null;
   totalElapsedMs: number;
   /**
    * Id of the persisted `isometric_measurements` row, or `null` when the write
@@ -426,9 +450,43 @@ async function measureImbalance(
     left,
     right,
     imbalance,
+    directionHistory: await readDirectionHistory(state),
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
   };
+}
+
+/**
+ * How many past assessments the direction series reads. Generous rather than
+ * tuned: there is no published re-test cadence for asymmetry, so the series is
+ * "the recent tests", not a window someone claimed was correct.
+ */
+const DIRECTION_HISTORY_LIMIT = 20;
+
+/**
+ * Summarize limb dominance over the stored assessments, including the one this
+ * run just wrote (VW-270).
+ *
+ * Never throws, for the same reason `persistMeasurement` does not: the
+ * measurement in hand cost the athlete ten-plus minutes of maximal effort and
+ * must not be lost to a read that failed. A `null` says the history is unknown,
+ * which the caller can tell apart from a short-but-read history.
+ */
+async function readDirectionHistory(state: ServerState): Promise<DirectionHistory | null> {
+  try {
+    const measurements = await state.store.listRecentIsometricMeasurements({
+      limit: DIRECTION_HISTORY_LIMIT,
+    });
+    return summarizeDirectionHistory(
+      measurements.map((m) => ({
+        measuredAt: m.measuredAt,
+        direction: directionOfMeasurement(m),
+      })),
+    );
+  } catch (err) {
+    log.warn('isometric.measure_imbalance: reading the direction history failed', err);
+    return null;
+  }
 }
 
 interface PersistSideInput {

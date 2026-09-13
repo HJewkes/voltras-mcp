@@ -143,19 +143,68 @@ interface FakeSlot {
  */
 interface FakeStore {
   putIsometricMeasurement: Mock<(m: StoredIsometricMeasurement) => Promise<void>>;
+  listRecentIsometricMeasurements: Mock<
+    (opts?: { limit?: number }) => Promise<StoredIsometricMeasurement[]>
+  >;
   written: StoredIsometricMeasurement[];
+  /** Measurements already on disk before this run; the direction series reads them. */
+  seeded: StoredIsometricMeasurement[];
   /** Set to make every write reject, standing in for a broken DB. */
   failWith: Error | null;
 }
 
 function makeFakeStore(): FakeStore {
-  const store = { written: [], failWith: null } as unknown as FakeStore;
+  const store = { written: [], seeded: [], failWith: null } as unknown as FakeStore;
   store.putIsometricMeasurement = vi.fn(async (m: StoredIsometricMeasurement): Promise<void> => {
     if (store.failWith !== null) throw store.failWith;
     store.written.push(m);
     return Promise.resolve();
   });
+  store.listRecentIsometricMeasurements = vi.fn(
+    async (opts: { limit?: number } = {}): Promise<StoredIsometricMeasurement[]> => {
+      const all = [...store.seeded, ...store.written].sort(
+        (a, b) => Date.parse(b.measuredAt) - Date.parse(a.measuredAt),
+      );
+      return Promise.resolve(all.slice(0, opts.limit ?? 50));
+    },
+  );
   return store;
+}
+
+/**
+ * A past assessment on disk, reduced to what the direction series reads: two
+ * valid trials per side at the given plateau forces. `aggregateSide` needs two
+ * valid trials before a side has a mean at all.
+ */
+function seededMeasurement(
+  measuredAt: string,
+  leftLbs: number,
+  rightLbs: number,
+): StoredIsometricMeasurement {
+  const trials = (lbs: number) =>
+    [1, 2].map((index) => ({
+      id: `${measuredAt}-${lbs}-${index}`,
+      index,
+      peakForceLbs: lbs + 2,
+      plateauForceLbs: lbs,
+      plateauStartMs: 1500,
+      plateauEndMs: 2000,
+      valid: true,
+    }));
+  return {
+    id: `seed-${measuredAt}`,
+    measuredAt,
+    analysisVersion: 1,
+    firstSideTested: 'left',
+    durationMs: 3000,
+    trialsRequested: 2,
+    restMs: 30_000,
+    betweenSidesRestMs: 60_000,
+    sides: [
+      { side: 'left', slot: 'left', trials: trials(leftLbs) },
+      { side: 'right', slot: 'right', trials: trials(rightLbs) },
+    ],
+  };
 }
 
 interface PublishedEvent {
@@ -596,13 +645,14 @@ describe('isometric.measure_imbalance', () => {
       testOrder: string[];
       left: { meanPlateauForceLbs: number | null };
       right: { meanPlateauForceLbs: number | null };
-      imbalance: { strongerSide: string | null; flagged: boolean; meaningful: boolean };
+      imbalance: { direction: string | null; equation: string; real: boolean };
     };
     expect(body.ok).toBe(true);
     expect(body.testOrder).toEqual(['left', 'right']);
     expect(body.left.meanPlateauForceLbs).toBeGreaterThan(170);
     expect(body.right.meanPlateauForceLbs).toBeGreaterThan(150);
-    expect(body.imbalance.strongerSide).toBe('left');
+    expect(body.imbalance.direction).toBe('left');
+    expect(body.imbalance.equation).toBe('standard-percentage-difference');
     // No listener leaks on either client (2 trials × 1 sub each).
     expect(leftClient.subscribeCount).toBe(2);
     expect(leftClient.unsubscribeCount).toBe(2);
@@ -734,14 +784,14 @@ describe('isometric.measure_imbalance', () => {
   });
 
   it('stores observations only — no asymmetry verdict', async () => {
-    // The asymmetry %, stronger side and flagged/meaningful thresholds are
-    // recomputed from the stored trials on read. Persisting them would freeze
-    // a verdict that the thresholds can move out from under.
-    const body = (await runImbalance()) as { imbalance: { strongerSide: string } };
-    expect(body.imbalance.strongerSide).toBe('left');
+    // The asymmetry %, the direction and the real/not-real call are recomputed
+    // from the stored trials on read. Persisting them would freeze a verdict
+    // that the rules can move out from under — as VW-270 just moved them.
+    const body = (await runImbalance()) as { imbalance: { direction: string } };
+    expect(body.imbalance.direction).toBe('left');
 
     const written = JSON.stringify(store.written[0]);
-    for (const leaked of ['asymmetry', 'strongerSide', 'flagged', 'meaningful', 'inferred']) {
+    for (const leaked of ['asymmetry', 'direction', 'real', 'noiseFloor', 'inferred']) {
       expect(written).not.toContain(leaked);
     }
   });
@@ -765,12 +815,58 @@ describe('isometric.measure_imbalance', () => {
     const body = (await runImbalance()) as {
       ok: boolean;
       measurementId: string | null;
-      imbalance: { strongerSide: string };
+      imbalance: { direction: string };
     };
     expect(body.ok).toBe(true);
-    expect(body.imbalance.strongerSide).toBe('left');
+    expect(body.imbalance.direction).toBe('left');
     // …and says so, rather than implying it was saved.
     expect(body.measurementId).toBeNull();
+  });
+
+  // VW-270: direction across sessions is the interpretable signal, so the run
+  // reads its own history back and labels it.
+  it('labels dominance consistent when past tests named the same limb', async () => {
+    store.seeded = [
+      seededMeasurement('2026-09-01T10:00:00.000Z', 200, 170),
+      seededMeasurement('2026-09-05T10:00:00.000Z', 205, 172),
+    ];
+    const body = (await runImbalance()) as {
+      directionHistory: { label: string; testsCompared: number; agreementPct: number | null };
+    };
+    // Two seeded left-dominant tests plus this run, which is also left-dominant.
+    expect(body.directionHistory.testsCompared).toBe(3);
+    expect(body.directionHistory.label).toBe('consistent-left');
+    expect(body.directionHistory.agreementPct).toBe(100);
+  });
+
+  it('labels dominance fluctuating when the direction flips between tests', async () => {
+    store.seeded = [
+      seededMeasurement('2026-09-01T10:00:00.000Z', 170, 200),
+      seededMeasurement('2026-09-05T10:00:00.000Z', 205, 172),
+    ];
+    const body = (await runImbalance()) as { directionHistory: { label: string } };
+    expect(body.directionHistory.label).toBe('fluctuating');
+  });
+
+  it('withholds a dominance label until three tests have a direction', async () => {
+    const body = (await runImbalance()) as {
+      directionHistory: { label: string; testsCompared: number };
+    };
+    expect(body.directionHistory.testsCompared).toBe(1);
+    expect(body.directionHistory.label).toBe('insufficient-history');
+  });
+
+  it('reports the measurement when the history read fails', async () => {
+    store.listRecentIsometricMeasurements.mockRejectedValueOnce(new Error('database is locked'));
+    const body = (await runImbalance()) as {
+      ok: boolean;
+      directionHistory: unknown;
+      measurementId: string | null;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.measurementId).not.toBeNull();
+    // `null` says the history is unknown — distinct from a short-but-read one.
+    expect(body.directionHistory).toBeNull();
   });
 });
 

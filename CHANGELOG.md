@@ -58,6 +58,11 @@ entry is written from the user's point of view is a review question, not a check
   says outright that no gate of its own reads an e1RM: a one-session jump inside the band is
   noise and moves no load.
 
+- `coaching.explain` topic `meso.asymmetry_interpretation` (VW-270) — why a left/right
+  difference has to clear the athlete's own noise before it means anything, why no universal
+  cutoff survives the evidence, and why a consistent direction over time may warrant
+  attention while a fluctuating one does not.
+
 - `coaching.explain` topic `meso.e1rm_interpretation` (VW-267) — how to talk about an e1RM
   that moved, with the reliability figures and their citations. The first topic sourced
   from primary literature rather than the mined RP corpus.
@@ -75,6 +80,17 @@ entry is written from the user's point of view is a review question, not a check
   passed no `header` prop to `LiveFatiguePanel`, does not use `ExerciseHeaderLite`,
   `useTheme`, `Pill`, or the `Shell` family, so none of this release's removals or shape
   changes land on the wall. The live-page screenshot at rest and mid-set is unchanged.
+
+- `isometric.measure_imbalance` no longer calls an asymmetry noteworthy at 10% or meaningful
+  at 15% (VW-270). Both constants are gone. It reports `asymmetryPct` with the `equation` it
+  came from, each limb's own trial-to-trial CV, and marks the difference `real` only when it
+  exceeds that CV — a 10% gap between limbs whose own trials vary by 12% is the measurement
+  talking, and the old constants could not tell the two apart. A new `directionHistory` says
+  whether the SAME limb dominated across recent tests (`consistent-left` /
+  `consistent-right` / `fluctuating`, or `insufficient-history` under three tests), because
+  direction over time is what a series of these can support and one magnitude is not. No
+  stored row changed: every verdict is still recomputed from the persisted per-trial forces.
+
 - Requires `@voltras/workout-analytics` 3.x (#353). No behavior change: `history.trend`
   already discards `analyzeTrend`'s categorical verdict and reports its own explicit
   `null` direction (VW-230), and this server does not call `findOutlierReps`,
