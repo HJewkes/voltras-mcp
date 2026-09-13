@@ -110,6 +110,22 @@ Once at least 2 trials are valid, the tool takes the best 2 by plateau force and
   up to 5 lb (the device's own settable floor) so it's always a value the device will
   accept.
 
+## What the wall shows during a hold
+
+The wall dashboard's live page renders the phase pushes above as they arrive: a corner
+overlay names the current trial number, shows the phase's own label ("Get set" / "Pull
+now" / "Hold max" / "Stop and release"), and — only during the hold itself — runs a
+countdown ring for the hold duration. No spoken cue accompanies it yet; that pairing
+waits on a shared speech queue.
+
+The overlay is a small panel, not a takeover — the rest of the live page stays visible
+underneath it — and it tracks one hold at a time: it appears on that hold's `ready` event
+and disappears the instant its `stop` event lands, with no lingering on the terminal
+phase. A wall showing nothing extra during an assessment means no hold is in progress
+right then, whether between trials or between sides.
+
+<!-- src/dashboard/spa/live-page/IsometricWalkthrough.tsx -->
+
 ## Bilateral imbalance
 
 `isometric.measure_imbalance` runs the max-force protocol on both slots and reports the
