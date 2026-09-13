@@ -86,6 +86,14 @@ entry is written from the user's point of view is a review question, not a check
   fat-loss phase looks like a plateau (B34), and B34 states no correction, so none is
   applied — the phase is there for a reader to discount by hand.
 
+### Fixed
+
+- A set run with the eccentric loaded above the concentric no longer gets a velocity-loss
+  stop cue about a rep early (VW-268, #354). Rep 1 of such a set is the only rep with no
+  overloaded eccentric before it, so it was the fastest rep in the set for mechanical
+  reasons and became the baseline the rest were judged against. The stop now measures from
+  rep 3, and the `velocity_loss_exceeded` event says which reps it left out and why.
+
 ## [0.5.0] - 2026-09-08
 
 Two waves of work, `#244` through `#310`. The device and recording paths gained real

@@ -33,6 +33,7 @@ import {
   triggerDedupeKey,
 } from '../channel-payloads.js';
 import type { PendingCoercionCheck } from '../coercion-watch.js';
+import { NO_VELOCITY_LOSS_EXCLUSION } from '../rep-eligibility.js';
 import type { ActiveSet, DeviceSnapshot } from '../live-state.js';
 import type { StoredSet } from '../../store/types.js';
 import { mmsToMps } from '../live-signal.js';
@@ -941,6 +942,7 @@ describe('buildVelocityLossExceededPayload', () => {
       0.55,
       1,
       3,
+      NO_VELOCITY_LOSS_EXCLUSION,
     );
     expect(meta).toMatchObject({
       event_type: 'velocity_loss_exceeded',
@@ -950,7 +952,9 @@ describe('buildVelocityLossExceededPayload', () => {
       baseline_velocity: '0.850',
       current_velocity: '0.550',
       rep_count_at_threshold: '3',
+      excluded_lead_in_reps: '0',
     });
+    expect(meta.exclusion_reason).toBeUndefined();
     expect(meta.auto_stopped).toBeUndefined();
     const parsed = JSON.parse(content);
     expect(parsed.summary).toContain('35.3%');
@@ -965,6 +969,36 @@ describe('buildVelocityLossExceededPayload', () => {
       baseline_rep_number: 1,
     });
     expect(parsed.set_so_far.reps).toHaveLength(3);
+  });
+
+  it('VW-268: states the eccentric-overload exclusion in meta, trigger and summary', () => {
+    const set = activeSet([makeRep(1, 850, 500), makeRep(2, 800, 500), makeRep(3, 550, 400)]);
+    const { meta, content } = buildVelocityLossExceededPayload(
+      set,
+      device,
+      25,
+      35.3,
+      0.85,
+      0.55,
+      3,
+      5,
+      {
+        leadInReps: 2,
+        reason: 'eccentric_overload',
+      },
+    );
+    expect(meta).toMatchObject({
+      excluded_lead_in_reps: '2',
+      exclusion_reason: 'eccentric_overload',
+    });
+    const parsed = JSON.parse(content);
+    expect(parsed.trigger).toMatchObject({
+      excluded_lead_in_reps: 2,
+      exclusion_reason: 'eccentric_overload',
+    });
+    // A consumer reading only the prose must still learn which reps are out.
+    expect(parsed.summary).toContain('exclude the first 2 reps');
+    expect(parsed.summary).toContain('eccentric loaded above the concentric');
   });
 });
 

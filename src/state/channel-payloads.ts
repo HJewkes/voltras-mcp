@@ -42,7 +42,7 @@ import type { StoredSet, StoredRepVbt } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import type { TriggerSpec } from '../schemas/set.js';
 import type { PendingCoercionCheck } from './coercion-watch.js';
-import { selectEligibleReps } from './rep-eligibility.js';
+import { selectEligibleReps, type VelocityLossExclusion } from './rep-eligibility.js';
 import type { WeightImpliedResult } from './weight-implied-watch.js';
 import type { BilateralDivergence } from './bilateral-reconciler.js';
 
@@ -1026,6 +1026,11 @@ export function buildSetTargetReachedPayload(
  * `current` = peak concentric velocity of the just-finalized rep. The
  * `baselineRepNumber` gives PT Claude the rep at which the baseline was
  * established (sidesteps "is this baseline rep 1's setup pause artifact?").
+ *
+ * `exclusion` states which reps the figures were NOT taken over (VW-268). A
+ * consumer that reads a loss figure without it would attribute an eccentric-
+ * overload set's opening reps to fatigue, which is the whole reason they are
+ * out.
  */
 export function buildVelocityLossExceededPayload(
   set: ActiveSet,
@@ -1036,6 +1041,7 @@ export function buildVelocityLossExceededPayload(
   current: number,
   baselineRepNumber: number,
   actualReps: number,
+  exclusion: VelocityLossExclusion,
 ): { meta: Record<string, string>; content: string } {
   // `baseline` and `current` arrive in m/s (converted once at the bridge) and
   // are only rounded here so the labels (`baseline_velocity`,
@@ -1057,10 +1063,13 @@ export function buildVelocityLossExceededPayload(
     // `movement_class: 'pull'` here is looking at a set that opted back in via
     // `watch.velocityLoss.force`.
     movement_class: movementClassOfSet(set),
+    excluded_lead_in_reps: String(exclusion.leadInReps),
+    ...(exclusion.reason === null ? {} : { exclusion_reason: exclusion.reason }),
   };
   const summary =
     `Velocity dropped ${pct.toFixed(1)}% (${baselineMps.toFixed(2)} -> ` +
-    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%.`;
+    `${currentMps.toFixed(2)} m/s) on rep ${actualReps}. Threshold: ${threshold}%.` +
+    describeVelocityLossExclusion(exclusion);
   const content = JSON.stringify({
     summary,
     trigger: {
@@ -1070,10 +1079,25 @@ export function buildVelocityLossExceededPayload(
       baseline_velocity: baselineMps,
       current_velocity: currentMps,
       baseline_rep_number: baselineRepNumber,
+      excluded_lead_in_reps: exclusion.leadInReps,
+      exclusion_reason: exclusion.reason,
     },
     set_so_far: summarizeSetForTrigger(set, device),
   });
   return { meta, content };
+}
+
+/**
+ * The sentence appended to a velocity-loss summary when reps were excluded.
+ * Empty for an ordinary set, so the common summary reads exactly as before.
+ */
+function describeVelocityLossExclusion(exclusion: VelocityLossExclusion): string {
+  if (exclusion.reason !== 'eccentric_overload') return '';
+  return (
+    ` Baseline and comparison exclude the first ${exclusion.leadInReps} reps: ` +
+    'this set ran with the eccentric loaded above the concentric, which slows the ' +
+    'opening concentrics mechanically rather than through fatigue.'
+  );
 }
 
 /**

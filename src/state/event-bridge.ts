@@ -163,6 +163,7 @@ import type { CoercionWatch } from './coercion-watch.js';
 import {
   publishVelocityLossSuppression,
   velocityLossWatchSuppressed,
+  velocityLossWindow,
 } from './velocity-loss-gate.js';
 import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import type { ServerState, SlotState } from './server-state.js';
@@ -1483,8 +1484,13 @@ function evaluateRepTriggers(
   //
   // VW-168: the eligibility filter is what keeps a rope-positioning pull from
   // becoming the baseline and firing every threshold on rep 2.
+  //
+  // VW-268: on a set whose eccentric is loaded above the concentric, the window
+  // also drops the opening reps — they are slowed by the overloaded eccentric,
+  // not by fatigue.
   const finalizedReps = set.reps.slice(0, finalizedIndex + 1);
-  const { velocity: baseline, repNumber: baselineRepNumber } = velocityLossBaseline(finalizedReps);
+  const window = velocityLossWindow(finalizedReps, device);
+  const { velocity: baseline, repNumber: baselineRepNumber } = velocityLossBaseline(window.reps);
   const current = finalizedRep.concentric.peakVelocity;
 
   for (const spec of set.watch.notifyOn) {
@@ -1505,6 +1511,9 @@ function evaluateRepTriggers(
       // whole behaviour change, and no threshold moved to get it.
       if (velocityLossWatchSuppressed(set)) continue;
       // baseline must be a real positive velocity for loss% to be defined.
+      // VW-268: this is also what keeps a lead-in rep out of the COMPARISON —
+      // while the set is still inside the excluded reps its window is empty, so
+      // the baseline is zero and nothing can fire.
       // current >= baseline ⇒ loss <= 0 ⇒ no fire (covers the just-set-a-
       // new-max case explicitly).
       if (baseline <= 0 || current >= baseline) continue;
@@ -1520,6 +1529,7 @@ function evaluateRepTriggers(
         current,
         baselineRepNumber,
         actualReps,
+        window.exclusion,
       );
       channels.publish(payload);
       continue;

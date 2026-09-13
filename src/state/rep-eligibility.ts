@@ -44,6 +44,28 @@ const VELOCITY_OUTLIER_RATIO = 1.6;
  */
 const MIN_MEASURABLE_MOVEMENT_SAMPLES = 2;
 
+/**
+ * How many reps at the head of an eccentric-overloaded set are dropped from
+ * velocity-loss accounting (VW-268).
+ *
+ * Yang 2026 (AEL meta-analysis): an overloaded eccentric impairs the mean
+ * velocity of the concentric that follows it by ES -0.25, and the impairment
+ * is gone by the second or third repetition. That rep is slower for mechanical
+ * reasons, not fatigue, so feeding it to `velocity_loss_exceeded` ends the set
+ * early.
+ *
+ * TWO, MEASURED FROM THE HEAD OF THE SET — not "the rep after each overloaded
+ * eccentric". The device carries ONE set-level eccentric setting, never a
+ * per-rep record of which eccentrics were overloaded, so "after each" would
+ * degenerate to every rep but the first and leave nothing to compare. What the
+ * data model can prove is the entry into the overloaded regime: rep 1 has no
+ * overloaded eccentric before it and is therefore the only un-depressed rep in
+ * the set, and rep 2 is the first depressed one, inside Yang's reps-2-3
+ * dissipation window. From rep 3 on, every rep sits in the same mechanical
+ * regime and the velocity differences between them are fatigue.
+ */
+export const ECCENTRIC_OVERLOAD_LEAD_IN_REPS = 2;
+
 export type RepIneligibleReason = 'rom_outlier' | 'velocity_outlier' | 'first_rep_unconfirmed';
 
 export interface RepEligibility {
@@ -91,6 +113,33 @@ export function selectEligibleReps(reps: readonly Rep[]): readonly Rep[] {
   const kept = reps.filter((rep, i) => isRepEligible(rep, { priorReps: others(reps, i) }).eligible);
   return kept.length === 0 ? reps : kept;
 }
+
+/**
+ * How many head-of-set reps this eccentric setting excludes: 2, or none.
+ *
+ * `eccentricOverload` is the setting observed on the device, where a positive
+ * value means the eccentric phase is loaded ABOVE the concentric. Zero,
+ * negative and unobserved are all ordinary sets that exclude nothing.
+ */
+export function eccentricOverloadLeadIn(eccentricOverload: number | undefined): number {
+  return (eccentricOverload ?? 0) > 0 ? ECCENTRIC_OVERLOAD_LEAD_IN_REPS : 0;
+}
+
+/**
+ * Reps a set's eccentric setting keeps out of velocity-loss accounting
+ * (VW-268). `leadInReps: 0` with a null reason is the ordinary set — nothing
+ * was excluded and the figures mean what they always meant.
+ */
+export interface VelocityLossExclusion {
+  leadInReps: number;
+  reason: 'eccentric_overload' | null;
+}
+
+/** Nothing excluded. The shape every non-overloaded set reports. */
+export const NO_VELOCITY_LOSS_EXCLUSION: VelocityLossExclusion = {
+  leadInReps: 0,
+  reason: null,
+};
 
 /**
  * Are two adjacent closed reps consistent with each other (VW-181)?
