@@ -39,6 +39,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `report.weekly` (w3-91) — a coach-readable weekly summary, in markdown or JSON, over a
+  date range (default: the last 7 days). Sessions completed, a rolling 28-day
+  completed-session count, adherence against the active program with a trend vs. the
+  previous range, per-session results plus a gated RIR line, `plan.suggest_progression`
+  suggestions, flags (force-implied weight mismatches, inactivity-timeout closes,
+  velocity-loss holds), and a check-in section read from `self_reports`.
+
 - The documentation site renders this changelog at `/changelog` (#348). The page was a
   stub; it now includes this file verbatim, so there is one copy to read and one to write.
 

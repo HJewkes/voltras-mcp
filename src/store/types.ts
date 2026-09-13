@@ -1229,6 +1229,18 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   getSelfReportsForSession(sessionId: string, kind?: string): Promise<StoredSelfReport[]>;
 
+  /**
+   * Self-reports for one user across every session, oldest first, optionally
+   * windowed by `recordedAt` (w3-91). `report.weekly` needs this cross-session
+   * view; `getSelfReportsForSession` above is scoped to one session and can't
+   * answer "everything this user reported in the last 7 days".
+   */
+  getSelfReportsForUser(filter: {
+    userId: string;
+    from?: string;
+    to?: string;
+  }): Promise<StoredSelfReport[]>;
+
   // --- Idle reps (v7 schema) ---
 
   /**

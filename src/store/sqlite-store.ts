@@ -2219,6 +2219,32 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToSelfReport));
   }
 
+  /**
+   * Self-reports for one user across every session, oldest first (w3-91).
+   * `getSelfReportsForSession` above is scoped to one session; `report.weekly`
+   * needs "everything this user reported in the last 7 days" across sessions.
+   */
+  async getSelfReportsForUser(filter: {
+    userId: string;
+    from?: string;
+    to?: string;
+  }): Promise<StoredSelfReport[]> {
+    const where: string[] = ['user_id = ?'];
+    const params: string[] = [filter.userId];
+    if (filter.from !== undefined) {
+      where.push('recorded_at >= ?');
+      params.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      where.push('recorded_at <= ?');
+      params.push(filter.to);
+    }
+    const rows = this.db
+      .prepare(`SELECT * FROM self_reports WHERE ${where.join(' AND ')} ORDER BY recorded_at ASC`)
+      .all(...params) as unknown as SelfReportRow[];
+    return Promise.resolve(rows.map(rowToSelfReport));
+  }
+
   // --- Isometric assessments (v6 schema) ---
 
   async putIsometricMeasurement(m: StoredIsometricMeasurement): Promise<void> {
