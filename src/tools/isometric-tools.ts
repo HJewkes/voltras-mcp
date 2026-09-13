@@ -74,6 +74,8 @@ import { FRAME_FORCE_TENTHS_PER_LB } from '../state/live-signal.js';
 import {
   aggregateSide,
   analyzeTrial,
+  asymmetryEquationFor,
+  ASYMMETRY_EQUATION,
   computeImbalance,
   computePeakForceBaseline,
   decideTestOrder,
@@ -82,6 +84,7 @@ import {
   occasionPeakForcesLbs,
   summarizeDirectionHistory,
   PEAK_AFTER_MS,
+  type AsymmetryEquation,
   type DirectionHistory,
   type ForceSample,
   type PeakForceBaseline,
@@ -175,6 +178,12 @@ const MEASURE_MAX_DESCRIPTION = [
   'own past occasions of this exercise, and legacyUnkeyed counts the older',
   'assessments that carry no key and are therefore excluded from it.',
   '',
+  'EACH STORED ASSESSMENT NAMES ITS EQUATION (VW-295): this run has no asymmetry',
+  'to name one for (one side, no comparison), so nothing is stored here, but a',
+  "past isometric.measure_imbalance occasion's stored equation is checked before",
+  "its peak force joins this run's baseline — one computed under a different",
+  'equation is excluded and counted in otherEquation, alongside legacyUnkeyed.',
+  '',
   'VERIFIED IMTP-style PROTOCOL DETAILS THIS IMPLEMENTS: the 5 s hold',
   '(default, clamp 3-10s) and >=2 trials (default 3, clamp 2-5) an applied',
   'IMTP study used (Yeh et al., PMC13541152). NOT IMPLEMENTED, AND WHY: that',
@@ -232,7 +241,10 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'standard percentage difference, (stronger − weaker) / stronger × 100, and',
   'the equation it came from is named in the output because the valid equation',
   'is chosen by the test method (Bishop et al. 2018) and percentages from',
-  'different equations are not comparable. The difference is marked real ONLY',
+  'different equations are not comparable. THE EQUATION IS ALSO PERSISTED ON',
+  'THE STORED ROW (VW-295), fixed for this test type and never a per-call',
+  'choice, so a later read can tell whether a past occasion used the same one',
+  'before pooling it. The difference is marked real ONLY',
   "when asymmetryPct exceeds this athlete's own intra-limb CV across the very",
   'trials being compared (Bishop et al. 2023) — a difference smaller than a',
   "limb's own trial-to-trial spread is a measurement, not a capacity gap. Read",
@@ -251,7 +263,9 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'KEYED (VW-280): every stored assessment records the lifter, the exercise and',
   'the session it was captured under, so the series is this lifter tested on',
   'this exercise, and legacyUnkeyed counts the older assessments that carry no',
-  'key and are therefore excluded from it.',
+  'key and are therefore excluded from it. directionHistory and',
+  'peakForceBaseline also exclude a stored occasion computed under a different',
+  'asymmetry equation than this run (VW-295), counted in otherEquation.',
   '',
   'DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK OFF THIS RESULT (VW-273). The',
   'intervention literature does not support it: unilateral training beats',
@@ -439,6 +453,15 @@ interface MeasureMaxResult {
    * tests exist that could not join it.
    */
   legacyUnkeyed: number;
+  /**
+   * Stored assessments excluded from `peakForceBaseline` because they carry a
+   * DIFFERENT asymmetry equation than this run's (VW-295) — a percentage from
+   * a different equation is not comparable, so pooling its peak forces in
+   * would mix two measurement bases. A row with NO equation at all (every
+   * `measure_max` row, and any legacy row) is not "other equation" and stays
+   * in; only counted here is a genuine mismatch.
+   */
+  otherEquation: number;
   /** Id of the persisted `isometric_measurements` row, or `null` when the write failed. */
   measurementId: string | null;
   /**
@@ -520,6 +543,15 @@ interface MeasureImbalanceResult {
    * differently once you know nine older tests could not join it.
    */
   legacyUnkeyed: number;
+  /**
+   * Stored assessments excluded from `directionHistory` and `peakForceBaseline`
+   * because they carry a DIFFERENT asymmetry equation than this run's
+   * (VW-295) — a percentage from a different equation is not comparable, so
+   * a stored direction or peak force computed under one cannot join a series
+   * read under another. A row with NO equation at all is not "other equation"
+   * and stays in; only a genuine mismatch is counted here.
+   */
+  otherEquation: number;
   /**
    * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
    * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
@@ -634,7 +666,8 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
   // baseline (VW-271) — the opposite of the direction history, which wants
   // the current run included.
   const history = await readKeyedHistory(state, keys, 'isometric.measure_max');
-  const peakForceBaseline = baselineFrom(history);
+  const filtered = excludeOtherEquations(history);
+  const peakForceBaseline = baselineFrom(filtered);
   const changeFromBaseline =
     peakForceBaseline !== null && result.analysis.meanPeakForceLbs !== null
       ? evaluatePeakForceChange(result.analysis.meanPeakForceLbs, peakForceBaseline)
@@ -643,6 +676,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     durationMs: input.durationMs,
     trialsRequested: input.trials,
     restMs: input.restMs,
+    asymmetryEquation: asymmetryEquationFor('unilateral-max'),
     sides: [{ slotId, trials: result.analysis.trials }],
   });
   publishMaxResult(state, { slot: slotId, peakForceLbs: result.analysis.meanPeakForceLbs });
@@ -658,6 +692,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     peakForceBaseline,
     changeFromBaseline,
     legacyUnkeyed: history?.legacyUnkeyed ?? 0,
+    otherEquation: filtered?.otherEquation ?? 0,
     measurementId,
     mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
@@ -724,7 +759,7 @@ async function measureImbalance(
   // baseline (VW-271) — the opposite of the direction history below, which
   // wants the current run included.
   const peakForceBaseline = baselineFrom(
-    await readKeyedHistory(state, keys, 'isometric.measure_imbalance'),
+    excludeOtherEquations(await readKeyedHistory(state, keys, 'isometric.measure_imbalance')),
   );
   const left: SideSummary = sideAsSummary(leftSlotId, leftAnalysis, peakForceBaseline);
   const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis, peakForceBaseline);
@@ -745,6 +780,7 @@ async function measureImbalance(
     trialsRequested: input.trials,
     restMs: input.restMs,
     betweenSidesRestMs: input.betweenSidesRestMs,
+    asymmetryEquation: asymmetryEquationFor('bilateral-imbalance'),
     sides: [
       { side: 'left', slotId: leftSlotId, trials: leftAnalysis?.trials ?? [] },
       { side: 'right', slotId: rightSlotId, trials: rightAnalysis?.trials ?? [] },
@@ -761,6 +797,7 @@ async function measureImbalance(
 
   // Re-read AFTER persisting so the run just completed is in its own series.
   const directionRead = await readKeyedHistory(state, keys, 'isometric.measure_imbalance');
+  const directionFiltered = excludeOtherEquations(directionRead);
 
   return {
     ok: true,
@@ -771,10 +808,11 @@ async function measureImbalance(
     setupComparability: setupGate.comparability,
     setupSignatures: { left: setupGate.left, right: setupGate.right },
     setupReason: setupGate.reason,
-    directionHistory: summarizeDirection(directionRead),
+    directionHistory: summarizeDirection(directionFiltered),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
     legacyUnkeyed: directionRead?.legacyUnkeyed ?? 0,
+    otherEquation: directionFiltered?.otherEquation ?? 0,
     mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
@@ -818,11 +856,44 @@ async function readKeyedHistory(
   }
 }
 
+/** A keyed history page with rows under a different asymmetry equation pulled out. */
+interface FilteredIsometricHistory {
+  measurements: StoredIsometricMeasurement[];
+  /** Rows excluded because their equation is SET and differs from this run's (VW-295). */
+  otherEquation: number;
+}
+
+/**
+ * Pull out stored rows whose asymmetry equation is a MISMATCH with the current
+ * one (VW-295) — `directionHistory` and the peak-force baseline both read
+ * through this, because a percentage or a direction computed under a
+ * different equation cannot join a series read under this one.
+ *
+ * A row with NO equation at all is not a mismatch: every `measure_max` row
+ * computes no comparison and stores none by design, and a pre-VW-295 row
+ * never named one either. Both stay in — this excludes a genuine conflict,
+ * not an absence.
+ */
+function excludeOtherEquations(
+  history: IsometricMeasurementHistory | null,
+): FilteredIsometricHistory | null {
+  if (history === null) return null;
+  let otherEquation = 0;
+  const measurements = history.measurements.filter((m) => {
+    if (m.asymmetryEquation === undefined || m.asymmetryEquation === ASYMMETRY_EQUATION) {
+      return true;
+    }
+    otherEquation += 1;
+    return false;
+  });
+  return { measurements, otherEquation };
+}
+
 /**
  * Summarize limb dominance over this lifter's stored assessments of this
  * exercise, including the one this run just wrote (VW-270/VW-280).
  */
-function summarizeDirection(history: IsometricMeasurementHistory | null): DirectionHistory | null {
+function summarizeDirection(history: FilteredIsometricHistory | null): DirectionHistory | null {
   if (history === null) return null;
   return summarizeDirectionHistory(
     history.measurements.map((m) => ({
@@ -931,7 +1002,7 @@ function withholdImbalanceVerdict(
  * measurement spread, so pooling a second lifter's pulls into it inflated the
  * spread and hid real changes.
  */
-function baselineFrom(history: IsometricMeasurementHistory | null): PeakForceBaseline | null {
+function baselineFrom(history: FilteredIsometricHistory | null): PeakForceBaseline | null {
   if (history === null) return null;
   return computePeakForceBaseline(occasionPeakForcesLbs(history.measurements));
 }
@@ -993,6 +1064,12 @@ interface PersistSideInput {
  * current thresholds. A stored verdict would be indistinguishable from a fresh
  * one the day the thresholds move.
  *
+ * `asymmetry_equation` (VW-295) is the one exception: it is stamped, not
+ * recomputed, because it is not a function of the stored trials at all — it is
+ * fixed by which tool ran (`asymmetryEquationFor`), and a future equation
+ * change must not silently reinterpret an old row's percentage under the new
+ * one. Absent for `measure_max`, which computes no comparison to name.
+ *
  * Identity, run level (VW-280): `user_id` / `exercise_id` / `session_id` say
  * who was tested, on what, and during which session — see
  * {@link measurementKeys}. They are what makes a stored assessment joinable to
@@ -1019,6 +1096,8 @@ async function persistMeasurement(
     trialsRequested: number;
     restMs: number;
     betweenSidesRestMs?: number;
+    /** The equation this run's asymmetry math used, fixed per test type (VW-295); null for a run with no comparison to name one for. */
+    asymmetryEquation: AsymmetryEquation | null;
     sides: PersistSideInput[];
   },
 ): Promise<string | null> {
@@ -1036,6 +1115,7 @@ async function persistMeasurement(
     ...(args.betweenSidesRestMs !== undefined
       ? { betweenSidesRestMs: args.betweenSidesRestMs }
       : {}),
+    ...(args.asymmetryEquation !== null ? { asymmetryEquation: args.asymmetryEquation } : {}),
     sides: args.sides.map((s) => toStoredSide(state, s)),
   };
   try {

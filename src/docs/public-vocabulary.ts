@@ -172,6 +172,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-280: stored assessments now carry a lifter / exercise / session key, so
   // the runs that predate it are excluded from both series and counted.
   'legacyUnkeyed',
+  // VW-295: the equation a stored assessment's asymmetry math was computed
+  // under, fixed per test type, and the exclusion count for a stored
+  // occasion whose equation does not match this run's.
+  'asymmetryEquation',
+  'otherEquation',
   // VW-274: the mount-load envelope check on `isometric.measure_hold`,
   // `isometric.measure_max`, `isometric.measure_imbalance` and
   // `device.set_eccentric`.
