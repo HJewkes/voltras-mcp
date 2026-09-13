@@ -190,6 +190,29 @@ VW-270 change the rules without stranding a single stored row. The write is best
 store failure returns `measurementId: null` rather than discarding a result that just cost
 the athlete real effort to produce (`src/tools/isometric-tools.ts:293-301`).
 
+### What the result does not license
+
+**No corrective unilateral work is prescribed from a detected asymmetry** — not here, not by
+`coaching.explain`, not by `plan.suggest_progression`. The intervention literature does not
+support it. Meta-analysed against bilateral training, unilateral training was clearly better
+for unilateral jump (ES 0.89, 95% CI 0.52-1.26) and worse for bilateral strength (ES -0.43,
+CI -0.71 to -0.14), while unilateral strength, bilateral jump, sprint and change of direction
+were all non-significant (Liao et al., _Biology of Sport_ 2022). Unilateral work is
+goal-specific: prescribe it when single-limb capacity is the goal. The evidence that any
+method reduces asymmetry at all is thin — a seven-week bilateral back-squat block moved
+isometric peak-force asymmetry only in the subgroup that started weaker, and several combined
+and flywheel programmes improved performance while leaving asymmetry untouched (Bishop et al.
+2023). The stated answer to a detected difference is consistent strength training over time.
+Ask `coaching.explain` for `meso.asymmetry_interpretation` to get this with its citations.
+
+**There is no published re-test cadence for asymmetry, and this server invents none.** No
+interval appears anywhere in these tools, and none should be read into the
+`insufficient-history` threshold — three tests is the point at which a direction label
+becomes possible, not a schedule. The defensible rule is a decision rule: test often enough
+to judge whether limb dominance is consistent across sessions. See
+[the bilateral guide](/guides/bilateral#what-a-detected-asymmetry-does-not-license) for the
+same two statements alongside the slot-pairing they apply to.
+
 ## The calibration caveat
 
 Force is read off the SDK's telemetry frame and converted from the device's native
