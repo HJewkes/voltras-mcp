@@ -101,6 +101,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `metrics.compute` gains a `fatigue.verdict` pipeline (VW-313): the same multi-dimension
+  fatigue verdict the live dashboard's fatigue card renders — an aggregate state
+  (good/slowing/grinding/form-breakdown), an aggregate tone, and per-dimension tones for
+  velocity loss, ROM and tempo. A ROM or tempo alarm overrides a clean-looking velocity
+  reading, so a cheat rep (cutting ROM while keeping cable speed up) cannot hide behind an
+  honest-looking velocity number. `null` for a set under 2 reps, which has no baseline yet
+  to judge a rep against. Prefer this over `fatigue.set`, whose `FatigueIndex` is deprecated
+  upstream. No schema change.
+
 - The wall dashboard's session rail now shows how the session is tracking against its plan
   (VW-290). When a workout template is attached, the rail reports how many planned sets are
   left, the clock time the plan projects you to finish at, and the elapsed time against the

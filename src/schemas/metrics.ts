@@ -52,6 +52,24 @@ export const MetricsComputeInput = z.discriminatedUnion('pipeline', [
   // Analytics: getSetFatigueIndex(set) from @voltras/workout-analytics.
   z.object({ pipeline: z.literal('fatigue.set'), setId: IdSchema }),
 
+  // Multi-dimension fatigue verdict for one set (VW-313) — the same verdict
+  // the SPA's live fatigue card renders, returned verbatim. Analytics:
+  // getSetFatigueVerdict(set) from @voltras/workout-analytics. `null` below
+  // 2 reps (no baseline yet to judge a rep against). `fatigue.set`'s
+  // FatigueIndex is DEPRECATED upstream; this is its discrete-state
+  // replacement — state/tone plus three per-dimension tones, with a ROM or
+  // tempo alarm overriding a clean-looking velocity reading (a cheat rep
+  // props velocity up by cutting ROM and dropping the eccentric).
+  z
+    .object({ pipeline: z.literal('fatigue.verdict'), setId: IdSchema })
+    .describe(
+      'Multi-dimension fatigue verdict for one set — state (good/slowing/grinding/' +
+        'form-breakdown), an aggregate tone, and three per-dimension tones ' +
+        '(velocityLoss/rom/tempo). A ROM or tempo alarm overrides a clean-looking ' +
+        'velocity reading, so a cheat rep cannot hide behind velocity alone. `null` ' +
+        'below 2 reps. Prefer this over `fatigue.set`, whose FatigueIndex is deprecated.',
+    ),
+
   // Per-rep RIR (reps in reserve) from the VBT §5.3 regression (VW-134).
   // Analytics: estimateRIRWithProfile(inputs, profile) — DISTINCT from
   // `fatigue.set`'s RIR, which is the simpler velocity-loss interpolation.

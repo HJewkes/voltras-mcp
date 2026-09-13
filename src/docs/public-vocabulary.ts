@@ -381,10 +381,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
 
 /**
  * The `pipeline` selector on `metrics.compute`. Its schema declares a bare
- * string — the sixteen accepted literals exist only in the description — so
+ * string — the seventeen accepted literals exist only in the description — so
  * these cannot be harvested and are listed instead.
  *
- * All sixteen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
+ * All seventeen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
  * `src/__tests__/docs/check-docs.test.ts`. Nine were missing, which mattered
  * once `scripts/check-docs.mjs` started reading this list: seven of the
  * sixteen open with a tool namespace (`session.`), so a partial list makes a
@@ -392,6 +392,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
  */
 export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
   'fatigue.set',
+  'fatigue.verdict',
   'history.trend',
   'history.weekly_volume',
   'quality.bounce',
@@ -430,6 +431,7 @@ export const EXTERNAL_NAMES: readonly string[] = [
   'detectPlateau',
   'e1RM',
   'exitWorkout',
+  'FatigueIndex',
   'getVolumeByMuscleGroup',
   'getWeeklySummaries',
   'iPad',
