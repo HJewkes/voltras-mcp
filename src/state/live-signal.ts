@@ -168,6 +168,37 @@ export interface LiveIsometricSignal {
   side: 'left' | 'right' | null;
 }
 
+/** One side of a {@link LiveIsometricResultSignal}. */
+export interface LiveIsometricResultSide {
+  side: 'left' | 'right' | null;
+  slot: string;
+  /** Mean of the side's best two valid trials, lbs; null under 2 valid trials. */
+  peakForceLbs: number | null;
+}
+
+/**
+ * Live echo of an `isometric_result` channel event (VW-264) — what the hold the
+ * walkthrough just narrated actually measured.
+ *
+ * Carries no `slot` of its own: a bilateral assessment spans two slots and each side
+ * names its own inside {@link sides}. The wall renders ONE verdict card per assessment,
+ * so there is nothing to demux.
+ */
+export interface LiveIsometricResultSignal {
+  /** The tool that produced this, e.g. `isometric.measure_imbalance`. */
+  tool: string;
+  sides: readonly LiveIsometricResultSide[];
+  asymmetryPct: number | null;
+  /** See the channel payload's `IsometricVerdict`; null means no verdict at all. */
+  verdict: 'flagged' | 'meaningful' | null;
+  reason: string;
+  /** The setup-geometry gate's answer (VW-284), or null when none ran. */
+  comparability: string | null;
+  setupReason: string | null;
+  /** When the assessment finished, ms since epoch. */
+  occurredAt: number;
+}
+
 /**
  * The phase payloads as {@link PhaseClock} derives them — before a slot is
  * known. The clock is pure phase math over one device's frames and has no
@@ -194,14 +225,16 @@ export type LiveSetSignalCore = Omit<LiveSetSignal, 'slot'>;
  * `isometric` (VW-198) rides the same hub even though it has no frame-cadence origin —
  * it is teed in from the `isometric_phase` channel event by `isometric-live-signal-tee.ts`
  * rather than emitted by `LiveSignalEmitter`, but the verbatim-by-`type` forwarder needs
- * no per-type awareness of that, so it just works.
+ * no per-type awareness of that, so it just works. `isometric_result` (VW-264) is teed in the
+ * same way, from the event that closes the assessment rather than a phase of it.
  */
 export type LiveSignalEvent =
   | { type: 'phase'; data: LivePhaseSignal }
   | { type: 'phaseflip'; data: LivePhaseFlip }
   | { type: 'rep'; data: LiveRepSignal }
   | { type: 'set'; data: LiveSetSignal }
-  | { type: 'isometric'; data: LiveIsometricSignal };
+  | { type: 'isometric'; data: LiveIsometricSignal }
+  | { type: 'isometric_result'; data: LiveIsometricResultSignal };
 
 export type LiveSignalListener = (event: LiveSignalEvent) => void;
 

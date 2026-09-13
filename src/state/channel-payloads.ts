@@ -2450,6 +2450,94 @@ export function buildIsometricPhasePayload(input: IsometricPhasePayloadInput): {
 }
 
 /**
+ * What an isometric assessment concluded about a left/right difference.
+ *
+ * `meaningful` — the between-limb percentage exceeds this athlete's own
+ * intra-limb CV on the same test, so it is larger than the measurement's own
+ * spread (`computeImbalance`'s `real`).
+ * `flagged` — a difference was measured but sits inside that CV: worth showing,
+ * not worth concluding from.
+ *
+ * `null` (not a member here) is the third answer and means no verdict at all:
+ * a side produced fewer than 2 valid trials, the run was single-sided, or the
+ * setup gate withheld it.
+ */
+export type IsometricVerdict = 'flagged' | 'meaningful';
+
+/** One side's contribution to an `isometric_result`. */
+export interface IsometricResultSide {
+  /** The limb, or `null` for a single-sided run that declared none. */
+  side: 'left' | 'right' | null;
+  slot: string;
+  /** Mean of the side's best two valid trials, lbs; null under 2 valid trials. */
+  peakForceLbs: number | null;
+}
+
+export interface IsometricResultPayloadInput {
+  /** The tool that produced this, e.g. `isometric.measure_imbalance`. */
+  tool: string;
+  sides: readonly IsometricResultSide[];
+  asymmetryPct: number | null;
+  verdict: IsometricVerdict | null;
+  /** Why that verdict, in the assessment's own words. */
+  reason: string;
+  /** The setup-geometry gate's answer (VW-284), when the run ran one. */
+  comparability?: string | undefined;
+  /** Why the setup gate said that, when it has something to say. */
+  setupReason?: string | undefined;
+  /** When the assessment finished, ms since epoch — the card's dwell clock. */
+  occurredAt: number;
+}
+
+/**
+ * Build the meta + content for an `isometric_result` channel event (VW-264).
+ *
+ * The `isometric_phase` events walk the athlete through a hold; nothing told
+ * them what the hold MEASURED. The tool result goes back to the MCP client
+ * only, so a lifter standing at the rig learned their own asymmetry from a
+ * spoken cue the model chose to give, or not at all. This carries the finished
+ * numbers onto the same push surface the phases already ride.
+ *
+ * Fitness units only — per-side peak force in lbs and a percentage. No device
+ * value, register or command code is derivable from any of it.
+ *
+ * `slot` is deliberately NOT set, and the slot-scoped publisher is not used: a
+ * bilateral result spans two slots and stamping it with either one would
+ * misattribute the other side. Each side names its own slot inside the payload.
+ * See docs/push-events.md's slot-exception list.
+ */
+export function buildIsometricResultPayload(input: IsometricResultPayloadInput): {
+  meta: Record<string, string>;
+  content: string;
+} {
+  const meta: Record<string, string> = {
+    source: 'voltras',
+    event_type: 'isometric_result',
+    tool: input.tool,
+    ...(input.verdict !== null ? { verdict: input.verdict } : {}),
+    ...(input.comparability !== undefined ? { comparability: input.comparability } : {}),
+  };
+  const content = JSON.stringify({
+    summary: `${input.tool}: ${input.reason}`,
+    isometric_result: {
+      tool: input.tool,
+      sides: input.sides.map((side) => ({
+        side: side.side,
+        slot: side.slot,
+        peakForceLbs: side.peakForceLbs === null ? null : round1(side.peakForceLbs),
+      })),
+      asymmetryPct: input.asymmetryPct === null ? null : round1(input.asymmetryPct),
+      verdict: input.verdict,
+      reason: input.reason,
+      comparability: input.comparability ?? null,
+      setupReason: input.setupReason ?? null,
+      occurredAt: input.occurredAt,
+    },
+  });
+  return { meta, content };
+}
+
+/**
  * Build the meta + content for a `lease_lost` channel event (VMCP-01.65).
  *
  * Fired when a multi-step device write re-checked the write-lease after an

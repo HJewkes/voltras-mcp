@@ -39,6 +39,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall shows what an isometric assessment measured, once the hold overlay closes
+  (VW-264). After `isometric.measure_imbalance` (or `isometric.measure_max`) finishes, a
+  card carries each side's peak force, the left/right percentage and the verdict — and
+  stays up for twenty seconds, or until the next set starts or the next hold begins,
+  whichever comes first. Until now those numbers went back to the MCP client only, so a
+  lifter standing at the rig heard their own asymmetry only if the model chose to speak
+  it. The verdict is the same comparison the tool result makes — the difference against
+  this athlete's own trial-to-trial spread, never a fixed percentage — and a result whose
+  setup geometry could not be compared reads "verdict withheld" with the reason, not "no
+  difference found". Delivered as a new `isometric_result` push event, documented in
+  `docs/push-events.md`.
+
 - The declared diet phase now moves autoregulation thresholds instead of only sitting
   next to them (VW-277). A fat-loss phase WIDENS the performance dip tolerated before a
   load cut or a plateau call, and the widening grows with weeks in phase; a gain phase

@@ -89,6 +89,7 @@ import {
   type TrialAnalysis,
 } from '../state/isometric-protocol.js';
 import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channel-payloads.js';
+import { publishImbalanceResult, publishMaxResult } from './isometric-result-emit.js';
 import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
 import { checkMountLoad, ISOMETRIC_MAX_PEAK_LBS_PER_UNIT } from '../state/mount-load-gate.js';
 import { unloadSlot } from './device-exit.js';
@@ -627,6 +628,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     restMs: input.restMs,
     sides: [{ slotId, trials: result.analysis.trials }],
   });
+  publishMaxResult(state, { slot: slotId, peakForceLbs: result.analysis.meanPeakForceLbs });
   return {
     ok: true,
     slot: slotId,
@@ -726,6 +728,14 @@ async function measureImbalance(
       { side: 'left', slotId: leftSlotId, trials: leftAnalysis?.trials ?? [] },
       { side: 'right', slotId: rightSlotId, trials: rightAnalysis?.trials ?? [] },
     ],
+  });
+  publishImbalanceResult(state, {
+    sides: [
+      { side: 'left', slot: leftSlotId, peakForceLbs: left.meanPeakForceLbs },
+      { side: 'right', slot: rightSlotId, peakForceLbs: right.meanPeakForceLbs },
+    ],
+    imbalance,
+    setup: setupGate,
   });
 
   return {

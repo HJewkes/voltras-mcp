@@ -27,6 +27,7 @@
  * type-only import) — no protocol bytes, frames, or command codes cross here.
  */
 import {
+  type LiveIsometricResultSignal,
   type LiveIsometricSignal,
   type LivePhase,
   type LivePhaseFlip,
@@ -123,6 +124,10 @@ function createSlotState(): SlotState {
  * interpolated like the phase/rep/set signals above, so it is forwarded as-is rather than
  * held in per-slot anchor state.
  *
+ * `onIsometricResult` (VW-264) receives the assessment's finished verdict the same way.
+ * It takes no slot: a bilateral result spans two slots and names each one inside its own
+ * payload, so there is nothing for a consumer to demux.
+ *
  * `onModel`'s second argument is the originating slot ({@link PRIMARY_SLOT} for a
  * single-Voltra stream). Slot-blind consumers may ignore it and behave exactly as before.
  */
@@ -130,6 +135,7 @@ export function createLiveStreamController(
   onModel: (model: LiveModel, slot: string) => void,
   onSnapshot?: (snapshot: Snapshot) => void,
   onIsometric?: (signal: LiveIsometricSignal, slot: string) => void,
+  onIsometricResult?: (signal: LiveIsometricResultSignal) => void,
 ): () => void {
   // EventSource is absent in very old browsers / some test envs — degrade to
   // poll-only silently rather than throwing.
@@ -286,6 +292,13 @@ export function createLiveStreamController(
     onIsometric?.(data, slotOf(data));
   };
 
+  // Same discrete forward as the phase echo, minus the slot: see `onIsometricResult`.
+  const onIsometricResultEvent = (e: MessageEvent<string>): void => {
+    const data = JSON.parse(e.data) as LiveIsometricResultSignal;
+    touchAll(Date.now());
+    onIsometricResult?.(data);
+  };
+
   source.addEventListener('phase', onPhase);
   source.addEventListener('phaseflip', onFlip);
   source.addEventListener('rep', onRep);
@@ -293,6 +306,7 @@ export function createLiveStreamController(
   source.addEventListener('hb', onHb);
   source.addEventListener('snapshot', onSnapshotEvent);
   source.addEventListener('isometric', onIsometricEvent);
+  source.addEventListener('isometric_result', onIsometricResultEvent);
   // EventSource auto-reconnects honoring the server's `retry:` hint; we just
   // let the staleness clock flip `connected` to false in the meantime.
   source.onerror = (): void => commitAll(true);
@@ -317,6 +331,7 @@ export function createLiveStreamController(
     source.removeEventListener('hb', onHb);
     source.removeEventListener('snapshot', onSnapshotEvent);
     source.removeEventListener('isometric', onIsometricEvent);
+    source.removeEventListener('isometric_result', onIsometricResultEvent);
     source.close();
   };
 }

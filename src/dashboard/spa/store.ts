@@ -49,7 +49,7 @@ import {
   type Snapshot,
 } from './adapter';
 import { type LiveModel } from './live-stream';
-import type { LiveIsometricSignal } from '../../state/live-signal';
+import type { LiveIsometricResultSignal, LiveIsometricSignal } from '../../state/live-signal';
 import { type MassUnit } from './live-page/mass';
 import { parseRoute, type Route } from './routing';
 import type { DashboardCatalogEntry } from '../read-models/catalog-entry';
@@ -177,6 +177,12 @@ interface IsometricSlice {
   isometricBySlot: Record<string, LiveIsometricSignal>;
   /** @see LiveSlice.live — same single-slot derivation for slot-blind consumers. */
   isometric: LiveIsometricSignal | null;
+  /**
+   * The latest finished assessment (VW-264). NOT per-slot, unlike the walkthrough above:
+   * a bilateral result is one answer about two slots, so there is one card. Retained
+   * after its card stops showing — the dwell is the model's decision, not the store's.
+   */
+  isometricResult: LiveIsometricResultSignal | null;
 }
 
 /** @see IsometricSlice.isometric */
@@ -204,6 +210,8 @@ interface DashboardActions {
    * it — see {@link IsometricSlice}.
    */
   setIsometric(signal: LiveIsometricSignal | null, slot?: string): void;
+  /** Apply the latest finished isometric assessment (VW-264). @see IsometricSlice.isometricResult */
+  setIsometricResult(result: LiveIsometricResultSignal | null): void;
   /** Merge a batch of planner results (best-effort; partial is fine). */
   applyPlanner(patch: PlannerPatch): void;
   /** Choose the display unit (VW-63) and persist it to `localStorage`. */
@@ -252,6 +260,7 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
   live: null,
   isometricBySlot: {},
   isometric: null,
+  isometricResult: null,
   displayUnit: readStoredDisplayUnit(),
   route: readInitialRoute(),
 
@@ -318,6 +327,8 @@ export const dashboardStore = createStore<DashboardState>((set) => ({
       }
       return { isometricBySlot, isometric: deriveIsometric(isometricBySlot) };
     }),
+
+  setIsometricResult: (result) => set({ isometricResult: result }),
 
   setDisplayUnit: (unit) =>
     set(() => {

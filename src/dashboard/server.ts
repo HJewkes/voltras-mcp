@@ -38,8 +38,8 @@
 //                          and the active set if any.
 //   GET /api/stream      — Server-Sent Events (`text/event-stream`) live
 //                          overlay (VMCP-01.59): `phase` / `phaseflip` / `rep`
-//                          / `set` / `isometric` (VW-198) derived signals + ~1 Hz
-//                          `hb` keepalive.
+//                          / `set` / `isometric` (VW-198) / `isometric_result`
+//                          (VW-264) derived signals + ~1 Hz `hb` keepalive.
 //                          Additive to /api/snapshot (which stays the source of
 //                          truth); the SPA degrades to poll-only without it.
 //   GET /api/health      — { ok, version, uptimeMs } JSON.
@@ -730,8 +730,8 @@ const STREAM_HEARTBEAT_MS = 1000;
 /**
  * `GET /api/stream` — the VMCP-01.59 Server-Sent Events endpoint. Registers the
  * response as a subscriber on the live-signal hub and streams `phase` /
- * `phaseflip` / `rep` / `set` / `isometric` events plus a ~1 Hz `hb` keepalive, in
- * `text/event-stream`.
+ * `phaseflip` / `rep` / `set` / `isometric` / `isometric_result` events plus a ~1 Hz
+ * `hb` keepalive, in `text/event-stream`.
  *
  * Structural push (VMCP-03.04): each `set` lifecycle boundary — the structural
  * transition the dashboard cares about (session/set start & end) — also pushes a
