@@ -326,6 +326,14 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'voiceReady.whisperCli',
   'watch.inactivityTimeoutMs',
   'watch.velocityLoss.force',
+  // VW-297: `timer.start`'s rest-duration basis, when no explicit `durationMs`
+  // was given.
+  'restBasis',
+  'intent_default',
+  'intent_default_extended',
+  'prevRepsToThreshold',
+  'currRepsToThreshold',
+  'extensionSeconds',
 ];
 
 /**

@@ -70,6 +70,18 @@ entry is written from the user's point of view is a review question, not a check
   0.93-0.94) — this server's own sideSplit had no such statement before, so a reader could
   not tell whether the 30 vs 45 lb gap it already showed was a reliable comparison or not.
 
+- `timer.start` now defaults its rest duration by training goal when no explicit
+  `durationMs` is given (VW-297): >=120s for a `strength`-intent exercise (Grgic et al.
+  2018 — over 2 minutes needed to maximise strength gains in trained lifters), 90-120s for
+  `hypertrophy` (Singer et al. 2024 — no further benefit past 90s), or a named
+  conservative default when no plan or training intent is attached. It then extends,
+  unprompted, when the exercise's most recent completed set reached its velocity-loss
+  stop threshold in fewer reps than the set before it — Singer et al. 2024's proposed
+  mechanism is volume-load preservation, observable as reps-to-threshold holding steady
+  set to set. The result reports `restBasis` (`source`, `intent`,
+  `prevRepsToThreshold`, `currRepsToThreshold`, `extensionSeconds`) so the basis for the
+  duration is always visible; an explicit `durationMs` is never overridden.
+
 - The wall shows what an isometric assessment measured, once the hold overlay closes
   (VW-264). After `isometric.measure_imbalance` (or `isometric.measure_max`) finishes, a
   card carries each side's peak force, the left/right percentage and the verdict — and

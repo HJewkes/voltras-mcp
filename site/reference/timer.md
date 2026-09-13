@@ -19,11 +19,11 @@ Use this for short rest timers between sets, between-session breaks, or any "wai
 
 Start a non-blocking timer.
 
-Returns a `timer_id` immediately; when the duration elapses, a `timer_complete` claude/channel event fires with the label, original duration, and expected fire time. Use this for any rest longer than ~30s where the model wants to keep talking with the user (or react to their messages) while the timer counts down. Multiple `timer.start` timers can be in flight at once; cancel a specific one with `timer.cancel({ timer_id })`.
+Returns a `timer_id` immediately; when the duration elapses, a `timer_complete` claude/channel event fires with the label, original duration, and expected fire time. Use this for any rest longer than ~30s where the model wants to keep talking with the user (or react to their messages) while the timer counts down. Multiple `timer.start` timers can be in flight at once; cancel a specific one with `timer.cancel({ timer_id })`. Omit `durationMs` for a rest timer to default it by training goal (VW-297): >=120s for a `strength`-intent exercise (Grgic et al. 2018 — over 2 minutes needed to maximise strength gains in trained lifters), 90-120s for `hypertrophy` (Singer et al. 2024 — no further benefit past 90s), or a named conservative default when the active session carries no plan or the plan names no training intent. The default then extends when the exercise's most recent completed set reached its velocity-loss stop threshold in FEWER reps than the set before it — Singer et al. 2024 ties this drop to insufficient rest (their proposed mechanism is volume-load preservation: reps-to-threshold holding steady set to set means rest was long enough). The result reports `restBasis` — `source` (`explicit` when `durationMs` was given, `intent_default` or `intent_default_extended` otherwise), `intent`, `prevRepsToThreshold`, `currRepsToThreshold`, and `extensionSeconds` — so the basis for the duration is always visible. An explicit `durationMs` is never overridden.
 
 **Parameters**
 
-- `durationMs` — `integer` (1–3600000), **required**.
+- `durationMs` — `integer` (1–3600000), optional.
 - `label` — `string`, **required**.
 
 ## `timer.cancel`
