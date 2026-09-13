@@ -125,6 +125,11 @@ import {
   type RepBounceReading,
   type RepHesitationReading,
 } from '../analytics/rep-faults.js';
+import {
+  computeFatigueAxes,
+  type FatigueAxes,
+  type FatigueSetReading,
+} from '../analytics/fatigue-axes.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import {
   buildComparabilitySubjectGroups,
@@ -312,10 +317,15 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
       // `withinSetFatigue` is surfaced alongside for transparency.
       const withinSetPerSet = analyticsSets.map((s) => computeVBTSetFatigueIndex(s).fatigueIndex);
       const withinSetMax = withinSetPerSet.length === 0 ? 0 : Math.max(...withinSetPerSet);
+      // VW-306: `level` blends entry state and accumulated work into one
+      // number. The axes below say which of the two moved, additively — every
+      // field above keeps its meaning.
+      const exerciseId = sets[0]?.exerciseId ?? UNKNOWN_KEY;
       return {
         ...crossSet,
         level: Math.max(crossSet.level, withinSetMax),
         withinSetFatigue: { max: withinSetMax, perSet: withinSetPerSet },
+        fatigueAxes: await fatigueAxesForExercise(state, exerciseId, input.sessionId, sets),
       };
     }
 
@@ -422,9 +432,11 @@ async function compute(state: ServerState, input: MetricsComputeInputType): Prom
     case 'session.perturbation': {
       const sets = await state.store.getSetsForSession(input.sessionId);
       if (sets.length === 0) throw notFound(`session '${input.sessionId}' has no sets`);
-      const groups = workingSetsByExercise(sets, input.exerciseId);
+      const groups = ownSetsByExercise(sets, input.exerciseId);
       const exercises = await Promise.all(
-        [...groups].map(([id, working]) => perturbationForExercise(state, id, working)),
+        [...groups].map(([id, group]) =>
+          perturbationForExercise(state, id, input.sessionId, group),
+        ),
       );
       return { exercises };
     }
@@ -1287,6 +1299,21 @@ function workingSetsByExercise(
   sets: readonly StoredSet[],
   only: string | undefined,
 ): Map<string, StoredSet[]> {
+  return new Map(
+    [...ownSetsByExercise(sets, only)].map(([key, group]) => [key, selectWorkingSets(group)]),
+  );
+}
+
+/**
+ * The same grouping WITHOUT the warm-up filter, for the one caller that needs
+ * to know whether a warm-up happened at all (VW-306's `warmupState`
+ * confounder). Guest sets are still dropped: that filter is about whose
+ * evidence this is, not about which sets are work.
+ */
+function ownSetsByExercise(
+  sets: readonly StoredSet[],
+  only: string | undefined,
+): Map<string, StoredSet[]> {
   const grouped = new Map<string, StoredSet[]>();
   for (const set of sets) {
     if (set.lifter !== undefined) continue;
@@ -1296,7 +1323,7 @@ function workingSetsByExercise(
     if (group) group.push(set);
     else grouped.set(key, [set]);
   }
-  return new Map([...grouped].map(([key, group]) => [key, selectWorkingSets(group)]));
+  return grouped;
 }
 
 /** The band a perturbation readout would carry once a threshold is citable. */
@@ -1340,18 +1367,29 @@ interface ExercisePerturbation {
   gate: FeatureGateVerdict;
   interpretation: PerturbationBand | null;
   interpretationNote: string;
+  /**
+   * VW-306's split of the same fatigue into its two physiologically distinct
+   * halves. ADDITIVE: every field above means exactly what it meant before,
+   * including the blended `meanVelocityDropPct` this sits beside.
+   */
+  fatigueAxes: FatigueAxes;
 }
 
 /**
  * Decay for one exercise's working sets. Fewer than two working sets leaves
  * every drop null — first and last would be the same set, and reporting 0
  * there would read as "no fatigue" rather than "nothing to compare".
+ *
+ * `group` is the exercise's sets INCLUDING warm-ups, because the fatigue axes
+ * read warm-up state; the drops below still compare working sets only.
  */
 async function perturbationForExercise(
   state: ServerState,
   exerciseId: string,
-  working: readonly StoredSet[],
+  sessionId: string,
+  group: readonly StoredSet[],
 ): Promise<ExercisePerturbation> {
+  const working = selectWorkingSets([...group]);
   const base: ExercisePerturbation = {
     exerciseId,
     workingSets: working.length,
@@ -1361,6 +1399,7 @@ async function perturbationForExercise(
     gate: await relativeSignalGate(state, exerciseId, working),
     interpretation: null,
     interpretationNote: PERTURBATION_INTERPRETATION_NOTE,
+    fatigueAxes: await fatigueAxesForExercise(state, exerciseId, sessionId, group),
   };
   const first = working[0];
   const last = working[working.length - 1];
@@ -1384,6 +1423,69 @@ async function perturbationForExercise(
 function dropPct(from: number | undefined, to: number | undefined): number | null {
   if (from === undefined || to === undefined || from <= 0) return null;
   return ((from - to) / from) * 100;
+}
+
+/**
+ * VW-306's two fatigue axes for one exercise's work in one session.
+ *
+ * PLUMBING ONLY (AC-20): this resolves the reference sets and normalises
+ * velocities; `computeFatigueAxes` owns every comparison. The reference is the
+ * lifter's most recent PRIOR session on the same exercise, chosen here rather
+ * than taken as an input so the axes ship on the existing pipeline shapes with
+ * no schema change — a caller that never asked for them still gets them.
+ */
+async function fatigueAxesForExercise(
+  state: ServerState,
+  exerciseId: string,
+  sessionId: string,
+  sessionSets: readonly StoredSet[],
+): Promise<FatigueAxes> {
+  // Guest sets (VW-169) are someone else's evidence at both ends.
+  return computeFatigueAxes({
+    sessionSets: sessionSets.filter((set) => set.lifter === undefined).map(toFatigueReading),
+    referenceSets: (await referenceSetsForFatigueAxes(state, exerciseId, sessionId)).map(
+      toFatigueReading,
+    ),
+  });
+}
+
+/**
+ * The lifter's own sets from the most recent prior session on this exercise.
+ *
+ * ONE session, not the whole history: pooling every session a lifter ever
+ * trained turns "down against my norm" into "down against a year of drift",
+ * and the entry axis is meant to read today's recovery state.
+ */
+async function referenceSetsForFatigueAxes(
+  state: ServerState,
+  exerciseId: string,
+  sessionId: string,
+): Promise<StoredSet[]> {
+  if (exerciseId === UNKNOWN_KEY) return [];
+  const rows = (await state.store.getSetsForExercise({ userId: LOCAL_USER_ID, exerciseId })).filter(
+    (set) => set.sessionId !== sessionId && set.lifter === undefined,
+  );
+  const newest = sessionIdsNewestFirst(rows)[0];
+  return newest === undefined ? [] : rows.filter((set) => set.sessionId === newest);
+}
+
+/**
+ * One stored set as an axis reading. Velocity is the mean concentric over the
+ * set's ELIGIBLE reps (VW-168) on the normalised m/s scale (VW-160), so a
+ * positioning pull cannot become the session opener's velocity and a
+ * device-native row compares cleanly against a converted one.
+ */
+function toFatigueReading(set: StoredSet): FatigueSetReading {
+  const eligible = selectEligibleReps(toAnalyticsSet(set).reps);
+  const velocities = eligible.map((rep: AnalyticsRep) => getRepMeanVelocity(rep));
+  return {
+    setId: set.id,
+    isWarmup: isWarmupSet(set),
+    ...(velocities.length > 0 ? { meanVelocity: mean(velocities) } : {}),
+    ...(set.weightLbs !== undefined ? { loadLbs: set.weightLbs } : {}),
+    ...(set.restBeforeSec !== undefined ? { restBeforeSec: set.restBeforeSec } : {}),
+    ...(set.eccentricPct !== undefined ? { eccentricPct: set.eccentricPct } : {}),
+  };
 }
 
 /**
@@ -2002,7 +2104,8 @@ const METRICS_COMPUTE_DESCRIPTION =
   'only — `model` is always `target-only`, and secondary/synergist muscles are never credited ' +
   '(B47). An exercise the catalog does not know counts under `unknown`. ' +
   "`session.fatigue` (sessionId) — cross-set fatigue decay for the session's own exercise, " +
-  'folded with within-set fatigue so a single hard set still reads as fatigued. ' +
+  'folded with within-set fatigue so a single hard set still reads as fatigued, plus ' +
+  '`fatigueAxes` (see `session.perturbation`). ' +
   "`session.strength` (sessionId) — session-level strength estimate for the session's own " +
   'exercise, plus a `comparability` block (VW-94) naming the heaviest set the estimate leans on ' +
   'and whether the rest of the session is like-vs-like with it. ' +
@@ -2028,7 +2131,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   'the tolerance actually moved a threshold. ' +
   '`session.perturbation` (sessionId, optional exerciseId) — per exercise, how much the last ' +
   'WORKING set decayed against the first: mean-concentric velocity drop %, firmware peak-force ' +
-  'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. ' +
+  'drop % (null unless both sets recorded one), and rep drop, with the B57 gate attached. Also ' +
+  '`fatigueAxes` (VW-306), which splits that blended decay into `entryDepression` (the opening ' +
+  "working set against the lifter's own prior sets at the same load — recovery state) and " +
+  "`lateSessionDecay` (the slope across this session's matched-load sets — accumulated work), " +
+  'each with its own confidence and the confounders it held fixed. Ask `coaching.explain` for ' +
+  '`live.fatigue_axes` before interpreting either. ' +
   "`session.junk_volume` (sessionId, optional exerciseId) — per exercise, each working set's " +
   'within-set MEAN-concentric loss % beside its PEAK-based loss % (the two are different numbers ' +
   'on purpose: the 25% literature is mean-based, the live watch is peak-based), plus a ' +

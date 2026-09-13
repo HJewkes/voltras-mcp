@@ -29,6 +29,7 @@ export const CoachingTopic = z.enum([
   'live.velocity_loss_threshold',
   'live.readiness_interpretation',
   'live.eccentric_overload_cost',
+  'live.fatigue_axes',
   // Mesocycle planning
   'meso.deload_trigger',
   'meso.deload_ladder',
