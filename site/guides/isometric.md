@@ -109,6 +109,17 @@ Once at least 2 trials are valid, the tool takes the best 2 by plateau force and
 - **`inferredWorkingWeightLbs`** — 70% of the mean, rounded to the nearest 5 lb and clamped
   up to 5 lb (the device's own settable floor) so it's always a value the device will
   accept.
+- **`inferredWorkingWeightBasis`** — what that weight is and is not, shipped with the number
+  rather than only in the tool description (`src/tools/isometric-tools.ts:278-294`).
+
+That last field exists because the weight is a **heuristic, not a validated conversion**
+(VW-273). No study validates a cable-device isometric maximum as a predictor of dynamic
+cable loads, no `plan.*` or `progression.*` path consumes one, and it is never a 1RM proxy.
+Joint angle dominates what an isometric maximum predicts at all: an isometric squat predicted
+the full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum
+et al., _Sports_ 2020). Held at the wrong angle for the exercise you mean to load, the number
+means very little. A description is read once when the model picks the tool; the number is
+read every time the result is, so the caveat travels with the number.
 
 ## What the wall shows during a hold
 

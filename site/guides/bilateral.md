@@ -175,6 +175,39 @@ rep streams stayed apart rather than mirroring each other. Open `http://127.0.0.
 before or during the run, same as the single-slot driver — the set log accumulates
 client-side from live transitions.
 
+## What a detected asymmetry does not license
+
+Two statements hold across every tool in this server, and neither is a style preference.
+
+**No corrective unilateral work is prescribed from an asymmetry.** Not by
+`coaching.explain`, not by `plan.suggest_progression`, not by
+`isometric.measure_imbalance`. The intervention literature does not support it: meta-analysed
+against bilateral training, unilateral training was clearly better for unilateral jump
+(ES 0.89, 95% CI 0.52-1.26) and worse for bilateral strength (ES -0.43, CI -0.71 to -0.14),
+while unilateral strength, bilateral jump, sprint and change of direction were all
+non-significant (Liao et al., *Biology of Sport* 2022). Unilateral work is goal-specific —
+prescribe it when single-limb capacity is the goal. The evidence that any method reduces
+asymmetry at all is thin: a seven-week bilateral back-squat block moved isometric peak-force
+asymmetry only in the subgroup that started weaker, and several combined and flywheel
+programmes improved performance while leaving asymmetry untouched (Bishop et al. 2023). The
+authors' own recommendation for a detected asymmetry is consistent strength training over
+time, and an athlete showing only natural between-session fluctuation in limb dominance may
+need no intervention at all.
+
+**A load derived from an isometric maximum is a heuristic.** `isometric.measure_max` and
+`isometric.measure_imbalance` both return an inferred working weight at 70% of the mean
+plateau force, and both label it as such in the result itself, not only in the description
+(`src/tools/isometric-tools.ts:278-294`). No study validates a cable-device isometric maximum
+as a predictor of dynamic cable loads, and no `plan.*` or `progression.*` path consumes one.
+Joint angle dominates what an isometric maximum predicts: an isometric squat predicted the
+full squat at r 0.864 at 90 degrees of knee flexion but only r 0.597 at 120 degrees (Lum et
+al., *Sports* 2020), so the figure means something only when the hold was held at the angle
+where the exercise peaks.
+
+There is **no published re-test cadence** for asymmetry, and this server invents none. The
+defensible rule is a decision rule, not an interval: test often enough to judge whether limb
+dominance is consistent across sessions.
+
 ## What to read next
 
 - The [dashboard walkthrough](/guides/) for the diverging stage rendered live.

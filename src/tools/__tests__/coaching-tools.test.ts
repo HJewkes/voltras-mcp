@@ -144,6 +144,49 @@ describe('coaching.explain', () => {
     expect(body.caveats?.length).toBeGreaterThan(0);
   });
 
+  // VW-273: the asymmetry topic must never turn a measurement into a
+  // prescription. The intervention literature does not support corrective
+  // unilateral work, so an entry that recommended it would be telling a coach
+  // something the citations underneath it contradict.
+  describe('no corrective unilateral work from a detected asymmetry', () => {
+    // The banned sentence is one that TELLS a coach to add single-limb work
+    // BECAUSE a difference was detected. Prescribing unilateral work because
+    // single-limb capacity is the goal is fine and is what the evidence
+    // supports, so all three parts have to co-occur in one sentence.
+    const PRESCRIBES_SINGLE_LIMB =
+      /\b(?:add|prescribe|assign|program|introduce|start)\b[^.]{0,60}\b(?:unilateral|single-limb)\b/i;
+    const TRIGGERED_BY_A_DIFFERENCE = /\b(?:asymmetr|imbalance|weaker (?:side|limb))/i;
+    /** A negation only excuses the sentence when it attaches to the verb itself. */
+    const NEGATED_VERB = /\b(?:do not|does not|never|not|rather than|instead of|no)\s+\S{0,20}$/i;
+
+    it('states the rule outright in the asymmetry topic', async () => {
+      const body = parseResult(await h.invoke({ topic: 'meso.asymmetry_interpretation' }));
+      expect(body.explanation).toContain('DO NOT PRESCRIBE CORRECTIVE UNILATERAL WORK');
+      // …and says what to do instead, so the rule is not just a prohibition.
+      expect(body.explanation).toContain('consistent strength training over time');
+      expect(body.explanation).toContain('GOAL-SPECIFIC');
+      expect(body.sources).toContain(
+        'liao-2022-unilateral-vs-bilateral-training-meta-analysis-biology-of-sport',
+      );
+    });
+
+    it('recommends it nowhere in the corpus', () => {
+      const offenders: string[] = [];
+      for (const topic of CoachingTopic.options) {
+        const content = COACHING_CONTENT[topic];
+        const text = [content.allTiers, ...Object.values(content.perTier ?? {})].join(' ');
+        for (const sentence of text.split(/(?<=\.)\s+/)) {
+          const match = PRESCRIBES_SINGLE_LIMB.exec(sentence);
+          if (match === null) continue;
+          if (!TRIGGERED_BY_A_DIFFERENCE.test(sentence)) continue;
+          if (NEGATED_VERB.test(sentence.slice(0, match.index))) continue;
+          offenders.push(`${topic}: ${sentence.trim()}`);
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
   it('rejects an unknown topic', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'not.a.real.topic' });
