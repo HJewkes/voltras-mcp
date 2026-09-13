@@ -100,7 +100,7 @@ entry is written from the user's point of view is a review question, not a check
   share one emission point, so one utterance is one event.
 
 - The session-completion page now shows an expected rep RANGE for a velocity-loss-terminated
-  set, never a single predicted number (VW-301). Each set on `GET /api/session-summary/:id`
+  set, never a single predicted number (VW-301, #392). Each set on `GET /api/session-summary/:id`
   gains `expectedRepRange` (`expectedLow`/`expectedHigh`/`median`/`n`/`basis`), built from this
   lifter's own reps-to-threshold history at the exact same exercise and load, once at least 3
   qualifying historical sets exist — the same evidence floor this server already treats as the
