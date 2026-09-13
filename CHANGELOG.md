@@ -95,6 +95,17 @@ entry is written from the user's point of view is a review question, not a check
   part of the band most working sets sit in. New `rir_velocity_models` table (schema v24);
   nothing is back-filled, because a fit only exists once it is run.
 
+- The weekly report guide now says outright why the `RIR (final rep, est.)` line is not the
+  same claim as an `rir_velocity.fit` curve: it is the per-rep `vbt.rir` estimator (VW-134),
+  and neither it nor anything else in this server converts velocity loss straight into a
+  reps-in-reserve number without a lifter's own fitted curve. Jukic, Prnjak, McGuigan & Helms
+  (_Eur J Appl Physiol_, 2023) found the agreement between velocity loss and percentage of
+  max reps completed unacceptable at every load tested, with errors over 10% — velocity loss
+  is a volume-control dial, not a proximity-to-failure estimate. A new repo-wide test now
+  fails CI if any code path pairs a velocity-loss input with an RIR output outside the fitted
+  model (VW-302); `vbt.rir`'s own velocity-loss-to-RIR call is a tracked, pre-existing
+  exception, not yet folded into the fitted model.
+
 - `device.set_eccentric`'s description and `coaching.explain` now frame eccentric overload
   as a stimulus-cost knob, not a growth multiplier (VW-303). The largest available synthesis
   (49 studies, 773 participants) found accentuated eccentric loading's chronic strength and

@@ -541,6 +541,7 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
   if (!(baselineMax > 0)) return null;
   const finalPeak = getRepPeakVelocity(reps[reps.length - 1]!);
   const velLossPct = Math.max(0, ((baselineMax - finalPeak) / baselineMax) * 100);
+  // VW-302: pre-existing, tracked — `vbt.rir` (VW-134) predates the fitted model.
   const estimate = estimateRIRWithProfile({
     peakVelocity: finalPeak,
     baselineMaxVelocity: baselineMax,
