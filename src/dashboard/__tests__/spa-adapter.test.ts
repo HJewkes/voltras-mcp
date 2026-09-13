@@ -402,6 +402,8 @@ describe('reduceSnapshot — completed-set accumulation', () => {
       reps: [rep(1, 900), rep(2, 800)],
       // No `setPurpose` on this snapshot's `activeSet` → defaults to 'working' (VW-260).
       setPurpose: 'working',
+      // No `autoCreatedBy` on this snapshot's `activeSet` → defaults to null (VW-265).
+      autoCreatedBy: null,
     });
     expect(state.restStartMs).toBe(2_000);
   });

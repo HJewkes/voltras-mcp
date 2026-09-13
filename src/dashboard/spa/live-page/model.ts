@@ -62,6 +62,11 @@ export interface LiveModel {
   velocityLossPct: number | null;
   /** Peak concentric force this set (lbs); the store folds a running set-level max (VW-45). */
   peakForce: number | null;
+  /**
+   * Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set.
+   * Optional so a fixture built before this field existed still type-checks.
+   */
+  autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
 }
 
 /** A logged set on the session read-model. */
@@ -113,6 +118,11 @@ export interface CompletedSet {
    * `mode` gets, so nothing downstream has to repeat the fallback.
    */
   setPurpose: SetPurpose;
+  /**
+   * Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set.
+   * Optional so a fixture built before this field existed still type-checks.
+   */
+  autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
 }
 
 /**
@@ -295,6 +305,25 @@ export function verdictFromLoss(lossPct: number | null): 'productive' | 'thresho
 
 /** Placeholder shown where the rail demands a value the store cannot supply yet. */
 const NO_VALUE = '—';
+
+/**
+ * Which auto-arm mechanism opened `set` (VW-265), or null for a lifter-started set. Shared
+ * by the live header badge and the rest recap's set-type marker so the two surfaces read
+ * the same signal off the same field rather than each re-deriving it.
+ */
+export function autoArmedBadge(
+  set: { autoCreatedBy?: 'guided_load' | 'idle_rep' | null } | null | undefined,
+): 'guided_load' | 'idle_rep' | null {
+  return set?.autoCreatedBy ?? null;
+}
+
+/** Compact badge text for an auto-armed set — identical wherever the badge appears. */
+export const AUTO_ARM_BADGE_TEXT = 'AUTO';
+
+/** The badge's tooltip/title line, naming which auto-arm mechanism opened the set. */
+export function autoArmedTitle(source: 'guided_load' | 'idle_rep'): string {
+  return source === 'guided_load' ? 'Auto-armed · guided load' : 'Auto-armed · your reps';
+}
 
 /**
  * True for a set worth showing — one that recorded at least one rep. A completed set with

@@ -16,6 +16,8 @@ import {
 } from '@titan-design/react-ui';
 import {
   activeCompletedSets,
+  AUTO_ARM_BADGE_TEXT,
+  autoArmedBadge,
   completedSetVerdict,
   deriveRecapPrescription,
   velocityLossPct,
@@ -87,6 +89,17 @@ function setTypeLabel(purpose: SetPurpose): string | undefined {
   }
 }
 
+/**
+ * The recap row's SET-cell marker: the set-purpose label above wins when the set has one
+ * (it says something more specific than "the server opened this"); otherwise, an
+ * auto-armed set (VW-265) gets the same "AUTO" text the live header badge uses, so the
+ * lifter sees the same signal here once the set closes into rest. `undefined` for a
+ * lifter-started working set — `SetRow`'s own "no marker" case.
+ */
+function setRowType(set: CompletedSet): string | undefined {
+  return setTypeLabel(set.setPurpose) ?? (autoArmedBadge(set) ? AUTO_ARM_BADGE_TEXT : undefined);
+}
+
 /** The recap card's rows — one `done` row per logged set of the active exercise. */
 function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
   const { session } = model;
@@ -103,7 +116,7 @@ function recapRows(model: DashboardModel, displayUnit: MassUnit): DoneSetRow[] {
       // Ratio-of-best, not raw m/s — SetRow's strip bands the same domain SetStrip does.
       velocities: velocityRatios(set.reps),
       // rpe intentionally omitted — the store has none and the specimen's value was invented.
-      setType: setTypeLabel(set.setPurpose),
+      setType: setRowType(set),
     };
   });
 }
@@ -253,8 +266,16 @@ function RecapCard({
           // `SetRow` has no muted variant of its own `done` state (VW-260) — `setType` (set
           // above) already labels a non-working row, and this opacity wrapper is the extra
           // "look muted, not just labelled" cue, applied from OUTSIDE the titan component
-          // rather than reimplementing it.
-          <View key={i} style={row.setType !== undefined ? { opacity: 0.55 } : undefined}>
+          // rather than reimplementing it. An AUTO-only marker (VW-265) is excluded: an
+          // auto-armed set is a real working set (VMCP-02.84) and must not read as muted.
+          <View
+            key={i}
+            style={
+              row.setType !== undefined && row.setType !== AUTO_ARM_BADGE_TEXT
+                ? { opacity: 0.55 }
+                : undefined
+            }
+          >
             <SetRow {...row} />
           </View>
         ))}
