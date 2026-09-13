@@ -11,6 +11,9 @@
 - [Coach reports and the outbox](/guides/coach-report) — reading `report.session_results`,
   load labels on non-weight modes, the local outbox, and the separate, gated write-back
   submitter.
+- [The weekly report](/guides/weekly-report) — reading `report.weekly`'s header, per-session
+  blocks, progression suggestions, flags, and check-in section, and how its adherence trend
+  feeds `accountability.state`.
 - [The wall dashboard](/guides/dashboard) — the sidecar itself: finding its URL, its three
   pages, how it stays current, and driving it without hardware.
 
