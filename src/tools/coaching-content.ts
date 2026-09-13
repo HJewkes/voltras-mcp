@@ -16,6 +16,12 @@
 // rp-university/` tree hold the notes themselves). `caveats` flags topics
 // whose OWN source material disagrees with itself — recorded, never silently
 // resolved, matching how the mined synthesis itself handles it.
+//
+// A topic whose evidence is primary literature rather than the RP corpus cites
+// author-year keys instead of `rp-*` ids, and says so in its own `caveats`
+// (VW-267's `meso.e1rm_interpretation` is the first). The corpus has nothing
+// to say about measurement error, so an entry that needed it would otherwise
+// have no honest source line at all.
 
 import type { CoachingTopic } from '../schemas/coaching.js';
 
@@ -367,6 +373,42 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'rp-s2-directed-adaptation',
       'rp-s4-exercise-rotation-quarter-rule',
       'rp-s6-exercise-variation-without-swapping',
+    ],
+  },
+  'meso.e1rm_interpretation': {
+    allTiers:
+      'An estimated 1RM is a TREND INSTRUMENT, not a measurement, and nothing in this server ' +
+      'moves load on one. The pooled evidence: across 137 load-velocity models from 26 studies ' +
+      'and 434 participants, the standard error of the estimate is 9.8% of measured 1RM (95% CI ' +
+      '7.4 to 12.2) and the estimate runs systematically HIGH by 4.5 kg, or 3.7% of 1RM (95% CI ' +
+      '0.5 to 6.9) — those authors recommend direct 1RM assessment where it is possible, and ' +
+      'otherwise using the estimate only to monitor a trend across a training cycle. The noise ' +
+      'has a named source: actual 1RM repeats almost perfectly between sessions (ICC 0.99, CV ' +
+      '2.1%), but the VELOCITY at 1RM does not (ICC 0.42, CV 22.5%), and the extrapolation ' +
+      'multiplies that instability. A back-squat-specific meta-analysis found the same ' +
+      'overestimate (ES 0.53) and told practitioners to be sceptical of the method for judging ' +
+      'maximal strength. What this means in a conversation, at every tier: a lifter whose e1RM ' +
+      'reads 15 lb higher than last week has not necessarily got stronger, and telling them so ' +
+      'is a claim the number cannot support. Say the honest version — "that is inside the ' +
+      'measurement error; we look at the slope over the block, not week to week." Add load on ' +
+      'what was actually observed instead: reps completed against the prescribed band, ' +
+      'intra-set velocity loss and technique holding, which is exactly what ' +
+      '`plan.suggest_progression` reads. Velocity at a FIXED load is the better progression ' +
+      'signal than e1RM anyway, because it skips the extrapolation entirely. Read the trend ' +
+      'through `metrics.compute` `history.trend` with `metric: e1rm`, which reports the fitted ' +
+      'slope and attaches the band.',
+    sources: [
+      'greig-2023-load-velocity-1rm-ipd-meta-analysis-sports-medicine',
+      'banyard-2017-1rm-and-velocity-reliability-jscr',
+      'lemense-2024-back-squat-mvt-overestimate-jscr',
+    ],
+    caveats: [
+      'The pooled figures come from free-weight barbell squat and bench press in young trained ' +
+        'men on a fixed external load. Voltra is an electromagnetic cable device with independently ' +
+        'settable eccentric load, so treat the magnitudes as the right order, not as calibrated ' +
+        'constants for these exercises.',
+      'This entry cites primary literature rather than the mined RP corpus; its source ids are ' +
+        'author-year keys, not `rp-*` note ids.',
     ],
   },
   'diet.phase_coupling': {

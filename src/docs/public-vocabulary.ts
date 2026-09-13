@@ -132,6 +132,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'event_type',
   'feelSetOnly',
   'firmware_count',
+  // VW-267: the e1RM error band's own fields, on `metrics.compute`'s
+  // `strength.e1rm` and `history.trend` results.
+  'biasLbs',
+  'biasPct',
+  'fitFor',
+  'highLbs',
+  'lowLbs',
+  'seeLbs',
+  'seePct',
+  'seePctCi',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',
@@ -196,6 +206,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'voiceReady',
   'whisperCli',
   // Dotted paths into a result object, cited the way a caller would read them.
+  'band.fitFor',
+  'band.note',
   'baseline.note',
   'decay.lastOverFirstEligible',
   'guided_load.phase',

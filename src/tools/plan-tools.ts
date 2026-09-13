@@ -169,6 +169,14 @@ const PLAN_SUGGEST_PROGRESSION_DESCRIPTION =
   "ROM shrank or its rep-to-rep ROM was erratic, by workout-analytics' own cited cuts. It is " +
   '`unknown` whenever no set could be judged, and `unknown` never holds the load — an ' +
   'unproven technique is not a failed one. Every hold says in words which reading caused it. ' +
+  'AN ESTIMATED 1RM NEVER MOVES LOAD HERE (VW-267). No gate on this tool reads an e1RM, ' +
+  'single-session or otherwise: the inputs are the prescribed rep band, intra-set velocity ' +
+  'loss, within-set ROM integrity and the tier signal, all read off stored sets. A ' +
+  'load-velocity e1RM carries a pooled standard error of 9.8% of 1RM and runs 3.7% high on ' +
+  'average (Greig et al., Sports Medicine 2023, 434 participants), far wider than the 5 lb ' +
+  'step this tool suggests — so a one-session e1RM jump is noise, not evidence, and would move ' +
+  'the load for no reason. e1RM is a trend instrument: read it as a multi-session slope from ' +
+  '`metrics.compute` `history.trend` with `metric: e1rm`, which carries the band. ' +
   'Suggestion only: the coach or lifter accepts or declines it, it is never ' +
   'auto-applied, and a declined suggestion is not re-applied.';
 
