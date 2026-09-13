@@ -207,6 +207,7 @@ export async function createProgramWithScaffold(
     blockId: block.id,
     orderIndex: 0,
     name: 'Week 1',
+    isDeload: false,
   };
   const template: StoredWorkoutTemplate = {
     id: randomUUID(),

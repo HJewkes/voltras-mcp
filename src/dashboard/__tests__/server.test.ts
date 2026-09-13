@@ -644,7 +644,8 @@ describe('GET /api/history', () => {
           ]),
         getWorkoutTemplate: () =>
           Promise.resolve({ id: 't1', weekId: 'w1', name: 'Push A', orderIndex: 0 }),
-        getTrainingWeek: () => Promise.resolve({ id: 'w1', blockId: 'b1', orderIndex: 0 }),
+        getTrainingWeek: () =>
+          Promise.resolve({ id: 'w1', blockId: 'b1', orderIndex: 0, isDeload: false }),
         getTrainingBlock: () =>
           Promise.resolve({
             id: 'b1',

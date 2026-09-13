@@ -109,7 +109,7 @@ const BLOCK: StoredTrainingBlock = {
   focus: 'hypertrophy',
   weeksCount: 1,
 };
-const WEEK: StoredTrainingWeek = { id: 'wk-1', blockId: 'blk-1', orderIndex: 0 };
+const WEEK: StoredTrainingWeek = { id: 'wk-1', blockId: 'blk-1', orderIndex: 0, isDeload: false };
 const TEMPLATE: StoredWorkoutTemplate = {
   id: 'tpl-1',
   weekId: 'wk-1',

@@ -173,6 +173,7 @@ async function resolveWeeks(
       blockId: block.id,
       orderIndex: nextIndex,
       name: label,
+      isDeload: false,
     };
     await state.store.putTrainingWeek(week);
     byName.set(label, week.id);

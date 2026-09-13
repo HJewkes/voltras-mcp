@@ -58,6 +58,9 @@ export interface PlanWeekView {
   id: string;
   name?: string;
   orderIndex: number;
+  phaseType?: string;
+  isDeload: boolean;
+  weekIndex?: number;
   templates: PlanTemplateView[];
 }
 
@@ -164,11 +167,14 @@ function toWeekView(
   const view: PlanWeekView = {
     id: row.id,
     orderIndex: row.orderIndex,
+    isDeload: row.isDeload,
     templates: byOrderIndex(rows.templatesByWeek.get(row.id) ?? []).map((t) =>
       toTemplateView(t, rows, nameOf),
     ),
   };
   if (row.name !== undefined) view.name = row.name;
+  if (row.phaseType !== undefined) view.phaseType = row.phaseType;
+  if (row.weekIndex !== undefined) view.weekIndex = row.weekIndex;
   return view;
 }
 

@@ -58,6 +58,7 @@ function tree(templateIds: string[]): PlanTreeView {
             {
               id: 'wk-1',
               orderIndex: 0,
+              isDeload: false,
               templates: templateIds.map((id, index) => ({
                 id,
                 name: id,

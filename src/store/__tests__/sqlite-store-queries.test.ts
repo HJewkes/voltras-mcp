@@ -196,7 +196,13 @@ describe('SqliteSessionStore planning-tree by-id getters', () => {
 
     const template = await store.getWorkoutTemplate(planned?.workoutTemplateId ?? '');
     const week = await store.getTrainingWeek(template?.weekId ?? '');
-    expect(week).toEqual({ id: 'week-1', blockId: 'block-1', orderIndex: 2, name: 'Week 3' });
+    expect(week).toEqual({
+      id: 'week-1',
+      blockId: 'block-1',
+      orderIndex: 2,
+      name: 'Week 3',
+      isDeload: false,
+    });
 
     const block = await store.getTrainingBlock(week?.blockId ?? '');
     expect(block).toMatchObject({ id: 'block-1', programId: 'prog-1', focus: 'hypertrophy' });
