@@ -20,6 +20,9 @@ import {
   type DashboardModel,
   type LiveDashboardModel,
   type SetupCard,
+  AUTO_ARM_BADGE_TEXT,
+  autoArmedBadge,
+  autoArmedTitle,
   deriveActiveSetStates,
   derivePrescription,
   stageIsEnded,
@@ -277,6 +280,32 @@ function formatSetupCard(card: SetupCard): string {
 }
 
 /**
+ * The compact "AUTO" chip for an auto-armed active set (VW-265) — a hairline-outlined pill
+ * matching the header's existing chrome ({@link CARD_EDGE}), with the auto-arm mechanism
+ * (guided load vs the lifter's own reps) on hover rather than crowding the header with it.
+ */
+function AutoArmBadge({ source }: { source: 'guided_load' | 'idle_rep' }) {
+  const textColor = useOnSurfaceColor('secondary');
+  return (
+    <Tooltip label={autoArmedTitle(source)} placement="bottom">
+      <View
+        testID="auto-arm-badge"
+        style={{
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: 6,
+          ...CARD_EDGE,
+        }}
+      >
+        <Text style={{ color: textColor, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>
+          {AUTO_ARM_BADGE_TEXT}
+        </Text>
+      </View>
+    </Tooltip>
+  );
+}
+
+/**
  * The workout title + targets — the exercise being performed, independent of how many
  * voltras drive it, so it lives at the TOP OF THE PAGE (above the live stage) and stays
  * visible across single/dual. NOT a published component.
@@ -307,7 +336,10 @@ export function ExerciseHeader({
   // than competing with it for the wall read.
   const lifterColor = useOnSurfaceColor('secondary');
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
-  const { session, connection } = model;
+  const { session, connection, live } = model;
+  // VW-265: the badge names the CURRENTLY ACTIVE set only — it disappears with the live
+  // overlay once the set closes, same as the rest of this mid-set chrome.
+  const autoArmSource = live ? autoArmedBadge(live) : null;
   const targets = derivePrescription(session, displayUnit);
   const setStates = deriveActiveSetStates(model);
   const wrap = w > 0 && w < HEADER_WRAP;
@@ -385,6 +417,8 @@ export function ExerciseHeader({
         >
           {headingText}
         </Text>
+        {/* VW-265: only while the active set is streaming AND the server opened it itself. */}
+        {autoArmSource && <AutoArmBadge source={autoArmSource} />}
         {/* VW-169: whose set this is, shown ONLY for a guest working in — the wall is the
             owner's by default, and a name on every set would be noise that stops being read
             by the time it matters. */}

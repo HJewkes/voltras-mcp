@@ -186,6 +186,7 @@ function mapLive(
   live: StoreLiveModel,
   velocityLossPct: number | null,
   repVelocities: number[],
+  autoCreatedBy: 'guided_load' | 'idle_rep' | null,
 ): LiveModel {
   return {
     velocity: live.velocity,
@@ -196,6 +197,7 @@ function mapLive(
     repVelocities,
     velocityLossPct,
     peakForce: live.peakForce,
+    autoCreatedBy,
   };
 }
 
@@ -209,6 +211,7 @@ function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
     reps: repVelocitiesMps(set.reps),
     peakForceLbs: set.peakForceLbs,
     setPurpose: set.setPurpose,
+    autoCreatedBy: set.autoCreatedBy,
   };
 }
 
@@ -321,7 +324,9 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
     accumulator.restStartMs == null ? null : Math.max(0, nowMs - accumulator.restStartMs);
 
   return {
-    live: live ? mapLive(live, currentSet.velocityLossPct, repVelocities) : null,
+    live: live
+      ? mapLive(live, currentSet.velocityLossPct, repVelocities, currentSet.autoCreatedBy)
+      : null,
     restElapsedMs,
     connection: mapConnection(snapshot, pollStatus),
     session: mapSession(

@@ -190,6 +190,12 @@ export interface SnapshotActiveSet {
    * `summariseClosedSet`'s default (VW-260).
    */
   setPurpose?: SetPurpose;
+  /**
+   * Which auto-arm mechanism opened this set (VW-265), or undefined for a lifter-started
+   * set — same "already on the wire, just declare it" treatment as `setPurpose`. See
+   * `ActiveSet.autoCreatedBy` (`state/live-state.ts`) for what each value means.
+   */
+  autoCreatedBy?: 'guided_load' | 'idle_rep';
 }
 
 /**
@@ -306,6 +312,8 @@ export interface CurrentSetView {
   targetWeight: string;
   /** Per-rep peak velocities in m/s, ordered by rep, for the VelocityStrip. */
   velocitiesMps: number[];
+  /** Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set. */
+  autoCreatedBy: 'guided_load' | 'idle_rep' | null;
 }
 
 /**
@@ -393,6 +401,7 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
       latestPeakVelocity: '—',
       targetWeight: '—',
       velocitiesMps: [],
+      autoCreatedBy: null,
     };
   }
   const device = pickRepresentativeDevice(snapshot);
@@ -422,6 +431,7 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
     targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB, displayUnit) : '—',
     velocitiesMps,
+    autoCreatedBy: set.autoCreatedBy ?? null,
   };
 }
 
@@ -593,6 +603,12 @@ export interface CompletedSet {
    * concrete value — the same "resolve once, read a value" treatment `mode` gets.
    */
   setPurpose: SetPurpose;
+  /**
+   * Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set —
+   * same defaulting boundary as `setPurpose`, off the wire-optional `SnapshotActiveSet`.
+   * Optional so a fixture built before this field existed still type-checks.
+   */
+  autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
 }
 
 export interface AccumulatorState {
@@ -648,6 +664,7 @@ function summariseClosedSet(
     peakForceLbs: peakForce,
     reps: [...reps],
     setPurpose: set.setPurpose ?? 'working',
+    autoCreatedBy: set.autoCreatedBy ?? null,
   };
 }
 

@@ -113,7 +113,9 @@ the rep that triggered it is _not_ dropped. It waits for a second rep to agree w
 first before adopting either, because a single rope-positioning pull looks exactly like
 a rep until another rep disagrees with it (`src/state/auto-arm.ts`, VW-164/VW-181). If
 you didn't call `set.start` yourself and a set appears anyway, this is why — it isn't a
-bug, and the rep count is still accurate.
+bug, and the rep count is still accurate. The wall dashboard marks such a set with a
+compact "AUTO" badge, on the live header while it's active and on the rest recap once it
+closes.
 
 ## Set purpose
 

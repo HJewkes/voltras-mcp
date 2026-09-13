@@ -67,6 +67,10 @@ entry is written from the user's point of view is a review question, not a check
   re-arms normal cadence. Nothing sends a message yet: the transport is an interface with an
   in-memory implementation, and the schema gains an `accountability_state` table (v20).
 
+- The wall dashboard now flags an auto-armed set with a compact "AUTO" badge (VW-265):
+  on the live header while the set is active, naming the mechanism (guided load vs your
+  own reps) on hover, and on the rest recap's set-just-completed row once it closes.
+
 - `metrics.compute` `session.readiness` now labels itself: every response carries
   `basis: "heuristic"` and a `note` saying plainly that no published study validates
   fixed-load warm-up velocity as a same-day readiness marker (VW-269). The probe velocity
