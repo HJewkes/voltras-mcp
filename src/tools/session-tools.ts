@@ -67,6 +67,7 @@ import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
 import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
 import { writeSessionOutbox } from '../integrations/truecoach/outbox.js';
+import { MUSCLE_MAP_VERSION } from '../exercises/muscle-map.js';
 
 /**
  * Error type used by tool handlers to signal a known, mapped error code.
@@ -315,6 +316,7 @@ async function startSession(
   const stored: StoredSession = {
     id: sessionId,
     startedAt,
+    catalogVersion: MUSCLE_MAP_VERSION,
     ...(exerciseId !== undefined ? { exerciseId } : {}),
     ...(exerciseName !== undefined ? { exerciseName } : {}),
     ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),

@@ -21,6 +21,7 @@ import type { LiveState as LiveStateType } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { SessionStore, StoredSession, StoredSet } from '../../store/types.js';
 import type { Exercise, ExerciseService } from '../../exercises/exercise-service.js';
+import { MUSCLE_MAP_VERSION } from '../../exercises/muscle-map.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -320,6 +321,12 @@ describe('session.start', () => {
     expect(stored.exerciseId).toBe('bench-press');
     expect(stored.exerciseName).toBeUndefined();
     expect(stored.endedAt).toBeUndefined();
+  });
+
+  it('stamps the started session with MUSCLE_MAP_VERSION (VW-328)', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.catalogVersion).toBe(MUSCLE_MAP_VERSION);
   });
 
   it('returns SESSION_ALREADY_ACTIVE while a session is active (EC-14)', async () => {

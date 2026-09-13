@@ -100,6 +100,22 @@ describe('SqliteSessionStore', () => {
       expect(fetched?.endedAt).toBe('2025-01-01T01:00:00.000Z');
     });
 
+    it('stamps and round-trips catalogVersion (VW-328)', async () => {
+      const session = makeSession({ catalogVersion: '2026-09-13.1' });
+      await store.putSession(session);
+      const fetched = await store.getSession(session.id);
+      expect(fetched?.catalogVersion).toBe('2026-09-13.1');
+    });
+
+    it('preserves catalogVersion across a re-put that omits it (session.end shape)', async () => {
+      await store.putSession(makeSession({ catalogVersion: '2026-09-13.1' }));
+      // session.end re-builds the row from its in-memory ActiveSession, which
+      // never carries catalogVersion — the stamp must survive that re-put.
+      await store.putSession(makeSession({ endedAt: '2025-01-01T01:00:00.000Z' }));
+      const fetched = await store.getSession('sess-1');
+      expect(fetched?.catalogVersion).toBe('2026-09-13.1');
+    });
+
     it('preserves omitted optional fields as undefined', async () => {
       const session: StoredSession = {
         id: 'sess-min',
