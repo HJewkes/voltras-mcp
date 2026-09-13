@@ -107,6 +107,17 @@ entry is written from the user's point of view is a review question, not a check
   athlete does not have. `setup_unverified` means a side recorded no travel, so the check
   never ran; it withholds nothing.
 
+- `isometric.measure_imbalance` now runs the same cable-geometry gate (VW-284/VW-272)
+  before reporting its asymmetry verdict. Each side's CONFIRMED `exercise_setups` signature
+  for the exercise active on that slot is compared; `setupComparability` reports the
+  result. On `setup_confounded`, `setupSignatures` and `setupReason` ship with the result
+  and `imbalance.real`/`imbalance.direction` come back `null` — the per-side peak forces
+  still report, since those are facts about one side each, but reading the gap between
+  them as an imbalance is what gets withheld. `setup_unverified` (one or both sides never
+  had a confirmed setup) reports the verdict unchanged. An isometric hold has no velocity
+  fallback the live wall's callout has: a hold's peak force at a given cable angle is
+  determined entirely by anchor position (Keogh, Lake & Swinton 2013).
+
 - `scripts/dashboard-replay-drive.mjs` (VW-256) — the fifth rung of the dashboard driver
   ladder: replays a flight-recorder capture (`VMCP_RECORD_SESSION=1`) through the real
   MCP pipeline and dashboard, off-hardware, using the SDK's `ReplayBLEAdapter` and

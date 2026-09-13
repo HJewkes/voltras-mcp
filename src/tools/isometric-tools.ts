@@ -48,7 +48,19 @@ import type { TelemetryFrame } from '@voltras/node-sdk';
 import type { z } from 'zod';
 
 import { log } from '../logger.js';
-import type { StoredIsometricMeasurement, StoredIsometricSideMeasurement } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type StoredIsometricMeasurement,
+  type StoredIsometricSideMeasurement,
+} from '../store/types.js';
+import { setMedianRomM } from '../store/exercise-setups.js';
+import {
+  compareSetupSignatures,
+  medianRomMetres,
+  type SetupComparability,
+  type SetupComparabilityVerdict,
+  type SetupSignature,
+} from '../analytics/setup-comparability.js';
 
 import {
   IsometricMeasureHoldInput,
@@ -201,6 +213,18 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'configured between-sides rest (default 120s); when dominantSide is',
   'known and testNonDominantFirst is true (default), the non-dominant side',
   'is tested first to control for within-session fatigue.',
+  '',
+  'SETUP GEOMETRY GATES THE VERDICT TOO (VW-284/VW-272): before the asymmetry',
+  "verdict is built, each side's CONFIRMED setup signature (its median",
+  'concentric ROM, keyed on whichever setup exercise.confirm_setup vouched',
+  "for) is compared against the other's. setupComparability carries the",
+  'result: setup_confounded means the two sides are different physical',
+  'setups, so real and direction on the imbalance verdict come back null',
+  '(the raw asymmetryPct and CVs still report — those are facts, only the',
+  'left-vs-right READING of them is withheld) — setupSignatures and',
+  'setupReason say what was compared and why. setup_unverified means one or',
+  'both sides had no confirmed setup to check, so the verdict is reported',
+  'unchanged, with setupReason naming what could not be checked.',
   '',
   'THERE IS NO FIXED ASYMMETRY THRESHOLD HERE (VW-270). asymmetryPct is the',
   'standard percentage difference, (stronger − weaker) / stronger × 100, and',
@@ -431,12 +455,40 @@ interface SideSummary {
 
 type TestOrder = ['left', 'right'] | ['right', 'left'];
 
+/**
+ * The pure `computeImbalance` verdict, as reported once the setup gate has had
+ * its say (VW-284). `real`/`direction` widen to admit `null` — WITHHELD,
+ * distinct from the `false`/tie a computed verdict can also report — for the
+ * `setup_confounded` case, where a between-limb difference cannot be told
+ * apart from the rig.
+ */
+type ImbalanceVerdict = ReturnType<typeof computeImbalance>;
+type ReportedImbalance = Omit<ImbalanceVerdict, 'real' | 'direction'> & {
+  real: boolean | null;
+  direction: ImbalanceVerdict['direction'] | null;
+};
+
 interface MeasureImbalanceResult {
   ok: true;
   testOrder: TestOrder;
   left: SideSummary;
   right: SideSummary;
-  imbalance: ReturnType<typeof computeImbalance>;
+  imbalance: ReportedImbalance;
+  /**
+   * Whether the two sides' setups may be compared at all (VW-284/VW-272): the
+   * same cable-geometry gate `progression.get_for_exercise`'s `sideSplit`
+   * runs, applied here to each side's CONFIRMED setup for the exercise active
+   * on that slot rather than to its stored sets directly — an isometric hold
+   * has no reps of its own to cluster. `setup_confounded` withholds
+   * `imbalance.real`/`direction`; `setup_unverified` (no confirmed setup on
+   * one or both sides) reports the verdict unchanged, with `setupReason`
+   * stating what could not be checked.
+   */
+  setupComparability: SetupComparability;
+  /** Each side's confirmed setup signature the gate compared. */
+  setupSignatures: { left: SetupSignature; right: SetupSignature };
+  /** Why the gate landed where it did — the wording `compareSetupSignatures` itself produced. */
+  setupReason: string;
   /**
    * Whether the same limb dominated across recent tests, recomputed from the
    * stored trials of this run and the ones before it. `null` only when the
@@ -653,7 +705,16 @@ async function measureImbalance(
   const peakForceBaseline = await readPeakForceBaseline(state);
   const left: SideSummary = sideAsSummary(leftSlotId, leftAnalysis, peakForceBaseline);
   const right: SideSummary = sideAsSummary(rightSlotId, rightAnalysis, peakForceBaseline);
-  const imbalance = computeImbalance(left, right);
+
+  // Setup geometry before the verdict (VW-284): a confounded rig makes the raw
+  // asymmetry meaningless, so the gate has to run before the verdict is built,
+  // not after.
+  const setupGate = await readSetupComparability(state, leftSlotId, rightSlotId);
+  const rawImbalance = computeImbalance(left, right);
+  const imbalance: ReportedImbalance =
+    setupGate.comparability === 'setup_confounded'
+      ? withholdImbalanceVerdict(rawImbalance, setupGate)
+      : rawImbalance;
 
   const measurementId = await persistMeasurement(state, {
     firstSideTested: order[0],
@@ -673,6 +734,9 @@ async function measureImbalance(
     left,
     right,
     imbalance,
+    setupComparability: setupGate.comparability,
+    setupSignatures: { left: setupGate.left, right: setupGate.right },
+    setupReason: setupGate.reason,
     directionHistory: await readDirectionHistory(state),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
@@ -721,6 +785,99 @@ async function readDirectionHistory(state: ServerState): Promise<DirectionHistor
     log.warn('isometric.measure_imbalance: reading the direction history failed', err);
     return null;
   }
+}
+
+/**
+ * Whether the two sides' setups may be compared at all (VW-284). Reads each
+ * side's own confirmed-setup signature, then asks the shared VW-272 gate.
+ */
+async function readSetupComparability(
+  state: ServerState,
+  leftSlotId: string,
+  rightSlotId: string,
+): Promise<SetupComparabilityVerdict> {
+  const [left, right] = await Promise.all([
+    confirmedSetupSignature(state, 'left', leftSlotId),
+    confirmedSetupSignature(state, 'right', rightSlotId),
+  ]);
+  return compareSetupSignatures(left, right);
+}
+
+/**
+ * One side's setup signature, read off its CONFIRMED `exercise_setups` row for
+ * the exercise active on that slot's session (VW-284) — never an inferred-but-
+ * unconfirmed cluster. An isometric hold has no reps of its own to cluster a
+ * setup from, so this reads the same signal `progression.get_for_exercise`'s
+ * `sideSplit` does (median concentric ROM over the side's working sets) but
+ * scoped to whichever setup a human actually vouched for, via the sets
+ * currently stamped with it.
+ *
+ * No active exercise on the slot, or no confirmed setup for this side, both
+ * come back as a signature with no `medianRomM` — `compareSetupSignatures`
+ * reads that as `setup_unverified`, never as a mismatch.
+ *
+ * Never throws, on the same posture as `readDirectionHistory`: a read failure
+ * here must not cost the athlete the assessment they just produced.
+ */
+async function confirmedSetupSignature(
+  state: ServerState,
+  side: 'left' | 'right',
+  slotId: string,
+): Promise<SetupSignature> {
+  const exerciseId = getSlot(state, slotId).live.session?.exerciseId;
+  if (exerciseId === undefined) return { side };
+  try {
+    const [setups, sets] = await Promise.all([
+      state.store.listExerciseSetups({ userId: LOCAL_USER_ID, exerciseId }),
+      state.store.getSetsForExercise({
+        userId: LOCAL_USER_ID,
+        exerciseId,
+        side,
+        purpose: ['working'],
+      }),
+    ]);
+    const confirmedIds = new Set(
+      setups
+        .filter((s) => s.confirmedAt !== undefined && s.retiredAt === undefined)
+        .map((s) => s.id),
+    );
+    const confirmedSets = sets.filter(
+      (set) => set.setupId !== undefined && confirmedIds.has(set.setupId),
+    );
+    const medianRomM = medianRomMetres(
+      confirmedSets
+        .map((set) => setMedianRomM(set))
+        .filter((rom): rom is number => rom !== undefined),
+    );
+    const setupIds = new Set(confirmedSets.map((set) => set.setupId));
+    return {
+      side,
+      ...(medianRomM !== undefined ? { medianRomM } : {}),
+      ...(setupIds.size === 1 ? { setupId: [...setupIds][0] } : {}),
+    };
+  } catch (err) {
+    log.warn(`isometric.measure_imbalance: reading the confirmed setup for ${side} failed`, err);
+    return { side };
+  }
+}
+
+/**
+ * The pure `computeImbalance` verdict with `real`/`direction` withheld (VW-284):
+ * a `setup_confounded` gate means a left-vs-right difference here is at least
+ * partly the rig, so the interpretive call is replaced with why it was
+ * withheld. `asymmetryPct` and the CVs stay — they are facts about what was
+ * measured, not a claim about what it means.
+ */
+function withholdImbalanceVerdict(
+  imbalance: ImbalanceVerdict,
+  gate: SetupComparabilityVerdict,
+): ReportedImbalance {
+  return {
+    ...imbalance,
+    real: null,
+    direction: null,
+    interpretation: `Verdict withheld: ${gate.reason}`,
+  };
 }
 
 /**

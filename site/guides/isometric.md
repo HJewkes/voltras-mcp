@@ -153,6 +153,23 @@ asymmetry between the two resulting means
   higher of the two.
 - `real` is `true` only when `asymmetryPct` exceeds `noiseFloorCvPct`.
 
+### Setup geometry gates this verdict too
+
+An isometric peak force at a given cable angle is determined by anchor position, full
+stop — there is no velocity fallback the way the wall's live L/R callout has. A moving
+lift can still read something off velocity when force comparability is in doubt; a hold
+produces exactly one number, at exactly one joint angle, off exactly one anchor position,
+so if the two units are not anchored the same way there is nothing else in the trial to
+fall back on. The same cable-geometry gate [the bilateral guide](/guides/bilateral#setup-geometry-gates-the-asymmetry-verdict)
+describes for the live wall (Keogh, Lake & Swinton 2013, _Journal of Fitness Research_
+2(2):39-48) therefore runs here too, before the verdict: `setupComparability` compares
+each side's CONFIRMED `exercise_setups` signature for the exercise active on that slot.
+On `setup_confounded` it carries `setupSignatures` and `setupReason`, and `imbalance.real`
+/ `imbalance.direction` come back `null` — the per-side peak forces still report, because
+those are facts about one side each, but reading the gap between them as an imbalance is
+what gets withheld. `setup_unverified` means one or both sides had no confirmed setup to
+check; that is not a mismatch, so the verdict reports unchanged.
+
 There is no fixed percentage anywhere in that list, and that is the point (VW-270). A
 difference smaller than a limb's own spread across its trials cannot be told apart from
 that spread, so the comparison is against the athlete's own CV on the same test, not
