@@ -174,5 +174,133 @@
       "bytes": 323424,
       "sha256": "d49487ac80fbbaeb47e4ed97f1b58805fca50b76034aa3a41ecce4f0fe3d8467"
     }
+  ],
+  "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",
+  "clipSize": {
+    "width": 1280,
+    "height": 800
+  },
+  "clipFps": 25,
+  "clips": [
+    {
+      "name": "planned-set",
+      "scenario": "planned-clip",
+      "route": "/app",
+      "caption": "A working set on the live page, with the plan prescription attached.",
+      "file": "clips/planned-set.mp4",
+      "narrationFile": "planned-set.narration.txt",
+      "narrationAudio": "clips/planned-set.narration.m4a",
+      "narrationHash": "2cb6b2dd24b254919c94ee632e7fdb0c285bb4ec7296dae54b041d2bcc0ac51c",
+      "narrationSeconds": 24.405,
+      "narrationRegenerated": true,
+      "startWhen": {
+        "kind": "set-open-min",
+        "reps": [
+          [
+            "primary",
+            1
+          ]
+        ]
+      },
+      "endWhen": {
+        "kind": "rest"
+      },
+      "assertedText": [
+        "Push A · Hypertrophy",
+        "Cable Chest Press",
+        "VELOCITY · this set",
+        "FATIGUE",
+        "TONNAGE"
+      ],
+      "assertedValues": [
+        "Cable Chest Press 3 × 8–10 @ 140 lbs",
+        "0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40",
+        "VOLUME 8 TONNAGE 0 lbs"
+      ],
+      "width": 1280,
+      "height": 800,
+      "fps": 25,
+      "seconds": 33.32,
+      "bytes": 605590,
+      "frames": [
+        {
+          "atSeconds": 5,
+          "bytes": 226213,
+          "sha256": "7a037ebb85cb2a49c6cfe1789f7546cf031529804d31de22a35402fbdf619c7d"
+        },
+        {
+          "atSeconds": 16.66,
+          "bytes": 187003,
+          "sha256": "b0ca1b51b31df04c7a984f4933646e76c44763b21f054d0f9c2e1325b8f31031"
+        },
+        {
+          "atSeconds": 28.32,
+          "bytes": 191169,
+          "sha256": "1ad67b0a98a97ce8e8489c8e17c4d0b3cf1890ccfcabe30436a8197377abcb3c"
+        }
+      ],
+      "sha256": "7db709365e6bc5af423f8928a05d83c4e701cd8b2236f3b5ca64e49c6f51d573"
+    },
+    {
+      "name": "dual-divergence",
+      "scenario": "dual-clip",
+      "route": "/app?variant=live-dual",
+      "caption": "Two Voltras on the left and right slots diverging through a set, then falling through to rest.",
+      "file": "clips/dual-divergence.mp4",
+      "narrationFile": "dual-divergence.narration.txt",
+      "narrationAudio": "clips/dual-divergence.narration.m4a",
+      "narrationHash": "c96d6c0b48e0999db57e3ad2ad1e8321fd624d455ed1bb17711caa3bd5935dea",
+      "narrationSeconds": 23.189,
+      "narrationRegenerated": true,
+      "startWhen": {
+        "kind": "set-open-min",
+        "reps": [
+          [
+            "left",
+            1
+          ]
+        ]
+      },
+      "endWhen": {
+        "kind": "slots-rest",
+        "slots": [
+          "left",
+          "right"
+        ]
+      },
+      "assertedText": [
+        "MOCK-VOLTRA-LEFT",
+        "MOCK-VOLTRA-RIGHT",
+        "L/R",
+        "CON ECC",
+        "TONNAGE"
+      ],
+      "assertedValues": [
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44"
+      ],
+      "width": 1280,
+      "height": 800,
+      "fps": 25,
+      "seconds": 36.96,
+      "bytes": 578944,
+      "frames": [
+        {
+          "atSeconds": 5.54,
+          "bytes": 205539,
+          "sha256": "e08b5289f6ca0c5ea970d656fa441fa000cd63c3078921d60b8cb2cce2e1df05"
+        },
+        {
+          "atSeconds": 18.48,
+          "bytes": 196982,
+          "sha256": "5bca93e4ff878d9c20550157f99125ee287863ff910ed6db1d9461bf1460a1a0"
+        },
+        {
+          "atSeconds": 31.42,
+          "bytes": 103085,
+          "sha256": "86f1b197f33974aa7bd44bb81dfbd138dc412bd7d02884d1217c49379046905f"
+        }
+      ],
+      "sha256": "7bed488c9fa417c503b8757136bb6e60d3368cbf1efb631a94b46f18449346cd"
+    }
   ]
 }

@@ -1,0 +1,1 @@
+Two Voltras, bound to the left and right slots and tracked as separate streams. The right side starts late and finishes short. The diverging stage plots both sides against each other while the set is still running, so an imbalance is visible during the work rather than after it. Each side closes on its own reps, and the page falls through to rest once both are logged.

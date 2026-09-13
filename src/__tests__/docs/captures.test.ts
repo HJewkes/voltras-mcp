@@ -147,7 +147,13 @@ describe('the captures on disk', () => {
   });
 
   it('holds nothing the definition does not declare', () => {
-    const expected = [...CAPTURE_SHOTS.map((shot) => `${shot.name}.png`), 'manifest.json'].sort();
+    // `clips/` is the recordings' half of the same published tree, declared by
+    // `capture-clips.ts` and held by `clips.test.ts`.
+    const expected = [
+      ...CAPTURE_SHOTS.map((shot) => `${shot.name}.png`),
+      'clips',
+      'manifest.json',
+    ].sort();
     expect(readdirSync(CAPTURES).sort()).toEqual(expected);
   });
 });

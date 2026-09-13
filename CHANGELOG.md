@@ -49,6 +49,13 @@ entry is written from the user's point of view is a review question, not a check
 - The documentation site renders this changelog at `/changelog` (#348). The page was a
   stub; it now includes this file verbatim, so there is one copy to read and one to write.
 
+- Two narrated screen recordings on the documentation site (w5-08): a working set landing
+  on the wall dashboard with its plan prescription attached, on the planned-session guide,
+  and two Voltras diverging through a set and falling through to rest, on the bilateral
+  guide. Both are produced headlessly from the mock adapter by `npm run docs:captures` —
+  the same harness that makes the screenshots — and both pages say the narration is
+  synthetic and link the script it was spoken from.
+
 - Every estimated 1RM now arrives with an error band and a `fitFor: "trend"` marker
   (VW-267). `metrics.compute` `strength.e1rm` attaches the pooled standard error (9.8% of
   1RM, sized to the estimate) and the 3.7% systematic overestimate — reported, never

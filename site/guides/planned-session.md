@@ -72,6 +72,20 @@ write to the plan — nothing about the planned exercise changes because you ask
 [`profile.get_starting_prescription`](/reference/profile): it reads the athlete's tier
 signal and self-report into a conservative starting point and applies nothing on its own.
 
+## Watching a prescribed set land
+
+This is a set of the prescription above running on the wall dashboard — the header
+lockup, the prescribed rep band and load, each rep arriving on the velocity chart, and
+the rest stage the set closes into. It is recorded headlessly from the mock adapter
+through the real tool pipeline, so nothing here came off a real device.
+
+<video controls preload="metadata" width="100%" src="/captures/clips/planned-set.mp4" title="A working set on the live page, with the plan prescription attached."></video>
+
+The narration is synthetic speech, generated from a script in this repository. Edit
+[`planned-set.narration.txt`](https://github.com/HJewkes/voltras-mcp/blob/main/site/guides/planned-set.narration.txt)
+and re-run `npm run docs:captures` to change what it says
+([`docs/screenshot-harness.md`](https://github.com/HJewkes/voltras-mcp/blob/main/docs/screenshot-harness.md)).
+
 ## Completing the workout and what `blockBoundary` means
 
 [`plan.complete_workout`](/reference/plan) marks a workout template completed, optionally
