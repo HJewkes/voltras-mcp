@@ -1099,15 +1099,21 @@ export function buildVelocityLossExceededPayload(
 /**
  * How the threshold in a velocity-loss summary was arrived at (VW-266).
  *
- * The volume-dial band rides with the intent-derived cases, because a reader
- * who sees "hypertrophy intent" is being told the stop is a volume decision and
- * will otherwise read it as proximity to failure. Velocity loss is a poor
- * proximity estimate: reps completed to a fixed threshold vary by roughly
- * +/-5 across sessions (Jukic 2023).
+ * EMPTY FOR AN EXPLICIT THRESHOLD, which is every pre-VW-266 caller: the number
+ * came from whoever asked for it, the summary said so by quoting it, and adding
+ * prose to that sentence would change the text every existing consumer already
+ * reads. `meta.threshold_source` carries the fact for anyone who needs it.
+ *
+ * The volume-dial band rides with the intent-derived cases only, because those
+ * are the ones whose copy names a GOAL. A reader who sees "hypertrophy intent"
+ * is being told the stop is a volume decision and will otherwise read it as
+ * proximity to failure. Velocity loss is a poor proximity estimate: reps
+ * completed to a fixed threshold vary by roughly +/-5 across sessions
+ * (Jukic 2023).
  */
 function describeThresholdProvenance(spec: ResolvedVelocityLossSpec): string {
-  if (spec.thresholdSource === undefined || spec.thresholdSource === 'explicit') {
-    return spec.intent === undefined ? ' (as requested, no training intent stated)' : '';
+  if (spec.thresholdSource !== 'set_intent' && spec.thresholdSource !== 'plan_intent') {
+    return '';
   }
   const where = spec.thresholdSource === 'plan_intent' ? "the plan's" : 'the stated';
   return (

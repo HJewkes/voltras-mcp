@@ -1054,11 +1054,27 @@ describe('buildVelocityLossExceededPayload', () => {
     expect(JSON.parse(content).summary).toContain("the plan's strength intent");
   });
 
-  it('VW-266: a bare pct says no intent was stated, rather than implying one', () => {
+  // The pre-VW-266 summary, verbatim. An EXACT match, not `toContain`: this is
+  // the sentence every existing consumer already reads, and the fact that the
+  // threshold was not goal-derived rides in `meta.threshold_source` rather than
+  // in prose, so the common path is byte-identical to before the change.
+  const LEGACY_SUMMARY = 'Velocity dropped 35.3% (0.85 -> 0.55 m/s) on rep 2. Threshold: 25%.';
+
+  it('VW-266: a bare explicit pct leaves the summary exactly as it was', () => {
     const { meta, content } = build(spec({}));
     expect(meta.threshold_source).toBe('explicit');
     expect(meta.training_intent).toBeUndefined();
-    expect(JSON.parse(content).summary).toContain('no training intent stated');
+    expect(JSON.parse(content).summary).toBe(LEGACY_SUMMARY);
+  });
+
+  it('VW-266: an explicit pct alongside an intent is still the caller’s number', () => {
+    const { meta, content } = build(spec({ intent: 'hypertrophy' }));
+    expect(meta).toMatchObject({ threshold_pct: '25', threshold_source: 'explicit' });
+    // The intent is reported, but it did not supply the number, so the prose
+    // must not credit it — and the volume-dial band belongs to goal-derived
+    // copy, which this is not.
+    expect(meta.training_intent).toBe('hypertrophy');
+    expect(JSON.parse(content).summary).toBe(LEGACY_SUMMARY);
   });
 });
 
