@@ -107,7 +107,8 @@ entry is written from the user's point of view is a review question, not a check
   minimum for a personalised statistical claim. Jukic et al. 2023 found reps completed to a
   fixed velocity-loss threshold at a fixed load carry 95% limits of agreement of roughly
   -5.4/+5.5 reps between sessions, so a point estimate here would overstate how precisely this
-  can be predicted. `null` below the minimum, never a fabricated range.
+  can be predicted. `null` below the minimum, never a fabricated range. Live-rail rendering
+  deferred: needs a distinct titan affordance, tracked separately.
 
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
