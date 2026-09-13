@@ -179,6 +179,7 @@ const SQUAT: Exercise = {
 const TOOL_NAMES = [
   'session.start',
   'session.end',
+  'session.checkin',
   'session.set_exercise',
   'session.set_lifter',
   'session.list',

@@ -2,7 +2,7 @@
 
 # `session.*`
 
-6 tools in the `session` namespace.
+7 tools in the `session` namespace.
 
 ## `session.start`
 
@@ -22,11 +22,25 @@ Start a workout session, optionally pinned to an exercise (`exerciseId` or `exer
 
 End the active session on a slot and return its summary.
 
-Idempotent-adjacent: ending an already-ended or nonexistent session is a normal, checkable outcome, not necessarily an error — check the response shape rather than assuming a throw.
+Idempotent-adjacent: ending an already-ended or nonexistent session is a normal, checkable outcome, not necessarily an error — check the response shape rather than assuming a throw. Optional `checkin` block (`{ answers, notes? }`, same shape as `session.checkin`) records a check-in atomically with the close — see that tool for the question set, scale and gating. Omitted changes nothing: no prompt, no block.
 
 **Parameters**
 
 - `slot` — `string`, optional. Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises). Must match /^[a-zA-Z][a-zA-Z0-9_-]\*$/ — letters, digits, underscores, and hyphens, leading with a letter.
+- `checkin` — `object`, optional.
+
+## `session.checkin`
+
+Record a check-in against a session (RP corpus, "Client Check Ins"): "How did it go?" (`went`), "How did you feel?" (`felt`), "Did anything feel off?" (`off`), "Any questions?" (`questions`) — all free text — and "How are you feeling about the next session/week?" (`next`), plus `soreness`/`joint`/`motivation`, on RP's coarse 3-point scale (`low`/`medium`/`high`, never 5- or 10-point).
+
+Completion (loads, reps, sets) is already telemetry-derivable — show the lifter their own numbers back rather than asking `went` as a prompt; it exists only to store whatever they volunteer, and like every other code it is optional, never required. `soreness`, `joint` and `motivation` are withheld before the lifter's first completed training week (answers are uniformly positive and low-signal that early, and asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in the response's `withheld` array. RP's cadence: after the very first session, then at the end of every completed training week — never mandatory, never a gate on anything. `sessionId` omitted means the slot's active session. A guest session (a named `lifter`) writes nothing: check-ins are the owner's only.
+
+**Parameters**
+
+- `answers` — `object[]`, **required**.
+- `notes` — `string`, optional.
+- `slot` — `string`, optional. Device slot identifier. Defaults to 'primary' for single-device sessions. Used to disambiguate when multiple devices are connected (e.g., 'left' / 'right' for bilateral exercises). Must match /^[a-zA-Z][a-zA-Z0-9_-]\*$/ — letters, digits, underscores, and hyphens, leading with a letter.
+- `sessionId` — `string`, optional.
 
 ## `session.set_exercise`
 

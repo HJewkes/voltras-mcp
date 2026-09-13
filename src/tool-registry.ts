@@ -39,6 +39,9 @@ export const CORE_TOOL_NAMES = [
   'slot.swap',
   'session.start',
   'session.end',
+  // First writer of `self_reports` (VMCP-06.12 / B41). See
+  // src/tools/session-tools.ts.
+  'session.checkin',
   'session.set_exercise',
   'session.set_lifter',
   'session.list',
@@ -222,6 +225,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
 
   'session.start': 'write',
   'session.end': 'write',
+  'session.checkin': 'write',
   'session.set_exercise': 'write',
   'session.set_lifter': 'write',
   'session.list': 'read',

@@ -20,6 +20,57 @@ import { IdSchema, SlotIdSchema } from './common.js';
 export const LifterLabel = z.string().min(1).max(40);
 
 /**
+ * `session.checkin` answer codes (VMCP-06.12 / B41), quoted from the RP
+ * corpus's five-question check-in (`rp-s10-checkin-question-set`): "How did
+ * it go?" (`went`), "How did you feel?" (`felt`), "Did anything feel off?"
+ * (`off`), "Any questions?" (`questions`) — all free text — and "How are you
+ * feeling about the next session/week?" (`next`), RP's coarse 3-point scale.
+ * `soreness`, `joint` and `motivation` are the backlog's additional
+ * week-1-gated 3-point ratings (idea 15, B41).
+ */
+export const CHECKIN_TEXT_CODES = ['went', 'felt', 'off', 'questions'] as const;
+export const CHECKIN_SCALE_CODES = ['next', 'soreness', 'joint', 'motivation'] as const;
+/**
+ * Withheld before the lifter's first completed training week: per the
+ * backlog, answers are uniformly positive and low-signal that early, and
+ * asking can seed unwarranted concern.
+ */
+export const CHECKIN_GATED_CODES = ['soreness', 'joint', 'motivation'] as const;
+
+export const CheckinAnswerCode = z.enum([...CHECKIN_TEXT_CODES, ...CHECKIN_SCALE_CODES]);
+
+/**
+ * RP's coarse 3-point scale (`rp-s7-coarse-rating-scale-rationale`):
+ * 'low'/'medium'/'high', never a 5- or 10-point scale — finer gradations
+ * manufacture precision a subjective self-rating doesn't actually have.
+ */
+export const CheckinScaleValue = z.enum(['low', 'medium', 'high']);
+
+const CHECKIN_SCALE_CODE_SET: ReadonlySet<string> = new Set(CHECKIN_SCALE_CODES);
+
+export const CheckinAnswerInput = z
+  .object({
+    code: CheckinAnswerCode,
+    value: z.string().min(1).max(500),
+  })
+  .refine(
+    (v) => !CHECKIN_SCALE_CODE_SET.has(v.code) || CheckinScaleValue.safeParse(v.value).success,
+    {
+      message:
+        "'next', 'soreness', 'joint' and 'motivation' answers must be 'low', 'medium' or 'high'.",
+    },
+  );
+
+/**
+ * Shared shape for `session.checkin` and `session.end`'s `checkin` block —
+ * both call the same writer, so both take the same payload.
+ */
+const CheckinPayload = z.object({
+  answers: z.array(CheckinAnswerInput).min(1).max(8),
+  notes: z.string().max(2000).optional(),
+});
+
+/**
  * Input for `session.start`. Both fields are optional individually so that
  * either may be supplied, but the refinement below requires at least one.
  *
@@ -91,6 +142,22 @@ export const SessionGetInput = z.object({ id: IdSchema });
  */
 export const SessionEndInput = z.object({
   slot: SlotIdSchema,
+  /**
+   * Optional check-in written atomically with the close (VMCP-06.12 / B41),
+   * same shape `session.checkin` takes. Omitted changes nothing about how
+   * `session.end` behaves — it never blocks or prompts for one.
+   */
+  checkin: CheckinPayload.optional(),
+});
+
+/**
+ * Input for `session.checkin` (VMCP-06.12 / B41). `sessionId` omitted means
+ * the slot's active session; pass it explicitly to check in on a session
+ * that has already ended.
+ */
+export const SessionCheckinInput = CheckinPayload.extend({
+  slot: SlotIdSchema,
+  sessionId: IdSchema.optional(),
 });
 
 /**
