@@ -31,7 +31,11 @@ with an additional rest between sides, and computes the asymmetry between them
 
 - Hold duration: 5s (`DEFAULT_DURATION_MS`, `src/schemas/isometric.ts:14`)
 - Trials per side: 3 (`DEFAULT_TRIALS`, `src/schemas/isometric.ts:16`)
-- Rest between trials, same side: 90s (`DEFAULT_REST_MS`, `src/schemas/isometric.ts:18`)
+- Rest between trials, same side, `measure_imbalance`: 90s (`DEFAULT_REST_MS`,
+  `src/schemas/isometric.ts:18`)
+- Rest between EVERY hold `measure_max` runs — warm-up pulls included (VW-294): 2min
+  (`DEFAULT_MAX_REST_MS`, `src/schemas/isometric.ts:29`) — see
+  [Warm-up ramp](#warm-up-ramp-measure-max-only) below
 - Rest between sides (`measure_imbalance` only): 120s (`DEFAULT_BETWEEN_SIDES_REST_MS`,
   `src/schemas/isometric.ts:20`)
 
@@ -46,6 +50,29 @@ wait aborts instead of running out, the tool call fails with `LEASE_LOST`, and t
 left unloaded — the athlete may still be pulling against it at that moment, so dropping the
 load is the one write worth making on the way out
 (`docs/push-events.md:388-393`, `src/tools/isometric-tools.ts:608-624`).
+
+## Warm-up ramp (`measure_max` only)
+
+Before VW-294, a coach had to pace a warm-up by hand: call `isometric.measure_hold` a
+couple of times at a lighter cue, wait, then call `isometric.measure_max` for the real
+protocol. `isometric.measure_max` now runs that ramp itself, unprompted, by default: two
+brief submaximal pulls — one cued as roughly 50% effort, then one at roughly 75% — ahead
+of the trial loop, standardising the approach to a maximal isometric attempt (Comfort et
+al. 2019, as applied by Yeh et al., PLoS One) (`src/schemas/isometric.ts:30`,
+`src/tools/isometric-tools.ts:1220-1238`).
+
+Every hold in the sequence — both warm-up pulls and every real trial — shares the SAME
+`restMs` gap, defaulting to the standardised inter-trial rest for maximal isometric
+testing, 2 minutes (Maffiuletti et al. 2016) (`src/schemas/isometric.ts:21-29`). One rest
+concept governs the whole ready-then-test sequence rather than a second, unstated
+ramp-specific interval.
+
+The tool cannot verify actual effort — a warm-up pull is a cue over the phase-push
+channel, not a controlled variable — so its readings are reported separately, under
+`warmup` (`effortLevel`, `peakForceLbs`, `holdMs` per pull), and never join `trials`, the
+best-2 selection, the inferred working weight, or the stored assessment
+(`src/tools/isometric-tools.ts:1186-1192,1255-1262`). Pass `warmup: false` to skip the
+ramp entirely — for a coach-paced bench sitting, or to reproduce the pre-VW-294 timing.
 
 ## Phase pushes
 

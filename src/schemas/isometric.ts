@@ -18,6 +18,17 @@ export const DEFAULT_TRIALS = 3;
 export const DEFAULT_REST_MS = 90_000;
 /** Default rest between sides for the imbalance tool (120 seconds). */
 export const DEFAULT_BETWEEN_SIDES_REST_MS = 120_000;
+/**
+ * Default rest between EVERY hold `isometric.measure_max` runs — warm-up
+ * pulls included — once the tool starts and tracks that rest itself (VW-294):
+ * 2 minutes, the standardised inter-trial rest for maximal isometric testing
+ * (Maffiuletti et al. 2016). `isometric.measure_imbalance` keeps
+ * `DEFAULT_REST_MS` (90s, Yeh et al.) unchanged — this default is scoped to
+ * `measure_max` alone.
+ */
+export const DEFAULT_MAX_REST_MS = 120_000;
+/** Default warm-up ramp: two brief submaximal pulls before the max trial loop. */
+export const WARMUP_EFFORT_LEVELS: readonly number[] = [0.5, 0.75];
 
 /**
  * Hold duration for one trial, shared by every isometric tool so a single
@@ -59,13 +70,21 @@ export const IsometricMeasureHoldInput = z.object({
  *   * `trials`: 2–5 (the brief specifies 3, with up to 4 if a replacement
  *     trial is needed; cap at 5 for safety / reasonableness).
  *   * `restMs`: 30s–5min (under 30s is sub-recovery for max-force testing;
- *     over 5min is impractical in a session flow).
+ *     over 5min is impractical in a session flow). Defaults to
+ *     `DEFAULT_MAX_REST_MS` (VW-294) — still an opt-in override, not a
+ *     rewrite of the clamp VW-271 set.
+ *   * `warmup`: true by default (VW-294) — two brief submaximal pulls (50%,
+ *     then 75%, of a max-effort hold) run automatically before the trial
+ *     loop, standardising the approach to a maximal isometric attempt
+ *     (Comfort et al. 2019, as applied by Yeh et al., PLoS One). Set false
+ *     to skip the ramp for a human-paced bench sitting.
  */
 export const IsometricMeasureMaxInput = z.object({
   slot: SlotIdSchema,
   durationMs: HoldDurationMs,
   trials: z.number().int().min(2).max(5).optional().default(DEFAULT_TRIALS),
-  restMs: z.number().int().min(30_000).max(300_000).optional().default(DEFAULT_REST_MS),
+  restMs: z.number().int().min(30_000).max(300_000).optional().default(DEFAULT_MAX_REST_MS),
+  warmup: z.boolean().optional().default(true),
 });
 
 /**
