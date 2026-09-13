@@ -159,6 +159,7 @@ describe('working-set count parity across the wall, the summary page and progres
       restSec: null,
       plannedSets: null,
       targetReps: null,
+      expectedSetupCard: null,
     };
     expect(workingCompletedSets(session).length).toBe(2);
   });
