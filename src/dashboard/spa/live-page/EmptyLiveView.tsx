@@ -1,10 +1,12 @@
 // Font mapping: font-heading=Space Grotesk, font-body=Nunito Sans (UI), font-sans=Inter (body)
-import { useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Text, View, type LayoutChangeEvent } from 'react-native';
 import {
+  AwardIcon,
   BluetoothIcon,
   DumbbellIcon,
   EmptyState,
+  Link,
   LiveAuraFrame,
   Metric,
   MetricGroup,
@@ -15,6 +17,7 @@ import {
 } from '@titan-design/react-ui';
 import { type DashboardModel } from './model';
 import { formatMass } from './mass';
+import { LATEST_SESSION, routeHash } from '../routing';
 import {
   FATIGUE_CARD_WIDTH,
   PANEL_COLUMN_GAP,
@@ -259,6 +262,46 @@ export function EmptyLiveView({ model }: { model: DashboardModel }): ReactElemen
             {/* SECONDARY — the fatigue card's outline. */}
             <IdleFatigueCard height={bodyHeight} />
           </View>
+        </View>
+      </LiveAuraFrame>
+    </View>
+  );
+}
+
+/** How long the end-of-session stage sits before auto-navigating to the summary (VW-261). */
+const SESSION_ENDED_AUTO_NAV_MS = 8000;
+
+/** The hash the wall's summary page for the just-ended session resolves at (VW-261). */
+const SUMMARY_HREF = routeHash({ name: 'summary', sessionId: LATEST_SESSION });
+
+/**
+ * The end-of-session stage (VW-261): `session.end` closed the session the lifter was on, so
+ * neither the live stage nor the rest recap has anything current to show. Rather than falling
+ * back through to the idle stage (which would read as "no session ever happened") or a stale
+ * rest recap, this names what just happened and routes to the summary — a visible {@link Link}
+ * for the lifter to follow now, plus an unattended auto-navigate for the wall (a kiosk display
+ * with nobody there to tap).
+ */
+export function SessionEndedView(): ReactElement {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.location.hash = SUMMARY_HREF;
+    }, SESSION_ENDED_AUTO_NAV_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <View style={{ flex: 1 }} testID="session-ended-stage">
+      <LiveAuraFrame category="productive" style={{ borderRadius: 0, borderWidth: 0 }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+          <EmptyState
+            icon={AwardIcon}
+            title="Session complete"
+            description="The recap is on the summary page."
+          />
+          <Link href={SUMMARY_HREF} onPress={() => (window.location.hash = SUMMARY_HREF)}>
+            View session summary
+          </Link>
         </View>
       </LiveAuraFrame>
     </View>
