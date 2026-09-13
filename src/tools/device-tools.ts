@@ -440,7 +440,7 @@ const DISCONNECT_DESCRIPTION =
   'Drop the BLE link for one slot. Best-effort returns the device to Idle first so it leaves any active workout and shows its home screen; a failed mode write is logged and never blocks teardown. `slot` defaults to `primary`, which survives the disconnect with a fresh client and a fresh LiveState so the next device.connect works; any other slot is removed outright and frees its place against the slot cap. A disconnect against an already-idle primary slot is a true no-op and still returns `{ ok: true }`. An error from the underlying disconnect is rethrown only AFTER slot teardown, so the bookkeeping is clean either way. Does NOT close an open session or set — call set.end and session.end first or the in-flight set is left unpersisted.';
 
 const SET_WEIGHT_DESCRIPTION =
-  'SETTINGS layer (see docs/vocabulary.md): set the base training weight for one slot (5-200 lbs, integer). This is a SETTING, not a load engagement: the firmware holds the previously-engaged load until the cable goes slack, so a change made under tension does not apply to the rep in progress or to the remainder of the current set (VW-170). The value is snapshotted into the set header at set.start, so set the weight BEFORE set.start or the recorded set carries the old number (VW-165). A device-side coercion (the firmware landing somewhere other than the requested value) surfaces asynchronously as a `setting_coerced` channel event, never as an error here — confirm with device.get_state.';
+  'SETTINGS layer (see docs/vocabulary.md): set the base training weight for one slot (5-200 lbs, integer). This is a SETTING, not a load engagement: the firmware holds the previously-engaged load until the cable goes slack, so a change made under tension does not apply to the rep in progress or to the remainder of the current set (VW-170). When the change is made under tension — a set is active, or `load_state` reads `loaded` — the result carries a `weightChangeWarning` sentence saying so; the write still goes through and this is never an error. `weightChangeWarning` is null otherwise. The value is snapshotted into the set header at set.start, so set the weight BEFORE set.start or the recorded set carries the old number (VW-165). A device-side coercion (the firmware landing somewhere other than the requested value) surfaces asynchronously as a `setting_coerced` channel event, never as an error here — confirm with device.get_state.';
 
 const SET_MODE_DESCRIPTION =
   'TRAINING MODE layer (see docs/vocabulary.md): set the training mode on ONE slot. `mode` is a TrainingMode name; `Idle` is not selectable and is rejected with INVALID_INPUT. For Isokinetic and every other non-WeightTraining mode, set the mode HERE per slot FIRST and then cascade the remaining settings — a bilateral.cascade carrying a non-WeightTraining mode silently reverts both units (VW-162). Rowing routes through the SDK rowing entry automatically; use device.enter_row_mode + device.start_row when a distance preset is needed. The call resolves on BLE-write completion, not on a device acknowledgement, so read device.get_state and compare `requested_mode` against `active_mode` before starting a set.';
@@ -748,8 +748,12 @@ export function registerDeviceTools(
     'device.set_weight',
     DeviceSetWeightInput,
     wrapHandler(DeviceSetWeightInput, async (input) => {
+      // Read the tension state BEFORE the write: it describes the moment the
+      // change was requested, which is the moment the firmware decides whether
+      // to hold the old load (VW-170).
+      const warning = weightChangeWarning(state, input.slot);
       await setSlotWeight(state, input.slot, input.lbs);
-      return { ok: true };
+      return { ok: true, weightChangeWarning: warning };
     }),
     SET_WEIGHT_DESCRIPTION,
   );
@@ -1892,6 +1896,45 @@ export async function setSlotWeight(
     'device.set_weight',
     [{ field: 'baseWeight', requested: lbs }],
     () => slot.client.setWeight(lbs),
+  );
+}
+
+/**
+ * VW-170 — the under-tension caveat on a weight change, as one sentence or
+ * null. The write still goes through; this is a warning, never an error,
+ * because mid-set adjustment is a normal drop-set move and refusing it would
+ * be worse than mis-timing it.
+ *
+ * Observed 2026-09-07: 45 lb was requested mid-set and 31 lb was delivered for
+ * the whole remaining set, because the firmware keeps the engaged load until
+ * the cable next goes slack. Nothing reported the mismatch — the tool said
+ * `ok`, `device.get_state` read back the new number, and the lifter trained a
+ * set at a weight nobody asked for.
+ *
+ * Both triggers are needed, and neither subsumes the other. `deriveLoadState`
+ * reads `unloaded` throughout ordinary weight-training reps (the cable is
+ * slack at every rep boundary), so only the active-set check catches the
+ * common case; `loaded` is what guided-load and rowing report, where the cable
+ * is continuously hot and no set need be open.
+ */
+export function weightChangeWarning(state: ServerState, slotId: string | undefined): string | null {
+  const slot = getSlot(state, slotId);
+  if (!slot.client.isConnected) return null;
+  const set = slot.live.snapshotSet();
+  const underActiveSet = set !== undefined && set.status === 'active';
+  const loaded =
+    deriveLoadState(
+      slot.client.isConnected,
+      slot.client.guidedLoadState,
+      slot.client.isRowingActive,
+    ) === 'loaded';
+  if (!underActiveSet && !loaded) return null;
+  const trigger = underActiveSet ? 'a set is active' : 'the cable reads loaded';
+  return (
+    `Weight changed while ${trigger}: the firmware holds the previously-engaged load ` +
+    'until the cable goes slack, so this rep and possibly the rest of the set run at the ' +
+    'OLD weight however the setting reads back. The change was applied. To have it take ' +
+    'effect, let the cable go slack before the next rep.'
   );
 }
 

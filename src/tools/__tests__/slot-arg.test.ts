@@ -306,7 +306,7 @@ describe('slot argument plumbing (Step 2)', () => {
     it("accepts slot: 'primary' on device.set_weight and routes to the primary slot's client", async () => {
       const r = await h.invoke('device.set_weight', { lbs: 50, slot: 'primary' });
       expect(r.isError).toBeUndefined();
-      expect(parse(r)).toEqual({ ok: true });
+      expect(parse(r)).toEqual({ ok: true, weightChangeWarning: null });
       expect(h.client.setWeight).toHaveBeenCalledWith(50);
     });
 

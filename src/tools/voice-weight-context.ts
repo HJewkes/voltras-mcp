@@ -7,7 +7,7 @@
 // builds this, and only it pays that import cost.
 
 import type { ServerState } from '../state/server-state.js';
-import { setSlotWeight } from './device-tools.js';
+import { setSlotWeight, weightChangeWarning } from './device-tools.js';
 import type { VoiceWeightContext } from './voice-weight.js';
 
 /**
@@ -27,6 +27,7 @@ export function makeVoiceWeight(state: ServerState): VoiceWeightContext {
           currentWeightLbs: slot.live.snapshotDevice().weightLbs ?? null,
         })),
     setWeight: (slotId, lbs) => setSlotWeight(state, slotId, lbs),
+    weightChangeWarning: (slotId) => weightChangeWarning(state, slotId),
   };
 }
 

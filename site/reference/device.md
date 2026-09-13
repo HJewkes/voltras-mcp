@@ -50,7 +50,7 @@ Best-effort returns the device to Idle first so it leaves any active workout and
 
 SETTINGS layer (see docs/vocabulary.md): set the base training weight for one slot (5-200 lbs, integer).
 
-This is a SETTING, not a load engagement: the firmware holds the previously-engaged load until the cable goes slack, so a change made under tension does not apply to the rep in progress or to the remainder of the current set (VW-170). The value is snapshotted into the set header at set.start, so set the weight BEFORE set.start or the recorded set carries the old number (VW-165). A device-side coercion (the firmware landing somewhere other than the requested value) surfaces asynchronously as a `setting_coerced` channel event, never as an error here — confirm with device.get_state.
+This is a SETTING, not a load engagement: the firmware holds the previously-engaged load until the cable goes slack, so a change made under tension does not apply to the rep in progress or to the remainder of the current set (VW-170). When the change is made under tension — a set is active, or `load_state` reads `loaded` — the result carries a `weightChangeWarning` sentence saying so; the write still goes through and this is never an error. `weightChangeWarning` is null otherwise. The value is snapshotted into the set header at set.start, so set the weight BEFORE set.start or the recorded set carries the old number (VW-165). A device-side coercion (the firmware landing somewhere other than the requested value) surfaces asynchronously as a `setting_coerced` channel event, never as an error here — confirm with device.get_state.
 
 **Parameters**
 

@@ -916,7 +916,7 @@ describe('registerDeviceTools', () => {
       const reg = placeholders.get('device.set_weight')!;
       const { isError, payload } = await invoke(reg, { lbs: 50 });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true });
+      expect(payload).toEqual({ ok: true, weightChangeWarning: null });
       expect(primaryClient(state).setWeight).toHaveBeenCalledWith(50);
     });
 
@@ -926,6 +926,78 @@ describe('registerDeviceTools', () => {
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
       expect(primaryClient(state).setWeight).not.toHaveBeenCalled();
+    });
+
+    // VW-170. The two triggers are tested apart on purpose: `deriveLoadState`
+    // reads `unloaded` right through ordinary weight reps, so an implementation
+    // gated on load state alone passes the second of these and misses the case
+    // that produced the bug (45 lb asked for, 31 lb delivered, 2026-09-07).
+    describe('under-tension warning', () => {
+      it('warns when a set is active, even though load_state reads unloaded', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.client.isConnected = true;
+        slot.live.snapshotSet = () => ({
+          setId: 'set-1',
+          sessionId: 'sess-1',
+          startedAt: '2026-09-07T10:00:00.000Z',
+          reps: [],
+          status: 'active',
+        });
+
+        const { isError, payload } = await invoke(placeholders.get('device.set_weight')!, {
+          lbs: 45,
+        });
+
+        expect(isError).toBeUndefined();
+        expect(String(payload.weightChangeWarning)).toContain('a set is active');
+        expect(String(payload.weightChangeWarning)).toContain('goes slack');
+        // A warning, not a refusal: the write still happened.
+        expect(payload.ok).toBe(true);
+        expect(primaryClient(state).setWeight).toHaveBeenCalledWith(45);
+      });
+
+      it('warns when the cable reads loaded with no set open', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.client.isConnected = true;
+        slot.client.guidedLoadState = {
+          phase: 'active',
+          countdownRemainingMs: null,
+          fitnessModeRaw: null,
+        };
+
+        const { isError, payload } = await invoke(placeholders.get('device.set_weight')!, {
+          lbs: 45,
+        });
+
+        expect(isError).toBeUndefined();
+        expect(String(payload.weightChangeWarning)).toContain('the cable reads loaded');
+        expect(payload.ok).toBe(true);
+        expect(primaryClient(state).setWeight).toHaveBeenCalledWith(45);
+      });
+
+      it('stays silent with no set open and the cable slack', async () => {
+        state.slots.get('primary')!.client.isConnected = true;
+
+        const { payload } = await invoke(placeholders.get('device.set_weight')!, { lbs: 45 });
+
+        expect(payload.weightChangeWarning).toBeNull();
+      });
+
+      it('stays silent on a closed set', async () => {
+        const slot = state.slots.get('primary')!;
+        slot.client.isConnected = true;
+        slot.live.snapshotSet = () => ({
+          setId: 'set-1',
+          sessionId: 'sess-1',
+          startedAt: '2026-09-07T10:00:00.000Z',
+          reps: [],
+          status: 'ended',
+        });
+
+        const { payload } = await invoke(placeholders.get('device.set_weight')!, { lbs: 45 });
+
+        expect(payload.weightChangeWarning).toBeNull();
+      });
     });
   });
 

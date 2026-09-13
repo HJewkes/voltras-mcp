@@ -1959,6 +1959,8 @@ export type VoiceCommandKind = 'absolute' | 'relative' | 'undo';
  * would fight the athlete's voice. `previousLbs` is what the slot carried
  * before the write — the value a subsequent "cancel" reverts to. `clamped` is
  * true when a relative step ran into the 5-200 lb bound and was pinned to it.
+ * `weightChangeWarning` carries the VW-170 under-tension caveat when the
+ * change was made with the cable hot, and is null otherwise.
  */
 export function buildVoiceCommandAppliedPayload(args: {
   slot: string;
@@ -1967,8 +1969,10 @@ export function buildVoiceCommandAppliedPayload(args: {
   previousLbs: number | null;
   transcript: string;
   clamped?: boolean;
+  weightChangeWarning?: string | null;
 }): { meta: Record<string, string>; content: string } {
   const { slot, kind, lbs, previousLbs, transcript, clamped = false } = args;
+  const weightChangeWarning = args.weightChangeWarning ?? null;
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'voice_command_applied',
@@ -1979,9 +1983,10 @@ export function buildVoiceCommandAppliedPayload(args: {
   };
   if (clamped) meta.clamped = 'true';
   const from = previousLbs === null ? '' : ` (from ${previousLbs} lb)`;
+  const caveat = weightChangeWarning === null ? '' : ` ${weightChangeWarning}`;
   const summary =
     `Voice fast-path already set slot ${slot} to ${lbs} lb${from} on "${transcript}" — ` +
-    'do NOT call device.set_weight for this.';
+    `do NOT call device.set_weight for this.${caveat}`;
   const content = JSON.stringify({
     summary,
     slot,
@@ -1991,6 +1996,7 @@ export function buildVoiceCommandAppliedPayload(args: {
     transcript,
     clamped,
     applied: true,
+    weightChangeWarning,
   });
   return { meta, content };
 }
