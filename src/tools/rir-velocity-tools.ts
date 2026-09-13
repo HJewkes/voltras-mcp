@@ -10,6 +10,7 @@
 // the honest answer with no fitted curve is the stated caveat and no number.
 // See `analytics/rir-velocity.ts`.
 
+import { estimateRIRWithProfile } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -17,6 +18,7 @@ import {
   GENERAL_MODEL_CAVEAT,
   JUKIC_2024_CITATION,
   JUKIC_2024_FINDING,
+  rirForVelocity,
   velocityForRir,
   type RirVelocityModel,
 } from '../analytics/rir-velocity.js';
@@ -166,5 +168,58 @@ export async function resolveRirVelocityTarget(
     fitQuality: stored.fitQuality,
     rirErrorReps: model.rirErrorReps,
     caveat: null,
+  };
+}
+
+/** Which curve produced an RIR reading: the lifter's own fit, or the general regression. */
+export type RirEstimateBasis = 'fitted' | 'profile-estimate';
+
+/** One rep's inputs to an RIR reading, whichever basis answers it (VW-310). */
+export interface RepRirEstimateInput {
+  peakVelocity: number;
+  baselineMaxVelocity: number;
+  velLossPct: number;
+  repIndex: number;
+  repsInSet: number;
+}
+
+/** One rep's RIR reading, tagged with which curve produced it. */
+export interface RepRirEstimateResult {
+  rir: number;
+  range: { low: number; high: number };
+  confidence: 'low' | 'medium' | 'high';
+  basis: RirEstimateBasis;
+}
+
+/**
+ * One rep's RIR reading, from the lifter's own fitted curve (VW-298) when
+ * `model` is supplied, or the general regression (`estimateRIRWithProfile`,
+ * VW-134) when it is not.
+ *
+ * The ONLY place either `vbt.rir` call site (`metrics-tools.ts`'s `rirForSet`,
+ * `report-tools.ts`'s `rirLineForExercise`) turns a velocity into an RIR
+ * reading (VW-302/VW-310) — both fetch `model` once per set via
+ * `store.getRirVelocityModel` and call this per rep, rather than each running
+ * its own conversion.
+ */
+export function estimateRepRir(
+  model: RirVelocityModel | undefined,
+  input: RepRirEstimateInput,
+): RepRirEstimateResult {
+  if (model !== undefined) {
+    const fitted = rirForVelocity(model, input.peakVelocity);
+    return {
+      rir: fitted.rir,
+      range: fitted.range,
+      confidence: fitted.withinFittedRange ? 'high' : 'low',
+      basis: 'fitted',
+    };
+  }
+  const estimate = estimateRIRWithProfile(input);
+  return {
+    rir: estimate.rir,
+    range: estimate.range,
+    confidence: estimate.confidence,
+    basis: 'profile-estimate',
   };
 }

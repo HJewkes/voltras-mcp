@@ -108,6 +108,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'atRomFraction',
   'autoArm',
   'auto_armed',
+  // VW-310: which curve answered a `vbt.rir` reading — the lifter's own
+  // fitted RIR-velocity model (VW-298) or the general-profile fallback.
+  'basis',
   'blockBoundary',
   'bounceCount',
   'byMuscleGroup',

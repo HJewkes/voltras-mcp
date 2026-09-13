@@ -13,14 +13,11 @@
 // working sets picked by the shared `selectWorkingSets` rule so a ramp-up does
 // not read as a light top set.
 
-import {
-  estimateRIRWithProfile,
-  getRepPeakVelocity,
-  getSetVelocitySummary,
-} from '@voltras/workout-analytics';
+import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import type { RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
@@ -40,6 +37,7 @@ import {
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import { wrapHandler } from './helpers.js';
+import { estimateRepRir } from './rir-velocity-tools.js';
 import {
   computeProgressionDelta,
   resolveDefaultProgram,
@@ -311,7 +309,10 @@ export const REPORT_WEEKLY_DESCRIPTION =
   '28-day completed-session count — never a streak — and adherence `planned N / done M` against ' +
   "the active program's touched week(s), plus a coarse trend vs the previous equal-length range); " +
   'one block per session (date, template name, the same `report.session_results` strings verbatim, ' +
-  'plus an RIR line only when the rir-estimate baseline gate allows it); one progression-suggestion ' +
+  'plus an RIR line only when the rir-estimate baseline gate allows it — labelled `fitted` when ' +
+  'the lifter has a fitted RIR-velocity curve (VW-298) for the exercise, or `general model, not ' +
+  'a proximity-to-failure read` with no such curve (VW-310): Jukic et al. 2023, Eur J Appl ' +
+  'Physiol, found velocity-loss-to-RIR agreement unacceptable at every load); one progression-suggestion ' +
   'line per exercise from the same heuristic `plan.suggest_progression` uses, labelled "suggestion ' +
   'for the coach, not applied"; flags (force-implied weight/header mismatches, sets closed by an ' +
   'inactivity timeout with reps recorded, and velocity-loss holds at the VL30 stop point — ' +
@@ -510,11 +511,16 @@ async function resolveTemplateName(state: ServerState, sessionId: string): Promi
 
 /**
  * RIR for the exercise's last working set, final rep — the same estimator
- * `metrics.compute`'s `rir` pipeline runs (`estimateRIRWithProfile` +
- * `selectEligibleReps` for the baseline, both public `@voltras/workout-analytics`
- * exports), gated the same way (`rir-estimate` feature gate). Composed here
- * rather than imported because the gating composition itself is private to
- * `metrics-tools.ts`; the primitives it composes are not.
+ * `metrics.compute`'s `rir` pipeline runs (`estimateRepRir` +
+ * `selectEligibleReps` for the baseline), gated the same way (`rir-estimate`
+ * feature gate). Composed here rather than imported because the gating
+ * composition itself is private to `metrics-tools.ts`; the primitives it
+ * composes are not.
+ *
+ * Prefers the lifter's own fitted RIR-velocity curve (VW-298) when one exists
+ * for this exercise; the label says which basis answered (VW-310), because a
+ * general-model reading is NOT a proximity-to-failure claim (Jukic et al.
+ * 2023, Eur J Appl Physiol — VL-to-RIR agreement unacceptable at every load).
  *
  * Returns `null` (line omitted) when there is no working set, no exercise, the
  * gate is withheld, or there is no velocity telemetry to estimate from.
@@ -541,15 +547,19 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
   if (!(baselineMax > 0)) return null;
   const finalPeak = getRepPeakVelocity(reps[reps.length - 1]!);
   const velLossPct = Math.max(0, ((baselineMax - finalPeak) / baselineMax) * 100);
-  // VW-302: pre-existing, tracked — `vbt.rir` (VW-134) predates the fitted model.
-  const estimate = estimateRIRWithProfile({
+  const stored = await state.store.getRirVelocityModel(LOCAL_USER_ID, set.exerciseId);
+  const model = stored === undefined ? undefined : (stored.model as unknown as RirVelocityModel);
+  const estimateInput = {
     peakVelocity: finalPeak,
     baselineMaxVelocity: baselineMax,
     velLossPct,
     repIndex: reps.length,
     repsInSet: reps.length,
-  });
-  return `RIR (final rep, est.): ${estimate.rir.toFixed(1)}`;
+  };
+  const estimate = estimateRepRir(model, estimateInput);
+  const basisLabel =
+    estimate.basis === 'fitted' ? 'fitted' : 'general model, not a proximity-to-failure read';
+  return `RIR (final rep, ${basisLabel}): ${estimate.rir.toFixed(1)}`;
 }
 
 async function buildProgressionLines(

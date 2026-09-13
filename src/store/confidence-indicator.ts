@@ -69,6 +69,34 @@ export const RIR_MODEL_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
 };
 
 /**
+ * The model-calibration axis when the reading comes from the lifter's OWN
+ * fitted RIR-velocity curve (VW-298) rather than `estimateRIRWithProfile`'s
+ * placeholder profile.
+ *
+ * Distinct from {@link RIR_MODEL_CALIBRATION_CONFIDENCE}: Jukic et al. 2024
+ * individually validated this shape of fit (predicted a later session within
+ * under 2 reps of mean error across 70/80/90% 1RM), and a curve only reaches
+ * this axis after clearing VW-298's own minimums (3+ qualifying sets, 2+
+ * sessions, an RIR spread of 3+). So `high`, not the placeholder profile's
+ * `low` — the two axes read opposite defaults because they describe different
+ * models.
+ */
+export const RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
+  axis: 'model-calibration',
+  level: 'high',
+  reasoning:
+    "reading comes from the lifter's own fitted RIR-velocity curve (VW-298), which cleared its " +
+    'own minimums on qualifying sets, sessions and RIR spread — not the placeholder profile ' +
+    'estimateRIRWithProfile falls back to when no such curve exists',
+  userMessage:
+    'This RIR estimate comes from a curve fitted to your own recorded sets for this exercise, ' +
+    'not a general model.',
+  improvementPath:
+    'Re-run `rir_velocity.fit` as you log more qualifying sets — the curve’s own residual ' +
+    'error (`rirErrorReps`) narrows with more and more varied data.',
+};
+
+/**
  * The input-domain axis: whether this particular estimate's inputs land inside
  * the regression's calibration window.
  *

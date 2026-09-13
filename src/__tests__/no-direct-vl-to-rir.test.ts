@@ -202,11 +202,18 @@ describe('positive control — the scanner is not blind', () => {
 describe('the tracked-exception marker', () => {
   // Same discipline as `no-protocol-detail.test.ts`'s exemption-list test: an
   // exclusion that governs the first test above must be enumerated here, so
-  // a third marker cannot appear without someone editing this list and
-  // saying why. Both tracked hits are `estimateRIRWithProfile` (VW-134), an
-  // RIR estimator that predates the fitted model (VW-298) this guard
-  // protects and was not folded into it by VW-302 — see CHANGELOG.
-  it('is exactly the two tracked vbt.rir estimator call sites, and nothing else', () => {
+  // a marker cannot appear without someone editing this list and saying why.
+  //
+  // ZERO, as of VW-310. The two tracked hits this list used to carry
+  // (`estimateRIRWithProfile` calls in `metrics-tools.ts`'s `rirForSet` and
+  // `report-tools.ts`'s `rirLineForExercise`) are gone: both call sites now
+  // go through `rir-velocity-tools.ts`'s `estimateRepRir`, which tries the
+  // fitted per-lifter curve (VW-298) first and only falls back to
+  // `estimateRIRWithProfile` — still a direct velocity-loss-to-RIR
+  // conversion by shape, but one that now lives inside `MODEL_PATH_FILES`,
+  // the one path this guard already treats as the fitted model's own
+  // business. See CHANGELOG.
+  it('carries no tracked exceptions', () => {
     const sites: string[] = [];
     for (const file of sourceFiles(SRC_ROOT)) {
       const text = readFileSync(file, 'utf8');
@@ -216,6 +223,6 @@ describe('the tracked-exception marker', () => {
       });
     }
 
-    expect(sites).toEqual(['src/tools/metrics-tools.ts:2023', 'src/tools/report-tools.ts:544']);
+    expect(sites).toEqual([]);
   });
 });

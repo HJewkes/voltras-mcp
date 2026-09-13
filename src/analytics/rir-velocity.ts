@@ -281,6 +281,43 @@ export function velocityForRir(model: RirVelocityModel, rir: number): RirVelocit
   };
 }
 
+/** The reps in reserve this curve reads off an observed velocity (VW-310). */
+export interface RirVelocityReading {
+  rir: number;
+  /** 95% CI band from `rirErrorReps`, half-rep resolution — same convention as `ExerciseRIREstimate.range`. */
+  range: { low: number; high: number };
+  /**
+   * Whether the OBSERVED velocity implies a RIR inside the range the curve was
+   * fitted over. False means the reading is an extrapolation past the fitted
+   * curve, the mirror image of {@link RirVelocityTarget.withinFittedRange}.
+   */
+  withinFittedRange: boolean;
+}
+
+/**
+ * The reps-in-reserve this curve puts on an OBSERVED velocity — the inverse
+ * read of {@link velocityForRir}. Solves the same line, `v = intercept + slope
+ * * rir`, for `rir` instead of `v`.
+ *
+ * Every input this module fits on is the lifter's own recorded velocity
+ * against a known RIR anchor (never a velocity-LOSS percentage), and this
+ * read stays on that same footing: the caller hands a raw velocity, not a
+ * loss figure.
+ */
+export function rirForVelocity(model: RirVelocityModel, velocityMps: number): RirVelocityReading {
+  const [low, high] = model.rirRange;
+  const rawRir = (velocityMps - model.interceptMps) / model.slopeMpsPerRir;
+  const halfWidth = roundToHalf(1.96 * model.rirErrorReps);
+  return {
+    rir: round2(Math.max(0, rawRir)),
+    range: {
+      low: Math.max(0, roundToHalf(rawRir - halfWidth)),
+      high: roundToHalf(rawRir + halfWidth),
+    },
+    withinFittedRange: rawRir >= low && rawRir <= high,
+  };
+}
+
 function inBand(observation: RirVelocityObservation): boolean {
   return (
     observation.points.length > 0 &&
@@ -380,4 +417,9 @@ function round2(n: number): number {
 
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+/** Nearest 0.5 — the CI resolution `ExerciseRIREstimate.range` also uses. */
+function roundToHalf(n: number): number {
+  return Math.round(n * 2) / 2;
 }
