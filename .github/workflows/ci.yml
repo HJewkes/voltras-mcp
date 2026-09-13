@@ -47,6 +47,7 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run changelog:check
+      - run: npm run docs:check
 
   # Unit + integration tests
   test:
