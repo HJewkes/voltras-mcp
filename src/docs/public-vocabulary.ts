@@ -211,14 +211,29 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
  * The `pipeline` selector on `metrics.compute`. Its schema declares a bare
  * string — the sixteen accepted literals exist only in the description — so
  * these cannot be harvested and are listed instead.
+ *
+ * All sixteen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
+ * `src/__tests__/docs/check-docs.test.ts`. Nine were missing, which mattered
+ * once `scripts/check-docs.mjs` started reading this list: seven of the
+ * sixteen open with a tool namespace (`session.`), so a partial list makes a
+ * pipeline name look like a tool that was never registered.
  */
 export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
   'fatigue.set',
+  'history.trend',
+  'history.weekly_volume',
+  'quality.bounce',
+  'quality.hesitation',
   'quality.rep',
+  'quality.rom',
   'session.fatigue',
   'session.junk_volume',
   'session.perturbation',
+  'session.readiness',
+  'session.strength',
+  'session.volume',
   'vbt.profile',
+  'vbt.rir',
   'vbt.set',
 ];
 

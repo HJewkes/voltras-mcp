@@ -88,6 +88,13 @@ const PATTERNS: readonly ProtocolPattern[] = [
     checksVocabulary: false,
   },
   { kind: 'hex-literal', regexp: /\b0x[0-9a-f]+\b/gi, checksVocabulary: false },
+  // A command code names itself. The same shape ESLint's `no-protocol-detail`
+  // bans in source, so the two layers agree on what a command code looks like.
+  {
+    kind: 'command-code',
+    regexp: /\bcmd(?:id)?[\s_.:=-]*(?:0x)?[0-9a-f]{2,}\b/gi,
+    checksVocabulary: false,
+  },
   {
     kind: 'bare-hex',
     regexp: /(?<![\w.-])(?=[0-9a-f]{4,}(?![\w.-]))(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{4,}/gi,
@@ -130,8 +137,56 @@ export interface ProtocolGuard {
   redact(text: string): { text: string; count: number };
 }
 
+/**
+ * The tail of a source citation that names several lines — a range, then a
+ * comma, then another line. Decimal throughout and mixing the two separators,
+ * which a byte run never does: a byte run uses one separator. Without this,
+ * every multi-line citation in the docs reads as a run of bytes.
+ *
+ * (The example cannot be written here. ESLint's `no-protocol-detail` reads the
+ * shape the same way this function does, which is the point.)
+ */
+function isLineRangeList(token: string): boolean {
+  if (!/^\d+(?:[-,]\d+)+$/.test(token)) return false;
+  return token.includes('-') && token.includes(',');
+}
+
 function isStructurallyRejected(token: string): boolean {
+  if (isLineRangeList(token)) return true;
   return STRUCTURAL_REJECTS.some((pattern) => pattern.test(token));
+}
+
+function collectMatches(
+  text: string,
+  patterns: readonly ProtocolPattern[],
+  isPublic: (token: string) => boolean,
+): ProtocolMatch[] {
+  const matches: ProtocolMatch[] = [];
+  for (const { kind, regexp, checksVocabulary, minimumLength } of patterns) {
+    for (const found of text.matchAll(regexp)) {
+      const token = found[0];
+      if (minimumLength !== undefined && token.length < minimumLength) continue;
+      if (isStructurallyRejected(token)) continue;
+      if (checksVocabulary && isPublic(token)) continue;
+      matches.push({ kind, token, start: found.index, end: found.index + token.length });
+    }
+  }
+  return matches.sort((a, b) => a.start - b.start || b.end - a.end);
+}
+
+/**
+ * The half of the guard that needs no vocabulary: encoded values — byte
+ * sequences, `0x` literals, bare hex runs and command codes. A value is
+ * protocol detail whoever wrote it, so nothing can allowlist one.
+ *
+ * Split out for `scripts/check-docs.mjs`, which runs over HAND-WRITTEN pages.
+ * The identifier half is deliberately not exposed there: its allowlist is
+ * derived from the project's published markdown, so pointing it at that same
+ * markdown would let every token allowlist itself.
+ */
+export function findEncodedValues(text: string): ProtocolMatch[] {
+  const literalPatterns = PATTERNS.filter((pattern) => !pattern.checksVocabulary);
+  return collectMatches(text, literalPatterns, () => false);
 }
 
 /** Non-overlapping spans covering every match, so one splice pass suffices. */
@@ -169,19 +224,7 @@ export function createProtocolGuard(publicVocabulary: Iterable<string>): Protoco
     return opensAKnownIdentifier(normalized);
   };
 
-  const find = (text: string): ProtocolMatch[] => {
-    const matches: ProtocolMatch[] = [];
-    for (const { kind, regexp, checksVocabulary, minimumLength } of PATTERNS) {
-      for (const found of text.matchAll(regexp)) {
-        const token = found[0];
-        if (minimumLength !== undefined && token.length < minimumLength) continue;
-        if (isStructurallyRejected(token)) continue;
-        if (checksVocabulary && isPublic(token)) continue;
-        matches.push({ kind, token, start: found.index, end: found.index + token.length });
-      }
-    }
-    return matches.sort((a, b) => a.start - b.start || b.end - a.end);
-  };
+  const find = (text: string): ProtocolMatch[] => collectMatches(text, PATTERNS, isPublic);
 
   return {
     find,

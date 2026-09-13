@@ -41,7 +41,8 @@
     "docs:build": "vitepress build site",
     "docs:reference": "node scripts/gen-tool-reference.mjs",
     "docs:captures": "node scripts/capture-screens.mjs",
-    "changelog:check": "node scripts/check-changelog.mjs"
+    "changelog:check": "node scripts/check-changelog.mjs",
+    "docs:check": "node scripts/check-docs.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
