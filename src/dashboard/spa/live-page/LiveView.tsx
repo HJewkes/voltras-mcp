@@ -279,14 +279,13 @@ export function ExerciseHeader({
   displayUnit?: MassUnit;
 }) {
   const [w, setW] = useState(0);
-  // Hoisted above the early return so the hook count stays stable (rules of hooks). On-surface
-  // primary text from the Surface context — see the note at the heading below.
+  // On-surface primary text from the Surface context — see the note at the heading below.
   const nameColor = useOnSurfaceColor('primary');
   // Secondary, not primary: the lifter's name qualifies the exercise rather
   // than competing with it for the wall read.
   const lifterColor = useOnSurfaceColor('secondary');
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
-  const { session } = model;
+  const { session, connection } = model;
   const targets = derivePrescription(session, displayUnit);
   const setStates = deriveActiveSetStates(model);
   const wrap = w > 0 && w < HEADER_WRAP;
@@ -294,12 +293,21 @@ export function ExerciseHeader({
     ? Math.round(HEADER_NAME_SIZE * SET_HEADING_RATIO) // set-heading ratio on the second line
     : Math.round(clampLerp(w || HEADER_WIDE, HEADER_WRAP, HEADER_WIDE, 22, 28));
 
-  // No open session ⇒ no exercise to title (VW-68). Hide the header rather than showing the
-  // `Exercise N` ordinal for a wall that is merely idle/waiting. (Hooks above run first.)
-  if (!session.hasSession) return null;
+  // A KNOWN disconnect (VW-68) — same reading EmptyLiveView uses. Unchanged: the shell owns
+  // the disconnected messaging and this header stays hidden rather than duplicating it.
+  const disconnected = connection?.connected === false;
+
+  // No open session, but connected (or connection unknown) ⇒ no exercise to title (VMCP-03.08).
+  // Keep the region rather than removing it — the wall's layout should not jump when a session
+  // opens — but show the same idle copy EmptyLiveView's stage uses rather than the `Exercise N`
+  // ordinal, which exists to name a genuinely open session and would misdescribe an idle wall.
+  const headingText = session.hasSession ? session.exerciseName : 'Waiting for a set';
+
+  if (disconnected) return null;
 
   return (
     <View
+      testID="exercise-header"
       onLayout={onLayout}
       className="border-border"
       style={{
@@ -335,6 +343,7 @@ export function ExerciseHeader({
         }}
       >
         <Text
+          testID="exercise-header-name"
           style={{
             // On-surface primary text from the Surface context (LivePage's Surface root), not the
             // `text-text-primary` className — the className→CSS-var path renders black on the
@@ -346,7 +355,7 @@ export function ExerciseHeader({
             fontWeight: '700',
           }}
         >
-          {session.exerciseName}
+          {headingText}
         </Text>
         {/* VW-169: whose set this is, shown ONLY for a guest working in — the wall is the
             owner's by default, and a name on every set would be noise that stops being read
