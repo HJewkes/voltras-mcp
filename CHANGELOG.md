@@ -58,6 +58,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- Requires `@voltras/workout-analytics` 3.x (#353). No behavior change: `history.trend`
+  already discards `analyzeTrend`'s categorical verdict and reports its own explicit
+  `null` direction (VW-230), and this server does not call `findOutlierReps`,
+  `updateBaselineWithPoint`, or reference `FatigueSchemes.outlier` — the surfaces 3.0.0
+  changed or removed.
 - The rep-corrections gate is split in two (VMCP-02.65). `VMCP_REP_UNRACK_DROP` (default `off`)
   gates the un-rack drop, which is unchanged and still dark behind VW-16; `VMCP_REP_ECC_TRUNCATE`
   (default **`on`**) gates the final-eccentric idle-tail truncation, which is now applied by
