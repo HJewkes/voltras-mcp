@@ -595,6 +595,8 @@ export function registerDeviceTools(
   //     LiveState (so the next single-device `device.connect` works).
   //   * `slot: <other>`: BLE-disconnect, then `removeSlot` — the slot
   //     ceases to exist, freeing the soft cap for a future allocation.
+  //
+  // Deliberately unfenced (VW-232): a half-torn-down BLE link is worse than finishing.
   install(
     placeholders,
     'device.disconnect',
