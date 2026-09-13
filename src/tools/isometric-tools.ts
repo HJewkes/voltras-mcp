@@ -254,6 +254,15 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   '(Weakley et al. 2024). The same pooled-database scope limit as',
   'directionHistory above applies to the baseline too.',
   '',
+  'MOUNT LOAD (VW-274): each side runs the same single-unit isometric hold',
+  'isometric.measure_max does, up to 400 lb per unit regardless of the',
+  'commanded weight — no wall/rack mount rating is published for any',
+  'accessory. Refused as INVALID_INPUT, before either side runs, when 400 lb',
+  'exceeds a configured VMCP_MOUNT_RATING_LBS; checked once for both sides',
+  'since the peak and the rating are the same regardless of slot. With no',
+  'rating configured, mountLoadWarning in the result says the envelope is',
+  'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
+  '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
   '',
@@ -443,6 +452,14 @@ interface MeasureImbalanceResult {
    * (VW-271). Shared by both sides' `changeFromBaseline`.
    */
   peakForceBaseline: PeakForceBaseline | null;
+  /**
+   * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
+   * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
+   * configured — configured-and-fine reports nothing extra. Checked once for
+   * both sides: the isometric mode peak and the configured rating are the
+   * same regardless of which slot is pulling.
+   */
+  mountLoadWarning: string | null;
   totalElapsedMs: number;
   /**
    * Id of the persisted `isometric_measurements` row, or `null` when the write
@@ -585,6 +602,12 @@ async function measureImbalance(
   const secondary = getSlot(state, input.secondarySlot);
   ensureSlotConnected(input.primarySlot, primary);
   ensureSlotConnected(input.secondarySlot, secondary);
+  // Each side runs the same single-unit isometric hold measure_max does, so
+  // it carries the same per-unit mount-load risk (VW-274) — the gate cannot
+  // depend on which tool triggered the hold. One check covers both sides:
+  // the mode-driven peak and the configured rating are the same regardless
+  // of slot.
+  const mountLoadWarning = enforceIsometricMountLoad(state);
 
   const secondarySide: 'left' | 'right' = input.primarySide === 'left' ? 'right' : 'left';
   const order = decideTestOrder(
@@ -653,6 +676,7 @@ async function measureImbalance(
     directionHistory: await readDirectionHistory(state),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
+    mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
   };

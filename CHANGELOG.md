@@ -52,12 +52,12 @@ entry is written from the user's point of view is a review question, not a check
 - `VMCP_MOUNT_RATING_LBS` gates the anchor load against the mount's pull-out rating (VW-274).
   No wall/rack mount rating is published for any Beyond Power accessory, and isometric mode
   alone measures up to 400 lb on a single unit — roughly 2x the nominal 200 lb working
-  ceiling — while eccentric overload is "configurable up to unlimited". `isometric.measure_hold`
-  and `isometric.measure_max` now refuse (`INVALID_INPUT`, before any hold begins) when 400 lb
-  exceeds a configured rating, and `device.set_eccentric` refuses the same way when the true
-  peak (concentric weight + overload) exceeds it. With no rating configured, all three report
-  `mountLoadWarning` saying the envelope is UNKNOWN — a warning, never a refusal, and never
-  silence.
+  ceiling — while eccentric overload is "configurable up to unlimited". `isometric.measure_hold`,
+  `isometric.measure_max` and `isometric.measure_imbalance` now refuse (`INVALID_INPUT`, before
+  any hold begins) when 400 lb per unit exceeds a configured rating, and `device.set_eccentric`
+  refuses the same way when the true peak (concentric weight + overload) exceeds it. With no
+  rating configured, all four report `mountLoadWarning` saying the envelope is UNKNOWN — a
+  warning, never a refusal, and never silence.
 
 - Cable geometry now gates every left-vs-right read (VW-272). Before the wall's `L/R`
   callout or `progression.get_for_exercise`'s `sideSplit` compares the two arms, the two

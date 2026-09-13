@@ -1025,6 +1025,79 @@ describe('isometric.measure_imbalance', () => {
   });
 });
 
+// VW-274: each side of measure_imbalance runs the same single-unit isometric
+// hold measure_max does, so it carries the same per-unit mount-load risk —
+// the gate cannot depend on which tool triggered the hold.
+describe('isometric mount-load gate — measure_imbalance', () => {
+  let leftClient: FakeClient;
+  let rightClient: FakeClient;
+
+  function build(mountRatingLbs: number | undefined): { measureImbalanceCb: Callback } {
+    vi.useFakeTimers();
+    leftClient = makeFakeClient();
+    rightClient = makeFakeClient();
+    const state = makeState({ left: leftClient, right: rightClient }, { mountRatingLbs });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    return { measureImbalanceCb: slots.get('isometric.measure_imbalance')!.callback };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const baseInput = {
+    primarySlot: 'left',
+    secondarySlot: 'right',
+    primarySide: 'left' as const,
+    durationMs: 3000,
+    trials: 2,
+    restMs: 30_000,
+    betweenSidesRestMs: 60_000,
+    testNonDominantFirst: false,
+    dominantSide: 'unknown' as const,
+  };
+
+  it('proceeds and reports null warning when the rating covers it', async () => {
+    const { measureImbalanceCb } = build(500);
+    const promise = measureImbalanceCb(baseInput);
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    const body = payload(await promise) as { ok: boolean; mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toBeNull();
+  });
+
+  it('refuses INVALID_INPUT before either side runs when the rating is exceeded', async () => {
+    const { measureImbalanceCb } = build(350);
+    const result = await measureImbalanceCb(baseInput);
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(leftClient.subscribeCount).toBe(0);
+    expect(rightClient.subscribeCount).toBe(0);
+  });
+
+  it('warns, and still proceeds, when no rating is configured', async () => {
+    const { measureImbalanceCb } = build(undefined);
+    const promise = measureImbalanceCb(baseInput);
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    const body = payload(await promise) as { ok: boolean; mountLoadWarning: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.mountLoadWarning).toContain('UNKNOWN');
+  });
+});
+
 // VW-200: these tools issue no BLE command of their own, but they BLOCK — a
 // hold for seconds, the full protocol for minutes. Until the fence they kept
 // measuring, and kept cueing the athlete, on a device another session owned.

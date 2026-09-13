@@ -170,7 +170,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'deltaLbs',
   'changed',
   // VW-274: the mount-load envelope check on `isometric.measure_hold`,
-  // `isometric.measure_max` and `device.set_eccentric`.
+  // `isometric.measure_max`, `isometric.measure_imbalance` and
+  // `device.set_eccentric`.
   'mountLoadWarning',
   'goalRealism',
   'guided_load_state',
