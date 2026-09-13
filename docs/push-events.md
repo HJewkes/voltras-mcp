@@ -304,6 +304,42 @@ unknown keys), matching the advisory-only semantics.
 }
 ```
 
+### Where the velocity-loss threshold comes from
+
+A `velocity_loss_exceeded` spec does not have to carry a number. The threshold is keyed
+to the training goal, and `set.start` resolves it once, at set start, from the first of
+these that is available:
+
+| source        | spec carries         | threshold                                     |
+| ------------- | -------------------- | --------------------------------------------- |
+| `explicit`    | `pct`                | that number, unchanged                        |
+| `set_intent`  | `intent`             | strength 20%, hypertrophy 30%, power 10%      |
+| `plan_intent` | neither              | the planned exercise's `trainingIntent`, same defaults |
+
+With none of the three the call is refused rather than registering a watch that can never
+fire. The defaults sit in published bands — strength 10-20%, hypertrophy 25-40%, power 10%
+— and `coaching.explain {topic: "live.velocity_loss_threshold"}` returns the bands with
+their citations.
+
+The fired event reports which source supplied it, so a consumer can tell a goal-derived
+threshold from a number someone typed:
+
+```jsonc
+{
+  "trigger": {
+    "threshold_pct": 30,
+    "threshold_source": "set_intent", // explicit | set_intent | plan_intent
+    "training_intent": "hypertrophy", // null on a bare explicit pct
+  },
+}
+```
+
+Both ride in `meta` too: `threshold_source` always, `training_intent` only when one is
+known. A goal-derived threshold also puts the volume-dial caveat in the event's prose —
+velocity loss controls VOLUME and is a poor proximity-to-failure estimate, since reps
+completed to a fixed threshold vary by roughly ±5 between sessions. Nothing downstream
+should convert a loss figure into a reps-in-reserve claim without that band.
+
 ## Auto-armed sets
 
 Reps begin within about a second of a weight change on the unit, while a `set.start`

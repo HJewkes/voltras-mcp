@@ -36,8 +36,14 @@ import {
   SetLiveMetricsInput,
   SetStartInput,
   SetUpdateInput,
+  type ResolvedWatchConfig,
   type WatchConfig,
 } from '../schemas/set.js';
+import {
+  resolveVelocityLossSpec,
+  VELOCITY_LOSS_NO_THRESHOLD_MESSAGE,
+} from '../state/velocity-loss-intent.js';
+import { planTrainingIntentFor } from './plan-tools.js';
 import { inferExerciseSetups } from '../store/exercise-setups.js';
 import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
 import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
@@ -146,7 +152,14 @@ const SET_START_DESCRIPTION =
   '`set.live_metrics`. On a `pull` exercise the velocity-loss watch is suppressed — peak ' +
   'velocity does not decay with fatigue on a ballistic pull, so you get one ' +
   '`velocity_loss_watch_suppressed` event instead and judge effort by load, ROM and RPE; pass ' +
-  '`watch.velocityLoss.force` to re-enable it unchanged. `setPurpose` says WHY the set is being performed and decides how ' +
+  '`watch.velocityLoss.force` to re-enable it unchanged. A `velocity_loss_exceeded` spec takes ' +
+  'EITHER an explicit `pct` OR an `intent` (`strength` 20%, `hypertrophy` 30%, `power` 10% — ' +
+  'literature bands 10-20 / 25-40 / 10, see `coaching.explain {topic: ' +
+  '"live.velocity_loss_threshold"}`), or neither, in which case the threshold comes from the ' +
+  "planned exercise's `trainingIntent`. With none of the three the call is refused rather than " +
+  'registering a watch that can never fire. The fired event reports which of the three its ' +
+  'threshold came from, so a consumer can tell a goal-derived threshold from a number someone ' +
+  'typed. `setPurpose` says WHY the set is being performed and decides how ' +
   'progression reads it: `working` (the default) is the only value scored against the planned ' +
   'rep band and the only one that sets the top load a progression step is measured from; ' +
   '`warmup` is excluded from progression and from baseline derivation, and is counted ' +
@@ -437,7 +450,7 @@ function upgradeAutoArmedSet(
   state: ServerState,
   slotId: string,
   opts: {
-    watch: WatchConfig | undefined;
+    watch: ResolvedWatchConfig | undefined;
     setPurpose: SetPurpose | undefined;
     lifter: string | undefined;
   },
@@ -478,6 +491,40 @@ function upgradeAutoArmedSet(
   return { setId: upgraded.setId, upgraded: true, adoptedReps: upgraded.reps.length };
 }
 
+/**
+ * Pin every `velocity_loss_exceeded` threshold in a watch config (VW-266).
+ *
+ * The store is only consulted when some spec actually needs a plan intent —
+ * the common case, a caller who states `pct` or `intent`, costs no read.
+ * Errors from the lookup propagate: a threshold silently defaulted because a
+ * query failed is exactly the kind of invented number this ticket removes.
+ */
+async function resolveWatchThresholds(
+  state: ServerState,
+  session: { sessionId: string; exerciseId?: string },
+  watch: WatchConfig | undefined,
+): Promise<ResolvedWatchConfig | undefined> {
+  if (watch === undefined) return undefined;
+  const needsPlan = watch.notifyOn.some(
+    (spec) =>
+      spec.type === 'velocity_loss_exceeded' && spec.pct === undefined && spec.intent === undefined,
+  );
+  const planIntent = needsPlan
+    ? await planTrainingIntentFor(state, session.sessionId, session.exerciseId)
+    : undefined;
+  return {
+    ...watch,
+    notifyOn: watch.notifyOn.map((spec) => {
+      if (spec.type !== 'velocity_loss_exceeded') return spec;
+      const resolved = resolveVelocityLossSpec(spec, planIntent);
+      if (resolved === undefined) {
+        throw new ToolError('INVALID_INPUT', VELOCITY_LOSS_NO_THRESHOLD_MESSAGE);
+      }
+      return resolved;
+    }),
+  };
+}
+
 async function startSet(
   state: ServerState,
   watch: WatchConfig | undefined,
@@ -500,7 +547,11 @@ async function startSet(
     // set, which this slot cannot give while one is recording.
     if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
       assertEngageAllowed(state, slot, slotId, session.sessionId);
-      return upgradeAutoArmedSet(state, slotId, { watch, setPurpose, lifter });
+      return upgradeAutoArmedSet(state, slotId, {
+        watch: await resolveWatchThresholds(state, session, watch),
+        setPurpose,
+        lifter,
+      });
     }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
@@ -514,6 +565,11 @@ async function startSet(
   }
 
   assertEngageAllowed(state, slot, slotId, session.sessionId);
+
+  // VW-266: pin every velocity-loss threshold BEFORE the motor engages. A spec
+  // with no resolvable threshold is refused here, while the cable is still
+  // slack, rather than after the lifter is loaded.
+  const resolvedWatch = await resolveWatchThresholds(state, session, watch);
 
   // Re-arm the guard for the upcoming engagement window. The user's
   // intent at this exact moment is the device's current trainingMode (the
@@ -548,7 +604,7 @@ async function startSet(
       reps: [],
       status: 'active',
       ...setPurposeFields(setPurpose),
-      ...(watch !== undefined ? { watch } : {}),
+      ...(resolvedWatch !== undefined ? { watch: resolvedWatch } : {}),
       // VMCP-01.72b: snapshot the session's CURRENT exercise pointer now, not
       // at close. A `session.set_exercise` call after this point (mid-set)
       // must not retroactively relabel this set.

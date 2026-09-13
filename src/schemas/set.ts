@@ -14,6 +14,21 @@ import { SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
 
 /**
+ * Why a set is being trained, as an input to the velocity-loss stop (VW-266).
+ *
+ * The literature keys the useful velocity-loss threshold to the training goal,
+ * not to one constant: `strength` and `power` stop early and cheap, while
+ * `hypertrophy` tolerates a much larger drop. The numbers live with the
+ * resolver in `state/velocity-loss-intent.ts`; this is only the vocabulary.
+ *
+ * DISTINCT FROM `setPurpose`. `setPurpose` says whether a set is scored at all
+ * (working / warmup / probe / technique); `intent` says what a scored set is
+ * trying to buy. A warm-up and a working set can share one intent.
+ */
+export const TrainingIntent = z.enum(['strength', 'hypertrophy', 'power']);
+export type TrainingIntent = z.infer<typeof TrainingIntent>;
+
+/**
  * Trigger DSL — server-evaluated conditions a coach can register at
  * `set.start` time. Each spec is a discriminated union by `type` so Zod
  * errors stay clean and the bridge's evaluator can narrow on the tag without
@@ -35,6 +50,9 @@ import { LifterLabel } from './session.js';
  *     concentric velocity drops `pct`% below the highest peak seen so far in
  *     the set. Range 1..95 — below 1% is sample noise; above 95% almost
  *     always means the lifter has stopped exercising rather than slowed.
+ *     `pct` and `intent` are both optional and `set.start` resolves one
+ *     threshold from them (see {@link TrainingIntent}); a spec carrying
+ *     neither leans on the planned exercise's intent.
  *
  * The legacy `idle_timeout_ms` trigger has been lifted to a dedicated field
  * (`WatchConfig.inactivityTimeoutMs`) since it's the only force-close path
@@ -47,7 +65,8 @@ export const TriggerSpec = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('velocity_loss_exceeded'),
-    pct: z.number().min(1).max(95),
+    pct: z.number().min(1).max(95).optional(),
+    intent: TrainingIntent.optional(),
   }),
 ]);
 export type TriggerSpec = z.infer<typeof TriggerSpec>;
@@ -106,6 +125,33 @@ export const WatchConfig = z.object({
     .optional(),
 });
 export type WatchConfig = z.infer<typeof WatchConfig>;
+
+/** Which of the three ways a fired threshold's number was arrived at. */
+export type VelocityLossThresholdSource = 'explicit' | 'set_intent' | 'plan_intent';
+
+/**
+ * A `velocity_loss_exceeded` spec after `set.start` has pinned its threshold.
+ *
+ * `pct` is a number here, not an optional: resolution happens once, at set
+ * start, so the bridge never re-derives a threshold mid-set and the
+ * suppression event can name the exact numbers it is suppressing. `intent` and
+ * `thresholdSource` carry the provenance onto the fired event.
+ */
+export interface ResolvedVelocityLossSpec {
+  type: 'velocity_loss_exceeded';
+  pct: number;
+  intent?: TrainingIntent;
+  thresholdSource?: VelocityLossThresholdSource;
+}
+
+export type ResolvedTriggerSpec =
+  | Extract<TriggerSpec, { type: 'rep_count_reached' }>
+  | ResolvedVelocityLossSpec;
+
+/** A {@link WatchConfig} as installed on an active set: thresholds pinned. */
+export interface ResolvedWatchConfig extends Omit<WatchConfig, 'notifyOn'> {
+  notifyOn: ResolvedTriggerSpec[];
+}
 
 /**
  * Input for `set.start`. Optional `watch` config registers server-evaluated

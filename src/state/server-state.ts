@@ -45,7 +45,7 @@ import { deriveLoadState } from './load-state.js';
 import type { Config } from '../config.js';
 import { configureLogger, log } from '../logger.js';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
-import type { WatchConfig } from '../schemas/set.js';
+import type { ResolvedWatchConfig } from '../schemas/set.js';
 import type { SessionStore } from '../store/types.js';
 import { SqliteSessionStore } from '../store/sqlite-store.js';
 import { ExerciseService } from '../exercises/exercise-service.js';
@@ -143,7 +143,7 @@ export interface SlotState {
    * from a trigger that never armed can't leak into the next one.
    */
   pendingGuidedLoadIsWarmup?: boolean;
-  pendingGuidedLoadWatch?: WatchConfig;
+  pendingGuidedLoadWatch?: ResolvedWatchConfig;
   /**
    * Requested guided-load target weight (lbs) for the in-flight direct-load
    * flow (VMCP-02.03). Set by `device.start_guided_load` so the bridge can

@@ -230,6 +230,49 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'rp-s2-junk-volume-definition',
     ],
   },
+  'live.velocity_loss_threshold': {
+    allTiers:
+      'The velocity-loss percentage that ends a set is keyed to the GOAL, not to one constant, ' +
+      'and the server resolves it from an explicit intent on `set.start` or from the planned ' +
+      "exercise's `trainingIntent`: strength 10-20% (default 20), hypertrophy 25-40% " +
+      '(default 30), power 10%. Say plainly WHY the strength case is the low band: it is about ' +
+      'efficiency and fatigue cost, NOT about larger 1RM gains. Pareja-Blanco 2020 ran ' +
+      'VL0/VL10/VL20/VL40 for eight weeks and found no between-group difference in strength, ' +
+      'sprint or jump despite very different volumes, with VL20 and VL40 maximising hypertrophy ' +
+      'and VL40 alone showing slowed tensiomyography delay time and reduced early rate of force ' +
+      'development. The 37-study meta agrees: velocity-loss magnitude does not meaningfully ' +
+      'change strength or muscular-endurance gains, higher loss favours hypertrophy, lower loss ' +
+      'better preserves jump, sprint and velocity against submaximal loads, and the acute ' +
+      'metabolic and perceptual cost rises with the threshold. For power intent the band ' +
+      'collapses to 10%: VL10 produced the largest countermovement-jump gain and the best ' +
+      'sprint change of VL10/VL30/VL45. ' +
+      'NEVER convert a velocity-loss figure into a reps-in-reserve claim: agreement in reps ' +
+      'completed to a fixed threshold across sessions 72 h apart runs about -5.4 to +5.5 reps ' +
+      'against an equivalence margin of +/-2. It is a volume dial, not a proximity-to-failure ' +
+      'estimate, and any copy that implies RIR from it must carry that band. ' +
+      'Two limits on the numbers themselves. This literature is barbell squat and bench press ' +
+      'in young trained men on a fixed external load, so these are starting points on a cable ' +
+      'device with settable eccentric load, not transferable constants. And a set carrying ' +
+      'eccentric overload excludes its opening reps from the loss figure entirely — that ' +
+      'slowing is mechanical, not fatigue.',
+    sources: [
+      'Pareja-Blanco et al., Med Sci Sports Exerc, 2020 — 10.1249/MSS.0000000000002295',
+      'Jukic et al., Sports Medicine, 2023 — 10.1007/s40279-022-01754-4',
+      'Rodríguez-Rosell et al., Scand J Med Sci Sports, 2021 — 10.1111/sms.13967',
+      'Jukic, Prnjak, McGuigan & Helms, Sports Medicine - Open, 2023 — 10.1186/s40798-023-00626-z',
+      'Yang et al., Sports Med Open, 2026 — 10.1186/s40798-026-01031-y',
+    ],
+    caveats: [
+      'The band edges disagree with each other by design: Galiano 2022 found VL5 and VL20 ' +
+        'produced similar strength gains over seven weeks, so the FLOOR on useful velocity loss ' +
+        'for strength is very low, while Chen 2024 suggests 10-20% for velocity-at-load and ' +
+        '<=10% for sprint. Quote the range, never a resolved single number, when the lifter ' +
+        'asks what threshold is correct for them.',
+      'Work completed at a given threshold falls with load (about 2.1 fewer reps at 80% 1RM ' +
+        'and 4.0 fewer at 90% vs 70%), and women completed more reps than men at matched ' +
+        'thresholds, so the same percentage is not the same set across loads or lifters.',
+    ],
+  },
   'meso.deload_trigger': {
     allTiers:
       'Deload triggering is performance-gated, full stop: two CONSECUTIVE sessions of the same ' +
