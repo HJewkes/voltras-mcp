@@ -229,7 +229,8 @@ describe('v6 → v7 migration: identity, capture and state', () => {
     }
   });
 
-  it('de-sentinels training_mode and weight_lbs to NULL', async () => {
+  // Real disk I/O (dozens of un-batched auto-commits) exposed to CI fsync contention (VW-231).
+  it('de-sentinels training_mode and weight_lbs to NULL', { timeout: 15_000 }, async () => {
     const store = SqliteSessionStore.open(dbPath);
     try {
       // 'Unknown' was never a real training mode and 0 was the missing-snapshot
