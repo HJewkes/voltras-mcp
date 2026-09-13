@@ -217,6 +217,25 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ VMCP_AUTO_ARM: 'yes' })).toThrow(/on/);
   });
 
+  it('defaults VMCP_MOUNT_RATING_LBS to undefined — unset means UNKNOWN, not unlimited (VW-274)', () => {
+    const cfg = loadConfig({ HOME: '/home/test' });
+    expect(cfg.mountRatingLbs).toBeUndefined();
+  });
+
+  it('honors VMCP_MOUNT_RATING_LBS when provided', () => {
+    const cfg = loadConfig({ VMCP_MOUNT_RATING_LBS: '250', HOME: '/home/test' });
+    expect(cfg.mountRatingLbs).toBe(250);
+  });
+
+  it('throws on a non-numeric VMCP_MOUNT_RATING_LBS, naming the bad value', () => {
+    expect(() => loadConfig({ VMCP_MOUNT_RATING_LBS: 'plenty' })).toThrow(/plenty/);
+  });
+
+  it('throws on a zero or negative VMCP_MOUNT_RATING_LBS', () => {
+    expect(() => loadConfig({ VMCP_MOUNT_RATING_LBS: '0' })).toThrow(/0/);
+    expect(() => loadConfig({ VMCP_MOUNT_RATING_LBS: '-50' })).toThrow(/-50/);
+  });
+
   it('defaults VMCP_TRUECOACH_OUTBOX to "off" — the file drop is opt-in', () => {
     const cfg = loadConfig({ HOME: '/home/test' });
     expect(cfg.trueCoachOutbox).toBe('off');

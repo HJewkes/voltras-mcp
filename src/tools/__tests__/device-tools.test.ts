@@ -402,6 +402,9 @@ interface State {
   // VMCP-01.65: the multi-step writers take a lease fence, which reads both.
   lease: FakeLease;
   channels: RecordingChannels;
+  // VW-274: mutable so a test can set `state.config.mountRatingLbs` before
+  // invoking; unconfigured (the default) exercises the warning-only path.
+  config: { mountRatingLbs: number | undefined };
 }
 
 function makeFakeSlotBindings(): FakeSlotBindings {
@@ -439,6 +442,7 @@ function makeState(): State {
     slotBindings: makeFakeSlotBindings(),
     lease: makeFakeLease(SELF),
     channels: makeRecordingChannels(),
+    config: { mountRatingLbs: undefined },
   };
 }
 
@@ -1035,7 +1039,7 @@ describe('registerDeviceTools', () => {
       const reg = placeholders.get('device.set_eccentric')!;
       const { isError, payload } = await invoke(reg, { overloadLbs: -50 });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true });
+      expect(payload).toEqual({ ok: true, mountLoadWarning: null });
       expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
     });
 
@@ -1043,7 +1047,7 @@ describe('registerDeviceTools', () => {
       const reg = placeholders.get('device.set_eccentric')!;
       const { isError, payload } = await invoke(reg, { percent: -50 });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true });
+      expect(payload).toEqual({ ok: true, mountLoadWarning: null });
       expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(-50);
     });
 
@@ -1059,6 +1063,62 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBe(true);
       expect(payload.code).toBe('INVALID_INPUT');
+    });
+
+    // VW-274: overload adds load on top of the concentric weight, and the
+    // vendor's own docs call the addable amount "configurable up to unlimited"
+    // — so the anchor, not the firmware, is what a mount rating protects.
+    describe('mount-load gate (VW-274)', () => {
+      it('proceeds and reports null warning when the rating covers the peak', async () => {
+        state.slots.get('primary')!.live = makeFakeLive({ weightLbs: 100 });
+        state.config.mountRatingLbs = 400; // 100 concentric + 100 overload = 200, well under.
+        const reg = placeholders.get('device.set_eccentric')!;
+        const { isError, payload } = await invoke(reg, { overloadLbs: 100 });
+        expect(isError).toBeUndefined();
+        expect(payload).toEqual({ ok: true, mountLoadWarning: null });
+        expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(100);
+      });
+
+      it('refuses INVALID_INPUT before writing when concentric + overload exceeds the rating', async () => {
+        state.slots.get('primary')!.live = makeFakeLive({ weightLbs: 150 });
+        state.config.mountRatingLbs = 200; // 150 + 100 = 250 > 200.
+        const reg = placeholders.get('device.set_eccentric')!;
+        const { isError, payload } = await invoke(reg, { overloadLbs: 100 });
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('INVALID_INPUT');
+        expect(payload.message).toContain('eccentric overload peak');
+        // Refused before any write.
+        expect(primaryClient(state).setEccentric).not.toHaveBeenCalled();
+      });
+
+      it('warns, and still writes, when no rating is configured', async () => {
+        state.slots.get('primary')!.live = makeFakeLive({ weightLbs: 150 });
+        state.config.mountRatingLbs = undefined;
+        const reg = placeholders.get('device.set_eccentric')!;
+        const { isError, payload } = await invoke(reg, { overloadLbs: 100 });
+        expect(isError).toBeUndefined();
+        expect(payload.ok).toBe(true);
+        expect(String(payload.mountLoadWarning)).toContain('UNKNOWN');
+        expect(primaryClient(state).setEccentric).toHaveBeenCalledWith(100);
+      });
+
+      it('does not gate a non-positive overload even when a rating is configured', async () => {
+        state.slots.get('primary')!.live = makeFakeLive({ weightLbs: 300 });
+        state.config.mountRatingLbs = 50; // Would exceed if the concentric weight were checked.
+        const reg = placeholders.get('device.set_eccentric')!;
+        const { isError, payload } = await invoke(reg, { overloadLbs: -20 });
+        expect(isError).toBeUndefined();
+        expect(payload).toEqual({ ok: true, mountLoadWarning: null });
+      });
+
+      it('falls back to the device ceiling for the concentric weight when it is unknown', async () => {
+        // No weightLbs override — snapshotDevice() reports it absent.
+        state.config.mountRatingLbs = 250; // 200 (unknown-weight fallback) + 100 = 300 > 250.
+        const reg = placeholders.get('device.set_eccentric')!;
+        const { isError, payload } = await invoke(reg, { overloadLbs: 100 });
+        expect(isError).toBe(true);
+        expect(payload.code).toBe('INVALID_INPUT');
+      });
     });
   });
 

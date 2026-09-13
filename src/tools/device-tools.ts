@@ -104,6 +104,7 @@ import {
   VELOCITY_LOSS_NO_THRESHOLD_MESSAGE,
 } from '../state/velocity-loss-intent.js';
 import { fence, type LeaseFence } from '../state/lease-fence.js';
+import { checkMountLoad } from '../state/mount-load-gate.js';
 import type { ClientId } from '../client-connection.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import {
@@ -206,6 +207,42 @@ const GUIDED_LOAD_DEFAULT_INACTIVITY_MS = 30_000;
  */
 function weightTrainingName(): string {
   return TrainingModeNames[TrainingMode.WeightTraining];
+}
+
+/**
+ * Fallback concentric weight for the mount-load check when the slot's
+ * current setting is unknown at the moment `device.set_eccentric` is called
+ * (VW-274) — a conservative assumption, not a reading. The device's own
+ * settable ceiling (`DeviceSetWeightInput` max) is the worst case that could
+ * be true; understating it as 0 would let a real risk pass unchecked.
+ */
+const UNKNOWN_CONCENTRIC_WEIGHT_LBS = 200;
+
+/**
+ * Refuse or warn before writing an eccentric overload that adds load above
+ * the concentric weight (VW-274). The vendor's own docs call the added
+ * amount "configurable up to unlimited under Advanced User Mode", so the
+ * anchor — not the firmware — is the limiting factor once overload is
+ * requested. A non-positive overload (assisted eccentric, or none) never
+ * raises the peak above the concentric weight and is not gated here.
+ */
+function enforceEccentricMountLoad(
+  state: ServerState,
+  slot: SlotState,
+  overloadLbs: number,
+): string | null {
+  if (overloadLbs <= 0) return null;
+  const concentricLbs = slot.live.snapshotDevice().weightLbs ?? UNKNOWN_CONCENTRIC_WEIGHT_LBS;
+  const peakLbs = concentricLbs + overloadLbs;
+  const verdict = checkMountLoad(
+    state.config.mountRatingLbs,
+    peakLbs,
+    `eccentric overload peak (${concentricLbs} lb concentric + ${overloadLbs} lb overload)`,
+  );
+  if (verdict.refused) {
+    throwSdkLike('INVALID_INPUT', verdict.refusalMessage as string);
+  }
+  return verdict.warning ?? null;
 }
 
 /**
@@ -371,7 +408,8 @@ const EXIT_GUIDED_LOAD_DESCRIPTION =
 const SET_ECCENTRIC_DESCRIPTION =
   'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
   'The legacy `percent` param is accepted as a deprecated alias for one release and will be removed in the next major; the value semantics are identical (it was mis-named — the underlying SDK call has always taken pounds, not a percent of base weight). ' +
-  "No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device's `eccentricPercentTenths` echo within COERCION_WINDOW_MS.";
+  "No `modeConfirmation` is emitted by the firmware; the call resolves on BLE-write completion. Field-level coercion is correlated against the device's `eccentricPercentTenths` echo within COERCION_WINDOW_MS. " +
+  'MOUNT LOAD (VW-274): a positive `overloadLbs` adds to the concentric weight to produce the true anchor peak — "configurable up to unlimited" per the vendor, so the anchor is the limiting factor, not the displayed weight. The concentric weight is read from the slot\'s live device state; when that read is unavailable (no state dump yet), the check assumes the device\'s own 200 lb settable ceiling instead of 0 — a conservative stand-in, never a real reading, that makes the gate MORE likely to refuse rather than silently pass an unknown weight. Refused as INVALID_INPUT, BEFORE the write, when the resulting peak exceeds a configured `VMCP_MOUNT_RATING_LBS`; the refusal names the peak (concentric + overload), never the displayed weight alone. With no rating configured, `mountLoadWarning` in the result says the envelope is UNKNOWN — a warning, never a refusal. `null` when a non-positive `overloadLbs` is requested (it cannot raise the peak) or when a configured rating already covers it.';
 
 const UNLOAD_DESCRIPTION =
   'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
@@ -825,13 +863,14 @@ export function registerDeviceTools(
           'device.set_eccentric: `percent` param is deprecated, use `overloadLbs` instead. The legacy alias will be removed in the next release.',
         );
       }
+      const mountLoadWarning = enforceEccentricMountLoad(state, slot, value);
       await trackedSetterCall(
         slot.coercionWatch,
         'device.set_eccentric',
         [{ field: 'eccentricPercentTenths', requested: value * 10 }],
         () => slot.client.setEccentric(value),
       );
-      return { ok: true };
+      return { ok: true, mountLoadWarning };
     }),
     SET_ECCENTRIC_DESCRIPTION,
   );

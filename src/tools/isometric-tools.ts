@@ -78,6 +78,7 @@ import {
 } from '../state/isometric-protocol.js';
 import { buildIsometricPhasePayload, type IsometricPhase } from '../state/channel-payloads.js';
 import { fence, waitFenced, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
+import { checkMountLoad, ISOMETRIC_MAX_PEAK_LBS_PER_UNIT } from '../state/mount-load-gate.js';
 import { unloadSlot } from './device-exit.js';
 import { wrapHandler } from './helpers.js';
 
@@ -112,6 +113,13 @@ const MEASURE_HOLD_DESCRIPTION = [
   'too noisy to tell a real change from measurement error. Phase pushes',
   '(isometric_phase: ready, go, hold, stop) are emitted on the channel so a',
   'dashboard or cue surface can signal the athlete while the hold runs.',
+  '',
+  'MOUNT LOAD (VW-274): isometric mode measures up to 400 lb per unit',
+  'regardless of the commanded weight — no wall/rack mount rating is',
+  'published for any accessory. Refused as INVALID_INPUT, before the hold',
+  'begins, when 400 lb exceeds a configured VMCP_MOUNT_RATING_LBS. With no',
+  'rating configured, mountLoadWarning in the result says the envelope is',
+  'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
   '',
   'For the full 3-trial protocol with rests and best-2-of-N aggregation, use',
   'isometric.measure_max; for bilateral asymmetry, isometric.measure_imbalance.',
@@ -174,6 +182,13 @@ const MEASURE_MAX_DESCRIPTION = [
   'number means something only when the hold was held at the angle where the',
   'exercise peaks. Treat it as a starting point a coach adjusts against what',
   'the athlete actually lifts.',
+  '',
+  'MOUNT LOAD (VW-274): isometric mode measures up to 400 lb per unit',
+  'regardless of the commanded weight — no wall/rack mount rating is',
+  'published for any accessory. Refused as INVALID_INPUT, before any trial',
+  'runs, when 400 lb exceeds a configured VMCP_MOUNT_RATING_LBS. With no',
+  'rating configured, mountLoadWarning in the result says the envelope is',
+  'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
   '',
   'For bilateral assessment + asymmetry detection, prefer',
   'isometric.measure_imbalance which composes this tool with the standard',
@@ -238,6 +253,15 @@ const MEASURE_IMBALANCE_DESCRIPTION = [
   'signed difference) — thresholdLbs is the adjusted SEM, semLbs x sqrt(2)',
   '(Weakley et al. 2024). The same pooled-database scope limit as',
   'directionHistory above applies to the baseline too.',
+  '',
+  'MOUNT LOAD (VW-274): each side runs the same single-unit isometric hold',
+  'isometric.measure_max does, up to 400 lb per unit regardless of the',
+  'commanded weight — no wall/rack mount rating is published for any',
+  'accessory. Refused as INVALID_INPUT, before either side runs, when 400 lb',
+  'exceeds a configured VMCP_MOUNT_RATING_LBS; checked once for both sides',
+  'since the peak and the rating are the same regardless of slot. With no',
+  'rating configured, mountLoadWarning in the result says the envelope is',
+  'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
   '',
   'Both slots must be connected before invoking. Each side runs the same',
   'measurement protocol as isometric.measure_max.',
@@ -343,6 +367,12 @@ interface MeasureHoldResult {
    * a validity gate — a coach still wants to know what the athlete pulled.
    */
   peakForceLbs: number;
+  /**
+   * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
+   * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
+   * configured — configured-and-fine reports nothing extra.
+   */
+  mountLoadWarning: string | null;
   totalElapsedMs: number;
 }
 
@@ -380,6 +410,12 @@ interface MeasureMaxResult {
   changeFromBaseline: PeakForceChangeVerdict | null;
   /** Id of the persisted `isometric_measurements` row, or `null` when the write failed. */
   measurementId: string | null;
+  /**
+   * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
+   * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
+   * configured — configured-and-fine reports nothing extra.
+   */
+  mountLoadWarning: string | null;
   totalElapsedMs: number;
 }
 
@@ -416,6 +452,14 @@ interface MeasureImbalanceResult {
    * (VW-271). Shared by both sides' `changeFromBaseline`.
    */
   peakForceBaseline: PeakForceBaseline | null;
+  /**
+   * Set only when no `VMCP_MOUNT_RATING_LBS` is configured (VW-274): the
+   * anchor's load envelope is UNKNOWN, not unlimited. `null` once a rating is
+   * configured — configured-and-fine reports nothing extra. Checked once for
+   * both sides: the isometric mode peak and the configured rating are the
+   * same regardless of which slot is pulling.
+   */
+  mountLoadWarning: string | null;
   totalElapsedMs: number;
   /**
    * Id of the persisted `isometric_measurements` row, or `null` when the write
@@ -463,6 +507,7 @@ async function measureHold(
   input: MeasureHoldInput,
 ): Promise<MeasureHoldResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
+  const mountLoadWarning = enforceIsometricMountLoad(state);
   const startedAt = Date.now();
   const trial = await withLeaseFence(state, 'isometric.measure_hold', [slotId], (leaseFence) =>
     captureSingleHold(
@@ -485,12 +530,33 @@ async function measureHold(
     holdMs: input.holdMs,
     trial,
     peakForceLbs: trial.peakForceLbs,
+    mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
   };
 }
 
+/**
+ * Refuse or warn before any isometric hold begins (VW-274). Isometric mode
+ * measures up to {@link ISOMETRIC_MAX_PEAK_LBS_PER_UNIT} on a single unit
+ * regardless of the commanded weight — a MODE-driven peak the caller's input
+ * does not control — so the check runs unconditionally, before the lease
+ * fence claims the slot, on every call.
+ */
+function enforceIsometricMountLoad(state: ServerState): string | null {
+  const verdict = checkMountLoad(
+    state.config.mountRatingLbs,
+    ISOMETRIC_MAX_PEAK_LBS_PER_UNIT,
+    `isometric max force, up to ${ISOMETRIC_MAX_PEAK_LBS_PER_UNIT} lb per unit`,
+  );
+  if (verdict.refused) {
+    throw new ToolError('INVALID_INPUT', verdict.refusalMessage as string);
+  }
+  return verdict.warning ?? null;
+}
+
 async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<MeasureMaxResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
+  const mountLoadWarning = enforceIsometricMountLoad(state);
   const startedAt = Date.now();
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
     runSideProtocol(state, slotId, input, leaseFence),
@@ -521,6 +587,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
     peakForceBaseline,
     changeFromBaseline,
     measurementId,
+    mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
   };
 }
@@ -535,6 +602,12 @@ async function measureImbalance(
   const secondary = getSlot(state, input.secondarySlot);
   ensureSlotConnected(input.primarySlot, primary);
   ensureSlotConnected(input.secondarySlot, secondary);
+  // Each side runs the same single-unit isometric hold measure_max does, so
+  // it carries the same per-unit mount-load risk (VW-274) — the gate cannot
+  // depend on which tool triggered the hold. One check covers both sides:
+  // the mode-driven peak and the configured rating are the same regardless
+  // of slot.
+  const mountLoadWarning = enforceIsometricMountLoad(state);
 
   const secondarySide: 'left' | 'right' = input.primarySide === 'left' ? 'right' : 'left';
   const order = decideTestOrder(
@@ -603,6 +676,7 @@ async function measureImbalance(
     directionHistory: await readDirectionHistory(state),
     inferredWorkingWeightBasis: INFERRED_WORKING_WEIGHT_BASIS,
     peakForceBaseline,
+    mountLoadWarning,
     totalElapsedMs: Date.now() - startedAt,
     measurementId,
   };
