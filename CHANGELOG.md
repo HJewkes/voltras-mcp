@@ -101,6 +101,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `sessions.catalog_version` is now stamped at `session.start` (VW-328, B1 of the body-map
+  plan, #401): every new session records which version of the catalog-to-titan muscle map
+  (`src/exercises/muscle-map.ts`) was in effect, so a future re-classification is
+  detectable rather than silently rewriting historical per-muscle rollups. Internal only —
+  no tool exposes the map or the field yet.
+
 - `metrics.compute`'s `strength.e1rm` result now reports `isPR` and `priorBest` (VW-314):
   whether the fresh estimate beats this exercise's own best e1RM on record, and what that
   prior best was. It shares its comparison with the dashboard hero card's PR chip through

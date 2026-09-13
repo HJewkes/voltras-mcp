@@ -661,6 +661,12 @@ export interface StoredSession {
    * present.
    */
   preSessionCarbs?: StoredPreSessionCarbs;
+  /**
+   * The `mapCatalogMuscle` version (VW-328) in effect when this session was
+   * started. Without it, a later re-classification would silently rewrite
+   * every historical per-muscle rollup for this session.
+   */
+  catalogVersion?: string;
 }
 
 /** A session's self-reported pre-session carb context (VW-307). */

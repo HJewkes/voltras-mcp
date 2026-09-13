@@ -1573,6 +1573,7 @@ interface SessionRow {
   diet_phase: string | null;
   pre_session_carbs_level: string | null;
   pre_session_carbs_hours_since_meal: number | null;
+  catalog_version: string | null;
 }
 
 interface DietPhaseRow {
@@ -1957,12 +1958,15 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putSession(s: StoredSession): Promise<void> {
+    // catalog_version is deliberately outside the ON CONFLICT UPDATE SET below:
+    // it is stamped once at session.start, and session.end's re-put never
+    // carries it, so updating it here would null out the stamp on every close.
     this.db
       .prepare(
         `INSERT INTO sessions
            (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-            pre_session_carbs_level, pre_session_carbs_hours_since_meal)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
@@ -1988,6 +1992,7 @@ export class SqliteSessionStore implements SessionStore {
         this.stampableDietPhase(s),
         s.preSessionCarbs?.level ?? null,
         s.preSessionCarbs?.hoursSinceLastMeal ?? null,
+        s.catalogVersion ?? null,
       );
     return Promise.resolve();
   }
@@ -4015,6 +4020,7 @@ function rowToSession(row: SessionRow): StoredSession {
         : {}),
     };
   }
+  if (row.catalog_version !== null) out.catalogVersion = row.catalog_version;
   return out;
 }
 
