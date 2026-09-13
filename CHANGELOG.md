@@ -71,7 +71,7 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
-- Requires `@titan-design/react-ui` ^0.13.0. No SPA source change: the dashboard already
+- Requires `@titan-design/react-ui` ^0.13.0 (#359). No SPA source change: the dashboard already
   passed no `header` prop to `LiveFatiguePanel`, does not use `ExerciseHeaderLite`,
   `useTheme`, `Pill`, or the `Shell` family, so none of this release's removals or shape
   changes land on the wall. The live-page screenshot at rest and mid-set is unchanged.
