@@ -38,7 +38,12 @@ import type { ServerState } from '../../state/server-state.js';
 import type { TelemetryFrame } from '@voltras/node-sdk';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../../state/live-signal.js';
 import type { ToolResult } from '../helpers.js';
-import type { StoredIsometricMeasurement } from '../../store/types.js';
+import type { Rep } from '@voltras/workout-analytics';
+import type {
+  StoredExerciseSetup,
+  StoredIsometricMeasurement,
+  StoredSet,
+} from '../../store/types.js';
 import {
   McpChannelPublisher,
   noopChannelPublisher,
@@ -134,6 +139,7 @@ function makeFakeClient(opts: { isConnected: boolean } = { isConnected: true }):
 interface FakeSlot {
   slotId: string;
   client: FakeClient;
+  live: { session?: { exerciseId?: string } };
 }
 
 /**
@@ -151,10 +157,27 @@ interface FakeStore {
   seeded: StoredIsometricMeasurement[];
   /** Set to make every write reject, standing in for a broken DB. */
   failWith: Error | null;
+  /** `exercise_setups` rows the VW-284 setup gate reads (`listExerciseSetups`). */
+  listExerciseSetups: Mock<
+    (f: { userId: string; exerciseId: string }) => Promise<StoredExerciseSetup[]>
+  >;
+  /** Working sets the VW-284 setup gate reads to derive a confirmed setup's ROM. */
+  getSetsForExercise: Mock<
+    (f: { userId: string; exerciseId: string; side?: 'left' | 'right' }) => Promise<StoredSet[]>
+  >;
+  /** Backing rows for the two mocks above. */
+  exerciseSetups: StoredExerciseSetup[];
+  sets: StoredSet[];
 }
 
 function makeFakeStore(): FakeStore {
-  const store = { written: [], seeded: [], failWith: null } as unknown as FakeStore;
+  const store = {
+    written: [],
+    seeded: [],
+    failWith: null,
+    exerciseSetups: [],
+    sets: [],
+  } as unknown as FakeStore;
   store.putIsometricMeasurement = vi.fn(async (m: StoredIsometricMeasurement): Promise<void> => {
     if (store.failWith !== null) throw store.failWith;
     store.written.push(m);
@@ -168,7 +191,80 @@ function makeFakeStore(): FakeStore {
       return Promise.resolve(all.slice(0, opts.limit ?? 50));
     },
   );
+  store.listExerciseSetups = vi.fn(async (f: { exerciseId: string }) =>
+    store.exerciseSetups.filter((s) => s.exerciseId === f.exerciseId),
+  );
+  store.getSetsForExercise = vi.fn(async (f: { exerciseId: string; side?: 'left' | 'right' }) =>
+    store.sets.filter(
+      (s) => s.exerciseId === f.exerciseId && (f.side === undefined || s.side === f.side),
+    ),
+  );
   return store;
+}
+
+/** A minimal `Rep` whose concentric range of motion is exactly `romM`. */
+function makeRep(repNumber: number, romM: number): Rep {
+  const phase = {
+    samples: [],
+    startTime: 0,
+    endTime: 0,
+    startPosition: 0,
+    endPosition: romM,
+    _totalVelocity: 0,
+    _totalForce: 0,
+    _totalLoad: 0,
+    _movementSampleCount: 0,
+    _totalHoldDuration: 0,
+    peakVelocity: 0,
+    peakForce: 0,
+    peakLoad: 0,
+  };
+  return { repNumber, concentric: phase, eccentric: phase };
+}
+
+/**
+ * A confirmed `exercise_setups` row, feeding the VW-284 gate's "who vouched
+ * for this?" check. `confirmedAt` absent models an inferred-but-unconfirmed
+ * cluster, which the gate treats the same as no setup at all.
+ */
+function makeExerciseSetup(
+  id: string,
+  exerciseId: string,
+  opts: { confirmed?: boolean } = {},
+): StoredExerciseSetup {
+  return {
+    id,
+    userId: 'local',
+    exerciseId,
+    label: id,
+    ...(opts.confirmed !== false ? { confirmedAt: '2026-09-01T00:00:00.000Z' } : {}),
+  };
+}
+
+/** A working set stamped with one confirmed setup's id, at a given cable-travel ROM. */
+function makeExerciseSet(
+  id: string,
+  exerciseId: string,
+  side: 'left' | 'right',
+  setupId: string,
+  romM: number,
+): StoredSet {
+  return {
+    id,
+    sessionId: `${id}-session`,
+    startedAt: '2026-09-01T00:00:00.000Z',
+    endedAt: '2026-09-01T00:05:00.000Z',
+    partial: false,
+    exerciseId,
+    side,
+    setupId,
+    reps: [1, 2, 3].map((n) => ({
+      ...makeRep(n, romM),
+      id: `${id}-r${n}`,
+      setId: id,
+      index: n - 1,
+    })),
+  } as StoredSet;
 }
 
 /**
@@ -237,6 +333,8 @@ function makeState(
     channels?: ChannelPublisher;
     lease?: FakeLease;
     mountRatingLbs?: number;
+    /** Per-slot active-session exerciseId, for the VW-284 setup gate. */
+    exerciseIds?: Record<string, string | undefined>;
   } = {},
 ): ServerState {
   const slotMap = new Map<string, FakeSlot>();
@@ -245,7 +343,12 @@ function makeState(
     // persisted measurement; `null` models the mock adapter / a dropped unit.
     (client as unknown as { connectedDeviceId: string | null }).connectedDeviceId =
       opts.deviceIds?.[slotId] ?? null;
-    slotMap.set(slotId, { slotId, client });
+    const exerciseId = opts.exerciseIds?.[slotId];
+    slotMap.set(slotId, {
+      slotId,
+      client,
+      live: { session: exerciseId !== undefined ? { exerciseId } : undefined },
+    });
   }
   return {
     slots: slotMap,
@@ -1025,6 +1128,145 @@ describe('isometric.measure_imbalance', () => {
   });
 });
 
+// VW-284: an isometric hold has no reps of its own to cluster a setup from,
+// so the gate reads each side's CONFIRMED `exercise_setups` signature for the
+// exercise active on that slot's session — the same cable-geometry question
+// VW-272 asks of `progression.get_for_exercise`'s `sideSplit`.
+describe('isometric.measure_imbalance — setup geometry gate (VW-284)', () => {
+  let leftClient: FakeClient;
+  let rightClient: FakeClient;
+  let store: FakeStore;
+  let measureImbalanceCb: Callback;
+
+  const EXERCISE_ID = 'cable-row';
+
+  function build(exerciseIds: Record<string, string | undefined>): void {
+    vi.useFakeTimers();
+    leftClient = makeFakeClient();
+    rightClient = makeFakeClient();
+    store = makeFakeStore();
+    const state = makeState({ left: leftClient, right: rightClient }, { store, exerciseIds });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureImbalanceCb = slots.get('isometric.measure_imbalance')!.callback;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  interface Body {
+    ok: boolean;
+    setupComparability: string;
+    setupSignatures: {
+      left: { medianRomM?: number };
+      right: { medianRomM?: number };
+    };
+    setupReason: string;
+    imbalance: { real: boolean | null; direction: string | null; asymmetryPct: number | null };
+    left: { meanPeakForceLbs: number | null };
+    right: { meanPeakForceLbs: number | null };
+  }
+
+  /** Drive a full 2-trial-per-side run with left pulling harder than right. */
+  async function runImbalance(): Promise<Body> {
+    const promise = measureImbalanceCb({
+      primarySlot: 'left',
+      secondarySlot: 'right',
+      primarySide: 'left',
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      betweenSidesRestMs: 60_000,
+      testNonDominantFirst: false,
+      dominantSide: 'unknown',
+    });
+    await pumpTrialFrames(leftClient, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(leftClient, 3000, 195);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pumpTrialFrames(rightClient, 3000, 180);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(rightClient, 3000, 175);
+    return payload(await promise) as unknown as Body;
+  }
+
+  it('matching confirmed setups: comparable, verdict unchanged', async () => {
+    build({ left: EXERCISE_ID, right: EXERCISE_ID });
+    store.exerciseSetups = [
+      makeExerciseSetup('setup-left', EXERCISE_ID),
+      makeExerciseSetup('setup-right', EXERCISE_ID),
+    ];
+    store.sets = [
+      makeExerciseSet('set-l1', EXERCISE_ID, 'left', 'setup-left', 0.5),
+      makeExerciseSet('set-r1', EXERCISE_ID, 'right', 'setup-right', 0.52),
+    ];
+
+    const body = await runImbalance();
+
+    expect(body.setupComparability).toBe('comparable');
+    expect(body.imbalance.real).not.toBeNull();
+    expect(body.imbalance.direction).toBe('left');
+    expect(body.left.meanPeakForceLbs).toBeGreaterThan(170);
+    expect(body.right.meanPeakForceLbs).toBeGreaterThan(150);
+  });
+
+  it('mismatched confirmed setups: confounded, verdict withheld, per-side peaks still reported', async () => {
+    build({ left: EXERCISE_ID, right: EXERCISE_ID });
+    store.exerciseSetups = [
+      makeExerciseSetup('setup-left', EXERCISE_ID),
+      makeExerciseSetup('setup-right', EXERCISE_ID),
+    ];
+    // 0.9 / 0.5 = 1.8x apart — past the 1.15x geometry-split ratio.
+    store.sets = [
+      makeExerciseSet('set-l1', EXERCISE_ID, 'left', 'setup-left', 0.5),
+      makeExerciseSet('set-r1', EXERCISE_ID, 'right', 'setup-right', 0.9),
+    ];
+
+    const body = await runImbalance();
+
+    expect(body.setupComparability).toBe('setup_confounded');
+    expect(body.setupReason).toContain('joint torque');
+    expect(body.imbalance.real).toBeNull();
+    expect(body.imbalance.direction).toBeNull();
+    // Facts about what was measured survive the withholding.
+    expect(body.imbalance.asymmetryPct).not.toBeNull();
+    expect(body.left.meanPeakForceLbs).toBeGreaterThan(170);
+    expect(body.right.meanPeakForceLbs).toBeGreaterThan(150);
+  });
+
+  it('one side has no confirmed setup: setup_unverified, verdict still reported', async () => {
+    build({ left: EXERCISE_ID, right: EXERCISE_ID });
+    store.exerciseSetups = [
+      makeExerciseSetup('setup-left', EXERCISE_ID),
+      // Right's setup was inferred but never confirmed.
+      makeExerciseSetup('setup-right', EXERCISE_ID, { confirmed: false }),
+    ];
+    store.sets = [
+      makeExerciseSet('set-l1', EXERCISE_ID, 'left', 'setup-left', 0.5),
+      makeExerciseSet('set-r1', EXERCISE_ID, 'right', 'setup-right', 0.9),
+    ];
+
+    const body = await runImbalance();
+
+    expect(body.setupComparability).toBe('setup_unverified');
+    expect(body.setupSignatures.right.medianRomM).toBeUndefined();
+    // A check that never ran is not evidence of a mismatch: the verdict is
+    // reported exactly as `computeImbalance` produced it.
+    expect(body.imbalance.real).not.toBeNull();
+    expect(body.imbalance.direction).toBe('left');
+  });
+
+  it('no active exercise on either slot: setup_unverified, never comparable by default', async () => {
+    build({});
+
+    const body = await runImbalance();
+
+    expect(body.setupComparability).toBe('setup_unverified');
+    expect(body.imbalance.real).not.toBeNull();
+  });
+});
+
 // VW-274: each side of measure_imbalance runs the same single-unit isometric
 // hold measure_max does, so it carries the same per-unit mount-load risk —
 // the gate cannot depend on which tool triggered the hold.
@@ -1032,11 +1274,17 @@ describe('isometric mount-load gate — measure_imbalance', () => {
   let leftClient: FakeClient;
   let rightClient: FakeClient;
 
-  function build(mountRatingLbs: number | undefined): { measureImbalanceCb: Callback } {
+  function build(
+    mountRatingLbs: number | undefined,
+    store?: FakeStore,
+  ): { measureImbalanceCb: Callback } {
     vi.useFakeTimers();
     leftClient = makeFakeClient();
     rightClient = makeFakeClient();
-    const state = makeState({ left: leftClient, right: rightClient }, { mountRatingLbs });
+    const state = makeState(
+      { left: leftClient, right: rightClient },
+      { mountRatingLbs, store, exerciseIds: { left: 'cable-row', right: 'cable-row' } },
+    );
     const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
     registerIsometricTools({} as McpServer, state, placeholders);
     return { measureImbalanceCb: slots.get('isometric.measure_imbalance')!.callback };
@@ -1080,6 +1328,18 @@ describe('isometric mount-load gate — measure_imbalance', () => {
     expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
     expect(leftClient.subscribeCount).toBe(0);
     expect(rightClient.subscribeCount).toBe(0);
+  });
+
+  // VW-284: the setup gate reads `exercise_setups`/sets AFTER the protocol has
+  // run, so a mount-load refusal — which happens before any trial — must never
+  // reach that read either.
+  it('refuses before the VW-284 setup gate reads exercise_setups', async () => {
+    const store = makeFakeStore();
+    const { measureImbalanceCb } = build(350, store);
+    const result = await measureImbalanceCb(baseInput);
+    expect(result.isError).toBe(true);
+    expect(store.listExerciseSetups).not.toHaveBeenCalled();
+    expect(store.getSetsForExercise).not.toHaveBeenCalled();
   });
 
   it('warns, and still proceeds, when no rating is configured', async () => {
