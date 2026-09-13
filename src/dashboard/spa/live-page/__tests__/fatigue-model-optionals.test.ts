@@ -81,6 +81,12 @@ const everyTitanOptional: LiveFatigueModel = {
   targetTempoSeconds: [3, 0, 1, 0],
   contributingLimbCount: 2,
   asymmetry: { pct: 8, strongerSide: 'right', strongerLabel: 'Right Arm' },
+  asymmetrySetup: {
+    comparability: 'comparable',
+    reason: 'both slots travel the same',
+    left: { side: 'left', medianRomM: 0.4 },
+    right: { side: 'right', medianRomM: 0.4 },
+  },
 };
 
 describe('titan’s optional fatigue fields are all accounted for (VMCP-03.06)', () => {

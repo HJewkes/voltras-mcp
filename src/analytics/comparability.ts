@@ -64,6 +64,17 @@
 // the copy is {@link EARLY_TRAINING_STRENGTH_WORDING}, carried verbatim in the
 // reasons the claiming surface already renders.
 //
+// THE SIDE CLAUSE IS NOT THE GEOMETRY GATE (VW-272)
+// --------------------------------------------------
+// `side` here only refuses to compare a left set with a right one. The opposite
+// question — two slots being compared ON PURPOSE, as a bilateral pair — is
+// `setup-comparability.ts`, and it cannot be asked with the `setup` clause
+// below: `setupRowId` keys on the side, so a left setup id and a right one are
+// never equal. A cable's resistance moment arm moves with its anchor, so the
+// same nominal load at a different anchor height is a different joint torque
+// (Keogh, Lake & Swinton 2013) — that module compares the two sides' travel
+// signatures before any asymmetry verdict is allowed out.
+//
 // B16's clause (c) is deliberately absent: it IS B15's tempo/ROM check, whose
 // owner is `checkDriftGuard` (see above). No clause here reads a rep, so no
 // clause here reads a position and none needs `normalisePositionsToMetres`

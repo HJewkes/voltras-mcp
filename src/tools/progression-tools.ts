@@ -33,8 +33,15 @@ import {
   buildComparabilitySubjectGroups,
   type ComparabilitySubjectFetchers,
 } from '../analytics/comparability-subject.js';
+import {
+  compareSetupSignatures,
+  medianRomMetres,
+  type SetupComparability,
+  type SetupSignature,
+} from '../analytics/setup-comparability.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
+import { setMedianRomM } from '../store/exercise-setups.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import {
@@ -70,7 +77,13 @@ const PROGRESSION_GET_DESCRIPTION =
   'names the most recent earlier session whose top set is like-vs-like with the latest one — the ' +
   'basis a progress claim may rest on. `trend` spans the whole window regardless, so when ' +
   '`comparability` reports `noValidComparison` say what changed (its `nearest.reasons`) rather ' +
-  'than presenting the trend delta as progress.';
+  'than presenting the trend delta as progress. CABLE GEOMETRY GATES THE TWO SIDES (VW-272): ' +
+  "`sideSplit.setupComparability` is `setup_confounded` when the two arms' median cable travel " +
+  "differs by more than 1.15x, because a cable's resistance moment arm moves with its anchor, so " +
+  'the same nominal load at a different anchor height is a different joint torque (Keogh, Lake & ' +
+  'Swinton 2013). On that verdict do NOT read the left/right load difference as an imbalance — ' +
+  "relay `sideSplit.setupReason` and `sideSplit.setupSignatures` (both sides' travel medians) " +
+  'instead. `setup_unverified` means neither side recorded travel, so the check never ran.';
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -303,21 +316,68 @@ interface SideSplitSummary {
   lastSessionTopWeightLbs: number;
 }
 
+/**
+ * The per-side split, plus whether its two columns may be READ against each
+ * other (VW-272).
+ *
+ * The two summaries are facts about one side each and always ship; what the gate
+ * governs is the comparison a reader would make between them. On
+ * `setup_confounded` the load difference is at least partly the rig, so `reason`
+ * says so in words rather than leaving the two numbers side by side with nothing
+ * between them.
+ */
+interface SideSplitReport {
+  left: SideSplitSummary;
+  right: SideSplitSummary;
+  setupComparability: SetupComparability;
+  setupSignatures: { left: SetupSignature; right: SetupSignature };
+  setupReason: string;
+}
+
 // VMCP-04.09: derived from the same `setsBySessionId` the aggregator already
 // consumes — not a second store query — since bilateral rows already carry
 // their own resolved `side`, no bilateral-group dedup is needed to split them.
 function computeSideSplit(
   limitedSessionIds: string[],
   setsBySessionId: Map<string, StoredSet[]>,
-): { left: SideSplitSummary; right: SideSplitSummary } | undefined {
+): SideSplitReport | undefined {
   const allSets = limitedSessionIds.flatMap((id) => setsBySessionId.get(id) ?? []);
   if (!allSets.some((s) => s.side !== undefined)) return undefined;
 
   const lastSessionSets =
     setsBySessionId.get(limitedSessionIds[limitedSessionIds.length - 1]) ?? [];
+  const gate = compareSetupSignatures(
+    storedSetupSignature(allSets, 'left'),
+    storedSetupSignature(allSets, 'right'),
+  );
   return {
     left: sideSplitSummary(allSets, lastSessionSets, 'left'),
     right: sideSplitSummary(allSets, lastSessionSets, 'right'),
+    setupComparability: gate.comparability,
+    setupSignatures: { left: gate.left, right: gate.right },
+    setupReason: gate.reason,
+  };
+}
+
+/**
+ * One side's setup signature over the window (VW-272): the median of its sets'
+ * own median working-rep ROMs, and the setup cluster they were stamped with when
+ * they all agree on one.
+ *
+ * A window that spans a real setup change on one side has sets in more than one
+ * cluster, and `setupId` is left off rather than naming whichever one came
+ * first — the travel median still describes the window either way.
+ */
+function storedSetupSignature(sets: readonly StoredSet[], side: StoredSide): SetupSignature {
+  const own = sets.filter((set) => set.side === side);
+  const medianRomM = medianRomMetres(
+    own.map((set) => setMedianRomM(set)).filter((rom): rom is number => rom !== undefined),
+  );
+  const setupIds = new Set(own.map((set) => set.setupId).filter((id) => id !== undefined));
+  return {
+    side,
+    ...(medianRomM !== undefined ? { medianRomM } : {}),
+    ...(setupIds.size === 1 ? { setupId: [...setupIds][0] } : {}),
   };
 }
 

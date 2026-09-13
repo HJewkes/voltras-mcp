@@ -34,7 +34,7 @@ import {
 import { LiveControlsRow } from './LiveView';
 import { exertionMessage } from './live-copy';
 import { type LiveDashboardModel, verdictFromLoss } from './model';
-import type { DivergingHeroModel, LimbAsymmetry } from './fatigue-model';
+import type { DivergingHeroModel, LimbAsymmetry, SetupComparabilityVerdict } from './fatigue-model';
 import { toStream, toGhostCurves, missingSides, hasGhostCurves } from './diverging-stage-model';
 
 /** Fallback hero height before the first layout pass, matching the single view's dual case. */
@@ -55,10 +55,29 @@ const SPARK_FLEX = 2;
  * Absent whenever it cannot be computed honestly (single Voltra, both devices on
  * the same side or on no side, a side with no usable mean velocity). The mapper
  * already encodes that as `null`; this just declines to draw. A gap beats a guess.
+ *
+ * One refusal is LOUDER than a gap: a `setup_confounded` geometry gate (VW-272)
+ * means the two slots are anchored differently, so the number would have been the
+ * rig rather than the athlete. That one renders its reason in the callout's place —
+ * the wall is where a lifter would act on the imbalance, so it is where the reason
+ * has to appear.
  */
-function AsymmetryCallout({ asymmetry }: { asymmetry: LimbAsymmetry | null }) {
+function AsymmetryCallout({
+  asymmetry,
+  setup,
+}: {
+  asymmetry: LimbAsymmetry | null;
+  setup: SetupComparabilityVerdict | null;
+}) {
   const strongColor = useOnSurfaceColor('secondary');
   const mutedColor = useOnSurfaceColor('tertiary');
+  if (setup?.comparability === 'setup_confounded') {
+    return (
+      <Text style={{ color: mutedColor, fontSize: 13, alignSelf: 'center', textAlign: 'center' }}>
+        {`L/R held back — ${setup.reason}`}
+      </Text>
+    );
+  }
   if (asymmetry === null) return null;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, alignSelf: 'center' }}>
@@ -138,10 +157,12 @@ export function DivergingLiveStage({
   model,
   hero,
   asymmetry,
+  asymmetrySetup = null,
 }: {
   model: LiveDashboardModel;
   hero: DivergingHeroModel;
   asymmetry: LimbAsymmetry | null;
+  asymmetrySetup?: SetupComparabilityVerdict | null;
 }) {
   const { live, session } = model;
   const [contentW, setContentW] = useState(0);
@@ -197,7 +218,7 @@ export function DivergingLiveStage({
           <GhostSparkBlock hero={hero} targetTempoSeconds={session.tempo ?? null} />
         ) : null}
 
-        <AsymmetryCallout asymmetry={asymmetry} />
+        <AsymmetryCallout asymmetry={asymmetry} setup={asymmetrySetup} />
         <AwaitingSides hero={hero} />
       </View>
     </LiveAuraFrame>

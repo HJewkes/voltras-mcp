@@ -215,3 +215,37 @@ dominance is consistent across sessions.
   the same left/right slot pairing to compare force between sides.
 - The [`bilateral.*`](/reference/bilateral), [`slot.*`](/reference/slot) and
   [`device.*`](/reference/device) references for full schemas.
+
+## Setup geometry gates the asymmetry verdict
+
+Two units at the same commanded weight are not two units at the same joint demand. A
+cable's resistance torque is the force times the perpendicular distance from the line of
+the cable to the joint, and that line moves when the anchor moves — so the resistance
+moment arm, and with it the shape of the load through the range, is a property of where
+the cable is attached rather than of the number on the device. Keogh, Lake & Swinton
+(2013, _Journal of Fitness Research_ 2(2):39-48) work the example: a cable lateral raise
+peaks its moment arm near full adduction and _decreases_ through the concentric, while the
+dumbbell version peaks at 90 degrees. Same load, different torque curve.
+
+The consequence for a two-unit rig is blunt: left and right anchored at different heights
+will manufacture a left/right difference that has nothing to do with the athlete. So every
+left-vs-right comparison here is gated on geometry first.
+
+The signature each side is compared on is its median concentric cable travel over the reps
+that count as work — the same observable the setup clustering
+([`exercise.confirm_setup`](/reference/exercise)) reads. Two sides more than 1.15x apart
+are a geometry mismatch, the same band a single side's sets have to cross before they are
+judged a new setup.
+
+- On the wall, the `L/R` callout under the diverging stage is replaced by the reason it
+  was held back. You get a sentence, not a blank space.
+- In [`progression.get_for_exercise`](/reference/progression), `sideSplit` carries
+  `setupComparability`. On `setup_confounded` it also carries `setupSignatures` (both
+  sides' travel medians) and `setupReason`; the per-side set counts and top loads still
+  ship, because those are facts about one side each — what is withheld is reading the gap
+  between them as an imbalance.
+- `setup_unverified` means a side recorded no measurable travel, so the check never ran.
+  That is not a mismatch, and it does not withhold anything.
+
+If the verdict comes back `setup_confounded`, fix the rig rather than the lifter: match
+the anchor height and cable-length setting on both units, then re-run the comparison.

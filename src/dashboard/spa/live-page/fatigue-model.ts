@@ -34,6 +34,15 @@ import type {
   RepVelocityCurve,
 } from '@titan-design/react-ui';
 
+import type { SetupComparabilityVerdict } from '../../../analytics/setup-comparability.js';
+
+/** The setup gate's verdict, re-exported so SPA modules keep one import site. */
+export type {
+  SetupComparability,
+  SetupComparabilityVerdict,
+  SetupSignature,
+} from '../../../analytics/setup-comparability.js';
+
 /**
  * titan's fatigue sub-models, re-exported so SPA modules keep importing the whole
  * contract from here. Previously mirrored one-for-one; see the module note.
@@ -110,10 +119,22 @@ export type LiveFatigueModel = TitanLiveFatigueModel & {
   /**
    * The L/R imbalance callout. `null` whenever it cannot be computed HONESTLY:
    * a single Voltra, both live devices resolving to the same side or to no side at
-   * all (an unbound slot — we never guess which arm is which), or a side with no
-   * usable mean velocity. A gap beats a guess.
+   * all (an unbound slot — we never guess which arm is which), a side with no
+   * usable mean velocity, or a `setup_confounded` {@link asymmetrySetup}. A gap
+   * beats a guess.
    */
   asymmetry: LimbAsymmetry | null;
+  /**
+   * Whether the two slots were set up the same way, and why (VW-272). `null` when
+   * there is no left/right pair to ask about.
+   *
+   * GATES {@link asymmetry}: a cable's resistance moment arm moves with its anchor,
+   * so two units anchored differently turn the same commanded load into a different
+   * joint torque and manufacture an imbalance the athlete does not have. On
+   * `setup_confounded` the callout is withheld and this block's `reason` is what the
+   * stage renders in its place — a stated refusal, never silence.
+   */
+  asymmetrySetup: SetupComparabilityVerdict | null;
 };
 
 /**
