@@ -62,6 +62,14 @@ entry is written from the user's point of view is a review question, not a check
   mechanical caveat that the rep right after an overloaded one runs slower for reasons
   unrelated to fatigue.
 
+- `progression.get_for_exercise`'s `sideSplit` now names which figure to actually compare
+  between the two sides (VW-304): `comparisonMetric` is `peak_force` when the last session
+  recorded it on both arms, `top_weight` otherwise, and `comparisonBasis` says why in prose.
+  Peak force is preferred because it is the only metric with good bilateral reliability in
+  unilateral isometric squat testing (Bishop et al. 2021, JSCR 35(2S): CV 5.44-5.70%, ICC
+  0.93-0.94) — this server's own sideSplit had no such statement before, so a reader could
+  not tell whether the 30 vs 45 lb gap it already showed was a reliable comparison or not.
+
 - The wall shows what an isometric assessment measured, once the hold overlay closes
   (VW-264). After `isometric.measure_imbalance` (or `isometric.measure_max`) finishes, a
   card carries each side's peak force, the left/right percentage and the verdict — and
