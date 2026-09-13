@@ -179,7 +179,7 @@ function registerRealTools(
       placeholders.delete(name);
     }
   }
-  registerDeviceTools(server, state, placeholders);
+  registerDeviceTools(server, state, placeholders, self);
   registerSessionTools(server, state, placeholders);
   registerSetTools(server, state, placeholders);
   registerMetricsTools(server, state, placeholders);
