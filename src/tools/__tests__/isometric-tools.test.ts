@@ -482,6 +482,13 @@ interface MeasureHoldBody {
   holdMs: number;
   trial: { index: number; valid: boolean; peakForceLbs: number };
   peakForceLbs: number;
+  jointAngleGate: {
+    comparability: string;
+    reason: string;
+    exercisePeakAngleDeg: number | null;
+    setupAngleDeg: number | null;
+    deltaDeg: number | null;
+  };
 }
 
 describe('the advertised isometric hold default', () => {
@@ -612,6 +619,103 @@ describe('isometric.measure_hold', () => {
     // A `ready` push for a hold that can never happen would signal the athlete
     // to get set for nothing.
     expect(published).toEqual([]);
+  });
+});
+
+// VW-296: joint angle dominates what an isometric hold predicts about the
+// dynamic lift (Lum, Haff & Barbosa 2020). `isometric.measure_hold` compares
+// a declared setup angle against the exercise's known peak-force angle and
+// warns (default) or refuses (`strict: true`) on a material mismatch.
+describe('isometric.measure_hold — joint-angle gate (VW-296)', () => {
+  let measureHoldCb: Callback;
+  let client: FakeClient;
+  let published: PublishedEvent[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    client = makeFakeClient();
+    published = [];
+    const state = makeState({ primary: client }, { channels: makeChannels(published) });
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureHoldCb = slots.get('isometric.measure_hold')!.callback;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('matched angle: comparable, and the hold runs normally', async () => {
+    const promise = measureHoldCb({ holdMs: 3000, exerciseId: 'cable-squat', setupAngleDeg: 92 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody;
+
+    expect(body.ok).toBe(true);
+    expect(body.jointAngleGate).toMatchObject({
+      comparability: 'comparable',
+      exercisePeakAngleDeg: 90,
+      setupAngleDeg: 92,
+      deltaDeg: 2,
+    });
+  });
+
+  it('mismatched angle: warns by default, but the hold still runs', async () => {
+    const promise = measureHoldCb({ holdMs: 3000, exerciseId: 'cable-squat', setupAngleDeg: 120 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody;
+
+    expect(body.ok).toBe(true);
+    expect(body.jointAngleGate).toMatchObject({
+      comparability: 'angle_mismatch',
+      exercisePeakAngleDeg: 90,
+      setupAngleDeg: 120,
+      deltaDeg: 30,
+    });
+    expect(body.jointAngleGate.reason).toContain('Lum, Haff & Barbosa 2020');
+    // The gate warned, not refused — a hold was actually captured.
+    expect(phasesOf(published)).toEqual(['ready', 'go', 'hold', 'stop']);
+  });
+
+  it('mismatched angle with strict: true refuses INVALID_INPUT before the hold begins', async () => {
+    const result = await measureHoldCb({
+      holdMs: 3000,
+      exerciseId: 'cable-squat',
+      setupAngleDeg: 120,
+      strict: true,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(published).toEqual([]);
+  });
+
+  it('unknown exercise: angle_unverified, no gate, hold still runs', async () => {
+    const promise = measureHoldCb({
+      holdMs: 3000,
+      exerciseId: 'cable-row',
+      setupAngleDeg: 90,
+    });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody;
+
+    expect(body.jointAngleGate).toMatchObject({
+      comparability: 'angle_unverified',
+      exercisePeakAngleDeg: null,
+      deltaDeg: null,
+    });
+  });
+
+  it('no exerciseId given: angle_unverified — the pre-VW-296 call shape still works', async () => {
+    const promise = measureHoldCb({ holdMs: 3000 });
+    await pumpTrialFrames(client, 3000, 200);
+    const body = payload(await promise) as MeasureHoldBody;
+
+    expect(body.jointAngleGate).toMatchObject({
+      comparability: 'angle_unverified',
+      exercisePeakAngleDeg: null,
+      setupAngleDeg: null,
+      deltaDeg: null,
+    });
   });
 });
 

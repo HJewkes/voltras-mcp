@@ -51,6 +51,44 @@ left unloaded — the athlete may still be pulling against it at that moment, so
 load is the one write worth making on the way out
 (`docs/push-events.md:388-393`, `src/tools/isometric-tools.ts:608-624`).
 
+## Joint-angle gate (`measure_hold` only)
+
+An isometric hold measures force at exactly one joint angle. What that single number
+predicts about the exercise's DYNAMIC form depends heavily on whether it was held at the
+angle where the dynamic lift actually peaks force: Lum, Haff & Barbosa (2020, _Sports_
+8(5):63) found an isometric squat predicted the full squat at r=0.864 held at 90 degrees of
+knee flexion, but only r=0.597 held at 120 degrees — the same correlation, at a joint 30
+degrees off, cut nearly in half (`src/state/isometric-protocol.ts:696-710`).
+
+`isometric.measure_hold` cannot measure the physical setup's angle itself — there is no
+angle sensor on the rig — so the gate is a comparison the CALLER feeds it: pass `exerciseId`
+and `setupAngleDeg` (the angle the current setup implies, however the coach or lifter
+arrived at it) and the tool checks `setupAngleDeg` against a small static table of known
+peak-force angles, keyed by the catalog's own exercise ids
+(`EXERCISE_PEAK_ANGLES`, `src/state/isometric-protocol.ts:720-726`). Deliberately sparse:
+today it holds one entry, the squat's 90 degrees from the citation above, and a made-up
+angle for an exercise nobody has sourced is worse than an honest gap.
+
+`jointAngleGate` on the result reports one of three verdicts
+(`src/state/isometric-protocol.ts:744-828`):
+
+- `comparable` — `setupAngleDeg` sits within `JOINT_ANGLE_MISMATCH_THRESHOLD_DEG` (15
+  degrees) of the exercise's known peak angle.
+- `angle_mismatch` — it does not. WARNS by default (the hold still runs, and the reading is
+  still returned) — pass `strict: true` to REFUSE it as `INVALID_INPUT` before the hold
+  begins instead (`src/tools/isometric-tools.ts:700-706`).
+- `angle_unverified` — the gate did not run: no `exerciseId`, no `setupAngleDeg`, or the
+  exercise carries no known angle. Never treated as a match or a mismatch, the same
+  DEGRADE-never-refuse-silently posture the bilateral setup-geometry gate takes.
+
+The 15-degree threshold is a heuristic, not a value the citation states directly — Lum et al.
+compared exactly two angles, 90 and 120 degrees apart, and the threshold sits inside that gap
+pending a study with more than two angles to interpolate between
+(`src/state/isometric-protocol.ts:728-741`). Nothing here is persisted: `setupAngleDeg` is a
+per-call input, pairing in spirit with the human-declared setup card
+([`exercise.confirm_setup`](/reference/exercise), VW-275) rather than living in its storage —
+no schema migration backs it.
+
 ## Warm-up ramp (`measure_max` only)
 
 Before VW-294, a coach had to pace a warm-up by hand: call `isometric.measure_hold` a

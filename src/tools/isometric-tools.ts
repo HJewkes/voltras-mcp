@@ -82,13 +82,16 @@ import {
   computePeakForceBaseline,
   decideTestOrder,
   directionOfMeasurement,
+  evaluateJointAngleGate,
   evaluatePeakForceChange,
   occasionPeakForcesLbs,
   summarizeDirectionHistory,
   PEAK_AFTER_MS,
+  JOINT_ANGLE_MISMATCH_THRESHOLD_DEG,
   type AsymmetryEquation,
   type DirectionHistory,
   type ForceSample,
+  type JointAngleGateVerdict,
   type PeakForceBaseline,
   type PeakForceChangeVerdict,
   type SideAnalysis,
@@ -139,6 +142,19 @@ const MEASURE_HOLD_DESCRIPTION = [
   'begins, when 400 lb exceeds a configured VMCP_MOUNT_RATING_LBS. With no',
   'rating configured, mountLoadWarning in the result says the envelope is',
   'UNKNOWN — a warning, never a refusal; null once a rating is configured.',
+  '',
+  'JOINT-ANGLE GATE (VW-296): joint angle dominates what an isometric hold',
+  'predicts about the dynamic lift — an isometric squat predicted the full',
+  'squat at r=0.864 held at 90 degrees of knee flexion but only r=0.597 held',
+  'at 120 degrees (Lum, Haff & Barbosa 2020, Sports 8(5):63). Pass `exerciseId`',
+  'and `setupAngleDeg` (the joint angle the current physical setup implies —',
+  "this tool cannot measure it) to check the setup against that exercise's",
+  'known peak-force angle; jointAngleGate in the result reports `comparable`,',
+  `\`angle_mismatch\` (more than ${JOINT_ANGLE_MISMATCH_THRESHOLD_DEG} degrees apart), or`,
+  '`angle_unverified` when either input is omitted or the exercise has no',
+  'known angle — a gap in the table, never a silent pass. A mismatch WARNS by',
+  'default (the hold still runs); pass `strict: true` to REFUSE it as',
+  'INVALID_INPUT before the hold begins instead.',
   '',
   'For the full 3-trial protocol with rests and best-2-of-N aggregation, use',
   'isometric.measure_max; for bilateral asymmetry, isometric.measure_imbalance.',
@@ -385,6 +401,9 @@ interface MeasureHoldInput {
   side?: 'left' | 'right' | undefined;
   holdMs: number;
   label?: string | undefined;
+  exerciseId?: string | undefined;
+  setupAngleDeg?: number | undefined;
+  strict: boolean;
 }
 
 interface MeasureMaxInput {
@@ -428,6 +447,13 @@ interface MeasureHoldResult {
    * configured — configured-and-fine reports nothing extra.
    */
   mountLoadWarning: string | null;
+  /**
+   * Whether the declared setup angle matches this exercise's known peak-force
+   * angle (VW-296). `angle_unverified` — never treated as a match or a
+   * mismatch — whenever `exerciseId` or `setupAngleDeg` is omitted, or the
+   * exercise carries no known angle.
+   */
+  jointAngleGate: JointAngleGateVerdict;
   totalElapsedMs: number;
 }
 
@@ -633,6 +659,7 @@ async function measureHold(
 ): Promise<MeasureHoldResult> {
   const slotId = input.slot ?? PRIMARY_SLOT;
   const mountLoadWarning = enforceIsometricMountLoad(state);
+  const jointAngleGate = enforceJointAngleGate(input);
   const startedAt = Date.now();
   const trial = await withLeaseFence(state, 'isometric.measure_hold', [slotId], (leaseFence) =>
     captureSingleHold(
@@ -656,8 +683,26 @@ async function measureHold(
     trial,
     peakForceLbs: trial.peakForceLbs,
     mountLoadWarning,
+    jointAngleGate,
     totalElapsedMs: Date.now() - startedAt,
   };
+}
+
+/**
+ * Refuse or warn before a hold begins when the declared setup angle
+ * materially differs from the exercise's known peak-force angle (VW-296).
+ * `strict` (default false) is what decides which: a mismatch WARNS by
+ * default (the returned verdict rides along on the result, and the hold still
+ * runs) and only REFUSES as `INVALID_INPUT` when the caller opted into
+ * `strict`. Runs before the lease fence claims the slot, alongside the
+ * mount-load check — a refusal here should cost nothing.
+ */
+function enforceJointAngleGate(input: MeasureHoldInput): JointAngleGateVerdict {
+  const verdict = evaluateJointAngleGate(input.exerciseId, input.setupAngleDeg);
+  if (input.strict && verdict.comparability === 'angle_mismatch') {
+    throw new ToolError('INVALID_INPUT', verdict.reason);
+  }
+  return verdict;
 }
 
 /**

@@ -16,9 +16,11 @@ import {
   computePeakForceBaseline,
   decideTestOrder,
   directionOfMeasurement,
+  evaluateJointAngleGate,
   evaluatePeakForceChange,
   occasionPeakForcesLbs,
   summarizeDirectionHistory,
+  JOINT_ANGLE_MISMATCH_THRESHOLD_DEG,
   type ForceSample,
   type TrialAnalysis,
 } from '../isometric-protocol.js';
@@ -500,5 +502,44 @@ describe('decideTestOrder — non-dominant first reordering', () => {
   it('keeps primary first when primary is already the non-dominant side', () => {
     const order = decideTestOrder('left', 'right', true, 'right');
     expect(order).toEqual(['left', 'right']);
+  });
+});
+
+describe('evaluateJointAngleGate — VW-296', () => {
+  it('is angle_unverified with no exerciseId', () => {
+    const verdict = evaluateJointAngleGate(undefined, 90);
+    expect(verdict.comparability).toBe('angle_unverified');
+    expect(verdict.exercisePeakAngleDeg).toBeNull();
+    expect(verdict.deltaDeg).toBeNull();
+  });
+
+  it('is angle_unverified for an exercise with no known peak angle', () => {
+    const verdict = evaluateJointAngleGate('cable-row', 90);
+    expect(verdict.comparability).toBe('angle_unverified');
+    expect(verdict.exercisePeakAngleDeg).toBeNull();
+    expect(verdict.reason).toContain('cable-row');
+  });
+
+  it('is angle_unverified with no setupAngleDeg, even for a known exercise', () => {
+    const verdict = evaluateJointAngleGate('cable-squat', undefined);
+    expect(verdict.comparability).toBe('angle_unverified');
+    expect(verdict.exercisePeakAngleDeg).toBe(90);
+    expect(verdict.setupAngleDeg).toBeNull();
+  });
+
+  it('is comparable inside the mismatch threshold', () => {
+    const verdict = evaluateJointAngleGate('cable-squat', 90 + JOINT_ANGLE_MISMATCH_THRESHOLD_DEG);
+    expect(verdict.comparability).toBe('comparable');
+    expect(verdict.deltaDeg).toBe(JOINT_ANGLE_MISMATCH_THRESHOLD_DEG);
+  });
+
+  it('is angle_mismatch just past the threshold, citing the source', () => {
+    const verdict = evaluateJointAngleGate(
+      'cable-squat',
+      90 + JOINT_ANGLE_MISMATCH_THRESHOLD_DEG + 1,
+    );
+    expect(verdict.comparability).toBe('angle_mismatch');
+    expect(verdict.deltaDeg).toBe(JOINT_ANGLE_MISMATCH_THRESHOLD_DEG + 1);
+    expect(verdict.reason).toContain('Lum, Haff & Barbosa 2020');
   });
 });
