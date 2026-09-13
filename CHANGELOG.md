@@ -137,6 +137,17 @@ entry is written from the user's point of view is a review question, not a check
   the covering phase at write; the table stays the source of truth on read. Distinct from
   a plan week's PRESCRIBED `phase_type`, which nothing here touches.
 
+- The accountability coach's five proactive messages now have fixed wording: the Sunday
+  anchor, the miss-recovery prompt, the two ghost nudges and the realign opener (VW-287).
+  The Sunday anchor shows last week's planned-versus-recorded numbers and the trend
+  direction back instead of asking how the week went, names each planned day's fallback
+  slot, and says once that silence through the week means the plan is on track. A missed
+  session gets one reduced-scope re-entry on a named day, taken from `plan.next_workout`;
+  the same missed day inside a declared hold gets no miss framing at all. Progress is a
+  rolling 28-day session count, never a streak, and a frequency change is offered as
+  re-architecting within the same number of days rather than fewer of them. No tool sends
+  any of this yet: the state machine that decides when is separate work.
+
 ### Changed
 
 - Requires `@titan-design/react-ui` ^0.13.0 (#359). No SPA source change: the dashboard already
