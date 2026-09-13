@@ -39,6 +39,21 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- `metrics.compute strength.e1rm` now solves for the load at a minimum velocity threshold
+  fitted to your own history, where one exists, instead of the same 0.17 m/s for everybody
+  (VW-299). `baselines.recalc` searches for the threshold that would have made the fewest
+  percentage points of 1RM prediction error across this exercise's own sessions, and stores
+  it as `optimalMvt` beside the error it achieved, the number of sessions behind it, and
+  `optimalMvtObservedV1rm` — the velocity you were actually recorded at on your heaviest set
+  to failure, which is the threshold this replaces. That velocity is a poor threshold: it is
+  not stable between sessions (Banyard, Nosaka & Haff 2017: ICC 0.42 and CV 22.5%, against
+  ICC 0.99 for the 1RM itself), while fitting to minimise error cut absolute e1RM error to
+  2.8% against 4.9-5.5% (Fitas et al. 2024). Every e1RM now reports `mvtBasis`, so an
+  estimate resting on the general population threshold says so rather than reading like a
+  personalised one. An exercise with sets to failure in fewer than three sessions is not
+  fitted and keeps the old behaviour exactly. The schema gains the fitted columns on
+  `exercise_baselines` (v23); nothing is back-filled.
+
 - Isometric history is now per lifter and per exercise (VW-280). Every stored assessment
   records who was tested, on what, and during which session, so `directionHistory` on
   `isometric.measure_imbalance` and the peak-force baseline on both it and

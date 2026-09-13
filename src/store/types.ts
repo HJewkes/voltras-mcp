@@ -1127,6 +1127,23 @@ export interface StoredExerciseBaseline {
   invalidationReason?: string;
   /** Which rule set produced `state`. A row is only interpretable against it. */
   algorithmVersion: string;
+  /**
+   * The minimum velocity threshold fitted to minimise this exercise's own 1RM
+   * prediction error (VW-299), m/s. Absent means the history could not support
+   * a fit, and consumers fall back to the general default.
+   */
+  optimalMvt?: number;
+  /** Mean absolute 1RM prediction error at `optimalMvt`, percent. */
+  optimalMvtErrorPct?: number;
+  /** Anchored sessions the fit was measured over. */
+  optimalMvtSampleSize?: number;
+  /**
+   * Velocity on the heaviest set taken to failure — the individually observed
+   * V1RM, stored beside the fit so the two are comparable. Banyard, Nosaka &
+   * Haff (2017) measured this number's between-session ICC at 0.42, which is
+   * why the fit exists rather than this being used directly.
+   */
+  optimalMvtObservedV1rm?: number;
 }
 
 /**

@@ -29,11 +29,14 @@
 import {
   baselineKeyId,
   getRepDuration,
+  getSetBestRepVelocity,
   type BaselineKey,
   type Rep,
 } from '@voltras/workout-analytics';
 
+import type { MvtSetObservation, OptimalMvtFit } from '../analytics/optimal-mvt.js';
 import type { BaselineState, StoredExerciseBaseline, StoredSet } from './types.js';
+import { normaliseVelocityToMps } from './velocity-units.js';
 
 /**
  * Version stamped onto every row this module writes. Bump on ANY change to
@@ -380,11 +383,45 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Assemble the row to persist from a key plus a derivation. */
+/**
+ * Reduce a key's stored sets into what the MVT fit reads (VW-299): one
+ * observation per set, with the sets that ended at momentary failure flagged
+ * from the harvested failure anchors rather than guessed at here.
+ *
+ * Velocities are normalised to m/s first, the same conversion every metrics
+ * pipeline applies (VW-160): a fitted threshold is a velocity, so a row
+ * captured before the bridge conversion and one captured after have to arrive
+ * on one scale or the fit is minimising over two different units.
+ */
+export function toMvtObservations(
+  sets: readonly StoredSet[],
+  failureSetIds: ReadonlySet<string>,
+): MvtSetObservation[] {
+  return sets
+    .filter((set) => set.weightLbs !== undefined && set.reps.length > 0)
+    .map((set) => ({
+      sessionId: set.sessionId,
+      startedAt: set.startedAt,
+      loadLbs: set.weightLbs as number,
+      bestRepVelocityMps: getSetBestRepVelocity({ reps: normaliseVelocityToMps(set).reps }),
+      repCount: set.reps.length,
+      failure: failureSetIds.has(set.id),
+    }));
+}
+
+/**
+ * Assemble the row to persist from a key plus a derivation.
+ *
+ * `fit` is the VW-299 MVT fit, absent when this key's history cannot support
+ * one. Absent writes NULLs rather than leaving a previous fit in place: a
+ * stored threshold outliving the history that produced it is the silent lie
+ * this table's header warns about.
+ */
 export function toBaselineRow(
   key: BaselineKey,
   derived: BaselineDerivation,
   updatedAt: string,
+  fit?: OptimalMvtFit | null,
 ): StoredExerciseBaseline {
   const out: StoredExerciseBaseline = {
     id: baselineRowId(key),
@@ -405,6 +442,12 @@ export function toBaselineRow(
   if (derived.invalidatedAt !== undefined) out.invalidatedAt = derived.invalidatedAt;
   if (derived.invalidationReason !== undefined) {
     out.invalidationReason = derived.invalidationReason;
+  }
+  if (fit !== undefined && fit !== null) {
+    out.optimalMvt = fit.mvt;
+    out.optimalMvtErrorPct = fit.errorPct;
+    out.optimalMvtSampleSize = fit.sampleSize;
+    out.optimalMvtObservedV1rm = fit.observedV1rm;
   }
   return out;
 }

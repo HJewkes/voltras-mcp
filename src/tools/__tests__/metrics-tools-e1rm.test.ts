@@ -145,6 +145,7 @@ interface E1RMBody {
   estimate: { e1RM: number; confidence: number; method: string } | null;
   band: E1RMBand | null;
   gate: FeatureGateVerdict | null;
+  mvtBasis: 'optimal' | 'observed' | 'default' | null;
 }
 
 describe('metrics.compute — strength.e1rm', () => {
@@ -200,6 +201,8 @@ describe('metrics.compute — strength.e1rm', () => {
       // the published SEE was measured on load-velocity models, not this one.
       band: e1rmBand(116.7, 'reps'),
       gate: null,
+      // VW-299: Epley extrapolates to no velocity, so no threshold was chosen.
+      mvtBasis: null,
     });
   });
 
@@ -305,6 +308,70 @@ describe('metrics.compute — strength.e1rm', () => {
     expect(body.method).toBe('hybrid');
     expect(body.estimate).toBeNull();
     expect(body.gate?.activation).toBe('withheld');
+  });
+
+  // VW-299: which minimum velocity threshold the profile is solved at, and
+  // what the result calls it. 0.17 m/s is the analytics package's general
+  // default and is the number this pipeline used for every exercise before
+  // the per-exercise fit existed.
+  it('no stored fit: solves at the general default and says so', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const state = makeState({
+      getSetsForExercise: async () => sets,
+      getBaseline: async () => makeBaselineRow('CALIBRATED'),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    expect(profileSpy).toHaveBeenCalledWith(expect.anything(), 0.17);
+    expect(buildSpy).toHaveBeenCalledWith(expect.anything(), 0.17);
+    expect((parsePayload(result) as E1RMBody).mvtBasis).toBe('default');
+  });
+
+  it('stored fit: solves at the fitted threshold, not the general default', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const fitted = {
+      ...makeBaselineRow('CALIBRATED'),
+      optimalMvt: 0.265,
+      optimalMvtErrorPct: 4.02,
+      optimalMvtSampleSize: 4,
+      optimalMvtObservedV1rm: 0.3,
+    };
+    const state = makeState({
+      getSetsForExercise: async () => sets,
+      getBaseline: async () => fitted,
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    expect(profileSpy).toHaveBeenCalledWith(expect.anything(), 0.265);
+    expect((parsePayload(result) as E1RMBody).mvtBasis).toBe('optimal');
+  });
+
+  it('a fit that landed on the observed V1RM is reported as observed, not optimal', async () => {
+    const sets = [makeSet('s-a', 100), makeSet('s-b', 150)];
+    const landed = {
+      ...makeBaselineRow('CALIBRATED'),
+      optimalMvt: 0.3,
+      optimalMvtErrorPct: 5.4,
+      optimalMvtSampleSize: 3,
+      optimalMvtObservedV1rm: 0.3,
+    };
+    const state = makeState({
+      getSetsForExercise: async () => sets,
+      getBaseline: async () => landed,
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const result = await callTool(tools, { pipeline: 'strength.e1rm', exerciseId: 'back-squat' });
+
+    expect(profileSpy).toHaveBeenCalledWith(expect.anything(), 0.3);
+    expect((parsePayload(result) as E1RMBody).mvtBasis).toBe('observed');
   });
 
   it('invalid: a lone `load` with no `reps` and no `exerciseId` is refused', async () => {

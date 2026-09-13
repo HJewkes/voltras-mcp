@@ -152,6 +152,14 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'directionHistory',
   'testsCompared',
   'agreementPct',
+  // VW-299: the fitted MVT on a `baselines.*` row, and the provenance label
+  // `metrics.compute strength.e1rm` reports beside its estimate. All five are
+  // numbers or labels a caller reads straight off a result.
+  'optimalMvt',
+  'optimalMvtErrorPct',
+  'optimalMvtSampleSize',
+  'optimalMvtObservedV1rm',
+  'mvtBasis',
   // VW-271: peak force as the isometric headline, RFD/impulse as
   // diagnostic-only, and the per-athlete peak-force baseline / adjusted-SEM
   // change check on `isometric.measure_max` and `isometric.measure_imbalance`.

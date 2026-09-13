@@ -131,6 +131,7 @@ import {
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
+import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
 import {
   buildComparabilitySubjectGroups,
   type ComparabilitySubjectFetchers,
@@ -174,6 +175,7 @@ import {
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import {
   LOCAL_USER_ID,
+  type StoredExerciseBaseline,
   type StoredSession,
   type StoredSet,
   type StoredSide,
@@ -1138,6 +1140,12 @@ interface E1RMResult {
   estimate: E1RMEstimate | null;
   band: E1RMBand | null;
   gate: FeatureGateVerdict | null;
+  /**
+   * VW-299: which minimum velocity threshold the profile was solved at. Null
+   * on the `reps` shape, which is the Epley formula and extrapolates to no
+   * velocity at all.
+   */
+  mvtBasis: MvtBasis | null;
 }
 
 type E1RMInput = Extract<MetricsComputeInputType, { pipeline: 'strength.e1rm' }>;
@@ -1183,7 +1191,7 @@ function e1rmShape(input: E1RMInput): E1RMShape {
 async function profileE1RM(
   state: ServerState,
   exerciseId: string,
-): Promise<{ profile: LoadVelocityProfile; gate: FeatureGateVerdict }> {
+): Promise<{ profile: LoadVelocityProfile; gate: FeatureGateVerdict; mvt: MvtChoice }> {
   const sets = await state.store.getSetsForExercise({
     userId: LOCAL_USER_ID,
     exerciseId,
@@ -1201,7 +1209,23 @@ async function profileE1RM(
     );
   }
   const gate = await relativeSignalGate(state, exerciseId, sets);
-  return { profile: buildProfile(points), gate };
+  // VW-299: the stored per-exercise fit, where `baselines.recalc` found one.
+  const mvt = resolveMvt(await storedBaseline(state, exerciseId, sets));
+  return { profile: buildProfile(points, mvt.mvt), gate, mvt };
+}
+
+/** The baseline row the e1RM path solves against, on the same key the gate grades. */
+async function storedBaseline(
+  state: ServerState,
+  exerciseId: string,
+  sets: readonly StoredSet[],
+): Promise<StoredExerciseBaseline | undefined> {
+  const side = resolveKeySide(sets);
+  return state.store.getBaseline({
+    userId: LOCAL_USER_ID,
+    exerciseId,
+    ...(side !== undefined ? { side } : {}),
+  });
 }
 
 /**
@@ -1214,17 +1238,18 @@ async function profileE1RM(
 async function computeE1RM(state: ServerState, input: E1RMInput): Promise<E1RMResult> {
   const shape = e1rmShape(input);
   if (shape.kind === 'reps') {
-    return bandedE1RM('reps', estimateE1RMFromReps(shape.load, shape.reps), null);
+    return bandedE1RM('reps', estimateE1RMFromReps(shape.load, shape.reps), null, null);
   }
-  const { profile, gate } = await profileE1RM(state, shape.exerciseId);
-  const profileEstimate = gate.activation === 'withheld' ? null : estimateE1RMFromProfile(profile);
+  const { profile, gate, mvt } = await profileE1RM(state, shape.exerciseId);
+  const profileEstimate =
+    gate.activation === 'withheld' ? null : estimateE1RMFromProfile(profile, mvt.mvt);
   if (shape.kind === 'profile') {
-    return bandedE1RM('profile', profileEstimate, gate);
+    return bandedE1RM('profile', profileEstimate, gate, mvt.basis);
   }
   const repsEstimate = estimateE1RMFromReps(shape.load, shape.reps);
   const estimate =
     profileEstimate === null ? null : estimateHybridE1RM(profileEstimate, repsEstimate);
-  return bandedE1RM('hybrid', estimate, gate);
+  return bandedE1RM('hybrid', estimate, gate, mvt.basis);
 }
 
 /** VW-267: no e1RM leaves this pipeline without its band. */
@@ -1232,12 +1257,14 @@ function bandedE1RM(
   method: E1RMResult['method'],
   estimate: E1RMEstimate | null,
   gate: FeatureGateVerdict | null,
+  mvtBasis: MvtBasis | null,
 ): E1RMResult {
   return {
     method,
     estimate,
     band: estimate === null ? null : e1rmBand(estimate.e1RM, method),
     gate,
+    mvtBasis,
   };
 }
 
@@ -2193,7 +2220,18 @@ const METRICS_COMPUTE_DESCRIPTION =
   'load-velocity figures do not describe its error and no source here states one that does — ' +
   '`note` says exactly that. Either way: a session-to-session e1RM change smaller than the band ' +
   'is indistinguishable from estimation error. Read the multi-session slope from ' +
-  '`history.trend` below, and never move load on one session. ' +
+  '`history.trend` below, and never move load on one session. `mvtBasis` (VW-299) names the ' +
+  'minimum velocity threshold the two velocity-derived methods solved at: `optimal` is the ' +
+  "threshold `baselines.recalc` fitted to minimise this exercise's own 1RM prediction error, " +
+  '`observed` means that fit landed on the velocity the lifter was recorded at on their heaviest ' +
+  "set to failure, and `default` means no fit is stored and the package's general 0.17 m/s stood " +
+  'in. It is null on the `reps` shape, which extrapolates to no velocity at all. Prefer an ' +
+  '`optimal` basis: the velocity at 1RM is not stable between sessions (Banyard, Nosaka & Haff ' +
+  '2017: ICC 0.42, CV 22.5%, against ICC 0.99 for the 1RM itself), and fitting to minimise error ' +
+  'cut absolute error to 2.8% against 4.9-5.5% for a general or individually observed threshold ' +
+  '(Fitas et al. 2024). A `default` basis is not an error — say that the estimate rests on a ' +
+  'population threshold rather than this lifter, and that `baselines.recalc` fits one once the ' +
+  'exercise has sets to failure across three sessions. ' +
   '`history.trend` (VW-144/VW-145) (exerciseId, optional weeks [default 12], metric ' +
   "[`topLoad`|`e1rm`|`volume`, default `topLoad`], thresholdPct, minDays) — this exercise's " +
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +

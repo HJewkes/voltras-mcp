@@ -48,6 +48,20 @@ const ANCHOR_SELECTION_DESCRIPTION =
   'setups that may not be the one you asked about. Say so when you report it; do not compare ' +
   'two setups whose anchors both came from the pooled fallback.';
 
+const OPTIMAL_MVT_DESCRIPTION =
+  "`optimalMvt` (VW-299) is the minimum velocity threshold fitted to minimise this exercise's " +
+  'own historical 1RM prediction error, in m/s. `optimalMvtErrorPct` is the mean absolute error it ' +
+  'achieved, `optimalMvtSampleSize` the sessions with a set to failure it was measured over, and ' +
+  '`optimalMvtObservedV1rm` the velocity on the heaviest of those sets — the individually observed ' +
+  'V1RM the fit replaces. Fitting beats reading the threshold off one maximal effort because the ' +
+  'velocity at 1RM is NOT stable between sessions while the 1RM itself is (Banyard, Nosaka & Haff ' +
+  '2017: ICC 0.42 and CV 22.5% for the velocity, against ICC 0.99 for the 1RM), and fitting to ' +
+  'minimise error cut absolute e1RM error to 2.8% against 4.9-5.5% for a general or individually ' +
+  'observed threshold (Fitas et al. 2024). All four fields are absent together when the history ' +
+  'cannot support a fit; `metrics.compute strength.e1rm` then falls back to the general default ' +
+  'and reports that in `mvtBasis`. A fitted threshold makes an e1RM less wrong, never a ' +
+  'measurement — the error band on that pipeline applies unchanged.';
+
 const GET_BASELINE_DESCRIPTION =
   'Read the persisted confidence state for one exercise baseline (COLD -> SHAPE_ONLY -> ' +
   'PROVISIONAL -> CALIBRATED -> STALE). This is a diagnostic read over an internal state ' +
@@ -65,7 +79,9 @@ const GET_BASELINE_DESCRIPTION =
   'Pass `setupId` to read the baseline for ONE inferred physical setup (bench height, ' +
   'attachment, stance) rather than the pooled row across all of them; ids come back from ' +
   '`baselines.recalc { inferSetups: true }` and cannot be invented. ' +
-  ANCHOR_SELECTION_DESCRIPTION;
+  ANCHOR_SELECTION_DESCRIPTION +
+  ' ' +
+  OPTIMAL_MVT_DESCRIPTION;
 
 const RECALC_BASELINE_DESCRIPTION =
   'Force a baseline recalculation for one (exercise, side) key. Set-close already recalculates ' +
@@ -83,7 +99,9 @@ const RECALC_BASELINE_DESCRIPTION =
   'geometry, NOT what the difference was, so do not describe a setup as a bench angle or an ' +
   'attachment. Ask the user what a setup is and record their answer with ' +
   '`exercise.confirm_setup`. ' +
-  ANCHOR_SELECTION_DESCRIPTION;
+  ANCHOR_SELECTION_DESCRIPTION +
+  ' ' +
+  OPTIMAL_MVT_DESCRIPTION;
 
 export function registerBaselineTools(
   _server: McpServer,
