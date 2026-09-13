@@ -42,9 +42,18 @@
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
+import {
+  defaultRestSeconds,
+  repsToVelocityLossThreshold,
+  restExtensionSeconds,
+} from '../analytics/rest-defaults.js';
 import { TimerCancelInput, TimerStartInput, TimerWaitInput } from '../schemas/timer.js';
+import type { TrainingIntent } from '../schemas/set.js';
 import { PRIMARY_SLOT, type ServerState } from '../state/server-state.js';
 import { fence, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
+import { VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
+import type { StoredPlannedExercise, StoredSet } from '../store/types.js';
+import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 
 interface TimerOutcome {
@@ -129,6 +138,22 @@ const START_TOOL_DESCRIPTION = [
   '',
   'Multiple `timer.start` timers can be in flight at once; cancel a specific',
   'one with `timer.cancel({ timer_id })`.',
+  '',
+  'Omit `durationMs` for a rest timer to default it by training goal (VW-297):',
+  '>=120s for a `strength`-intent exercise (Grgic et al. 2018 — over 2 minutes',
+  'needed to maximise strength gains in trained lifters), 90-120s for',
+  '`hypertrophy` (Singer et al. 2024 — no further benefit past 90s), or a named',
+  'conservative default when the active session carries no plan or the plan',
+  "names no training intent. The default then extends when the exercise's",
+  'most recent completed set reached its velocity-loss stop threshold in',
+  'FEWER reps than the set before it — Singer et al. 2024 ties this drop to',
+  'insufficient rest (their proposed mechanism is volume-load preservation:',
+  'reps-to-threshold holding steady set to set means rest was long enough).',
+  'The result reports `restBasis` — `source` (`explicit` when `durationMs`',
+  'was given, `intent_default` or `intent_default_extended` otherwise),',
+  '`intent`, `prevRepsToThreshold`, `currRepsToThreshold`, and',
+  '`extensionSeconds` — so the basis for the duration is always visible. An',
+  'explicit `durationMs` is never overridden.',
 ].join(' ');
 
 const CANCEL_TOOL_DESCRIPTION = [
@@ -246,6 +271,129 @@ function runBlockingTimer(
   });
 }
 
+/**
+ * Where a `timer.start` duration came from (VW-297) — always present on the
+ * result so a caller never has to guess whether a rest length was requested
+ * or resolved.
+ */
+export interface RestBasis {
+  readonly source: 'explicit' | 'intent_default' | 'intent_default_extended';
+  readonly intent?: TrainingIntent | null;
+  readonly prevRepsToThreshold?: number | null;
+  readonly currRepsToThreshold?: number | null;
+  readonly extensionSeconds?: number;
+}
+
+/**
+ * The active session's most recent completed sets for `exerciseId`, oldest
+ * first — used to compare the last two sets of the same exercise. A set with
+ * no exercise of its own inherits the session's (matches `report-tools.ts`'s
+ * `groupByExercise`).
+ */
+function completedSetsForExercise(
+  sets: readonly StoredSet[],
+  sessionExerciseId: string | undefined,
+  exerciseId: string,
+): StoredSet[] {
+  return sets.filter(
+    (set) =>
+      set.endedAt !== undefined &&
+      set.reps.length > 0 &&
+      (set.exerciseId ?? sessionExerciseId) === exerciseId,
+  );
+}
+
+/**
+ * The planned exercise (if any) carrying `exerciseId`, looked up the same way
+ * `report-tools.ts`'s `loadPlannedExercises` resolves an assignment: a whole
+ * template, or a single planned exercise.
+ */
+async function resolvePlannedExercise(
+  state: ServerState,
+  sessionId: string,
+  exerciseId: string,
+): Promise<StoredPlannedExercise | undefined> {
+  const assignments = await state.store.getAssignmentsForSession(sessionId);
+  for (const assignment of assignments) {
+    if (assignment.workoutTemplateId !== undefined) {
+      const planned = await state.store.getPlannedExercisesForTemplate(
+        assignment.workoutTemplateId,
+      );
+      const match = planned.find((p) => p.exerciseId === exerciseId);
+      if (match !== undefined) return match;
+    } else if (assignment.plannedExerciseId !== undefined) {
+      const one = await state.store.getPlannedExercise(assignment.plannedExerciseId);
+      if (one?.exerciseId === exerciseId) return one;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a rest duration when the caller gave no `durationMs` (VW-297).
+ *
+ * With no active session, or the session's current exercise unresolvable,
+ * there is nothing to derive from but the goal itself — `intent` reads as
+ * unknown and the named default applies.
+ *
+ * The velocity-loss threshold used to derive `prevRepsToThreshold` /
+ * `currRepsToThreshold` is the SAME goal-keyed default `velocity_loss_exceeded`
+ * resolves to for this exercise (`VELOCITY_LOSS_DEFAULT_PCT`, from
+ * `state/velocity-loss-intent.ts`) — the two sets are only comparable when
+ * judged against the same threshold. An unknown intent falls to the
+ * hypertrophy default (30%), the same VL band `report.weekly`'s
+ * velocity-loss-hold flag and the dashboard's stop verdict already treat as
+ * canonical.
+ */
+async function resolveRestDuration(
+  state: ServerState,
+): Promise<{ durationMs: number; restBasis: RestBasis }> {
+  const session = state.slots.get(PRIMARY_SLOT)?.live.session;
+  if (session === undefined) {
+    return {
+      durationMs: defaultRestSeconds(undefined) * 1000,
+      restBasis: { source: 'intent_default', intent: null },
+    };
+  }
+  const sessionId = session.sessionId;
+
+  const allSets = await state.store.getSetsForSession(sessionId);
+  const completed = allSets.filter((set) => set.endedAt !== undefined && set.reps.length > 0);
+  const lastSet = completed[completed.length - 1];
+  const exerciseId = lastSet?.exerciseId ?? session.exerciseId;
+  if (exerciseId === undefined) {
+    return {
+      durationMs: defaultRestSeconds(undefined) * 1000,
+      restBasis: { source: 'intent_default', intent: null },
+    };
+  }
+
+  const planned = await resolvePlannedExercise(state, sessionId, exerciseId);
+  const intent = planned?.trainingIntent;
+  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[intent ?? 'hypertrophy'];
+  const exerciseSets = completedSetsForExercise(completed, session.exerciseId, exerciseId);
+  const currSet = exerciseSets[exerciseSets.length - 1];
+  const prevSet = exerciseSets[exerciseSets.length - 2];
+  const currRepsToThreshold = currSet
+    ? repsToVelocityLossThreshold(normaliseVelocityToMps(currSet).reps, thresholdPct)
+    : null;
+  const prevRepsToThreshold = prevSet
+    ? repsToVelocityLossThreshold(normaliseVelocityToMps(prevSet).reps, thresholdPct)
+    : null;
+  const extensionSeconds = restExtensionSeconds(prevRepsToThreshold, currRepsToThreshold);
+
+  return {
+    durationMs: (defaultRestSeconds(intent) + extensionSeconds) * 1000,
+    restBasis: {
+      source: extensionSeconds > 0 ? 'intent_default_extended' : 'intent_default',
+      intent: intent ?? null,
+      prevRepsToThreshold,
+      currRepsToThreshold,
+      extensionSeconds,
+    },
+  };
+}
+
 function makeStartCallback(
   state: ServerState,
 ): (args: unknown, extra?: unknown) => Promise<ToolResult> {
@@ -254,7 +402,11 @@ function makeStartCallback(
     if (!parsed.success) {
       return errorResult({ code: 'INVALID_INPUT', message: parsed.error.message });
     }
-    const { durationMs, label } = parsed.data;
+    const { label } = parsed.data;
+    const { durationMs, restBasis }: { durationMs: number; restBasis: RestBasis } =
+      parsed.data.durationMs !== undefined
+        ? { durationMs: parsed.data.durationMs, restBasis: { source: 'explicit' } }
+        : await resolveRestDuration(state);
     const id = randomUUID();
     const expectedAt = new Date(Date.now() + durationMs).toISOString();
     const handle = setTimeout(() => {
@@ -276,7 +428,7 @@ function makeStartCallback(
       });
     }, durationMs);
     state.timers.set(id, { handle, label, durationMs, expectedAt });
-    return textResult({ timer_id: id, label, durationMs, expectedAt });
+    return textResult({ timer_id: id, label, durationMs, expectedAt, restBasis });
   };
 }
 

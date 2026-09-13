@@ -7,6 +7,7 @@
 // tests exercise the actual wiring.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Phase, Rep } from '@voltras/workout-analytics';
 
 // Stub the SDK so the static import chain (helpers -> errors -> SDK) does
 // not pull in the real package during a focused timer-tools test.
@@ -22,6 +23,7 @@ vi.mock('@voltras/node-sdk', () => ({ VoltraSDKError: FakeVoltraSDKError }));
 
 const { registerTimerTools, __resetTimerState, formatDuration } = await import('../timer-tools.js');
 const { makeFakeLease } = await import('../../state/__tests__/fixtures/lease-fence.js');
+const { PRIMARY_SLOT } = await import('../../state/server-state.js');
 type FakeLease = ReturnType<typeof makeFakeLease>;
 
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -29,6 +31,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { PushTimer } from '../timer-tools.js';
 import type { ToolResult } from '../helpers.js';
+import type {
+  StoredPlannedExercise,
+  StoredProgramAssignment,
+  StoredSet,
+} from '../../store/types.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -378,6 +385,189 @@ describe('timer.start (non-blocking)', () => {
       expect(result.isError).toBe(true);
       expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
     }
+  });
+});
+
+describe('timer.start default rest resolution (VW-297)', () => {
+  const SESSION_ID = 'sess-1';
+  const EXERCISE_ID = 'row';
+
+  const EMPTY_PHASE: Phase = {
+    samples: [],
+    startTime: 0,
+    endTime: 0,
+    startPosition: 0,
+    endPosition: 0,
+    _totalVelocity: 0,
+    _totalForce: 0,
+    _totalLoad: 0,
+    _movementSampleCount: 0,
+    _totalHoldDuration: 0,
+    peakVelocity: 0,
+    peakForce: 0,
+    peakLoad: 0,
+  };
+
+  /** `_movementSampleCount: 1` keeps every rep below `selectEligibleReps`' eligibility
+   *  floor, so the filter falls back to the untouched list (matches
+   *  `report-weekly-tools.test.ts`'s fixture convention). */
+  function makeRep(repNumber: number, peakVelocity: number): Rep {
+    return {
+      repNumber,
+      concentric: {
+        ...EMPTY_PHASE,
+        peakVelocity,
+        _totalVelocity: peakVelocity,
+        _movementSampleCount: 1,
+      },
+      eccentric: { ...EMPTY_PHASE },
+    };
+  }
+
+  function makeSet(id: string, velocities: number[]): StoredSet {
+    return {
+      id,
+      sessionId: SESSION_ID,
+      exerciseId: EXERCISE_ID,
+      startedAt: '2026-09-13T12:00:00.000Z',
+      endedAt: '2026-09-13T12:01:00.000Z',
+      partial: false,
+      reps: velocities.map((v, i) => ({
+        ...makeRep(i + 1, v),
+        id: `${id}-r${String(i)}`,
+        setId: id,
+        index: i,
+      })),
+    } as StoredSet;
+  }
+
+  function makeRestState(fixture: {
+    sets: StoredSet[];
+    planned?: StoredPlannedExercise[];
+    assignments?: StoredProgramAssignment[];
+    noSession?: boolean;
+  }): { state: ServerState; channels: FakeChannels } {
+    const channels: FakeChannels = { publish: vi.fn(), forSlot: () => channels };
+    const timers = new Map<string, PushTimer>();
+    const slots = new Map(
+      fixture.noSession === true
+        ? []
+        : [
+            [
+              PRIMARY_SLOT,
+              { live: { session: { sessionId: SESSION_ID, exerciseId: EXERCISE_ID } } },
+            ],
+          ],
+    );
+    const store = {
+      getSetsForSession: () => Promise.resolve(fixture.sets),
+      getAssignmentsForSession: () => Promise.resolve(fixture.assignments ?? []),
+      getPlannedExercisesForTemplate: () => Promise.resolve(fixture.planned ?? []),
+      getPlannedExercise: (id: string) =>
+        Promise.resolve(fixture.planned?.find((p) => p.id === id)),
+    };
+    const state = { channels, timers, slots, store } as unknown as ServerState;
+    return { state, channels };
+  }
+
+  function plannedExercise(overrides: Partial<StoredPlannedExercise> = {}): StoredPlannedExercise {
+    return {
+      id: 'planned-1',
+      workoutTemplateId: 'template-1',
+      exerciseId: EXERCISE_ID,
+      orderIndex: 0,
+      targetSets: 3,
+      ...overrides,
+    };
+  }
+
+  function withStartCallback(state: ServerState): Callback {
+    const { placeholders, slots } = buildPlaceholders();
+    registerTimerTools({} as McpServer, state, placeholders);
+    return slots.get('timer.start')!.callback;
+  }
+
+  afterEach(() => {
+    __resetTimerState();
+  });
+
+  it('extends rest, unprompted, when reps-to-threshold dropped versus the prior set', async () => {
+    // hypertrophy => VL30 threshold. prev crosses at rep6, curr (fewer reps) at rep5.
+    const prev = makeSet('set-1', [1.0, 0.95, 0.9, 0.85, 0.8, 0.68, 0.6, 0.55]);
+    const curr = makeSet('set-2', [1.0, 0.92, 0.85, 0.78, 0.68]);
+    const { state } = makeRestState({
+      sets: [prev, curr],
+      assignments: [
+        {
+          id: 'a1',
+          sessionId: SESSION_ID,
+          plannedExerciseId: 'planned-1',
+          assignedAt: prev.startedAt,
+        },
+      ],
+      planned: [plannedExercise({ trainingIntent: 'hypertrophy' })],
+    });
+    const startCb = withStartCallback(state);
+
+    const result = await startCb({ label: 'rest' });
+
+    expect(result.isError).toBeUndefined();
+    const body = payload(result) as {
+      durationMs: number;
+      restBasis: {
+        source: string;
+        intent: string | null;
+        prevRepsToThreshold: number | null;
+        currRepsToThreshold: number | null;
+        extensionSeconds: number;
+      };
+    };
+    expect(body.restBasis).toEqual({
+      source: 'intent_default_extended',
+      intent: 'hypertrophy',
+      prevRepsToThreshold: 6,
+      currRepsToThreshold: 5,
+      extensionSeconds: 30,
+    });
+    expect(body.durationMs).toBe((105 + 30) * 1000);
+  });
+
+  it('never overrides an explicit duration', async () => {
+    const prev = makeSet('set-1', [1.0, 0.95, 0.9, 0.85, 0.8, 0.68, 0.6, 0.55]);
+    const curr = makeSet('set-2', [1.0, 0.92, 0.85, 0.78, 0.68]);
+    const { state } = makeRestState({
+      sets: [prev, curr],
+      assignments: [
+        {
+          id: 'a1',
+          sessionId: SESSION_ID,
+          plannedExerciseId: 'planned-1',
+          assignedAt: prev.startedAt,
+        },
+      ],
+      planned: [plannedExercise({ trainingIntent: 'hypertrophy' })],
+    });
+    const startCb = withStartCallback(state);
+
+    const result = await startCb({ durationMs: 45_000, label: 'rest' });
+
+    const body = payload(result) as { durationMs: number; restBasis: { source: string } };
+    expect(body.durationMs).toBe(45_000);
+    expect(body.restBasis).toEqual({ source: 'explicit' });
+  });
+
+  it('defaults with no intent when no session is active', async () => {
+    const { state } = makeRestState({ sets: [], noSession: true });
+    const startCb = withStartCallback(state);
+
+    const result = await startCb({ label: 'rest' });
+
+    const body = payload(result) as {
+      durationMs: number;
+      restBasis: { source: string; intent: string | null };
+    };
+    expect(body.restBasis).toEqual({ source: 'intent_default', intent: null });
+    expect(body.durationMs).toBe(120_000);
   });
 });
 

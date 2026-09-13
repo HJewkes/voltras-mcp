@@ -31,11 +31,16 @@ export const TimerWaitInput = z.object({
  * Input for `timer.start` — schedule a non-blocking timer that fires a
  * `timer_complete` claude/channel event when it elapses. Returns the
  * `timer_id` synchronously so the model can keep talking while the timer
- * runs. Bounded to [1ms, 1h]; `label` is required so the wake-up event has
- * a human-readable identifier.
+ * runs. Bounded to [1ms, 1h] when supplied; `label` is required so the
+ * wake-up event has a human-readable identifier.
+ *
+ * `durationMs` is optional (VW-297): omitting it resolves a rest duration
+ * from the active session's planned-exercise training intent, extended when
+ * the current set's reps-to-VL-threshold fell versus the prior set of the
+ * same exercise. An explicit `durationMs` is always honored as given.
  */
 export const TimerStartInput = z.object({
-  durationMs: z.number().int().min(1).max(ONE_HOUR_MS),
+  durationMs: z.number().int().min(1).max(ONE_HOUR_MS).optional(),
   label: z.string().min(1).max(100),
 });
 
