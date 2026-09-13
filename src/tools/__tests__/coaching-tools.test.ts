@@ -157,6 +157,24 @@ describe('coaching.explain', () => {
     expect(body.caveats?.length).toBeGreaterThan(0);
   });
 
+  it('states the diet-phase tolerance rule and cites the S12 notes (VW-277)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'meso.diet_phase_tolerance' }));
+
+    // Assert: both directions of the rule, the slope override, and the
+    // ahead-of-schedule branch — never one of the three alone.
+    expect(body.explanation).toContain('WIDENS');
+    expect(body.explanation).toContain('TIGHTENS');
+    expect(body.explanation).toContain('Check the slope before you act');
+    expect(body.explanation).toContain('present the three, never');
+    expect(body.sources).toContain('rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope');
+    expect(body.sources).toContain('rp-s12-trend-slope-overrides-raw-deviation');
+    expect(body.sources).toContain('rp-s12-ahead-of-schedule-fat-loss-options');
+    // The corpus is about calories; this server applies it to training load.
+    // That gap is a caveat, not something to leave implicit.
+    expect(body.caveats?.some((c) => c.includes('CALORIE'))).toBe(true);
+  });
+
   // VW-273: the asymmetry topic must never turn a measurement into a
   // prescription. The intervention literature does not support corrective
   // unilateral work, so an entry that recommended it would be telling a coach

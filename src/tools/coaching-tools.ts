@@ -31,7 +31,8 @@ const COACHING_EXPLAIN_DESCRIPTION =
   'intake), live.* (cue budget, cue delivery, warmup protocol, RIR estimation, stop-set ' +
   'signal, velocity-loss threshold, readiness interpretation), meso.* (deload trigger, deload ' +
   'ladder, volume progression, post-deload restart, exercise rotation, e1RM interpretation, ' +
-  'asymmetry interpretation), diet.* (phase coupling, phase durations, disruption handling). ' +
+  'asymmetry interpretation, diet-phase tolerance), diet.* (phase coupling, phase durations, ' +
+  'disruption handling). ' +
   'Every response states tier-specific values INLINE in `explanation` — an unqualified number ' +
   'from this corpus is meaningless, so never strip the tier qualifier when relaying it. Pass ' +
   '`tier` to narrow a tier-split topic to one tier; omit it to get every applicable tier at ' +

@@ -173,6 +173,21 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // `isometric.measure_max`, `isometric.measure_imbalance` and
   // `device.set_eccentric`.
   'mountLoadWarning',
+  // VW-277: the diet-phase tolerance context and the two verdicts it produces,
+  // on `plan.suggest_progression`, `metrics.compute` `history.trend` and
+  // `session.readiness`.
+  'dietPhaseContext',
+  'weeksInPhase',
+  'toleranceApplied',
+  'zoneVerdict',
+  'as-read',
+  'plateau.verdict',
+  'plateau.dietPhaseContext',
+  // Cited alongside the two new verdicts, because the point of both sentences
+  // is that the upstream field is left alone.
+  'isPlateau',
+  'plateau.isPlateau',
+  'readiness.zone',
   'goalRealism',
   'guided_load_state',
   'hesitatedCount',

@@ -118,6 +118,8 @@ function makeState(setsBySession: Record<string, StoredSet[]>): ServerState {
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     // VW-150: no phase declared, which is what every pair here compares under.
     getSessionDietPhase: vi.fn(async () => undefined),
+    // VW-277: the same "nothing declared" case for the tolerance table.
+    getDietPhaseCovering: vi.fn(async () => undefined),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),

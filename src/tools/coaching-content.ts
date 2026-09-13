@@ -539,6 +539,63 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
         'as the right shape rather than a calibrated constant for this device.',
     ],
   },
+  'meso.diet_phase_tolerance': {
+    allTiers:
+      'At every tier, the SAME performance dip means different things in a cut, at maintenance ' +
+      'and in a gain, and this server now autoregulates on that difference rather than only ' +
+      'reporting the phase next to the verdict. The rule in one sentence: a fat-loss phase ' +
+      'WIDENS the dip tolerated before a deload or load cut is suggested, a gain phase TIGHTENS ' +
+      'it, and maintenance — or no declared phase at all — leaves every threshold where it was. ' +
+      'Two things set the size of the response, not one. First, how far off plan the lifter is, ' +
+      'banded small / moderate / large. Second, which way the trend is moving: improving, flat, ' +
+      'or declining. RP states the combination as roughly a 0-10% change for a small deviation ' +
+      'with a converging trend, 10-20% for a moderate deviation on a similar slope, and 20-40% ' +
+      'for a large deviation with a diverging trend — and is explicit that those percentages are ' +
+      'illustrative starting points with wide acceptable variance, not constants. The single ' +
+      'most important cell is the one naive logic gets wrong: a lifter who is off-target but ' +
+      "already converging back on their own needs NO adjustment, however large this week's gap " +
+      'looks. Check the slope before you act on the deviation. ' +
+      'WEEKS-IN-PHASE MATTERS AS MUCH AS THE PHASE. The first couple of weeks after any phase ' +
+      'transition are a slow-signal window — body water is still re-normalising — so a week-2 ' +
+      'reading earns only a partial widening, and a gain phase earns no tightening at all yet. ' +
+      "Past that, a fat-loss phase widens further as it runs, because at RP's own 0.5-1% per " +
+      'week pace a phase past roughly eight weeks is also past the ~7% cumulative loss that ' +
+      'produces noticeable diet fatigue. Never wait more than about two weeks for an ambiguous ' +
+      'signal to clarify, though: at that point the delay costs more than acting on a slightly ' +
+      'noisy reading. ' +
+      'THE AHEAD-OF-SCHEDULE CASE RUNS THE SAME TABLE. A lifter beating their progression ' +
+      'schedule needs a decision too, not silence, and there are three rational answers, not ' +
+      'one: keep going and bank the extra progress (only if fatigue is low), split the ' +
+      'difference, or stop early on the progress already made. Which one is right turns on ' +
+      'reported fatigue and momentum, NOT on the trend line — so present the three, never ' +
+      'auto-select. ' +
+      'One safety rail on top of all of it: if the change the math demands would be extreme, the ' +
+      'goal was miscalibrated, not the lifter. Renegotiate the target instead of forcing the ' +
+      'adjustment through.',
+    sources: [
+      'rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope',
+      'rp-s12-trend-slope-overrides-raw-deviation',
+      'rp-s12-no-adjustment-under-half-pound-weekly-change',
+      'rp-s12-minimum-half-week-before-recalorie-change',
+      'rp-s12-two-week-cap-for-slow-signal-situations',
+      'rp-s12-diet-phase-length-for-adherence',
+      'rp-s12-ahead-of-schedule-fat-loss-options',
+      'rp-s12-ahead-of-schedule-muscle-gain-options',
+      'rp-s12-goal-too-extreme-signal',
+      'rp-s11-diet-phase-training-fatigue-coupling',
+    ],
+    caveats: [
+      'The RP material behind this is about CALORIE adjustments off a body-weight trend. This ' +
+        'server applies the same table to TRAINING LOAD off a performance trend, so what ' +
+        'transfers is the shape — three deviation bands, three slopes, magnitude rising with ' +
+        'both — and not the percentages. The specific cut points between bands, and the size of ' +
+        'each phase multiplier, are engineering defaults marked as such in the code; only their ' +
+        'direction and the three cells on the table diagonal come from the corpus.',
+      'The lecturer frames the 0-10 / 10-20 / 20-40% bands as illustrative starting points with ' +
+        "wide acceptable variance ('25 or 35 could be fine instead of 30'). Quote them as bands, " +
+        'never as a resolved single number.',
+    ],
+  },
   'diet.phase_coupling': {
     allTiers:
       'Diet phase and training phase are coupled but INDEPENDENT clocks — this is the ' +

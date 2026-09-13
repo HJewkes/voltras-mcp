@@ -11,10 +11,16 @@
 // named fat-loss / gain / maintenance since B34; those three values are the
 // citation and this enum is a transcription of it, not a new taxonomy.
 //
-// NO INTERPRETATION LIVES HERE OR DOWNSTREAM. B34 says a fat-loss phase LOOKS
-// like a plateau; it states no correction, so there is none to implement. The
-// phase is reported next to a verdict for a reader to discount by hand. No
-// threshold moves, no comparison is weighted, no plateau is suppressed.
+// NO INTERPRETATION LIVES HERE, AND NONE IN THE COMPARABILITY PATH. B34 says a
+// fat-loss phase LOOKS like a plateau; it states no correction, so this module
+// and every comparability reader of it still only report the phase next to a
+// verdict for a reader to discount by hand.
+//
+// VW-277 IS THE EXCEPTION, AND IT IS EXPLICIT. `analytics/diet-phase-tolerance.ts`
+// now moves autoregulation thresholds off the phase and weeks-in-phase, for the
+// three callers named in its header. The citation B34 lacked is the mined RP
+// S12 corpus; the discounting a reader used to do by hand is what that table
+// does. Nothing else reads the phase that way.
 
 /** The three observed phases, per `ComparabilitySubject.phase`'s docstring (B34). */
 export const DIET_PHASES = ['fat-loss', 'gain', 'maintenance'] as const;

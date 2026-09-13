@@ -202,6 +202,7 @@ interface StoreStub {
   getSetsForExercise: ReturnType<typeof vi.fn>;
   getSessionDateSpan: ReturnType<typeof vi.fn>;
   getSessionDietPhase: ReturnType<typeof vi.fn>;
+  getDietPhaseCovering: ReturnType<typeof vi.fn>;
   putSession: ReturnType<typeof vi.fn>;
   putSet: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -226,6 +227,9 @@ function makeStateWithStore(overrides: Partial<StoreStub> = {}): ServerState {
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     // VW-150: no declared phase, so the phase clause stays unchecked here.
     getSessionDietPhase: vi.fn(async () => undefined),
+    // VW-277: with nothing declared the tolerance table runs unmodified, which
+    // is what keeps every pinned number in this file at its pre-VW-277 value.
+    getDietPhaseCovering: vi.fn(async () => undefined),
     putSession: vi.fn(async () => undefined),
     putSet: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -790,6 +794,8 @@ interface GatedReadiness {
   gate: FeatureGateVerdict;
   basis?: string;
   note?: string;
+  zoneVerdict?: 'as-read' | 'tolerated';
+  dietPhaseContext?: { phase: string; weeksInPhase: number | null; toleranceApplied: boolean };
 }
 
 describe('metrics.compute — session.readiness baseline gating (B57)', () => {
@@ -1064,6 +1070,91 @@ describe('metrics.compute — session.readiness pinned values, legacy vs default
     // confidence min(1, 0.6 + min(|0.6-0.95|,|0.6-0.85|)*4) = min(1, 1.6) = 1.
     expect(body.observed).toEqual({ actualVelocityMps: 0.6, baselineVelocityMps: 1.0 });
     expect(body.readiness).toEqual({ zone: 'red', velocityRatio: 0.6, confidence: 1 });
+  });
+});
+
+// VW-277: a yellow zone in a long cut is the phase, not a stall. The fixture is
+// a 7% velocity dip (0.93/1.0) — inside the 8.75% a week-6 cut earns, outside
+// the unwidened 5%.
+describe('metrics.compute — session.readiness diet-phase tolerance (VW-277)', () => {
+  const probe = {
+    ...makeSetWithFirstRepVelocity('probe', 'sess-target', 88, 0.93),
+    setPurpose: 'warmup' as const,
+  };
+  const baseline = makeSetWithFirstRepVelocity('base', 'sess-baseline', 100, 1.0);
+
+  function declared(phase: string, startedAt: string): Record<string, string> {
+    return { id: 'dp-1', userId: 'local', phase, startedAt, declaredAt: startedAt };
+  }
+
+  async function run(phase?: Record<string, string>): Promise<GatedReadiness> {
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) => (id === 'sess-target' ? [probe] : [baseline])),
+      getBaseline: vi.fn(async () => makeBaselineRow('CALIBRATED', 0.9)),
+      getDietPhaseCovering: vi.fn(async () => phase),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+    return parsePayload(
+      await callTool(tools, {
+        pipeline: 'session.readiness',
+        sessionId: 'sess-target',
+        baselineSessionId: 'sess-baseline',
+      }),
+    ) as GatedReadiness;
+  }
+
+  it('relays the zone as read when no phase is declared', async () => {
+    const body = await run();
+
+    expect(body.readiness).toMatchObject({ zone: 'yellow', velocityRatio: 0.93 });
+    expect(body.zoneVerdict).toBe('as-read');
+    expect(body.dietPhaseContext).toEqual({
+      phase: 'unknown',
+      weeksInPhase: null,
+      toleranceApplied: false,
+    });
+  });
+
+  it('tolerates the same dip in week 6 of a cut, without rewriting the zone', async () => {
+    // The probe set is dated 2025-01-01; the phase opened 38 days earlier.
+    const body = await run(declared('fat-loss', '2024-11-24T00:00:00.000Z'));
+
+    expect(body.readiness).toMatchObject({ zone: 'yellow', velocityRatio: 0.93 });
+    expect(body.zoneVerdict).toBe('tolerated');
+    expect(body.dietPhaseContext).toEqual({
+      phase: 'fat-loss',
+      weeksInPhase: 6,
+      toleranceApplied: true,
+    });
+  });
+
+  it('leaves the same dip as read in a gain phase', async () => {
+    const body = await run(declared('gain', '2024-11-24T00:00:00.000Z'));
+
+    expect(body.zoneVerdict).toBe('as-read');
+    expect(body.dietPhaseContext?.phase).toBe('gain');
+  });
+
+  it('never tolerates a zone the B57 gate already withheld', async () => {
+    const state = makeStateWithStore({
+      getSetsForSession: vi.fn(async (id: string) => (id === 'sess-target' ? [probe] : [baseline])),
+      getDietPhaseCovering: vi.fn(async () => declared('fat-loss', '2024-11-24T00:00:00.000Z')),
+    });
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+
+    const body = parsePayload(
+      await callTool(tools, {
+        pipeline: 'session.readiness',
+        sessionId: 'sess-target',
+        baselineSessionId: 'sess-baseline',
+      }),
+    ) as GatedReadiness;
+
+    expect(body.readiness).toBeNull();
+    expect(body.zoneVerdict).toBe('as-read');
+    expect(body.dietPhaseContext?.phase).toBe('fat-loss');
   });
 });
 
