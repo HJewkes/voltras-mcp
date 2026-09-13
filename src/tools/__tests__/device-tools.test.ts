@@ -392,6 +392,9 @@ interface FakeSlotBindings {
   list: Mock<() => unknown[]>;
 }
 
+/** The client these tools are registered for, and the lease holder by default. */
+const SELF = 'client-under-test';
+
 interface State {
   manager: FakeManager;
   slots: Map<string, FakeSlot>;
@@ -434,7 +437,7 @@ function makeState(): State {
     manager: makeFakeManager(),
     slots,
     slotBindings: makeFakeSlotBindings(),
-    lease: makeFakeLease(),
+    lease: makeFakeLease(SELF),
     channels: makeRecordingChannels(),
   };
 }
@@ -479,6 +482,7 @@ describe('registerDeviceTools', () => {
       server as unknown as Parameters<typeof registerDeviceTools>[0],
       state as unknown as Parameters<typeof registerDeviceTools>[1],
       placeholders as unknown as Parameters<typeof registerDeviceTools>[2],
+      SELF,
     );
   });
 
@@ -2341,6 +2345,72 @@ describe('registerDeviceTools', () => {
       expect(payload.code).toBe('LEASE_LOST');
       expect(client.setIsokineticEccMode).not.toHaveBeenCalled();
       expect(client.setIsokineticEccConstWeight).not.toHaveBeenCalled();
+    });
+
+    // VW-232: the two teardown tools awaited device writes with no fence, so a
+    // steal mid-await came back as a read-back failure naming the DEVICE. That
+    // reads as a device fault and invites a retry against a device another
+    // session now owns. The lease moving is the honest reason.
+    it('device.unload: a steal during the teardown fails LEASE_LOST, not UNLOAD_UNCONFIRMED', async () => {
+      const client = primaryClient(state);
+      // A live flow whose exit does not clear the phase: without the fence this
+      // is the exact UNLOAD_UNCONFIRMED path the reviewer found.
+      client.guidedLoadState.phase = 'active';
+      client.exitGuidedLoad.mockImplementation(async () => undefined);
+      const unload = gate(client.unloadDevice);
+      const call = invoke(placeholders.get('device.unload')!, {});
+      await unload.issued;
+
+      state.lease.steal();
+      unload.release();
+      const { isError, payload } = await call;
+
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('LEASE_LOST');
+      expect(payload.read_back).toBeUndefined();
+      expect(state.channels.events[0]?.meta.tool).toBe('device.unload');
+    });
+
+    it('device.exit_guided_load: a steal during the exit fails LEASE_LOST, not EXIT_UNCONFIRMED', async () => {
+      const client = primaryClient(state);
+      client.guidedLoadState.phase = 'active';
+      const exit = gate(client.exitGuidedLoad);
+      const call = invoke(placeholders.get('device.exit_guided_load')!, {});
+      await exit.issued;
+
+      state.lease.steal();
+      exit.release();
+      const { isError, payload } = await call;
+
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('LEASE_LOST');
+      expect(payload.read_back).toBeUndefined();
+      expect(state.channels.events[0]?.meta.tool).toBe('device.exit_guided_load');
+    });
+
+    // The other half of VW-232. Both teardown tools are lease-EXEMPT so any
+    // client can stop the machine; fencing a non-holder would fail an
+    // emergency unload the moment the lease moved under it, which is what the
+    // exemption exists to prevent.
+    it('device.unload: a non-holder is not fenced when the lease moves', async () => {
+      const client = primaryClient(state);
+      const strangerPlaceholders = buildPlaceholderMap(makeFakeServer(), [...DEVICE_TOOL_NAMES]);
+      registerDeviceTools(
+        makeFakeServer() as unknown as Parameters<typeof registerDeviceTools>[0],
+        state as unknown as Parameters<typeof registerDeviceTools>[1],
+        strangerPlaceholders as unknown as Parameters<typeof registerDeviceTools>[2],
+        'some-other-client',
+      );
+      const unload = gate(client.unloadDevice);
+      const call = invoke(strangerPlaceholders.get('device.unload')!, {});
+      await unload.issued;
+
+      state.lease.steal();
+      unload.release();
+      const { isError, payload } = await call;
+
+      expect(isError).toBeUndefined();
+      expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed' });
     });
 
     // VW-200: `startGuidedLoad` resolves once the trigger is written and the

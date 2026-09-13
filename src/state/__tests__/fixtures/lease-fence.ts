@@ -9,6 +9,8 @@ import type { ChannelEvent, ChannelPublisher } from '../../channel-publisher.js'
 import type { FenceableLease } from '../../lease-fence.js';
 
 export interface FakeLease extends FenceableLease {
+  /** Whether `clientId` holds the lease — what `fenceHolderOnly` reads (VW-232). */
+  isHeldBy(clientId: string): boolean;
   /** Take the device, exactly as a forced `system.lease_acquire` would. */
   steal(): void;
   /** Freeze the lease as `beginTransfer` does, without completing a steal. */
@@ -20,9 +22,11 @@ export interface FakeLease extends FenceableLease {
   touch(): void;
 }
 
-export function makeFakeLease(): FakeLease {
+/** `holder` is who holds the lease; a steal moves it to nobody this test names. */
+export function makeFakeLease(holder?: string): FakeLease {
   let epoch = 1;
   let transferring = false;
+  let heldBy = holder;
   const watchers = new Set<() => void>();
   const notify = (): void => {
     for (const watcher of [...watchers]) watcher();
@@ -30,6 +34,7 @@ export function makeFakeLease(): FakeLease {
   return {
     generation: () => epoch,
     isTransferring: () => transferring,
+    isHeldBy: (clientId: string) => heldBy !== undefined && clientId === heldBy,
     onChange: (listener: () => void) => {
       watchers.add(listener);
       return (): void => {
@@ -39,6 +44,7 @@ export function makeFakeLease(): FakeLease {
     steal: () => {
       epoch += 1;
       transferring = false;
+      heldBy = undefined;
       notify();
     },
     beginTransfer: () => {

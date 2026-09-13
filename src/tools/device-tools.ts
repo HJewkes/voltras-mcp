@@ -99,6 +99,7 @@ import {
 } from '../state/passive-scanner.js';
 import { buildVoltrasAvailablePayload } from '../state/channel-payloads.js';
 import { fence, type LeaseFence } from '../state/lease-fence.js';
+import type { ClientId } from '../client-connection.js';
 import { wrapHandler, type ToolResult } from './helpers.js';
 import {
   shouldPreflightWeightTraining,
@@ -434,6 +435,7 @@ export function registerDeviceTools(
   _server: McpServer,
   state: ServerState,
   placeholders: Placeholders,
+  self?: ClientId,
 ): void {
   // device.scan — manager-level discovery. Wraps the user's `timeoutMs` in
   // a `ScanOptions` object so the SDK is never called with a bare number.
@@ -1047,7 +1049,14 @@ export function registerDeviceTools(
       const slotId = input.slot ?? PRIMARY_SLOT;
       const slot = getSlot(state, slotId);
       const guidedLoadWasActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
+      // VW-232: the teardown is up to three sequential writes, and the verdict
+      // below is drawn from state read after them. Re-check the lease first so
+      // a steal mid-await surfaces as LEASE_LOST rather than an
+      // UNLOAD_UNCONFIRMED that reads as a device fault and invites a retry
+      // against a device another session now owns.
+      const unloadFence = fenceHolderOnly(state, 'device.unload', self);
       await unloadSlot(state, slotId);
+      unloadFence?.check(slotId);
       return {
         ok: true,
         read_back: readBackUnload({
@@ -1277,8 +1286,15 @@ export function registerDeviceTools(
           `Slot \`${input.slot ?? PRIMARY_SLOT}\` is not in an active guided-load phase (current: "${phase}"). Call device.start_guided_load first.`,
         );
       }
+      // VW-232: same gap as device.unload. Without this a steal mid-exit came
+      // back GUIDED_LOAD_EXIT_UNCONFIRMED, which names the device as the
+      // problem when the problem is that the lease moved.
+      const exitFence = fenceHolderOnly(state, 'device.exit_guided_load', self);
       await slot.client.exitGuidedLoad();
+      // Reap before the fence check: it is local bookkeeping, not a device
+      // write, and skipping it would strand the auto-created session and set.
       await reapGuidedLoadScaffold(state, slotId);
+      exitFence?.check(slotId);
       return {
         ok: true,
         read_back: readBackGuidedLoadExit(slotId, slot.client.guidedLoadState.phase),
@@ -1846,6 +1862,26 @@ async function enterWeightTrainingForGuidedLoad(
         `and retry.`,
     );
   }
+}
+
+/**
+ * A fence for the two lease-EXEMPT teardown tools (VW-232).
+ *
+ * `device.unload` and `device.exit_guided_load` are callable by a client that
+ * holds no lease, on purpose: stopping the machine must never wait on
+ * arbitration (see `LEASE_EXEMPT_TOOLS`). Fencing those calls unconditionally
+ * would fail a non-holder's emergency stop the moment the lease moved under it,
+ * which is the opposite of what the exemption is for. So only the HOLDER gets a
+ * fence: it is the only caller whose post-write read-back describes a device it
+ * still owns, and the only one for whom `LEASE_LOST` is the honest answer.
+ */
+function fenceHolderOnly(
+  state: ServerState,
+  tool: string,
+  self: ClientId | undefined,
+): LeaseFence | undefined {
+  if (self === undefined || !state.lease.isHeldBy(self)) return undefined;
+  return fence(state, tool);
 }
 
 /**
