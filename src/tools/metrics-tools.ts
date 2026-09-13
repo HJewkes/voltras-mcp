@@ -478,10 +478,38 @@ const HISTORY_TREND_METRIC: Record<
   volume: 'volume',
 };
 
-/** `history.trend`'s response (VW-144/VW-145/VW-150). */
+/**
+ * The unit each `metric` is measured in, so the reported slope carries one
+ * (VW-230). All three are pounds: `top_weight` and `estimated_1rm` are a load,
+ * and `volume` is a volume-load (load times reps) summed over the week bucket.
+ */
+const HISTORY_TREND_UNIT: Record<NonNullable<HistoryTrendInput['metric']>, string> = {
+  topLoad: 'lb',
+  e1rm: 'lb',
+  volume: 'lb (volume-load)',
+};
+
+/**
+ * `analyzeTrend`'s readout with its categorical verdict withheld (VW-230).
+ *
+ * WA's `direction` compares the fitted slope against a flat-threshold whose
+ * only published value is a VELOCITY one. These three metrics are loads, so
+ * that threshold answers a different question — against pound data it calls a
+ * top weight creeping a fraction of a pound per YEAR "up". No source in this
+ * repo states a flat band for a load trend, so `direction` is null and the raw
+ * fit ships instead, the same posture `quality.bounce` takes on dwell.
+ */
+interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
+  direction: null;
+  directionReason: string;
+  /** `slope`'s unit; `slope` is the per-day change in that unit. */
+  slopeUnit: string;
+}
+
+/** `history.trend`'s response (VW-144/VW-145/VW-150/VW-230). */
 interface HistoryTrendResult {
   series: TimeSeries;
-  trend: TrendAnalysis;
+  trend: HistoryTrendReadout;
   plateau: PlateauDetection & { phase: DietPhase | 'unknown' };
 }
 
@@ -553,6 +581,30 @@ function earliestStartedAt(sets: readonly StoredSet[]): string {
   return sets.reduce((min, s) => (s.startedAt < min ? s.startedAt : min), sets[0]!.startedAt);
 }
 
+/**
+ * The linear fit, with `direction` withheld and the withholding explained
+ * (VW-230). `analyzeTrend` runs with no options, so the numbers here are its
+ * own; only its categorical label is dropped, which is what makes this readout
+ * identical whether or not WA's own per-metric threshold work has shipped.
+ */
+function trendReadout(
+  series: TimeSeries,
+  metric: NonNullable<HistoryTrendInput['metric']>,
+): HistoryTrendReadout {
+  const { direction: _withheld, ...fit } = analyzeTrend(series);
+  const unit = HISTORY_TREND_UNIT[metric];
+  return {
+    ...fit,
+    direction: null,
+    directionReason:
+      `no citable up/down/flat threshold exists for a ${unit} trend — the published ` +
+      `flat band is a velocity one and says nothing about load — so the raw fit is reported ` +
+      `instead: slope ${fit.slope} ${unit}/day over ${fit.windowDays} days, rSquared ` +
+      `${fit.rSquared}`,
+    slopeUnit: `${unit}/day`,
+  };
+}
+
 async function computeHistoryTrend(
   state: ServerState,
   input: HistoryTrendInput,
@@ -577,7 +629,7 @@ async function computeHistoryTrend(
     ts: p.timestamp,
     value: p.value,
   }));
-  const trend = analyzeTrend(series);
+  const trend = trendReadout(series, input.metric ?? 'topLoad');
   // Omitted thresholdPct/minDays pass through as `undefined`, which is WA's
   // own signal to use its defaults (5, 14) — never redeclared here.
   const plateau = detectPlateau(series, input.thresholdPct, input.minDays);
@@ -1763,7 +1815,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +
   "trend, plateau }`. `trend`/`plateau` are WA's own `analyzeTrend`/`detectPlateau`; omitted " +
   "`thresholdPct`/`minDays` use WA's OWN defaults (5%, 14 days — never redeclared here), not " +
-  "this server's. `plateau.phase` (VW-150) is the OBSERVED diet phase covering the plateau " +
+  "this server's. The trend's `direction` is ALWAYS null (VW-230) — every metric here is a " +
+  'load (`topLoad`/`e1rm` in lb, `volume` in lb of volume-load) and no citable up/down/flat ' +
+  'band exists for a load trend, so no verdict is invented; `directionReason` says so in ' +
+  'words. Read the raw fit instead: `slope` is the per-day change in `slopeUnit`, beside ' +
+  '`rSquared`, `percentChange`, `windowDays` and `confidence`. ' +
+  '`plateau.phase` (VW-150) is the OBSERVED diet phase covering the plateau ' +
   "window, from `profile.set_diet_phase`, or `'unknown'` when no single declared phase covers " +
   'it. Read it ALONGSIDE the verdict: a fat-loss phase can look identical to a true plateau, ' +
   'so a flat stretch under `fat-loss` is worth discounting by hand — but the verdict itself ' +

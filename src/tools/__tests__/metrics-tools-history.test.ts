@@ -129,7 +129,7 @@ function parsePayload(result: ToolResult): unknown {
 
 interface HistoryTrendBody {
   series: { ts: string; value: number }[];
-  trend: { direction: 'up' | 'down' | 'flat' };
+  trend: { direction: null; directionReason: string; slope: number; slopeUnit: string };
   plateau: {
     isPlateau: boolean;
     plateauDays: number;
@@ -148,7 +148,7 @@ describe('metrics.compute — history.trend', () => {
     vi.useRealTimers();
   });
 
-  it('8 weeks of rising top load -> trend up, no plateau', async () => {
+  it('8 weeks of rising top load -> positive slope, null direction, no plateau', async () => {
     // 20% week-over-week growth: steep enough that no trailing run of
     // consecutive weeks stays within detectPlateau's default 5% band, so the
     // rise itself never reads as a plateau.
@@ -162,7 +162,8 @@ describe('metrics.compute — history.trend', () => {
     expect(result.isError).toBeUndefined();
     const body = parsePayload(result) as HistoryTrendBody;
     expect(body.series).toHaveLength(8);
-    expect(body.trend.direction).toBe('up');
+    expect(body.trend.slope).toBeGreaterThan(0);
+    expect(body.trend.direction).toBeNull();
     expect(body.plateau.isPlateau).toBe(false);
     expect(body.plateau.phase).toBe('unknown');
   });
@@ -177,7 +178,8 @@ describe('metrics.compute — history.trend', () => {
 
     expect(result.isError).toBeUndefined();
     const body = parsePayload(result) as HistoryTrendBody;
-    expect(body.trend.direction).toBe('flat');
+    expect(body.trend.slope).toBe(0);
+    expect(body.trend.direction).toBeNull();
     expect(body.plateau.isPlateau).toBe(true);
     expect(body.plateau.phase).toBe('unknown');
   });
@@ -207,6 +209,56 @@ describe('metrics.compute — history.trend', () => {
     const body = parsePayload(result) as HistoryTrendBody;
     // One week's worth of data, from the single surviving working set.
     expect(body.series).toEqual([{ ts: expect.any(String), value: 135 }]);
+  });
+});
+
+describe('metrics.compute — history.trend direction (VW-230)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T12:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function trendFor(sets: StoredSet[], metric?: string): Promise<HistoryTrendBody> {
+    const state = makeState(sets);
+    const { server, tools } = makeFakeServer();
+    registerMetricsTools(server, state, makePlaceholders(server));
+    const result = await callTool(tools, {
+      pipeline: 'history.trend',
+      exerciseId: 'back-squat',
+      ...(metric !== undefined ? { metric } : {}),
+    });
+    expect(result.isError).toBeUndefined();
+    return parsePayload(result) as HistoryTrendBody;
+  }
+
+  for (const metric of ['topLoad', 'e1rm', 'volume']) {
+    it(`${metric}: reports a numeric slope with its unit and a null direction`, async () => {
+      const sets = Array.from({ length: 6 }, (_, i) => makeSet(`s-${i}`, i, 100 + 5 * i));
+
+      const body = await trendFor(sets, metric);
+
+      expect(typeof body.trend.slope).toBe('number');
+      expect(Number.isFinite(body.trend.slope)).toBe(true);
+      expect(body.trend.direction).toBeNull();
+      expect(body.trend.slopeUnit).toMatch(/\/day$/);
+      expect(body.trend.directionReason).toEqual(expect.any(String));
+      expect(body.trend.directionReason.length).toBeGreaterThan(0);
+    });
+  }
+
+  it('withholds direction on a rise too small for any load threshold to mean anything', async () => {
+    // A top weight creeping one pound per YEAR. The velocity-derived flat band
+    // called this "up"; there is no load band that can call it anything.
+    const sets = Array.from({ length: 8 }, (_, i) => makeSet(`s-${i}`, i, 135 + i * (7 / 365)));
+
+    const body = await trendFor(sets);
+
+    expect(body.trend.slope).toBeCloseTo(1 / 365, 6);
+    expect(body.trend.direction).toBeNull();
+    expect(body.trend.directionReason).toContain('velocity');
   });
 });
 
