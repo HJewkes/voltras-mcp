@@ -3395,6 +3395,8 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
   // 16 = v16 schema; v17 adds `training_profile.injuries_json` /
   //     `.named_program_history` (VW-148) — additive columns, nothing
   //     backfilled (absent injuries means "never asked", not "none").
+  // 17 = v17 schema; v18 adds `planned_exercises.training_intent` (VW-266) —
+  //     additive column, nothing backfilled.
   // 18 = v18 schema; v19 adds `exercise_setups.setup_anchor` / `.mount_hole` /
   //     `.cable_length_setting_json` / `.mode` (VW-275) — additive columns,
   //     nothing backfilled (absent card means "never confirmed with one").
