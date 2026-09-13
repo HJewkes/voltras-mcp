@@ -16,11 +16,23 @@
 //     passing args separately so shell metacharacters in `text` are inert.
 //   * A single in-flight child is tracked at module scope. `interrupt: true`
 //     sends SIGTERM to that prior child before spawning the new one, which
-//     lets a new cue cut off a still-playing one. Without `interrupt`,
-//     concurrent calls layer audibly — `say` itself doesn't queue.
+//     lets a new cue cut off a still-playing one.
 //   * `blocking: true` awaits the child's `exit` event before returning so
-//     the caller can chain on completion; the default fire-and-forget shape
-//     resolves immediately after spawn so the trainer can keep talking.
+//     the caller can chain on completion; a queued fire-and-forget call
+//     resolves once it has been spawned, not once it has finished playing.
+//
+// Serialisation (VW-170):
+//   * `say` does not queue: two overlapping spawns play over each other, and
+//     an auto cue landing on top of a `system.speak` line makes both
+//     unintelligible. Every caller lands in `speak()`, so ONE module-scope
+//     queue here serialises both — a call waits for the previous utterance's
+//     child to exit before its own `say` is spawned. Order is the order the
+//     calls were made: a slot is reserved synchronously.
+//   * `interrupt: true` is the cancel/flush path and deliberately skips the
+//     queue: it kills the playing child, drops everything still waiting, and
+//     speaks now. That is what keeps the Tier-A stop-phrase ack immediate
+//     (VW-173) — it must never wait behind a cue. A dropped queue entry
+//     returns `ok: true` with `spoken: false`.
 //
 // Failure shape:
 //   * Non-darwin → `TTS_NOT_SUPPORTED`.
@@ -86,9 +98,24 @@ const DEFAULT_DEPS: SpeakDeps = {
 
 let inFlight: ChildProcess | null = null;
 
-/** Test-only: clear any tracked in-flight child between cases. */
+/**
+ * Tail of the speech queue: resolves when the last-reserved utterance has
+ * stopped occupying the speaker. A new caller chains onto it.
+ */
+let queueTail: Promise<void> = Promise.resolve();
+
+/** Bumped by every flush; a waiter whose generation is stale does not speak. */
+let queueGeneration = 0;
+
+/** Utterances holding or awaiting the speaker. Zero means "speak now". */
+let queueDepth = 0;
+
+/** Test-only: clear the in-flight child and the speech queue between cases. */
 export function __resetSpeakState(): void {
   inFlight = null;
+  queueTail = Promise.resolve();
+  queueGeneration += 1;
+  queueDepth = 0;
 }
 
 /**
@@ -134,9 +161,15 @@ const TOOL_DESCRIPTION = [
   '',
   'Default behavior is fire-and-forget: the call returns as soon as `say`',
   'has been spawned. Pass `blocking: true` to await playback completion.',
-  'Pass `interrupt: true` to cut off any still-playing cue from a previous',
-  'call before this one starts — useful when a more urgent prompt needs to',
-  'override an in-flight one.',
+  '',
+  'Spoken output is serialised: this tool and the automatic coaching cues',
+  'share one queue, so lines never play over each other. A call made while',
+  'another line is playing waits its turn, and so returns late rather than',
+  'immediately — expect the call to take as long as whatever is ahead of it.',
+  'Pass `interrupt: true` to skip the queue instead: it cuts off the playing',
+  'line, drops the lines still waiting, and speaks now. A dropped line',
+  'returns `ok: true` with `spoken: false` — nothing was said and nothing',
+  'failed. Use it only when the new line makes the queued ones pointless.',
   '',
   'Playback mutes the local voice listener, if one is armed: mic frames are',
   'discarded (not buffered) for the duration of the cue, and any utterance',
@@ -218,17 +251,80 @@ export async function speak(
   source: string = SPEAK_LINE_SOURCE,
 ): Promise<ToolResult> {
   if (input.interrupt) interruptInFlight();
+  return schedule(() => play(input, deps, source), input.interrupt);
+}
 
+/** One utterance's tool result, plus when it stops occupying the speaker. */
+interface Playback {
+  readonly result: ToolResult;
+  readonly finished: Promise<void>;
+}
+
+/**
+ * Take the speaker for one utterance.
+ *
+ * The slot is reserved synchronously, so the play order is the call order
+ * however the callers interleave. An utterance that finds the speaker free
+ * spawns synchronously too — the queue costs nothing when nothing is playing.
+ *
+ * `jumpQueue` is the flush: it bumps the generation, which every waiter
+ * checks when its turn comes, so the lines still queued are dropped rather
+ * than played after the line that replaced them.
+ */
+function schedule(startPlayback: () => Promise<Playback>, jumpQueue: boolean): Promise<ToolResult> {
+  const turn = jumpQueue || queueDepth === 0 ? null : queueTail;
+  const generation = jumpQueue ? ++queueGeneration : queueGeneration;
+  queueDepth += 1;
+  let release!: () => void;
+  queueTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const done = (): void => {
+    queueDepth -= 1;
+    release();
+  };
+  return turn === null
+    ? runTurn(startPlayback, done, generation)
+    : turn.then(() => runTurn(startPlayback, done, generation));
+}
+
+async function runTurn(
+  startPlayback: () => Promise<Playback>,
+  done: () => void,
+  generation: number,
+): Promise<ToolResult> {
+  if (generation !== queueGeneration) {
+    done();
+    return textResult({ ok: true, spoken: false });
+  }
+  try {
+    const playback = await startPlayback();
+    void playback.finished.then(done, done);
+    return playback.result;
+  } catch (err) {
+    done();
+    throw err;
+  }
+}
+
+async function play(
+  input: SystemSpeakInputType,
+  deps: SpeakDeps,
+  source: string,
+): Promise<Playback> {
   const voiceListener = deps.voiceListenerRef?.listener ?? null;
   const unmuteOnce = muteWithFailsafe(voiceListener);
 
   const child = trySpawn(deps, buildSayArgs(input));
   if (child === null) {
     unmuteOnce();
-    return errorResult({
-      code: 'TTS_NOT_AVAILABLE',
-      message: '`say` binary not found on PATH; macOS TTS is unavailable.',
-    });
+    return {
+      result: errorResult({
+        code: 'TTS_NOT_AVAILABLE',
+        message: '`say` binary not found on PATH; macOS TTS is unavailable.',
+      }),
+      finished: Promise.resolve(),
+    };
   }
   emitCoachLine(deps, input.text, source);
   inFlight = child;
@@ -242,8 +338,9 @@ export async function speak(
   if (input.blocking) {
     // awaitExit resolves after child exits (success or error). Unmute in a
     // finally so mute leaks are impossible regardless of exit code or thrown error.
+    // The speaker is already free by then, so the queue slot frees immediately.
     try {
-      return await awaitExit(child);
+      return { result: await awaitExit(child), finished: Promise.resolve() };
     } finally {
       unmuteOnce();
     }
@@ -257,7 +354,25 @@ export async function speak(
   child.once('exit', unmuteOnce);
   child.once('error', unmuteOnce);
 
-  return textResult({ ok: true });
+  return { result: textResult({ ok: true }), finished: whenPlaybackEnds(child) };
+}
+
+/**
+ * Resolves when `child` stops making sound. The timeout mirrors the mute
+ * failsafe for the same reason: a `say` that hangs, or whose events are lost,
+ * must not hold the queue shut on every cue that follows it.
+ */
+function whenPlaybackEnds(child: ChildProcess): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, MUTE_FAILSAFE_MS);
+    timer.unref?.();
+    const done = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    child.once('exit', done);
+    child.once('error', done);
+  });
 }
 
 /**

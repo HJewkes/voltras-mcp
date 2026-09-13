@@ -35,6 +35,8 @@ interface Harness {
   speak: Callback;
   channels: RecordingPublisher;
   signals: LiveSignalEvent[];
+  /** Spawned `say` children, so a test can end one line before the next (VW-170). */
+  children: EventEmitter[];
 }
 
 /** The real `system.speak` handler, wired to the real `publishCoachLine`. */
@@ -53,15 +55,23 @@ function buildHarness(): Harness {
     },
   } as unknown as RegisteredTool);
 
+  const children: EventEmitter[] = [];
   registerSystemTools(
     {} as McpServer,
     placeholders,
-    { platform: 'darwin', spawn: () => new EventEmitter() as unknown as ChildProcess },
+    {
+      platform: 'darwin',
+      spawn: () => {
+        const child = new EventEmitter();
+        children.push(child);
+        return child as unknown as ChildProcess;
+      },
+    },
     null,
     (line) => publishCoachLine({ channels, liveSignals }, line),
   );
   if (slot.callback === undefined) throw new Error('callback was not registered');
-  return { speak: slot.callback, channels, signals };
+  return { speak: slot.callback, channels, signals, children };
 }
 
 function coachLines(channels: RecordingPublisher): ChannelEvent[] {
@@ -102,7 +112,11 @@ describe('coach_line push event (VW-289)', () => {
     const h = buildHarness();
 
     await h.speak({ text: 'first' });
-    await h.speak({ text: 'second' });
+    // The two lines are serialised (VW-170), so the first has to finish before
+    // the second is spoken at all.
+    const second = h.speak({ text: 'second' });
+    h.children[0].emit('exit', 0);
+    await second;
 
     expect(coachLines(h.channels).map((e) => JSON.parse(e.content).coach_line.text)).toEqual([
       'first',

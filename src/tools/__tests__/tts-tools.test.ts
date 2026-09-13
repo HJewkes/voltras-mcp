@@ -236,16 +236,22 @@ describe('system.speak — interrupt behavior', () => {
     __resetSpeakState();
   });
 
-  it('does not signal a prior child by default', async () => {
+  it('does not signal a prior child by default — it waits for it instead', async () => {
     const first = new FakeChild();
     harness.setNextChild(first);
     await harness.invoke({ text: 'first' });
 
     const second = new FakeChild();
     harness.setNextChild(second);
-    await harness.invoke({ text: 'second' });
+    const queued = harness.invoke({ text: 'second' });
+    await Promise.resolve();
+    expect(harness.spawnCalls).toHaveLength(1);
+
+    first.emitExit(0);
+    await queued;
 
     expect(first.killed).toBe(false);
+    expect(harness.spawnCalls.map((call) => call.args[0])).toEqual(['first', 'second']);
   });
 
   it('sends SIGTERM to a still-running prior child when interrupt:true', async () => {
