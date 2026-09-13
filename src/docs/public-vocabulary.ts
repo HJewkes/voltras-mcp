@@ -129,6 +129,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'eccentricPeakOverConcentricPeak',
   'eccentricPercentTenths',
   'echoedAfterMs',
+  // VW-294: the warm-up ramp's own field, on `isometric.measure_max`'s `warmup`.
+  'effortLevel',
   'event_type',
   'feelSetOnly',
   'firmware_count',

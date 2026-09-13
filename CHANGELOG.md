@@ -39,6 +39,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- `isometric.measure_max` now runs its own warm-up ramp and inter-trial rest instead of
+  leaving both to the coach (VW-294). By default it runs two brief submaximal pulls — one
+  cued at roughly 50% effort, then one at roughly 75% — before the trial loop,
+  standardising the approach to a maximal isometric attempt (Comfort et al. 2019, as
+  applied by Yeh et al., PLoS One); pass `warmup: false` to skip it. Every hold in the
+  sequence, warm-up pulls included, now shares the same rest, which defaults to 2 minutes
+  — the standardised inter-trial rest for maximal isometric testing (Maffiuletti et al. 2016) — up from 90s; `restMs` still overrides it. The warm-up pulls report their own
+  `effortLevel` and `peakForceLbs` under a new `warmup` field and never join `trials`, the
+  best-2 selection, or the stored assessment: the tool cannot verify actual effort, so a
+  warm-up pull is a cue, not a controlled variable. See the [isometric guide](/guides/isometric#warm-up-ramp-measure-max-only)
+  for the full sequence.
+
 - `metrics.compute strength.e1rm` now solves for the load at a minimum velocity threshold
   fitted to your own history, where one exists, instead of the same 0.17 m/s for everybody
   (VW-299). `baselines.recalc` searches for the threshold that would have made the fewest

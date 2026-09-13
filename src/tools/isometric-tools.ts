@@ -68,6 +68,8 @@ import {
   IsometricMeasureMaxInput,
   IsometricMeasureImbalanceInput,
   IsometricMeasureImbalanceInputRefined,
+  DEFAULT_MAX_REST_MS,
+  WARMUP_EFFORT_LEVELS,
 } from '../schemas/isometric.js';
 import { type ServerState, PRIMARY_SLOT, getSlot } from '../state/server-state.js';
 import { FRAME_FORCE_TENTHS_PER_LB } from '../state/live-signal.js';
@@ -145,9 +147,22 @@ const MEASURE_HOLD_DESCRIPTION = [
 const MEASURE_MAX_DESCRIPTION = [
   'Run the isometric maximum-force assessment protocol on one device slot.',
   'Performs N trials (default 3) of M-second max-effort holds (default 5s)',
-  'with rest between trials (default 90s). Caller must pre-configure the',
-  'device into Isometric mode and set resistance to a low value (or 0 lb if',
-  'supported) before invoking — this tool does NOT change device settings.',
+  `with rest between EVERY hold, warm-up pulls included (default ${DEFAULT_MAX_REST_MS / 1000}s).`,
+  'Caller must pre-configure the device into Isometric mode and set',
+  'resistance to a low value (or 0 lb if supported) before invoking — this',
+  'tool does NOT change device settings.',
+  '',
+  'WARM-UP RAMP (VW-294, default on): before the trial loop, the tool runs',
+  'two brief submaximal pulls of its own — one cued as roughly 50% effort,',
+  'then one at roughly 75% — with the SAME inter-hold rest as the max trials,',
+  'so the whole ramp-then-test sequence runs unprompted from one call instead',
+  'of a coach pacing it turn by turn. This standardises the approach to a',
+  'maximal isometric attempt (Comfort et al. 2019, as applied by Yeh et al.,',
+  'PLoS One). The tool cannot verify actual effort — a warm-up pull is a cue,',
+  'not a controlled variable — so its samples are reported under `warmup`',
+  '(effortLevel, peakForceLbs, holdMs) and never join `trials`, the best-2',
+  'selection, or the stored assessment. Pass `warmup: false` to skip the ramp',
+  'for a coach-paced bench sitting.',
   '',
   'PEAK FORCE IS THE HEADLINE METRIC (VW-271): meanPeakForceLbs is the mean',
   'of the best 2 of N valid trials by peakForceLbs, and drives the 70%',
@@ -186,9 +201,11 @@ const MEASURE_MAX_DESCRIPTION = [
   '',
   'VERIFIED IMTP-style PROTOCOL DETAILS THIS IMPLEMENTS: the 5 s hold',
   '(default, clamp 3-10s) and >=2 trials (default 3, clamp 2-5) an applied',
-  'IMTP study used (Yeh et al., PMC13541152). NOT IMPLEMENTED, AND WHY: that',
-  "study's 2 min inter-trial rest — this tool defaults restMs to 90s (clamp",
-  '30s-5min); pass restMs 120000 to match it. Its repeat-trial rule (repeat',
+  "IMTP study used (Yeh et al., PMC13541152), AND (VW-294) that same study's",
+  `2 min inter-trial rest — restMs now defaults to ${DEFAULT_MAX_REST_MS} (clamp`,
+  'unchanged, 30s-5min), matching the standardised inter-trial rest for',
+  'maximal isometric testing (Maffiuletti et al. 2016); pass a shorter restMs',
+  'to loosen it for a coach-paced sitting. Its repeat-trial rule (repeat',
   'when two trials differ by more than 250 N) — this tool instead discards a',
   'trial whose peak diverges more than 15% from the session median, a',
   'percentage rule already established here and left unchanged. Its 40 N-',
@@ -375,6 +392,7 @@ interface MeasureMaxInput {
   durationMs: number;
   trials: number;
   restMs: number;
+  warmup: boolean;
 }
 
 interface MeasureImbalanceInput {
@@ -434,6 +452,13 @@ const INFERRED_WORKING_WEIGHT_BASIS =
 interface MeasureMaxResult {
   ok: true;
   slot: string;
+  /**
+   * The warm-up ramp's own pulls (VW-294), empty when `warmup: false`. Never
+   * folded into `trials`, the best-2 selection, or the stored assessment —
+   * effort during a warm-up pull is a cue the tool gives, not a controlled
+   * variable it can verify.
+   */
+  warmup: WarmupPullResult[];
   trials: TrialAnalysis[];
   validTrialCount: number;
   meanPeakForceLbs: number | null;
@@ -659,7 +684,12 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
   const mountLoadWarning = enforceIsometricMountLoad(state);
   const startedAt = Date.now();
   const result = await withLeaseFence(state, 'isometric.measure_max', [slotId], (leaseFence) =>
-    runSideProtocol(state, slotId, input, leaseFence),
+    runSideProtocol(
+      state,
+      slotId,
+      { ...input, warmupEffortLevels: input.warmup ? WARMUP_EFFORT_LEVELS : undefined },
+      leaseFence,
+    ),
   );
   const keys = measurementKeys(state, slotId);
   // Read BEFORE persisting, so this run's own result never leaks into its own
@@ -683,6 +713,7 @@ async function measureMax(state: ServerState, input: MeasureMaxInput): Promise<M
   return {
     ok: true,
     slot: slotId,
+    warmup: result.warmup,
     trials: result.analysis.trials,
     validTrialCount: result.analysis.validTrialCount,
     meanPeakForceLbs: result.analysis.meanPeakForceLbs,
@@ -1151,8 +1182,18 @@ function toStoredSide(state: ServerState, side: PersistSideInput): StoredIsometr
   };
 }
 
+/** One warm-up pull's own reading (VW-294) — never a trial, never persisted. */
+interface WarmupPullResult {
+  /** Cued effort as a fraction of max (0.5, 0.75, …) — not a controlled variable. */
+  effortLevel: number;
+  peakForceLbs: number;
+  holdMs: number;
+}
+
 interface RunSideResult {
   analysis: SideAnalysis;
+  /** Empty unless `opts.warmupEffortLevels` was given (VW-294). */
+  warmup: WarmupPullResult[];
 }
 
 /** What one hold needs: how long, which hold of the run, and how to name it. */
@@ -1163,14 +1204,64 @@ interface SingleHoldOptions {
   label?: string | undefined;
 }
 
+function warmupLabel(effortLevel: number): string {
+  return `warm-up (${Math.round(effortLevel * 100)}% effort)`;
+}
+
+/**
+ * Run the warm-up ramp's own pulls, one per `effortLevel`, each followed by
+ * the SAME `restMs` gap the max trials use (VW-294) — a single rest concept
+ * governs the whole ready-then-test sequence rather than inventing a second,
+ * unstated ramp-specific interval. Every pull uses the same `durationMs` a
+ * max trial does for the same reason. Called with an EMPTY array for every
+ * flow that predates the ramp (`measure_imbalance`), which leaves the
+ * sequence and timing of those flows unchanged.
+ */
+async function runWarmupPulls(
+  state: ServerState,
+  slotId: string,
+  opts: { durationMs: number; restMs: number; effortLevels: readonly number[] },
+  leaseFence: LeaseFence,
+): Promise<WarmupPullResult[]> {
+  const results: WarmupPullResult[] = [];
+  for (let i = 0; i < opts.effortLevels.length; i++) {
+    const effortLevel = opts.effortLevels[i]!;
+    const analysis = await captureSingleHold(
+      state,
+      slotId,
+      { holdMs: opts.durationMs, trial: i + 1, label: warmupLabel(effortLevel) },
+      leaseFence,
+    );
+    results.push({ effortLevel, peakForceLbs: analysis.peakForceLbs, holdMs: opts.durationMs });
+    await waitFenced(opts.restMs, leaseFence, slotId);
+  }
+  return results;
+}
+
 async function runSideProtocol(
   state: ServerState,
   slotId: string,
-  opts: { durationMs: number; trials: number; restMs: number },
+  opts: {
+    durationMs: number;
+    trials: number;
+    restMs: number;
+    warmupEffortLevels?: readonly number[] | undefined;
+  },
   leaseFence: LeaseFence,
 ): Promise<RunSideResult> {
   const slot = getSlot(state, slotId);
   ensureSlotConnected(slotId, slot);
+
+  const warmup = await runWarmupPulls(
+    state,
+    slotId,
+    {
+      durationMs: opts.durationMs,
+      restMs: opts.restMs,
+      effortLevels: opts.warmupEffortLevels ?? [],
+    },
+    leaseFence,
+  );
 
   const trialAnalyses: TrialAnalysis[] = [];
   for (let i = 0; i < opts.trials; i++) {
@@ -1181,7 +1272,7 @@ async function runSideProtocol(
       await waitFenced(opts.restMs, leaseFence, slotId);
     }
   }
-  return { analysis: aggregateSide(trialAnalyses) };
+  return { analysis: aggregateSide(trialAnalyses), warmup };
 }
 
 /**

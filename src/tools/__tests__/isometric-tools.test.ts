@@ -52,7 +52,7 @@ import {
   noopChannelPublisher,
   type ChannelPublisher,
 } from '../../state/channel-publisher.js';
-import { DEFAULT_DURATION_MS } from '../../schemas/isometric.js';
+import { DEFAULT_DURATION_MS, DEFAULT_MAX_REST_MS } from '../../schemas/isometric.js';
 
 type Callback = (args: unknown, extra?: unknown) => Promise<ToolResult>;
 
@@ -467,6 +467,13 @@ function trialsOf(published: PublishedEvent[]): string[] {
   return published.filter((e) => e.meta.event_type === 'isometric_phase').map((e) => e.meta.trial);
 }
 
+/** The `label` carried on each `isometric_phase` push's content (VW-294: distinguishes warm-up pulls from real trials). */
+function labelsOf(published: PublishedEvent[]): (string | null)[] {
+  return published
+    .filter((e) => e.meta.event_type === 'isometric_phase')
+    .map((e) => (JSON.parse(e.content) as { isometric: { label: string | null } }).isometric.label);
+}
+
 interface MeasureHoldBody {
   ok: boolean;
   slot: string;
@@ -663,7 +670,7 @@ describe('isometric mount-load gate — measure_hold and measure_max', () => {
 
   it('measure_max: proceeds and reports null warning when the rating covers it', async () => {
     const { measureMaxCb } = build(500);
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 195);
@@ -674,7 +681,12 @@ describe('isometric mount-load gate — measure_hold and measure_max', () => {
 
   it('measure_max: refuses INVALID_INPUT before any trial when the rating is exceeded', async () => {
     const { measureMaxCb } = build(350);
-    const result = await measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const result = await measureMaxCb({
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      warmup: false,
+    });
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
     expect(client.subscribeCount).toBe(0);
@@ -682,7 +694,7 @@ describe('isometric mount-load gate — measure_hold and measure_max', () => {
 
   it('measure_max: warns, and still proceeds, when no rating is configured', async () => {
     const { measureMaxCb } = build(undefined);
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 195);
@@ -745,6 +757,7 @@ describe('isometric.measure_max', () => {
       durationMs: 3000,
       trials: 2,
       restMs: 30_000,
+      warmup: false,
     });
 
     // Pump frames for trial 1.
@@ -775,7 +788,7 @@ describe('isometric.measure_max', () => {
   });
 
   it('persists the run and reports null baseline with fewer than 3 past occasions', async () => {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 195);
@@ -799,7 +812,7 @@ describe('isometric.measure_max', () => {
       seededMeasurement('2026-09-03T00:00:00.000Z', 101, 101),
       seededMeasurement('2026-09-05T00:00:00.000Z', 99, 99),
     ];
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 200);
@@ -815,7 +828,7 @@ describe('isometric.measure_max', () => {
   });
 
   it('runs N holds over the same primitive, one phase cycle per trial', async () => {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 195);
@@ -838,7 +851,7 @@ describe('isometric.measure_max', () => {
   });
 
   it('publishes one isometric_result after the last trial (VW-264)', async () => {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(client, 3000, 195);
@@ -862,6 +875,7 @@ describe('isometric.measure_max', () => {
       durationMs: 3000,
       trials: 2,
       restMs: 30_000,
+      warmup: false,
     });
     await vi.advanceTimersByTimeAsync(3000); // trial 1 elapses with no frames
     await vi.advanceTimersByTimeAsync(30_000); // rest
@@ -891,7 +905,12 @@ describe('isometric.measure_max', () => {
 
   it('returns SLOT_NOT_BOUND when the slot is not connected', async () => {
     client.isConnected = false;
-    const result = await measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const result = await measureMaxCb({
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      warmup: false,
+    });
     expect(result.isError).toBe(true);
     expect(payload(result)).toMatchObject({ code: 'SLOT_NOT_BOUND' });
   });
@@ -904,6 +923,7 @@ describe('isometric.measure_max', () => {
       durationMs: 3000,
       trials: 2,
       restMs: 90_000,
+      warmup: false,
     });
     await pumpTrialFrames(client, 3000, 200);
     let settled = false;
@@ -918,6 +938,166 @@ describe('isometric.measure_max', () => {
     await pumpTrialFrames(client, 3000, 195);
     await promise;
     expect(settled).toBe(true);
+  });
+});
+
+describe('isometric.measure_max — warm-up ramp (VW-294)', () => {
+  let measureMaxCb: Callback;
+  let client: FakeClient;
+  let published: PublishedEvent[];
+  let store: FakeStore;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    client = makeFakeClient();
+    published = [];
+    store = makeFakeStore();
+    const state = makeState(
+      { primary: client },
+      { channels: makeChannels(published), store, deviceIds: { primary: 'device-1' } },
+    );
+    const { placeholders, slots } = buildPlaceholders(TOOL_NAMES);
+    registerIsometricTools({} as McpServer, state, placeholders);
+    measureMaxCb = slots.get('isometric.measure_max')!.callback;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  interface WarmupBody {
+    warmup: { effortLevel: number; peakForceLbs: number; holdMs: number }[];
+    trials: unknown[];
+    validTrialCount: number;
+    meanPeakForceLbs: number | null;
+  }
+
+  /** Drive the default-on ramp (2 warm-up pulls) then 2 real trials, all at `restMs`. */
+  async function driveDefaultWarmupRun(restMs: number): Promise<{
+    promise: Promise<ToolResult>;
+  }> {
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs });
+    await pumpTrialFrames(client, 3000, 100); // warm-up pull 1 (~50% effort)
+    await vi.advanceTimersByTimeAsync(restMs);
+    await pumpTrialFrames(client, 3000, 150); // warm-up pull 2 (~75% effort)
+    await vi.advanceTimersByTimeAsync(restMs);
+    await pumpTrialFrames(client, 3000, 200); // trial 1
+    await vi.advanceTimersByTimeAsync(restMs);
+    await pumpTrialFrames(client, 3000, 195); // trial 2
+    return { promise };
+  }
+
+  it('runs the ramp (50%, then 75% effort) and the inter-hold rest unprompted, by default', async () => {
+    const { promise } = await driveDefaultWarmupRun(DEFAULT_MAX_REST_MS);
+    const body = payload(await promise) as WarmupBody;
+
+    // Ramp + 2 real trials = 4 ready/go/hold/stop cycles, with no coach call
+    // in between — the whole sequence ran off one measure_max invocation.
+    expect(phasesOf(published)).toEqual([
+      'ready',
+      'go',
+      'hold',
+      'stop',
+      'ready',
+      'go',
+      'hold',
+      'stop',
+      'ready',
+      'go',
+      'hold',
+      'stop',
+      'ready',
+      'go',
+      'hold',
+      'stop',
+    ]);
+    expect(labelsOf(published)).toEqual([
+      'warm-up (50% effort)',
+      'warm-up (50% effort)',
+      'warm-up (50% effort)',
+      'warm-up (50% effort)',
+      'warm-up (75% effort)',
+      'warm-up (75% effort)',
+      'warm-up (75% effort)',
+      'warm-up (75% effort)',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+
+    expect(body.warmup).toHaveLength(2);
+    expect(body.warmup[0]!.effortLevel).toBe(0.5);
+    expect(body.warmup[0]!.peakForceLbs).toBeGreaterThan(80);
+    expect(body.warmup[1]!.effortLevel).toBe(0.75);
+    expect(body.warmup[1]!.peakForceLbs).toBeGreaterThan(130);
+
+    // The warm-up pulls (100/150 lb) never join the real trials (200/195 lb).
+    expect(body.trials).toHaveLength(2);
+    expect(body.validTrialCount).toBe(2);
+    expect(body.meanPeakForceLbs).toBeGreaterThan(190);
+  });
+
+  it('defaults restMs to DEFAULT_MAX_REST_MS (2 min) when the caller gives none', async () => {
+    // No restMs at all, and warmup off so exactly ONE rest gap is in play —
+    // isolates the schema default the same way the pre-VW-294 restMs test
+    // isolates an explicit value. 1ms short of DEFAULT_MAX_REST_MS must NOT
+    // be enough; this is what catches a default that silently reverts to
+    // the old 90s (a shorter rest completes, and trial 2 — needing no more
+    // frames to finish an invalid hold — settles well before this checkpoint).
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, warmup: false });
+    await pumpTrialFrames(client, 3000, 200);
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULT_MAX_REST_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await pumpTrialFrames(client, 3000, 195);
+    await promise;
+    expect(settled).toBe(true);
+  });
+
+  it('warmup: false skips the ramp entirely — only the real trials run', async () => {
+    const promise = measureMaxCb({
+      durationMs: 3000,
+      trials: 2,
+      restMs: 30_000,
+      warmup: false,
+    });
+    await pumpTrialFrames(client, 3000, 200);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pumpTrialFrames(client, 3000, 195);
+    const body = payload(await promise) as WarmupBody;
+
+    expect(body.warmup).toEqual([]);
+    expect(phasesOf(published)).toEqual([
+      'ready',
+      'go',
+      'hold',
+      'stop',
+      'ready',
+      'go',
+      'hold',
+      'stop',
+    ]);
+    expect(labelsOf(published)).toEqual([null, null, null, null, null, null, null, null]);
+    expect(body.trials).toHaveLength(2);
+  });
+
+  it('does not persist the warm-up pulls — only the real trials are stored', async () => {
+    const { promise } = await driveDefaultWarmupRun(30_000);
+    await promise;
+
+    expect(store.written).toHaveLength(1);
+    expect(store.written[0]!.sides).toHaveLength(1);
+    // 2 real trials stored, not 4 — the 2 warm-up pulls never joined them.
+    expect(store.written[0]!.sides[0]!.trials).toHaveLength(2);
   });
 });
 
@@ -1550,7 +1730,7 @@ describe('the lease fence over an isometric assessment', () => {
   });
 
   it('measure_max: a steal during the rest stops the remaining trials', async () => {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 3, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 3, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     await vi.advanceTimersByTimeAsync(5000);
 
@@ -1568,7 +1748,7 @@ describe('the lease fence over an isometric assessment', () => {
   it('measure_max: runs to completion when the holder keeps the lease', async () => {
     // The sanity case: a notification that leaves the generation where it was
     // — the holder refreshing its own claim — aborts nothing.
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(client, 3000, 200);
     lease.touch();
     await vi.advanceTimersByTimeAsync(30_000);
@@ -1641,7 +1821,7 @@ describe('isometric — the lifter / exercise / session key (VW-280)', () => {
 
   /** Drive a 2-trial `measure_max` run on the primary slot at ~200 lb. */
   async function runMax(): Promise<MeasureMaxBody & { legacyUnkeyed: number }> {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(leftClient, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(leftClient, 3000, 200);
@@ -1847,7 +2027,7 @@ describe('isometric — the persisted asymmetry equation (VW-295)', () => {
   }
 
   async function runMax(): Promise<Record<string, unknown>> {
-    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000 });
+    const promise = measureMaxCb({ durationMs: 3000, trials: 2, restMs: 30_000, warmup: false });
     await pumpTrialFrames(leftClient, 3000, 200);
     await vi.advanceTimersByTimeAsync(30_000);
     await pumpTrialFrames(leftClient, 3000, 200);
