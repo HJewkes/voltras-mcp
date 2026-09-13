@@ -21,6 +21,7 @@ import {
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import { countMissed } from '../analytics/target-verdict.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -247,9 +248,8 @@ function renderMissedLine(
   planned: StoredPlannedExercise | undefined,
 ): string | undefined {
   const low = planned?.targetRepsLow;
-  if (low === undefined) return undefined;
-  const missed = working.filter((set) => repCount(set) < low).length;
-  if (missed === 0) return undefined;
+  const missed = countMissed(working.map(repCount), low);
+  if (missed === undefined || missed === 0) return undefined;
   return `missed: ${missed} of ${working.length} ${pluralSets(working.length)} below ${low} reps`;
 }
 

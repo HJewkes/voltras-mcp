@@ -17,6 +17,7 @@ import { RestView } from './RestView';
 import { EmptyLiveView, SessionEndedView } from './EmptyLiveView';
 import { IsometricWalkthrough } from './IsometricWalkthrough';
 import {
+  deriveMissedSetsMetric,
   deriveRailExercises,
   deriveRailMetrics,
   stageIsEmpty,
@@ -209,7 +210,14 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
   // itself when no hold is in progress, so it's safe to always mount here.
   const isometric = useStore(dashboardStore, (s) => s.isometric);
   const exercises = deriveRailExercises(model, displayUnit);
-  const metrics = deriveRailMetrics(model, displayUnit);
+  // Volume/Tonnage rollup (VW-52), plus a "Missed: N" tile (VW-262) when at
+  // least one set missed its rep floor — appended, never replacing, so a
+  // session with nothing to flag keeps the plain rollup.
+  const missedTile = deriveMissedSetsMetric(model);
+  const metrics = [
+    ...(deriveRailMetrics(model, displayUnit) ?? []),
+    ...(missedTile ? [missedTile] : []),
+  ];
   // Working sets only (VW-260) — warmup/probe/technique sets are real and logged, but
   // don't advance the header's "sets done" pace figure.
   const completedSets = workingCompletedSets(model.session).length;
@@ -231,7 +239,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
         // Session rollup tiles (Volume / Load), folded from the exercise-tagged set log
         // (VW-52). Undefined before the first set closes, so the header hides them rather
         // than showing zeros. No Fatigue tile — no honest session-wide signal to source it.
-        metrics={metrics ?? undefined}
+        metrics={metrics.length > 0 ? metrics : undefined}
       />
       {/* The lab hardcoded 76% / 7.3k / MOD here; the tiles above are the real rollup. */}
 

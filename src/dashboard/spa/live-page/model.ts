@@ -17,6 +17,7 @@
  * two-`LiveView` stage it fed and the fixture-fabricating `deriveDualModel` before that.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
+import { targetVerdict, type TargetVerdict } from '../../../analytics/target-verdict.js';
 import { type MassUnit, convertMass, formatMass } from './mass';
 // Type-only: erased at build (same rationale as adapter.ts's own import of this) —
 // mirrors the store's four-value set-purpose enum without a runtime dependency.
@@ -726,4 +727,30 @@ export function deriveRailMetrics(
     { label: 'Volume', value: String(reps) },
     { label: 'Tonnage', value: `${formatLoad(tonnage)} ${displayUnit}` },
   ];
+}
+
+/**
+ * A completed set's verdict against its OWN exercise's planned rep floor — the
+ * same rule `report.session_results`' "missed: X of Y" line uses
+ * (`analytics/target-verdict.ts`), so the wall and the report can never
+ * disagree about the same set. Matched by exercise name, the same key
+ * {@link activeCompletedSets} already filters on. `no-target` when the exercise
+ * carries no rep floor (no plan attached, or an untargeted/AMRAP exercise).
+ */
+export function completedSetVerdict(set: CompletedSet, session: SessionModel): TargetVerdict {
+  const planned = session.plannedExercises.find((e) => e.name === set.exerciseName);
+  return targetVerdict(set.repCount, planned?.targetReps ?? undefined);
+}
+
+/**
+ * A "Missed: N" rail-header tile for sets that missed their rep floor this
+ * session, meant to be appended to {@link deriveRailMetrics}'s Volume/Tonnage
+ * rollup rather than replacing it. Null when nothing has a floor to miss, or
+ * nothing missed — never a fabricated zero.
+ */
+export function deriveMissedSetsMetric(model: DashboardModel): MetricTileData | null {
+  const missed = model.session.completedSets.filter(
+    (set) => completedSetVerdict(set, model.session) === 'miss',
+  ).length;
+  return missed > 0 ? { label: 'Missed', value: String(missed) } : null;
 }
