@@ -955,16 +955,17 @@ export async function finalizeSet(
   const finalizedForStore = selectSetReps(finalizedWithCause, state.config?.repSource);
   // VMCP-02.66/02.65/02.69a: correct the rep array once, here, so the persisted
   // set and the `set_ended` payload (built from `stored` below) share the same
-  // de-artifacted / idle-truncated / re-peaked reps. The movement-class-dependent
-  // segmentation corrections (02.66/02.65) stay dark behind VMCP_REP_CORRECTIONS
-  // until the VW-16 bench parity run; the 02.69a peak recompute always runs.
+  // de-artifacted / idle-truncated / re-peaked reps. The 02.66 un-rack drop stays
+  // dark behind VMCP_REP_UNRACK_DROP until the VW-16 bench parity run; the 02.65
+  // truncation and the 02.69a peak recompute run by default.
   // Note this runs on the STORE path only — the live `rep_finalized` event
   // carries the raw analytics rep — so any correction here must preserve the
   // conventions the live payload already publishes (VMCP-05.14).
   const correctedForStore: ActiveSet = {
     ...finalizedForStore,
     reps: finalizeReps(finalizedForStore.reps, {
-      segmentationCorrections: state.config?.repCorrections === 'on',
+      dropUnrackArtifact: state.config?.repUnrackDrop === 'on',
+      truncateFinalEccentric: state.config?.repEccentricTruncate !== 'off',
     }),
   };
   // VMCP-04.08: stamp device / side / slot identity onto the persisted row.

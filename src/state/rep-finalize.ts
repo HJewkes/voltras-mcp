@@ -3,25 +3,26 @@
 // channel payload. Runs at the single finalize chokepoint (`finalizeSet`) so
 // the persisted block and the live event never disagree.
 //
-// Three corrections. The first two are movement-class-dependent and gated OFF
-// by default behind `VMCP_REP_CORRECTIONS` (passed as `segmentationCorrections`)
-// until the VW-16 bench parity run validates them across movement classes; the
-// third always runs. They apply in dependency order (each builds on the
-// previous):
+// Three corrections, each with its own gate, applied in dependency order (each
+// builds on the previous):
 //
-//   1. VMCP-02.66 (gated) — drop mis-segmented reps. The un-rack that precedes the
+//   1. VMCP-02.66 (`VMCP_REP_UNRACK_DROP`, default OFF) — drop mis-segmented reps. The un-rack that precedes the
 //      first real rep segments as a phantom rep whose concentric moves the
 //      load the WRONG way (it ends below where it started). A real working
 //      concentric always nets positive displacement, so a strictly-negative
 //      net concentric displacement is the un-rack signature. Dropping it fixes
 //      rep-count inflation and stops the phantom from poisoning
-//      `vbt_summary.first_rep_v`.
+//      `vbt_summary.first_rep_v`. It changes the persisted rep COUNT, so it
+//      stays dark until the VW-16 bench parity run validates the un-rack
+//      signature across movement classes.
 //
-//   2. VMCP-02.65 (gated) — truncate the final rep's eccentric idle tail. When the set
+//   2. VMCP-02.65 (`VMCP_REP_ECC_TRUNCATE`, default ON) — truncate the final rep's eccentric idle tail. When the set
 //      ends the cable sits parked, and those idle samples land on the last
 //      rep's eccentric, inflating its duration (tempo_ratio blows up) and
 //      diluting its mean velocity. Trim trailing non-movement samples back to
-//      the last real movement and rebuild the phase.
+//      the last real movement and rebuild the phase. Defaulted on separately
+//      from 02.66: it deletes no rep and moves only derived tempo and velocity
+//      on one rep, so it does not need the bench gate its neighbour does.
 //
 //   3. VMCP-02.69a (always on) — recompute each phase's peak velocity from its own
 //      samples. The analytics running-aggregate `peakVelocity` can go stale
@@ -73,13 +74,15 @@ const ECCENTRIC_IDLE_VELOCITY_THRESHOLD = 0.05;
 
 export interface RepFinalizeOptions {
   /**
-   * Apply the movement-class-dependent segmentation corrections (VMCP-02.66
-   * un-rack drop + VMCP-02.65 eccentric idle-tail truncation). Gated OFF by
-   * default via `VMCP_REP_CORRECTIONS` — see {@link RepCorrectionsMode} — until
-   * the VW-16 bench parity run validates them across movement classes. The
-   * VMCP-02.69a peak recompute always runs regardless of this flag.
+   * Apply the VMCP-02.66 un-rack drop. Off unless asked for; see
+   * {@link RepUnrackDropMode}.
    */
-  segmentationCorrections?: boolean;
+  dropUnrackArtifact?: boolean;
+  /**
+   * Apply the VMCP-02.65 final-eccentric idle-tail truncation. Off unless asked
+   * for here; the SERVER default is on, via {@link RepEccentricTruncateMode}.
+   */
+  truncateFinalEccentric?: boolean;
 }
 
 /**
@@ -89,17 +92,17 @@ export interface RepFinalizeOptions {
  * values), and set-level rep counts derive from array length, not the max rep
  * number.
  *
- * When `segmentationCorrections` is set, the movement-class-dependent
- * corrections run first in dependency order (VMCP-02.66 filter → 02.65
- * truncate) so the samples the peak-recompute pass sees are already
- * de-artifacted and trimmed. VMCP-02.69a (sample-derived peaks) then runs
- * unconditionally.
+ * The two gated corrections keep their dependency order whichever combination
+ * is selected (VMCP-02.66 filter → 02.65 truncate), so the samples the
+ * peak-recompute pass sees are already de-artifacted and trimmed. VMCP-02.69a
+ * (sample-derived peaks) then runs unconditionally.
  */
 export function finalizeReps(reps: readonly Rep[], opts: RepFinalizeOptions = {}): Rep[] {
+  const deArtifacted = opts.dropUnrackArtifact === true ? reps.filter(isNotUnrackArtifact) : reps;
   const segmented =
-    opts.segmentationCorrections === true
-      ? truncateFinalEccentricIdleTail(reps.filter(isNotUnrackArtifact))
-      : reps;
+    opts.truncateFinalEccentric === true
+      ? truncateFinalEccentricIdleTail(deArtifacted)
+      : deArtifacted;
   return segmented.map(withSampleDerivedPeaks);
 }
 

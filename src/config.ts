@@ -7,7 +7,9 @@
 //   - VMCP_LOG_LEVEL                  — 'debug' | 'info' | 'warn' | 'error', default 'info'.
 //   - VMCP_REP_SOURCE                  — 'analytics' | 'firmware', default 'analytics'.
 //   - VMCP_REST_TIMER                  — 'on' | 'off', default 'off'.
-//   - VMCP_REP_CORRECTIONS             — 'on' | 'off', default 'off'.
+//   - VMCP_REP_CORRECTIONS             — 'on' | 'off', both halves together, no default.
+//   - VMCP_REP_UNRACK_DROP             — 'on' | 'off', default 'off'.
+//   - VMCP_REP_ECC_TRUNCATE            — 'on' | 'off', default 'on'.
 //   - VMCP_CUES                        — 'on' | 'off', default 'off'.
 //   - VMCP_CUES_MIDSET                 — 'on' | 'off', default 'off'.
 //   - VMCP_AUTO_ARM                    — 'on' | 'off', default 'on'.
@@ -18,9 +20,9 @@
 //
 // `loadConfig()` is a pure function: it neither logs nor touches disk. It
 // throws synchronously when VOLTRA_ADAPTER, VMCP_REP_SOURCE, VMCP_REST_TIMER,
-// VMCP_REP_CORRECTIONS or VMCP_AUTO_ARM is set to an unrecognized value so the
-// failure surfaces before bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws
-// on the same terms.
+// VMCP_REP_CORRECTIONS, VMCP_REP_UNRACK_DROP, VMCP_REP_ECC_TRUNCATE or
+// VMCP_AUTO_ARM is set to an unrecognized value so the failure surfaces before
+// bootstrapState begins. VMCP_TRUECOACH_OUTBOX throws on the same terms.
 
 import { homedir } from 'node:os';
 
@@ -53,20 +55,49 @@ export type RepSource = 'analytics' | 'firmware';
 export type RestTimerMode = 'off' | 'on';
 
 /**
- * Whether `finalizeSet` applies the movement-class-dependent rep-segmentation
- * corrections at set close (VMCP-02.66 un-rack drop + VMCP-02.65 eccentric
- * idle-tail truncation).
- *   - `'off'` (DEFAULT) — those two corrections are skipped. They rest on a
- *     bench-observed assumption (a valid concentric nets positive position) and
- *     a tunable idle threshold that are only validated on press/row so far; on
- *     an untested movement class the un-rack filter could silently drop valid
- *     reps. Kept dark until the VW-16 bench parity run confirms them across
- *     movement classes, mirroring the VMCP_REP_SOURCE cutover pattern.
- *   - `'on'` — apply both corrections. The VMCP-02.69a signed-peak recompute
- *     and VMCP-02.64 derived-VBT persistence are NOT gated by this flag; they
- *     carry no movement-class dependence and always run.
+ * The legacy coarse switch over BOTH movement-class-dependent rep-segmentation
+ * corrections (VMCP-02.66 un-rack drop + VMCP-02.65 eccentric idle-tail
+ * truncation). It has no default of its own any more: unset, each half falls
+ * back to its own variable. Set explicitly, it moves both halves together, so
+ * an existing `VMCP_REP_CORRECTIONS=off` is still a complete opt-out and
+ * `=on` still turns both on.
  */
 export type RepCorrectionsMode = 'off' | 'on';
+
+/**
+ * Whether `finalizeSet` drops the un-rack artifact rep (VMCP-02.66) — the
+ * phantom whose concentric nets negative displacement.
+ *   - `'off'` (DEFAULT) — skipped. It rests on a bench-observed assumption (a
+ *     valid concentric nets positive position) validated on press/row only; on
+ *     an untested movement class it could silently drop a valid rep, and it
+ *     changes the persisted rep COUNT. Kept dark until the VW-16 bench parity
+ *     run confirms it across movement classes.
+ *   - `'on'` — drop the artifact. Runs before VMCP-02.65 so the truncation sees
+ *     a de-artifacted array.
+ */
+export type RepUnrackDropMode = 'off' | 'on';
+
+/**
+ * Whether `finalizeSet` truncates the final rep's eccentric idle tail
+ * (VMCP-02.65).
+ *   - `'on'` (DEFAULT) — trim the parked-cable samples that land on the last
+ *     rep's eccentric. It deletes no rep and rewrites no raw sample; it moves
+ *     only that rep's derived `tempo_ratio` and eccentric mean velocity, which
+ *     are known wrong without it. Decided independently of VW-16.
+ *   - `'off'` — leave the idle tail on the phase.
+ *
+ * The VMCP-02.69a peak recompute and VMCP-02.64 derived-VBT persistence are
+ * gated by neither flag: they carry no movement-class dependence and always run.
+ */
+export type RepEccentricTruncateMode = 'off' | 'on';
+
+function onOffFlag(raw: string | undefined, name: string, fallback: 'off' | 'on'): 'off' | 'on' {
+  const value = raw ?? fallback;
+  if (value !== 'off' && value !== 'on') {
+    throw new Error(`Invalid ${name}="${value}". Must be "off" or "on".`);
+  }
+  return value;
+}
 
 /**
  * Whether the server speaks deterministic coaching cues off channel events
@@ -170,7 +201,8 @@ export interface Config {
   readonly logLevel: LogLevel;
   readonly repSource: RepSource;
   readonly restTimer: RestTimerMode;
-  readonly repCorrections: RepCorrectionsMode;
+  readonly repUnrackDrop: RepUnrackDropMode;
+  readonly repEccentricTruncate: RepEccentricTruncateMode;
   readonly cues: CuesMode;
   readonly cuesMidSet: CuesMidSetMode;
   readonly autoArm: AutoArmMode;
@@ -204,10 +236,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (restTimer !== 'off' && restTimer !== 'on') {
     throw new Error(`Invalid VMCP_REST_TIMER="${restTimer}". Must be "off" or "on".`);
   }
-  const repCorrections = env.VMCP_REP_CORRECTIONS ?? 'off';
-  if (repCorrections !== 'off' && repCorrections !== 'on') {
-    throw new Error(`Invalid VMCP_REP_CORRECTIONS="${repCorrections}". Must be "off" or "on".`);
-  }
+  // The coarse flag no longer carries a default of its own: when it is set it
+  // still moves both halves together, and when it is absent each half falls
+  // back to its own default (VMCP-02.65 on, VMCP-02.66 off behind VW-16).
+  const bothHalves =
+    env.VMCP_REP_CORRECTIONS === undefined
+      ? undefined
+      : onOffFlag(env.VMCP_REP_CORRECTIONS, 'VMCP_REP_CORRECTIONS', 'off');
+  const repUnrackDrop = onOffFlag(
+    env.VMCP_REP_UNRACK_DROP,
+    'VMCP_REP_UNRACK_DROP',
+    bothHalves ?? 'off',
+  );
+  const repEccentricTruncate = onOffFlag(
+    env.VMCP_REP_ECC_TRUNCATE,
+    'VMCP_REP_ECC_TRUNCATE',
+    bothHalves ?? 'on',
+  );
   const cues = env.VMCP_CUES ?? 'off';
   if (cues !== 'off' && cues !== 'on') {
     throw new Error(`Invalid VMCP_CUES="${cues}". Must be "off" or "on".`);
@@ -240,7 +285,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: (env.VMCP_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     repSource,
     restTimer,
-    repCorrections,
+    repUnrackDrop,
+    repEccentricTruncate,
     cues,
     cuesMidSet,
     autoArm,
