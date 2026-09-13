@@ -64,26 +64,34 @@ describe('plugin launcher shim (VW-66)', () => {
     }
   });
 
-  it('launches against the mock adapter and exits cleanly on SIGTERM', async () => {
-    const tmpDir = mkdtempSync(resolve(tmpdir(), 'vmcp-launcher-test-'));
-    const dbPath = resolve(tmpDir, 'vmcp.sqlite');
-    try {
-      const child = spawn(LAUNCHER_PATH, [], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          VOLTRAS_MCP_HOME: REPO_ROOT,
-          VOLTRA_ADAPTER: 'mock',
-          VMCP_DB_PATH: dbPath,
-          VMCP_DASHBOARD_PORT: '0',
-        },
-      });
-      await waitForReady(child);
-      child.kill('SIGTERM');
-      const result = await waitForExit(child);
-      expect(result.code).toBe(0);
-    } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+  // Spawns the real server: a process start, a SQLite file created on disk, and
+  // a SIGTERM shutdown, all exposed to CI fsync contention under full-suite load
+  // (VW-231, same reasoning as the v7 migration case). The 5s default is a
+  // timer, not an assertion about how fast a cold Node boot should be.
+  it(
+    'launches against the mock adapter and exits cleanly on SIGTERM',
+    { timeout: 30_000 },
+    async () => {
+      const tmpDir = mkdtempSync(resolve(tmpdir(), 'vmcp-launcher-test-'));
+      const dbPath = resolve(tmpDir, 'vmcp.sqlite');
+      try {
+        const child = spawn(LAUNCHER_PATH, [], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            VOLTRAS_MCP_HOME: REPO_ROOT,
+            VOLTRA_ADAPTER: 'mock',
+            VMCP_DB_PATH: dbPath,
+            VMCP_DASHBOARD_PORT: '0',
+          },
+        });
+        await waitForReady(child);
+        child.kill('SIGTERM');
+        const result = await waitForExit(child);
+        expect(result.code).toBe(0);
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
