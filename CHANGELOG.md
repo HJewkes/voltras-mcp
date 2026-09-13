@@ -12,6 +12,29 @@ version, which consumers must bump-and-reinstall to pick up launcher changes.
 
 Entries name the pull request that shipped them. Anything not listed did not change.
 
+## How to write an entry
+
+Entries are hand-written. There is no generator, no changeset tooling and no release
+workflow: this file is the record a reader trusts, so a human writes it.
+
+- Write what a **user** can now do, now sees, or no longer has to work around. Not which
+  file changed and not how it was implemented. "The rest timer now announces the last ten
+  seconds" is an entry; "refactored `timer-tools.ts`" is not.
+- Put it under `## [Unreleased]`, grouped **Added / Changed / Fixed / Removed**. Add only
+  the groups the release actually has.
+- Name the pull request that shipped it, as `(#123)`, or the ticket and the PR when both
+  exist.
+- **A change with no user-visible effect gets no entry, and that is fine.** Refactors,
+  test-only changes and internal renames belong in `git log`, not here. Padding this file
+  to prove work happened makes it useless for the thing it is for.
+- On release, rename `[Unreleased]` to the new version with its date, bump
+  `package.json`, and open a fresh empty `[Unreleased]`.
+
+`npm run changelog:check` enforces the mechanical half of this in CI: the version in
+`package.json` has a section, sections run newest first, and no released section is empty.
+An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
+entry is written from the user's point of view is a review question, not a check.
+
 ## [Unreleased]
 
 ### Added
