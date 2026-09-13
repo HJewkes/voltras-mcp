@@ -56,6 +56,7 @@ function completed(repCount: number): CompletedSet {
     repCount,
     reps: [],
     peakForceLbs: null,
+    setPurpose: 'working',
   };
 }
 
