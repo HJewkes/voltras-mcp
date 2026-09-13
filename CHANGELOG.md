@@ -170,6 +170,19 @@ entry is written from the user's point of view is a review question, not a check
   later. The schema gains `pre_session_carbs_level` and `pre_session_carbs_hours_since_meal`
   on `sessions` (v25); nothing is back-filled.
 
+- `isometric.measure_hold` now gates a hold against the joint angle its exercise's dynamic
+  form actually peaks force at (VW-296). Joint angle dominates what an isometric hold
+  predicts about the dynamic lift: an isometric squat predicted the full squat at r=0.864
+  held at 90 degrees of knee flexion but only r=0.597 held at 120 degrees (Lum, Haff &
+  Barbosa 2020, _Sports_ 8(5):63). Pass `exerciseId` and `setupAngleDeg` (the angle the
+  current physical setup implies — the tool cannot measure it) and the new `jointAngleGate`
+  on the result reports `comparable`, `angle_mismatch`, or `angle_unverified` when either
+  input is omitted or the exercise carries no known angle — checked against a small,
+  deliberately sparse static table, not a schema field. A mismatch warns by default (the
+  hold still runs); pass `strict: true` to refuse it as `INVALID_INPUT` instead. Omitting
+  both new inputs reproduces the exact pre-VW-296 behaviour. See the
+  [isometric guide](/guides/isometric#joint-angle-gate-measure-hold-only) for the full gate.
+
 - `metrics.compute` now reports fatigue on two separately named axes instead of one blended
   number (VW-306). `session.perturbation` and `session.fatigue` both gain `fatigueAxes`, with
   `entryDepression` — how far the session's opening working set sat below the lifter's own

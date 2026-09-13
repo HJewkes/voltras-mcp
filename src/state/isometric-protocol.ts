@@ -693,6 +693,140 @@ export function decideTestOrder(
   return [primarySide, secondarySide];
 }
 
+/**
+ * The joint angle at which an exercise's DYNAMIC form peaks force, for the
+ * exercises this table actually covers (VW-296). An isometric hold measures
+ * one angle; what it predicts about the dynamic lift depends heavily on
+ * whether that was the RIGHT angle — Lum, Haff & Barbosa (2020, Sports 8(5):63)
+ * found an isometric squat predicted the full squat at r=0.864 held at 90
+ * degrees of knee flexion, but only r=0.597 held at 120 degrees.
+ *
+ * DELIBERATELY SPARSE: the brief for this table is "the catalog's compound
+ * lifts", not "every exercise", and a made-up angle is worse than an admitted
+ * gap — {@link evaluateJointAngleGate} treats an exercise absent here exactly
+ * like an unrecognised id, `angle_unverified`, never a silent pass. Extend
+ * this table only from a cited source, the same standard the squat entry
+ * meets.
+ */
+export interface ExercisePeakAngle {
+  /** Degrees of joint flexion at which the exercise's dynamic form peaks force. */
+  jointAngleDeg: number;
+  /** The joint the angle is measured at (e.g. `'knee'`). */
+  joint: string;
+  /** Where `jointAngleDeg` comes from, quoted wherever the gate reports it. */
+  citation: string;
+}
+
+export const EXERCISE_PEAK_ANGLES: Readonly<Partial<Record<string, ExercisePeakAngle>>> = {
+  'cable-squat': {
+    jointAngleDeg: 90,
+    joint: 'knee',
+    citation: 'Lum, Haff & Barbosa 2020, Sports 8(5):63',
+  },
+};
+
+/**
+ * How far a declared setup angle may sit from the exercise's known peak angle
+ * before the two are judged a MATERIALLY different angle (VW-296).
+ *
+ * NOT read off {@link EXERCISE_PEAK_ANGLES}'s own citation: Lum et al. (2020)
+ * compared exactly two angles, 90 and 120 degrees, 30 degrees apart, and found
+ * the correlation had already dropped from a strong r=0.864 to a moderate
+ * r=0.597 by then — evidence that SOME gap in that range matters, not a
+ * measured threshold for where it starts. This value is a heuristic pending a
+ * study with more than two angles to interpolate between; it sits inside that
+ * 30-degree gap deliberately, so a hold near either published angle reads as
+ * a match and one drifting toward the other reads as a mismatch.
+ */
+export const JOINT_ANGLE_MISMATCH_THRESHOLD_DEG = 15;
+
+/** Whether a declared setup angle may be read against an exercise's known peak angle. */
+export type JointAngleComparability = 'comparable' | 'angle_mismatch' | 'angle_unverified';
+
+/** The joint-angle gate's answer: a verdict, why, and what it compared. */
+export interface JointAngleGateVerdict {
+  comparability: JointAngleComparability;
+  reason: string;
+  /** The exercise's known peak angle, or `null` when the gate could not look one up. */
+  exercisePeakAngleDeg: number | null;
+  /** The caller's declared setup angle, or `null` when none was given. */
+  setupAngleDeg: number | null;
+  /** `Math.abs(setupAngleDeg - exercisePeakAngleDeg)`, or `null` when either side is missing. */
+  deltaDeg: number | null;
+}
+
+/**
+ * Whether a hold's declared setup angle matches the angle its exercise's
+ * dynamic form actually peaks at (VW-296).
+ *
+ * DEGRADE, NEVER REFUSE SILENTLY, the same posture {@link compareSetupSignatures}
+ * takes on the equivalent cable-geometry question: no `exerciseId`, an
+ * exercise absent from {@link EXERCISE_PEAK_ANGLES}, or no `setupAngleDeg`
+ * are each `angle_unverified` — the gate did not run — never treated as a
+ * match or a mismatch.
+ */
+export function evaluateJointAngleGate(
+  exerciseId: string | undefined,
+  setupAngleDeg: number | undefined,
+): JointAngleGateVerdict {
+  const declaredSetupAngleDeg = setupAngleDeg ?? null;
+  if (exerciseId === undefined) {
+    return {
+      comparability: 'angle_unverified',
+      reason:
+        'no exerciseId was given, so there is no dynamic peak angle to check the setup against',
+      exercisePeakAngleDeg: null,
+      setupAngleDeg: declaredSetupAngleDeg,
+      deltaDeg: null,
+    };
+  }
+  const known = EXERCISE_PEAK_ANGLES[exerciseId];
+  if (known === undefined) {
+    return {
+      comparability: 'angle_unverified',
+      reason: `no known peak-force joint angle for exercise "${exerciseId}" — the angle gate did not run`,
+      exercisePeakAngleDeg: null,
+      setupAngleDeg: declaredSetupAngleDeg,
+      deltaDeg: null,
+    };
+  }
+  if (setupAngleDeg === undefined) {
+    return {
+      comparability: 'angle_unverified',
+      reason:
+        `"${exerciseId}" peaks at ${known.jointAngleDeg} degrees of ${known.joint} flexion ` +
+        `(${known.citation}), but no setupAngleDeg was given to check the current setup against it`,
+      exercisePeakAngleDeg: known.jointAngleDeg,
+      setupAngleDeg: null,
+      deltaDeg: null,
+    };
+  }
+  const deltaDeg = Math.abs(setupAngleDeg - known.jointAngleDeg);
+  if (deltaDeg > JOINT_ANGLE_MISMATCH_THRESHOLD_DEG) {
+    return {
+      comparability: 'angle_mismatch',
+      reason:
+        `setup angle ${setupAngleDeg} degrees is ${deltaDeg.toFixed(1)} degrees from "${exerciseId}"'s ` +
+        `known peak-force angle, ${known.jointAngleDeg} degrees of ${known.joint} flexion ` +
+        `(${known.citation}) — a hold at this setup measures a materially different angle than the one ` +
+        'that predicts the dynamic lift',
+      exercisePeakAngleDeg: known.jointAngleDeg,
+      setupAngleDeg,
+      deltaDeg,
+    };
+  }
+  return {
+    comparability: 'comparable',
+    reason:
+      `setup angle ${setupAngleDeg} degrees is within ${JOINT_ANGLE_MISMATCH_THRESHOLD_DEG} degrees of ` +
+      `"${exerciseId}"'s known peak-force angle, ${known.jointAngleDeg} degrees of ${known.joint} ` +
+      `flexion (${known.citation})`,
+    exercisePeakAngleDeg: known.jointAngleDeg,
+    setupAngleDeg,
+    deltaDeg,
+  };
+}
+
 function mean(xs: number[]): number {
   if (xs.length === 0) return 0;
   let sum = 0;

@@ -135,6 +135,12 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-294: the warm-up ramp's own field, on `isometric.measure_max`'s `warmup`.
   'effortLevel',
   'event_type',
+  // VW-296: the joint-angle gate on `isometric.measure_hold`'s `jointAngleGate`.
+  'jointAngleGate',
+  'exercisePeakAngleDeg',
+  'deltaDeg',
+  'angle_mismatch',
+  'angle_unverified',
   'feelSetOnly',
   'firmware_count',
   // VW-267: the e1RM error band's own fields, on `metrics.compute`'s

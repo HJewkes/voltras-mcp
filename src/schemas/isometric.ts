@@ -53,12 +53,22 @@ const HoldDurationMs = z
  * only; they steer nothing. `holdMs` is the same window (and default) the
  * multi-trial tools use, so one hold is comparable with a trial from a
  * `measure_max` run.
+ *
+ * `exerciseId` and `setupAngleDeg` are both optional and both new (VW-296):
+ * omitting either leaves the joint-angle gate `angle_unverified`, the same
+ * as every call made before this landed. `setupAngleDeg` is a per-call input,
+ * never persisted — it pairs with the human-declared setup card (VW-275)
+ * in spirit, not in storage; no schema migration backs it. `strict` (default
+ * false) turns a detected mismatch from a warning into a refusal.
  */
 export const IsometricMeasureHoldInput = z.object({
   slot: SlotIdSchema,
   side: z.enum(['left', 'right']).optional(),
   holdMs: HoldDurationMs,
   label: z.string().min(1).optional(),
+  exerciseId: z.string().min(1).optional(),
+  setupAngleDeg: z.number().min(0).max(180).optional(),
+  strict: z.boolean().optional().default(false),
 });
 
 /**
