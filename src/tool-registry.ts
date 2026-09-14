@@ -177,6 +177,16 @@ export const CORE_TOOL_NAMES = [
   // text a `send` decision would carry (VW-291). Read-only: it never sends
   // and never writes. See src/tools/accountability-tools.ts.
   'accountability.preview',
+  // Declared priorities and the coach's derived targets over them (VW-350).
+  // The human states priorities; the coach picks the metrics, reads a start
+  // value out of history and bands it. A target is FIXED once accepted.
+  // See src/tools/goal-tools.ts.
+  'goal.declare_priorities',
+  'goal.propose_targets',
+  'goal.accept_target',
+  'goal.list',
+  'goal.retire',
+  'goal.new_chapter',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -376,6 +386,16 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // Same read as `accountability.state`, plus a plan/report read to render
   // text. Persists nothing and sends nothing.
   'accountability.preview': 'read',
+
+  // `write`: each of these upserts SQLite rows in `priorities`,
+  // `goal_targets` or `advisory_decisions`.
+  'goal.declare_priorities': 'write',
+  'goal.propose_targets': 'write',
+  'goal.accept_target': 'write',
+  'goal.retire': 'write',
+  'goal.new_chapter': 'write',
+  // Reads the two goal tables and returns them. No row moves.
+  'goal.list': 'read',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

@@ -724,6 +724,48 @@ export interface ListBodyMetricsFilter {
   sinceDays?: number;
 }
 
+// --- Advisory decisions (table since v7, first writer VW-350) ---
+
+/** How the lifter answered an advisory. Absent means it was issued and not yet answered. */
+export type StoredAdvisoryResponse = 'accepted' | 'declined' | 'ignored';
+
+/**
+ * One row of `advisory_decisions` — an advisory the coach issued, the inputs
+ * and thresholds it fired on, and what the lifter said back.
+ *
+ * `inputs` and `thresholds` are stored as JSON text and returned parsed. What
+ * they hold is the issuing advisory's business; persisting BOTH is what lets a
+ * later threshold change be re-scored against the advisories it would have
+ * fired on, rather than settled by taste.
+ */
+export interface StoredAdvisoryDecision {
+  id: string;
+  userId: string;
+  sessionId?: string;
+  setId?: string;
+  /** Which advisory this is, e.g. `'goal_fat_loss_specialize_downgrade'`. */
+  code: string;
+  issuedAt: string;
+  inputs: Record<string, unknown>;
+  thresholds: Record<string, unknown>;
+  algorithmVersion: string;
+  /** What the advisory concluded, in the issuing advisory's own vocabulary. */
+  verdict: string;
+  userResponse?: StoredAdvisoryResponse;
+  respondedAt?: string;
+}
+
+/** Arguments to {@link SessionStore.putAdvisoryDecision}. `id` is generated when absent. */
+export interface PutAdvisoryDecisionInput extends Omit<StoredAdvisoryDecision, 'id'> {
+  id?: string;
+}
+
+/** Filter for {@link SessionStore.listAdvisoryDecisions}; every field narrows. */
+export interface ListAdvisoryDecisionsFilter {
+  code?: string;
+  userResponse?: StoredAdvisoryResponse;
+}
+
 // --- Priorities and goal targets (VW-349, v27) ---
 //
 // TWO TABLES, NOT ONE. A priority is a HUMAN DECLARATION ("get bench up"):
@@ -1790,6 +1832,22 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** A user's bodyweight readings, newest-first. */
   listBodyMetrics(userId: string, filter?: ListBodyMetricsFilter): Promise<StoredBodyMetric[]>;
+
+  // --- Advisory decisions (VW-350) ---
+
+  /**
+   * Record an advisory and, when the lifter has answered it, their answer.
+   * Insert-only on a fresh `id`: an advisory that fired is a fact about a
+   * moment, so a later answer is written as a second call carrying the same
+   * `id` rather than as a new row (`ON CONFLICT DO UPDATE`).
+   */
+  putAdvisoryDecision(input: PutAdvisoryDecisionInput): Promise<StoredAdvisoryDecision>;
+
+  /** A user's advisory decisions, newest first, narrowed by `filter`. */
+  listAdvisoryDecisions(
+    userId: string,
+    filter?: ListAdvisoryDecisionsFilter,
+  ): Promise<StoredAdvisoryDecision[]>;
 
   // --- Priorities and goal targets (VW-349) ---
 

@@ -45,6 +45,31 @@ entry is written from the user's point of view is a review question, not a check
   same as maintenance — since RP treats recomposition as a maintenance-calorie strategy
   rather than a fourth physiology.
 
+- You can now tell the coach what you want to emphasise, and it sets the numbers (VW-350).
+  `goal.declare_priorities` takes priorities in your own terms — "get bench up", "grow my
+  arms" — as muscles or lifts at `specialize`, `maintain` or `deprioritize`, and takes no
+  target value at all. `goal.propose_targets` then picks the metrics, reads your start
+  value out of your own history (never typed), and returns a band with a committed edge
+  and a stretch edge, each labelled with how much evidence is behind it: `cold` is the
+  programmed ramp with no claim about strength gained, `ramp` is the weekly increment,
+  `own` is your own fitted slope. `goal.accept_target` fixes it, `goal.list` shows every
+  priority with its targets, `goal.retire` ends one with an outcome, and
+  `goal.new_chapter` marks where a technique change restarts the comparison.
+
+  Two rules are worth knowing before you use it. **A target does not move once you accept
+  it**: the coach will not raise it when you are ahead, will not lower it when you are
+  behind, and a second acceptance is refused — retiring it with an outcome is the honest
+  way out. **The band is never shaded to match what you agreed to**: the committed value
+  is the conservative edge of the range, the stretch is the optimistic one, both are
+  shown, and reaching past the stretch edge is allowed only with an explicit
+  acknowledgement that leaves the drawn band exactly where it was.
+
+  Declaration guardrails advise and never block. More than two specialized items warns;
+  in a fat-loss phase the coach OFFERS to move a specialized item to maintenance and
+  waits for your answer, which is recorded so the same offer is not made twice; changing
+  a priority inside a block warns, as does dropping one you have held for less than two
+  mesocycles. Whatever you declared is what gets stored.
+
 ### Changed
 
 - Relabelling a maintenance run as a recomposition no longer throws away your comparison

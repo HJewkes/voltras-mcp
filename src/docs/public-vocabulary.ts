@@ -399,6 +399,37 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'phaseType',
   'isDeload',
   'weekIndex',
+  // VW-350: the `goal.*` results. A declared priority and its stored row
+  // (`mesosHeld`, `tierUsed`), the four advisory codes `goal.declare_priorities`
+  // can return, the derived band a proposal carries, and the three refusal
+  // codes `goal.accept_target` enforces the fixed-target rule with.
+  'mesosHeld',
+  'tierUsed',
+  'specialize_cap_exceeded',
+  'priority_changed_mid_block',
+  'priority_persistence_nudge',
+  'fat_loss_specialize_beginner_exception',
+  'declineFatLossDowngrade',
+  'anchorReps',
+  'startValue',
+  'startMeasuredAt',
+  'matchedSessionCount',
+  'bandLowPctPerWeek',
+  'bandHighPctPerWeek',
+  'committedValue',
+  'stretchValue',
+  'infoLevel',
+  'tierProvisional',
+  'dietPhaseAtDerivation',
+  'acceptedBy',
+  'acknowledgedStretch',
+  'acknowledgeStretch',
+  'bandUnchanged',
+  'newChapterAt',
+  'rpIds',
+  'GOAL_TARGET_FIXED',
+  'GOAL_TARGET_BELOW_BAND',
+  'GOAL_TARGET_ABOVE_BAND',
 ];
 
 /**

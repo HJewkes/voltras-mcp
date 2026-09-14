@@ -96,6 +96,10 @@
     "link": "/reference/accountability"
   },
   {
+    "text": "goal.*",
+    "link": "/reference/goal"
+  },
+  {
     "text": "mock.*",
     "link": "/reference/mock"
   },
