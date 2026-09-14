@@ -10,12 +10,53 @@ one doesn't repeat them.
 voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1` only, no
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
-`/api/plan-tree`, `/api/muscle-plan`, `/api/session-summary/:sessionId` — are all reads.
-That's the surface the README calls "read-only," and it's the one this guide is mostly
-about. `/api/muscle-plan` (VW-331) rolls up the active training week into planned-vs-done
-working sets per titan muscle group (VW-328), plus the still-untrained planned exercises
-per muscle — internal plumbing for the body-map page (VW-323), not surfaced on a route of
-its own yet.
+`/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/session-summary/:sessionId` —
+are all reads. That's the surface the README calls "read-only," and it's the one this guide
+is mostly about. `/api/muscle-plan` (VW-331) rolls up the active training week into
+planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
+planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
+how much you actually trained each muscle this week, and whether that is a lot or a little.
+Both are internal plumbing for the body-map page (VW-323), not surfaced on a page of their
+own yet.
+
+### `/api/muscle-week` — weekly sets per muscle
+
+```json
+{
+  "weekStart": "2026-07-06T00:00:00.000Z",
+  "muscleMapVersion": "2026-09-13.1",
+  "landmarkBasis": "population-default",
+  "muscles": [
+    {
+      "muscle": "chest",
+      "sets": 9,
+      "status": "maintenance",
+      "landmarks": { "mev": 8, "mav": 14, "mrv": 20 },
+      "lastTrainedAt": "2026-07-07T11:00:00.000Z"
+    }
+  ]
+}
+```
+
+All 15 titan muscle groups are always present, with zeros for the ones you didn't train, so
+a figure can paint every muscle rather than guessing at gaps. `?weekStart=` picks a week by
+any ISO instant inside it; the default is the current week, which starts Monday 00:00 UTC —
+the same boundary `history.weekly_volume` uses.
+
+A set counts toward its exercise's **primary** muscle group only. Secondary groups
+contribute nothing, at any weight: a chest press is chest volume, not chest volume plus a
+half-share of triceps. Only your own working sets count — a guest's sets, warm-ups, and sets
+where nothing was actually lifted are all left out. `lastTrainedAt` looks back further than
+the week itself, so a muscle you last trained a fortnight ago still reports the date.
+
+**`landmarkBasis` is always `population-default`, and that word matters.** MEV, MAV and MRV
+here are population reference numbers copied from the titan design system, not numbers
+discovered from your own training. Your actual landmarks can only come from watching how
+your set counts and performance move across mesocycles, which voltras-mcp does not yet do
+(VW-146). Until it does, read `status` as "how this week compares to a typical lifter," not
+as "how this week compares to what you can recover from." `status` is one of `under`,
+`maintenance`, `productive` or `over`, and the route never suggests adding sets or taking a
+deload — set count is a fatigue dial, not a progression tool.
 
 It isn't read-only end to end, though: the plan builder page writes through a small REST
 surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/exercises`,

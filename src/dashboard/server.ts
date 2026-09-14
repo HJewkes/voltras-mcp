@@ -62,6 +62,13 @@
 //                          B4 of the body-map plan) — every titan muscle group (VW-328),
 //                          zeros included. 404 `{ error: 'not_found' }` when no training
 //                          week is currently active.
+//   GET  /api/muscle-week — `{ weekStart, muscleMapVersion, landmarkBasis,
+//                          muscles: [{ muscle, sets, status, landmarks,
+//                          lastTrainedAt }] }` — weekly working sets per titan muscle
+//                          group against the POPULATION volume landmarks (VW-329, B2 of
+//                          the body-map plan). `?weekStart=` picks a week by any ISO
+//                          instant inside it; default is the current week. Every titan
+//                          muscle group, zeros included.
 //   POST /api/plan/programs                      — create a program + its first
 //                          block/week/workout (see `plan-api.ts` for why).
 //   POST /api/plan/programs/:id/workouts         — add a workout template.
@@ -86,6 +93,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildHistoryView,
   buildMusclePlanView,
+  buildMuscleWeekView,
   buildSessionPlanView,
   buildSessionSummary,
   buildSessionPaceView,
@@ -97,6 +105,7 @@ import {
   type DeviceEntry,
   type MusclePlanTemplateRow,
   type MusclePlanView,
+  type MuscleWeekView,
   type PrescriptionView,
   type SessionPaceView,
   type SessionPlanRows,
@@ -480,6 +489,10 @@ async function handleRequest(
     await serveMusclePlan(res, state);
     return;
   }
+  if (pathname === '/api/muscle-week') {
+    await serveMuscleWeek(res, state, url);
+    return;
+  }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
   if (summaryMatch !== null) {
     await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
@@ -675,6 +688,74 @@ async function serveMusclePlan(res: ServerResponse, state: DashboardServerState)
     templates,
     plannedExercises,
     completedSets,
+    catalog: (id) => state.exercises?.getById(id),
+    now,
+  });
+  sendJson(res, 200, view);
+}
+
+/**
+ * How far back of `lastTrainedAt` the muscle-week route can see. A muscle not
+ * trained inside this window reports `lastTrainedAt: null` rather than a date,
+ * which is the honest answer for a figure that only dims by staleness.
+ */
+const MUSCLE_WEEK_LOOKBACK_DAYS = 56;
+
+/** Generous cap on sessions fetched for the lookback window. @see MUSCLE_PLAN_SESSION_LIMIT */
+const MUSCLE_WEEK_SESSION_LIMIT = 500;
+
+/**
+ * The instant `?weekStart=` names, or `null` when the query parameter is
+ * present but unparseable. Absent means now, i.e. the current week.
+ */
+function parseWeekStartParam(url: URL): Date | null {
+  const raw = url.searchParams.get('weekStart');
+  if (raw === null || raw === '') return new Date();
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * `GET /api/muscle-week` (VW-329, B2 of the body-map plan): weekly working sets
+ * per titan muscle group against the population volume landmarks. `?weekStart=`
+ * selects a week by any ISO instant inside it; the default is the current week.
+ */
+async function serveMuscleWeek(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  if (!hasSessionStore(state.store)) {
+    sendJson(res, 501, { error: 'session_store_unavailable' });
+    return;
+  }
+  const now = parseWeekStartParam(url);
+  if (now === null) {
+    sendJson(res, 400, { error: 'invalid_input', message: 'weekStart is not an ISO date' });
+    return;
+  }
+
+  const weekStart = startOfCalendarWeekIso(now);
+  const from = new Date(weekStart);
+  from.setUTCDate(from.getUTCDate() - MUSCLE_WEEK_LOOKBACK_DAYS);
+  // Slack past the exact week boundary — `buildMuscleWeekView` applies the
+  // authoritative filter, so this only needs to not miss a session.
+  const to = new Date(weekStart);
+  to.setUTCDate(to.getUTCDate() + 8);
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:asc',
+    limit: MUSCLE_WEEK_SESSION_LIMIT,
+    offset: 0,
+    from: from.toISOString(),
+    to: to.toISOString(),
+  });
+  const sets: StoredSet[] = [];
+  for (const session of sessions) {
+    sets.push(...(await state.store.getSetsForSession(session.id)));
+  }
+
+  const view: MuscleWeekView = buildMuscleWeekView({
+    sets,
     catalog: (id) => state.exercises?.getById(id),
     now,
   });
