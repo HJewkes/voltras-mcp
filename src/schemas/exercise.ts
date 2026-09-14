@@ -51,3 +51,24 @@ export const ExerciseConfirmSetupInput = z
     card: SetupCardInput.optional(),
   })
   .strict();
+
+/**
+ * Input for `exercise.mark_new_chapter` (VW-361). `startedAt` defaults to now
+ * and may be in the past — a lifter naming the week the reform began is the
+ * ordinary case, not a correction. `reason` is their own words and is stored
+ * verbatim.
+ */
+export const ExerciseMarkNewChapterInput = z
+  .object({
+    exerciseId: IdSchema,
+    startedAt: z.string().datetime().optional(),
+    reason: z.string().min(1).max(500).optional(),
+  })
+  .strict();
+
+/** Input for `exercise.retire_chapter` — the `chapterId` a mark call returned. */
+export const ExerciseRetireChapterInput = z
+  .object({
+    chapterId: z.string().min(1),
+  })
+  .strict();

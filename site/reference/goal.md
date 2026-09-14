@@ -65,7 +65,7 @@ Pass exactly one id. RETIRING A PRIORITY CASCADES to every live target under it,
 
 Stamp `newChapterAt` on a target whose movement itself changed — a technique reform (squat depth, a grip change) that makes the stored `startValue` a measurement of a different exercise.
 
-THE TARGET’S NUMBERS DO NOT MOVE: this is not a way around the fixed-target rule, it records where the comparable series restarts so the read model shows a new chapter instead of a drop. Pass `at` to stamp a past instant; omitted means now. Returns `target` and `note`.
+THE TARGET’S NUMBERS DO NOT MOVE: this is not a way around the fixed-target rule, it records where the comparable series restarts so the read model shows a new chapter instead of a drop. Pass `at` to stamp a past instant; omitted means now. VW-361: the declaration lands in the exercise's own chapter table, so every PR and trend read for that exercise clamps to the same boundary and `newChapterAt` is the stamp of it rather than a second record. A target with no exercise behind it (bodyweight, session count) is refused — a chapter is a statement about a movement (rp:rp-s3-old-prs-irrelevant-reframe). Returns `target`, `chapterId` and `note`; undo with `exercise.retire_chapter`.
 
 **Parameters**
 

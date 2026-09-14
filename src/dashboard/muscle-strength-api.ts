@@ -63,6 +63,7 @@ export interface MuscleStrengthStore {
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
   getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;
   getDietPhaseCovering: SessionStore['getDietPhaseCovering'];
+  chapterStartedAt: SessionStore['chapterStartedAt'];
   getTrainingProfile(userId: string): Promise<StoredTrainingProfile | undefined>;
 }
 
@@ -141,6 +142,11 @@ function sideKeysOf(sets: readonly MuscleStrengthSetRow[]): MuscleStrengthSideKe
  * `computeHistoryTrend` throws `NOT_FOUND` for an empty window, which on this
  * page is an ordinary state (an exercise trained on one side only), not a
  * request error.
+ *
+ * VW-361: a declared chapter with nothing recorded since it returns a
+ * `null` fit instead of throwing, and lands in the same "no fit" state. The
+ * page shows no slope either way; what it must never do is draw one across
+ * the boundary.
  */
 async function fitForSide(
   store: MuscleStrengthStore,
@@ -158,6 +164,7 @@ async function fitForSide(
     // degrades through the analytics package's .d.ts under NodeNext resolution
     // (the same note `metrics-tools.ts` carries), so spreading it would widen
     // this wire shape to an index signature.
+    if (result.trend === null || result.plateau === null) return undefined;
     const { slope, intercept, rSquared, pointCount } = result.trend;
     return {
       trend: { slope, intercept, rSquared, pointCount },

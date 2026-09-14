@@ -1,5 +1,6 @@
-// Wave 3D — `exercise.search`, `exercise.get` and `exercise.confirm_setup`
-// tool registrations.
+// Wave 3D — `exercise.search`, `exercise.get`, `exercise.confirm_setup` and
+// the VW-361 chapter pair (`exercise.mark_new_chapter` /
+// `exercise.retire_chapter`) tool registrations.
 //
 // The first two are pure pass-throughs to the `ExerciseService` (R22 / AC-22):
 // the wave-2B service owns the upstream catalog seam (`searchExercises`,
@@ -30,6 +31,11 @@
 // what it writes is the one thing the ROM clustering in
 // `store/exercise-setups.ts` cannot derive — what a physical setup actually IS
 // (VW-119).
+//
+// The chapter pair writes for the same kind of reason: only a human knows a
+// technique reform happened, and every PR read clamps to what they declare
+// (`store/exercise-chapters.ts`). There is no detector here and there is not
+// meant to be one.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
@@ -37,10 +43,12 @@ import { mapSdkError } from '../errors.js';
 import {
   ExerciseConfirmSetupInput,
   ExerciseGetInput,
+  ExerciseMarkNewChapterInput,
+  ExerciseRetireChapterInput,
   ExerciseSearchInput,
 } from '../schemas/exercise.js';
 import type { ServerState } from '../state/server-state.js';
-import type { SetupCard, StoredExerciseSetup } from '../store/types.js';
+import { LOCAL_USER_ID, type SetupCard, type StoredExerciseSetup } from '../store/types.js';
 import { errorResult, textResult, wrapHandler, type ToolResult } from './helpers.js';
 
 /**
@@ -80,7 +88,52 @@ export function registerExerciseTools(
     callback: makeConfirmSetupCallback(state) as never,
     description: CONFIRM_SETUP_DESCRIPTION,
   } as never);
+
+  const markNewChapter = wrapHandler(ExerciseMarkNewChapterInput, async (input) => {
+    const now = new Date().toISOString();
+    return state.store.markExerciseChapter({
+      userId: LOCAL_USER_ID,
+      exerciseId: input.exerciseId,
+      startedAt: input.startedAt ?? now,
+      declaredAt: now,
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    });
+  });
+  placeholders.get('exercise.mark_new_chapter')?.update({
+    paramsSchema: ExerciseMarkNewChapterInput.shape,
+    callback: markNewChapter as never,
+    description: MARK_NEW_CHAPTER_DESCRIPTION,
+  } as never);
+
+  placeholders.get('exercise.retire_chapter')?.update({
+    paramsSchema: ExerciseRetireChapterInput.shape,
+    callback: makeRetireChapterCallback(state) as never,
+    description: RETIRE_CHAPTER_DESCRIPTION,
+  } as never);
 }
+
+const MARK_NEW_CHAPTER_DESCRIPTION =
+  'Declare that this exercise starts a new chapter (VW-361) — the point after which the ' +
+  "loads before it stop being the number to beat. Clamps this exercise's e1RM PR check, " +
+  '`history.trend` and `progression.get_for_exercise` to `startedAt`, so a pre-chapter best ' +
+  'can no longer win. Nothing is deleted, hidden or recomputed: the older sets stay exactly ' +
+  'where they are and `exercise.retire_chapter` undoes the declaration. ' +
+  'MANUAL ONLY, NEVER INFERRED. Do not call this because a number dropped, a set looked ' +
+  'ragged or a layoff ended — nothing here can tell a technique reform from a bad week, and a ' +
+  'wrong call silently erases PR history the lifter earned. Call it when the lifter (or their ' +
+  'coach) says the movement itself changed: a reformed squat depth, a new grip, a corrected ' +
+  'bar path. `startedAt` defaults to now and may be backdated to when the reform began; ' +
+  "`reason` is the lifter's own words. The framing is RP's own — pre-reform PRs \"don't " +
+  'count" because they were set with the faulty technique, and beating them later is a bonus, ' +
+  'not the goal (rp:rp-s3-old-prs-irrelevant-reframe).';
+
+const RETIRE_CHAPTER_DESCRIPTION =
+  'Undo a chapter declared by `exercise.mark_new_chapter` (VW-361), by the `id` that call ' +
+  "returned. The exercise's full history becomes comparable again immediately, because the " +
+  'chapter only ever clamped a window — no set, rep or baseline was changed when it was ' +
+  'declared, so none needs restoring now. The row itself is kept and marked retired rather ' +
+  'than deleted: that the lifter once declared a reform is history too. NOT_FOUND if no ' +
+  'chapter carries that id (rp:rp-s3-old-prs-irrelevant-reframe).';
 
 const CONFIRM_SETUP_DESCRIPTION =
   'Name an inferred physical setup (VW-119) — the bench height, attachment or stance a group ' +
@@ -177,6 +230,36 @@ async function confirmSetup(
   };
   await state.store.putExerciseSetup(confirmed);
   return confirmed;
+}
+
+/**
+ * Build the `exercise.retire_chapter` callback. Inline rather than via
+ * `wrapHandler` for the same reason as `exercise.get`: an unknown `chapterId`
+ * must surface as `NOT_FOUND`, not as a success carrying `undefined`.
+ */
+function makeRetireChapterCallback(
+  state: ServerState,
+): (args: unknown, extra?: unknown) => Promise<ToolResult> {
+  return async (args: unknown, _extra?: unknown): Promise<ToolResult> => {
+    const parsed = ExerciseRetireChapterInput.safeParse(args);
+    if (!parsed.success) {
+      return errorResult({ code: 'INVALID_INPUT', message: parsed.error.message });
+    }
+    try {
+      const retired = await state.store.retireExerciseChapter(
+        parsed.data.chapterId,
+        new Date().toISOString(),
+      );
+      return retired === undefined
+        ? errorResult({
+            code: 'NOT_FOUND',
+            message: `Chapter not found: ${parsed.data.chapterId}. Ids come from exercise.mark_new_chapter.`,
+          })
+        : textResult(retired);
+    } catch (err) {
+      return errorResult(mapSdkError(err));
+    }
+  };
 }
 
 /**

@@ -745,6 +745,47 @@ export interface ListBodyMetricsFilter {
   sinceDays?: number;
 }
 
+// --- Exercise chapters (v29, VW-361) ---
+
+/**
+ * One row of `exercise_chapters` — a DECLARED boundary in one exercise's
+ * history, after which the pre-boundary numbers stop being the thing to beat
+ * (VW-361, rp:rp-s3-old-prs-irrelevant-reframe).
+ *
+ * DECLARED, NEVER DETECTED. Nothing in this repo can tell a technique reform
+ * from a bad week, and the failure is asymmetric: a false positive silently
+ * erases PR history the lifter earned. Every row here is a human saying so.
+ *
+ * ADDITIVE AND REVERSIBLE. The row hides nothing and deletes nothing — every
+ * reader clamps a window it already computed. `retiredAt` undoes the
+ * declaration; the pre-chapter sets stay exactly where they were.
+ *
+ * `endedAt` is stored and NOT READ by anything (VW-361 §4). RP's reform is a
+ * cycle with a reintroduction at its end, so the column is here for the
+ * consumer that eventually wants the window; until then `startedAt` alone
+ * decides every clamp.
+ */
+export interface StoredExerciseChapter {
+  id: string;
+  userId: string;
+  exerciseId: string;
+  startedAt: string;
+  endedAt?: string;
+  declaredAt: string;
+  reason?: string;
+  retiredAt?: string;
+}
+
+/** Arguments to {@link SessionStore.markExerciseChapter}. */
+export interface MarkExerciseChapterInput {
+  userId: string;
+  exerciseId: string;
+  /** When the chapter began. May be in the past — that is the correction path. */
+  startedAt: string;
+  declaredAt: string;
+  reason?: string;
+}
+
 // --- Advisory decisions (table since v7, first writer VW-350) ---
 
 /** How the lifter answered an advisory. Absent means it was issued and not yet answered. */
@@ -1839,6 +1880,33 @@ export interface SessionStore extends ExerciseSetupStore {
    * declared anything.
    */
   getSessionDietPhase(sessionId: string): Promise<string | undefined>;
+
+  // --- Exercise chapters (VW-361) ---
+
+  /**
+   * Declare a new chapter for one exercise. INSERT ONLY: a declaration is a
+   * fact about a moment, and a second one is a second row, so a correction is
+   * made by retiring the wrong row and declaring again rather than by
+   * overwriting. Nothing is deleted, hidden or recomputed.
+   */
+  markExerciseChapter(input: MarkExerciseChapterInput): Promise<StoredExerciseChapter>;
+
+  /**
+   * Undo a declaration. The row stays for the audit trail and stops counting
+   * the instant `retiredAt` is set, so the exercise's full history becomes
+   * comparable again. `undefined` when no such chapter exists.
+   */
+  retireExerciseChapter(id: string, retiredAt: string): Promise<StoredExerciseChapter | undefined>;
+
+  /** A user's chapters, newest-first. Retired rows are included. */
+  listExerciseChapters(userId: string, exerciseId?: string): Promise<StoredExerciseChapter[]>;
+
+  /**
+   * The latest non-retired `startedAt` for one exercise, or `null` when the
+   * lifter has declared none. This is the one read every clamp goes through:
+   * `from = max(windowStart, chapterStartedAt)`.
+   */
+  chapterStartedAt(userId: string, exerciseId: string): Promise<string | null>;
 
   // --- Body metrics (VW-327) ---
 

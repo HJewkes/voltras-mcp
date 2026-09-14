@@ -167,6 +167,7 @@ function makeSession(
 function makeStore(
   sessions: StoredSession[],
   setMap: Record<string, StoredSet[]>,
+  chapterStartedAt: string | null = null,
 ): SessionStore & {
   listSessions: ReturnType<typeof vi.fn>;
   getSetsForSession: ReturnType<typeof vi.fn>;
@@ -227,6 +228,9 @@ function makeStore(
     listExerciseSetups: vi.fn(async () => []),
     putExerciseSetup: vi.fn(async () => {}),
     stampSetSetup: vi.fn(async () => {}),
+    // VW-361: no declared chapter, so the window the caller asked for is the
+    // window that is read. The clamp has its own test file.
+    chapterStartedAt: vi.fn(async () => chapterStartedAt),
     close: vi.fn(async () => {}),
   };
 }
@@ -238,8 +242,12 @@ interface Harness {
   store: ReturnType<typeof makeStore>;
 }
 
-function setup(sessions: StoredSession[], setMap: Record<string, StoredSet[]>): Harness {
-  const store = makeStore(sessions, setMap);
+function setup(
+  sessions: StoredSession[],
+  setMap: Record<string, StoredSet[]>,
+  chapterStartedAt: string | null = null,
+): Harness {
+  const store = makeStore(sessions, setMap, chapterStartedAt);
   const state = {
     config: {} as never,
     slots: new Map(),

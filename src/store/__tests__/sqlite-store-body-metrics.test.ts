@@ -134,7 +134,7 @@ describe('migrateV25ToV26', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('lands a fresh DB at SCHEMA_VERSION 28 and enforces the natural key', async () => {
+  it('lands a fresh DB at SCHEMA_VERSION 29 and enforces the natural key', async () => {
     const store = SqliteSessionStore.open(path);
     await store.putBodyMetric({
       userId: LOCAL_USER_ID,
@@ -146,7 +146,7 @@ describe('migrateV25ToV26', () => {
     const db = new DatabaseSync(path);
     try {
       const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(row.user_version).toBe(28);
+      expect(row.user_version).toBe(29);
       expect(() =>
         db
           .prepare(

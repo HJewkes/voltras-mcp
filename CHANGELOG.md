@@ -39,6 +39,21 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- After a technique reform, your old PRs stop being the number to beat (VW-361).
+  `exercise.mark_new_chapter` declares that a movement itself changed — a reformed squat
+  depth, a new grip, a corrected bar path — and from that point the e1RM PR check,
+  `history.trend` and `progression.get_for_exercise` all read from the boundary forward.
+  A load you set with the old technique can no longer win, and the first session after the
+  boundary is reported as a fresh baseline rather than as a drop. Nothing is deleted or
+  hidden: the older sets are still there, and `exercise.retire_chapter` undoes the
+  declaration and gives you the full history back.
+
+  **You declare it; nothing detects it.** There is no inference here on purpose — nothing
+  the server can see tells a genuine reform from a bad week, and guessing wrong would
+  quietly erase PR history you earned. `goal.new_chapter` now files the same declaration,
+  so a goal target and the exercise behind it can never disagree about where the chapter
+  started.
+
 - `profile.set_diet_phase` now accepts `recomposition` as a fourth diet phase, alongside
   `fat-loss`, `gain` and `maintenance` (VW-363). It runs on maintenance's arithmetic
   throughout — the autoregulation tolerance table applies no widening or tightening for it,

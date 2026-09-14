@@ -2,7 +2,7 @@
 
 # `exercise.*`
 
-3 tools in the `exercise` namespace.
+5 tools in the `exercise` namespace.
 
 ## `exercise.search`
 
@@ -35,3 +35,25 @@ Name an inferred physical setup (VW-119) — the bench height, attachment or sta
 - `setupId` — `string`, **required**.
 - `label` — `string`, **required**.
 - `card` — `object`, optional.
+
+## `exercise.mark_new_chapter`
+
+Declare that this exercise starts a new chapter (VW-361) — the point after which the loads before it stop being the number to beat.
+
+Clamps this exercise's e1RM PR check, `history.trend` and `progression.get_for_exercise` to `startedAt`, so a pre-chapter best can no longer win. Nothing is deleted, hidden or recomputed: the older sets stay exactly where they are and `exercise.retire_chapter` undoes the declaration. MANUAL ONLY, NEVER INFERRED. Do not call this because a number dropped, a set looked ragged or a layoff ended — nothing here can tell a technique reform from a bad week, and a wrong call silently erases PR history the lifter earned. Call it when the lifter (or their coach) says the movement itself changed: a reformed squat depth, a new grip, a corrected bar path. `startedAt` defaults to now and may be backdated to when the reform began; `reason` is the lifter's own words. The framing is RP's own — pre-reform PRs "don't count" because they were set with the faulty technique, and beating them later is a bonus, not the goal (rp:rp-s3-old-prs-irrelevant-reframe).
+
+**Parameters**
+
+- `exerciseId` — `string`, **required**.
+- `startedAt` — `string`, optional.
+- `reason` — `string`, optional.
+
+## `exercise.retire_chapter`
+
+Undo a chapter declared by `exercise.mark_new_chapter` (VW-361), by the `id` that call returned.
+
+The exercise's full history becomes comparable again immediately, because the chapter only ever clamped a window — no set, rep or baseline was changed when it was declared, so none needs restoring now. The row itself is kept and marked retired rather than deleted: that the lifter once declared a reform is history too. NOT_FOUND if no chapter carries that id (rp:rp-s3-old-prs-irrelevant-reframe).
+
+**Parameters**
+
+- `chapterId` — `string`, **required**.
