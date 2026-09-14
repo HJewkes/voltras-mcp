@@ -16,6 +16,11 @@
 // and every comparability reader of it still only report the phase next to a
 // verdict for a reader to discount by hand.
 //
+// THE EQUIVALENCE TABLE IS VOCABULARY, NOT INTERPRETATION (VW-366).
+// `dietPhasesComparable` says which tags name the same training context, so a
+// lifter who relabels maintenance as recomposition keeps every pair they had.
+// It reads the corpus's own synonymy, and no caller may read a verdict off it.
+//
 // VW-277 IS THE EXCEPTION, AND IT IS EXPLICIT. `analytics/diet-phase-tolerance.ts`
 // now moves autoregulation thresholds off the phase and weeks-in-phase, for the
 // three callers named in its header. The citation B34 lacked is the mined RP
@@ -53,4 +58,47 @@ export function covers(range: DietPhaseRange, from: string, to: string): boolean
 /** Is `value` one of the three observed phases? */
 export function isDietPhase(value: string): value is DietPhase {
   return (DIET_PHASES as readonly string[]).includes(value);
+}
+
+/** The distinct sets of arithmetic the vocabulary maps onto (VW-366). */
+type PhaseEquivalenceClass = 'fat-loss' | 'gain' | 'maintenance';
+
+/**
+ * Which class each phase belongs to. Keyed by the union rather than `string`,
+ * so a phase added to {@link DIET_PHASES} without a class chosen for it here is
+ * a type error rather than a silent mismatch.
+ *
+ * `'recomposition'` is keyed before VW-363 adds it to {@link DIET_PHASES}: the
+ * corpus uses the word as a synonym for the middle phase, so it shares
+ * maintenance's class and its arithmetic rather than naming a fourth
+ * physiology. Remove the extra key once the union carries it.
+ */
+const PHASE_EQUIVALENCE_CLASSES: Record<DietPhase | 'recomposition', PhaseEquivalenceClass> = {
+  'fat-loss': 'fat-loss',
+  gain: 'gain',
+  maintenance: 'maintenance',
+  recomposition: 'maintenance',
+};
+
+/**
+ * May two recorded phase tags be compared as the same training context?
+ *
+ * Absence is the CALLER's question, not this one's: `analytics/comparability.ts`
+ * decides what an unrecorded phase means before either string reaches here. A
+ * string this table has not been taught only ever matches itself, so a future
+ * phase cannot become comparable by accident.
+ */
+export function dietPhasesComparable(a: string, b: string): boolean {
+  const left = equivalenceClassOf(a);
+  const right = equivalenceClassOf(b);
+  if (left === undefined || right === undefined) return a === b;
+  return left === right;
+}
+
+function equivalenceClassOf(phase: string): PhaseEquivalenceClass | undefined {
+  return isClassedPhase(phase) ? PHASE_EQUIVALENCE_CLASSES[phase] : undefined;
+}
+
+function isClassedPhase(value: string): value is keyof typeof PHASE_EQUIVALENCE_CLASSES {
+  return Object.hasOwn(PHASE_EQUIVALENCE_CLASSES, value);
 }

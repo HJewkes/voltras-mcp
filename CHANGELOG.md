@@ -39,6 +39,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- Relabelling a maintenance run as a recomposition no longer throws away your comparison
+  history (VW-366). Sessions tagged `maintenance` and sessions tagged `recomposition` now
+  count as the same training context, so every trend, PR and progression basis that was
+  matched before the relabel stays matched after it. A pair that spans the two labels says
+  so in its reasons, rather than quietly appearing as if nothing changed. `fat-loss` and
+  `gain` are untouched: each still only compares against itself, and a session with no
+  declared phase pairs exactly as it did before.
+
 - `isometric.measure_max` now runs its own warm-up ramp and inter-trial rest instead of
   leaving both to the coach (VW-294). By default it runs two brief submaximal pulls — one
   cued at roughly 50% effort, then one at roughly 75% — before the trial loop,
