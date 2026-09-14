@@ -178,6 +178,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The dashboard now draws on titan 0.15.0 (VW-345, #431). Status badges on the planner page sit
+  on a wider pill — 12px of padding either side instead of 8, and 4px above and below
+  instead of 2 — so a label like `completed` reads as a chip rather than as tight text.
+  The session-summary page's fatigue colours (the e1RM trend line's change figure and the
+  next-session recommendation) now resolve against the surface they are drawn on instead
+  of a palette fixed when the page loads, so they follow the theme; the three colours
+  themselves are unchanged today. The muscle chips, the outline pills and every button
+  label keep the size and colour they had — the dashboard names its own solid-button label
+  colour, so titan's contrast change does not reach it. Newly available to the dashboard,
+  not yet used anywhere: a goal-trajectory chart, a muscle strip, and a wall-sized body
+  map.
+
 - Finishing the last workout of a block now asks about your declared priorities instead of
   quoting the free-text goal on file (VW-359). `plan.complete_workout` and
   `plan.next_workout` name each priority and how many mesocycles you have held it, offer
