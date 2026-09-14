@@ -392,6 +392,7 @@ describe('coaching.explain', () => {
       'rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope',
       'rp-s12-minimum-half-week-before-recalorie-change',
       'rp-s11-fat-loss-rate-heuristic',
+      'rp-s12-scale-opacity-salt-and-water',
     ]);
   });
 
@@ -401,8 +402,9 @@ describe('coaching.explain', () => {
       // Arrange / Act
       const body = parseResult(await h.invoke({ topic: 'diet.rate_autoregulation', tier }));
 
-      // Assert: this topic has no perTier entry (the corpus states the band
-      // is tier-invariant), so every tier falls back to the same explanation.
+      // Assert: this topic has no perTier entry (the corpus is silent on a
+      // tier-specific rate, not stated invariant), so every tier falls back
+      // to the same explanation.
       expect(body.explanation.length).toBeGreaterThan(0);
       expect(body.sources.length).toBeGreaterThan(0);
     },
