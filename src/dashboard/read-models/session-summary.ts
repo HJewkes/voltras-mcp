@@ -82,6 +82,9 @@ export interface DashboardSessionStore extends LoadDriftStore {
     limit: number;
     offset: number;
     exerciseId?: string;
+    /** Inclusive/exclusive ISO bounds — the muscle-plan route's calendar-week scope (VW-331). */
+    from?: string;
+    to?: string;
   }): Promise<StoredSession[]>;
   /** This lifter's cross-session sets for one exercise — feeds `expectedRepRange` (VW-301). */
   getSetsForExercise(filter: ExerciseSetsFilter): Promise<StoredSet[]>;

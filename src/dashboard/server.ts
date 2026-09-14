@@ -56,6 +56,12 @@
 //                          activeExerciseId }`. `?programId=` selects; default is
 //                          the most recent non-archived program. Poll this to see
 //                          an agent's `plan.*` writes appear live.
+//   GET  /api/muscle-plan — `{ weekStart, weekIndex, isDeload, muscleMapVersion,
+//                          muscles: [{ muscle, plannedSetsThisWeek, doneSetsThisWeek,
+//                          plannedRemaining }] }` for the active training week (VW-331,
+//                          B4 of the body-map plan) — every titan muscle group (VW-328),
+//                          zeros included. 404 `{ error: 'not_found' }` when no training
+//                          week is currently active.
 //   POST /api/plan/programs                      — create a program + its first
 //                          block/week/workout (see `plan-api.ts` for why).
 //   POST /api/plan/programs/:id/workouts         — add a workout template.
@@ -79,14 +85,18 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildHistoryView,
+  buildMusclePlanView,
   buildSessionPlanView,
   buildSessionSummary,
   buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
   resolveSummarySessionId,
+  startOfCalendarWeekIso,
   type DashboardSessionStore,
   type DeviceEntry,
+  type MusclePlanTemplateRow,
+  type MusclePlanView,
   type PrescriptionView,
   type SessionPaceView,
   type SessionPlanRows,
@@ -118,6 +128,8 @@ import {
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredExerciseSetup,
+  type StoredSet,
+  type StoredTrainingWeek,
   type SetupCard,
 } from '../store/types.js';
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
@@ -183,6 +195,9 @@ export interface DashboardServerState {
       limit: number;
       offset: number;
       exerciseId?: string;
+      /** Inclusive/exclusive ISO bounds — the muscle-plan route's calendar-week scope (VW-331). */
+      from?: string;
+      to?: string;
     }): Promise<StoredSession[]>;
     getPlannedExercisesForTemplate?(templateId: string): Promise<StoredPlannedExercise[]>;
     /** Plan assignments attached to a session — feeds the active-exercise prescription. */
@@ -461,6 +476,10 @@ async function handleRequest(
     await servePlanTree(res, state, url);
     return;
   }
+  if (pathname === '/api/muscle-plan') {
+    await serveMusclePlan(res, state);
+    return;
+  }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
   if (summaryMatch !== null) {
     await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
@@ -572,6 +591,94 @@ async function servePlanTree(
     active: activeSessionContext(state),
   });
   sendJson(res, 200, tree);
+}
+
+/** The active week's plan structure, resolved by `findActiveWeek`. */
+interface ActiveWeek {
+  week: StoredTrainingWeek;
+  templates: MusclePlanTemplateRow[];
+}
+
+/**
+ * The active training week — the same "first template with no assignment" walk
+ * `plan.next_workout` (`plan-tools.ts`) runs, reimplemented here against
+ * `DashboardPlanStore` for the same reason `fetchPlanTree` reimplements its own
+ * tree walk rather than importing the MCP-bound tool handler (VW-331).
+ */
+async function findActiveWeek(store: DashboardPlanStore): Promise<ActiveWeek | null> {
+  const programs = await store.listTrainingPrograms({ includeArchived: true });
+  const program = programs.find((p) => p.archivedAt === undefined);
+  if (program === undefined) return null;
+  for (const block of await store.getTrainingBlocksForProgram(program.id)) {
+    for (const week of await store.getTrainingWeeksForBlock(block.id)) {
+      const templates: MusclePlanTemplateRow[] = [];
+      let hasIncomplete = false;
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        const completed = (await store.getAssignmentsForTemplate(template.id)).length > 0;
+        if (!completed) hasIncomplete = true;
+        templates.push({ id: template.id, name: template.name, completed });
+      }
+      if (hasIncomplete) return { week, templates };
+    }
+  }
+  return null;
+}
+
+/**
+ * Generous cap on sessions fetched for one calendar week — matches the
+ * convention `HISTORY_WEEKLY_VOLUME_SESSION_LIMIT` sets in `metrics-tools.ts`.
+ */
+const MUSCLE_PLAN_SESSION_LIMIT = 200;
+
+/**
+ * `GET /api/muscle-plan` (VW-331, B4 of the body-map plan): planned vs done
+ * working sets this week per titan muscle group, plus the upcoming planned
+ * exercises per muscle, for the active training week. 404s the same shape
+ * `/api/session-summary` does when no training week is currently active.
+ */
+async function serveMusclePlan(res: ServerResponse, state: DashboardServerState): Promise<void> {
+  if (!hasPlanStore(state.store) || !hasSessionStore(state.store)) {
+    sendJson(res, 501, { error: 'plan_store_unavailable' });
+    return;
+  }
+  const active = await findActiveWeek(state.store);
+  if (active === null) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  const { week, templates } = active;
+  const plannedExercises: StoredPlannedExercise[] = [];
+  for (const template of templates) {
+    plannedExercises.push(...(await state.store.getPlannedExercisesForTemplate(template.id)));
+  }
+
+  const now = new Date();
+  const weekStart = startOfCalendarWeekIso(now);
+  // Slack past the exact week boundary — `buildMusclePlanView` applies the
+  // authoritative filter, so this only needs to not miss a session.
+  const queryEnd = new Date(weekStart);
+  queryEnd.setUTCDate(queryEnd.getUTCDate() + 8);
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:asc',
+    limit: MUSCLE_PLAN_SESSION_LIMIT,
+    offset: 0,
+    from: weekStart,
+    to: queryEnd.toISOString(),
+  });
+  const completedSets: StoredSet[] = [];
+  for (const session of sessions) {
+    completedSets.push(...(await state.store.getSetsForSession(session.id)));
+  }
+
+  const view: MusclePlanView = buildMusclePlanView({
+    week,
+    templates,
+    plannedExercises,
+    completedSets,
+    catalog: (id) => state.exercises?.getById(id),
+    now,
+  });
+  sendJson(res, 200, view);
 }
 
 async function serveSessionSummary(
