@@ -32,11 +32,29 @@ const WEEK: StoredTrainingWeek = {
 const TEMPLATE_A: MusclePlanTemplateRow = { id: 'tpl-a', name: 'Upper A', completed: true };
 const TEMPLATE_B: MusclePlanTemplateRow = { id: 'tpl-b', name: 'Upper B', completed: false };
 
-const CATALOG: Record<string, { name?: string; muscleGroups: string[] }> = {
+/**
+ * `secondaryMuscleGroups` mirrors the seed catalog's shape (`seed-catalog.ts`)
+ * and the real `state.exercises.getById` return shape — `MuscleCatalogLookup`
+ * doesn't name it, but nothing stops a future edit from reading it anyway, so
+ * the regression fixture carries it for real rather than requiring a future
+ * mutation check to fabricate it.
+ */
+const CATALOG: Record<
+  string,
+  { name?: string; muscleGroups: string[]; secondaryMuscleGroups?: string[] }
+> = {
   'chest-press': { name: 'Chest Press', muscleGroups: ['chest'] },
   'overhead-press': { name: 'Overhead Press', muscleGroups: ['shoulders'] },
+  'cable-chest-press': {
+    name: 'Cable Chest Press',
+    muscleGroups: ['chest'],
+    secondaryMuscleGroups: ['triceps'],
+  },
 };
-const catalog = (id: string): { name?: string; muscleGroups: string[] } | undefined => CATALOG[id];
+const catalog = (
+  id: string,
+): { name?: string; muscleGroups: string[]; secondaryMuscleGroups?: string[] } | undefined =>
+  CATALOG[id];
 
 function plannedExercise(overrides: Partial<StoredPlannedExercise> = {}): StoredPlannedExercise {
   return {
@@ -89,6 +107,31 @@ describe('buildMusclePlanView', () => {
     expect(chest?.plannedRemaining).toEqual([
       { workoutName: 'Upper B', exerciseId: 'chest-press', exerciseName: 'Chest Press', sets: 4 },
     ]);
+  });
+
+  it('never credits a secondary muscle group — target-only (B47)', () => {
+    const rows: MusclePlanRows = {
+      week: WEEK,
+      templates: [TEMPLATE_B],
+      plannedExercises: [
+        plannedExercise({
+          id: 'pe-secondary',
+          workoutTemplateId: 'tpl-b',
+          exerciseId: 'cable-chest-press',
+          targetSets: 5,
+        }),
+      ],
+      completedSets: [completedSet({ exerciseId: 'cable-chest-press' })],
+      catalog,
+      now: NOW,
+    };
+    const muscles = musclesOf(buildMusclePlanView(rows));
+    expect(muscles.get('chest')?.plannedSetsThisWeek).toBe(5);
+    expect(muscles.get('chest')?.doneSetsThisWeek).toBe(1);
+    // `cable-chest-press`'s secondary group is `triceps` — it must stay at zero.
+    expect(muscles.get('triceps')?.plannedSetsThisWeek).toBe(0);
+    expect(muscles.get('triceps')?.doneSetsThisWeek).toBe(0);
+    expect(muscles.get('triceps')?.plannedRemaining).toEqual([]);
   });
 
   it('credits every titan slug a coarse catalog group maps to, in full', () => {
