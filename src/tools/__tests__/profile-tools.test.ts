@@ -560,10 +560,12 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
 
+  // VW-378 made `recompMode` required here; the rest of the case is VW-363's.
   it('accepts recomposition as a fourth phase and stamps sessions with it (VW-363)', async () => {
     const r = await h.invoke('profile.set_diet_phase', {
       phase: 'recomposition',
       startedAt: '2026-01-01T00:00:00.000Z',
+      recompMode: 'hold',
     });
 
     expect(r.isError).toBeUndefined();
@@ -572,6 +574,51 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
 
     await h.store.putSession({ id: 'sess-1', startedAt: '2026-02-01T00:00:00.000Z' });
     expect(await h.store.getSessionDietPhase('sess-1')).toBe('recomposition');
+  });
+
+  it('carries the declared recomposition mode onto the range (VW-378)', async () => {
+    const r = await h.invoke('profile.set_diet_phase', {
+      phase: 'recomposition',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      recompMode: 'slow-loss',
+    });
+
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as { declared: { recompMode?: string } };
+    expect(body.declared.recompMode).toBe('slow-loss');
+    const covering = await h.store.getDietPhaseCovering(
+      LOCAL_USER_ID,
+      '2026-02-01T00:00:00.000Z',
+      '2026-02-01T00:00:00.000Z',
+    );
+    expect(covering?.recompMode).toBe('slow-loss');
+  });
+
+  it('refuses a recomposition with no declared mode (VW-378)', async () => {
+    const r = await h.invoke('profile.set_diet_phase', { phase: 'recomposition' });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('refuses a recompMode on any phase that is not a recomposition (VW-378)', async () => {
+    const r = await h.invoke('profile.set_diet_phase', {
+      phase: 'fat-loss',
+      recompMode: 'slow-loss',
+    });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects a recompMode outside the two declared values (VW-378)', async () => {
+    const r = await h.invoke('profile.set_diet_phase', {
+      phase: 'recomposition',
+      recompMode: 'fast-loss',
+    });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
   });
 
   it('rejects unknown keys with INVALID_INPUT', async () => {

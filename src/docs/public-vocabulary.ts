@@ -293,6 +293,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'pre_summary',
   'priorPair',
   'raw_frame',
+  // VW-378: the declared recomposition bodyweight target, echoed back on every
+  // `profile.set_diet_phase` range it was declared on.
+  'recompMode',
   'repCount',
   'run_in_background',
   'repCountDisagreement',

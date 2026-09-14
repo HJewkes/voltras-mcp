@@ -195,6 +195,12 @@ interface ProposedTargetShape {
   acceptedBy: null;
 }
 
+/** The band edges VW-378's declared mode is supposed to move. */
+interface ProposedBodyweightShape extends ProposedTargetShape {
+  bandLowPctPerWeek: number;
+  bandHighPctPerWeek: number;
+}
+
 async function proposeFirstTarget(
   harness: Harness,
   priorityId: string,
@@ -453,6 +459,66 @@ describe('goal.propose_targets', () => {
       'top_load_at_reps',
       'top_load_at_reps',
     ]);
+  });
+});
+
+describe('recomposition mode reaches the bodyweight band (VW-378)', () => {
+  let harness: Harness;
+  beforeEach(() => {
+    harness = setup();
+  });
+
+  async function declareRecomposition(recompMode?: 'hold' | 'slow-loss'): Promise<void> {
+    await harness.store.declareDietPhase({
+      userId: LOCAL_USER_ID,
+      phase: 'recomposition',
+      startedAt: daysAgo(14),
+      declaredAt: daysAgo(14),
+      ...(recompMode === undefined ? {} : { recompMode }),
+    });
+  }
+
+  async function proposeBodyweightBand(): Promise<ProposedBodyweightShape> {
+    await harness.store.putBodyMetric({
+      userId: LOCAL_USER_ID,
+      measuredAt: daysAgo(1),
+      bodyweightLbs: 330,
+    });
+    const declared = await harness.invoke('goal.declare_priorities', {
+      items: [{ kind: 'muscle', ref: 'bodyweight', level: 'specialize' }],
+      horizonWeeks: 6,
+    });
+    const proposed = await harness.invoke('goal.propose_targets', {
+      priorityId: (declared.priorities as { id: string }[])[0].id,
+    });
+    return (proposed.targets as ProposedBodyweightShape[])[0];
+  }
+
+  it('puts a declared slow-loss recomposition on the -0.5%/wk line', async () => {
+    await declareRecomposition('slow-loss');
+    const target = await proposeBodyweightBand();
+    expect(target.metric).toBe('bodyweight');
+    expect(target.bandLowPctPerWeek).toBe(-0.5);
+    expect(target.bandHighPctPerWeek).toBe(-0.5);
+    expect(target.committedValue).toBeLessThan(330);
+    expect(target.rpIds).toContain('rp:rp-s11-fat-loss-rate-heuristic');
+  });
+
+  it('leaves a declared hold recomposition on the maintenance corridor', async () => {
+    await declareRecomposition('hold');
+    const target = await proposeBodyweightBand();
+    expect(target.bandLowPctPerWeek).toBe(0);
+    expect(target.bandHighPctPerWeek).toBe(0);
+    expect(target.committedValue).toBe(330 * 0.98);
+    expect(target.stretchValue).toBe(330 * 1.02);
+  });
+
+  it('leaves an undeclared recomposition on the maintenance corridor', async () => {
+    await declareRecomposition();
+    const target = await proposeBodyweightBand();
+    expect(target.bandLowPctPerWeek).toBe(0);
+    expect(target.committedValue).toBe(330 * 0.98);
+    expect(target.stretchValue).toBe(330 * 1.02);
   });
 });
 

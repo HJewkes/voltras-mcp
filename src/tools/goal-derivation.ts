@@ -100,7 +100,14 @@ export async function readDerivationContext(
     priorityId: priority.id,
     tier: signal.declared ?? signal.tier,
     tierProvisional: signal.declared !== null && signal.declared !== signal.tier,
-    dietState: { phase: dietState.phase, weeksInPhase: dietState.weeksInPhase },
+    // `slowLoss` is the DECLARED recomposition mode (VW-378), never read off
+    // the scale: an undeclared recomposition is false here and lands on the
+    // default hold corridor. Ignored by every other phase's band.
+    dietState: {
+      phase: dietState.phase,
+      weeksInPhase: dietState.weeksInPhase,
+      slowLoss: dietState.recompMode === 'slow-loss',
+    },
     horizonWeeks: weeks.length,
     weeks,
     layoff: await hasRecentLayoff(state),

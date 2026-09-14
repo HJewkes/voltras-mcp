@@ -15,6 +15,9 @@
 //   * A guest lifter's session is never stamped and never resolves.
 //   * `training_weeks.phase_type` is neither read nor written.
 //   * `SCHEMA_VERSION` does not move.
+//   * VW-378's `recomp_mode` round-trips, stays absent on every other phase,
+//     and its fresh-DB CHECK list is exactly `RECOMP_MODES`. That column DOES
+//     move the schema; the v29 -> v30 migration itself has its own file.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +26,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LOCAL_USER_ID, SqliteSessionStore } from '../sqlite-store.js';
+import { RECOMP_MODES } from '../diet-phase.js';
 
 const T = {
   jan: '2026-01-01T00:00:00.000Z',
@@ -177,6 +181,52 @@ describe('guest lifters (VW-169)', () => {
   });
 });
 
+describe('recomp_mode (VW-378)', () => {
+  let dir: string;
+  let path: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'vmcp-recomp-mode-'));
+    path = join(dir, 'vmcp.sqlite');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('round-trips a declared mode and leaves every other phase absent', async () => {
+    const store = open();
+    await store.declareDietPhase({
+      userId: LOCAL_USER_ID,
+      phase: 'recomposition',
+      startedAt: T.jan,
+      declaredAt: DECLARED_AT,
+      recompMode: 'slow-loss',
+    });
+    expect((await store.getDietPhaseCovering(LOCAL_USER_ID, T.feb, T.feb))?.recompMode).toBe(
+      'slow-loss',
+    );
+
+    await declare(store, 'fat-loss', T.mar);
+    expect(
+      (await store.getDietPhaseCovering(LOCAL_USER_ID, T.apr, T.apr))?.recompMode,
+    ).toBeUndefined();
+  });
+
+  it('keeps the fresh-DB CHECK list identical to RECOMP_MODES', () => {
+    const store = SqliteSessionStore.open(path);
+    store.close();
+    const db = new DatabaseSync(path);
+    try {
+      const row = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'diet_phases'`)
+        .get() as unknown as { sql: string };
+      const clause = /recomp_mode IN \(([^)]*)\)/.exec(row.sql);
+      const values = [...(clause?.[1] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1] ?? '');
+      expect(values).toEqual([...RECOMP_MODES]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('file-backed database', () => {
   let dir: string;
   let path: string;
@@ -208,7 +258,7 @@ describe('file-backed database', () => {
 
     const after = readUserVersion(path);
     expect(after).toBe(before);
-    expect(after).toBe(29);
+    expect(after).toBe(30);
   });
 
   it('falls back to the stamp when no range covers the session any more', async () => {

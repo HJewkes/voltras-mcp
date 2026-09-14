@@ -40,6 +40,7 @@ import type { AccountabilityState, ProactiveSend } from '../accountability/types
 import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
 import { BODY_FAT_SOURCES, isBodyFatSource } from '../analytics/body-fat-sources.js';
 import { isLeannessBand, LEANNESS_BANDS } from './leanness-band.js';
+import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
@@ -122,7 +123,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 30;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -900,13 +901,19 @@ const SCHEMA_SQL = `
 
   -- ACTUAL (observed) diet phase, time-ranged and retroactively correctable.
   -- Distinct from training_weeks.phase_type, which is the PRESCRIBED phase.
+  -- v30 (VW-378) adds recomp_mode: the bodyweight target a recomposition is
+  -- run against, declared by the lifter and never inferred. NULL on every
+  -- other phase and on every range declared before v30. The CHECK list is a
+  -- transcription of RECOMP_MODES, pinned against it by
+  -- sqlite-store-diet-phase.test.ts.
   CREATE TABLE IF NOT EXISTS diet_phases (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     phase TEXT NOT NULL,
     started_at TEXT NOT NULL,
     ended_at TEXT,
-    declared_at TEXT NOT NULL
+    declared_at TEXT NOT NULL,
+    recomp_mode TEXT CHECK (recomp_mode IS NULL OR recomp_mode IN ('hold','slow-loss'))
   );
   CREATE INDEX IF NOT EXISTS idx_diet_phases_user ON diet_phases(user_id, started_at);
 
@@ -1635,6 +1642,25 @@ function migrateV28ToV29(db: DatabaseSync): void {
   db.exec(EXERCISE_CHAPTERS_DDL);
 }
 
+/**
+ * v29 -> v30: `diet_phases.recomp_mode` (VW-378). PURELY ADDITIVE — one
+ * nullable column, nothing back-filled. A recomposition declared before v30
+ * reads as an undeclared mode, which `deriveGoalBand` already treats as the
+ * default hold corridor; back-filling `'hold'` would turn a question nobody
+ * was asked into an answer the lifter appears to have given.
+ *
+ * The CHECK list here and in `SCHEMA_SQL` must stay identical to
+ * `RECOMP_MODES`; `sqlite-store-diet-phase.test.ts` pins all three.
+ */
+function migrateV29ToV30(db: DatabaseSync): void {
+  addColumnIfMissing(
+    db,
+    'diet_phases',
+    'recomp_mode',
+    `TEXT CHECK (recomp_mode IS NULL OR recomp_mode IN (${sqlList(RECOMP_MODES)}))`,
+  );
+}
+
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
@@ -1837,6 +1863,7 @@ interface DietPhaseRow {
   started_at: string;
   ended_at: string | null;
   declared_at: string;
+  recomp_mode: string | null;
 }
 
 interface ExerciseChapterRow {
@@ -3465,6 +3492,7 @@ export class SqliteSessionStore implements SessionStore {
       startedAt: input.startedAt,
       declaredAt: input.declaredAt,
     };
+    if (input.recompMode !== undefined) declared.recompMode = input.recompMode;
     // One transaction, three statements. Halfway through, the timeline either
     // has two open ranges or a hole — both are states a reader would report
     // as fact, so the window in which they exist must not be observable.
@@ -3485,10 +3513,17 @@ export class SqliteSessionStore implements SessionStore {
         .run(input.startedAt, input.userId, input.startedAt, input.startedAt);
       this.db
         .prepare(
-          `INSERT INTO diet_phases (id, user_id, phase, started_at, ended_at, declared_at)
-           VALUES (?, ?, ?, ?, NULL, ?)`,
+          `INSERT INTO diet_phases (id, user_id, phase, started_at, ended_at, declared_at, recomp_mode)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
         )
-        .run(declared.id, declared.userId, declared.phase, declared.startedAt, declared.declaredAt);
+        .run(
+          declared.id,
+          declared.userId,
+          declared.phase,
+          declared.startedAt,
+          declared.declaredAt,
+          declared.recompMode ?? null,
+        );
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');
@@ -4605,6 +4640,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 28) {
     migrateV28ToV29(db);
   }
+  if (current <= 29) {
+    migrateV29ToV30(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4700,6 +4738,9 @@ function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {
     declaredAt: row.declared_at,
   };
   if (row.ended_at !== null) out.endedAt = row.ended_at;
+  // A row written before v30 answers null, which is the same absence as a
+  // phase that was never asked the question.
+  if (row.recomp_mode !== null && isRecompMode(row.recomp_mode)) out.recompMode = row.recomp_mode;
   return out;
 }
 
