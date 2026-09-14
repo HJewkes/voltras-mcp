@@ -145,9 +145,25 @@ describe('the synonym table', () => {
     expect(ids).toContain('cable-squat');
     expect(ids).toContain('cable-romanian-deadlift');
     expect(ids).toContain('cable-glute-kickback');
-    // The adduction lift comes in through the muscle map's quads proxy row,
-    // not through a synonym row of its own.
-    expect(ids).toContain('cable-hip-adduction');
+  });
+
+  it('does not let a proxy row corroborate: "legs" skips the adduction lift', () => {
+    // `adductors` maps to the quads slug only because the taxonomy has no
+    // adductor slug. Counting it would claim a quad grew from an adductor lift
+    // (review of PR #408). The dose still covers the quads slug.
+    expect(trackedIds('legs')).not.toContain('cable-hip-adduction');
+    expect(trackedIds('quads')).not.toContain('cable-hip-adduction');
+    expect(
+      doseOf(selectGoalMetrics({ kind: 'muscle', ref: 'legs', level: 'specialize' }, CATALOG))
+        ?.muscles,
+    ).toContain('quads');
+  });
+
+  it('still tracks a proxy-mapped lift when the human declares that muscle itself', () => {
+    // The exact catalog string is the one path across a proxy row. The squat
+    // sits on the same slug and is deliberately not here: the argument that
+    // keeps adduction out of "legs" keeps quads out of "adductors".
+    expect(trackedIds('adductors')).toEqual(['cable-hip-adduction']);
   });
 
   it('passes a catalog string through untouched, normalising case and spacing', () => {
@@ -280,6 +296,10 @@ const CATALOG_MUSCLE_STRINGS = [
 const UNREACHABLE_MUSCLE_STRINGS: Record<string, string> = {
   forearms:
     'Secondary only: every curl and row lists forearms as an assister and no seed entry names it as the primary mover, so no lift can carry a forearms target.',
+  traps:
+    'A proxy row (upper_back) with no seed entry naming traps as the primary mover. The rows and pulldowns that land on upper_back train the region, not the traps, so none of them may corroborate a traps target.',
+  abductors:
+    'A proxy row (glutes) with no seed entry naming abductors as the primary mover — the hip abduction lift itself is catalogued as glutes. The glute lifts train the region, not the abductors.',
 };
 
 describe('catalog coverage', () => {

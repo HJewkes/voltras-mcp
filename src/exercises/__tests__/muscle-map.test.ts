@@ -5,7 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { SEED_CABLE_EXERCISES } from '../seed-catalog.js';
-import { mapCatalogMuscle, TITAN_MUSCLE_GROUPS } from '../muscle-map.js';
+import {
+  isProxyMapping,
+  mapCatalogMuscle,
+  PROXY_CATALOG_MUSCLES,
+  TITAN_MUSCLE_GROUPS,
+} from '../muscle-map.js';
 import type { TitanMuscleGroup } from '../muscle-map.js';
 
 const EXPECTED: Record<string, TitanMuscleGroup[]> = {
@@ -50,6 +55,18 @@ describe('mapCatalogMuscle', () => {
     for (const s of seedStrings) {
       expect(Object.keys(EXPECTED), `no EXPECTED row for seed string "${s}"`).toContain(s);
     }
+  });
+
+  it('names exactly the three rows that are a nearest-region proxy', () => {
+    expect([...PROXY_CATALOG_MUSCLES].sort()).toEqual(['abductors', 'adductors', 'traps']);
+    for (const proxy of PROXY_CATALOG_MUSCLES) {
+      expect(isProxyMapping(proxy)).toBe(true);
+      expect(Object.keys(EXPECTED)).toContain(proxy);
+      // A proxy lands on a slug that is not the muscle it came from; an
+      // identity or composite row never does.
+      expect(mapCatalogMuscle(proxy)).not.toContain(proxy);
+    }
+    expect(isProxyMapping('quads')).toBe(false);
   });
 
   it('every mapped slug is one of the 15 titan groups', () => {

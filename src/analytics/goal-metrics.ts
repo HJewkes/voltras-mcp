@@ -13,6 +13,14 @@
 // across two or more exercises before it believes a muscle grew
 // (rp:rp-s7-multi-exercise-confirmation-for-muscle-gain).
 //
+// A PROXY ROW IS NOT EVIDENCE. The muscle map carries three rows that exist
+// only because titan's taxonomy has no slug for the muscle (`adductors`,
+// `abductors`, `traps`). A lift that reaches the target through one of them —
+// in either direction — is not tracked as a gain leg for that muscle, because
+// it would corroborate a claim about a muscle it does not train. Only an exact
+// catalog-string match crosses a proxy row. Those lifts still count toward the
+// dose, which asks what was trained rather than what grew.
+//
 // SETS ARE A DOSE, NEVER A GOAL (B47). Weekly working sets come back on every
 // muscle-or-lift selection flagged `informational`, so a surface can show the
 // dose without a consumer mistaking it for something to maximise.
@@ -21,7 +29,11 @@
 // and velocity-at-load have no series behind them today, so each returns a
 // reason a surface can print rather than an empty array.
 
-import { mapCatalogMuscle, type TitanMuscleGroup } from '../exercises/muscle-map.js';
+import {
+  isProxyMapping,
+  mapCatalogMuscle,
+  type TitanMuscleGroup,
+} from '../exercises/muscle-map.js';
 import type { StoredPriorityKind, StoredPriorityLevel } from '../store/types.js';
 import type { GoalMetric } from './goal-band.js';
 
@@ -194,18 +206,17 @@ function muscleSelections(
   level: StoredPriorityLevel,
   catalog: readonly CatalogExercise[],
 ): GoalMetricSelection[] {
-  const targets = new Set(resolveMuscleRef(ref).flatMap(mapCatalogMuscle));
+  const targetStrings = resolveMuscleRef(ref);
+  const targetSlugs = new Set(targetStrings.flatMap(mapCatalogMuscle));
   const dose: GoalDoseMetric = {
     kind: 'weekly_sets',
     informational: true,
     exerciseId: null,
-    muscles: [...targets],
+    muscles: [...targetSlugs],
   };
   if (level === 'deprioritize') return [dose];
 
-  const qualifying = catalog.filter((entry) =>
-    primarySlugsOf(entry).some((slug) => targets.has(slug)),
-  );
+  const qualifying = catalog.filter((entry) => qualifies(entry, targetStrings));
   const selections: GoalMetricSelection[] = qualifying.map((entry) => ({
     kind: 'gain',
     metric: 'top_load_at_reps',
@@ -231,6 +242,31 @@ function corroborationGap(qualifyingLifts: number): GoalCorroborationGap {
     qualifyingLifts,
     reason: `${shortfall}; muscle-gain agreement needs ${MIN_CORROBORATING_LIFTS} (rp:rp-s7-multi-exercise-confirmation-for-muscle-gain), so this priority is tracked without a corroborated verdict.`,
   };
+}
+
+/** Whether any primary mover of this lift is evidence about any target muscle. */
+function qualifies(exercise: CatalogExercise, targetStrings: readonly string[]): boolean {
+  return exercise.muscleGroups.some((primary) =>
+    targetStrings.some((target) => trainsTarget(primary, target)),
+  );
+}
+
+/**
+ * Whether a lift's primary mover is evidence ABOUT the declared muscle.
+ *
+ * The same catalog string always is. Otherwise the two have to meet on a titan
+ * slug, and a PROXY row on either side blocks that: those rows exist because
+ * the taxonomy has no slug for the muscle, so they land on the nearest region
+ * without being that muscle. A hip adduction on the quads slug must not
+ * corroborate a "legs" priority (review of PR #408), and the same argument run
+ * backwards says a squat must not corroborate an "adductors" one. Both lifts
+ * still count toward the weekly-sets dose, which asks only what was trained.
+ */
+function trainsTarget(primary: string, target: string): boolean {
+  if (primary === target) return true;
+  if (isProxyMapping(primary) || isProxyMapping(target)) return false;
+  const targetSlugs = mapCatalogMuscle(target);
+  return mapCatalogMuscle(primary).some((slug) => targetSlugs.includes(slug));
 }
 
 function primarySlugsOf(exercise: CatalogExercise): TitanMuscleGroup[] {

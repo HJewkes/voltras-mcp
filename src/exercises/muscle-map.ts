@@ -67,6 +67,28 @@ const CATALOG_TO_TITAN: Record<string, TitanMuscleGroup[]> = {
   traps: ['upper_back'],
 };
 
+/**
+ * The catalog strings whose row above is a nearest-anatomical PROXY: the
+ * taxonomy has no slug for them, so the row says "closest region", not "same
+ * muscle". Every other row is either an identity or a genuine composite
+ * (`back`, `core`, `shoulders`), where the slugs really are the muscle.
+ *
+ * A rollup that only asks "does this train the region" may read the proxy rows
+ * like any other. A claim ABOUT the muscle may not: a hip adduction is not
+ * evidence a quad grew. {@link isProxyMapping} is what that second kind of
+ * consumer calls (first one: `analytics/goal-metrics.ts`, VW-347).
+ */
+export const PROXY_CATALOG_MUSCLES: ReadonlySet<string> = new Set([
+  'adductors',
+  'abductors',
+  'traps',
+]);
+
+/** True when {@link mapCatalogMuscle} reaches its slugs through a proxy row. */
+export function isProxyMapping(catalogString: string): boolean {
+  return PROXY_CATALOG_MUSCLES.has(catalogString);
+}
+
 const warnedUnknown = new Set<string>();
 
 /**
