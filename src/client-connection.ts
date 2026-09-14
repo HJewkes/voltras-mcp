@@ -54,6 +54,7 @@ import { registerRirVelocityTools } from './tools/rir-velocity-tools.js';
 import { registerTrueCoachTools } from './tools/truecoach-tools.js';
 import { registerReportTools } from './tools/report-tools.js';
 import { registerAccountabilityTools } from './tools/accountability-tools.js';
+import { registerGoalTools } from './tools/goal-tools.js';
 import { registerProfileTools } from './tools/profile-tools.js';
 import { registerLeaseTools } from './tools/lease-tools.js';
 import { applyLeaseGuard } from './lease-guard.js';
@@ -211,6 +212,7 @@ function registerRealTools(
   registerTrueCoachTools(server, state, placeholders);
   registerReportTools(server, state, placeholders);
   registerAccountabilityTools(server, state, placeholders);
+  registerGoalTools(server, state, placeholders);
   registerLeaseTools(server, state, placeholders, self);
   if (state.config.adapter === 'mock') {
     registerMockTools(server, state, placeholders);

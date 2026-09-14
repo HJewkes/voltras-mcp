@@ -60,9 +60,11 @@ import {
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
   type GoalTargetSelector,
+  type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
   type ListGoalTargetsOptions,
   type ListPrioritiesOptions,
+  type PutAdvisoryDecisionInput,
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
@@ -83,6 +85,8 @@ import {
   type PlanImportTemplate,
   type StoredPlannedExercise,
   type StoredTargetTempo,
+  type StoredAdvisoryDecision,
+  type StoredAdvisoryResponse,
   type StoredBodyMetric,
   type StoredDietPhase,
   type StoredExerciseBaseline,
@@ -1719,6 +1723,21 @@ interface BodyMetricRow {
   recorded_at: string;
   bodyweight_lbs: number;
   notes: string | null;
+}
+
+interface AdvisoryDecisionRow {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  set_id: string | null;
+  code: string;
+  issued_at: string;
+  inputs_json: string;
+  thresholds_json: string;
+  algorithm_version: string;
+  verdict: string;
+  user_response: string | null;
+  responded_at: string | null;
 }
 
 interface PriorityRow {
@@ -3406,6 +3425,47 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToBodyMetric));
   }
 
+  // --- Advisory decisions (VW-350) ---
+
+  /**
+   * `ON CONFLICT(id) DO UPDATE` on the id alone: answering an advisory is an
+   * update of the row that fired, not a new row. `user_id`, `code` and
+   * `issued_at` are still in the UPDATE SET because a caller re-putting a row
+   * it just read must not silently drop a correction, and nothing here owns a
+   * second identity the way `body_metrics` owns its instant.
+   */
+  async putAdvisoryDecision(input: PutAdvisoryDecisionInput): Promise<StoredAdvisoryDecision> {
+    const id = input.id ?? randomUUID();
+    this.db.prepare(PUT_ADVISORY_DECISION_SQL).run(id, ...advisoryDecisionBindings(input));
+    const row = this.db
+      .prepare(`SELECT * FROM advisory_decisions WHERE id = ?`)
+      .get(id) as unknown as AdvisoryDecisionRow;
+    return Promise.resolve(rowToAdvisoryDecision(row));
+  }
+
+  async listAdvisoryDecisions(
+    userId: string,
+    filter?: ListAdvisoryDecisionsFilter,
+  ): Promise<StoredAdvisoryDecision[]> {
+    const clauses = ['user_id = ?'];
+    const bindings: string[] = [userId];
+    if (filter?.code !== undefined) {
+      clauses.push('code = ?');
+      bindings.push(filter.code);
+    }
+    if (filter?.userResponse !== undefined) {
+      clauses.push('user_response = ?');
+      bindings.push(filter.userResponse);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM advisory_decisions WHERE ${clauses.join(' AND ')}
+         ORDER BY issued_at DESC, id ASC`,
+      )
+      .all(...bindings) as unknown as AdvisoryDecisionRow[];
+    return Promise.resolve(rows.map(rowToAdvisoryDecision));
+  }
+
   // --- Priorities and goal targets (VW-349) ---
 
   /**
@@ -4465,6 +4525,59 @@ function rowToGoalTarget(row: GoalTargetRow): StoredGoalTarget {
   if (row.retired_at !== null) out.retiredAt = row.retired_at;
   if (row.outcome !== null) out.outcome = row.outcome as StoredGoalTargetOutcome;
   if (row.new_chapter_at !== null) out.newChapterAt = row.new_chapter_at;
+  return out;
+}
+
+const PUT_ADVISORY_DECISION_SQL = `
+  INSERT INTO advisory_decisions
+    (id, user_id, session_id, set_id, code, issued_at, inputs_json, thresholds_json,
+     algorithm_version, verdict, user_response, responded_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    user_id = excluded.user_id,
+    session_id = excluded.session_id,
+    set_id = excluded.set_id,
+    code = excluded.code,
+    issued_at = excluded.issued_at,
+    inputs_json = excluded.inputs_json,
+    thresholds_json = excluded.thresholds_json,
+    algorithm_version = excluded.algorithm_version,
+    verdict = excluded.verdict,
+    user_response = excluded.user_response,
+    responded_at = excluded.responded_at
+`;
+
+function advisoryDecisionBindings(input: PutAdvisoryDecisionInput): (string | null)[] {
+  return [
+    input.userId,
+    input.sessionId ?? null,
+    input.setId ?? null,
+    input.code,
+    input.issuedAt,
+    JSON.stringify(input.inputs),
+    JSON.stringify(input.thresholds),
+    input.algorithmVersion,
+    input.verdict,
+    input.userResponse ?? null,
+    input.respondedAt ?? null,
+  ];
+}
+
+function rowToAdvisoryDecision(row: AdvisoryDecisionRow): StoredAdvisoryDecision {
+  const out: StoredAdvisoryDecision = {
+    id: row.id,
+    userId: row.user_id,
+    code: row.code,
+    issuedAt: row.issued_at,
+    inputs: JSON.parse(row.inputs_json) as Record<string, unknown>,
+    thresholds: JSON.parse(row.thresholds_json) as Record<string, unknown>,
+    algorithmVersion: row.algorithm_version,
+    verdict: row.verdict,
+  };
+  if (row.session_id !== null) out.sessionId = row.session_id;
+  if (row.set_id !== null) out.setId = row.set_id;
+  if (row.user_response !== null) out.userResponse = row.user_response as StoredAdvisoryResponse;
+  if (row.responded_at !== null) out.respondedAt = row.responded_at;
   return out;
 }
 
