@@ -376,6 +376,40 @@ describe('coaching.explain', () => {
     },
   );
 
+  // VW-377: weekly-cadence bodyweight-trend autoregulation, calorie-free by
+  // design, with an explicit engineering-choice disclaimer on the 7-day window.
+  it('states the rate-autoregulation rule: cadence, noise floor, slope, calorie-free (VW-377)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'diet.rate_autoregulation' }));
+
+    // Assert
+    expect(body.explanation).toMatch(/prescribes no calories/i);
+    expect(body.explanation).toMatch(/engineering choice, not RP's/i);
+    expect(body.explanation).toMatch(/beginner.*intermediate.*advanced/is);
+    expect(body.explanation).toContain('half-week');
+    expect(body.sources).toEqual([
+      'rp-s12-trend-slope-overrides-raw-deviation',
+      'rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope',
+      'rp-s12-minimum-half-week-before-recalorie-change',
+      'rp-s11-fat-loss-rate-heuristic',
+      'rp-s12-scale-opacity-salt-and-water',
+    ]);
+  });
+
+  it.each(['beginner', 'intermediate', 'advanced'] as const)(
+    'returns non-empty rate-autoregulation prose for tier %s',
+    async (tier) => {
+      // Arrange / Act
+      const body = parseResult(await h.invoke({ topic: 'diet.rate_autoregulation', tier }));
+
+      // Assert: this topic has no perTier entry (the corpus is silent on a
+      // tier-specific rate, not stated invariant), so every tier falls back
+      // to the same explanation.
+      expect(body.explanation.length).toBeGreaterThan(0);
+      expect(body.sources.length).toBeGreaterThan(0);
+    },
+  );
+
   it('rejects an unknown topic', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'not.a.real.topic' });

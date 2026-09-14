@@ -800,6 +800,58 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'adherence failure.',
     sources: ['rp-s11-unplanned-disruption-protocol', 'rp-s11-chronic-plan-abandonment-response'],
   },
+  'diet.rate_autoregulation': {
+    allTiers:
+      'RP describes bodyweight-trend autoregulation as a WEEKLY-CADENCE loop, not a daily ' +
+      'reaction: check the trend and decide whether to change course no more than once every ' +
+      'half-week at the fastest, with once-a-week as the normal default, because reacting on a ' +
+      'shorter cycle mostly chases body-water noise and destroys the planning stability — batch ' +
+      'cooking, settling into macros — that a held target gives a client ' +
+      '(rp-s12-minimum-half-week-before-recalorie-change). THE SOURCE MATERIAL IS STATED IN ' +
+      'CALORIES, AND THIS SERVER PRESCRIBES NO CALORIES: what transfers from RP is the loop and ' +
+      'the observation layer, not a calorie number, so this topic names the two levers a lifter ' +
+      "actually has — INTAKE and ACTIVITY — and sizes neither. NOISE FLOOR: RP's starting " +
+      'fat-loss rate is 0.5-1% of body weight per week; going slower than that makes true fat ' +
+      'loss hard to distinguish from day-to-day measurement noise — water, salt and glycogen ' +
+      'swings that have nothing to do with fat mass — while going faster accelerates diet ' +
+      'fatigue (rp-s11-fat-loss-rate-heuristic). That same noise is why a single reading, or ' +
+      'even one bad week, should never be read alone: TREND SLOPE OVERRIDES RAW DEVIATION. Being ' +
+      'off the target line in a given week is not by itself a reason to react — check the slope ' +
+      'of the last several points first, and if the trajectory is already converging back toward ' +
+      'the goal line on its own, no change is warranted even though the current reading is ' +
+      'technically off-track (rp-s12-trend-slope-overrides-raw-deviation). When a change IS ' +
+      'warranted, RP sizes it on two axes at once — deviation from the goal line and the slope ' +
+      'of the trend — and that same two-axis read sets the URGENCY this topic reports, without ' +
+      'ever resolving to a calorie percentage: a small deviation with a converging slope reads ' +
+      'as no action needed, a moderate deviation with a flat or similar slope reads as a real ' +
+      'but modest gap, and a large deviation with a diverging slope is the loudest signal this ' +
+      'tool emits (rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope). NAMED CONFOUNDS ' +
+      'that should suppress an over-eager read rather than trigger one: a high-sodium meal, a ' +
+      "diet-phase transition, and the menstrual cycle are RP's own named examples of triggers " +
+      'that can shift the scale several pounds in a day or two through water alone, with the ' +
+      'correct response being to disregard the spiked reading and wait roughly a week for it to ' +
+      'restabilize rather than react to it (rp-s12-scale-opacity-salt-and-water). Each of those ' +
+      'looks like a real deviation on any single day and dissolves within about a week, which is ' +
+      'exactly why the slope of several points beats reacting to one. TIER: the citation behind ' +
+      'the 0.5-1% band (rp-s11-fat-loss-rate-heuristic) states one starting rate and is silent ' +
+      'on tier, leanness and sex — no separate figure for a beginner, an intermediate or an ' +
+      "advanced lifter, though tier and leanness do move the phase's magnitude and timeline " +
+      'elsewhere in the corpus, not this weekly figure. Reading that silence as an absence ' +
+      'rather than a stated invariance — our own reading, not a claim the note itself makes — ' +
+      'this topic returns identical prose regardless of the `tier` argument. ' +
+      'ENGINEERING NOTE: the 7-day mean this server uses to ' +
+      "smooth the daily series is our own engineering choice, not RP's — the corpus specifies " +
+      'only a weekly cadence with some undefined recency-weighting, never a window size, so the ' +
+      "window is our engineering choice, not RP's, and should be labelled as such wherever it " +
+      'is shown.',
+    sources: [
+      'rp-s12-trend-slope-overrides-raw-deviation',
+      'rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope',
+      'rp-s12-minimum-half-week-before-recalorie-change',
+      'rp-s11-fat-loss-rate-heuristic',
+      'rp-s12-scale-opacity-salt-and-water',
+    ],
+  },
   // A `live.*` topic appended out of group order (VW-306): three agents were
   // editing this file in parallel and the end is the one place a new entry
   // does not collide. `COACHING_CONTENT` is a Record, so order is cosmetic.

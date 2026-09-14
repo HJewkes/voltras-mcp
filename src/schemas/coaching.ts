@@ -46,6 +46,7 @@ export const CoachingTopic = z.enum([
   'diet.phase_coupling',
   'diet.phase_durations',
   'diet.disruption_handling',
+  'diet.rate_autoregulation',
 ]);
 
 export type CoachingTopic = z.infer<typeof CoachingTopic>;
