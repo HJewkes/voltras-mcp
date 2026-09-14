@@ -28,7 +28,7 @@
 import { dietPhaseTolerance, type DietPhaseState } from './diet-phase-tolerance.js';
 import type { DietPhase } from '../store/diet-phase.js';
 import type { BaselineState } from '../store/types.js';
-import { computePercentIncrement } from '../tools/plan-tools.js';
+import { computePercentIncrement } from './percent-increment.js';
 import type { Tier } from '../tools/tier-signal.js';
 
 /**

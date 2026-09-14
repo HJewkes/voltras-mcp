@@ -60,7 +60,7 @@ import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
 import { selectWorkingSets } from '../store/working-sets.js';
 import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises/movement-class.js';
-import { DEVICE_LOAD_STEP_LBS } from './warmup-ramp-tools.js';
+import { computePercentIncrement } from '../analytics/percent-increment.js';
 import {
   LOCAL_USER_ID,
   type StoredPlannedExercise,
@@ -716,30 +716,8 @@ const PROGRESSION_HOLD_LBS = 0;
  */
 const PROGRESSION_INCREMENT_PERCENT: number | null = null;
 
-/**
- * Ceiling on the percent-derived increment, same citation gap as
- * `PROGRESSION_INCREMENT_PERCENT`: no cap value is stated either, so null
- * means uncapped (beyond the device-step rounding below).
- */
-const PROGRESSION_INCREMENT_CAP_LBS: number | null = null;
-
-/**
- * B23's arithmetic, kept pure and exported so it's testable independent of
- * the (currently null) production percent: `topLoadLbs * percent`, rounded
- * down to the device's load step, floored at the fixed increment, and capped
- * when a cap is cited.
- */
-export function computePercentIncrement(
-  topLoadLbs: number,
-  percent: number,
-  floorLbs: number = PROGRESSION_INCREMENT_LBS,
-  capLbs: number | null = PROGRESSION_INCREMENT_CAP_LBS,
-): number {
-  const raw = topLoadLbs * (percent / 100);
-  const stepped = Math.floor(raw / DEVICE_LOAD_STEP_LBS) * DEVICE_LOAD_STEP_LBS;
-  const floored = Math.max(floorLbs, stepped);
-  return capLbs === null ? floored : Math.min(floored, capLbs);
-}
+// `computePercentIncrement` moved to `src/analytics/percent-increment.ts` (VW-362); re-exported here so existing importers are unaffected.
+export { computePercentIncrement };
 
 /**
  * VMCP-02.25: velocity-loss ceiling above which a set that *hit its rep target*
