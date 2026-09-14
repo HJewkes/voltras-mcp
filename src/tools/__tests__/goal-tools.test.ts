@@ -29,6 +29,7 @@ const TOOL_NAMES = [
   'goal.list',
   'goal.retire',
   'goal.new_chapter',
+  'goal.weekly_review',
 ];
 
 const CATALOG = [
