@@ -99,6 +99,21 @@ export {
 } from './muscle-plan.js';
 
 export {
+  buildFatigueAxesLookup,
+  type FatigueAxesKey,
+  type FatigueAxesLookup,
+} from './muscle-recovery-fatigue.js';
+
+export {
+  buildMuscleRecoveryView,
+  type MuscleRecoveryEntryDepression,
+  type MuscleRecoveryMuscleView,
+  type MuscleRecoveryReason,
+  type MuscleRecoveryRows,
+  type MuscleRecoveryView,
+} from './muscle-recovery.js';
+
+export {
   buildMuscleWeekView,
   classifyWeeklyVolume,
   POPULATION_VOLUME_LANDMARKS,

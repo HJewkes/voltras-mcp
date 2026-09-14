@@ -1,0 +1,159 @@
+// The entry-depression supply for the muscle-recovery read model (VW-332, B5).
+//
+// `computeFatigueAxes` (VW-306) is per EXERCISE within one SESSION: the entry
+// axis compares that session's opening working set against the same exercise's
+// sets in the lifter's most recent prior session at the same load. So a lookup
+// keyed by session id alone would answer the wrong question in a session that
+// trained two exercises. The key here is the pair.
+//
+// This mirrors `fatigueAxesForExercise` / `referenceSetsForFatigueAxes` in
+// `tools/metrics-tools.ts` deliberately — the dashboard must not invent a
+// second definition of the axis — with one difference: the reference session is
+// resolved from the rows the caller already fetched rather than from a store
+// read, which keeps this module pure. A prior session outside the caller's
+// window is therefore invisible, and the axis reports itself unmeasurable
+// rather than guessing.
+//
+// Confidentiality: fitness metadata only — no protocol data (NF-07).
+
+import { getRepMeanVelocity, type Rep as AnalyticsRep } from '@voltras/workout-analytics';
+
+import {
+  computeFatigueAxes,
+  type FatigueAxes,
+  type FatigueSetReading,
+} from '../../analytics/fatigue-axes.js';
+import { selectEligibleReps } from '../../state/rep-eligibility.js';
+import { normalisePositionsToMetres } from '../../store/position-units.js';
+import { normaliseVelocityToMps } from '../../store/velocity-units.js';
+import { isWarmupSet } from '../../store/working-sets.js';
+import type { StoredSet } from '../../store/types.js';
+
+/** Which session's work on which exercise an axis reading is wanted for. */
+export interface FatigueAxesKey {
+  sessionId: string;
+  exerciseId: string;
+}
+
+/** Both VW-306 axes for one (session, exercise) pair, or undefined when it recorded no sets. */
+export type FatigueAxesLookup = (key: FatigueAxesKey) => FatigueAxes | undefined;
+
+/**
+ * One stored set as an axis reading. `toFatigueReading` in
+ * `tools/metrics-tools.ts` is the source of truth for this shape; keep the two
+ * identical.
+ *
+ * That includes the normalisation chain, which runs positions through
+ * `normalisePositionsToMetres` (VW-203) as well as velocities through
+ * `normaliseVelocityToMps` (VW-160). `FatigueSetReading` carries no position
+ * field, so today the position half changes nothing here — it is applied
+ * anyway, because a reading that diverges from its source of truth only where
+ * it currently does not matter is the kind that silently stops matching when a
+ * field is added.
+ */
+function toFatigueReading(set: StoredSet): FatigueSetReading {
+  const eligible = selectEligibleReps(normalisePositionsToMetres(normaliseVelocityToMps(set)).reps);
+  const velocities = eligible.map((rep: AnalyticsRep) => getRepMeanVelocity(rep));
+  return {
+    setId: set.id,
+    isWarmup: isWarmupSet(set),
+    ...(velocities.length > 0
+      ? { meanVelocity: velocities.reduce((a, b) => a + b, 0) / velocities.length }
+      : {}),
+    ...(set.weightLbs !== undefined ? { loadLbs: set.weightLbs } : {}),
+    ...(set.restBeforeSec !== undefined ? { restBeforeSec: set.restBeforeSec } : {}),
+    ...(set.eccentricPct !== undefined ? { eccentricPct: set.eccentricPct } : {}),
+  };
+}
+
+interface ExerciseGroup {
+  /** Sets of one exercise in one session, in the order performed. */
+  sets: StoredSet[];
+  /** Earliest `startedAt` in the group — what orders sessions against each other. */
+  startedAt: string;
+}
+
+/** Sets indexed by exercise, then by the session they were performed in. */
+type GroupIndex = Map<string, Map<string, ExerciseGroup>>;
+
+function indexByExerciseAndSession(sets: readonly StoredSet[]): GroupIndex {
+  const index: GroupIndex = new Map();
+  for (const set of sets) {
+    // Guest sets (VW-169) are someone else's evidence at both ends of the comparison.
+    if (set.exerciseId === undefined || set.lifter !== undefined) continue;
+    const bySession = index.get(set.exerciseId) ?? new Map<string, ExerciseGroup>();
+    index.set(set.exerciseId, bySession);
+    const group = bySession.get(set.sessionId);
+    if (group === undefined) {
+      bySession.set(set.sessionId, { sets: [set], startedAt: set.startedAt });
+      continue;
+    }
+    group.sets.push(set);
+    if (set.startedAt < group.startedAt) group.startedAt = set.startedAt;
+  }
+  for (const bySession of index.values()) {
+    for (const group of bySession.values()) {
+      group.sets.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    }
+  }
+  return index;
+}
+
+/**
+ * The same exercise's sets from the lifter's most recent session before
+ * `target` — ONE session, not the pooled history, for the reason
+ * `referenceSetsForFatigueAxes` states: pooling turns "down against my norm"
+ * into "down against a year of drift".
+ *
+ * HOW THIS DIFFERS from `referenceSetsForFatigueAxes`, by design. That one
+ * excludes the target session by id and takes the newest session remaining, so
+ * a session recorded LATER than the target can become its reference. This one
+ * requires `startedAt <` the target: the entry axis is a recovery-state read on
+ * a session opener, and a surface that reports "when you last trained this and
+ * how that session went" must not measure a past session against a future one.
+ * On a caller that asks about its own newest session — which is what the
+ * muscle-recovery route does, since `lastTrainedAt` picks the latest set — the
+ * two rules select the same session.
+ */
+function referenceGroup(
+  bySession: ReadonlyMap<string, ExerciseGroup>,
+  sessionId: string,
+  target: ExerciseGroup,
+): ExerciseGroup | undefined {
+  let best: ExerciseGroup | undefined;
+  for (const [otherSessionId, group] of bySession) {
+    if (otherSessionId === sessionId) continue;
+    if (group.startedAt >= target.startedAt) continue;
+    if (best === undefined || group.startedAt > best.startedAt) best = group;
+  }
+  return best;
+}
+
+/**
+ * A memoized {@link FatigueAxesLookup} over already-fetched rows. Pure: the
+ * same rows always produce the same answer, and nothing is read or written.
+ */
+export function buildFatigueAxesLookup(sets: readonly StoredSet[]): FatigueAxesLookup {
+  const index = indexByExerciseAndSession(sets);
+  // Keyed by the group OBJECT, not a composed string: one group is exactly one
+  // (session, exercise) pair, so identity is the key and no separator can collide.
+  const memo = new Map<ExerciseGroup, FatigueAxes>();
+
+  return ({ sessionId, exerciseId }: FatigueAxesKey): FatigueAxes | undefined => {
+    const bySession = index.get(exerciseId);
+    const target = bySession?.get(sessionId);
+    if (bySession === undefined || target === undefined) return undefined;
+
+    const cached = memo.get(target);
+    if (cached !== undefined) return cached;
+
+    const axes = computeFatigueAxes({
+      sessionSets: target.sets.map(toFatigueReading),
+      referenceSets: (referenceGroup(bySession, sessionId, target)?.sets ?? []).map(
+        toFatigueReading,
+      ),
+    });
+    memo.set(target, axes);
+    return axes;
+  };
+}

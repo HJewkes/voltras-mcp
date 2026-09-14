@@ -69,6 +69,12 @@
 //                          the body-map plan). `?weekStart=` picks a week by any ISO
 //                          instant inside it; default is the current week. Every titan
 //                          muscle group, zeros included.
+//   GET  /api/muscle-recovery — `{ muscleMapVersion, muscles: [{ muscle, lastTrainedAt,
+//                          daysSince, lastEntryDepression, lastSessionMatchedPrior,
+//                          reason }] }` over a trailing 56-day window (VW-332, B5 of the
+//                          body-map plan). Elapsed days, the entry-depression read from
+//                          that session, and whether it matched or beat its previous
+//                          comparable session. No recovery window is computed.
 //   POST /api/plan/programs                      — create a program + its first
 //                          block/week/workout (see `plan-api.ts` for why).
 //   POST /api/plan/programs/:id/workouts         — add a workout template.
@@ -96,8 +102,10 @@ import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildFatigueAxesLookup,
   buildHistoryView,
   buildMusclePlanView,
+  buildMuscleRecoveryView,
   buildMuscleWeekView,
   buildSessionPlanView,
   buildSessionSummary,
@@ -110,6 +118,7 @@ import {
   type DeviceEntry,
   type MusclePlanTemplateRow,
   type MusclePlanView,
+  type MuscleRecoveryView,
   type MuscleWeekView,
   type PrescriptionView,
   type SessionPaceView,
@@ -513,6 +522,10 @@ async function handleRequest(
     await serveMuscleStrength(res, state);
     return;
   }
+  if (pathname === '/api/muscle-recovery') {
+    await serveMuscleRecovery(res, state);
+    return;
+  }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
   if (summaryMatch !== null) {
     await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
@@ -776,6 +789,56 @@ async function serveMuscleWeek(
 
   const view: MuscleWeekView = buildMuscleWeekView({
     sets,
+    catalog: (id) => state.exercises?.getById(id),
+    now,
+  });
+  sendJson(res, 200, view);
+}
+
+/**
+ * How far back the muscle-recovery route can see — the same trailing window
+ * `/api/muscle-week` uses. A muscle not trained inside it reports
+ * `lastTrainedAt: null`, and a benchmark whose prior session fell outside it
+ * reports `reason: 'insufficient history'` rather than a verdict built on a
+ * partial view.
+ */
+const MUSCLE_RECOVERY_LOOKBACK_DAYS = 56;
+
+/** Generous cap on sessions fetched for the lookback window. @see MUSCLE_PLAN_SESSION_LIMIT */
+const MUSCLE_RECOVERY_SESSION_LIMIT = 500;
+
+/**
+ * `GET /api/muscle-recovery` (VW-332, B5 of the body-map plan): per titan
+ * muscle group, when it was last trained, how many days ago, that session's
+ * entry-depression read, and whether it matched or beat its previous comparable
+ * session. No recovery window is computed — see the read-model's header.
+ */
+async function serveMuscleRecovery(
+  res: ServerResponse,
+  state: DashboardServerState,
+): Promise<void> {
+  if (!hasSessionStore(state.store)) {
+    sendJson(res, 501, { error: 'session_store_unavailable' });
+    return;
+  }
+  const now = new Date();
+  const from = new Date(now);
+  from.setUTCDate(from.getUTCDate() - MUSCLE_RECOVERY_LOOKBACK_DAYS);
+  const sessions = await state.store.listSessions({
+    sort: 'startedAt:asc',
+    limit: MUSCLE_RECOVERY_SESSION_LIMIT,
+    offset: 0,
+    from: from.toISOString(),
+  });
+  const sets: StoredSet[] = [];
+  for (const session of sessions) {
+    sets.push(...(await state.store.getSetsForSession(session.id)));
+  }
+
+  const view: MuscleRecoveryView = buildMuscleRecoveryView({
+    sessions,
+    sets,
+    fatigueBySession: buildFatigueAxesLookup(sets),
     catalog: (id) => state.exercises?.getById(id),
     now,
   });

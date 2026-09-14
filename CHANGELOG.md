@@ -117,6 +117,23 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall dashboard gains `GET /api/muscle-recovery` (VW-332, #415, B5 of the body-map
+  plan): for each of the 15 titan muscle groups (VW-328), when you last trained it, how
+  many whole days ago that was, the entry-depression read from that session, and whether
+  that session matched or beat the previous **comparable** one on load times reps. Muscles
+  you have not trained inside the trailing 56 days report nulls rather than a stale date.
+  **It computes
+  no recovery window, in any unit, and it never will**: the research behind it looked for a
+  citable per-muscle one and found only training-frequency bands that vary by training age
+  and say nothing about one athlete on one day, so a projected return-to-ready moment would
+  be a number nobody measured. What you get instead is what was observed — elapsed days,
+  the entry-depression percentage with its own confidence, and the performance benchmark.
+  When no comparable prior session exists the benchmark is `null` with a reason that says
+  which piece was missing: nothing prior recorded, a prior at a different load, or a prior
+  that differed in something else (side, device settings, physical setup, training phase).
+  Those three are reported separately because they are not the same answer. Internal
+  plumbing for the body-map page (VW-323) — no page renders it yet.
+
 - The wall dashboard gains `GET /api/muscle-week` (VW-329, B2 of the body-map plan): how
   many working sets each of the 15 titan muscle groups (VW-328) got this week, and whether
   that reads as `under`, `maintenance`, `productive` or `over`. Untrained muscles are
