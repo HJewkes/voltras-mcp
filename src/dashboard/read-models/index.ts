@@ -82,6 +82,25 @@ export {
 } from './session-pace.js';
 
 export {
+  GOAL_PROGRESS_CONSTANTS,
+  buildGoalProgressView,
+  buildPriorityRollup,
+  type GoalActual,
+  type GoalAdvisory,
+  type GoalConfounder,
+  type GoalE1RMContextView,
+  type GoalE1RMInput,
+  type GoalFatigueContext,
+  type GoalMesoWeek,
+  type GoalMilestone,
+  type GoalPraise,
+  type GoalProgressInput,
+  type GoalProgressStatus,
+  type GoalProgressView,
+  type PriorityRollupView,
+} from './goal-progress.js';
+
+export {
   endOfCalendarWeekIso,
   isEligibleWorkingSet,
   startOfCalendarWeekIso,
