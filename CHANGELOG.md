@@ -39,6 +39,21 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The Sunday sitting now reads the scale against your committed bodyweight goal and says
+  whether it is worth acting on (VW-376). `goal.weekly_review` takes the week's readings,
+  the phase you declared and that week's check-in, and comes back with the observation —
+  what you actually moved per week, against the band you accepted — plus an advisory that
+  names the two levers, intake and activity, and sizes neither. A week that is under the
+  noise floor, still settling after a phase change, holding a one-day water jump, or flat
+  late in a cut while you report sticking to the plan proposes nothing and says which rule
+  held it.
+
+  **It proposes; you answer.** Call it again with `accepted`, `declined` or `ignored` and
+  the answer is recorded against the proposal it answers. A proposal you declined is never
+  raised again for the same week at the same urgency — it can come back next week, or
+  sooner if the signal widens. Nothing on the chart moves: your committed and stretch
+  values are read and never rewritten, and the diet phase you declared is never touched.
+
 - A weekly Sunday check-in for hunger, diet-plan adherence and sleep quality (VW-374).
   `profile.log_weekly_checkin` records each on the same low/medium/high scale
   `session.checkin` already uses, and every field is optional — you can log a week with

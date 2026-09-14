@@ -134,3 +134,22 @@ export const GoalNewChapterInput = z
     at: z.string().datetime().optional(),
   })
   .strict();
+
+/**
+ * `goal.weekly_review` — the Sunday tick's rate re-proposal (VW-376, W5).
+ *
+ * `weekOf` is a date only and anchors the sitting, defaulting to the most
+ * recent Sunday exactly as `profile.log_weekly_checkin` does; the two have to
+ * agree, because the week's check-in is one of this review's inputs.
+ *
+ * `response` answers the proposal the previous call raised for the same week.
+ * It rides the issuing tool rather than a response tool of its own, the way
+ * `declineFatLossDowngrade` rides the next declaration: an answer belongs to
+ * the advisory that asked, and no tool here can answer one it did not issue.
+ */
+export const GoalWeeklyReviewInput = z
+  .object({
+    weekOf: z.string().date().optional(),
+    response: z.enum(['accepted', 'declined', 'ignored']).optional(),
+  })
+  .strict();

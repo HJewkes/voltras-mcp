@@ -2,7 +2,7 @@
 
 # `goal.*`
 
-6 tools in the `goal` namespace.
+7 tools in the `goal` namespace.
 
 ## `goal.declare_priorities`
 
@@ -71,3 +71,14 @@ THE TARGET’S NUMBERS DO NOT MOVE: this is not a way around the fixed-target ru
 
 - `targetId` — `string`, **required**.
 - `at` — `string`, optional.
+
+## `goal.weekly_review`
+
+The Sunday sitting’s bodyweight-rate review: what the scale did this week against the committed goal line, and whether that is worth acting on.
+
+Takes `weekOf` (a date, defaults to the most recent Sunday, the same anchor `profile.log_weekly_checkin` uses) and an optional `response`. EVERY INPUT IS READ, NONE IS TYPED — the weight series, the declared diet phase and that week’s check-in. Returns `observation` (the observed percent per week, the band it is judged against, how far off the line and which way the gap is moving), `advisory`, `levers`, `vetoes`, `offCadenceConditions`, `confounders`, `lowConfidence`, `checkin`, `readingCount`, `targetId`, `committedValue`, `stretchValue`, `committedUnchanged`, `outcome`, `proposal`, `suppressedByDecline`, `reviewedAt` and `notes`. THE ADVISORY IS NEVER SIZED: it names the observation and the two levers, intake and activity, and says which one to move is the lifter’s pick (rp:rp-s12-activity-vs-food-adjustment-choice). This server prescribes no calories and no macros. A week under the weekly noise floor, still inside the settling window after a phase change, holding a down-weighted single-day jump, or flat late in a cut with adherence reported high is VETOED: nothing is proposed and `vetoes` says which rule held it (rp:rp-s12-no-adjustment-under-half-pound-weekly-change, rp:rp-s12-scale-opacity-salt-and-water). NOTHING ON THE CHART MOVES: the accepted target’s committed and stretch values are read, never written, and the declared diet phase is never written at all — this is a proposal beside the committed line, not an edit of it (B55). Answer the proposal by calling again with `response`: `accepted`, `declined` or `ignored`. A DECLINED PROPOSAL IS NEVER RAISED AGAIN for the same observation, defined as the same week anchor at the same urgency; it can return next week, or sooner if the signal widens.
+
+**Parameters**
+
+- `weekOf` — `string`, optional.
+- `response` — `accepted` | `declined` | `ignored`, optional.

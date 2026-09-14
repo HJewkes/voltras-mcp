@@ -54,6 +54,7 @@ import type { ServerState } from '../state/server-state.js';
 import type { LeannessBand } from '../store/leanness-band.js';
 import {
   LOCAL_USER_ID,
+  type SessionStore,
   type StoredBodyMetric,
   type StoredDietPhase,
   type StoredTrainingProfile,
@@ -633,10 +634,15 @@ const WEEKLY_CHECKIN_FIELDS = [
   key: 'hunger' | 'dietPlanAdherence' | 'sleepQuality';
 }>;
 
-interface WeeklyCheckin {
+export interface WeeklyCheckin {
   hunger: WeeklyCheckinScale | null;
   dietPlanAdherence: WeeklyCheckinScale | null;
   sleepQuality: WeeklyCheckinScale | null;
+}
+
+/** The one store read `readWeeklyCheckin` needs, as a slice (VW-376). */
+export interface WeeklyCheckinReadState {
+  store: Pick<SessionStore, 'getSelfReportsForUser'>;
 }
 
 /**
@@ -644,7 +650,7 @@ interface WeeklyCheckin {
  * UTC-based and deterministic: `now`'s own day-of-week (`getUTCDay()`, 0 for
  * Sunday) is how far back to walk.
  */
-function mostRecentSundayIso(now: Date): string {
+export function mostRecentSundayIso(now: Date): string {
   const sunday = new Date(now);
   sunday.setUTCDate(now.getUTCDate() - now.getUTCDay());
   return sunday.toISOString().slice(0, 10);
@@ -709,6 +715,20 @@ async function getWeeklyCheckin(
   input: z.infer<typeof ProfileGetWeeklyCheckinInput>,
 ): Promise<{ weekOf: string; checkin: WeeklyCheckin | null }> {
   const weekOf = input.weekOf ?? mostRecentSundayIso(new Date());
+  return { weekOf, checkin: await readWeeklyCheckin(state, weekOf) };
+}
+
+/**
+ * One week's answers, or `null` when that week was never checked in at all.
+ *
+ * Exported for VW-376's Sunday review, which assembles the same three answers
+ * into the rate advisory's input. Shared rather than re-read there so the
+ * last-row-per-code rule above has one implementation.
+ */
+export async function readWeeklyCheckin(
+  state: WeeklyCheckinReadState,
+  weekOf: string,
+): Promise<WeeklyCheckin | null> {
   const recordedAt = weekOfRecordedAt(weekOf);
   const rows = await state.store.getSelfReportsForUser({
     userId: LOCAL_USER_ID,
@@ -716,20 +736,15 @@ async function getWeeklyCheckin(
     from: recordedAt,
     to: recordedAt,
   });
-  if (rows.length === 0) {
-    return { weekOf, checkin: null };
-  }
+  if (rows.length === 0) return null;
   const latestByCode = new Map<string, WeeklyCheckinScale | null>();
   for (const row of rows) {
     if (row.questionCode === undefined) continue;
     latestByCode.set(row.questionCode, (row.valueText as WeeklyCheckinScale | undefined) ?? null);
   }
   return {
-    weekOf,
-    checkin: {
-      hunger: latestByCode.get(WEEKLY_CHECKIN_CODES[0]) ?? null,
-      dietPlanAdherence: latestByCode.get(WEEKLY_CHECKIN_CODES[1]) ?? null,
-      sleepQuality: latestByCode.get(WEEKLY_CHECKIN_CODES[2]) ?? null,
-    },
+    hunger: latestByCode.get(WEEKLY_CHECKIN_CODES[0]) ?? null,
+    dietPlanAdherence: latestByCode.get(WEEKLY_CHECKIN_CODES[1]) ?? null,
+    sleepQuality: latestByCode.get(WEEKLY_CHECKIN_CODES[2]) ?? null,
   };
 }

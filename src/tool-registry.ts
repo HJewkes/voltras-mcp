@@ -197,6 +197,11 @@ export const CORE_TOOL_NAMES = [
   'goal.list',
   'goal.retire',
   'goal.new_chapter',
+  // The Sunday tick's bodyweight-rate re-proposal (VW-376). Reads the weight
+  // series, the declared phase and that week's check-in, and offers an
+  // unsized advisory beside the committed goal line — it never edits that
+  // line and never writes the diet phase.
+  'goal.weekly_review',
 ] as const;
 
 /** Mock-only tools (R11), registered when `VOLTRA_ADAPTER=mock`. */
@@ -414,6 +419,11 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'goal.new_chapter': 'write',
   // Reads the two goal tables and returns them. No row moves.
   'goal.list': 'read',
+  // `write`: the review itself only reads, but recording the proposal it
+  // raises — and the lifter's answer to it — upserts one `advisory_decisions`
+  // row. Classified by what the tool can do, not by what one call happens to
+  // do: a vetoed week writes nothing and is still this tool.
+  'goal.weekly_review': 'write',
 
   'mock.configure': 'write',
   'mock.inject_error': 'write',

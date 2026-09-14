@@ -460,6 +460,18 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'realignment',
   'warningsIfChanged',
   'mesosHeld',
+  // VW-376: `goal.weekly_review`'s result. The observation the rate loop read,
+  // the vetoes and off-cadence conditions that held or released a proposal,
+  // the proposal row it recorded, and the assertion that the committed line
+  // was only read. The internal urgency rank is NOT here: it ranks RP's own
+  // calorie-adjustment bands, this server prescribes none, and no result field
+  // carries it.
+  'offCadenceConditions',
+  'lowConfidence',
+  'suppressedByDecline',
+  'committedUnchanged',
+  'readingCount',
+  'reviewedAt',
 ];
 
 /**

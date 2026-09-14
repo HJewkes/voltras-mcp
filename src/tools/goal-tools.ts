@@ -40,6 +40,7 @@ import {
   GoalNewChapterInput,
   GoalProposeTargetsInput,
   GoalRetireInput,
+  GoalWeeklyReviewInput,
 } from '../schemas/goal.js';
 import type { ServerState } from '../state/server-state.js';
 import {
@@ -73,7 +74,9 @@ import {
   GOAL_NEW_CHAPTER_DESCRIPTION,
   GOAL_PROPOSE_TARGETS_DESCRIPTION,
   GOAL_RETIRE_DESCRIPTION,
+  GOAL_WEEKLY_REVIEW_DESCRIPTION,
 } from './goal-descriptions.js';
+import { runWeeklyReview } from './goal-weekly-review.js';
 
 /** Weeks a horizon falls back to. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
@@ -140,6 +143,13 @@ export function registerGoalTools(
     GoalNewChapterInput,
     wrapHandler(GoalNewChapterInput, (input) => startNewChapter(state, input)),
     GOAL_NEW_CHAPTER_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'goal.weekly_review',
+    GoalWeeklyReviewInput,
+    wrapHandler(GoalWeeklyReviewInput, (input) => runWeeklyReview(state, input)),
+    GOAL_WEEKLY_REVIEW_DESCRIPTION,
   );
 }
 

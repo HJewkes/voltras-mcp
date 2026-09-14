@@ -21,6 +21,13 @@ import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 export interface DeclaredDietPhaseState extends DietPhaseState {
   /** Present only under `'recomposition'`, and only when it was declared. */
   recompMode?: RecompMode;
+  /**
+   * The covering range's own `startedAt` (VW-376). `weeksInPhase` is already
+   * derived from it, and the bodyweight trend needs the instant itself — the
+   * settling window and the cumulative-loss baseline both measure from it.
+   * Absent whenever the phase is unknown.
+   */
+  startedAt?: string;
 }
 
 /** What an undeclared (or straddled) phase answers: the table runs unmodified. */
@@ -58,6 +65,7 @@ export async function readDietPhaseState(
   const read: DeclaredDietPhaseState = {
     phase: covering.phase,
     weeksInPhase: weeksInPhaseAt(covering.startedAt, to),
+    startedAt: covering.startedAt,
   };
   if (covering.recompMode !== undefined) read.recompMode = covering.recompMode;
   return read;
