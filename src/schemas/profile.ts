@@ -89,3 +89,24 @@ export const ProfileSetDietPhaseInput = z
     startedAt: z.string().datetime().optional(),
   })
   .strict();
+
+// `profile.log_bodyweight` (VW-327) — the first writer of `body_metrics`.
+// Storage only, in the same posture as the rest of `profile.*`: it records a
+// self-reported reading and computes no verdict on it.
+export const ProfileLogBodyweightInput = z
+  .object({
+    bodyweightLbs: z.number().positive(),
+    // Omitted means "as of now". A second call for the same instant corrects
+    // the earlier reading rather than duplicating it (see `putBodyMetric`).
+    measuredAt: z.string().datetime().optional(),
+    note: z.string().min(1).optional(),
+  })
+  .strict();
+
+// `profile.get_body_metrics` (VW-327). Read-only; `sinceDays` limits the
+// returned series and defaults to the whole history when omitted.
+export const ProfileGetBodyMetricsInput = z
+  .object({
+    sinceDays: z.number().int().positive().optional(),
+  })
+  .strict();

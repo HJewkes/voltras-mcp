@@ -59,6 +59,8 @@ import {
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
+  type ListBodyMetricsFilter,
+  type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
   type SessionListFilter,
@@ -78,6 +80,7 @@ import {
   type PlanImportTemplate,
   type StoredPlannedExercise,
   type StoredTargetTempo,
+  type StoredBodyMetric,
   type StoredDietPhase,
   type StoredExerciseBaseline,
   type StoredExerciseSetup,
@@ -99,7 +102,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -1387,6 +1390,20 @@ function migrateV24ToV25(db: DatabaseSync): void {
 }
 
 /**
+ * v25 -> v26: a unique index on `body_metrics(user_id, recorded_at)` (VW-327),
+ * giving the first writer a natural key to upsert on. Creatable on any
+ * existing file because the table has never had a writer — like
+ * `migrateV11ToV12`'s `idx_failure_anchors_set_filter`, every DB on disk has
+ * zero rows here, so there is nothing for it to conflict with.
+ */
+function migrateV25ToV26(db: DatabaseSync): void {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_body_metrics_user_recorded
+      ON body_metrics(user_id, recorded_at)
+  `);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1583,6 +1600,14 @@ interface DietPhaseRow {
   started_at: string;
   ended_at: string | null;
   declared_at: string;
+}
+
+interface BodyMetricRow {
+  id: string;
+  user_id: string;
+  recorded_at: string;
+  bodyweight_lbs: number;
+  notes: string | null;
 }
 
 interface SetRow {
@@ -3189,6 +3214,48 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(covering?.phase ?? row.diet_phase ?? undefined);
   }
 
+  // --- Body metrics (VW-327) ---
+
+  /**
+   * `ON CONFLICT(user_id, recorded_at) DO UPDATE`, never `INSERT OR REPLACE`
+   * (see `putSet` #79). `id` is excluded from the UPDATE SET, so a correcting
+   * call on an existing instant keeps the original row's id — the same shape
+   * as `putFailureAnchor`. EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+   */
+  async putBodyMetric(input: PutBodyMetricInput): Promise<StoredBodyMetric> {
+    this.db
+      .prepare(
+        `INSERT INTO body_metrics (id, user_id, recorded_at, bodyweight_lbs, notes)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, recorded_at) DO UPDATE SET
+           bodyweight_lbs = excluded.bodyweight_lbs,
+           notes = excluded.notes`,
+      )
+      .run(randomUUID(), input.userId, input.measuredAt, input.bodyweightLbs, input.note ?? null);
+    const row = this.db
+      .prepare(`SELECT * FROM body_metrics WHERE user_id = ? AND recorded_at = ?`)
+      .get(input.userId, input.measuredAt) as unknown as BodyMetricRow;
+    return Promise.resolve(rowToBodyMetric(row));
+  }
+
+  async listBodyMetrics(
+    userId: string,
+    filter?: ListBodyMetricsFilter,
+  ): Promise<StoredBodyMetric[]> {
+    const rows =
+      filter?.sinceDays === undefined
+        ? (this.db
+            .prepare(`SELECT * FROM body_metrics WHERE user_id = ? ORDER BY recorded_at DESC`)
+            .all(userId) as unknown as BodyMetricRow[])
+        : (this.db
+            .prepare(
+              `SELECT * FROM body_metrics WHERE user_id = ? AND recorded_at >= ?
+               ORDER BY recorded_at DESC`,
+            )
+            .all(userId, sinceDaysCutoff(filter.sinceDays)) as unknown as BodyMetricRow[]);
+    return Promise.resolve(rows.map(rowToBodyMetric));
+  }
+
   /**
    * Half-open at the end (`ended_at > to`) so the instant two adjacent ranges
    * meet at belongs to the later one only — the SQL half of `covers()` in
@@ -3952,6 +4019,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 24) {
     migrateV24ToV25(db);
   }
+  if (current <= 25) {
+    migrateV25ToV26(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4047,6 +4117,22 @@ function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {
     declaredAt: row.declared_at,
   };
   if (row.ended_at !== null) out.endedAt = row.ended_at;
+  return out;
+}
+
+/** ISO instant `sinceDays` days before now, for a `recorded_at >=` filter. */
+function sinceDaysCutoff(sinceDays: number): string {
+  return new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function rowToBodyMetric(row: BodyMetricRow): StoredBodyMetric {
+  const out: StoredBodyMetric = {
+    id: row.id,
+    userId: row.user_id,
+    measuredAt: row.recorded_at,
+    bodyweightLbs: row.bodyweight_lbs,
+  };
+  if (row.notes !== null) out.note = row.notes;
   return out;
 }
 

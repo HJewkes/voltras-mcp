@@ -129,6 +129,11 @@ export const CORE_TOOL_NAMES = [
   // it suppresses no plateau and weights no comparison. See
   // src/tools/profile-tools.ts.
   'profile.set_diet_phase',
+  // Self-reported bodyweight (VW-327) — the first writer of `body_metrics`.
+  // Storage only, same posture as the rest of `profile.*`: advisory, no rate
+  // verdict computed here. See src/tools/profile-tools.ts.
+  'profile.log_bodyweight',
+  'profile.get_body_metrics',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -344,6 +349,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // Writes a row in SQLite and rewrites the timeline around it: two sessions
   // declaring different phases race each other.
   'profile.set_diet_phase': 'write',
+  // Upserts a row in SQLite.
+  'profile.log_bodyweight': 'write',
+  'profile.get_body_metrics': 'read',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',

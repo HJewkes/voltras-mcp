@@ -29,6 +29,8 @@ const TOOL_NAMES = [
   'profile.get_starting_prescription',
   'profile.get_onboarding_gaps',
   'profile.set_diet_phase',
+  'profile.log_bodyweight',
+  'profile.get_body_metrics',
 ];
 
 function makeFakePlaceholders(): {
@@ -563,5 +565,154 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
 
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('profile.log_bodyweight / profile.get_body_metrics (VW-327)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface BodyMetricEntry {
+    id: string;
+    userId: string;
+    measuredAt: string;
+    bodyweightLbs: number;
+    note?: string;
+  }
+  interface LogBody {
+    entry: BodyMetricEntry;
+  }
+  interface GetBody {
+    series: BodyMetricEntry[];
+    sevenDayMeanBodyweightLbs: number | null;
+  }
+
+  it('logs a reading defaulting measuredAt to now', async () => {
+    const before = new Date().toISOString();
+    const r = await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180 });
+
+    expect(r.isError).toBeUndefined();
+    const { entry } = parseResult(r) as LogBody;
+    expect(entry.bodyweightLbs).toBe(180);
+    expect(entry.userId).toBe(LOCAL_USER_ID);
+    expect(entry.measuredAt >= before).toBe(true);
+    expect(entry.note).toBeUndefined();
+  });
+
+  it('records an explicit measuredAt and note', async () => {
+    const r = await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 179.5,
+      measuredAt: '2026-01-01T00:00:00.000Z',
+      note: 'after breakfast',
+    });
+
+    const { entry } = parseResult(r) as LogBody;
+    expect(entry.measuredAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(entry.note).toBe('after breakfast');
+  });
+
+  it('a second log at the same measuredAt corrects rather than duplicates', async () => {
+    await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 180,
+      measuredAt: '2026-01-01T00:00:00.000Z',
+    });
+    const r2 = await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 181,
+      measuredAt: '2026-01-01T00:00:00.000Z',
+    });
+    const { entry: second } = parseResult(r2) as LogBody;
+
+    const r3 = await h.invoke('profile.get_body_metrics', {});
+    const { series } = parseResult(r3) as GetBody;
+    expect(series).toHaveLength(1);
+    expect(series[0]?.bodyweightLbs).toBe(181);
+    expect(series[0]?.id).toBe(second.id);
+  });
+
+  it('returns an empty series and a null mean before anything is logged', async () => {
+    const r = await h.invoke('profile.get_body_metrics', {});
+
+    const { series, sevenDayMeanBodyweightLbs } = parseResult(r) as GetBody;
+    expect(series).toEqual([]);
+    expect(sevenDayMeanBodyweightLbs).toBeNull();
+  });
+
+  it('returns the series newest-first', async () => {
+    await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 180,
+      measuredAt: '2026-01-01T00:00:00.000Z',
+    });
+    await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 179,
+      measuredAt: '2026-01-03T00:00:00.000Z',
+    });
+
+    const r = await h.invoke('profile.get_body_metrics', {});
+    const { series } = parseResult(r) as GetBody;
+    expect(series.map((m) => m.measuredAt)).toEqual([
+      '2026-01-03T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    ]);
+  });
+
+  it('reports the 7-day mean once at least 3 readings fall in that window', async () => {
+    const now = Date.now();
+    const daysAgo = (n: number): string => new Date(now - n * 24 * 60 * 60 * 1000).toISOString();
+
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180, measuredAt: daysAgo(1) });
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 182, measuredAt: daysAgo(3) });
+
+    const before3 = await h.invoke('profile.get_body_metrics', {});
+    expect((parseResult(before3) as GetBody).sevenDayMeanBodyweightLbs).toBeNull();
+
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 181, measuredAt: daysAgo(5) });
+
+    const after3 = await h.invoke('profile.get_body_metrics', {});
+    expect((parseResult(after3) as GetBody).sevenDayMeanBodyweightLbs).toBe(181);
+  });
+
+  it('excludes a reading older than 7 days from the mean', async () => {
+    const now = Date.now();
+    const daysAgo = (n: number): string => new Date(now - n * 24 * 60 * 60 * 1000).toISOString();
+
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180, measuredAt: daysAgo(1) });
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180, measuredAt: daysAgo(3) });
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 400, measuredAt: daysAgo(30) });
+
+    const r = await h.invoke('profile.get_body_metrics', {});
+    const { sevenDayMeanBodyweightLbs } = parseResult(r) as GetBody;
+    expect(sevenDayMeanBodyweightLbs).toBeNull();
+  });
+
+  it('filters the series by sinceDays independently of the 7-day mean', async () => {
+    const now = Date.now();
+    const daysAgo = (n: number): string => new Date(now - n * 24 * 60 * 60 * 1000).toISOString();
+
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180, measuredAt: daysAgo(1) });
+    await h.invoke('profile.log_bodyweight', { bodyweightLbs: 190, measuredAt: daysAgo(30) });
+
+    const r = await h.invoke('profile.get_body_metrics', { sinceDays: 7 });
+    const { series } = parseResult(r) as GetBody;
+    expect(series).toHaveLength(1);
+    expect(series[0]?.bodyweightLbs).toBe(180);
+  });
+
+  it('rejects a non-positive bodyweightLbs', async () => {
+    const r = await h.invoke('profile.log_bodyweight', { bodyweightLbs: 0 });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects unknown keys on both tools with INVALID_INPUT', async () => {
+    const r1 = await h.invoke('profile.log_bodyweight', { bodyweightLbs: 180, userId: 'someone' });
+    expect(r1.isError).toBe(true);
+    expect((parseResult(r1) as { code: string }).code).toBe('INVALID_INPUT');
+
+    const r2 = await h.invoke('profile.get_body_metrics', { userId: 'someone' });
+    expect(r2.isError).toBe(true);
+    expect((parseResult(r2) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });
