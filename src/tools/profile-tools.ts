@@ -35,6 +35,7 @@ import {
 } from '../profile/starting-prescription.js';
 import {
   ProfileGetBodyMetricsInput,
+  ProfileRespondRecompAdvisoryInput,
   ProfileGetOnboardingGapsInput,
   ProfileGetStartingPrescriptionInput,
   ProfileGetTierSignalInput,
@@ -60,6 +61,9 @@ import {
   type StoredTrainingProfile,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import { resolveDefaultProgram } from './plan-tools.js';
+import { buildRecompDegradation, recordRecompResponse } from './recomp-degradation.js';
+import type { RecompDegradationResult } from '../analytics/recomp-degradation.js';
 import { getTierSignal, type TierSignal } from './tier-signal.js';
 
 interface PlaceholderTools {
@@ -211,6 +215,23 @@ const GET_WEEKLY_CHECKIN_DESCRIPTION =
   'given or null if that particular field was left blank — the two are different states, see ' +
   'profile.log_weekly_checkin.';
 
+const RESPOND_RECOMP_ADVISORY_DESCRIPTION =
+  'Answer the recomposition re-ask that plan.complete_workout and plan.next_workout report as ' +
+  'the `recompReAsk` field of their `blockBoundary`: response is "accepted" or "declined". The ' +
+  're-ask fires when a ' +
+  'recomposition reaches its second block boundary, when cumulative bodyweight loss ' +
+  'since the phase started reaches the diet-fatigue proxy bands RP calls noticeable (7%) or ' +
+  'significant (10%), or when the self-reported leanness band moves a rung toward lean. ' +
+  'ANSWERING IT IS WHAT CLOSES IT. The block-boundary question opens at the second boundary ' +
+  'and comes back at every boundary after that until the lifter accepts or declines it, ' +
+  'because a phase with no natural end is exactly the one a skipped question keeps running. ' +
+  'NEITHER ANSWER CHANGES THE PHASE. The declared phase is an observed record and ' +
+  'profile.set_diet_phase is its only writer, so accepting records that the lifter agreed and ' +
+  'nothing else — call profile.set_diet_phase yourself only if they ask for the switch. ' +
+  'Declining files the proposal with the inputs and thresholds it fired on, and the same ' +
+  'evidence is not offered again until a later block boundary or a stronger band. Call this ' +
+  'only when a proposal is actually open; with none open it records nothing and says why.';
+
 export function registerProfileTools(
   _server: McpServer,
   state: ServerState,
@@ -264,6 +285,13 @@ export function registerProfileTools(
     ProfileLogBodyweightInput,
     wrapHandler(ProfileLogBodyweightInputRefined, (input) => logBodyweight(state, input)),
     LOG_BODYWEIGHT_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.respond_recomp_advisory',
+    ProfileRespondRecompAdvisoryInput,
+    wrapHandler(ProfileRespondRecompAdvisoryInput, (input) => respondRecompAdvisory(state, input)),
+    RESPOND_RECOMP_ADVISORY_DESCRIPTION,
   );
   install(
     placeholders,
@@ -455,6 +483,24 @@ async function setDietPhase(
     ...(input.recompMode === undefined ? {} : { recompMode: input.recompMode }),
   });
   return { declared, timeline: await state.store.listDietPhases(LOCAL_USER_ID) };
+}
+
+/**
+ * `profile.respond_recomp_advisory` (VW-369) — files an accept or a decline
+ * against the recomposition re-ask, and writes nothing else.
+ *
+ * The proposal is RE-DERIVED here rather than passed in, so an answer can only
+ * ever be filed against evidence that is still true. A caller holding a stale
+ * proposal gets `recorded: false` and the reason it went quiet.
+ */
+async function respondRecompAdvisory(
+  state: ServerState,
+  input: z.infer<typeof ProfileRespondRecompAdvisoryInput>,
+): Promise<{ recorded: boolean; reason: string; advisory: RecompDegradationResult }> {
+  const program = await resolveDefaultProgram(state, undefined);
+  const blocks = await state.store.getTrainingBlocksForProgram(program.id);
+  const advisory = await buildRecompDegradation(state, blocks, false);
+  return { ...(await recordRecompResponse(state, advisory, input.response)), advisory };
 }
 
 /**

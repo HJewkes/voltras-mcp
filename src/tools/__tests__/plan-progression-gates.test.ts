@@ -531,6 +531,7 @@ const PROFILE_TOOLS = [
   'profile.get_body_metrics',
   'profile.log_weekly_checkin',
   'profile.get_weekly_checkin',
+  'profile.respond_recomp_advisory',
 ];
 
 interface FakeTool {

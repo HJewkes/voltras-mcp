@@ -144,6 +144,11 @@ export const CORE_TOOL_NAMES = [
   // src/tools/profile-tools.ts.
   'profile.log_weekly_checkin',
   'profile.get_weekly_checkin',
+  // The accept/decline half of the recomposition re-ask (VW-369). Files the
+  // answer in `advisory_decisions` and never touches `diet_phases`; the
+  // proposal itself rides on `blockBoundary.recompReAsk`. See
+  // src/tools/recomp-degradation.ts.
+  'profile.respond_recomp_advisory',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -385,6 +390,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // Writes rows in SQLite (a plain INSERT, like `session.checkin`).
   'profile.log_weekly_checkin': 'write',
   'profile.get_weekly_checkin': 'read',
+  // Writes a row in SQLite: two sessions answering the same re-ask race.
+  'profile.respond_recomp_advisory': 'write',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',

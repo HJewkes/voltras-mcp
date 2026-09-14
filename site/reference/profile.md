@@ -2,7 +2,7 @@
 
 # `profile.*`
 
-10 tools in the `profile` namespace.
+11 tools in the `profile` namespace.
 
 ## `profile.set_training_background`
 
@@ -119,3 +119,13 @@ Returns `checkin: null` if that week has no recorded entry at all. Once a week h
 **Parameters**
 
 - `weekOf` — `string`, optional.
+
+## `profile.respond_recomp_advisory`
+
+Answer the recomposition re-ask that plan.complete_workout and plan.next_workout report as the `recompReAsk` field of their `blockBoundary`: response is "accepted" or "declined".
+
+The re-ask fires when a recomposition reaches its second block boundary, when cumulative bodyweight loss since the phase started reaches the diet-fatigue proxy bands RP calls noticeable (7%) or significant (10%), or when the self-reported leanness band moves a rung toward lean. ANSWERING IT IS WHAT CLOSES IT. The block-boundary question opens at the second boundary and comes back at every boundary after that until the lifter accepts or declines it, because a phase with no natural end is exactly the one a skipped question keeps running. NEITHER ANSWER CHANGES THE PHASE. The declared phase is an observed record and profile.set_diet_phase is its only writer, so accepting records that the lifter agreed and nothing else — call profile.set_diet_phase yourself only if they ask for the switch. Declining files the proposal with the inputs and thresholds it fired on, and the same evidence is not offered again until a later block boundary or a stronger band. Call this only when a proposal is actually open; with none open it records nothing and says why.
+
+**Parameters**
+
+- `response` — `accepted` | `declined`, **required**.

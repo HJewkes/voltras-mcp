@@ -53,6 +53,8 @@ import {
 } from '../analytics/diet-phase-tolerance.js';
 import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state.js';
 import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
+import { buildRecompDegradation } from './recomp-degradation.js';
+import type { RecompDegradationResult } from '../analytics/recomp-degradation.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
@@ -157,7 +159,8 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
   'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
   'written by this tool. When priorities have been declared (goal.declare_priorities) it also carries ' +
-  '`realignment`: the same re-ask `plan.complete_workout` describes.';
+  '`realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same ' +
+  'terms.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
   '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
@@ -174,7 +177,18 @@ const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'one still bound to the block that just ended draws the hold-it-for-the-whole-block warning ' +
   '(rp:rp-s6-priority-muscle-held-constant-per-block). Nothing here is written and no accepted ' +
   'target is re-banded: an accepted target comes back under `skipped`, because the re-ask ' +
-  're-proposes and never silently lowers a target you committed to.';
+  're-proposes and never silently lowers a target you committed to. The boundary also carries ' +
+  '`recompReAsk` (VW-369): the recomposition re-ask, present on every boundary and always explained. ' +
+  'Its `proposal` is null unless the lifter is in a declared recomposition AND one of three things ' +
+  'is true — the phase has reached its second block boundary, cumulative bodyweight loss since ' +
+  'the phase started has reached the bands RP calls noticeable or significant diet fatigue, or the ' +
+  'self-reported leanness band has moved a rung toward lean. The block-boundary question opens at ' +
+  'the second boundary and returns at every boundary after it until the lifter answers; an ' +
+  'ignored question must not be able to close it, because that is how a recomposition runs ' +
+  'forever. When `proposal` is null, `silentReason` says which test it failed, that the ask was ' +
+  'already answered, or which earlier decline still holds. A proposal offers switching to a ' +
+  'declared fat-loss or gain phase, or keeping the recomposition on its declared mode; answer it ' +
+  'with profile.respond_recomp_advisory. Nothing here switches a phase and nothing here writes one.';
 const PLAN_ATTACH_TO_SESSION_DESCRIPTION =
   'Link a live/real session to a plan entity — either a specific plannedExerciseId or a whole ' +
   'workoutTemplateId (exactly one of the two). Use this to connect what the user is actually ' +
@@ -911,6 +925,12 @@ export interface BlockBoundary {
   currentGoal: string | null;
   /** The declared-priority re-ask (VW-359); null when nothing was declared. */
   realignment: GoalRealignment | null;
+  /**
+   * The recomposition re-ask (VW-369). Always present and always carries a
+   * reason: `proposal` is null when nothing qualified or a decline still holds,
+   * and `silentReason` says which. Never switches a phase and never writes one.
+   */
+  recompReAsk: RecompDegradationResult;
   prompt: string;
 }
 
@@ -972,12 +992,17 @@ function declaredPrioritiesPrompt(
  * block, `nextWorkout` passes the block BEFORE the one it is returning — so
  * this one function computes the reported pair for both directions without
  * ever comparing block/template names.
+ *
+ * `pendingBoundary` is what VW-369's boundary count needs and the two callers
+ * differ on: `completeWorkout` reports the boundary BEFORE writing the
+ * assignment that records it, `nextWorkout` reports one already on file.
  */
 async function buildBlockBoundary(
   state: ServerState,
   orderedBlocks: StoredTrainingBlock[],
   finishedBlockIndex: number,
   currentGoal: string | null,
+  pendingBoundary: boolean,
 ): Promise<BlockBoundary> {
   const finishedBlock = toBlockBoundaryRef(orderedBlocks[finishedBlockIndex]);
   const nextBlockRow = orderedBlocks[finishedBlockIndex + 1];
@@ -989,6 +1014,11 @@ async function buildBlockBoundary(
     nextBlock,
     currentGoal,
     realignment,
+    recompReAsk: await buildRecompDegradation(
+      state,
+      orderedBlocks.slice(0, finishedBlockIndex + 1),
+      pendingBoundary,
+    ),
     prompt: buildGoalRealignmentPrompt(finishedBlock, nextBlock, currentGoal, realignment),
   };
 }
@@ -1010,7 +1040,13 @@ async function resolveNextWorkoutBlockBoundary(
   isFirstOfBlock: boolean,
 ): Promise<BlockBoundary | null> {
   if (!isFirstOfBlock || blockIndex === 0) return null;
-  return buildBlockBoundary(state, orderedBlocks, blockIndex - 1, await readCurrentGoal(state));
+  return buildBlockBoundary(
+    state,
+    orderedBlocks,
+    blockIndex - 1,
+    await readCurrentGoal(state),
+    false,
+  );
 }
 
 /**
@@ -1033,7 +1069,7 @@ async function resolveCompleteWorkoutBlockBoundary(
   const orderedBlocks = await state.store.getTrainingBlocksForProgram(block.programId);
   const blockIndex = orderedBlocks.findIndex((b) => b.id === block.id);
   if (blockIndex === -1) return null;
-  return buildBlockBoundary(state, orderedBlocks, blockIndex, await readCurrentGoal(state));
+  return buildBlockBoundary(state, orderedBlocks, blockIndex, await readCurrentGoal(state), true);
 }
 
 /** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */

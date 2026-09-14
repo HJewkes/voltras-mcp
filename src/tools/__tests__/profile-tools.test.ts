@@ -33,6 +33,7 @@ const TOOL_NAMES = [
   'profile.get_body_metrics',
   'profile.log_weekly_checkin',
   'profile.get_weekly_checkin',
+  'profile.respond_recomp_advisory',
 ];
 
 function makeFakePlaceholders(): {
