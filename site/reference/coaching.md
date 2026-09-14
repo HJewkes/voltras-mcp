@@ -12,7 +12,7 @@ Every response states tier-specific values INLINE in `explanation` — an unqual
 
 **Parameters**
 
-- `topic` — `onboarding.tier_inference` | `onboarding.frequency_negotiation` | `onboarding.goal_commitment_alignment` | `onboarding.injury_intake` | `live.cue_budget` | `live.cue_delivery` | `live.warmup_protocol` | `live.rir_estimation` | `live.stop_set_signal` | `live.velocity_loss_threshold` | `live.readiness_interpretation` | `live.eccentric_overload_cost` | `live.fatigue_axes` | `meso.deload_trigger` | `meso.deload_ladder` | `meso.volume_progression` | `meso.post_deload_restart` | `meso.exercise_rotation` | `meso.e1rm_interpretation` | `meso.asymmetry_interpretation` | `meso.diet_phase_tolerance` | `diet.phase_coupling` | `diet.phase_durations` | `diet.disruption_handling`, **required**.
+- `topic` — `onboarding.tier_inference` | `onboarding.frequency_negotiation` | `onboarding.goal_commitment_alignment` | `onboarding.injury_intake` | `live.cue_budget` | `live.cue_delivery` | `live.warmup_protocol` | `live.rir_estimation` | `live.stop_set_signal` | `live.velocity_loss_threshold` | `live.readiness_interpretation` | `live.eccentric_overload_cost` | `live.fatigue_axes` | `meso.deload_trigger` | `meso.deload_ladder` | `meso.volume_progression` | `meso.post_deload_restart` | `meso.exercise_rotation` | `meso.e1rm_interpretation` | `meso.asymmetry_interpretation` | `meso.diet_phase_tolerance` | `meso.goal_setting` | `diet.phase_coupling` | `diet.phase_durations` | `diet.disruption_handling`, **required**.
 - `tier` — `beginner` | `intermediate` | `advanced`, optional.
 - `exerciseId` — `string`, optional.
 - `rir` — `number` (0–10), optional.

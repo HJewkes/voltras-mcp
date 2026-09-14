@@ -339,6 +339,36 @@ describe('coaching.explain', () => {
     });
   });
 
+  // VW-357: priorities-not-numbers goal setting, committed/stretch bands,
+  // fixed-for-the-meso targets decided only at the block boundary.
+  it('states the goal-setting rule: bands, fixed targets, block-boundary decisions (VW-357)', async () => {
+    // Arrange / Act
+    const body = parseResult(await h.invoke({ topic: 'meso.goal_setting' }));
+
+    // Assert
+    expect(body.explanation).toContain('committed');
+    expect(body.explanation).toContain('stretch');
+    expect(body.explanation).toMatch(/fixed|block boundary/i);
+    expect(body.explanation).toContain('BEGINNER EXCEPTION');
+    expect(body.sources).toContain('rp-s10-underpromise-overdeliver-goal-setting');
+    expect(body.sources).toContain('rp-s5-fatloss-priority-training-rule');
+    expect(body.sources).toContain('rp-s3-old-prs-irrelevant-reframe');
+    expect(body.caveats?.length).toBeGreaterThan(0);
+  });
+
+  it.each(['beginner', 'intermediate', 'advanced'] as const)(
+    'returns non-empty goal-setting prose for tier %s',
+    async (tier) => {
+      // Arrange / Act
+      const body = parseResult(await h.invoke({ topic: 'meso.goal_setting', tier }));
+
+      // Assert: this topic has no perTier entry, so every tier falls back to
+      // the same complete, non-empty explanation.
+      expect(body.explanation.length).toBeGreaterThan(0);
+      expect(body.sources.length).toBeGreaterThan(0);
+    },
+  );
+
   it('rejects an unknown topic', async () => {
     // Arrange / Act
     const r = await h.invoke({ topic: 'not.a.real.topic' });

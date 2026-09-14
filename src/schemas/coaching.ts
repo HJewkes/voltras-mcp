@@ -41,6 +41,7 @@ export const CoachingTopic = z.enum([
   'meso.e1rm_interpretation',
   'meso.asymmetry_interpretation',
   'meso.diet_phase_tolerance',
+  'meso.goal_setting',
   // Diet / nutrition coaching
   'diet.phase_coupling',
   'diet.phase_durations',

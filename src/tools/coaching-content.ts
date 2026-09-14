@@ -645,6 +645,92 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
         'never as a resolved single number.',
     ],
   },
+  'meso.goal_setting': {
+    allTiers:
+      'A goal is set by stating PRIORITIES — specialize / maintain / deprioritize, per muscle ' +
+      'or lift — never a raw number. Beginner intake asks the grand goal, then which muscles to ' +
+      'emphasize while still training the whole body; intermediate intake adds a priority ' +
+      'RANKING among them. When a client cannot articulate a goal, propose a population default ' +
+      'and let them correct it (rp-s4-needs-analysis-four-part-intake, rp-s5-needs-analysis-' +
+      'four-parts, rp-s1-population-default-fallback-goal). From the declared priorities the ' +
+      "coach proposes a BAND, not a point: committed = the band's low edge, stretch = the " +
+      "band's high edge, and both are shown. That reconciles two rules that would otherwise " +
+      'pull apart — pick the target so under-delivery is nearly impossible ("barely achievable", ' +
+      'rp-s10-underpromise-overdeliver-goal-setting) — while the displayed range itself is never ' +
+      'shaded to protect that promise; it stays the honest range, uncertainty and all. Never set ' +
+      'a goal with a high failure probability at all (rp-s1-goal-failure-probability-guardrail). ' +
+      'SPECIALIZATION MECHANICS: the corpus never states a hard cap on how many muscles can be ' +
+      'specialized at once — it only ever says "one or two" in passing, and every worked example ' +
+      'is a pair (arms and shoulders, chest and back). Treat two as a practical default and say ' +
+      'so as a reading of the examples, not a rule the corpus states outright. A priority is ' +
+      'held for A MESO OR MORE: intermediates commit 2-5 mesocycles to a stated priority rather ' +
+      'than switching every cycle, since switching too often spreads gains too thin to see ' +
+      '(rp-s5-goal-persistence-multi-meso); advanced lifters lock the priority for a whole block ' +
+      'of 2-3 consecutive mesocycles, and a mid-block change warrants a warning ' +
+      '(rp-s6-priority-muscle-held-constant-per-block). Deprioritized muscles get MAINTENANCE ' +
+      'volume, never neglect. A FAT-LOSS PHASE DISABLES SPECIALIZATION, with a BEGINNER ' +
+      'EXCEPTION carried explicitly: an intermediate in a fat-loss phase drops priority ' +
+      'allocation and trains every muscle at or slightly above maintenance volume, because a ' +
+      "caloric deficit cannot support one muscle's elevated recovery needs without shortchanging " +
+      "the rest (rp-s5-fatloss-priority-training-rule) — but a BEGINNER'S training does not " +
+      "change across diet phases at all, gain, maintenance or fat loss alike, so a beginner's " +
+      "specialization declaration is not downgraded by phase the way an intermediate's or " +
+      "advanced's is (rp-s4-training-invariant-across-diet-phase). RECOMPOSITION runs on " +
+      'MAINTENANCE CALORIES, not a third strategy: simultaneous fat loss and muscle gain is only ' +
+      'physiologically available at maintenance, since fat loss wants a deficit and muscle gain ' +
+      'wants a surplus and a client cannot run both at once. Per RP, the modulator that decides ' +
+      'whether recomposition is worth declaring is TRAINING AGE, not body-fat percentage: ' +
+      'beginners can recomp meaningfully off newly-trained-body adaptability, while more ' +
+      'experienced trainees get better absolute results running fat-loss and muscle-gain as ' +
+      'separate, sequenced phases instead of chasing both on maintenance calories ' +
+      '(rp-s12-recomposition-requires-maintenance-calories). HORIZON: commitment runs in ' +
+      '3-MONTH WINDOWS tied to one block; at every block end the goal is RE-ASKED rather than ' +
+      'silently carried forward (rp-s10-three-month-planning-horizon). Intermediates in ' +
+      'particular tend to linearly extrapolate an early progression rate years into the future ' +
+      'once they have tasted a meso-to-meso gain — gains are asymptotic, not linear, so the plan ' +
+      'stays concrete only 1-2 mesocycles out and deliberately vague beyond that ' +
+      '(rp-s5-intermediate-overplanning-risk). TARGETS ARE FIXED FOR THE MESO: once a target ' +
+      'band is set, it does not move mid-meso — programming adapts around it instead, through ' +
+      'RIR/effort taper, fatigue-driven set-count reactions and deload triggers, and adding a ' +
+      'set once the top of the prescribed rep range is hit. Being ahead of target is a decision ' +
+      'made AT THE BLOCK BOUNDARY, never mid-meso: only there does the coach decide whether to ' +
+      'bank the extra progress, split the difference, or stop early on progress already made — ' +
+      'reacting to being ahead mid-cycle just reintroduces the linear-extrapolation trap above. ' +
+      'PRAISE CADENCE is QUIET PER SET, LOUD PER MESO: scale congratulatory intensity to the ' +
+      'size of the completed unit — light after a set, a bit more after a session, more after a ' +
+      'week, most after a full mesocycle or block — because matching magnitude to milestone size ' +
+      'is what keeps praise read as sincere rather than inflated ' +
+      '(rp-s1-escalating-praise-cadence). FAILURE IS NEVER GAMIFIED: a missed target gets no ' +
+      'streak break, no red number, no badge lost — avoiding a failure-prone goal in the first ' +
+      'place is the preventive half of this same rule, not a separate one. AFTER A TECHNIQUE ' +
+      'REFORM, OLD PRs DO NOT COUNT: when an exercise is reintroduced after a technique-reform ' +
+      'cycle, tell the client explicitly that pre-reform PRs "don\'t count", since they were set ' +
+      'with faulty technique — the corrected loads are a genuinely NEW baseline, and later ' +
+      'surpassing the old number is a bonus, never the goal. A goal target keyed to that ' +
+      'exercise should mark a new-chapter reset rather than silently comparing against the old ' +
+      'maximum (rp-s3-old-prs-irrelevant-reframe).',
+    sources: [
+      'rp-s4-needs-analysis-four-part-intake',
+      'rp-s5-needs-analysis-four-parts',
+      'rp-s1-population-default-fallback-goal',
+      'rp-s10-underpromise-overdeliver-goal-setting',
+      'rp-s1-goal-failure-probability-guardrail',
+      'rp-s5-goal-persistence-multi-meso',
+      'rp-s6-priority-muscle-held-constant-per-block',
+      'rp-s5-fatloss-priority-training-rule',
+      'rp-s4-training-invariant-across-diet-phase',
+      'rp-s12-recomposition-requires-maintenance-calories',
+      'rp-s10-three-month-planning-horizon',
+      'rp-s5-intermediate-overplanning-risk',
+      'rp-s1-escalating-praise-cadence',
+      'rp-s3-old-prs-irrelevant-reframe',
+    ],
+    caveats: [
+      'The corpus never states a numeric cap on simultaneous specialize items; "two" here is a ' +
+        'reading of its worked examples (always a pair), not a stated rule. Treat it as a ' +
+        'default that warns rather than blocks.',
+    ],
+  },
   'diet.phase_coupling': {
     allTiers:
       'Diet phase and training phase are coupled but INDEPENDENT clocks — this is the ' +
