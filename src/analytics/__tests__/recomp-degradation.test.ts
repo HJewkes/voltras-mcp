@@ -15,6 +15,7 @@ import {
   RECOMP_DEGRADATION_CONSTANTS,
   recompAdvisoryLevelRank,
   type RecompDegradationInput,
+  type RecompResponseRecord,
 } from '../recomp-degradation.js';
 
 const C = RECOMP_DEGRADATION_CONSTANTS;
@@ -39,8 +40,18 @@ function input(overrides: Partial<RecompDegradationInput> = {}): RecompDegradati
     recompMode: 'hold',
     boundariesSincePhaseStart: 1,
     cumulativeLoss: lossFacts(0),
-    declined: [],
+    responses: [],
     ...overrides,
+  };
+}
+
+/** An answer filed against a proposal that carried the block-boundary ask. */
+function answeredAtSecond(response: 'accepted' | 'declined'): RecompResponseRecord {
+  return {
+    level: 'boundary',
+    boundaryCount: C.boundaryReAskIndex,
+    response,
+    triggerKinds: ['block-boundary'],
   };
 }
 
@@ -57,9 +68,12 @@ describe('recomposition re-ask — silence', () => {
     expect(result.silentReason).toContain('boundary 1 of 2');
   });
 
-  it('says nothing at the third boundary when nothing else qualifies', () => {
-    const result = evaluateRecompDegradation(input({ boundariesSincePhaseStart: 3 }));
+  it('says nothing at a later boundary once the block-boundary ask was answered', () => {
+    const result = evaluateRecompDegradation(
+      input({ boundariesSincePhaseStart: 3, responses: [answeredAtSecond('accepted')] }),
+    );
     expect(result.proposal).toBeNull();
+    expect(result.silentReason).toContain('already been answered');
   });
 
   it('says nothing on a loss one tenth below the noticeable floor', () => {
@@ -184,12 +198,55 @@ describe('recomposition re-ask — the proposal', () => {
   });
 });
 
+describe('recomposition re-ask — an unanswered ask comes back', () => {
+  it('asks again at the third boundary when the second went unanswered', () => {
+    const result = evaluateRecompDegradation(input({ boundariesSincePhaseStart: 3 }));
+    expect(result.proposal?.triggers.map((t) => t.kind)).toEqual(['block-boundary']);
+    expect(result.proposal?.triggers[0].detail).toContain('3 block boundaries');
+  });
+
+  it('asks again at the fourth boundary too, because silence is not an answer', () => {
+    const result = evaluateRecompDegradation(input({ boundariesSincePhaseStart: 4 }));
+    expect(result.proposal?.level).toBe('boundary');
+  });
+
+  it('goes quiet for good once the ask is accepted', () => {
+    for (const boundary of [2, 3, 7]) {
+      const result = evaluateRecompDegradation(
+        input({
+          boundariesSincePhaseStart: boundary,
+          responses: [answeredAtSecond('accepted')],
+        }),
+      );
+      expect(result.proposal).toBeNull();
+    }
+  });
+
+  it('stays silent at the third boundary when the second was declined', () => {
+    const result = evaluateRecompDegradation(
+      input({ boundariesSincePhaseStart: 3, responses: [answeredAtSecond('declined')] }),
+    );
+    expect(result.proposal).toBeNull();
+  });
+});
+
 describe('recomposition re-ask — decline persistence', () => {
-  const declinedAtSecond = [{ level: 'boundary' as const, boundaryCount: 2 }];
+  const declinedAtSecond = [answeredAtSecond('declined')];
 
   it('does not re-offer the same evidence at the boundary it was declined on', () => {
     const result = evaluateRecompDegradation(
-      input({ boundariesSincePhaseStart: 2, declined: declinedAtSecond }),
+      input({
+        boundariesSincePhaseStart: 2,
+        responses: [
+          {
+            level: 'noticeable',
+            boundaryCount: 2,
+            response: 'declined',
+            triggerKinds: ['block-boundary', 'cumulative-loss'],
+          },
+        ],
+        cumulativeLoss: lossFacts(C.noticeableBandFloorPct),
+      }),
     );
     expect(result.proposal).toBeNull();
     expect(result.silentReason).toContain('declined');
@@ -199,7 +256,7 @@ describe('recomposition re-ask — decline persistence', () => {
     const result = evaluateRecompDegradation(
       input({
         boundariesSincePhaseStart: 3,
-        declined: declinedAtSecond,
+        responses: declinedAtSecond,
         cumulativeLoss: lossFacts(C.noticeableBandFloorPct),
       }),
     );
@@ -210,7 +267,9 @@ describe('recomposition re-ask — decline persistence', () => {
     const result = evaluateRecompDegradation(
       input({
         boundariesSincePhaseStart: 2,
-        declined: [{ level: 'noticeable', boundaryCount: 2 }],
+        responses: [
+          { level: 'noticeable', boundaryCount: 2, response: 'declined', triggerKinds: [] },
+        ],
         cumulativeLoss: lossFacts(C.significantBandFloorPct),
       }),
     );
@@ -221,7 +280,14 @@ describe('recomposition re-ask — decline persistence', () => {
     const result = evaluateRecompDegradation(
       input({
         boundariesSincePhaseStart: 2,
-        declined: [{ level: 'significant', boundaryCount: 2 }],
+        responses: [
+          {
+            level: 'significant',
+            boundaryCount: 2,
+            response: 'declined',
+            triggerKinds: ['cumulative-loss'],
+          },
+        ],
       }),
     );
     expect(result.proposal).toBeNull();

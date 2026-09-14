@@ -20,8 +20,9 @@ import {
   RECOMP_DEGRADATION_CODE,
   RECOMP_DEGRADATION_VERSION,
   type RecompAdvisoryLevel,
-  type RecompDeclineRecord,
   type RecompDegradationResult,
+  type RecompResponseRecord,
+  type RecompTriggerKind,
 } from '../analytics/recomp-degradation.js';
 import type { ServerState } from '../state/server-state.js';
 import { isDietPhase } from '../store/diet-phase.js';
@@ -100,16 +101,34 @@ function isAdvisoryLevel(value: string): value is RecompAdvisoryLevel {
   return (RECOMP_ADVISORY_LEVELS as readonly string[]).includes(value);
 }
 
-/** Every decline on file: any one of them can suppress a repeat. */
-async function readRecompDeclines(state: ServerState): Promise<RecompDeclineRecord[]> {
+/** The trigger kinds an answered row carried, or empty when it predates the field. */
+function storedTriggerKinds(value: unknown): RecompTriggerKind[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((kind): kind is RecompTriggerKind => typeof kind === 'string');
+}
+
+/**
+ * Every answered proposal on file. Acceptances matter as much as declines: an
+ * acceptance is what closes the block-boundary ask, and an unanswered proposal
+ * is deliberately absent so it re-surfaces at the next boundary.
+ */
+async function readRecompResponses(state: ServerState): Promise<RecompResponseRecord[]> {
   const decisions = await state.store.listAdvisoryDecisions(LOCAL_USER_ID, {
     code: RECOMP_DEGRADATION_CODE,
-    userResponse: 'declined',
   });
   return decisions.flatMap((decision) => {
     const boundaryCount = decision.inputs.boundariesSincePhaseStart;
+    const response = decision.userResponse;
+    if (response !== 'accepted' && response !== 'declined') return [];
     if (!isAdvisoryLevel(decision.verdict) || typeof boundaryCount !== 'number') return [];
-    return [{ level: decision.verdict, boundaryCount }];
+    return [
+      {
+        level: decision.verdict,
+        boundaryCount,
+        response,
+        triggerKinds: storedTriggerKinds(decision.inputs.triggerKinds),
+      },
+    ];
   });
 }
 
@@ -154,7 +173,7 @@ export async function buildRecompDegradation(
       phase: 'unknown',
       boundariesSincePhaseStart: 0,
       cumulativeLoss: null,
-      declined: [],
+      responses: [],
     });
   }
   const ascending = (await state.store.listBodyMetrics(LOCAL_USER_ID)).sort((a, b) =>
@@ -179,7 +198,7 @@ export async function buildRecompDegradation(
     ),
     ...(startBand !== undefined ? { phaseStartLeannessBand: startBand } : {}),
     ...(currentBand !== undefined ? { currentLeannessBand: currentBand } : {}),
-    declined: await readRecompDeclines(state),
+    responses: await readRecompResponses(state),
   });
 }
 

@@ -180,10 +180,13 @@ const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   're-proposes and never silently lowers a target you committed to. The boundary also carries ' +
   '`recompReAsk` (VW-369): the recomposition re-ask, present on every boundary and always explained. ' +
   'Its `proposal` is null unless the lifter is in a declared recomposition AND one of three things ' +
-  'is true — the phase has run through its second block boundary, cumulative bodyweight loss since ' +
+  'is true — the phase has reached its second block boundary, cumulative bodyweight loss since ' +
   'the phase started has reached the bands RP calls noticeable or significant diet fatigue, or the ' +
-  'self-reported leanness band has moved a rung toward lean. When it is null, `silentReason` says ' +
-  'which test it failed or which earlier decline still holds. A proposal offers switching to a ' +
+  'self-reported leanness band has moved a rung toward lean. The block-boundary question opens at ' +
+  'the second boundary and returns at every boundary after it until the lifter answers; an ' +
+  'ignored question must not be able to close it, because that is how a recomposition runs ' +
+  'forever. When `proposal` is null, `silentReason` says which test it failed, that the ask was ' +
+  'already answered, or which earlier decline still holds. A proposal offers switching to a ' +
   'declared fat-loss or gain phase, or keeping the recomposition on its declared mode; answer it ' +
   'with profile.respond_recomp_advisory. Nothing here switches a phase and nothing here writes one.';
 const PLAN_ATTACH_TO_SESSION_DESCRIPTION =

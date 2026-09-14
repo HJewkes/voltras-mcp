@@ -162,7 +162,7 @@ describe('recordRecompResponse', () => {
     await recordRecompResponse(state, issued, 'declined', NOW);
     const reread = await buildRecompDegradation(state, await blocks(), true, NOW);
     expect(reread.proposal).toBeNull();
-    expect(reread.silentReason).toContain('declined');
+    expect(reread.silentReason).toContain('already been answered');
     expect(await store.listDietPhases(LOCAL_USER_ID)).toEqual(before);
   });
 
@@ -174,6 +174,24 @@ describe('recordRecompResponse', () => {
     });
     expect(filed.userResponse).toBe('accepted');
     expect((await store.listDietPhases(LOCAL_USER_ID))[0].phase).toBe('recomposition');
+  });
+
+  it('asks again at the next boundary when the last one went unanswered', async () => {
+    const issued = await buildRecompDegradation(state, await blocks(), true, NOW);
+    expect(issued.proposal?.inputs.boundariesSincePhaseStart).toBe(2);
+    await addBlock(2, '2026-04-01T00:00:00.000Z');
+    const next = await buildRecompDegradation(state, await blocks(), true, NOW);
+    expect(next.proposal?.inputs.boundariesSincePhaseStart).toBe(3);
+    expect(next.proposal?.triggers.map((t) => t.kind)).toEqual(['block-boundary']);
+  });
+
+  it('goes quiet at the next boundary once the ask was accepted', async () => {
+    const issued = await buildRecompDegradation(state, await blocks(), true, NOW);
+    await recordRecompResponse(state, issued, 'accepted', NOW);
+    await addBlock(2, '2026-04-01T00:00:00.000Z');
+    const next = await buildRecompDegradation(state, await blocks(), true, NOW);
+    expect(next.proposal).toBeNull();
+    expect(next.silentReason).toContain('already been answered');
   });
 
   it('records nothing when no proposal is open, and says why', async () => {

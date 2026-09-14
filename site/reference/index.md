@@ -6,8 +6,8 @@ Everything on this page is generated from a running server: the generator boots
 voltras-mcp against the mock adapter and reads `tools/list`, so a description here
 is the description a client actually sees.
 
-**116 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
-**118** in mock mode — the `mock.*` namespace is registered only when
+**117 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
+**119** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
 
 | Namespace                              | Tools | Availability      |

@@ -11,6 +11,12 @@
 // keeping the recomposition on its declared mode, with accept / decline. The
 // server never picks one (VW-346 §2d).
 //
+// SILENCE IS NOT AN ANSWER. The block-boundary leg opens once, at
+// `boundaryReAskIndex`, and then comes back at every later boundary until the
+// lifter accepts or declines it. Asking once and going quiet is the shape that
+// produces VW-346 §3's "recomp forever": the one question that exists to end an
+// open-ended phase would be closed by ignoring it.
+//
 // THE BANDS ARE NOT RESTATED HERE. `cumulative-loss.ts` owns the 7% / 10%
 // diet-fatigue proxy; this module imports `classifyCumulativeLossPct`'s verdict
 // and reads the thresholds off `CUMULATIVE_LOSS_CONSTANTS`. Two copies of those
@@ -105,11 +111,17 @@ export interface RecompProposalOption {
   detail: string;
 }
 
-/** A decline already on file, read back out of `advisory_decisions`. */
-export interface RecompDeclineRecord {
+/** One answered proposal, read back out of `advisory_decisions`. */
+export interface RecompResponseRecord {
   level: RecompAdvisoryLevel;
-  /** Boundaries since phase start at the instant the decline was filed. */
+  /** Boundaries since phase start at the instant the answer was filed. */
   boundaryCount: number;
+  response: 'accepted' | 'declined';
+  /**
+   * Which triggers the answered proposal carried. A row written before this
+   * field existed reads back empty, which closes no ask.
+   */
+  triggerKinds: readonly RecompTriggerKind[];
 }
 
 export interface RecompDegradationProposal {
@@ -145,7 +157,8 @@ export interface RecompDegradationInput {
   phaseStartLeannessBand?: LeannessBand;
   /** The most recently declared band, absent when never declared. */
   currentLeannessBand?: LeannessBand;
-  declined: readonly RecompDeclineRecord[];
+  /** Every accepted or declined proposal on file for this phase. */
+  responses: readonly RecompResponseRecord[];
 }
 
 const C = RECOMP_DEGRADATION_CONSTANTS;
@@ -157,27 +170,41 @@ const BOUNDARY_RP_IDS = [
 
 const OBSERVED_RP_IDS = [`rp:${CUMULATIVE_LOSS_SOURCE_ID}`] as const;
 
-const LEANNESS_RP_IDS = [
-  'rp:rp-s12-goal-magnitude-shrinks-each-phase',
-  'rp:rp-s11-bodyfat-startpoint-modifies-fatloss-timeline',
-] as const;
+/** One id, because the detail text quotes this note and no other. */
+const LEANNESS_RP_IDS = ['rp:rp-s12-goal-magnitude-shrinks-each-phase'] as const;
 
 function silent(reason: string): RecompDegradationResult {
   return { proposal: null, silentReason: reason };
 }
 
-/** Fires on the nominated boundary only, so a held recomposition is asked once. */
+/** Has the lifter ever answered a proposal carrying the boundary question? */
+function boundaryAskAnswered(input: RecompDegradationInput): boolean {
+  return input.responses.some((record) => record.triggerKinds.includes('block-boundary'));
+}
+
+/**
+ * Opens at the nominated boundary and stays open until answered.
+ *
+ * NOT ONCE, AND NOT EVERY BLOCK EITHER. The first ask is at
+ * `boundaryReAskIndex` and never before it, which is the human decision. After
+ * that an UNANSWERED ask comes back at every later boundary: a question the
+ * lifter scrolled past is exactly how VW-346 §3's "recomp forever" happens, and
+ * silence is not an answer. Once they accept or decline, this leg goes quiet —
+ * a decline then falls to `suppressingDecline`'s level rule, which is what lets
+ * a stronger band re-open the conversation on its own evidence.
+ */
 function boundaryTrigger(input: RecompDegradationInput): RecompDegradationTrigger[] {
-  if (input.boundariesSincePhaseStart !== C.boundaryReAskIndex) return [];
+  if (input.boundariesSincePhaseStart < C.boundaryReAskIndex) return [];
+  if (boundaryAskAnswered(input)) return [];
   return [
     {
       kind: 'block-boundary',
       level: 'boundary',
       detail:
-        `This recomposition has now run through ${C.boundaryReAskIndex} block boundaries. RP holds ` +
-        'that a recomposition runs on maintenance calories and that a non-beginner gets better ' +
-        'absolute results from fat-loss and muscle-gain run as separate phases ' +
-        '(rp:rp-s12-recomposition-requires-maintenance-calories).',
+        `This recomposition has now run through ${input.boundariesSincePhaseStart} block ` +
+        'boundaries. RP holds that a recomposition runs on maintenance calories and that a ' +
+        'non-beginner gets better absolute results from fat-loss and muscle-gain run as separate ' +
+        'phases (rp:rp-s12-recomposition-requires-maintenance-calories).',
       rpIds: BOUNDARY_RP_IDS,
     },
   ];
@@ -234,9 +261,10 @@ function strongestLevel(triggers: readonly RecompDegradationTrigger[]): RecompAd
 function suppressingDecline(
   input: RecompDegradationInput,
   level: RecompAdvisoryLevel,
-): RecompDeclineRecord | null {
-  const blocking = input.declined.find(
+): RecompResponseRecord | null {
+  const blocking = input.responses.find(
     (record) =>
+      record.response === 'declined' &&
       input.boundariesSincePhaseStart <= record.boundaryCount &&
       recompAdvisoryLevelRank(level) <= recompAdvisoryLevelRank(record.level),
   );
@@ -301,6 +329,17 @@ function buildProposal(
   };
 }
 
+/** Which of the three legs failed, so silence is never ambiguous. */
+function noTriggerReason(input: RecompDegradationInput): string {
+  const boundaryLeg = boundaryAskAnswered(input)
+    ? 'the block-boundary ask has already been answered'
+    : `boundary ${input.boundariesSincePhaseStart} of ${C.boundaryReAskIndex}`;
+  return (
+    `no trigger crossed: ${boundaryLeg}, cumulative loss below ` +
+    `${C.noticeableBandFloorPct}%, and the declared leanness band has not moved a rung`
+  );
+}
+
 /**
  * Should the coach re-ask whether this recomposition is still the right label?
  * Silence is a legitimate answer and says why it was chosen.
@@ -314,13 +353,7 @@ export function evaluateRecompDegradation(input: RecompDegradationInput): Recomp
     ...cumulativeLossTrigger(input),
     ...leannessTrigger(input),
   ];
-  if (triggers.length === 0) {
-    return silent(
-      `no trigger crossed: boundary ${input.boundariesSincePhaseStart} of ` +
-        `${C.boundaryReAskIndex}, cumulative loss below ${C.noticeableBandFloorPct}%, and the ` +
-        'declared leanness band has not moved a rung',
-    );
-  }
+  if (triggers.length === 0) return silent(noTriggerReason(input));
   const level = strongestLevel(triggers);
   const blocking = suppressingDecline(input, level);
   if (blocking !== null) {

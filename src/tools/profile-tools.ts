@@ -219,9 +219,12 @@ const RESPOND_RECOMP_ADVISORY_DESCRIPTION =
   'Answer the recomposition re-ask that plan.complete_workout and plan.next_workout report as ' +
   'the `recompReAsk` field of their `blockBoundary`: response is "accepted" or "declined". The ' +
   're-ask fires when a ' +
-  'recomposition has run through its second block boundary, when cumulative bodyweight loss ' +
+  'recomposition reaches its second block boundary, when cumulative bodyweight loss ' +
   'since the phase started reaches the diet-fatigue proxy bands RP calls noticeable (7%) or ' +
   'significant (10%), or when the self-reported leanness band moves a rung toward lean. ' +
+  'ANSWERING IT IS WHAT CLOSES IT. The block-boundary question opens at the second boundary ' +
+  'and comes back at every boundary after that until the lifter accepts or declines it, ' +
+  'because a phase with no natural end is exactly the one a skipped question keeps running. ' +
   'NEITHER ANSWER CHANGES THE PHASE. The declared phase is an observed record and ' +
   'profile.set_diet_phase is its only writer, so accepting records that the lifter agreed and ' +
   'nothing else — call profile.set_diet_phase yourself only if they ask for the switch. ' +
