@@ -416,7 +416,12 @@ async function proposeTargets(
   const targets: ProposedTarget[] = [];
   for (const leg of preview.legs) {
     const row = await state.store.putGoalTarget(
-      toStoredTarget(leg.derived, preview.derivation, reusableId(preview.stored, leg.selection)),
+      toStoredTarget(
+        leg.derived,
+        preview.derivation,
+        reusableId(preview.stored, leg.selection),
+        await chapterStamp(state, leg.derived),
+      ),
     );
     targets.push({ targetId: row.id, acceptedBy: null, ...leg.entry });
   }
@@ -429,6 +434,18 @@ async function proposeTargets(
     horizonWeeks: preview.horizonWeeks,
     notes: preview.notes,
   };
+}
+
+/**
+ * VW-361: `newChapterAt` is a STAMP taken from `exercise_chapters` at
+ * derivation, the same way `sessions.diet_phase` stamps `diet_phases`. The
+ * table is the one source of truth — this column exists so a target still
+ * reports the boundary its numbers were derived under after a later
+ * declaration moves it.
+ */
+async function chapterStamp(state: ServerState, derived: DerivedTarget): Promise<string | null> {
+  if (derived.exerciseId === null) return null;
+  return state.store.chapterStartedAt(LOCAL_USER_ID, derived.exerciseId);
 }
 
 /**
@@ -517,6 +534,7 @@ function toStoredTarget(
   derived: DerivedTarget,
   context: GoalDerivationContext,
   id: string | undefined,
+  newChapterAt: string | null,
 ): StoredGoalTarget {
   return {
     id: id ?? randomUUID(),
@@ -538,6 +556,7 @@ function toStoredTarget(
     acknowledgedStretch: false,
     derivedAt: context.derivedAt,
     endsAt: context.endsAt,
+    ...(newChapterAt !== null ? { newChapterAt } : {}),
   };
 }
 
@@ -722,18 +741,41 @@ async function refreshTargets(state: ServerState, priorityId: string): Promise<S
   return state.store.listGoalTargets({ priorityId }, { includeRetired: true });
 }
 
+/**
+ * VW-361: the declaration goes into `exercise_chapters` and the target's own
+ * `newChapterAt` is the STAMP of it, never a second source of truth. Which is
+ * why a target with no exercise behind it is refused: a chapter is a statement
+ * about a MOVEMENT, and there is no bodyweight technique to reform.
+ */
 async function startNewChapter(
   state: ServerState,
   input: z.infer<typeof GoalNewChapterInput>,
-): Promise<{ target: StoredGoalTarget; note: string }> {
+): Promise<{ target: StoredGoalTarget; chapterId: string; note: string }> {
   const at = input.at ?? new Date().toISOString();
+  const existing = await findTarget(state, input.targetId);
+  if (existing.exerciseId === undefined) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      `Target ${input.targetId} tracks ${existing.metric}, which has no movement to reform. ` +
+        'A new chapter is declared per exercise; use exercise.mark_new_chapter directly.',
+    );
+  }
+  const chapter = await state.store.markExerciseChapter({
+    userId: LOCAL_USER_ID,
+    exerciseId: existing.exerciseId,
+    startedAt: at,
+    declaredAt: new Date().toISOString(),
+  });
   const target = await state.store.setGoalTargetNewChapter(input.targetId, at);
   if (target === undefined) throw notFound('goal target', input.targetId);
   return {
     target,
+    chapterId: chapter.id,
     note:
       'New chapter stamped. The target’s numbers are unchanged — this records that the movement ' +
-      'behind them changed, so the comparable series restarts here rather than reading as a drop.',
+      'behind them changed, so the comparable series restarts here rather than reading as a drop. ' +
+      `Every read of ${existing.exerciseId} now clamps to this boundary; ` +
+      'exercise.retire_chapter undoes it.',
   };
 }
 

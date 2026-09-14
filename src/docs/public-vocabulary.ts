@@ -441,6 +441,15 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'bandUnchanged',
   'newChapterAt',
   'rpIds',
+  // VW-361: the exercise-chapter boundary and the two fields that report it.
+  // `windowStartedAt` has been on `progression.get_for_exercise`'s response
+  // since v1 and only now appears in a description, which is what brings it
+  // through this gate.
+  'chapterStartedAt',
+  'chapterId',
+  'newChapter',
+  'sessionsSince',
+  'windowStartedAt',
   'GOAL_TARGET_FIXED',
   'GOAL_TARGET_BELOW_BAND',
   'GOAL_TARGET_ABOVE_BAND',

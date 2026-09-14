@@ -358,18 +358,31 @@ async function readOwnSlope(
   };
 }
 
+/**
+ * VW-361: a declared new chapter with nothing recorded since it comes back
+ * with a `null` fit rather than a throw, and is folded into the same "no
+ * history" answer. Deriving a band off the pre-chapter slope would propose a
+ * number the reform was meant to retire.
+ */
 async function tryHistoryTrend(
   state: ServerState,
   exerciseId: string,
   metric: 'topLoad' | 'e1rm' = 'topLoad',
-): Promise<Awaited<ReturnType<typeof computeHistoryTrend>> | null> {
+): Promise<FittedHistoryTrend | null> {
   try {
-    return await computeHistoryTrend(state, { exerciseId, metric });
+    const result = await computeHistoryTrend(state, { exerciseId, metric });
+    return result.trend === null ? null : { series: result.series, trend: result.trend };
   } catch {
     // A lift with no working sets in the window throws NOT_FOUND; that is an
     // absent slope, not a failure of the proposal.
     return null;
   }
+}
+
+/** The two legs of a `history.trend` result this module reads, both non-null. */
+interface FittedHistoryTrend {
+  series: Awaited<ReturnType<typeof computeHistoryTrend>>['series'];
+  trend: NonNullable<Awaited<ReturnType<typeof computeHistoryTrend>>['trend']>;
 }
 
 function bandFor(

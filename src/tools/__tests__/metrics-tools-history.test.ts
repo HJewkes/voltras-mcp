@@ -105,7 +105,11 @@ function makePlaceholders(server: McpServer): Map<string, RegisteredTool> {
   return m;
 }
 
-function makeState(sets: StoredSet[], phase?: StoredDietPhase): ServerState {
+function makeState(
+  sets: StoredSet[],
+  phase?: StoredDietPhase,
+  chapterStartedAt: string | null = null,
+): ServerState {
   const store = {
     getSetsForExercise: vi.fn(async () => sets),
     // VW-150: `history.trend` reports the phase covering the plateau window.
@@ -113,6 +117,9 @@ function makeState(sets: StoredSet[], phase?: StoredDietPhase): ServerState {
     getDietPhaseCovering: vi.fn(async (_userId: string, from: string, to: string) =>
       phase !== undefined && covers(phase, from, to) ? phase : undefined,
     ),
+    // VW-361: null by default — the lifter declared no chapter, which is what
+    // every exercise gets until someone says the movement itself changed.
+    chapterStartedAt: vi.fn(async () => chapterStartedAt),
   };
   return { store, exercises: { getById: vi.fn(() => undefined) } } as unknown as ServerState;
 }

@@ -66,6 +66,7 @@ import {
   type ListBodyMetricsFilter,
   type ListGoalTargetsOptions,
   type ListPrioritiesOptions,
+  type MarkExerciseChapterInput,
   type PutAdvisoryDecisionInput,
   type PutBodyMetricInput,
   type SessionCountFilter,
@@ -92,6 +93,7 @@ import {
   type StoredBodyMetric,
   type StoredDietPhase,
   type StoredExerciseBaseline,
+  type StoredExerciseChapter,
   type StoredExerciseSetup,
   type StoredFailureAnchor,
   type StoredGoalBandBasis,
@@ -120,7 +122,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -266,6 +268,42 @@ const GOAL_TARGETS_DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_goal_targets_priority
     ON goal_targets(priority_id, derived_at);
+`;
+
+/**
+ * Where one exercise's comparable history restarts (VW-361, v29). The same
+ * event-row shape as `diet_phases` and `disruption_windows`: user-declared,
+ * `started_at` / `ended_at` / `declared_at` / `reason`, retroactively
+ * correctable, and additive — no set, rep or baseline is touched by a row here.
+ *
+ * `retired_at` rather than a DELETE, because the declaration itself is history:
+ * a lifter who decides the reform did not happen should be able to see that
+ * they once said it did.
+ *
+ * `ended_at` HAS NO READER ON PURPOSE. The deliberate exception to the
+ * "no DDL without a reader" rule the `disruption_windows` precedent warns
+ * about: RP's reform is a cycle, and the column is here for the consumer that
+ * eventually wants the window rather than a migration later.
+ *
+ * NO INDEX. One row per declared reform per exercise is a table of dozens over
+ * a training lifetime, and the only read is a `user_id`/`exercise_id` scan for
+ * the latest live row. An index would also have to survive `SCHEMA_SQL`
+ * running BEFORE `applyMigrations` on every open.
+ *
+ * Shared with `migrateV28ToV29` so the fresh-DB shape and the migrated shape
+ * cannot drift apart.
+ */
+const EXERCISE_CHAPTERS_DDL = `
+  CREATE TABLE IF NOT EXISTS exercise_chapters (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    declared_at TEXT NOT NULL,
+    reason TEXT,
+    retired_at TEXT
+  );
 `;
 
 const SCHEMA_SQL = `
@@ -960,7 +998,8 @@ const SCHEMA_SQL = `
 ${ACCOUNTABILITY_STATE_DDL}
 ${RIR_VELOCITY_MODELS_DDL}
 ${PRIORITIES_DDL}
-${GOAL_TARGETS_DDL}`;
+${GOAL_TARGETS_DDL}
+${EXERCISE_CHAPTERS_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1580,6 +1619,22 @@ function migrateV27ToV28(db: DatabaseSync): void {
   addColumnIfMissing(db, 'body_metrics', 'measurement_protocol', 'TEXT');
 }
 
+/**
+ * v28 -> v29: the `exercise_chapters` table (VW-361). PURELY ADDITIVE — one
+ * new table, no existing column touched and NOTHING back-filled. A pre-v29
+ * database reads as zero chapters, which is the true answer: the lifter never
+ * declared one, and a manufactured boundary would erase PR history they
+ * earned.
+ *
+ * The table is never derived. Every clamp that reads it (`priorBestE1RM`,
+ * `history.trend`, `progression.get_for_exercise`) falls back to its own
+ * unclamped window when there is no row, so a database that never migrated
+ * and one that migrated but holds no declaration behave identically.
+ */
+function migrateV28ToV29(db: DatabaseSync): void {
+  db.exec(EXERCISE_CHAPTERS_DDL);
+}
+
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
@@ -1782,6 +1837,17 @@ interface DietPhaseRow {
   started_at: string;
   ended_at: string | null;
   declared_at: string;
+}
+
+interface ExerciseChapterRow {
+  id: string;
+  user_id: string;
+  exercise_id: string;
+  started_at: string;
+  ended_at: string | null;
+  declared_at: string;
+  reason: string | null;
+  retired_at: string | null;
 }
 
 interface BodyMetricRow {
@@ -3455,6 +3521,73 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(covering?.phase ?? row.diet_phase ?? undefined);
   }
 
+  // --- Exercise chapters (VW-361) ---
+
+  /**
+   * A plain INSERT: a declaration is a fact about a moment, so a second one is
+   * a second row. There is no natural key to upsert on and the table is an FK
+   * child of `users` only, so neither `INSERT OR REPLACE` nor an `ON CONFLICT`
+   * clause has anything to do here.
+   */
+  markExerciseChapter(input: MarkExerciseChapterInput): Promise<StoredExerciseChapter> {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO exercise_chapters
+           (id, user_id, exercise_id, started_at, ended_at, declared_at, reason, retired_at)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, NULL)`,
+      )
+      .run(
+        id,
+        input.userId,
+        input.exerciseId,
+        input.startedAt,
+        input.declaredAt,
+        input.reason ?? null,
+      );
+    return Promise.resolve(this.readExerciseChapter(id) as StoredExerciseChapter);
+  }
+
+  retireExerciseChapter(id: string, retiredAt: string): Promise<StoredExerciseChapter | undefined> {
+    this.db.prepare(`UPDATE exercise_chapters SET retired_at = ? WHERE id = ?`).run(retiredAt, id);
+    return Promise.resolve(this.readExerciseChapter(id));
+  }
+
+  listExerciseChapters(userId: string, exerciseId?: string): Promise<StoredExerciseChapter[]> {
+    const clauses = exerciseId === undefined ? '' : ' AND exercise_id = ?';
+    const bindings = exerciseId === undefined ? [userId] : [userId, exerciseId];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM exercise_chapters WHERE user_id = ?${clauses}
+         ORDER BY started_at DESC, id ASC`,
+      )
+      .all(...bindings) as unknown as ExerciseChapterRow[];
+    return Promise.resolve(rows.map(rowToExerciseChapter));
+  }
+
+  /**
+   * The LATEST live declaration wins. Two chapters on one exercise is an
+   * ordinary state — a lifter can reform the same movement twice — and the
+   * comparison restarts at the most recent one, not at the first.
+   */
+  chapterStartedAt(userId: string, exerciseId: string): Promise<string | null> {
+    const row = this.db
+      .prepare(
+        `SELECT started_at FROM exercise_chapters
+         WHERE user_id = ? AND exercise_id = ? AND retired_at IS NULL
+         ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(userId, exerciseId) as { started_at: string } | undefined;
+    return Promise.resolve(row?.started_at ?? null);
+  }
+
+  private readExerciseChapter(id: string): StoredExerciseChapter | undefined {
+    const row = this.db.prepare(`SELECT * FROM exercise_chapters WHERE id = ?`).get(id) as
+      | ExerciseChapterRow
+      | undefined;
+    return row === undefined ? undefined : rowToExerciseChapter(row);
+  }
+
   // --- Body metrics (VW-327) ---
 
   /**
@@ -4469,6 +4602,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 27) {
     migrateV27ToV28(db);
   }
+  if (current <= 28) {
+    migrateV28ToV29(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4564,6 +4700,20 @@ function rowToDietPhase(row: DietPhaseRow): StoredDietPhase {
     declaredAt: row.declared_at,
   };
   if (row.ended_at !== null) out.endedAt = row.ended_at;
+  return out;
+}
+
+function rowToExerciseChapter(row: ExerciseChapterRow): StoredExerciseChapter {
+  const out: StoredExerciseChapter = {
+    id: row.id,
+    userId: row.user_id,
+    exerciseId: row.exercise_id,
+    startedAt: row.started_at,
+    declaredAt: row.declared_at,
+  };
+  if (row.ended_at !== null) out.endedAt = row.ended_at;
+  if (row.reason !== null) out.reason = row.reason;
+  if (row.retired_at !== null) out.retiredAt = row.retired_at;
   return out;
 }
 

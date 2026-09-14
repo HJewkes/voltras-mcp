@@ -152,6 +152,7 @@ import {
   type FeatureGateVerdict,
 } from '../store/baseline-gate.js';
 import { type DietPhase } from '../store/diet-phase.js';
+import { clampToChapter } from '../store/exercise-chapters.js';
 import {
   dietPhaseTolerance,
   toleranceEffect,
@@ -564,20 +565,23 @@ export interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
 /** `history.trend`'s response (VW-144/VW-145/VW-150/VW-230/VW-267). */
 export interface HistoryTrendResult {
   series: TimeSeries;
-  trend: HistoryTrendReadout;
-  plateau: PlateauDetection & {
-    phase: DietPhase | 'unknown';
-    /**
-     * VW-277: this server's own answer, with the diet-phase tolerance applied.
-     * `isPlateau` above stays WA's untouched verdict. `'tolerated'` means WA
-     * found a plateau and the declared phase explains a run that short — a
-     * deficit is expected to cost bar speed, so widen before flagging a stall.
-     * The tolerance never runs the other way here: it cannot turn a
-     * `'none'` into a `'plateau'` WA did not find.
-     */
-    verdict: 'plateau' | 'tolerated' | 'none';
-    dietPhaseContext: DietPhaseContext;
-  };
+  /** `null` only in the VW-361 new-chapter state below, where there is nothing to fit. */
+  trend: HistoryTrendReadout | null;
+  plateau:
+    | (PlateauDetection & {
+        phase: DietPhase | 'unknown';
+        /**
+         * VW-277: this server's own answer, with the diet-phase tolerance applied.
+         * `isPlateau` above stays WA's untouched verdict. `'tolerated'` means WA
+         * found a plateau and the declared phase explains a run that short — a
+         * deficit is expected to cost bar speed, so widen before flagging a stall.
+         * The tolerance never runs the other way here: it cannot turn a
+         * `'none'` into a `'plateau'` WA did not find.
+         */
+        verdict: 'plateau' | 'tolerated' | 'none';
+        dietPhaseContext: DietPhaseContext;
+      })
+    | null;
   /**
    * VW-267: the e1RM error band, non-null only for `metric: 'e1rm'` — the
    * other two metrics are recorded loads, not estimates, and need no band.
@@ -585,6 +589,35 @@ export interface HistoryTrendResult {
    * session-to-session delta.
    */
   band: E1RMBand | null;
+  /**
+   * VW-361: where this exercise's comparable series restarts, or `null` when
+   * no chapter is declared. The window above is clamped to it, so the top-load
+   * PR a caller reads off `series` inherits the boundary for free. A chart
+   * draws its rule here and suppresses the PR badges before it.
+   */
+  chapterStartedAt: string | null;
+  /**
+   * VW-361: set only when a declared chapter left the window with nothing in
+   * it yet. This is a STATE, not an error: the lifter reformed the movement
+   * and has not trained it since, which is exactly what
+   * rp:rp-s3-old-prs-irrelevant-reframe describes. `trend` and `plateau` are
+   * `null` in this state and non-null in every other.
+   */
+  newChapter: NewChapterState | null;
+}
+
+/**
+ * The explicit "new chapter" readout (VW-361). Leads with the reframe rather
+ * than with a number to beat, because a number to beat is the pressure the
+ * reframe exists to remove.
+ */
+export interface NewChapterState {
+  startedAt: string;
+  /** Sessions recorded since the boundary. Zero is the state this object exists for. */
+  sessionsSince: number;
+  reason?: string;
+  note: string;
+  rpIds: readonly string[];
 }
 
 /**
@@ -747,7 +780,7 @@ function trendReadout(
  * structurally, so the MCP tool path is unchanged.
  */
 export interface HistoryTrendState extends DietPhaseReadState {
-  store: Pick<SessionStore, 'getSetsForExercise' | 'getDietPhaseCovering'>;
+  store: Pick<SessionStore, 'getSetsForExercise' | 'getDietPhaseCovering' | 'chapterStartedAt'>;
 }
 
 /**
@@ -768,6 +801,12 @@ export interface HistoryTrendOptions {
  * sets and is what keeps a bilateral exercise off a pooled slope (VW-330): a
  * left-right average is a display number, never the assessment reference. The
  * MCP tool path passes none, which reads every side the way it always has.
+ *
+ * VW-361: the window is CLAMPED to a declared chapter start, which is also what
+ * gives the top-load PR a caller reads off `series` its boundary for free. A
+ * clamp can empty a window, and an empty POST-CHAPTER window is a state, not an
+ * error — it returns `newChapter` where an undeclared exercise with no sets
+ * still throws NOT_FOUND.
  */
 export async function computeHistoryTrend(
   state: HistoryTrendState,
@@ -775,9 +814,11 @@ export async function computeHistoryTrend(
   side?: StoredSide,
 ): Promise<HistoryTrendResult> {
   const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
-  const fromIso = weeksAgoIso(weeks);
+  const chapterStartedAt = await state.store.chapterStartedAt(LOCAL_USER_ID, input.exerciseId);
+  const fromIso = clampToChapter(weeksAgoIso(weeks), chapterStartedAt);
   const sessions = await historyTrendSessions(state, input.exerciseId, fromIso, side);
   if (sessions.length === 0) {
+    if (chapterStartedAt !== null) return emptyChapterTrend(chapterStartedAt);
     throw notFound(`exercise '${input.exerciseId}' has no working sets in the last ${weeks} weeks`);
   }
   const metric = HISTORY_TREND_METRIC[input.metric ?? 'topLoad'];
@@ -811,6 +852,42 @@ export async function computeHistoryTrend(
       phase: dietState.phase,
       ...plateauVerdict(plateau, dietState, input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS),
     },
+    chapterStartedAt,
+    newChapter: chapterStartedAt === null ? null : newChapterState(chapterStartedAt, series.length),
+  };
+}
+
+/**
+ * The reframe copy, as close to RP's own words as prose gets. It names no
+ * number to beat: that pressure is precisely what the reframe removes
+ * (rp:rp-s3-old-prs-irrelevant-reframe).
+ */
+function newChapterState(startedAt: string, sessionsSince: number): NewChapterState {
+  return {
+    startedAt,
+    sessionsSince,
+    note:
+      sessionsSince === 0
+        ? 'New chapter — no session recorded since the boundary yet. The loads before it were ' +
+          'set with the old technique and are not the target; the first session after it sets ' +
+          'the new baseline.'
+        : `New chapter — ${sessionsSince} session${sessionsSince === 1 ? '' : 's'} since the ` +
+          'boundary. The comparison runs from here, not from the pre-reform loads.',
+    rpIds: NEW_CHAPTER_RP_IDS,
+  };
+}
+
+const NEW_CHAPTER_RP_IDS: readonly string[] = ['rp-s3-old-prs-irrelevant-reframe'];
+
+/** A declared chapter whose window holds nothing yet: a state, never NOT_FOUND. */
+function emptyChapterTrend(chapterStartedAt: string): HistoryTrendResult {
+  return {
+    series: [],
+    trend: null,
+    plateau: null,
+    band: null,
+    chapterStartedAt,
+    newChapter: newChapterState(chapterStartedAt, 0),
   };
 }
 
@@ -1328,9 +1405,19 @@ async function computeE1RM(state: ServerState, input: E1RMInput): Promise<E1RMRe
  * series `store/processed-session-mapper.ts` builds from `estimateE1RMFromReps`.
  * `null` when there is no prior session to beat, so the fresh estimate cannot
  * be a PR.
+ *
+ * VW-361: the window is CLAMPED to a declared chapter start, so a pre-reform
+ * number can never be the one to beat. `evaluateE1RMPr` stays a pure two-number
+ * comparison and learns nothing about dates — the boundary is applied here, to
+ * the history it is handed, which is also why the first post-chapter session
+ * reports `priorBest: null` rather than a number it is expected to lose to
+ * (rp:rp-s3-old-prs-irrelevant-reframe).
  */
 async function priorBestE1RM(state: ServerState, exerciseId: string): Promise<number | null> {
-  const fromIso = weeksAgoIso(HISTORY_DEFAULT_WEEKS);
+  const fromIso = clampToChapter(
+    weeksAgoIso(HISTORY_DEFAULT_WEEKS),
+    await state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
+  );
   const sessions = await historyTrendSessions(state, exerciseId, fromIso);
   if (sessions.length === 0) return null;
   const built = buildTimeSeries(sessions, {
@@ -2385,7 +2472,10 @@ const METRICS_COMPUTE_DESCRIPTION =
   'as `priorBest` — the same PR verdict the dashboard hero card computes through the shared ' +
   '`evaluateE1RMPr` helper. `priorBest` is `null` and `isPR` is always false when there is no ' +
   'prior session to beat, including the `reps` shape with no `exerciseId` to look one up ' +
-  'against — the first-ever session of an exercise is never a PR. ' +
+  'against — the first-ever session of an exercise is never a PR. VW-361: that window is ' +
+  'clamped to a declared new chapter, so the first session after a technique reform also ' +
+  'reports `priorBest: null` and the pre-reform load is never the one to beat ' +
+  '(rp:rp-s3-old-prs-irrelevant-reframe). ' +
   '`history.trend` (VW-144/VW-145) (exerciseId, optional weeks [default 12], metric ' +
   "[`topLoad`|`e1rm`|`volume`, default `topLoad`], thresholdPct, minDays) — this exercise's " +
   'own working, owner-only sets over the lookback window, bucketed by ISO week: `{ series, ' +
@@ -2412,6 +2502,15 @@ const METRICS_COMPUTE_DESCRIPTION =
   'plateau the detector did not find. `plateau.dietPhaseContext` carries the phase, the ' +
   'weeks elapsed in it and whether the tolerance actually moved a threshold. A window with no ' +
   'working sets is NOT_FOUND. ' +
+  "VW-361: `chapterStartedAt` is where this exercise's comparable series restarts, or null " +
+  'when no chapter is declared, and the window is CLAMPED to it — the lookback asked for is a ' +
+  'floor, never a way back past the boundary, so the top-load PR a caller reads off `series` ' +
+  'inherits it too. `newChapter` is non-null whenever a chapter is declared and carries its ' +
+  '`startedAt`, `sessionsSince` and the reframe copy. A declared chapter with nothing recorded ' +
+  'since it returns `newChapter` with `sessionsSince: 0` and null `trend`/`plateau` — a state, ' +
+  'NOT a NOT_FOUND error, because the lifter reformed the movement and has not trained it yet. ' +
+  'Lead with that reframe, never with the pre-chapter number to beat ' +
+  '(rp:rp-s3-old-prs-irrelevant-reframe). ' +
   '`history.weekly_volume` (VW-144/VW-145/VW-201) (optional weeks [default 12]) — weekly ' +
   "totals plus a per-muscle-group breakdown across EVERY exercise, over the owner's own " +
   "working, non-mock, real-rep sets: `{ weekly, byMuscleGroup, verdict }`. `weekly` is WA's " +

@@ -638,6 +638,72 @@ describe('goal.list, goal.retire and goal.new_chapter', () => {
     });
   });
 
+  it('files the declaration in exercise_chapters, not just on the target (VW-361)', async () => {
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+    const target = await proposeFirstTarget(harness, await declareLift(harness));
+    const reformedAt = daysAgo(1);
+    const stamped = await harness.invoke('goal.new_chapter', {
+      targetId: target.targetId,
+      at: reformedAt,
+    });
+    expect(stamped.chapterId).toEqual(expect.any(String));
+    // The table is the source of truth; `newChapterAt` above is its stamp.
+    expect(await harness.store.chapterStartedAt(LOCAL_USER_ID, 'bench-press')).toBe(reformedAt);
+  });
+
+  it('stamps newChapterAt at derivation from the table (VW-361)', async () => {
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+    const reformedAt = daysAgo(2);
+    await harness.store.markExerciseChapter({
+      userId: LOCAL_USER_ID,
+      exerciseId: 'bench-press',
+      startedAt: reformedAt,
+      declaredAt: reformedAt,
+    });
+    const target = await proposeFirstTarget(harness, await declareLift(harness));
+    const listed = (await harness.invoke('goal.list')).priorities as {
+      targets: { newChapterAt?: string }[];
+    }[];
+    expect(target.targetId).toEqual(expect.any(String));
+    expect(listed[0]?.targets[0]?.newChapterAt).toBe(reformedAt);
+  });
+
+  it('refuses a chapter on a target with no movement behind it (VW-361)', async () => {
+    const priorityId = await declareLift(harness);
+    await harness.store.putGoalTarget({
+      id: 'bodyweight-target',
+      priorityId,
+      metric: 'bodyweight',
+      startValue: 330,
+      startMeasuredAt: daysAgo(7),
+      bandLowPctPerWeek: -0.5,
+      bandHighPctPerWeek: -0.25,
+      committedValue: 325,
+      stretchValue: 320,
+      basis: 'rp_ramp',
+      infoLevel: 'ramp',
+      tierUsed: 'intermediate',
+      tierProvisional: false,
+      dietPhaseAtDerivation: 'fat-loss',
+      acknowledgedStretch: false,
+      derivedAt: daysAgo(7),
+      endsAt: daysAgo(-56),
+    });
+    const error = await harness.expectError('goal.new_chapter', { targetId: 'bodyweight-target' });
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toContain('exercise.mark_new_chapter');
+  });
+
   it('reports an unknown id as NOT_FOUND', async () => {
     expect((await harness.expectError('goal.new_chapter', { targetId: 'nope' })).code).toBe(
       'NOT_FOUND',

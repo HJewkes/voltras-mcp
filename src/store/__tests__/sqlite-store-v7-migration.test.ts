@@ -211,7 +211,7 @@ describe('v6 → v7 migration: identity, capture and state', { timeout: 20_000 }
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(28);
+      expect(version.user_version).toBe(29);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -578,7 +578,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -679,7 +679,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -739,7 +739,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -825,7 +825,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
       } finally {
         void opened.close();
       }
@@ -863,7 +863,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
       } finally {
         void opened.close();
       }
@@ -966,7 +966,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         // The pre-existing row survived the additive migration untouched.
         const sessions = raw.prepare(`SELECT id FROM sessions`).all() as { id: string }[];
         expect(sessions.map((s) => s.id)).toEqual(['s1']);
@@ -1006,7 +1006,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         // Nothing is backfilled: a pre-v13 row genuinely does not know which
         // path opened it, and it survives the additive migration untouched.
         const rows = raw.prepare(`SELECT id, auto_created_by, upgraded FROM sets`).all() as {
@@ -1073,7 +1073,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
       } finally {
         void second.close();
       }
@@ -1122,7 +1122,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(28);
+        expect(version.user_version).toBe(29);
         expect(await opened.getSet('set-old')).not.toHaveProperty('lifter');
         expect(await opened.getSession('s1')).not.toHaveProperty('lifter');
       } finally {

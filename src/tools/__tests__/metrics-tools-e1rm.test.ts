@@ -121,12 +121,15 @@ function makePlaceholders(server: McpServer): Map<string, RegisteredTool> {
 interface StoreOverrides {
   getSetsForExercise?: (filter: ExerciseSetsFilter) => Promise<StoredSet[]>;
   getBaseline?: () => Promise<StoredExerciseBaseline | undefined>;
+  /** VW-361. Null by default: no declared chapter, so no clamp. */
+  chapterStartedAt?: () => Promise<string | null>;
 }
 
 function makeState(overrides: StoreOverrides = {}): ServerState {
   const store = {
     getSetsForExercise: vi.fn(overrides.getSetsForExercise ?? (async () => [])),
     getBaseline: vi.fn(overrides.getBaseline ?? (async () => undefined)),
+    chapterStartedAt: vi.fn(overrides.chapterStartedAt ?? (async () => null)),
   };
   return { store, exercises: { getById: vi.fn(() => undefined) } } as unknown as ServerState;
 }

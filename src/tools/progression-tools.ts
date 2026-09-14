@@ -50,6 +50,7 @@ import {
 } from '../analytics/setup-cards.js';
 import { ProgressionGetInput } from '../schemas/progression.js';
 import { aggregateProgression } from '../state/progression-aggregator.js';
+import { clampToChapter } from '../store/exercise-chapters.js';
 import { setMedianRomM } from '../store/exercise-setups.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import { scopeSessionSetsToExerciseId, scopeSetsToLifter } from '../store/set-scope.js';
@@ -103,7 +104,12 @@ const PROGRESSION_GET_DESCRIPTION =
   'last session recorded it on both, else `top_weight` — peak force is preferred because it is the ' +
   'only metric with good bilateral reliability in unilateral isometric squat testing (Bishop et al. ' +
   '2021, JSCR 35(2S): CV 5.44-5.70%, ICC 0.93-0.94), a finding this comparison defers to until this ' +
-  "server's own data says otherwise. `sideSplit.comparisonBasis` states why in prose for this call.";
+  "server's own data says otherwise. `sideSplit.comparisonBasis` states why in prose for this call. " +
+  '`chapterStartedAt` (VW-361) is non-null when the lifter declared a new chapter for this ' +
+  'exercise, and `windowStartedAt` is then CLAMPED to it: the lookback asked for is a floor, not ' +
+  'a way back past a technique reform. A clamped window can come back with zero sessions — that ' +
+  'is a new chapter with nothing recorded since, not an untrained exercise, and the pre-chapter ' +
+  'loads are not the number to beat (rp:rp-s3-old-prs-irrelevant-reframe).';
 
 export function registerProgressionTools(
   _server: McpServer,
@@ -150,7 +156,13 @@ async function getProgressionForExercise(
   const windowEndedAt = new Date().toISOString();
   const windowStart = new Date();
   windowStart.setUTCDate(windowStart.getUTCDate() - lookbackWeeks * 7);
-  const windowStartedAt = windowStart.toISOString();
+  // VW-361: a declared chapter moves the window start forward, so "what did I
+  // hit last time?" never answers with a load set under the old technique. The
+  // lookback the caller asked for is the FLOOR, not the answer; the reported
+  // `windowStartedAt` is the clamped one, so the response says which window it
+  // actually read.
+  const chapterStartedAt = await state.store.chapterStartedAt(LOCAL_USER_ID, input.exerciseId);
+  const windowStartedAt = clampToChapter(windowStart.toISOString(), chapterStartedAt);
 
   // VMCP-01.72b (H1): pick candidate SESSIONS by each SET's own exerciseId,
   // not by the session row's single `exercise_id` column. That column is
@@ -235,6 +247,10 @@ async function getProgressionForExercise(
   return {
     ...response,
     side: input.side,
+    // VW-361: null unless a chapter is declared. Non-null says the window above
+    // is the clamped one, which is what keeps a zero-session answer from
+    // reading as "you have never trained this".
+    chapterStartedAt,
     comparability: await pickProgressionBasis(state, limitedSessionIds, setsBySessionId),
     ...(input.side === undefined
       ? { sideSplit: computeSideSplit(limitedSessionIds, exerciseScopedSetsBySessionId) }

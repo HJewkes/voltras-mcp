@@ -103,6 +103,9 @@ class FakeStrengthStore {
 
   getDietPhaseCovering = async (): Promise<StoredDietPhase | undefined> => undefined;
 
+  /** VW-361: no declared chapter, so no window on this page is clamped. */
+  chapterStartedAt = async (): Promise<string | null> => null;
+
   getTrainingProfile = async (): Promise<StoredTrainingProfile | undefined> => this.profile;
 }
 

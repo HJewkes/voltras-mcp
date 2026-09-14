@@ -58,6 +58,10 @@ export const CORE_TOOL_NAMES = [
   // sets share a bench height; only a human knows what the grouping IS, and
   // this is the only writer of that name. See src/tools/exercise-tools.ts.
   'exercise.confirm_setup',
+  // Declare / undo a per-exercise "new chapter" boundary (VW-361). MANUAL
+  // ONLY — there is no detector, by design. See src/tools/exercise-tools.ts.
+  'exercise.mark_new_chapter',
+  'exercise.retire_chapter',
   'timer.wait',
   'timer.start',
   'timer.cancel',
@@ -276,6 +280,11 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'exercise.get': 'read',
   // Writes a row in SQLite: two sessions naming the same setup race each other.
   'exercise.confirm_setup': 'write',
+  // Writes (and retires) an `exercise_chapters` row, which every PR read
+  // clamps against. No device traffic, but two sessions declaring the same
+  // reform leave two boundaries.
+  'exercise.mark_new_chapter': 'write',
+  'exercise.retire_chapter': 'write',
 
   // POLICY. `timer.wait` mutates no state — its in-flight flag is a bare
   // module-level `let` in timer-tools.ts:67, shared process-wide with no slot
