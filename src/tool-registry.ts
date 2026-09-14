@@ -138,6 +138,12 @@ export const CORE_TOOL_NAMES = [
   // verdict computed here. See src/tools/profile-tools.ts.
   'profile.log_bodyweight',
   'profile.get_body_metrics',
+  // Weekly non-session self-report (VW-374) — a second `self_reports` writer
+  // under its own `kind`, alongside `session.checkin`. Storage only; the
+  // bodyweight-rate advisory (VW-367) is its first intended reader. See
+  // src/tools/profile-tools.ts.
+  'profile.log_weekly_checkin',
+  'profile.get_weekly_checkin',
   // Exercise-baseline STATE (I5 / B56, VW-116). Reads the confidence tier
   // backing an exercise; never baseline values. See src/tools/baseline-tools.ts.
   // `baselines.get` also returns a feature-agnostic `summaryMessage` and a
@@ -371,6 +377,9 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   // Upserts a row in SQLite.
   'profile.log_bodyweight': 'write',
   'profile.get_body_metrics': 'read',
+  // Writes rows in SQLite (a plain INSERT, like `session.checkin`).
+  'profile.log_weekly_checkin': 'write',
+  'profile.get_weekly_checkin': 'read',
 
   'baselines.get': 'read',
   'baselines.recalc': 'write',

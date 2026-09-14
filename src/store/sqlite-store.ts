@@ -2888,6 +2888,7 @@ export class SqliteSessionStore implements SessionStore {
     userId: string;
     from?: string;
     to?: string;
+    kind?: string;
   }): Promise<StoredSelfReport[]> {
     const where: string[] = ['user_id = ?'];
     const params: string[] = [filter.userId];
@@ -2898,6 +2899,10 @@ export class SqliteSessionStore implements SessionStore {
     if (filter.to !== undefined) {
       where.push('recorded_at <= ?');
       params.push(filter.to);
+    }
+    if (filter.kind !== undefined) {
+      where.push('kind = ?');
+      params.push(filter.kind);
     }
     const rows = this.db
       .prepare(`SELECT * FROM self_reports WHERE ${where.join(' AND ')} ORDER BY recorded_at ASC`)

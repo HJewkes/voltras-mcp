@@ -529,6 +529,8 @@ const PROFILE_TOOLS = [
   'profile.set_diet_phase',
   'profile.log_bodyweight',
   'profile.get_body_metrics',
+  'profile.log_weekly_checkin',
+  'profile.get_weekly_checkin',
 ];
 
 interface FakeTool {
