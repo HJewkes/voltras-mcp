@@ -101,6 +101,19 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The database can now hold the priorities you declare and the targets the coach derives
+  from them (VW-349, schema v27). A priority is your own sentence turned into a row — a
+  muscle or a lift, at `specialize` / `maintain` / `deprioritize`, over a horizon — and a
+  target is the coach's band for one metric of it, carrying the committed and stretch
+  values, what the band was derived from, and the diet phase and tier it was derived
+  under. A target is FIXED once accepted: nothing can quietly lower the number you agreed
+  to, and the only exits are retiring it with an outcome or declaring a new chapter after
+  a technique change. Retiring a priority ends its live targets as `abandoned` rather than
+  deleting them, so a goal you set and stopped chasing stays visible as a fact about what
+  you attempted. Existing databases migrate additively and read as zero priorities — no
+  default is manufactured on your behalf. Internal only for now: no tool reads or writes
+  either table yet (that is VW-350).
+
 - `coaching.explain` gains a `meso.goal_setting` topic (VW-357): how a goal is set from
   stated priorities (specialize / maintain / deprioritize) rather than a typed number, why
   the coach's proposed band shows `committed` as its low edge and `stretch` as its high edge
