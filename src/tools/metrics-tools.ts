@@ -2052,6 +2052,7 @@ function comparabilitySubjectFetchers(state: ServerState): ComparabilitySubjectF
       ),
     primaryMuscleOf: (exerciseId) => state.exercises.getById(exerciseId)?.muscleGroups[0],
     getSessionDietPhase: (sessionId) => state.store.getSessionDietPhase(sessionId),
+    getChapterStartedAt: (exerciseId) => state.store.chapterStartedAt(LOCAL_USER_ID, exerciseId),
   };
 }
 

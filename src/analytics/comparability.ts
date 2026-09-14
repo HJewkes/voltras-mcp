@@ -238,6 +238,17 @@ export interface ComparabilitySubject extends PurposeBearing {
    * the lifter's first stored session.
    */
   trackedTrainingMonths?: number | undefined;
+  /**
+   * When the lifter declared a new chapter for this exercise (VW-380), as an
+   * ISO timestamp, or absent when none is declared. Written by the
+   * `chapterStartedAt` store helper (`store/exercise-chapters.ts`) — the same
+   * boundary `priorBestE1RM`/`computeHistoryTrend`/`getProgressionForExercise`
+   * clamp their windows to (VW-361). `swapClause` folds it into the (e) check
+   * below rather than adding a clause: a chapter is the same kind of context
+   * change as a re-introduction, so it reuses that clause's reason and
+   * {@link EXERCISE_SWAP_REFRAME}.
+   */
+  chapterStartedAt?: string | undefined;
 }
 
 /**
@@ -422,11 +433,16 @@ function profileNote(a: ComparabilitySubject, b: ComparabilitySubject): string {
  *
  * This is a CONTEXT clause, unlike (b), (d) and (f): the swap changed what was
  * performed, not just what may be claimed about it.
+ *
+ * VW-380: a declared chapter is folded into the same equality check via
+ * {@link effectiveIntroducedAt} rather than a clause of its own, so a pair
+ * straddling a chapter boundary is refused with this clause's existing reason
+ * and {@link EXERCISE_SWAP_REFRAME} — no new prose.
  */
 function swapClause(a: ComparabilitySubject, b: ComparabilitySubject): ClauseResult {
   const result = matchOrExplain(
-    a.exerciseIntroducedAt,
-    b.exerciseIntroducedAt,
+    effectiveIntroducedAt(a),
+    effectiveIntroducedAt(b),
     'programme entry date for this exercise',
   );
   if (result.ok) return result;
@@ -435,6 +451,28 @@ function swapClause(a: ComparabilitySubject, b: ComparabilitySubject): ClauseRes
       ? ', and no settling window is sourced, so the clause names the boundary rather than timing it'
       : '';
   return { ok: false, reason: `${result.reason} — ${EXERCISE_SWAP_REFRAME}${unsettled}` };
+}
+
+/**
+ * `exerciseIntroducedAt`, clamped forward to the declared chapter start ONLY
+ * for a set recorded on or after it (VW-380) — the same
+ * `max(windowStart, chapterStartedAt)` shape as `clampToChapter`
+ * (`store/exercise-chapters.ts`), applied per set rather than to one shared
+ * window so a pre-chapter and a post-chapter set land on different values.
+ *
+ * A pair entirely on one side of the boundary keeps a single shared value
+ * (both pre-chapter subjects read the original `exerciseIntroducedAt`, both
+ * post-chapter subjects read `chapterStartedAt`), so `matchOrExplain` still
+ * passes them — only a STRADDLING pair now disagrees. `startedAt` absent
+ * leaves the clamp unapplied: which side of an undeclared timestamp a set
+ * falls on cannot be known, so the original value passes through unchanged.
+ */
+function effectiveIntroducedAt(subject: ComparabilitySubject): string | undefined {
+  const { exerciseIntroducedAt, chapterStartedAt, startedAt } = subject;
+  if (chapterStartedAt === undefined) return exerciseIntroducedAt;
+  if (startedAt === undefined || startedAt < chapterStartedAt) return exerciseIntroducedAt;
+  if (exerciseIntroducedAt === undefined) return chapterStartedAt;
+  return chapterStartedAt > exerciseIntroducedAt ? chapterStartedAt : exerciseIntroducedAt;
 }
 
 /**

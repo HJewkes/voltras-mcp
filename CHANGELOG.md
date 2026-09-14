@@ -107,6 +107,13 @@ entry is written from the user's point of view is a review question, not a check
   so a goal target and the exercise behind it can never disagree about where the chapter
   started.
 
+- A declared chapter boundary now also reaches the comparability engine behind
+  `session.readiness`, `session.strength` and `progression.get_for_exercise` (VW-380,
+  follow-up to VW-361): a pair with one set before the chapter start and one after it is
+  refused with the same re-introduction reframe used for an exercise swap, rather than
+  being compared as though the technique never changed. A pair entirely on one side of the
+  boundary compares exactly as before.
+
 - `profile.set_diet_phase` now accepts `recomposition` as a fourth diet phase, alongside
   `fat-loss`, `gain` and `maintenance` (VW-363). It runs on maintenance's arithmetic
   throughout — the autoregulation tolerance table applies no widening or tightening for it,

@@ -18,11 +18,18 @@
 // corroboration THRESHOLD, `CORROBORATING_EXERCISES`, is not a duration), and
 // VW-211 forbids inventing one, so corroboration is counted across the
 // lifter's entire stored history rather than a made-up recent slice.
+//
+// VW-380 adds a sixth, `chapterStartedAt`, read straight from the
+// `chapterStartedAt` store helper (`store/exercise-chapters.ts`) rather than
+// derived from fetched rows like the other five — a chapter is DECLARED, not
+// computed. It is resolved once per exercise per call (same memoization as
+// the other exercise-scoped reads) and folded into the (e) swap clause by
+// `effectiveIntroducedAt` in comparability.ts.
 
 import type { ComparabilitySubject } from './comparability.js';
 import type { StoredSet } from '../store/types.js';
 
-/** A `StoredSet` plus the five fields this file writes onto it. */
+/** A `StoredSet` plus the six fields this file writes onto it. */
 export type ComparabilityEnrichedSet = StoredSet &
   Pick<
     ComparabilitySubject,
@@ -31,6 +38,7 @@ export type ComparabilityEnrichedSet = StoredSet &
     | 'trackedTrainingMonths'
     | 'corroboratingExerciseCount'
     | 'phase'
+    | 'chapterStartedAt'
   >;
 
 /** B16 (b): 1-based position of `target` among its exercise's sets in this session. */
@@ -94,12 +102,14 @@ export function deriveCorroboratingExerciseCount(
   return distinct.size;
 }
 
-/** Pre-fetched rows the four `derive*` functions need for one (exercise, lifter) pair. */
+/** Pre-fetched rows the four `derive*` functions and the chapter read need for one (exercise, lifter) pair. */
 interface ComparabilitySubjectContext {
   allSetsForExercise: readonly StoredSet[];
   firstSessionStartedAt: string | null;
   lifterSessionExerciseIds: readonly (string | undefined)[];
   primaryMuscleOf: (exerciseId: string) => string | undefined;
+  /** VW-380: the declared chapter boundary for this exercise, or `null` when none is declared. */
+  chapterStartedAt: string | null;
 }
 
 function toComparabilityEnrichedSet(
@@ -119,6 +129,7 @@ function toComparabilityEnrichedSet(
       ctx.lifterSessionExerciseIds,
       ctx.primaryMuscleOf,
     ),
+    chapterStartedAt: ctx.chapterStartedAt ?? undefined,
   };
 }
 
@@ -143,6 +154,13 @@ export interface ComparabilitySubjectFetchers {
    * stamp, and a guest lifter's session never inherits the owner's phase.
    */
   getSessionDietPhase: (sessionId: string) => Promise<string | undefined>;
+  /**
+   * The declared new-chapter boundary for this exercise (VW-380), or `null`
+   * when none is declared. Chapters are the local user's declarations, not
+   * the set's `lifter` — this mirrors `chapterStartedAt`
+   * (`store/exercise-chapters.ts`), which takes no `lifter` argument.
+   */
+  getChapterStartedAt: (exerciseId: string) => Promise<string | null>;
 }
 
 /**
@@ -179,19 +197,27 @@ export async function buildComparabilitySubjectGroups(
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
     const built = (async (): Promise<ComparabilitySubjectContext> => {
-      const [allSetsForExercise, firstSessionStartedAt, lifterSessionExerciseIds] =
-        await Promise.all([
-          exerciseId === undefined
-            ? Promise.resolve<readonly StoredSet[]>([])
-            : fetchers.getSetsForExercise(exerciseId, lifter),
-          fetchers.getFirstSessionStartedAt(lifter),
-          fetchers.getLifterSessionExerciseIds(lifter),
-        ]);
+      const [
+        allSetsForExercise,
+        firstSessionStartedAt,
+        lifterSessionExerciseIds,
+        chapterStartedAt,
+      ] = await Promise.all([
+        exerciseId === undefined
+          ? Promise.resolve<readonly StoredSet[]>([])
+          : fetchers.getSetsForExercise(exerciseId, lifter),
+        fetchers.getFirstSessionStartedAt(lifter),
+        fetchers.getLifterSessionExerciseIds(lifter),
+        exerciseId === undefined
+          ? Promise.resolve<string | null>(null)
+          : fetchers.getChapterStartedAt(exerciseId),
+      ]);
       return {
         allSetsForExercise,
         firstSessionStartedAt,
         lifterSessionExerciseIds,
         primaryMuscleOf: fetchers.primaryMuscleOf,
+        chapterStartedAt,
       };
     })();
     cache.set(key, built);
