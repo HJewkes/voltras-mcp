@@ -11,15 +11,17 @@ voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1`
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
 `/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
-`/api/session-summary/:sessionId` — are all reads. That's the surface the README calls
-"read-only," and it's the one this guide is mostly about. `/api/muscle-plan` (VW-331) rolls
-up the active training week into planned-vs-done working sets per titan muscle group
-(VW-328), plus the still-untrained planned exercises per muscle. `/api/muscle-week` (VW-329)
-answers the adjacent question — how much you actually trained each muscle this week, and
-whether that is a lot or a little. `/api/muscle-strength` (VW-330) answers the third — which
-muscles are actually getting stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
-All three are internal plumbing for the body-map page (VW-323), not surfaced on a page of
-their own yet.
+`/api/muscle-recovery`, `/api/session-summary/:sessionId` — are all reads. That's the
+surface the README calls "read-only," and it's the one this guide is mostly about.
+`/api/muscle-plan` (VW-331) rolls up the active training week into planned-vs-done working
+sets per titan muscle group (VW-328), plus the still-untrained planned exercises per muscle.
+`/api/muscle-week` (VW-329) answers the adjacent question — how much you actually trained
+each muscle this week, and whether that is a lot or a little. `/api/muscle-strength`
+(VW-330) answers the third — which muscles are actually getting stronger; it has
+[its own section below](#per-muscle-strength-api-muscle-strength). `/api/muscle-recovery`
+(VW-332) answers the fourth: when you last trained each muscle, and how that session went
+against the one before it. All four are internal plumbing for the body-map page (VW-323),
+not surfaced on a page of their own yet.
 
 ### `/api/muscle-week` — weekly sets per muscle
 
@@ -59,6 +61,53 @@ your set counts and performance move across mesocycles, which voltras-mcp does n
 as "how this week compares to what you can recover from." `status` is one of `under`,
 `maintenance`, `productive` or `over`, and the route never suggests adding sets or taking a
 deload — set count is a fatigue dial, not a progression tool.
+
+### `/api/muscle-recovery` — when you last trained each muscle
+
+```json
+{
+  "muscleMapVersion": "2026-09-13.1",
+  "muscles": [
+    {
+      "muscle": "chest",
+      "lastTrainedAt": "2026-07-08T10:00:00.000Z",
+      "daysSince": 2,
+      "lastEntryDepression": { "pct": 6.1, "confidence": 0.5 },
+      "lastSessionMatchedPrior": true,
+      "reason": null
+    }
+  ]
+}
+```
+
+All 15 titan muscle groups are always present. A muscle you haven't trained in the trailing
+56 days reports nulls across the board rather than a stale date. `daysSince` is whole days
+elapsed, so a muscle trained this morning reads `0`.
+
+**This route computes no recovery window, and that is deliberate.** It will not tell you how
+long a muscle needs before it is trainable again, because no such per-muscle number exists to
+cite: the research behind this route looked, and found only training-frequency bands that
+vary by training age and say nothing about you on a given day. A projected return-to-ready
+moment would be a number nobody measured, dressed as a measurement. So you get what was
+actually observed and the judgement stays yours.
+
+What was observed is two things. `lastEntryDepression` is the entry-depression axis from
+that last session — how far its opening working set sat below your own prior output at the
+same load, which is the under-recovery read with actual support behind it. `pct` is a
+percentage below; a negative value means you opened above your norm. `confidence` is the
+axis's own coarse 0-to-1 self-assessment, for ordering rows, not for arithmetic. It is null
+when the session had nothing at a matched load to compare its opener against, and it is
+never a read on what you ate.
+
+`lastSessionMatchedPrior` is the recovery performance benchmark: did that session's
+heaviest set match or beat the previous **comparable** session's load times reps? Comparable
+is the server's own like-vs-like test — same movement, same lifter, same intent, same side,
+same device settings, same physical setup, same load, and the same training context (a
+maintenance phase and a recomposition phase count as one). When no such pair exists the
+answer is `null` and `reason` says which piece was missing: `insufficient history` (nothing
+prior inside the window), `no matched-load prior` (you trained it, but at a different load —
+the common case after moving the pin), or `no comparable prior` (something else changed).
+The three are kept apart because they are not the same answer.
 
 It isn't read-only end to end, though: the plan builder page writes through a small REST
 surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/exercises`,
