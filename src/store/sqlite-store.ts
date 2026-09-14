@@ -59,7 +59,10 @@ import {
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
+  type GoalTargetSelector,
   type ListBodyMetricsFilter,
+  type ListGoalTargetsOptions,
+  type ListPrioritiesOptions,
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
@@ -85,6 +88,15 @@ import {
   type StoredExerciseBaseline,
   type StoredExerciseSetup,
   type StoredFailureAnchor,
+  type StoredGoalBandBasis,
+  type StoredGoalInfoLevel,
+  type StoredGoalMetric,
+  type StoredGoalTarget,
+  type StoredGoalTargetAcceptedBy,
+  type StoredGoalTargetOutcome,
+  type StoredPriority,
+  type StoredPriorityKind,
+  type StoredPriorityLevel,
   type StoredProgramAssignment,
   type StoredRep,
   type StoredPreSessionCarbs,
@@ -102,7 +114,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -167,6 +179,87 @@ const RIR_VELOCITY_MODELS_DDL = `
     fit_quality REAL,
     PRIMARY KEY (user_id, exercise_id)
   );
+`;
+
+/**
+ * What the human declared they want (VW-349, v27). One row per priority per
+ * block; `training_profile.goal` keeps their sentence verbatim and is untouched.
+ *
+ * `mesos_held` lives here rather than being counted on read because the count
+ * is over BLOCK BOUNDARIES the lifter crossed while holding this declaration,
+ * and a boundary leaves no row of its own to count.
+ *
+ * Shared with `migrateV26ToV27` so the fresh-DB shape and the migrated shape
+ * cannot drift apart.
+ */
+const PRIORITIES_DDL = `
+  CREATE TABLE IF NOT EXISTS priorities (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    block_id TEXT REFERENCES training_blocks(id) ON DELETE SET NULL,
+    horizon_weeks INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('muscle','lift')),
+    ref TEXT NOT NULL,
+    level TEXT NOT NULL CHECK (level IN ('specialize','maintain','deprioritize')),
+    declared_at TEXT NOT NULL,
+    retired_at TEXT,
+    mesos_held INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_priorities_user ON priorities(user_id, declared_at);
+`;
+
+/**
+ * The coach's derived band for one metric of one priority (VW-349, v27).
+ *
+ * `ON DELETE CASCADE` off `priorities` is the LAST RESORT, not the normal
+ * path: retiring a priority MARKS its targets (see `retirePriority`), and the
+ * cascade only fires if a priority row is ever genuinely deleted, so an orphan
+ * target — a band with nothing to explain why it was set — cannot exist.
+ *
+ * `committed_value` and `stretch_value` carry no CHECK relating them: the
+ * committed edge is the CONSERVATIVE one, not the smaller number, so for a
+ * fat-loss bodyweight goal it is numerically the greater of the two.
+ *
+ * `diet_phase_at_derivation` is free TEXT on purpose — recomposition is coming
+ * as a fourth phase, and a CHECK here would reject a phase `diet_phases`
+ * already accepts.
+ *
+ * Shared with `migrateV26ToV27` so the fresh-DB shape and the migrated shape
+ * cannot drift apart.
+ */
+const GOAL_TARGETS_DDL = `
+  CREATE TABLE IF NOT EXISTS goal_targets (
+    id TEXT PRIMARY KEY,
+    priority_id TEXT NOT NULL REFERENCES priorities(id) ON DELETE CASCADE,
+    metric TEXT NOT NULL CHECK (metric IN (
+      'top_load_at_reps','reps_at_load','e1rm_trend','sessions_28d',
+      'bodyweight','composite_strength'
+    )),
+    exercise_id TEXT,
+    anchor_reps INTEGER,
+    start_value REAL NOT NULL,
+    start_measured_at TEXT NOT NULL,
+    band_low_pct_per_week REAL NOT NULL,
+    band_high_pct_per_week REAL NOT NULL,
+    committed_value REAL NOT NULL,
+    stretch_value REAL NOT NULL,
+    basis TEXT NOT NULL CHECK (basis IN ('execution_ramp','rp_ramp','own_slope')),
+    info_level TEXT NOT NULL CHECK (info_level IN ('cold','ramp','own')),
+    tier_used TEXT NOT NULL,
+    tier_provisional INTEGER NOT NULL DEFAULT 0,
+    diet_phase_at_derivation TEXT NOT NULL,
+    -- NULL means proposed but not yet accepted, which is the only state in
+    -- which committed_value and stretch_value may still move.
+    accepted_by TEXT CHECK (accepted_by IS NULL OR accepted_by IN ('coach-default','user')),
+    acknowledged_stretch INTEGER NOT NULL DEFAULT 0,
+    derived_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    retired_at TEXT,
+    outcome TEXT CHECK (outcome IS NULL OR outcome IN ('met','missed','abandoned')),
+    new_chapter_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_goal_targets_priority
+    ON goal_targets(priority_id, derived_at);
 `;
 
 const SCHEMA_SQL = `
@@ -835,7 +928,9 @@ const SCHEMA_SQL = `
     reason TEXT
   );
 ${ACCOUNTABILITY_STATE_DDL}
-${RIR_VELOCITY_MODELS_DDL}`;
+${RIR_VELOCITY_MODELS_DDL}
+${PRIORITIES_DDL}
+${GOAL_TARGETS_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1404,6 +1499,22 @@ function migrateV25ToV26(db: DatabaseSync): void {
 }
 
 /**
+ * v26 -> v27: the `priorities` and `goal_targets` tables (VW-349). PURELY
+ * ADDITIVE — two new tables, no existing column touched and NOTHING
+ * back-filled. A pre-v27 database reads as zero priorities, which is the true
+ * answer: the lifter never declared one, and manufacturing a default would put
+ * words in their mouth and then track them against it.
+ *
+ * Order matters here in a way it does not in `SCHEMA_SQL`: `goal_targets`
+ * references `priorities`, and while SQLite resolves foreign keys at DML time,
+ * creating the parent first keeps the file readable by anyone dumping it.
+ */
+function migrateV26ToV27(db: DatabaseSync): void {
+  db.exec(PRIORITIES_DDL);
+  db.exec(GOAL_TARGETS_DDL);
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1608,6 +1719,45 @@ interface BodyMetricRow {
   recorded_at: string;
   bodyweight_lbs: number;
   notes: string | null;
+}
+
+interface PriorityRow {
+  id: string;
+  user_id: string;
+  block_id: string | null;
+  horizon_weeks: number;
+  kind: string;
+  ref: string;
+  level: string;
+  declared_at: string;
+  retired_at: string | null;
+  mesos_held: number;
+}
+
+interface GoalTargetRow {
+  id: string;
+  priority_id: string;
+  metric: string;
+  exercise_id: string | null;
+  anchor_reps: number | null;
+  start_value: number;
+  start_measured_at: string;
+  band_low_pct_per_week: number;
+  band_high_pct_per_week: number;
+  committed_value: number;
+  stretch_value: number;
+  basis: string;
+  info_level: string;
+  tier_used: string;
+  tier_provisional: number;
+  diet_phase_at_derivation: string;
+  accepted_by: string | null;
+  acknowledged_stretch: number;
+  derived_at: string;
+  ends_at: string;
+  retired_at: string | null;
+  outcome: string | null;
+  new_chapter_at: string | null;
 }
 
 interface SetRow {
@@ -3256,6 +3406,140 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToBodyMetric));
   }
 
+  // --- Priorities and goal targets (VW-349) ---
+
+  /**
+   * `ON CONFLICT(id) DO UPDATE`, never `INSERT OR REPLACE` (see `putSet` #79),
+   * and here the reason is load-bearing rather than stylistic: a REPLACE is a
+   * DELETE plus an INSERT, so it would cascade every `goal_targets` row off a
+   * priority the caller only meant to edit. `user_id` is excluded from the
+   * UPDATE SET — a priority does not change owner. EVERY OTHER WRITTEN COLUMN
+   * MUST APPEAR IN BOTH LISTS.
+   */
+  async putPriority(priority: StoredPriority): Promise<StoredPriority> {
+    this.db.prepare(PUT_PRIORITY_SQL).run(...priorityBindings(priority));
+    const row = this.db
+      .prepare(`SELECT * FROM priorities WHERE id = ?`)
+      .get(priority.id) as unknown as PriorityRow;
+    return Promise.resolve(rowToPriority(row));
+  }
+
+  async listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]> {
+    const retiredClause = options?.includeRetired === true ? '' : 'AND retired_at IS NULL';
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM priorities WHERE user_id = ? ${retiredClause}
+         ORDER BY declared_at DESC, id ASC`,
+      )
+      .all(userId) as unknown as PriorityRow[];
+    return Promise.resolve(rows.map(rowToPriority));
+  }
+
+  /**
+   * One transaction: the priority and every live target under it. Halfway
+   * through, a reader would see a retired priority still carrying live targets
+   * and report a band the lifter is no longer working toward, so the window in
+   * which that is true must not be observable.
+   *
+   * `WHERE retired_at IS NULL` on both statements is what makes a second call a
+   * no-op instead of a rewrite of when this ended.
+   */
+  async retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined> {
+    this.db.exec('BEGIN');
+    try {
+      this.db
+        .prepare(`UPDATE priorities SET retired_at = ? WHERE id = ? AND retired_at IS NULL`)
+        .run(retiredAt, id);
+      this.db
+        .prepare(
+          `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
+             WHERE priority_id = ? AND retired_at IS NULL`,
+        )
+        .run(retiredAt, id);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    const row = this.db.prepare(`SELECT * FROM priorities WHERE id = ?`).get(id) as
+      | PriorityRow
+      | undefined;
+    return Promise.resolve(row === undefined ? undefined : rowToPriority(row));
+  }
+
+  /**
+   * `ON CONFLICT(id) DO UPDATE`, with the fixed-target rule checked BEFORE the
+   * write: once `accepted_by` is set, `committed_value` and `stretch_value` are
+   * the thing being judged and nothing may quietly move them.
+   *
+   * `priority_id` is excluded from the UPDATE SET — a target belongs to the
+   * priority it was derived for, and re-parenting it would silently transfer a
+   * band to a declaration that never earned it.
+   */
+  async putGoalTarget(target: StoredGoalTarget): Promise<StoredGoalTarget> {
+    const existing = this.db.prepare(`SELECT * FROM goal_targets WHERE id = ?`).get(target.id) as
+      | GoalTargetRow
+      | undefined;
+    assertGoalTargetMovable(existing, target);
+    this.db.prepare(PUT_GOAL_TARGET_SQL).run(...goalTargetBindings(target));
+    const row = this.db
+      .prepare(`SELECT * FROM goal_targets WHERE id = ?`)
+      .get(target.id) as unknown as GoalTargetRow;
+    return Promise.resolve(rowToGoalTarget(row));
+  }
+
+  async listGoalTargets(
+    selector: GoalTargetSelector,
+    options?: ListGoalTargetsOptions,
+  ): Promise<StoredGoalTarget[]> {
+    const retiredClause =
+      options?.includeRetired === true ? '' : 'AND goal_targets.retired_at IS NULL';
+    const rows =
+      'priorityId' in selector
+        ? (this.db
+            .prepare(
+              `SELECT goal_targets.* FROM goal_targets
+                 WHERE priority_id = ? ${retiredClause}
+                 ORDER BY derived_at DESC, goal_targets.id ASC`,
+            )
+            .all(selector.priorityId) as unknown as GoalTargetRow[])
+        : (this.db
+            .prepare(
+              `SELECT goal_targets.* FROM goal_targets
+                 JOIN priorities ON priorities.id = goal_targets.priority_id
+                 WHERE priorities.user_id = ? ${retiredClause}
+                 ORDER BY derived_at DESC, goal_targets.id ASC`,
+            )
+            .all(selector.userId) as unknown as GoalTargetRow[]);
+    return Promise.resolve(rows.map(rowToGoalTarget));
+  }
+
+  async retireGoalTarget(
+    id: string,
+    outcome: StoredGoalTargetOutcome,
+    retiredAt: string,
+  ): Promise<StoredGoalTarget | undefined> {
+    this.db
+      .prepare(
+        `UPDATE goal_targets SET retired_at = ?, outcome = ?
+           WHERE id = ? AND retired_at IS NULL`,
+      )
+      .run(retiredAt, outcome, id);
+    return Promise.resolve(this.findGoalTarget(id));
+  }
+
+  async setGoalTargetNewChapter(id: string, at: string): Promise<StoredGoalTarget | undefined> {
+    this.db.prepare(`UPDATE goal_targets SET new_chapter_at = ? WHERE id = ?`).run(at, id);
+    return Promise.resolve(this.findGoalTarget(id));
+  }
+
+  private findGoalTarget(id: string): StoredGoalTarget | undefined {
+    const row = this.db.prepare(`SELECT * FROM goal_targets WHERE id = ?`).get(id) as
+      | GoalTargetRow
+      | undefined;
+    return row === undefined ? undefined : rowToGoalTarget(row);
+  }
+
   /**
    * Half-open at the end (`ended_at > to`) so the instant two adjacent ranges
    * meet at belongs to the later one only — the SQL half of `covers()` in
@@ -4022,6 +4306,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 25) {
     migrateV25ToV26(db);
   }
+  if (current <= 26) {
+    migrateV26ToV27(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4134,6 +4421,174 @@ function rowToBodyMetric(row: BodyMetricRow): StoredBodyMetric {
   };
   if (row.notes !== null) out.note = row.notes;
   return out;
+}
+
+function rowToPriority(row: PriorityRow): StoredPriority {
+  const out: StoredPriority = {
+    id: row.id,
+    userId: row.user_id,
+    horizonWeeks: row.horizon_weeks,
+    kind: row.kind as StoredPriorityKind,
+    ref: row.ref,
+    level: row.level as StoredPriorityLevel,
+    declaredAt: row.declared_at,
+    mesosHeld: row.mesos_held,
+  };
+  if (row.block_id !== null) out.blockId = row.block_id;
+  if (row.retired_at !== null) out.retiredAt = row.retired_at;
+  return out;
+}
+
+function rowToGoalTarget(row: GoalTargetRow): StoredGoalTarget {
+  const out: StoredGoalTarget = {
+    id: row.id,
+    priorityId: row.priority_id,
+    metric: row.metric as StoredGoalMetric,
+    startValue: row.start_value,
+    startMeasuredAt: row.start_measured_at,
+    bandLowPctPerWeek: row.band_low_pct_per_week,
+    bandHighPctPerWeek: row.band_high_pct_per_week,
+    committedValue: row.committed_value,
+    stretchValue: row.stretch_value,
+    basis: row.basis as StoredGoalBandBasis,
+    infoLevel: row.info_level as StoredGoalInfoLevel,
+    tierUsed: row.tier_used,
+    tierProvisional: row.tier_provisional !== 0,
+    dietPhaseAtDerivation: row.diet_phase_at_derivation,
+    acknowledgedStretch: row.acknowledged_stretch !== 0,
+    derivedAt: row.derived_at,
+    endsAt: row.ends_at,
+  };
+  if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  if (row.anchor_reps !== null) out.anchorReps = row.anchor_reps;
+  if (row.accepted_by !== null) out.acceptedBy = row.accepted_by as StoredGoalTargetAcceptedBy;
+  if (row.retired_at !== null) out.retiredAt = row.retired_at;
+  if (row.outcome !== null) out.outcome = row.outcome as StoredGoalTargetOutcome;
+  if (row.new_chapter_at !== null) out.newChapterAt = row.new_chapter_at;
+  return out;
+}
+
+const PUT_PRIORITY_SQL = `
+  INSERT INTO priorities
+    (id, user_id, block_id, horizon_weeks, kind, ref, level, declared_at, retired_at, mesos_held)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    block_id = excluded.block_id,
+    horizon_weeks = excluded.horizon_weeks,
+    kind = excluded.kind,
+    ref = excluded.ref,
+    level = excluded.level,
+    declared_at = excluded.declared_at,
+    retired_at = excluded.retired_at,
+    mesos_held = excluded.mesos_held
+`;
+
+function priorityBindings(p: StoredPriority): (string | number | null)[] {
+  return [
+    p.id,
+    p.userId,
+    p.blockId ?? null,
+    p.horizonWeeks,
+    p.kind,
+    p.ref,
+    p.level,
+    p.declaredAt,
+    p.retiredAt ?? null,
+    p.mesosHeld,
+  ];
+}
+
+const PUT_GOAL_TARGET_SQL = `
+  INSERT INTO goal_targets
+    (id, priority_id, metric, exercise_id, anchor_reps, start_value, start_measured_at,
+     band_low_pct_per_week, band_high_pct_per_week, committed_value, stretch_value, basis,
+     info_level, tier_used, tier_provisional, diet_phase_at_derivation, accepted_by,
+     acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    metric = excluded.metric,
+    exercise_id = excluded.exercise_id,
+    anchor_reps = excluded.anchor_reps,
+    start_value = excluded.start_value,
+    start_measured_at = excluded.start_measured_at,
+    band_low_pct_per_week = excluded.band_low_pct_per_week,
+    band_high_pct_per_week = excluded.band_high_pct_per_week,
+    committed_value = excluded.committed_value,
+    stretch_value = excluded.stretch_value,
+    basis = excluded.basis,
+    info_level = excluded.info_level,
+    tier_used = excluded.tier_used,
+    tier_provisional = excluded.tier_provisional,
+    diet_phase_at_derivation = excluded.diet_phase_at_derivation,
+    accepted_by = excluded.accepted_by,
+    acknowledged_stretch = excluded.acknowledged_stretch,
+    derived_at = excluded.derived_at,
+    ends_at = excluded.ends_at,
+    retired_at = excluded.retired_at,
+    outcome = excluded.outcome,
+    new_chapter_at = excluded.new_chapter_at
+`;
+
+function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
+  return [
+    t.id,
+    t.priorityId,
+    t.metric,
+    t.exerciseId ?? null,
+    t.anchorReps ?? null,
+    t.startValue,
+    t.startMeasuredAt,
+    t.bandLowPctPerWeek,
+    t.bandHighPctPerWeek,
+    t.committedValue,
+    t.stretchValue,
+    t.basis,
+    t.infoLevel,
+    t.tierUsed,
+    t.tierProvisional ? 1 : 0,
+    t.dietPhaseAtDerivation,
+    t.acceptedBy ?? null,
+    t.acknowledgedStretch ? 1 : 0,
+    t.derivedAt,
+    t.endsAt,
+    t.retiredAt ?? null,
+    t.outcome ?? null,
+    t.newChapterAt ?? null,
+  ];
+}
+
+/**
+ * The fixed-target rule. A row with no `accepted_by` is still a proposal and
+ * may be re-derived freely; once it is accepted, the two committed numbers are
+ * frozen. Everything ELSE on an accepted row stays writable on purpose — the
+ * outcome, the retirement and the new-chapter stamp are all how an accepted
+ * target legitimately ends.
+ */
+function assertGoalTargetMovable(
+  existing: GoalTargetRow | undefined,
+  incoming: StoredGoalTarget,
+): void {
+  if (existing === undefined || existing.accepted_by === null) return;
+  if (existing.committed_value !== incoming.committedValue) {
+    throw createFixedTargetError(incoming.id, 'committedValue');
+  }
+  if (existing.stretch_value !== incoming.stretchValue) {
+    throw createFixedTargetError(incoming.id, 'stretchValue');
+  }
+}
+
+/**
+ * Refusal to move an accepted target's numbers (VW-349). Carries a `code` for
+ * the same reason `DB_LOCKED` does: the tool layer has to tell this apart from
+ * a SQLite failure, because it is a rule being enforced rather than a fault.
+ */
+function createFixedTargetError(id: string, field: 'committedValue' | 'stretchValue'): Error {
+  const err = new Error(
+    `goal target ${id} was already accepted; ${field} cannot change. ` +
+      `Retire it with an outcome, or stamp a new chapter, and derive a new target.`,
+  );
+  (err as Error & { code: string }).code = 'GOAL_TARGET_FIXED';
+  return err;
 }
 
 function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {

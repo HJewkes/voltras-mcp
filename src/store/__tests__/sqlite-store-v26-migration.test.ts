@@ -137,7 +137,7 @@ describe('v25 -> v26 migration', () => {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(26);
+        expect(version.user_version).toBe(27);
         const row = db.prepare('SELECT COUNT(*) AS n FROM body_metrics').get() as { n: number };
         expect(row.n).toBe(1);
         expect(indexNames(db, 'body_metrics').has('idx_body_metrics_user_recorded')).toBe(true);

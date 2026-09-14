@@ -724,6 +724,136 @@ export interface ListBodyMetricsFilter {
   sinceDays?: number;
 }
 
+// --- Priorities and goal targets (VW-349, v27) ---
+//
+// TWO TABLES, NOT ONE. A priority is a HUMAN DECLARATION ("get bench up"):
+// slow, block-locked, its own provenance. A goal target is a COACH DERIVATION
+// over that declaration: recomputed per block, and once the human accepts it,
+// fixed. One priority fans out to 1..n targets (an "arms" priority becomes a
+// target per primary lift), which is a foreign key rather than a column.
+//
+// The four unions below MUST stay word-for-word identical to the analytics
+// vocabulary in `analytics/goal-band.ts` (VW-348) — `GoalMetric`,
+// `GoalBandBasis` and `GoalInfoLevel` there. They are restated rather than
+// imported because the persistence CONTRACT may not depend on an analytics
+// module; the tool layer (VW-350) is where the two meet, and a mismatch
+// surfaces there as a type error.
+
+/** What a stored target measures. Mirrors `GoalMetric` in `analytics/goal-band.ts`. */
+export type StoredGoalMetric =
+  | 'top_load_at_reps'
+  | 'reps_at_load'
+  | 'e1rm_trend'
+  | 'sessions_28d'
+  | 'bodyweight'
+  | 'composite_strength';
+
+/** What the band was derived from. Mirrors `GoalBandBasis` in `analytics/goal-band.ts`. */
+export type StoredGoalBandBasis = 'execution_ramp' | 'rp_ramp' | 'own_slope';
+
+/** How much history backed the derivation. Mirrors `GoalInfoLevel` in `analytics/goal-band.ts`. */
+export type StoredGoalInfoLevel = 'cold' | 'ramp' | 'own';
+
+/** Whether the declaration names a muscle group or a single lift. */
+export type StoredPriorityKind = 'muscle' | 'lift';
+
+/** How much programme attention the declaration asks for. */
+export type StoredPriorityLevel = 'specialize' | 'maintain' | 'deprioritize';
+
+/** Who fixed a target's numbers. Absent means still proposed, so still movable. */
+export type StoredGoalTargetAcceptedBy = 'coach-default' | 'user';
+
+/** How a retired target ended. */
+export type StoredGoalTargetOutcome = 'met' | 'missed' | 'abandoned';
+
+/**
+ * One row of `priorities` — what the human declared, once per block.
+ *
+ * `ref` is a catalog primary-muscle string when `kind` is `'muscle'` and an
+ * `exerciseId` when it is `'lift'`. `mesosHeld` counts the mesocycles this
+ * declaration has survived, which is what the "commit to a couple more?" nudge
+ * reads. A retired row keeps `mesosHeld`: how long a priority was held is part
+ * of the record, not state that stops applying.
+ */
+export interface StoredPriority {
+  id: string;
+  userId: string;
+  blockId?: string;
+  horizonWeeks: number;
+  kind: StoredPriorityKind;
+  ref: string;
+  level: StoredPriorityLevel;
+  declaredAt: string;
+  retiredAt?: string;
+  mesosHeld: number;
+}
+
+/**
+ * One row of `goal_targets` — the coach's band for one metric of one priority.
+ *
+ * FIXED ONCE ACCEPTED (human decision, 2026-09-13). While `acceptedBy` is
+ * absent the target is a proposal and its numbers may be re-derived freely;
+ * once it is set, {@link SessionStore.putGoalTarget} refuses to move
+ * `committedValue` or `stretchValue`. The only exits from an accepted target
+ * are retirement with an `outcome`, or `newChapterAt` — a technique reform
+ * that makes the old start value a measurement of a different movement.
+ *
+ * `startValue` / `startMeasuredAt` are READ FROM HISTORY, never typed: the
+ * coach derives a band from what the lifter has already done.
+ *
+ * `tierUsed` stores the DECLARED tier, because magnitude is judged against
+ * what the lifter says they are; `tierProvisional` is set when the tier-signal
+ * clamp disagreed with that declaration. Storing the clamped tier instead
+ * would lose the declaration, and storing only one flag would lose which of
+ * the two the band was actually built from.
+ *
+ * `dietPhaseAtDerivation` is free text rather than a union: recomposition is
+ * coming as a fourth phase, and a CHECK constraint here would reject a row
+ * the phase table already accepts.
+ */
+export interface StoredGoalTarget {
+  id: string;
+  priorityId: string;
+  metric: StoredGoalMetric;
+  exerciseId?: string;
+  anchorReps?: number;
+  startValue: number;
+  startMeasuredAt: string;
+  bandLowPctPerWeek: number;
+  bandHighPctPerWeek: number;
+  committedValue: number;
+  stretchValue: number;
+  basis: StoredGoalBandBasis;
+  infoLevel: StoredGoalInfoLevel;
+  tierUsed: string;
+  tierProvisional: boolean;
+  dietPhaseAtDerivation: string;
+  acceptedBy?: StoredGoalTargetAcceptedBy;
+  acknowledgedStretch: boolean;
+  derivedAt: string;
+  endsAt: string;
+  retiredAt?: string;
+  outcome?: StoredGoalTargetOutcome;
+  newChapterAt?: string;
+}
+
+/** Options for {@link SessionStore.listPriorities}. Retired rows are excluded by default. */
+export interface ListPrioritiesOptions {
+  includeRetired?: boolean;
+}
+
+/**
+ * Which targets to list: every target of one priority, or every target of one
+ * user's priorities. A union rather than two optional fields, so "neither" and
+ * "both" are not states the implementation has to reject at runtime.
+ */
+export type GoalTargetSelector = { priorityId: string } | { userId: string };
+
+/** Options for {@link SessionStore.listGoalTargets}. Retired rows are excluded by default. */
+export interface ListGoalTargetsOptions {
+  includeRetired?: boolean;
+}
+
 /**
  * Filter parameters for `listSessions`. `sort` defaults to `'startedAt:desc'`
  * and `limit` defaults to `50` at the implementation layer.
@@ -1660,6 +1790,74 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** A user's bodyweight readings, newest-first. */
   listBodyMetrics(userId: string, filter?: ListBodyMetricsFilter): Promise<StoredBodyMetric[]>;
+
+  // --- Priorities and goal targets (VW-349) ---
+
+  /**
+   * Upsert a declared priority on its `id` — `ON CONFLICT DO UPDATE`, never
+   * `INSERT OR REPLACE`, because `priorities` is an FK parent and a REPLACE is
+   * a DELETE, which would cascade every target off a row the caller only meant
+   * to edit. `userId` is identity and is never updated.
+   */
+  putPriority(priority: StoredPriority): Promise<StoredPriority>;
+
+  /** A user's declared priorities, newest declaration first. */
+  listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]>;
+
+  /**
+   * Retire a priority and, in the same transaction, every target still live
+   * under it — marked `retiredAt` with outcome `'abandoned'`.
+   *
+   * CASCADE ON RETIRE MEANS MARKED, NOT DELETED. A target the lifter worked
+   * toward for five weeks is a fact about what was attempted; deleting it
+   * would make the history read as though the goal was never set. `'abandoned'`
+   * is the honest outcome for a target whose priority went away, and is
+   * distinct from `'missed'`, which claims the lifter tried and fell short.
+   *
+   * Idempotent: an already-retired priority keeps its original `retiredAt`,
+   * and so does an already-retired target. Returns `undefined` when no such
+   * priority exists.
+   */
+  retirePriority(id: string, retiredAt: string): Promise<StoredPriority | undefined>;
+
+  /**
+   * Upsert a derived target on its `id`, `ON CONFLICT DO UPDATE`.
+   *
+   * REFUSES TO MOVE AN ACCEPTED TARGET: when the stored row already carries an
+   * `acceptedBy`, a call that changes `committedValue` or `stretchValue` throws
+   * with `code: 'GOAL_TARGET_FIXED'` rather than writing. That is the human
+   * decision of 2026-09-13 — a target the lifter agreed to is the thing being
+   * judged, so a coach that could quietly lower it would make every "met"
+   * meaningless. The exits are retirement with an outcome, or
+   * {@link SessionStore.setGoalTargetNewChapter}.
+   */
+  putGoalTarget(target: StoredGoalTarget): Promise<StoredGoalTarget>;
+
+  /** Targets of one priority, or of every priority a user declared; newest derivation first. */
+  listGoalTargets(
+    selector: GoalTargetSelector,
+    options?: ListGoalTargetsOptions,
+  ): Promise<StoredGoalTarget[]>;
+
+  /**
+   * Retire one target with the outcome it ended on. Idempotent — an
+   * already-retired target keeps its original `retiredAt` and `outcome`.
+   * Returns `undefined` when no such target exists.
+   */
+  retireGoalTarget(
+    id: string,
+    outcome: StoredGoalTargetOutcome,
+    retiredAt: string,
+  ): Promise<StoredGoalTarget | undefined>;
+
+  /**
+   * Stamp a target's `newChapterAt` — a technique reform (the lifter's squat
+   * depth changed) that makes the stored `startValue` a measurement of a
+   * different movement. The target stays live and its numbers stay fixed; the
+   * stamp tells the read model where the comparable series restarts. Returns
+   * `undefined` when no such target exists.
+   */
+  setGoalTargetNewChapter(id: string, at: string): Promise<StoredGoalTarget | undefined>;
 
   // --- Exercise baselines (I5 / B56, VW-116) ---
 
