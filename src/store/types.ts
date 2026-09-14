@@ -22,6 +22,7 @@ import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 import type { RirVelocityFit } from '../analytics/rir-velocity.js';
 import type { BodyFatSource } from '../analytics/body-fat-sources.js';
 import type { LeannessBand } from './leanness-band.js';
+import type { RecompMode } from './diet-phase.js';
 import type { AccountabilityState } from '../accountability/types.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
@@ -689,6 +690,12 @@ export interface StoredDietPhase {
   startedAt: string;
   endedAt?: string;
   declaredAt: string;
+  /**
+   * The declared recomposition bodyweight target (VW-378, v30). Present only
+   * on a `recomposition` range; absent on every range declared before v30 and
+   * on every other phase.
+   */
+  recompMode?: RecompMode;
 }
 
 /** Arguments to {@link SessionStore.declareDietPhase}. */
@@ -698,6 +705,8 @@ export interface DeclareDietPhaseInput {
   /** When the phase began. May be in the past — that is the correction path. */
   startedAt: string;
   declaredAt: string;
+  /** Required for `recomposition` and refused for every other phase; the tool layer is what enforces that. */
+  recompMode?: RecompMode;
 }
 
 /**

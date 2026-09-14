@@ -13,7 +13,7 @@
 import { z } from 'zod';
 
 import { BODY_FAT_SOURCES } from '../analytics/body-fat-sources.js';
-import { DIET_PHASES } from '../store/diet-phase.js';
+import { DIET_PHASES, RECOMP_MODES } from '../store/diet-phase.js';
 import { LEANNESS_BANDS } from '../store/leanness-band.js';
 
 /**
@@ -89,8 +89,30 @@ export const ProfileSetDietPhaseInput = z
     // the `diet_phases` DDL comment calls for, and rewrites the timeline from
     // there forward.
     startedAt: z.string().datetime().optional(),
+    // VW-378: the bodyweight target a recomposition runs against. Declared,
+    // never inferred — see `RECOMP_MODES`.
+    recompMode: z.enum(RECOMP_MODES).optional(),
   })
   .strict();
+
+/**
+ * `recompMode` is REQUIRED for a recomposition and REFUSED for every other
+ * phase (VW-378). Required, because the mode decides what the goal page calls
+ * "on track" from week 1 and a default would be the server answering a
+ * question only the lifter can (VW-346 §5 Q2). Refused elsewhere, because a
+ * stored mode on a fat-loss range would be a declaration no reader consults.
+ *
+ * Registered the way `ProfileLogBodyweightInputRefined` is: the object schema
+ * describes the parameters, the refined schema parses them.
+ */
+export const ProfileSetDietPhaseInputRefined = ProfileSetDietPhaseInput.refine(
+  (input) => (input.phase === 'recomposition') === (input.recompMode !== undefined),
+  {
+    message:
+      'recompMode is required when phase is recomposition, and must be omitted for every other phase',
+    path: ['recompMode'],
+  },
+);
 
 // `profile.log_bodyweight` (VW-327) — the first writer of `body_metrics`.
 // Storage only, in the same posture as the rest of `profile.*`: it records a

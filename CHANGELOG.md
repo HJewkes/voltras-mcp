@@ -39,6 +39,19 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- A recomposition now has a bodyweight target you declare, and it decides what "on track"
+  means from week 1 (VW-378). `profile.set_diet_phase` requires `recompMode` whenever the
+  phase is `recomposition`: `hold` to stay inside the maintenance corridor of plus or minus
+  2% of your starting weight, or `slow-loss` to come down deliberately at 0.5% a week while
+  you keep training hard. `goal.propose_targets` reads it, so the bodyweight goal band you
+  are judged against is the one you asked for rather than a default. The band itself landed
+  earlier (VW-365) but nothing could reach the slow-loss line until now; a recomposition
+  declared before this change keeps the hold corridor until you say otherwise.
+
+  **You declare it; the scale is never read for it.** Under a hold target there is no rate
+  on the scale to infer an intent from, so the server asks instead of guessing. Passing
+  `recompMode` for any other phase is refused, because nothing would ever consult it.
+
 - After a technique reform, your old PRs stop being the number to beat (VW-361).
   `exercise.mark_new_chapter` declares that a movement itself changed — a reformed squat
   depth, a new grip, a corrected bar path — and from that point the e1RM PR check,

@@ -41,6 +41,7 @@ import {
   ProfileLogBodyweightInput,
   ProfileLogBodyweightInputRefined,
   ProfileSetDietPhaseInput,
+  ProfileSetDietPhaseInputRefined,
   ProfileSetTrainingBackgroundInput,
 } from '../schemas/profile.js';
 import type { ServerState } from '../state/server-state.js';
@@ -133,7 +134,12 @@ const SET_DIET_PHASE_DESCRIPTION =
   'declared range plus the whole timeline, oldest-first — read it back to the lifter to ' +
   'confirm the correction landed where they meant. This is the OBSERVED phase (what they ' +
   'actually ate), which is a different claim from the prescribed phase_type on a plan week, ' +
-  'and this tool never touches that. Recording a phase changes NO analysis: it does not ' +
+  'and this tool never touches that. A recomposition REQUIRES recompMode, the bodyweight ' +
+  'target it is run against: hold (stay inside the maintenance corridor) or slow-loss (a slow, ' +
+  'deliberate drop while training hard). ASK THE LIFTER WHICH and pass their answer — never ' +
+  'infer it from the scale, and never pass it for any other phase, which is refused. It is the ' +
+  'one input that moves this phase’s bodyweight goal band. Recording a phase changes NO other ' +
+  'analysis: it does not ' +
   'suppress a plateau verdict, weight a comparison or move any threshold. It makes the phase ' +
   'visible so a reader can discount a flat stretch themselves — a fat-loss phase can look ' +
   'identical to a real plateau, and only the reader can tell which they are looking at.';
@@ -216,7 +222,7 @@ export function registerProfileTools(
     placeholders,
     'profile.set_diet_phase',
     ProfileSetDietPhaseInput,
-    wrapHandler(ProfileSetDietPhaseInput, (input) => setDietPhase(state, input)),
+    wrapHandler(ProfileSetDietPhaseInputRefined, (input) => setDietPhase(state, input)),
     SET_DIET_PHASE_DESCRIPTION,
   );
   install(
@@ -384,6 +390,10 @@ async function getOnboardingGaps(state: ServerState): Promise<{ gaps: Onboarding
  * mislabelled phase needs to see where the boundaries actually landed, not
  * just that a write succeeded. Overlap-freedom is the store's guarantee (see
  * `declareDietPhase`), so the timeline is a readout, never a re-check.
+ *
+ * VW-378 gives a recomposition one more declared field, `recompMode`, and it
+ * is the single exception to "derives nothing": the goal band reads it. This
+ * tool still only records it — `goal.propose_targets` is what reads it back.
  */
 async function setDietPhase(
   state: ServerState,
@@ -395,6 +405,7 @@ async function setDietPhase(
     phase: input.phase,
     startedAt: input.startedAt ?? now,
     declaredAt: now,
+    ...(input.recompMode === undefined ? {} : { recompMode: input.recompMode }),
   });
   return { declared, timeline: await state.store.listDietPhases(LOCAL_USER_ID) };
 }

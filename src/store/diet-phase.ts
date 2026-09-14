@@ -44,6 +44,25 @@ export const DIET_PHASES = ['fat-loss', 'gain', 'maintenance', 'recomposition'] 
 export type DietPhase = (typeof DIET_PHASES)[number];
 
 /**
+ * The bodyweight target a recomposition is run against (VW-378). DECLARED BY
+ * THE LIFTER at the Sunday sitting and NEVER inferred: under a hold target
+ * there is no rate on the scale to read a slow-loss intent off, so a guess
+ * would be manufactured either way (VW-346 §5 Q2).
+ *
+ * Read only under `'recomposition'`. `deriveGoalBand` turns `slow-loss` into
+ * the slow edge of the cited fat-loss range and `hold` into the cited
+ * maintenance corridor; both edges are the corpus's, neither is invented here.
+ */
+export const RECOMP_MODES = ['hold', 'slow-loss'] as const;
+
+export type RecompMode = (typeof RECOMP_MODES)[number];
+
+/** Is `value` one of the two declared recomposition modes? */
+export function isRecompMode(value: string): value is RecompMode {
+  return (RECOMP_MODES as readonly string[]).includes(value);
+}
+
+/**
  * One observed phase over a half-open instant range `[startedAt, endedAt)`.
  * An absent `endedAt` means the range is still open — the phase the lifter is
  * in now. At most one open range exists per user; see `declareDietPhase`.

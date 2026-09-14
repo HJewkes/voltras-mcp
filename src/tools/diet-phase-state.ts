@@ -10,8 +10,18 @@
 
 import type { DietPhaseState } from '../analytics/diet-phase-tolerance.js';
 import { weeksInPhaseAt } from '../analytics/diet-phase-tolerance.js';
-import { isDietPhase } from '../store/diet-phase.js';
+import { isDietPhase, type RecompMode } from '../store/diet-phase.js';
 import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
+
+/**
+ * The declared phase plus the recomposition mode the lifter chose with it
+ * (VW-378). The mode rides here rather than on `DietPhaseState` because the
+ * VW-277 tolerance table does not read it — only the goal band does.
+ */
+export interface DeclaredDietPhaseState extends DietPhaseState {
+  /** Present only under `'recomposition'`, and only when it was declared. */
+  recompMode?: RecompMode;
+}
 
 /** What an undeclared (or straddled) phase answers: the table runs unmodified. */
 export const UNKNOWN_DIET_PHASE_STATE: DietPhaseState = { phase: 'unknown', weeksInPhase: null };
@@ -42,8 +52,13 @@ export async function readDietPhaseState(
   state: DietPhaseReadState,
   from: string = new Date().toISOString(),
   to: string = from,
-): Promise<DietPhaseState> {
+): Promise<DeclaredDietPhaseState> {
   const covering = await state.store.getDietPhaseCovering(LOCAL_USER_ID, from, to);
   if (covering === undefined || !isDietPhase(covering.phase)) return UNKNOWN_DIET_PHASE_STATE;
-  return { phase: covering.phase, weeksInPhase: weeksInPhaseAt(covering.startedAt, to) };
+  const read: DeclaredDietPhaseState = {
+    phase: covering.phase,
+    weeksInPhase: weeksInPhaseAt(covering.startedAt, to),
+  };
+  if (covering.recompMode !== undefined) read.recompMode = covering.recompMode;
+  return read;
 }
