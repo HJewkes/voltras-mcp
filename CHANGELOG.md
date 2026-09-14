@@ -111,6 +111,16 @@ entry is written from the user's point of view is a review question, not a check
   direction, and a pair from two different sources renders no comparison at all and says
   why. The server still never asks you to go and get measured; it records what you offer.
 
+- `coaching.explain` gains a `diet.rate_autoregulation` topic (VW-377): how bodyweight-trend
+  autoregulation works per the RP corpus — a weekly check-in cadence with a half-week floor
+  before any change, why a single off-target reading is ignored when the trend is already
+  converging, the two-axis (deviation × slope) read that sets how urgent a course correction
+  is, and the named confounds (salt/water retention, a diet-phase transition, a
+  menstrual-cycle-linked shift) that should quiet a reading rather than trigger a reaction.
+  States plainly that the source material is about calories and this server prescribes none —
+  it names the two levers, intake and activity, without sizing either — and that the 7-day
+  mean smoothing window is this server's own engineering choice, not RP's.
+
 ### Changed
 
 - Finishing the last workout of a block now asks about your declared priorities instead of
