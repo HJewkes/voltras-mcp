@@ -83,6 +83,11 @@
 //                          recommendation for a finished session. `:sessionId`
 //                          may be `latest`.
 //
+//   ── Body map (VW-330) ───────────────────────────────────────────────────
+//   GET /api/muscle-strength — per titan muscle, its primary exercises with
+//                          best e1RM, 12-week slope, PR flag and a
+//                          multi-exercise agreement flag. One row per side.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -123,6 +128,7 @@ import {
   updatePlannedExercise,
   type DashboardPlanStore,
 } from './plan-api.js';
+import { fetchMuscleStrength, type MuscleStrengthStore } from './muscle-strength-api.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -133,11 +139,13 @@ import type {
 } from '../state/live-state.js';
 import {
   LOCAL_USER_ID,
+  type StoredDietPhase,
   type StoredSession,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredExerciseSetup,
   type StoredSet,
+  type StoredTrainingProfile,
   type StoredTrainingWeek,
   type SetupCard,
 } from '../store/types.js';
@@ -221,6 +229,14 @@ export interface DashboardServerState {
       userId: string;
       exerciseId: string;
     }): Promise<StoredExerciseSetup[]>;
+    /** The declared diet phase covering a window — `history.trend`'s own read (VW-330). */
+    getDietPhaseCovering?(
+      userId: string,
+      from: string,
+      to: string,
+    ): Promise<StoredDietPhase | undefined>;
+    /** Self-reported training background, read for the early-phase flag (VW-330). */
+    getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore>;
   /**
@@ -491,6 +507,10 @@ async function handleRequest(
   }
   if (pathname === '/api/muscle-week') {
     await serveMuscleWeek(res, state, url);
+    return;
+  }
+  if (pathname === '/api/muscle-strength') {
+    await serveMuscleStrength(res, state);
     return;
   }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
@@ -785,6 +805,39 @@ async function serveSessionSummary(
     return;
   }
   sendJson(res, 200, summary);
+}
+
+/** @see hasPlanStore — same narrowing, for the per-muscle strength reads (VW-330). */
+function hasMuscleStrengthStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & MuscleStrengthStore {
+  return (
+    typeof store.getSetsForSession === 'function' &&
+    typeof store.getSetsForExercise === 'function' &&
+    typeof store.getDietPhaseCovering === 'function' &&
+    typeof store.getTrainingProfile === 'function'
+  );
+}
+
+/**
+ * `GET /api/muscle-strength` — per titan muscle, its primary exercises with
+ * best e1RM, 12-week slope and PR flag (VW-330). Owner-only working sets, one
+ * row per side. 501s rather than half-answering when the store cannot serve it.
+ */
+async function serveMuscleStrength(
+  res: ServerResponse,
+  state: DashboardServerState,
+): Promise<void> {
+  if (!hasMuscleStrengthStore(state.store)) {
+    sendJson(res, 501, { error: 'strength_store_unavailable' });
+    return;
+  }
+  const view = await fetchMuscleStrength({
+    store: state.store,
+    catalog: (id) => state.exercises?.getById(id),
+    now: new Date(),
+  });
+  sendJson(res, 200, view);
 }
 
 /** Hard cap on a request body, so a runaway client can't buy unbounded memory. */

@@ -135,6 +135,20 @@ entry is written from the user's point of view is a review question, not a check
   `{ error: 'not_found' }` when no training week is currently active. Internal plumbing for
   the body-map page (VW-323) — no page renders it yet.
 
+- The dashboard can now answer "which muscles are getting stronger" in one read, at
+  `GET /api/muscle-strength` (VW-330). For each of the 15 body-map muscles it lists the
+  exercises that target it, each with its best estimated 1RM over the last 12 weeks, that
+  estimate's error band, the fitted weekly slope, the plateau verdict, and whether your most
+  recent session was a personal record. Only your own working sets with reps recorded count,
+  never a guest's and never a mock-adapter set — the same scoping `/api/muscle-week` and
+  `/api/muscle-plan` use. Two limits are built in rather than papered over: a
+  bilateral exercise reports your left and right sides as separate rows, never averaged into
+  one number, and a muscle is only called stronger or weaker when at least two different
+  exercises move the same way. That flag reports agreement of direction, not size — no
+  published threshold says how big a load trend has to be to count, so none is applied. Under
+  six months of declared training the rows carry an early-phase flag, because a rising
+  estimate that early is as much skill as muscle; nothing is hidden, it is labelled.
+
 - The database can now hold the priorities you declare and the targets the coach derives
   from them (VW-349, schema v27). A priority is your own sentence turned into a row — a
   muscle or a lift, at `specialize` / `maintain` / `deprioritize`, over a horizon — and a

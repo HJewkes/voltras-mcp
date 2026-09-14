@@ -11,11 +11,21 @@
 import type { DietPhaseState } from '../analytics/diet-phase-tolerance.js';
 import { weeksInPhaseAt } from '../analytics/diet-phase-tolerance.js';
 import { isDietPhase } from '../store/diet-phase.js';
-import type { ServerState } from '../state/server-state.js';
-import { LOCAL_USER_ID } from '../store/types.js';
+import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 
 /** What an undeclared (or straddled) phase answers: the table runs unmodified. */
 export const UNKNOWN_DIET_PHASE_STATE: DietPhaseState = { phase: 'unknown', weeksInPhase: null };
+
+/**
+ * The one store method this read needs. Declared as a slice rather than
+ * `ServerState` so a caller outside the MCP tool layer — the dashboard's
+ * muscle-strength route (VW-330) — can reach the same read without
+ * fabricating a whole server state. Every existing caller passes a
+ * `ServerState`, which satisfies this structurally.
+ */
+export interface DietPhaseReadState {
+  store: Pick<SessionStore, 'getDietPhaseCovering'>;
+}
 
 /**
  * The declared phase covering `[from, to]` and how many weeks the lifter has
@@ -29,7 +39,7 @@ export const UNKNOWN_DIET_PHASE_STATE: DietPhaseState = { phase: 'unknown', week
  * wants. A historical read passes the window it is judging.
  */
 export async function readDietPhaseState(
-  state: ServerState,
+  state: DietPhaseReadState,
   from: string = new Date().toISOString(),
   to: string = from,
 ): Promise<DietPhaseState> {

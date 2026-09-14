@@ -59,6 +59,22 @@ export {
 export { buildHistoryView, type HistoryRows } from './history.js';
 
 export {
+  buildMuscleStrengthView,
+  MUSCLE_STRENGTH_CONSTANTS,
+  type MuscleStrengthAgreement,
+  type MuscleStrengthBestE1rm,
+  type MuscleStrengthExerciseInput,
+  type MuscleStrengthExerciseRow,
+  type MuscleStrengthInput,
+  type MuscleStrengthMuscle,
+  type MuscleStrengthSetRow,
+  type MuscleStrengthSide,
+  type MuscleStrengthSideKey,
+  type MuscleStrengthTrend,
+  type MuscleStrengthView,
+} from './muscle-strength.js';
+
+export {
   buildSessionPaceView,
   DEFAULT_SET_WORK_SECONDS,
   type SessionPaceInput,

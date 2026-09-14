@@ -88,6 +88,48 @@ plain, human-meaningful value (a weight, a mode string, a muscle name); if you
 find yourself reaching for a raw command code or frame byte to answer a
 dashboard need, that's a signal the field belongs somewhere else.
 
+### The `/api/muscle-strength` contract (VW-330)
+
+```ts
+{
+  muscleMapVersion: string; // exercises/muscle-map.ts MUSCLE_MAP_VERSION
+  muscles: Array<{
+    muscle: TitanMuscleGroup; // all 15 slugs, always
+    exercises: Array<{
+      exerciseId: string;
+      name: string;
+      side: 'left' | 'right' | null; // null = the sets recorded no side
+      bestE1rm: { value: number; band: E1RMBand; method: E1RMMethod; confidence: number } | null;
+      slopePctPerWeek: number | null; // fitted weekly change, % of the fit's day-0 value
+      rSquared: number | null;
+      isPR: boolean;
+      priorBest: number | null;
+      plateau: 'plateau' | 'tolerated' | 'none' | null;
+    }>;
+    agreement: 'stronger' | 'weaker' | 'mixed' | 'insufficient';
+    earlyPhase: boolean;
+  }>;
+  agreementBasis: string;
+  earlyPhaseBasis: string;
+}
+```
+
+A 12-week window, scoped by `read-models/muscle-set-scope.ts` — the one copy
+`muscle-plan` and `muscle-week` also read, so the three panels of one body-map
+figure cannot disagree about what a working set is or which muscle it counts
+toward. The slope, `rSquared` and `plateau` come from `metrics.compute
+history.trend` (metric `e1rm`) run once per (exercise, side) — the same
+function, not a second implementation. `bestE1rm`, `isPR` and `priorBest` come
+from the Epley estimate and the shared `evaluateE1RMPr`, the same PR verdict the
+summary page's hero card shows.
+
+**A bilateral exercise yields one row per side and never a merged one.** Pooling
+two limbs into one strength number hides exactly the finding a per-side read
+exists to surface (`src/analytics/side-comparison.ts`). `agreement` needs two
+separate exercises trending the same way before it names a direction, and it is
+an agreement of signs, not a magnitude verdict: no citable flat threshold exists
+for a load trend (VW-230) and none is invented here.
+
 ### The build pipeline: one Vite alias + Tailwind PostCSS
 
 titan-design publishes its `dist` (not source) as React Native components.
