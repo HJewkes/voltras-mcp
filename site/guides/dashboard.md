@@ -10,14 +10,16 @@ one doesn't repeat them.
 voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1` only, no
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
-`/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/session-summary/:sessionId` —
-are all reads. That's the surface the README calls "read-only," and it's the one this guide
-is mostly about. `/api/muscle-plan` (VW-331) rolls up the active training week into
-planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
-planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
-how much you actually trained each muscle this week, and whether that is a lot or a little.
-Both are internal plumbing for the body-map page (VW-323), not surfaced on a page of their
-own yet.
+`/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
+`/api/session-summary/:sessionId` — are all reads. That's the surface the README calls
+"read-only," and it's the one this guide is mostly about. `/api/muscle-plan` (VW-331) rolls
+up the active training week into planned-vs-done working sets per titan muscle group
+(VW-328), plus the still-untrained planned exercises per muscle. `/api/muscle-week` (VW-329)
+answers the adjacent question — how much you actually trained each muscle this week, and
+whether that is a lot or a little. `/api/muscle-strength` (VW-330) answers the third — which
+muscles are actually getting stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
+All three are internal plumbing for the body-map page (VW-323), not surfaced on a page of
+their own yet.
 
 ### `/api/muscle-week` — weekly sets per muscle
 
@@ -108,6 +110,33 @@ The set log on the live page accumulates client-side from live transitions — a
 logged when the active set goes non-null → null across two polls. **Open the page before or
 during a run**: a browser that connects after the last set has nothing to show
 (`README.md`).
+
+## Per-muscle strength (`/api/muscle-strength`)
+
+One read answers "which muscles are getting stronger" without a page of its own yet. For
+each of the 15 body-map muscle slugs it returns the exercises whose **primary** muscle maps
+to that slug, and for each one: the best e1RM in a 12-week window with its error band, the
+fitted weekly slope, the plateau verdict, and whether the newest session was a personal
+record. Only your own working sets with reps recorded count, never a guest's, never a
+warm-up and never a mock-adapter set — the same scoping `/api/muscle-week` and
+`/api/muscle-plan` apply, so the three never disagree. The slope is
+`metrics.compute history.trend` (metric `e1rm`) run per exercise and per side, not a second
+implementation of the same fit (`src/dashboard/muscle-strength-api.ts`).
+
+Two rules shape the answer, and both exist to stop it over-claiming:
+
+- **Left and right are never pooled.** A bilateral exercise returns one row per side. An
+  average of two limbs is a display number; the per-side pair is the assessment reference
+  (`src/analytics/side-comparison.ts`).
+- **One exercise is never enough to say a muscle grew.** Each muscle carries an `agreement`
+  flag — `stronger`, `weaker`, `mixed`, or `insufficient` — that names a direction only when
+  at least two separate exercises trend the same way. It reports agreement of direction, not
+  size: no published threshold says how big a load trend has to be to count, so none is
+  applied. An `earlyPhase` flag marks a lifter with under six months of declared training,
+  where a rising e1RM is as much skill as tissue; rows are flagged, never dropped.
+
+The full response shape is in
+[`src/dashboard/README.md`](https://github.com/HJewkes/voltras-mcp/blob/main/src/dashboard/README.md).
 
 ## Driving it without hardware
 

@@ -159,7 +159,7 @@ import {
   type DietPhaseContext,
   type DietPhaseState,
 } from '../analytics/diet-phase-tolerance.js';
-import { readDietPhaseState } from './diet-phase-state.js';
+import { readDietPhaseState, type DietPhaseReadState } from './diet-phase-state.js';
 import { checkDriftGuard, summarizeSessionForDrift } from '../store/drift-guard.js';
 import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import {
@@ -179,6 +179,7 @@ import {
 import { scopeSessionSetsToExerciseId } from '../store/set-scope.js';
 import {
   LOCAL_USER_ID,
+  type SessionStore,
   type StoredExerciseBaseline,
   type StoredSession,
   type StoredSet,
@@ -553,7 +554,7 @@ const HISTORY_TREND_UNIT: Record<NonNullable<HistoryTrendInput['metric']>, strin
  * repo states a flat band for a load trend, so `direction` is null and the raw
  * fit ships instead, the same posture `quality.bounce` takes on dwell.
  */
-interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
+export interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
   direction: null;
   directionReason: string;
   /** `slope`'s unit; `slope` is the per-day change in that unit. */
@@ -561,7 +562,7 @@ interface HistoryTrendReadout extends Omit<TrendAnalysis, 'direction'> {
 }
 
 /** `history.trend`'s response (VW-144/VW-145/VW-150/VW-230/VW-267). */
-interface HistoryTrendResult {
+export interface HistoryTrendResult {
   series: TimeSeries;
   trend: HistoryTrendReadout;
   plateau: PlateauDetection & {
@@ -625,7 +626,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * separate so a reader can always see what the detector itself said.
  */
 async function plateauWindowDietState(
-  state: ServerState,
+  state: HistoryTrendState,
   series: TimeSeries,
   plateau: PlateauDetection,
 ): Promise<DietPhaseState> {
@@ -691,14 +692,16 @@ function plateauVerdict(
  * for "when this session-bucket happened" here, not the session row.
  */
 async function historyTrendSessions(
-  state: ServerState,
+  state: HistoryTrendState,
   exerciseId: string,
   fromIso: string,
+  side?: StoredSide,
 ): Promise<ProcessedSession[]> {
   const sets = await state.store.getSetsForExercise({
     userId: LOCAL_USER_ID,
     exerciseId,
     from: fromIso,
+    ...(side !== undefined ? { side } : {}),
   });
   const bySession = groupBySessionId(sets);
   const sources: ProcessedSessionSource[] = [...bySession.entries()].map(([id, group]) => ({
@@ -737,13 +740,43 @@ function trendReadout(
   };
 }
 
-async function computeHistoryTrend(
-  state: ServerState,
-  input: HistoryTrendInput,
+/**
+ * The store slice `computeHistoryTrend` reads. Declared as a slice rather than
+ * `ServerState` so the dashboard's muscle-strength route (VW-330) can run the
+ * same fit without fabricating a whole server state; `ServerState` satisfies it
+ * structurally, so the MCP tool path is unchanged.
+ */
+export interface HistoryTrendState extends DietPhaseReadState {
+  store: Pick<SessionStore, 'getSetsForExercise' | 'getDietPhaseCovering'>;
+}
+
+/**
+ * What `computeHistoryTrend` reads off a request. Declared rather than reused
+ * from the zod input so a non-tool caller need not build a whole
+ * `metrics.compute` payload; the tool path's own parsed input satisfies it.
+ */
+export interface HistoryTrendOptions {
+  exerciseId: string;
+  metric?: NonNullable<HistoryTrendInput['metric']> | undefined;
+  weeks?: number | undefined;
+  thresholdPct?: number | undefined;
+  minDays?: number | undefined;
+}
+
+/**
+ * `history.trend` (VW-144/VW-145). `side` narrows the fit to one limb's own
+ * sets and is what keeps a bilateral exercise off a pooled slope (VW-330): a
+ * left-right average is a display number, never the assessment reference. The
+ * MCP tool path passes none, which reads every side the way it always has.
+ */
+export async function computeHistoryTrend(
+  state: HistoryTrendState,
+  input: HistoryTrendOptions,
+  side?: StoredSide,
 ): Promise<HistoryTrendResult> {
   const weeks = input.weeks ?? HISTORY_DEFAULT_WEEKS;
   const fromIso = weeksAgoIso(weeks);
-  const sessions = await historyTrendSessions(state, input.exerciseId, fromIso);
+  const sessions = await historyTrendSessions(state, input.exerciseId, fromIso, side);
   if (sessions.length === 0) {
     throw notFound(`exercise '${input.exerciseId}' has no working sets in the last ${weeks} weeks`);
   }
