@@ -170,10 +170,11 @@ describe('buildGoalProgressView status vocabulary', () => {
     expect(view.statusBasis).not.toContain('maintenance');
   });
 
-  it('reads stalled on three matched readings flat under the committed edge', () => {
+  it('falls back to its own run rule for stalled when no plateau detector ran', () => {
     const view = buildGoalProgressView(input({ actuals: FLAT_RUN }));
 
     expect(view.status).toBe('stalled');
+    expect(view.statusBasis).toContain('no plateau detector run');
     expect(view.statusBasis).toContain('rp:rp-s7-plateau-flatline-vs-slowdown-distinction');
   });
 
@@ -195,6 +196,119 @@ describe('buildGoalProgressView status vocabulary', () => {
 
     expect(view.status).toBe('calibrating');
     expect(view.statusBasis).toContain('1 more matched session');
+  });
+});
+
+describe('buildGoalProgressView stalled source', () => {
+  it('lets the plateau detector decide stalled, and says it was the detector', () => {
+    const view = buildGoalProgressView(
+      input({
+        actuals: CONVERGING,
+        plateauVerdict: { verdict: 'plateau', plateauDays: 21, reasoning: 'Variance under 5%.' },
+      }),
+    );
+
+    expect(view.status).toBe('stalled');
+    expect(view.statusBasis).toContain('history.trend');
+    expect(view.statusBasis).toContain('21 days');
+    expect(view.statusBasis).toContain('Variance under 5%.');
+  });
+
+  it('does not stall on a tolerated plateau, because the phase already explains it', () => {
+    const view = buildGoalProgressView(
+      input({ actuals: FLAT_RUN, plateauVerdict: { verdict: 'tolerated' } }),
+    );
+
+    expect(view.status).not.toBe('stalled');
+  });
+
+  it('overrides the local run rule when the detector found no plateau', () => {
+    const withDetector = buildGoalProgressView(
+      input({ actuals: FLAT_RUN, plateauVerdict: { verdict: 'none' } }),
+    );
+    const withoutDetector = buildGoalProgressView(input({ actuals: FLAT_RUN }));
+
+    expect(withoutDetector.status).toBe('stalled');
+    expect(withDetector.status).toBe('behind');
+  });
+});
+
+describe('buildGoalProgressView session-count commitment', () => {
+  const sessionTarget: StoredGoalTarget = {
+    ...TARGET,
+    metric: 'sessions_28d',
+    anchorReps: undefined,
+    exerciseId: undefined,
+    startValue: 12,
+    committedValue: 12,
+    stretchValue: 12,
+    infoLevel: 'cold',
+    basis: 'execution_ramp',
+  };
+
+  /** A session count's band is flat at the declared count, as `sessionCountShape` builds it. */
+  const sessionBand: GoalBand = {
+    ...BAND,
+    basis: 'execution_ramp',
+    infoLevel: 'cold',
+    corridorPct: 0,
+    direction: 'hold',
+    expected: WEEKS.map((week) => ({ weekIndex: week.index, low: 12, high: 12 })),
+    committedValue: 12,
+    stretchValue: 12,
+  };
+
+  function sessionView(counted: number, now: string) {
+    return buildGoalProgressView(
+      input({
+        target: sessionTarget,
+        band: sessionBand,
+        actuals: [{ ts: now, value: counted, matched: true, isPR: false }],
+        now,
+      }),
+    );
+  }
+
+  it('reads on pace, not calibrating, when the count keeps up with the elapsed window', () => {
+    // Day 14 of the 28-day window, so 6 of the committed 12 are due.
+    const view = sessionView(7, '2026-08-17T00:00:00.000Z');
+
+    expect(view.status).toBe('on_track');
+    expect(view.statusBasis).toContain('a commitment, not a progression');
+    expect(view.statusBasis).toContain('rp:rp-s10-three-month-planning-horizon');
+    expect(view.statusBasis).not.toContain('execution ramp');
+  });
+
+  it('reads behind under pace, and the lever is the schedule rather than the load', () => {
+    const view = sessionView(2, '2026-08-17T00:00:00.000Z');
+
+    expect(view.status).toBe('behind');
+    expect(view.statusBasis).toContain('2 of the 6 due by now against a committed 12');
+    expect(view.advisory?.source).toBe('commitment');
+    expect(view.advisory?.prompt).toContain('the lever is the schedule');
+    expect(view.committed).toBe(12);
+  });
+});
+
+describe('buildGoalProgressView week-axis placement', () => {
+  it('places an actual on its meso week and leaves one outside the meso unplaced', () => {
+    const beforeStart = { ts: '2026-07-30T00:00:00.000Z', value: 165, matched: true, isPR: false };
+    const pastTheEnd = actual(8, 190);
+    const view = buildGoalProgressView(
+      input({ actuals: [beforeStart, actual(3, 174), pastTheEnd] }),
+    );
+
+    expect(view.actuals.map((entry) => entry.weekIndex)).toEqual([undefined, 3, undefined]);
+  });
+
+  it('keeps ts alongside the week it resolved', () => {
+    const view = buildGoalProgressView(input({ actuals: CONVERGING }));
+
+    expect(view.actuals).toEqual([
+      { ...CONVERGING[0], weekIndex: 1 },
+      { ...CONVERGING[1], weekIndex: 2 },
+      { ...CONVERGING[2], weekIndex: 3 },
+    ]);
   });
 });
 

@@ -33,9 +33,16 @@
 // per mesocycle (human decision 2026-09-13), sized against percent of the
 // lifter's OWN target (rp:rp-s12-praise-relative-to-goal-not-magnitude).
 //
-// CONSEQUENCE WORTH KNOWING: a `sessions_28d` band comes back `infoLevel: 'cold'`
-// by construction, so its card reads `calibrating` — a commitment count has no
-// gain claim to calibrate against, and the status vocabulary has no word for it.
+// TWO SOURCES FOR `stalled`. `history.trend`'s plateau verdict decides it when
+// the caller ran the detector, which is what plan §2d names; the local
+// run-under-the-edge rule is the fallback when no verdict arrives. `statusBasis`
+// says which one decided, because they can disagree — the detector fits a curve
+// over days, the fallback counts readings against the band.
+//
+// A COMMITMENT IS NOT A PROGRESSION. A `sessions_28d` band comes back
+// `infoLevel: 'cold'` by construction, so the generic `calibrating` rule would
+// swallow it forever and describe it in execution-ramp words. It gets its own
+// branch instead, judged on pace against the count due by now.
 //
 // Confidentiality: fitness units, plan metadata and coaching prose only — no
 // protocol data (NF-07).
@@ -94,6 +101,15 @@ export const GOAL_PROGRESS_CONSTANTS = {
    * rp:rp-s7-multi-exercise-confirmation-for-muscle-gain
    */
   corroborationMinLifts: 2,
+  /**
+   * The rolling window a `sessions_28d` commitment is counted over, in days.
+   *
+   * It is the metric's own name, and the window is what moves rather than a
+   * streak — the plan's "rolling 28-day counts only" (human decision
+   * 2026-09-13). `deriveGoalBand`'s `sessionCountShape` states the same thing
+   * about the band.
+   */
+  sessionWindowDays: 28,
 } as const;
 
 /** The seven words the page may say about a target. `calibrating` replaces v1's `insufficient_data`. */
@@ -113,6 +129,29 @@ export interface GoalActual {
   /** Comparability: the drift guard says this reading is the same work the band started from. */
   matched: boolean;
   isPR: boolean;
+}
+
+/**
+ * A reading placed on the meso's week axis. `GoalTrajectoryChart` (titan #223)
+ * plots by `weekIndex` and only interpolates from `ts` when it has none, so the
+ * placement is resolved here where the week boundaries are already known.
+ */
+export interface GoalActualView extends GoalActual {
+  /** Absent when the reading falls outside the meso — before it started or past its last week. */
+  weekIndex?: number;
+}
+
+/**
+ * `history.trend`'s plateau read, projected down to what this model uses
+ * (`HistoryTrendResult['plateau']` satisfies it). It arrives precomputed for
+ * the same reason `mrvVerdict` does: the detector needs a store read, and this
+ * module performs none.
+ */
+export interface GoalPlateauVerdict {
+  /** VW-277's phase-aware answer: `'tolerated'` means the declared phase already explains it. */
+  verdict: 'plateau' | 'tolerated' | 'none';
+  plateauDays?: number;
+  reasoning?: string;
 }
 
 /** The entry-depression axis of `computeFatigueAxes`, attached as a confounder and never as a verdict. */
@@ -151,6 +190,8 @@ export interface GoalProgressInput {
   fatigue?: GoalFatigueContext;
   /** `checkMrvGuard`'s two-session verdict, when the caller ran it for this lift. */
   mrvVerdict?: MrvGuardVerdict;
+  /** `history.trend`'s plateau read. When present it decides `stalled`; absent falls back. */
+  plateauVerdict?: GoalPlateauVerdict;
   e1rm?: GoalE1RMInput;
 }
 
@@ -192,7 +233,7 @@ export interface GoalProgressView {
   /** The target's own fixed numbers, never the band's recomputed edges. */
   committed: number;
   stretch: number;
-  actuals: GoalActual[];
+  actuals: GoalActualView[];
   e1rmContext?: GoalE1RMContextView;
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
@@ -245,7 +286,7 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     expected: [...input.band.expected],
     committed: input.target.committedValue,
     stretch: input.target.stretchValue,
-    actuals: [...input.actuals],
+    actuals: input.actuals.map((entry) => placeOnWeekAxis(entry, input)),
     status,
     statusBasis,
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
@@ -299,6 +340,20 @@ function read(input: GoalProgressInput): Reading {
 function positionAt(fromIso: string, nowIso: string, weekCount: number): number {
   const elapsed = weeksInPhaseAt(fromIso, nowIso);
   return Math.min(elapsed, weekCount) - 1;
+}
+
+/**
+ * Put a reading on the meso's week axis, or leave it off. Unlike
+ * {@link positionAt} this does NOT clamp: a reading taken before the target's
+ * start or past its last week belongs to no week of this meso, and clamping it
+ * into week 1 would draw it on a week it was not measured in.
+ */
+function placeOnWeekAxis(entry: GoalActual, input: GoalProgressInput): GoalActualView {
+  const startedMs = Date.parse(input.target.startMeasuredAt);
+  const takenMs = Date.parse(entry.ts);
+  if (Number.isNaN(startedMs) || Number.isNaN(takenMs) || takenMs < startedMs) return { ...entry };
+  const week = input.weeks[weeksInPhaseAt(input.target.startMeasuredAt, entry.ts) - 1];
+  return week === undefined ? { ...entry } : { ...entry, weekIndex: week.index };
 }
 
 /** The band row for a week, by `weekIndex` first so a reordered band still lines up. */
@@ -394,6 +449,7 @@ function mesoWeekOf(weeks: readonly GoalBandWeek[], position: number): GoalMesoW
 function resolveStatus(reading: Reading): StatusRead {
   return (
     deloadRead(reading) ??
+    sessionCountRead(reading) ??
     calibratingRead(reading) ??
     aheadRead(reading) ??
     toleratedRead(reading) ??
@@ -411,6 +467,41 @@ function deloadRead(reading: Reading): StatusRead | undefined {
     status: 'deload_week',
     statusBasis: `Week ${week.index} is a deload: the band is flat across it and no verdict is drawn (VW-326).`,
   };
+}
+
+/**
+ * A 28-day session count is judged on pace, not on calibration. Its band comes
+ * back `cold` by construction — `sessionCountShape` holds it flat at the
+ * declared count — so the generic `calibrating` rule below would swallow it
+ * forever and describe a commitment in execution-ramp words. What it is owed
+ * instead is the count due by now: the committed total pro-rated by however
+ * much of the rolling window has elapsed. Never a streak; the window moves.
+ */
+function sessionCountRead(reading: Reading): StatusRead | undefined {
+  if (reading.input.target.metric !== 'sessions_28d') return undefined;
+  const counted = reading.latest?.value;
+  const committed = reading.input.target.committedValue;
+  const dueByNow = committed * windowFractionElapsed(reading);
+  const commitment =
+    'A 28-day session count is a commitment, not a progression (goal / plan / commitment, ' +
+    'rp:rp-s10-three-month-planning-horizon): the count holds and the rolling window moves.';
+  if (counted === undefined) {
+    return { status: 'calibrating', statusBasis: `No sessions counted yet. ${commitment}` };
+  }
+  const pace = `${counted} of the ${round(dueByNow)} due by now against a committed ${committed}`;
+  if (counted >= dueByNow) {
+    return { status: 'on_track', statusBasis: `On pace: ${pace}. ${commitment}` };
+  }
+  return { status: 'behind', statusBasis: `Under pace: ${pace}. ${commitment}` };
+}
+
+/** How much of the rolling window has run, 0 to 1. A full window is the whole commitment. */
+function windowFractionElapsed(reading: Reading): number {
+  const startedMs = Date.parse(reading.input.target.startMeasuredAt);
+  const nowMs = Date.parse(reading.input.now);
+  if (Number.isNaN(startedMs) || Number.isNaN(nowMs)) return 1;
+  const elapsedDays = (nowMs - startedMs) / (24 * 60 * 60 * 1000);
+  return Math.min(1, Math.max(0, elapsedDays / C.sessionWindowDays));
 }
 
 function calibratingRead(reading: Reading): StatusRead | undefined {
@@ -457,16 +548,38 @@ function toleratedRead(reading: Reading): StatusRead | undefined {
   };
 }
 
-/** Three matched readings under the committed edge with a trend that is not closing on it. */
+/**
+ * `history.trend`'s plateau verdict is the source of `stalled` when the caller
+ * ran the detector (plan §2d), and the local run rule is the fallback when it
+ * did not. `statusBasis` names which of the two decided, because they can
+ * disagree: the detector fits a curve over days, the fallback counts readings
+ * against the band. A `'tolerated'` verdict is not a stall — the phase already
+ * explains it, and the chain's own `tolerated` branch has had its say above.
+ */
 function stalledRead(reading: Reading): StatusRead | undefined {
+  const detected = reading.input.plateauVerdict;
+  if (detected !== undefined) return detectedStall(detected);
   const run = reading.matched.slice(-C.minMatchedForStall);
   if (run.length < C.minMatchedForStall || reading.slope === 'improving') return undefined;
   if (!run.every((actual) => belowEdgeAt(actual, reading))) return undefined;
   return {
     status: 'stalled',
     statusBasis:
-      `${run.length} matched sessions under the committed edge with a ${reading.slope} trend: ` +
-      'a flatline, not a slowdown (rp:rp-s7-plateau-flatline-vs-slowdown-distinction).',
+      `${run.length} matched sessions under the committed edge with a ${reading.slope} trend, ` +
+      'by this page’s own run rule with no plateau detector run: a flatline, not a slowdown ' +
+      '(rp:rp-s7-plateau-flatline-vs-slowdown-distinction).',
+  };
+}
+
+function detectedStall(detected: GoalPlateauVerdict): StatusRead | undefined {
+  if (detected.verdict !== 'plateau') return undefined;
+  const run = detected.plateauDays === undefined ? '' : ` over ${detected.plateauDays} days`;
+  const why = detected.reasoning === undefined ? '' : ` ${detected.reasoning}`;
+  return {
+    status: 'stalled',
+    statusBasis:
+      `history.trend’s plateau detector called this a plateau${run}.${why} A flatline, not a ` +
+      'slowdown (rp:rp-s7-plateau-flatline-vs-slowdown-distinction).',
   };
 }
 
@@ -511,6 +624,15 @@ function advisoryFor(status: GoalProgressStatus, reading: Reading): GoalAdvisory
 }
 
 function programmingAdvisory(reading: Reading): GoalAdvisory {
+  if (reading.input.target.metric === 'sessions_28d') {
+    return {
+      kind: 'programming',
+      prompt:
+        'Under the count you committed to: the lever is the schedule, not the training. Put the ' +
+        'missed sessions back in the week. The committed count itself does not move.',
+      source: 'commitment',
+    };
+  }
   const verdict = reading.input.mrvVerdict;
   if (verdict?.mrvFlagged === true) {
     return {
