@@ -303,6 +303,90 @@ describe('isComparable', () => {
     expect(EXERCISE_SWAP_SETTLING_SESSIONS).toBeNull();
   });
 
+  // VW-380: a declared chapter folds into the same (e) equality check via
+  // `effectiveIntroducedAt` rather than a clause of its own, so a straddling
+  // pair is refused with THIS clause's existing reason and EXERCISE_SWAP_REFRAME.
+  const CHAPTER_STARTED_AT = '2026-08-01T00:00:00.000Z';
+  const PRE_CHAPTER = '2026-07-01T00:00:00.000Z';
+  const POST_CHAPTER = '2026-09-01T00:00:00.000Z';
+
+  it('refuses a pair straddling a declared chapter, with a named reason', () => {
+    const verdict = isComparable(
+      makeSubject({
+        startedAt: PRE_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+      makeSubject({
+        id: 'set-b',
+        startedAt: POST_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+    );
+
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.reasons).toContain(
+      'swap: different programme entry date for this exercise ' +
+        `(${INTRODUCED_FIRST} vs ${CHAPTER_STARTED_AT})${SWAP_TAIL}`,
+    );
+  });
+
+  it('leaves a pair entirely after the chapter start unaffected', () => {
+    const verdict = isComparable(
+      makeSubject({
+        startedAt: POST_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+      makeSubject({
+        id: 'set-b',
+        startedAt: POST_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+    );
+
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons.some((r) => r.startsWith('swap'))).toBe(false);
+  });
+
+  it('leaves a pair entirely before the chapter start unaffected (historical read)', () => {
+    const verdict = isComparable(
+      makeSubject({
+        startedAt: PRE_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+      makeSubject({
+        id: 'set-b',
+        startedAt: PRE_CHAPTER,
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: CHAPTER_STARTED_AT,
+      }),
+    );
+
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons.some((r) => r.startsWith('swap'))).toBe(false);
+  });
+
+  it('is byte-identical to the no-chapter case when no chapter is declared', () => {
+    const withoutChapter = isComparable(
+      makeSubject({ exerciseIntroducedAt: INTRODUCED_FIRST }),
+      makeSubject({ id: 'set-b', exerciseIntroducedAt: INTRODUCED_FIRST }),
+    );
+    const withUndeclaredChapter = isComparable(
+      makeSubject({ exerciseIntroducedAt: INTRODUCED_FIRST, chapterStartedAt: undefined }),
+      makeSubject({
+        id: 'set-b',
+        exerciseIntroducedAt: INTRODUCED_FIRST,
+        chapterStartedAt: undefined,
+      }),
+    );
+
+    expect(withUndeclaredChapter).toEqual(withoutChapter);
+  });
+
   // B16 (f): the whole point of the clause is what the beginner READS, so the
   // wording is asserted verbatim here and not merely matched loosely.
   it('tells a beginner who is getting stronger why the muscle claim is held back', () => {

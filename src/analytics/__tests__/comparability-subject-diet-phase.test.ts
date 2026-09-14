@@ -38,6 +38,7 @@ function makeFetchers(phaseBySession: Record<string, string>): ComparabilitySubj
     getLifterSessionExerciseIds: vi.fn(async () => []),
     primaryMuscleOf: vi.fn(() => undefined),
     getSessionDietPhase: vi.fn(async (sessionId: string) => phaseBySession[sessionId]),
+    getChapterStartedAt: vi.fn(async () => null),
   };
 }
 
