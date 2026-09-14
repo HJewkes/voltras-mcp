@@ -39,6 +39,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- A weekly Sunday check-in for hunger, diet-plan adherence and sleep quality (VW-374).
+  `profile.log_weekly_checkin` records each on the same low/medium/high scale
+  `session.checkin` already uses, and every field is optional — you can log a week with
+  nothing to report, which is different from never checking in at all.
+  `profile.get_weekly_checkin` reads a week back. Hunger is the input that matters most
+  here: it is what a future rate advisory will use to tell an intake problem from an
+  activity one. Sleep is recorded for context only and never drives anything on its own.
+
 - A recomposition now has a bodyweight target you declare, and it decides what "on track"
   means from week 1 (VW-378). `profile.set_diet_phase` requires `recompMode` whenever the
   phase is `recomposition`: `hold` to stay inside the maintenance corridor of plus or minus

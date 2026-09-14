@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { BODY_FAT_SOURCES } from '../analytics/body-fat-sources.js';
 import { DIET_PHASES, RECOMP_MODES } from '../store/diet-phase.js';
 import { LEANNESS_BANDS } from '../store/leanness-band.js';
+import { CheckinScaleValue } from './session.js';
 
 /**
  * One self-reported injury or limitation (VW-148 / B42).
@@ -168,5 +169,44 @@ export const ProfileLogBodyweightInputRefined = ProfileLogBodyweightInput.refine
 export const ProfileGetBodyMetricsInput = z
   .object({
     sinceDays: z.number().int().positive().optional(),
+  })
+  .strict();
+
+// `profile.log_weekly_checkin` / `profile.get_weekly_checkin` (VW-374) — a
+// second `self_reports` writer, alongside `session.checkin`. `kind` and the
+// three question codes are its own, never `'checkin'`, so the two never mix
+// on read.
+//
+// Reuses `CheckinScaleValue` (low/medium/high) rather than declaring a
+// second 3-point enum: it is already the corpus's coarse rating scale
+// (rp-s7-coarse-rating-scale-rationale, quoted on `CheckinScaleValue` itself),
+// and a second enum with the same three values would just be the same
+// convention spelled twice.
+export const WEEKLY_CHECKIN_KIND = 'weekly_checkin';
+export const WEEKLY_CHECKIN_CODES = ['hunger', 'diet_plan_adherence', 'sleep_quality'] as const;
+
+/**
+ * All three fields are optional and independently nullable — a lifter who
+ * opens the Sunday sitting and answers nothing still gets a stored row (see
+ * `logWeeklyCheckin`), which is what lets the downstream rate advisory (VW-367
+ * §2d, W2) tell "asked, no answer" apart from "never asked". `weekOf` is a
+ * date only (no time-of-day): omitted, it defaults to the most recent Sunday
+ * relative to now; given, it anchors a late or corrected entry to the sitting
+ * it actually answers.
+ */
+export const ProfileLogWeeklyCheckinInput = z
+  .object({
+    hunger: CheckinScaleValue.optional(),
+    dietPlanAdherence: CheckinScaleValue.optional(),
+    sleepQuality: CheckinScaleValue.optional(),
+    weekOf: z.string().date().optional(),
+  })
+  .strict();
+
+// `profile.get_weekly_checkin` (VW-374). Read-only; `weekOf` selects which
+// Sunday's entry to read back and defaults the same way the write side does.
+export const ProfileGetWeeklyCheckinInput = z
+  .object({
+    weekOf: z.string().date().optional(),
   })
   .strict();

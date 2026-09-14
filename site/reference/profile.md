@@ -2,7 +2,7 @@
 
 # `profile.*`
 
-8 tools in the `profile` namespace.
+10 tools in the `profile` namespace.
 
 ## `profile.set_training_background`
 
@@ -96,3 +96,26 @@ sinceDays optionally limits how far back the returned series goes; omitted retur
 **Parameters**
 
 - `sinceDays` — `integer`, optional.
+
+## `profile.log_weekly_checkin`
+
+Record the lifter's Sunday weekly check-in: three independently optional 3-point ratings (low/medium/high, the same coarse scale session.checkin uses) — hunger, dietPlanAdherence and sleepQuality.
+
+Anchored to weekOf (an ISO date, defaults to the most recent Sunday), not to any session, so it is answered once a week regardless of whether a session runs that day. Calling it with every field omitted is legal and still stores a row for the week, distinct from never checking in at all — the downstream rate advisory (VW-367 §2d) degrades to observed-only (bodyweight trend alone) when a week has no answers, rather than treating a silent week the same as one where the lifter reported nothing wrong. A second call for the same weekOf adds new rows rather than deleting the first — profile.get_weekly_checkin reads back the most recently recorded answer per field, so a later call still acts as a correction. hunger is the lever-choice input: it is what tells the advisory whether an unexpected rate looks like an intake problem or an activity one, so weight it accordingly. dietPlanAdherence corroborates hunger — it does not drive anything on its own. sleepQuality is a CONFOUNDER LINE ONLY: read it out alongside a rate observation as context, never as a trigger for changing the plan (VW-367 §2d — the corpus never treats sleep as a tracked autoregulation input).
+
+**Parameters**
+
+- `hunger` — `low` | `medium` | `high`, optional.
+- `dietPlanAdherence` — `low` | `medium` | `high`, optional.
+- `sleepQuality` — `low` | `medium` | `high`, optional.
+- `weekOf` — `string`, optional.
+
+## `profile.get_weekly_checkin`
+
+Read back the weekly check-in for one week (weekOf, an ISO date; defaults to the most recent Sunday).
+
+Returns `checkin: null` if that week has no recorded entry at all. Once a week has an entry, each of hunger/dietPlanAdherence/sleepQuality reads back as the answer given or null if that particular field was left blank — the two are different states, see profile.log_weekly_checkin.
+
+**Parameters**
+
+- `weekOf` — `string`, optional.

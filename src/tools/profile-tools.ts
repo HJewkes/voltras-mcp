@@ -17,6 +17,7 @@
 // to NULL would wipe out an earlier answer on every subsequent call.
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
 import {
@@ -38,12 +39,17 @@ import {
   ProfileGetStartingPrescriptionInput,
   ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
+  ProfileGetWeeklyCheckinInput,
   ProfileLogBodyweightInput,
   ProfileLogBodyweightInputRefined,
+  ProfileLogWeeklyCheckinInput,
   ProfileSetDietPhaseInput,
   ProfileSetDietPhaseInputRefined,
   ProfileSetTrainingBackgroundInput,
+  WEEKLY_CHECKIN_CODES,
+  WEEKLY_CHECKIN_KIND,
 } from '../schemas/profile.js';
+import type { CheckinScaleValue } from '../schemas/session.js';
 import type { ServerState } from '../state/server-state.js';
 import type { LeannessBand } from '../store/leanness-band.js';
 import {
@@ -178,6 +184,32 @@ const GET_BODY_METRICS_DESCRIPTION =
   'the band IS "no measurable change" and must never be read out as a direction. A pair whose ' +
   'sources differ gets delta: null and a reason; render the reason, not a comparison.';
 
+const LOG_WEEKLY_CHECKIN_DESCRIPTION =
+  "Record the lifter's Sunday weekly check-in: three independently optional 3-point ratings " +
+  '(low/medium/high, the same coarse scale session.checkin uses) — hunger, dietPlanAdherence ' +
+  'and sleepQuality. Anchored to weekOf (an ISO date, defaults to the most recent Sunday), ' +
+  'not to any session, so it is answered once a week regardless of whether a session runs ' +
+  'that day. Calling it with every field omitted is legal and still stores a row for the ' +
+  'week, distinct from never checking in at all — the downstream rate advisory (VW-367 §2d) ' +
+  'degrades to observed-only (bodyweight trend alone) when a week has no answers, rather than ' +
+  'treating a silent week the same as one where the lifter reported nothing wrong. A second ' +
+  'call for the same weekOf adds new rows rather than deleting the first — ' +
+  'profile.get_weekly_checkin reads back the most recently recorded answer per field, so a ' +
+  'later call still acts as a correction. ' +
+  'hunger is the lever-choice input: it is what tells the advisory whether an unexpected ' +
+  'rate looks like an intake problem or an activity one, so weight it accordingly. ' +
+  'dietPlanAdherence corroborates hunger — it does not drive anything on its own. ' +
+  'sleepQuality is a CONFOUNDER LINE ONLY: read it out alongside a rate observation as context, ' +
+  'never as a trigger for changing the plan (VW-367 §2d — the corpus never treats sleep as a ' +
+  'tracked autoregulation input).';
+
+const GET_WEEKLY_CHECKIN_DESCRIPTION =
+  'Read back the weekly check-in for one week (weekOf, an ISO date; defaults to the most ' +
+  'recent Sunday). Returns `checkin: null` if that week has no recorded entry at all. Once a ' +
+  'week has an entry, each of hunger/dietPlanAdherence/sleepQuality reads back as the answer ' +
+  'given or null if that particular field was left blank — the two are different states, see ' +
+  'profile.log_weekly_checkin.';
+
 export function registerProfileTools(
   _server: McpServer,
   state: ServerState,
@@ -238,6 +270,20 @@ export function registerProfileTools(
     ProfileGetBodyMetricsInput,
     wrapHandler(ProfileGetBodyMetricsInput, (input) => getBodyMetrics(state, input)),
     GET_BODY_METRICS_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.log_weekly_checkin',
+    ProfileLogWeeklyCheckinInput,
+    wrapHandler(ProfileLogWeeklyCheckinInput, (input) => logWeeklyCheckin(state, input)),
+    LOG_WEEKLY_CHECKIN_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'profile.get_weekly_checkin',
+    ProfileGetWeeklyCheckinInput,
+    wrapHandler(ProfileGetWeeklyCheckinInput, (input) => getWeeklyCheckin(state, input)),
+    GET_WEEKLY_CHECKIN_DESCRIPTION,
   );
 }
 
@@ -573,4 +619,117 @@ function bodyFatChanges(series: readonly StoredBodyMetric[]): BodyFatChange[] {
     });
   }
   return changes;
+}
+
+type WeeklyCheckinScale = z.infer<typeof CheckinScaleValue>;
+
+/** Question codes written by `profile.log_weekly_checkin`, in result order. */
+const WEEKLY_CHECKIN_FIELDS = [
+  { code: WEEKLY_CHECKIN_CODES[0], key: 'hunger' },
+  { code: WEEKLY_CHECKIN_CODES[1], key: 'dietPlanAdherence' },
+  { code: WEEKLY_CHECKIN_CODES[2], key: 'sleepQuality' },
+] as const satisfies ReadonlyArray<{
+  code: (typeof WEEKLY_CHECKIN_CODES)[number];
+  key: 'hunger' | 'dietPlanAdherence' | 'sleepQuality';
+}>;
+
+interface WeeklyCheckin {
+  hunger: WeeklyCheckinScale | null;
+  dietPlanAdherence: WeeklyCheckinScale | null;
+  sleepQuality: WeeklyCheckinScale | null;
+}
+
+/**
+ * The most recent Sunday on or before `now`, as an ISO date (`YYYY-MM-DD`).
+ * UTC-based and deterministic: `now`'s own day-of-week (`getUTCDay()`, 0 for
+ * Sunday) is how far back to walk.
+ */
+function mostRecentSundayIso(now: Date): string {
+  const sunday = new Date(now);
+  sunday.setUTCDate(now.getUTCDate() - now.getUTCDay());
+  return sunday.toISOString().slice(0, 10);
+}
+
+/** The row `recordedAt` every field of one `weekOf` shares — midnight UTC on that date. */
+function weekOfRecordedAt(weekOf: string): string {
+  return `${weekOf}T00:00:00.000Z`;
+}
+
+/**
+ * `profile.log_weekly_checkin` (VW-374) — the second `self_reports` writer
+ * after `session.checkin`, under its own `kind` so the two never mix on read.
+ *
+ * Writes one row per field, ALWAYS, whether or not that field was answered:
+ * an omitted field still gets a row with no value, which is what makes an
+ * all-null submission distinguishable from "this week was never checked in
+ * at all" on read (see `getWeeklyCheckin`). `session_id` is never set — this
+ * check-in is anchored to the calendar week, not to any session.
+ */
+async function logWeeklyCheckin(
+  state: ServerState,
+  input: z.infer<typeof ProfileLogWeeklyCheckinInput>,
+): Promise<{ weekOf: string } & WeeklyCheckin> {
+  const weekOf = input.weekOf ?? mostRecentSundayIso(new Date());
+  const recordedAt = weekOfRecordedAt(weekOf);
+  const answers: Record<string, WeeklyCheckinScale | undefined> = {
+    hunger: input.hunger,
+    dietPlanAdherence: input.dietPlanAdherence,
+    sleepQuality: input.sleepQuality,
+  };
+  for (const field of WEEKLY_CHECKIN_FIELDS) {
+    const value = answers[field.key];
+    await state.store.putSelfReport({
+      id: randomUUID(),
+      userId: LOCAL_USER_ID,
+      kind: WEEKLY_CHECKIN_KIND,
+      questionCode: field.code,
+      ...(value !== undefined ? { valueText: value } : {}),
+      recordedAt,
+    });
+  }
+  return {
+    weekOf,
+    hunger: input.hunger ?? null,
+    dietPlanAdherence: input.dietPlanAdherence ?? null,
+    sleepQuality: input.sleepQuality ?? null,
+  };
+}
+
+/**
+ * `profile.get_weekly_checkin` (VW-374) — read-only. Extends
+ * `getSelfReportsForUser` (already shared with `report.weekly`) with the
+ * `kind` filter added alongside it, rather than adding a new store query.
+ *
+ * Rows for one `weekOf` come back oldest-first; the last row per question
+ * code wins, so a correcting second `profile.log_weekly_checkin` call (which
+ * adds rows rather than updating them) is still read back as the correction.
+ */
+async function getWeeklyCheckin(
+  state: ServerState,
+  input: z.infer<typeof ProfileGetWeeklyCheckinInput>,
+): Promise<{ weekOf: string; checkin: WeeklyCheckin | null }> {
+  const weekOf = input.weekOf ?? mostRecentSundayIso(new Date());
+  const recordedAt = weekOfRecordedAt(weekOf);
+  const rows = await state.store.getSelfReportsForUser({
+    userId: LOCAL_USER_ID,
+    kind: WEEKLY_CHECKIN_KIND,
+    from: recordedAt,
+    to: recordedAt,
+  });
+  if (rows.length === 0) {
+    return { weekOf, checkin: null };
+  }
+  const latestByCode = new Map<string, WeeklyCheckinScale | null>();
+  for (const row of rows) {
+    if (row.questionCode === undefined) continue;
+    latestByCode.set(row.questionCode, (row.valueText as WeeklyCheckinScale | undefined) ?? null);
+  }
+  return {
+    weekOf,
+    checkin: {
+      hunger: latestByCode.get(WEEKLY_CHECKIN_CODES[0]) ?? null,
+      dietPlanAdherence: latestByCode.get(WEEKLY_CHECKIN_CODES[1]) ?? null,
+      sleepQuality: latestByCode.get(WEEKLY_CHECKIN_CODES[2]) ?? null,
+    },
+  };
 }

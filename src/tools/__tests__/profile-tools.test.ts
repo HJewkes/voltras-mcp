@@ -31,6 +31,8 @@ const TOOL_NAMES = [
   'profile.set_diet_phase',
   'profile.log_bodyweight',
   'profile.get_body_metrics',
+  'profile.log_weekly_checkin',
+  'profile.get_weekly_checkin',
 ];
 
 function makeFakePlaceholders(): {
@@ -943,5 +945,111 @@ describe('profile leanness fields (VW-364)', () => {
     ]);
     expect(body.bodyFatReadings).toEqual([]);
     expect(body.bodyFatChanges).toEqual([]);
+  });
+});
+
+describe('profile.log_weekly_checkin / profile.get_weekly_checkin (VW-374)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface WeeklyCheckinAnswers {
+    hunger: string | null;
+    dietPlanAdherence: string | null;
+    sleepQuality: string | null;
+  }
+  interface LogResult extends WeeklyCheckinAnswers {
+    weekOf: string;
+  }
+  interface GetResult {
+    weekOf: string;
+    checkin: WeeklyCheckinAnswers | null;
+  }
+
+  it('round-trips all three fields for an explicit weekOf', async () => {
+    const logged = parseResult(
+      await h.invoke('profile.log_weekly_checkin', {
+        hunger: 'low',
+        dietPlanAdherence: 'high',
+        sleepQuality: 'medium',
+        weekOf: '2026-09-13',
+      }),
+    ) as LogResult;
+    expect(logged).toEqual({
+      weekOf: '2026-09-13',
+      hunger: 'low',
+      dietPlanAdherence: 'high',
+      sleepQuality: 'medium',
+    });
+
+    const r = await h.invoke('profile.get_weekly_checkin', { weekOf: '2026-09-13' });
+    expect(r.isError).toBeUndefined();
+    expect(parseResult(r) as GetResult).toEqual({
+      weekOf: '2026-09-13',
+      checkin: { hunger: 'low', dietPlanAdherence: 'high', sleepQuality: 'medium' },
+    });
+  });
+
+  it('a row with a null session_id round-trips through the store', async () => {
+    await h.invoke('profile.log_weekly_checkin', { hunger: 'high', weekOf: '2026-09-13' });
+    const rows = await h.store.getSelfReportsForUser({
+      userId: LOCAL_USER_ID,
+      kind: 'weekly_checkin',
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.sessionId).toBeUndefined();
+    }
+  });
+
+  it('an all-null submission is legal and is stored, distinct from never checking in', async () => {
+    const logged = parseResult(
+      await h.invoke('profile.log_weekly_checkin', { weekOf: '2026-09-13' }),
+    ) as LogResult;
+    expect(logged).toEqual({
+      weekOf: '2026-09-13',
+      hunger: null,
+      dietPlanAdherence: null,
+      sleepQuality: null,
+    });
+
+    const checkedWeek = parseResult(
+      await h.invoke('profile.get_weekly_checkin', { weekOf: '2026-09-13' }),
+    ) as GetResult;
+    expect(checkedWeek.checkin).toEqual({
+      hunger: null,
+      dietPlanAdherence: null,
+      sleepQuality: null,
+    });
+
+    const neverCheckedWeek = parseResult(
+      await h.invoke('profile.get_weekly_checkin', { weekOf: '2026-08-30' }),
+    ) as GetResult;
+    expect(neverCheckedWeek.checkin).toBeNull();
+  });
+
+  it('rejects a value outside the low/medium/high scale with INVALID_INPUT', async () => {
+    const r = await h.invoke('profile.log_weekly_checkin', { hunger: 'ravenous' });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects unknown keys with INVALID_INPUT', async () => {
+    const r = await h.invoke('profile.log_weekly_checkin', { hunger: 'low', extra: true });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('defaults weekOf to the most recent Sunday', async () => {
+    const logged = parseResult(
+      await h.invoke('profile.log_weekly_checkin', { hunger: 'low' }),
+    ) as LogResult;
+    const sunday = new Date(`${logged.weekOf}T00:00:00.000Z`);
+    expect(sunday.getUTCDay()).toBe(0);
+    expect(sunday.getTime()).toBeLessThanOrEqual(Date.now());
+
+    const r = await h.invoke('profile.get_weekly_checkin', {});
+    expect((parseResult(r) as GetResult).weekOf).toBe(logged.weekOf);
   });
 });
