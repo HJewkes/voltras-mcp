@@ -103,8 +103,11 @@ export const BODYWEIGHT_TREND_CONSTANTS = {
    * A single-day jump at or above this many lbs is scale opacity (salt,
    * water, a phase transition), not tissue change.
    *
-   * The note names "~2-3 lb"; the midpoint is an ENGINEERING DEFAULT for the
-   * exact cut, the phenomenon itself is rp:rp-s12-scale-opacity-salt-and-water.
+   * rp:rp-s12-scale-opacity-salt-and-water is the citation for the RULE — it
+   * names the trigger as a "multi-pound" single-day swing, no numeric
+   * threshold. Its own "2 lb" is illustrative calorie math (2 lb of true
+   * tissue needs ~7,000+ excess kcal in a day), not a stated cut point. The
+   * exact lb value here is an ENGINEERING DEFAULT the note does not supply.
    */
   singleDaySpikeThresholdLbs: 2.5,
   /**
