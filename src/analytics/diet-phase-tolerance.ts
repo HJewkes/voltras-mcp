@@ -13,9 +13,9 @@
 // only the callers listed in that module's header note now do.
 //
 // THE PHASE VOCABULARY IS THE STORE'S. `DietPhase` is fat-loss / gain /
-// maintenance (VW-149), not the cut / maintain / gain wording VW-277's ticket
-// uses — those name the same three states and a second spelling of a persisted
-// enum would be a bug waiting to happen.
+// maintenance (VW-149) plus recomposition (VW-363), not the cut / maintain /
+// gain wording VW-277's ticket uses — those name the same states and a second
+// spelling of a persisted enum would be a bug waiting to happen.
 //
 // EVERY NUMBER HERE CARRIES ITS SOURCE. A cell taken from a mined note names
 // the note id; a cell chosen to keep the table monotone says "engineering
@@ -156,10 +156,12 @@ const LONG_PHASE_WEEKS = 8;
  *   progress, so a dip that persists in one is less likely to be the diet and
  *   more likely to be the training (the same coupling note read the other way).
  * - maintenance is the neutral case and moves nothing, which is also what an
- *   undeclared phase gets.
+ *   undeclared phase gets. `recomposition` is a fourth label over the same
+ *   arithmetic (VW-363): the corpus treats it as a maintenance-calorie
+ *   strategy, not a fourth physiology, so it moves nothing either.
  */
 function toleranceMultiplierFor(phase: DietPhase, weeksInPhase: number): number {
-  if (phase === 'maintenance') return 1;
+  if (phase === 'maintenance' || phase === 'recomposition') return 1;
   if (weeksInPhase <= PHASE_SETTLING_WEEKS) {
     // Engineering defaults. Inside the settling window the widening is partial
     // and the tightening is withheld entirely — there is not yet a phase
@@ -295,8 +297,9 @@ function bandFor(absDeviationPct: number, multiplier: number): DeviationBand {
 
 /**
  * The three options for a lifter running ahead of plan, in RP's own order.
- * Maintenance and an unknown phase get the fat-loss list's shape minus its diet
- * wording — the decision ("bank it, split it, or stop early") is the same one.
+ * Maintenance, recomposition and an unknown phase all get the fat-loss list's
+ * shape minus its diet wording — the decision ("bank it, split it, or stop
+ * early") is the same one.
  */
 function aheadOptionsFor(phase: DietPhase | 'unknown'): readonly string[] {
   if (phase === 'gain') {

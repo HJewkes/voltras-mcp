@@ -620,7 +620,11 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'auto-select. ' +
       'One safety rail on top of all of it: if the change the math demands would be extreme, the ' +
       'goal was miscalibrated, not the lifter. Renegotiate the target instead of forcing the ' +
-      'adjustment through.',
+      'adjustment through. ' +
+      'A DECLARED RECOMPOSITION RUNS THIS SAME TABLE AS MAINTENANCE, not a fourth set of ' +
+      'thresholds: RP treats recomposition as a maintenance-calorie strategy, not a separate ' +
+      'physiology, so nothing here widens or tightens for it ' +
+      '(rp-s12-recomposition-requires-maintenance-calories).',
     sources: [
       'rp-s12-calorie-adjustment-magnitude-by-divergence-and-slope',
       'rp-s12-trend-slope-overrides-raw-deviation',
@@ -632,6 +636,7 @@ export const COACHING_CONTENT: Record<CoachingTopic, CoachingTopicContent> = {
       'rp-s12-ahead-of-schedule-muscle-gain-options',
       'rp-s12-goal-too-extreme-signal',
       'rp-s11-diet-phase-training-fatigue-coupling',
+      'rp-s12-recomposition-requires-maintenance-calories',
     ],
     caveats: [
       'The RP material behind this is about CALORIE adjustments off a body-weight trend. This ' +

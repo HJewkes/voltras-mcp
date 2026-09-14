@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 
 import { DIET_PHASES, dietPhasesComparable } from '../diet-phase.js';
 
-const KNOWN = [...DIET_PHASES, 'recomposition'] as const;
+// VW-363 added `recomposition` to `DIET_PHASES` itself, so the vocabulary this
+// table is tested against no longer needs a manual append.
+const KNOWN = DIET_PHASES;
 
 describe('dietPhasesComparable', () => {
   it.each([

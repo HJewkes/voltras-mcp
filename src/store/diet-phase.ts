@@ -21,14 +21,25 @@
 // lifter who relabels maintenance as recomposition keeps every pair they had.
 // It reads the corpus's own synonymy, and no caller may read a verdict off it.
 //
+// RECOMPOSITION IS A FOURTH LABEL OVER MAINTENANCE'S ARITHMETIC (VW-363). The
+// corpus uses the word as a synonym for the middle phase
+// (rp-s12-recomposition-requires-maintenance-calories), so the lifter's own
+// label is recorded as its own value while every reader of the phase treats
+// it exactly as maintenance.
+//
 // VW-277 IS THE EXCEPTION, AND IT IS EXPLICIT. `analytics/diet-phase-tolerance.ts`
 // now moves autoregulation thresholds off the phase and weeks-in-phase, for the
 // three callers named in its header. The citation B34 lacked is the mined RP
 // S12 corpus; the discounting a reader used to do by hand is what that table
 // does. Nothing else reads the phase that way.
 
-/** The three observed phases, per `ComparabilitySubject.phase`'s docstring (B34). */
-export const DIET_PHASES = ['fat-loss', 'gain', 'maintenance'] as const;
+/**
+ * The four observed phases. The first three are `ComparabilitySubject.phase`'s
+ * docstring (B34); `recomposition` is VW-363's addition — a lifter's own label
+ * for a maintenance-calorie strategy (rp-s12-recomposition-requires-maintenance-calories),
+ * sharing maintenance's arithmetic everywhere below.
+ */
+export const DIET_PHASES = ['fat-loss', 'gain', 'maintenance', 'recomposition'] as const;
 
 export type DietPhase = (typeof DIET_PHASES)[number];
 
@@ -68,12 +79,11 @@ type PhaseEquivalenceClass = 'fat-loss' | 'gain' | 'maintenance';
  * so a phase added to {@link DIET_PHASES} without a class chosen for it here is
  * a type error rather than a silent mismatch.
  *
- * `'recomposition'` is keyed before VW-363 adds it to {@link DIET_PHASES}: the
- * corpus uses the word as a synonym for the middle phase, so it shares
- * maintenance's class and its arithmetic rather than naming a fourth
- * physiology. Remove the extra key once the union carries it.
+ * `recomposition` shares maintenance's class: the corpus uses the word as a
+ * synonym for the middle phase, so it shares maintenance's arithmetic rather
+ * than naming a fourth physiology.
  */
-const PHASE_EQUIVALENCE_CLASSES: Record<DietPhase | 'recomposition', PhaseEquivalenceClass> = {
+const PHASE_EQUIVALENCE_CLASSES: Record<DietPhase, PhaseEquivalenceClass> = {
   'fat-loss': 'fat-loss',
   gain: 'gain',
   maintenance: 'maintenance',

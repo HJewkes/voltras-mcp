@@ -11,6 +11,7 @@ import {
   toleranceEffect,
   weeksInPhaseAt,
   type DietPhaseState,
+  type TrendSlope,
 } from '../diet-phase-tolerance.js';
 
 const MAINTENANCE: DietPhaseState = { phase: 'maintenance', weeksInPhase: 6 };
@@ -183,4 +184,46 @@ describe('diet-phase tolerance — the rationale clause', () => {
   it('says tightened for a gain', () => {
     expect(dietPhaseTolerance(GAIN_WEEK_6, -7, 'flat').rationale).toContain('tightened');
   });
+});
+
+describe('diet-phase tolerance — recomposition is maintenance under a fourth name (VW-363)', () => {
+  // Every deviation x slope cell, across a spread of weeks-in-phase, so a
+  // regression that points `recomposition` at any other phase's row fails
+  // here instead of surfacing downstream.
+  const DEVIATIONS = [-30, -20, -12, -7, -4.5, -2, 2, 4.5, 7, 12, 20, 30];
+  const SLOPES: TrendSlope[] = ['improving', 'flat', 'declining'];
+  const WEEKS = [1, 2, 6, 9, 12];
+
+  const CASES = WEEKS.flatMap((weeksInPhase) =>
+    DEVIATIONS.flatMap((deviationPct) =>
+      SLOPES.map((slope) => [weeksInPhase, deviationPct, slope] as const),
+    ),
+  );
+
+  it.each(CASES)(
+    'week %s, %s%% deviation, %s slope: byte-identical to maintenance except the rationale phase name',
+    (weeksInPhase, deviationPct, slope) => {
+      const maintenance = dietPhaseTolerance(
+        { phase: 'maintenance', weeksInPhase },
+        deviationPct,
+        slope,
+      );
+      const recomposition = dietPhaseTolerance(
+        { phase: 'recomposition', weeksInPhase },
+        deviationPct,
+        slope,
+      );
+
+      expect(recomposition.toleranceMultiplier).toBe(maintenance.toleranceMultiplier);
+      expect(recomposition.band).toBe(maintenance.band);
+      expect(recomposition.magnitude).toBe(maintenance.magnitude);
+      expect(recomposition.untoleratedMagnitude).toBe(maintenance.untoleratedMagnitude);
+      expect(recomposition.direction).toBe(maintenance.direction);
+      expect(recomposition.aheadOptions).toEqual(maintenance.aheadOptions);
+      expect(recomposition.context.toleranceApplied).toBe(maintenance.context.toleranceApplied);
+      expect(recomposition.rationale.replace('recomposition', 'maintenance')).toBe(
+        maintenance.rationale,
+      );
+    },
+  );
 });

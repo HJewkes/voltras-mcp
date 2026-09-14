@@ -37,6 +37,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Added
+
+- `profile.set_diet_phase` now accepts `recomposition` as a fourth diet phase, alongside
+  `fat-loss`, `gain` and `maintenance` (VW-363). It runs on maintenance's arithmetic
+  throughout — the autoregulation tolerance table applies no widening or tightening for it,
+  same as maintenance — since RP treats recomposition as a maintenance-calorie strategy
+  rather than a fourth physiology.
+
 ### Changed
 
 - Relabelling a maintenance run as a recomposition no longer throws away your comparison

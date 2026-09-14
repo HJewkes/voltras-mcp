@@ -114,7 +114,8 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'goal or target has been captured yet.';
 
 const SET_DIET_PHASE_DESCRIPTION =
-  'Record the ACTUAL diet phase the lifter is in — fat-loss, gain or maintenance — as a ' +
+  'Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or ' +
+  'recomposition (a maintenance-calorie strategy run by its own name) — as a ' +
   'time range starting now, or at `startedAt` for a phase that began earlier. Declaring a ' +
   'phase closes the previous one at the same instant, so the timeline never has two phases ' +
   'covering one day; a `startedAt` in the past REWRITES the timeline from there forward, ' +
