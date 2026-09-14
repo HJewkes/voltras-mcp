@@ -127,8 +127,11 @@ export const ADVICE_PERCENT_BAND: Record<AdviceMagnitude, string> = {
  * as the window where the signal has not clarified yet, and caps the wait
  * there. So weeks 1-2 of any phase get the phase's tolerance only partly: the
  * reason to hold off is still noise, not yet accumulated diet fatigue.
+ *
+ * Exported for `bodyweight-trend.ts` (VW-372), which reuses this window
+ * rather than defining a second one for the same phase-transition signal.
  */
-const PHASE_SETTLING_WEEKS = 2;
+export const PHASE_SETTLING_WEEKS = 2;
 
 /**
  * Where a fat-loss phase stops being short and starts being long, in weeks.
