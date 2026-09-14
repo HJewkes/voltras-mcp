@@ -10,8 +10,12 @@ one doesn't repeat them.
 voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1` only, no
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
-`/api/plan-tree`, `/api/session-summary/:sessionId` — are all reads. That's the surface the
-README calls "read-only," and it's the one this guide is mostly about.
+`/api/plan-tree`, `/api/muscle-plan`, `/api/session-summary/:sessionId` — are all reads.
+That's the surface the README calls "read-only," and it's the one this guide is mostly
+about. `/api/muscle-plan` (VW-331) rolls up the active training week into planned-vs-done
+working sets per titan muscle group (VW-328), plus the still-untrained planned exercises
+per muscle — internal plumbing for the body-map page (VW-323), not surfaced on a route of
+its own yet.
 
 It isn't read-only end to end, though: the plan builder page writes through a small REST
 surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/exercises`,

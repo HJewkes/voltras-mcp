@@ -109,6 +109,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall dashboard gains `GET /api/muscle-plan` (VW-331, B4 of the body-map plan): for
+  the active training week, planned vs. done working sets per titan muscle group (VW-328),
+  plus the still-untrained planned exercises per muscle. Every one of the 15 titan slugs is
+  present with zeros when nothing is planned or trained for it, so a future body-map figure
+  can paint every muscle. `doneSetsThisWeek` counts target-only (B47): a set counts toward
+  its exercise's PRIMARY catalog muscle group only, the owner's own working sets only, never
+  a mock-adapter set, scoped to the calendar week `weekStart` names. 404s
+  `{ error: 'not_found' }` when no training week is currently active. Internal plumbing for
+  the body-map page (VW-323) — no page renders it yet.
+
 - The database can now hold the priorities you declare and the targets the coach derives
   from them (VW-349, schema v27). A priority is your own sentence turned into a row — a
   muscle or a lift, at `specialize` / `maintain` / `deprioritize`, over a horizon — and a

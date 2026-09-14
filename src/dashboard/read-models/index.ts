@@ -64,3 +64,14 @@ export {
   type SessionPaceInput,
   type SessionPaceView,
 } from './session-pace.js';
+
+export {
+  buildMusclePlanView,
+  startOfCalendarWeekIso,
+  type MuscleCatalogLookup,
+  type MusclePlanMuscleView,
+  type MusclePlanRemainingExercise,
+  type MusclePlanRows,
+  type MusclePlanTemplateRow,
+  type MusclePlanView,
+} from './muscle-plan.js';
