@@ -308,6 +308,20 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'setsPerExercise',
   // VW-327: `profile.get_body_metrics`'s trailing 7-day bodyweight mean.
   'sevenDayMeanBodyweightLbs',
+  // VW-364: the leanness legs on `profile.get_body_metrics`. `leannessSeries`
+  // and `waistSeries` are raw; the body-fat side comes back graded by source,
+  // flagged display-only, and with a banded change per same-source pair.
+  'leannessSeries',
+  'waistSeries',
+  'bodyFatReadings',
+  'bodyFatChanges',
+  'absoluteSeePctPoints',
+  'bandPctPoints',
+  'deltaPctPoints',
+  'displayOnly',
+  'displayOnlyReason',
+  'sourceNote',
+  'citationIds',
   'setsUnlocked',
   // VW-170: `system.speak`'s report that a queued line was dropped by a later
   // `interrupt: true` call rather than spoken, and `device.set_weight`'s

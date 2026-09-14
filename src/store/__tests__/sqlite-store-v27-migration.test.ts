@@ -199,7 +199,7 @@ describe('v26 -> v27 migration', () => {
       const db = new DatabaseSync(path);
       try {
         const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-        expect(version.user_version).toBe(27);
+        expect(version.user_version).toBe(28);
       } finally {
         db.close();
       }

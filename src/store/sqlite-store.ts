@@ -38,6 +38,8 @@ import {
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AccountabilityState, ProactiveSend } from '../accountability/types.js';
 import { fitOptimalMvt } from '../analytics/optimal-mvt.js';
+import { BODY_FAT_SOURCES, isBodyFatSource } from '../analytics/body-fat-sources.js';
+import { isLeannessBand, LEANNESS_BANDS } from './leanness-band.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
@@ -118,7 +120,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -882,13 +884,37 @@ const SCHEMA_SQL = `
     declared_at TEXT NOT NULL
   );
 
+  -- v28 (VW-364) adds the four leanness columns below bodyweight. Each is
+  -- SELF-REPORTED and independently optional: a row may carry a weigh-in and
+  -- nothing else, which is every row written before v28. The CHECK lists are
+  -- transcriptions of LEANNESS_BANDS and BODY_FAT_SOURCES, pinned against
+  -- those consts by sqlite-store-body-composition.test.ts.
+  --
+  -- waist_in NEVER BECOMES A PERCENTAGE. It is a raw trend leg, kept raw
+  -- because every circumference-to-%fat conversion is off its fitted
+  -- population here (VW-346 §2b, VW-370 §5), and no reader may convert it.
+  -- measurement_protocol is FREE TEXT on purpose: at extreme height every
+  -- scan is a two-scan or stitched protocol, and modelling that as an enum
+  -- would invent a taxonomy the literature does not agree on (VW-370 §11.2).
   CREATE TABLE IF NOT EXISTS body_metrics (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     recorded_at TEXT NOT NULL,
     bodyweight_lbs REAL,
     height_in REAL,
-    notes TEXT
+    notes TEXT,
+    leanness_band TEXT
+      CHECK (leanness_band IS NULL OR
+             leanness_band IN ('high','moderate','lean','very-lean')),
+    waist_in REAL,
+    body_fat_pct REAL,
+    body_fat_source TEXT
+      CHECK (body_fat_source IS NULL OR
+             body_fat_source IN ('mri','ct','dexa','bodpod','hydrostatic_measured_rv',
+                                 'hydrostatic_predicted_rv','mf_bia','consumer_bia',
+                                 'skinfold_7site','skinfold_3_4_site','navy_tape',
+                                 'scan_3d','ultrasound','other')),
+    measurement_protocol TEXT
   );
 
   -- The cardiovascular hard-gate is a fixed rule in code, never a model
@@ -1519,6 +1545,47 @@ function migrateV26ToV27(db: DatabaseSync): void {
 }
 
 /**
+ * v27 -> v28: the five leanness columns on `body_metrics` (VW-364). ADDITIVE,
+ * and NOTHING IS BACK-FILLED — a pre-v28 row recorded a weigh-in and nothing
+ * else, so every new column reads NULL, which is the true answer. Defaulting
+ * any of them would manufacture a self-report the lifter never made, and a
+ * manufactured `leanness_band` would then be read as a real one.
+ *
+ * The two enum columns carry their CHECK inline. SQLite permits a CHECK on
+ * `ALTER TABLE ADD COLUMN` (only PRIMARY KEY and UNIQUE are refused), and
+ * because every existing row gets NULL there is nothing for the constraint to
+ * reject on the way in. Each CHECK is written `IS NULL OR IN (...)` rather
+ * than relying on SQL's NULL semantics, so the intent survives a reader who
+ * does not have that rule in their head.
+ *
+ * The lists here and in `SCHEMA_SQL` must stay identical to `LEANNESS_BANDS`
+ * and `BODY_FAT_SOURCES`; `sqlite-store-body-composition.test.ts` pins all
+ * three against each other.
+ */
+function migrateV27ToV28(db: DatabaseSync): void {
+  addColumnIfMissing(
+    db,
+    'body_metrics',
+    'leanness_band',
+    `TEXT CHECK (leanness_band IS NULL OR leanness_band IN (${sqlList(LEANNESS_BANDS)}))`,
+  );
+  addColumnIfMissing(db, 'body_metrics', 'waist_in', 'REAL');
+  addColumnIfMissing(db, 'body_metrics', 'body_fat_pct', 'REAL');
+  addColumnIfMissing(
+    db,
+    'body_metrics',
+    'body_fat_source',
+    `TEXT CHECK (body_fat_source IS NULL OR body_fat_source IN (${sqlList(BODY_FAT_SOURCES)}))`,
+  );
+  addColumnIfMissing(db, 'body_metrics', 'measurement_protocol', 'TEXT');
+}
+
+/** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
+function sqlList(values: readonly string[]): string {
+  return values.map((value) => `'${value}'`).join(',');
+}
+
+/**
  * The `sets` indexes that name v6-only columns. Idempotent, and called from
  * both the rebuild (which drops the old table and with it every index) and the
  * fresh-DB path.
@@ -1723,6 +1790,11 @@ interface BodyMetricRow {
   recorded_at: string;
   bodyweight_lbs: number;
   notes: string | null;
+  leanness_band: string | null;
+  waist_in: number | null;
+  body_fat_pct: number | null;
+  body_fat_source: string | null;
+  measurement_protocol: string | null;
 }
 
 interface AdvisoryDecisionRow {
@@ -3390,17 +3462,42 @@ export class SqliteSessionStore implements SessionStore {
    * (see `putSet` #79). `id` is excluded from the UPDATE SET, so a correcting
    * call on an existing instant keeps the original row's id — the same shape
    * as `putFailureAnchor`. EVERY WRITTEN COLUMN MUST APPEAR IN BOTH LISTS.
+   *
+   * THE CORRECTION IS TOTAL, NOT A MERGE (VW-364). Re-logging an instant
+   * rewrites every v28 column from this call, so an omitted `leannessBand`
+   * clears one stored earlier at that instant. That is the right primitive for
+   * a correction — the caller is restating what the reading was — and it is
+   * why `bodyweightLbs` stays required: a partial-update path would need a
+   * read-modify-write, and this table's writer is a weigh-in, not a form.
    */
   async putBodyMetric(input: PutBodyMetricInput): Promise<StoredBodyMetric> {
     this.db
       .prepare(
-        `INSERT INTO body_metrics (id, user_id, recorded_at, bodyweight_lbs, notes)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO body_metrics (id, user_id, recorded_at, bodyweight_lbs, notes,
+                                   leanness_band, waist_in, body_fat_pct, body_fat_source,
+                                   measurement_protocol)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, recorded_at) DO UPDATE SET
            bodyweight_lbs = excluded.bodyweight_lbs,
-           notes = excluded.notes`,
+           notes = excluded.notes,
+           leanness_band = excluded.leanness_band,
+           waist_in = excluded.waist_in,
+           body_fat_pct = excluded.body_fat_pct,
+           body_fat_source = excluded.body_fat_source,
+           measurement_protocol = excluded.measurement_protocol`,
       )
-      .run(randomUUID(), input.userId, input.measuredAt, input.bodyweightLbs, input.note ?? null);
+      .run(
+        randomUUID(),
+        input.userId,
+        input.measuredAt,
+        input.bodyweightLbs,
+        input.note ?? null,
+        input.leannessBand ?? null,
+        input.waistIn ?? null,
+        input.bodyFatPct ?? null,
+        input.bodyFatSource ?? null,
+        input.measurementProtocol ?? null,
+      );
     const row = this.db
       .prepare(`SELECT * FROM body_metrics WHERE user_id = ? AND recorded_at = ?`)
       .get(input.userId, input.measuredAt) as unknown as BodyMetricRow;
@@ -4369,6 +4466,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 26) {
     migrateV26ToV27(db);
   }
+  if (current <= 27) {
+    migrateV27ToV28(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4472,6 +4572,12 @@ function sinceDaysCutoff(sinceDays: number): string {
   return new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * A v28 column is read back only when the value on disk is one the code still
+ * recognises. A band or source written by a newer build and read by an older
+ * one degrades to absent rather than surfacing a string no consumer can
+ * interpret — the same posture as `readDietPhaseState`'s `isDietPhase` guard.
+ */
 function rowToBodyMetric(row: BodyMetricRow): StoredBodyMetric {
   const out: StoredBodyMetric = {
     id: row.id,
@@ -4480,6 +4586,15 @@ function rowToBodyMetric(row: BodyMetricRow): StoredBodyMetric {
     bodyweightLbs: row.bodyweight_lbs,
   };
   if (row.notes !== null) out.note = row.notes;
+  if (row.leanness_band !== null && isLeannessBand(row.leanness_band)) {
+    out.leannessBand = row.leanness_band;
+  }
+  if (row.waist_in !== null) out.waistIn = row.waist_in;
+  if (row.body_fat_pct !== null) out.bodyFatPct = row.body_fat_pct;
+  if (row.body_fat_source !== null && isBodyFatSource(row.body_fat_source)) {
+    out.bodyFatSource = row.body_fat_source;
+  }
+  if (row.measurement_protocol !== null) out.measurementProtocol = row.measurement_protocol;
   return out;
 }
 

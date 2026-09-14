@@ -730,3 +730,171 @@ describe('profile.log_bodyweight / profile.get_body_metrics (VW-327)', () => {
     expect((parseResult(r2) as { code: string }).code).toBe('INVALID_INPUT');
   });
 });
+
+describe('profile leanness fields (VW-364)', () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+
+  interface GradedReading {
+    measuredAt: string;
+    bodyFatPct: number;
+    bodyFatSource: string;
+    tier: string;
+    absoluteSeePctPoints: number | null;
+    citationIds: string[];
+    sourceNote: string;
+    displayOnly: boolean;
+    displayOnlyReason: string;
+  }
+  interface Change {
+    fromMeasuredAt: string;
+    toMeasuredAt: string;
+    fromSource: string;
+    toSource: string;
+    delta: { deltaPctPoints: number; bandPctPoints: number; verdict: string } | null;
+    reason: string | null;
+  }
+  interface LeanBody {
+    series: {
+      measuredAt: string;
+      leannessBand?: string;
+      waistIn?: number;
+      bodyFatPct?: number;
+      bodyFatSource?: string;
+      measurementProtocol?: string;
+    }[];
+    leannessSeries: { measuredAt: string; leannessBand: string }[];
+    waistSeries: { measuredAt: string; waistIn: number }[];
+    bodyFatReadings: GradedReading[];
+    bodyFatChanges: Change[];
+  }
+
+  async function log(args: Record<string, unknown>): Promise<void> {
+    const r = await h.invoke('profile.log_bodyweight', args);
+    expect(r.isError).toBeUndefined();
+  }
+
+  it('stores the band, the tape, the percentage, its source and the protocol', async () => {
+    await log({
+      bodyweightLbs: 330,
+      measuredAt: '2026-06-01T09:00:00.000Z',
+      leannessBand: 'high',
+      waistIn: 48.5,
+      bodyFatPct: 34,
+      bodyFatSource: 'consumer_bia',
+      measurementProtocol: 'morning, fasted, same scale',
+    });
+
+    const body = parseResult(await h.invoke('profile.get_body_metrics', {})) as LeanBody;
+    expect(body.series[0]).toMatchObject({
+      leannessBand: 'high',
+      waistIn: 48.5,
+      bodyFatPct: 34,
+      bodyFatSource: 'consumer_bia',
+      measurementProtocol: 'morning, fasted, same scale',
+    });
+    expect(body.leannessSeries).toEqual([
+      { measuredAt: '2026-06-01T09:00:00.000Z', leannessBand: 'high' },
+    ]);
+    expect(body.waistSeries).toEqual([{ measuredAt: '2026-06-01T09:00:00.000Z', waistIn: 48.5 }]);
+  });
+
+  it('returns every body-fat reading display-only, with its tier and a reason', async () => {
+    await log({
+      bodyweightLbs: 330,
+      measuredAt: '2026-06-01T09:00:00.000Z',
+      bodyFatPct: 34,
+      bodyFatSource: 'consumer_bia',
+    });
+
+    const body = parseResult(await h.invoke('profile.get_body_metrics', {})) as LeanBody;
+    const [graded] = body.bodyFatReadings;
+    expect(graded?.displayOnly).toBe(true);
+    expect(graded?.displayOnlyReason.length).toBeGreaterThan(0);
+    expect(graded?.tier).toBe('low');
+    expect(graded?.absoluteSeePctPoints).toBe(7.5);
+    expect(graded?.citationIds).toEqual(['C42']);
+  });
+
+  it('bands a same-source pair and never names a direction inside the band', async () => {
+    await log({
+      bodyweightLbs: 330,
+      measuredAt: '2026-06-01T09:00:00.000Z',
+      bodyFatPct: 34,
+      bodyFatSource: 'consumer_bia',
+    });
+    await log({
+      bodyweightLbs: 320,
+      measuredAt: '2026-09-01T09:00:00.000Z',
+      bodyFatPct: 32,
+      bodyFatSource: 'consumer_bia',
+    });
+
+    const body = parseResult(await h.invoke('profile.get_body_metrics', {})) as LeanBody;
+    expect(body.bodyFatChanges).toHaveLength(1);
+    expect(body.bodyFatChanges[0]).toEqual({
+      fromMeasuredAt: '2026-06-01T09:00:00.000Z',
+      toMeasuredAt: '2026-09-01T09:00:00.000Z',
+      fromSource: 'consumer_bia',
+      toSource: 'consumer_bia',
+      delta: { deltaPctPoints: -2, bandPctPoints: 2.6, verdict: 'no measurable change' },
+      reason: null,
+    });
+  });
+
+  it('renders no delta across two different sources and says why', async () => {
+    await log({
+      bodyweightLbs: 330,
+      measuredAt: '2026-06-01T09:00:00.000Z',
+      bodyFatPct: 34,
+      bodyFatSource: 'consumer_bia',
+    });
+    await log({
+      bodyweightLbs: 320,
+      measuredAt: '2026-09-01T09:00:00.000Z',
+      bodyFatPct: 29,
+      bodyFatSource: 'dexa',
+    });
+
+    const body = parseResult(await h.invoke('profile.get_body_metrics', {})) as LeanBody;
+    expect(body.bodyFatChanges[0]?.delta).toBeNull();
+    expect(body.bodyFatChanges[0]?.reason).toBe('different source');
+  });
+
+  it('rejects a body-fat percentage with no source', async () => {
+    const r = await h.invoke('profile.log_bodyweight', { bodyweightLbs: 330, bodyFatPct: 30 });
+
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects a leanness band outside the four and a source outside the enum', async () => {
+    const band = await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 330,
+      leannessBand: 'shredded',
+    });
+    expect(band.isError).toBe(true);
+
+    const source = await h.invoke('profile.log_bodyweight', {
+      bodyweightLbs: 330,
+      bodyFatPct: 30,
+      bodyFatSource: 'mirror',
+    });
+    expect(source.isError).toBe(true);
+  });
+
+  it('returns a waist series with no derived percentage anywhere on it', async () => {
+    await log({ bodyweightLbs: 330, measuredAt: '2026-06-01T09:00:00.000Z', waistIn: 48.5 });
+    await log({ bodyweightLbs: 326, measuredAt: '2026-07-01T09:00:00.000Z', waistIn: 47 });
+
+    const body = parseResult(await h.invoke('profile.get_body_metrics', {})) as LeanBody;
+    expect(body.waistSeries).toEqual([
+      { measuredAt: '2026-07-01T09:00:00.000Z', waistIn: 47 },
+      { measuredAt: '2026-06-01T09:00:00.000Z', waistIn: 48.5 },
+    ]);
+    expect(body.bodyFatReadings).toEqual([]);
+    expect(body.bodyFatChanges).toEqual([]);
+  });
+});

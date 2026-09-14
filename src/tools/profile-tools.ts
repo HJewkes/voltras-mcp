@@ -19,6 +19,14 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import {
+  BODY_FAT_SOURCE_TIERS,
+  sameDeviceDelta,
+  type BodyFatReading,
+  type BodyFatSource,
+  type BodyFatTier,
+  type SameDeviceDelta,
+} from '../analytics/body-fat-sources.js';
 import { onboardingGaps, type OnboardingGaps } from '../profile/onboarding-gaps.js';
 import {
   startingPrescription,
@@ -31,10 +39,12 @@ import {
   ProfileGetTierSignalInput,
   ProfileGetTrainingBackgroundInput,
   ProfileLogBodyweightInput,
+  ProfileLogBodyweightInputRefined,
   ProfileSetDietPhaseInput,
   ProfileSetTrainingBackgroundInput,
 } from '../schemas/profile.js';
 import type { ServerState } from '../state/server-state.js';
+import type { LeannessBand } from '../store/leanness-band.js';
 import {
   LOCAL_USER_ID,
   type StoredBodyMetric,
@@ -131,15 +141,36 @@ const SET_DIET_PHASE_DESCRIPTION =
 const LOG_BODYWEIGHT_DESCRIPTION =
   'Record a self-reported bodyweight reading: bodyweightLbs (required), measuredAt (optional, ' +
   'defaults to now) and note (optional). A second call at the same measuredAt UPDATES that ' +
-  'reading rather than duplicating it — the supported way to correct one logged in error. ' +
-  'Storage only: this tool computes no trend, rate or verdict.';
+  'reading rather than duplicating it — the supported way to correct one logged in error, and ' +
+  'the update REPLACES every optional field, so restate the whole reading. Storage only: this ' +
+  'tool computes no trend, rate or verdict. Four optional leanness fields ride on the same ' +
+  'reading. leannessBand is a self-reported visual band — high, moderate, lean or very-lean — ' +
+  'and is the primary leanness input; never infer it from a photo, a weight or a percentage. ' +
+  'waistIn is a waist tape in inches, kept as a RAW trend and never converted to a body-fat ' +
+  'percentage by this server or by you. bodyFatPct is an absolute percentage and requires ' +
+  'bodyFatSource naming where it came from (dexa, consumer_bia, mf_bia, navy_tape, bodpod, ' +
+  'hydrostatic_measured_rv, hydrostatic_predicted_rv, skinfold_7site, skinfold_3_4_site, ' +
+  'scan_3d, ultrasound, mri, ct, other); it is stored for DISPLAY only. measurementProtocol is ' +
+  'free text for how a scan was actually run, which matters because two readings taken under ' +
+  'different protocols are not comparable. NEVER ask the lifter to go and get measured, and ' +
+  'never propose a schedule for doing so: log what they volunteer and nothing more.';
 
 const GET_BODY_METRICS_DESCRIPTION =
   'Read back logged bodyweight readings, newest-first. sinceDays optionally limits how far ' +
   'back the returned series goes; omitted returns the whole history. ' +
   'sevenDayMeanBodyweightLbs is the mean of readings from the last 7 days, reported only when ' +
   'there are at least 3 such readings (null otherwise) — advisory context, never a rate-of-' +
-  'change verdict.';
+  'change verdict. leannessSeries and waistSeries come back RAW, newest-first: a waist ' +
+  'measurement is a trend leg and has no percentage conversion anywhere in this server. ' +
+  'bodyFatReadings grades each body-fat reading by its source — tier (reference/high/moderate/' +
+  'low), absoluteSeePctPoints, citationIds and sourceNote — and every entry carries ' +
+  'displayOnly: true with displayOnlyReason. Read the absolute number out as a display value ' +
+  'only, never as a measurement and never as evidence for a training decision. ' +
+  'bodyFatChanges holds one entry per consecutive pair of body-fat readings: a pair from the ' +
+  'SAME source gets delta with deltaPctPoints, bandPctPoints (the change-error band for that ' +
+  'source) and a verdict of increase, decrease or "no measurable change" — a movement inside ' +
+  'the band IS "no measurable change" and must never be read out as a direction. A pair whose ' +
+  'sources differ gets delta: null and a reason; render the reason, not a comparison.';
 
 export function registerProfileTools(
   _server: McpServer,
@@ -192,7 +223,7 @@ export function registerProfileTools(
     placeholders,
     'profile.log_bodyweight',
     ProfileLogBodyweightInput,
-    wrapHandler(ProfileLogBodyweightInput, (input) => logBodyweight(state, input)),
+    wrapHandler(ProfileLogBodyweightInputRefined, (input) => logBodyweight(state, input)),
     LOG_BODYWEIGHT_DESCRIPTION,
   );
   install(
@@ -375,13 +406,20 @@ async function setDietPhase(
  */
 async function logBodyweight(
   state: ServerState,
-  input: z.infer<typeof ProfileLogBodyweightInput>,
+  input: z.infer<typeof ProfileLogBodyweightInputRefined>,
 ): Promise<{ entry: StoredBodyMetric }> {
   const entry = await state.store.putBodyMetric({
     userId: LOCAL_USER_ID,
     measuredAt: input.measuredAt ?? new Date().toISOString(),
     bodyweightLbs: input.bodyweightLbs,
     ...(input.note !== undefined ? { note: input.note } : {}),
+    ...(input.leannessBand !== undefined ? { leannessBand: input.leannessBand } : {}),
+    ...(input.waistIn !== undefined ? { waistIn: input.waistIn } : {}),
+    ...(input.bodyFatPct !== undefined ? { bodyFatPct: input.bodyFatPct } : {}),
+    ...(input.bodyFatSource !== undefined ? { bodyFatSource: input.bodyFatSource } : {}),
+    ...(input.measurementProtocol !== undefined
+      ? { measurementProtocol: input.measurementProtocol }
+      : {}),
   });
   return { entry };
 }
@@ -392,14 +430,61 @@ const SEVEN_DAY_MEAN_WINDOW_DAYS = 7;
 const SEVEN_DAY_MEAN_MIN_READINGS = 3;
 
 /**
- * `profile.get_body_metrics` (VW-327) — read-only. `sevenDayMeanBodyweightLbs`
- * is computed over the trailing 7 days regardless of `sinceDays`, so a caller
- * asking for a longer series still gets a meaningful recent mean.
+ * Why a body-fat percentage never reads as a measurement here. One line,
+ * returned beside every absolute value so the caveat cannot be separated from
+ * the number it qualifies.
+ */
+const BODY_FAT_DISPLAY_ONLY_REASON =
+  'Display only: an absolute body-fat percentage carries several points of ' +
+  'individual error on every source, and nothing in this server reads it (VW-370).';
+
+/** One stored body-fat reading with what its source is worth attached. */
+interface GradedBodyFatReading {
+  measuredAt: string;
+  bodyFatPct: number;
+  bodyFatSource: BodyFatSource;
+  tier: BodyFatTier;
+  absoluteSeePctPoints: number | null;
+  citationIds: readonly string[];
+  sourceNote: string;
+  displayOnly: true;
+  displayOnlyReason: string;
+}
+
+/** One consecutive pair of body-fat readings, banded or refused with a reason. */
+interface BodyFatChange {
+  fromMeasuredAt: string;
+  toMeasuredAt: string;
+  fromSource: BodyFatSource;
+  toSource: BodyFatSource;
+  delta: SameDeviceDelta | null;
+  reason: string | null;
+}
+
+/**
+ * `profile.get_body_metrics` (VW-327, extended by VW-364) — read-only.
+ * `sevenDayMeanBodyweightLbs` is computed over the trailing 7 days regardless
+ * of `sinceDays`, so a caller asking for a longer series still gets a
+ * meaningful recent mean.
+ *
+ * THE THREE LEANNESS LEGS COME BACK IN THREE DIFFERENT SHAPES, on purpose.
+ * The band and the waist tape are raw series and nothing is derived from
+ * either — in particular no circumference here ever becomes a percentage.
+ * Body fat is the one that needs framing, so it comes back graded by source,
+ * flagged display-only, and with a banded change per consecutive same-source
+ * pair.
  */
 async function getBodyMetrics(
   state: ServerState,
   input: z.infer<typeof ProfileGetBodyMetricsInput>,
-): Promise<{ series: StoredBodyMetric[]; sevenDayMeanBodyweightLbs: number | null }> {
+): Promise<{
+  series: StoredBodyMetric[];
+  sevenDayMeanBodyweightLbs: number | null;
+  leannessSeries: { measuredAt: string; leannessBand: LeannessBand }[];
+  waistSeries: { measuredAt: string; waistIn: number }[];
+  bodyFatReadings: GradedBodyFatReading[];
+  bodyFatChanges: BodyFatChange[];
+}> {
   const series = await state.store.listBodyMetrics(LOCAL_USER_ID, {
     ...(input.sinceDays !== undefined ? { sinceDays: input.sinceDays } : {}),
   });
@@ -410,5 +495,71 @@ async function getBodyMetrics(
     recent.length >= SEVEN_DAY_MEAN_MIN_READINGS
       ? recent.reduce((sum, m) => sum + m.bodyweightLbs, 0) / recent.length
       : null;
-  return { series, sevenDayMeanBodyweightLbs };
+  return {
+    series,
+    sevenDayMeanBodyweightLbs,
+    leannessSeries: series.flatMap((m) =>
+      m.leannessBand === undefined
+        ? []
+        : [{ measuredAt: m.measuredAt, leannessBand: m.leannessBand }],
+    ),
+    waistSeries: series.flatMap((m) =>
+      m.waistIn === undefined ? [] : [{ measuredAt: m.measuredAt, waistIn: m.waistIn }],
+    ),
+    bodyFatReadings: gradedBodyFatReadings(series),
+    bodyFatChanges: bodyFatChanges(series),
+  };
+}
+
+/** The body-fat readings in `series`, oldest first. */
+function bodyFatReadingsAscending(series: readonly StoredBodyMetric[]): BodyFatReading[] {
+  return series
+    .flatMap((m) =>
+      m.bodyFatPct === undefined || m.bodyFatSource === undefined
+        ? []
+        : [{ measuredAt: m.measuredAt, bodyFatPct: m.bodyFatPct, source: m.bodyFatSource }],
+    )
+    .sort((a, b) => a.measuredAt.localeCompare(b.measuredAt));
+}
+
+function gradedBodyFatReadings(series: readonly StoredBodyMetric[]): GradedBodyFatReading[] {
+  return bodyFatReadingsAscending(series).map((reading) => {
+    const row = BODY_FAT_SOURCE_TIERS[reading.source];
+    return {
+      measuredAt: reading.measuredAt,
+      bodyFatPct: reading.bodyFatPct,
+      bodyFatSource: reading.source,
+      tier: row.tier,
+      absoluteSeePctPoints: row.absoluteSeePctPoints,
+      citationIds: row.citationIds,
+      sourceNote: row.note,
+      displayOnly: true,
+      displayOnlyReason: BODY_FAT_DISPLAY_ONLY_REASON,
+    };
+  });
+}
+
+/**
+ * Consecutive pairs only. A delta between two readings with something else
+ * logged in between is still a same-device delta; a delta that skips a reading
+ * would quietly pick the flattering endpoints.
+ */
+function bodyFatChanges(series: readonly StoredBodyMetric[]): BodyFatChange[] {
+  const readings = bodyFatReadingsAscending(series);
+  const changes: BodyFatChange[] = [];
+  for (let i = 1; i < readings.length; i += 1) {
+    const earlier = readings[i - 1];
+    const later = readings[i];
+    if (earlier === undefined || later === undefined) continue;
+    const { delta, reason } = sameDeviceDelta([earlier, later]);
+    changes.push({
+      fromMeasuredAt: earlier.measuredAt,
+      toMeasuredAt: later.measuredAt,
+      fromSource: earlier.source,
+      toSource: later.source,
+      delta,
+      reason,
+    });
+  }
+  return changes;
 }
