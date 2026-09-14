@@ -73,19 +73,24 @@ Declaring a phase closes the previous one at the same instant, so the timeline n
 
 Record a self-reported bodyweight reading: bodyweightLbs (required), measuredAt (optional, defaults to now) and note (optional).
 
-A second call at the same measuredAt UPDATES that reading rather than duplicating it — the supported way to correct one logged in error. Storage only: this tool computes no trend, rate or verdict.
+A second call at the same measuredAt UPDATES that reading rather than duplicating it — the supported way to correct one logged in error, and the update REPLACES every optional field, so restate the whole reading. Storage only: this tool computes no trend, rate or verdict. Four optional leanness fields ride on the same reading. leannessBand is a self-reported visual band — high, moderate, lean or very-lean — and is the primary leanness input; never infer it from a photo, a weight or a percentage. waistIn is a waist tape in inches, kept as a RAW trend and never converted to a body-fat percentage by this server or by you. bodyFatPct is an absolute percentage and requires bodyFatSource naming where it came from (dexa, consumer_bia, mf_bia, navy_tape, bodpod, hydrostatic_measured_rv, hydrostatic_predicted_rv, skinfold_7site, skinfold_3_4_site, scan_3d, ultrasound, mri, ct, other); it is stored for DISPLAY only. measurementProtocol is free text for how a scan was actually run, which matters because two readings taken under different protocols are not comparable. NEVER ask the lifter to go and get measured, and never propose a schedule for doing so: log what they volunteer and nothing more.
 
 **Parameters**
 
 - `bodyweightLbs` — `number`, **required**.
 - `measuredAt` — `string`, optional.
 - `note` — `string`, optional.
+- `leannessBand` — `high` | `moderate` | `lean` | `very-lean`, optional.
+- `waistIn` — `number`, optional.
+- `bodyFatPct` — `number` (1–75), optional.
+- `bodyFatSource` — `mri` | `ct` | `dexa` | `bodpod` | `hydrostatic_measured_rv` | `hydrostatic_predicted_rv` | `mf_bia` | `consumer_bia` | `skinfold_7site` | `skinfold_3_4_site` | `navy_tape` | `scan_3d` | `ultrasound` | `other`, optional.
+- `measurementProtocol` — `string`, optional.
 
 ## `profile.get_body_metrics`
 
 Read back logged bodyweight readings, newest-first.
 
-sinceDays optionally limits how far back the returned series goes; omitted returns the whole history. sevenDayMeanBodyweightLbs is the mean of readings from the last 7 days, reported only when there are at least 3 such readings (null otherwise) — advisory context, never a rate-of-change verdict.
+sinceDays optionally limits how far back the returned series goes; omitted returns the whole history. sevenDayMeanBodyweightLbs is the mean of readings from the last 7 days, reported only when there are at least 3 such readings (null otherwise) — advisory context, never a rate-of-change verdict. leannessSeries and waistSeries come back RAW, newest-first: a waist measurement is a trend leg and has no percentage conversion anywhere in this server. bodyFatReadings grades each body-fat reading by its source — tier (reference/high/moderate/low), absoluteSeePctPoints, citationIds and sourceNote — and every entry carries displayOnly: true with displayOnlyReason. Read the absolute number out as a display value only, never as a measurement and never as evidence for a training decision. bodyFatChanges holds one entry per consecutive pair of body-fat readings: a pair from the SAME source gets delta with deltaPctPoints, bandPctPoints (the change-error band for that source) and a verdict of increase, decrease or "no measurable change" — a movement inside the band IS "no measurable change" and must never be read out as a direction. A pair whose sources differ gets delta: null and a reason; render the reason, not a comparison.
 
 **Parameters**
 

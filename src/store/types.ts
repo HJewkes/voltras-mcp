@@ -20,6 +20,8 @@
 import type { BaselineKey, Rep } from '@voltras/workout-analytics';
 
 import type { RirVelocityFit } from '../analytics/rir-velocity.js';
+import type { BodyFatSource } from '../analytics/body-fat-sources.js';
+import type { LeannessBand } from './leanness-band.js';
 import type { AccountabilityState } from '../accountability/types.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
@@ -699,9 +701,14 @@ export interface DeclareDietPhaseInput {
 }
 
 /**
- * One row of `body_metrics` — a self-reported bodyweight reading (VW-327).
- * `note` maps to the DDL's `notes` column; `height_in` is untouched by this
- * ticket and stays absent from this shape.
+ * One row of `body_metrics` — a self-reported bodyweight reading (VW-327),
+ * plus the optional leanness legs added in v28 (VW-364). `note` maps to the
+ * DDL's `notes` column; `height_in` has no writer and stays absent.
+ *
+ * Every v28 field is independently optional and independently self-reported.
+ * `waistIn` is a RAW trend leg and no reader may convert it to a percentage;
+ * `bodyFatPct` is display-only and carries `bodyFatSource` so a caller can
+ * look up what it is worth; `measurementProtocol` is free text.
  */
 export interface StoredBodyMetric {
   id: string;
@@ -709,14 +716,28 @@ export interface StoredBodyMetric {
   measuredAt: string;
   bodyweightLbs: number;
   note?: string;
+  leannessBand?: LeannessBand;
+  waistIn?: number;
+  bodyFatPct?: number;
+  bodyFatSource?: BodyFatSource;
+  measurementProtocol?: string;
 }
 
-/** Arguments to {@link SessionStore.putBodyMetric}. */
+/**
+ * Arguments to {@link SessionStore.putBodyMetric}. A re-put at an existing
+ * `measuredAt` REPLACES every optional field, so a correcting call must
+ * restate the whole reading.
+ */
 export interface PutBodyMetricInput {
   userId: string;
   measuredAt: string;
   bodyweightLbs: number;
   note?: string;
+  leannessBand?: LeannessBand;
+  waistIn?: number;
+  bodyFatPct?: number;
+  bodyFatSource?: BodyFatSource;
+  measurementProtocol?: string;
 }
 
 /** Filter for {@link SessionStore.listBodyMetrics}. Absent `sinceDays` returns the whole series. */

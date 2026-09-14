@@ -10,7 +10,7 @@
 //     than duplicating it, and keeps the original id.
 //   * listBodyMetrics returns newest-first.
 //   * sinceDays filters the returned series.
-//   * SCHEMA_VERSION lands at 27 on a fresh DB.
+//   * SCHEMA_VERSION lands at 28 on a fresh DB.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -134,7 +134,7 @@ describe('migrateV25ToV26', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('lands a fresh DB at SCHEMA_VERSION 27 and enforces the natural key', async () => {
+  it('lands a fresh DB at SCHEMA_VERSION 28 and enforces the natural key', async () => {
     const store = SqliteSessionStore.open(path);
     await store.putBodyMetric({
       userId: LOCAL_USER_ID,
@@ -146,7 +146,7 @@ describe('migrateV25ToV26', () => {
     const db = new DatabaseSync(path);
     try {
       const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(row.user_version).toBe(27);
+      expect(row.user_version).toBe(28);
       expect(() =>
         db
           .prepare(

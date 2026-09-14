@@ -12,7 +12,9 @@
 
 import { z } from 'zod';
 
+import { BODY_FAT_SOURCES } from '../analytics/body-fat-sources.js';
 import { DIET_PHASES } from '../store/diet-phase.js';
+import { LEANNESS_BANDS } from '../store/leanness-band.js';
 
 /**
  * One self-reported injury or limitation (VW-148 / B42).
@@ -93,15 +95,51 @@ export const ProfileSetDietPhaseInput = z
 // `profile.log_bodyweight` (VW-327) — the first writer of `body_metrics`.
 // Storage only, in the same posture as the rest of `profile.*`: it records a
 // self-reported reading and computes no verdict on it.
+//
+// VW-364 ADDS THE LEANNESS LEGS HERE RATHER THAN AS A SIBLING TOOL. They are
+// columns on the SAME row, keyed by the same `measuredAt`, and the table's
+// unique index makes that instant the row identity — two tools writing one row
+// would have to agree on an upsert key and would still race each other on it.
+// A weigh-in is when a tape or a scan reading gets recorded anyway, so
+// `bodyweightLbs` stays required and the rest ride along on it.
 export const ProfileLogBodyweightInput = z
   .object({
     bodyweightLbs: z.number().positive(),
     // Omitted means "as of now". A second call for the same instant corrects
-    // the earlier reading rather than duplicating it (see `putBodyMetric`).
+    // the earlier reading rather than duplicating it (see `putBodyMetric`) —
+    // and the correction is TOTAL, so it must restate every field.
     measuredAt: z.string().datetime().optional(),
     note: z.string().min(1).optional(),
+    // Self-reported against RP's visual descriptors, never inferred from any
+    // other field here and never converted to a percentage.
+    leannessBand: z.enum(LEANNESS_BANDS).optional(),
+    // A RAW trend leg. Nothing in this server converts a circumference to a
+    // body-fat percentage: every published conversion is off its fitted
+    // population at this athlete's height (VW-346 §2b, VW-370 §5).
+    waistIn: z.number().positive().optional(),
+    // Display-only, always (VW-370 §9). `bodyFatSource` is required alongside
+    // it because an unattributed percentage cannot be graded, and a delta
+    // against a reading from a different source is never renderable.
+    bodyFatPct: z.number().min(1).max(75).optional(),
+    bodyFatSource: z.enum(BODY_FAT_SOURCES).optional(),
+    // Free text, deliberately: at extreme height every scan runs a two-scan or
+    // stitched protocol and the literature agrees on no taxonomy for them.
+    measurementProtocol: z.string().min(1).optional(),
   })
   .strict();
+
+/**
+ * An unattributed body-fat percentage cannot be graded, banded or compared —
+ * every figure in `BODY_FAT_SOURCE_TIERS` is keyed on the source, and a
+ * reading with no source would render as a bare number with no caveat, which
+ * is the one thing VW-370 §9 rules out. Registered the way
+ * `IsometricMeasureImbalanceInputRefined` is: the object schema describes the
+ * parameters, the refined schema parses them.
+ */
+export const ProfileLogBodyweightInputRefined = ProfileLogBodyweightInput.refine(
+  (input) => input.bodyFatPct === undefined || input.bodyFatSource !== undefined,
+  { message: 'bodyFatSource is required whenever bodyFatPct is given', path: ['bodyFatSource'] },
+);
 
 // `profile.get_body_metrics` (VW-327). Read-only; `sinceDays` limits the
 // returned series and defaults to the whole history when omitted.

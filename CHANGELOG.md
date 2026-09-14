@@ -70,6 +70,19 @@ entry is written from the user's point of view is a review question, not a check
   a priority inside a block warns, as does dropping one you have held for less than two
   mesocycles. Whatever you declared is what gets stored.
 
+- `profile.log_bodyweight` now records four optional leanness inputs alongside the weigh-in
+  (VW-364): a self-reported visual band (`high`, `moderate`, `lean`, `very-lean`), a waist
+  tape in inches, an absolute body-fat percentage, the source that produced it, and free
+  text for how a scan was actually run. `profile.get_body_metrics` reads them back. The
+  band and the tape come back raw — a waist measurement is a trend on its own and nothing
+  here converts a circumference into a percentage. Every body-fat reading comes back marked
+  display-only, with the accuracy tier of its source, that source's published error, and
+  the citations behind both, so an absolute number is never shown as if it were a
+  measurement. A change between two readings from the SAME source renders with an explicit
+  error band: a move no bigger than the band reads "no measurable change" rather than a
+  direction, and a pair from two different sources renders no comparison at all and says
+  why. The server still never asks you to go and get measured; it records what you offer.
+
 ### Changed
 
 - Relabelling a maintenance run as a recomposition no longer throws away your comparison
