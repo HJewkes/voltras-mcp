@@ -248,6 +248,13 @@ describe('coaching.explain', () => {
     expect(body.caveats?.some((c) => c.includes('CALORIE'))).toBe(true);
   });
 
+  it('states that a declared recomposition runs the same table as maintenance (VW-363)', async () => {
+    const body = parseResult(await h.invoke({ topic: 'meso.diet_phase_tolerance' }));
+
+    expect(body.explanation).toContain('RECOMPOSITION RUNS THIS SAME TABLE AS MAINTENANCE');
+    expect(body.sources).toContain('rp-s12-recomposition-requires-maintenance-calories');
+  });
+
   // VW-273: the asymmetry topic must never turn a measurement into a
   // prescription. The intervention literature does not support corrective
   // unilateral work, so an entry that recommended it would be telling a coach

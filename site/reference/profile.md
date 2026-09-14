@@ -60,13 +60,13 @@ Read-only; it stores nothing and invents no questions — `missing[]` is exactly
 
 ## `profile.set_diet_phase`
 
-Record the ACTUAL diet phase the lifter is in — fat-loss, gain or maintenance — as a time range starting now, or at `startedAt` for a phase that began earlier.
+Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or recomposition (a maintenance-calorie strategy run by its own name) — as a time range starting now, or at `startedAt` for a phase that began earlier.
 
 Declaring a phase closes the previous one at the same instant, so the timeline never has two phases covering one day; a `startedAt` in the past REWRITES the timeline from there forward, which is the supported way to correct a phase you logged late or mislabelled. Returns the declared range plus the whole timeline, oldest-first — read it back to the lifter to confirm the correction landed where they meant. This is the OBSERVED phase (what they actually ate), which is a different claim from the prescribed phase_type on a plan week, and this tool never touches that. Recording a phase changes NO analysis: it does not suppress a plateau verdict, weight a comparison or move any threshold. It makes the phase visible so a reader can discount a flat stretch themselves — a fat-loss phase can look identical to a real plateau, and only the reader can tell which they are looking at.
 
 **Parameters**
 
-- `phase` — `fat-loss` | `gain` | `maintenance`, **required**.
+- `phase` — `fat-loss` | `gain` | `maintenance` | `recomposition`, **required**.
 - `startedAt` — `string`, optional.
 
 ## `profile.log_bodyweight`

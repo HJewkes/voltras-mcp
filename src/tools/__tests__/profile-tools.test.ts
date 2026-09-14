@@ -553,11 +553,25 @@ describe('profile.set_diet_phase (VW-149 / VW-150)', () => {
     expect(await h.store.getSessionDietPhase('sess-1')).toBe('gain');
   });
 
-  it('rejects a phase outside the three-value vocabulary', async () => {
+  it('rejects a phase outside the four-value vocabulary', async () => {
     const r = await h.invoke('profile.set_diet_phase', { phase: 'recomp' });
 
     expect(r.isError).toBe(true);
     expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+  });
+
+  it('accepts recomposition as a fourth phase and stamps sessions with it (VW-363)', async () => {
+    const r = await h.invoke('profile.set_diet_phase', {
+      phase: 'recomposition',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(r.isError).toBeUndefined();
+    const body = parseResult(r) as DietPhaseBody;
+    expect(body.declared.phase).toBe('recomposition');
+
+    await h.store.putSession({ id: 'sess-1', startedAt: '2026-02-01T00:00:00.000Z' });
+    expect(await h.store.getSessionDietPhase('sess-1')).toBe('recomposition');
   });
 
   it('rejects unknown keys with INVALID_INPUT', async () => {
