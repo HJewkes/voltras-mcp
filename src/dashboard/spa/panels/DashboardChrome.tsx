@@ -48,6 +48,10 @@ export function navKeyForRoute(route: Route): string {
       return 'review';
     case 'live':
       return 'live';
+    case 'goals':
+      // No rail entry yet (`NAV_ITEMS` has no `goals` key) — the route is reached
+      // by URL only, same as `#/goals` itself; this key simply matches nothing.
+      return 'goals';
   }
 }
 

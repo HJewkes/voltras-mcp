@@ -39,6 +39,10 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The dashboard now has a `#/goals` wall page (VW-355): your declared priorities, the
+  coach's committed/stretch band as a trajectory chart with PR stars, a per-lift table, a
+  muscle-priority rollup, and a whole-body panel with the priority rail. Bodyweight only
+  shows once a bodyweight goal has an actual reading logged against it.
 - The Sunday sitting now reads the scale against your committed bodyweight goal and says
   whether it is worth acting on (VW-376). `goal.weekly_review` takes the week's readings,
   the phase you declared and that week's check-in, and comes back with the observation —

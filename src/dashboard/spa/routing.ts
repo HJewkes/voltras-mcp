@@ -26,8 +26,12 @@ export interface SummaryRoute {
   name: 'summary';
   sessionId: string;
 }
+/** The goal-coach wall page (VW-355): priorities, bands and progress. */
+export interface GoalsRoute {
+  name: 'goals';
+}
 
-export type Route = LiveRoute | PlanRoute | SummaryRoute;
+export type Route = LiveRoute | PlanRoute | SummaryRoute | GoalsRoute;
 
 /** Sentinel the server accepts in place of a real session id. */
 export const LATEST_SESSION = 'latest';
@@ -41,6 +45,7 @@ export function parseRoute(hash: string): Route {
   const normalized = hash.replace(/^#\/?/, '').replace(/\/+$/, '');
   const [head, ...rest] = normalized.split('/');
   if (head === 'plan') return { name: 'plan' };
+  if (head === 'goals') return { name: 'goals' };
   if (head === 'summary') {
     const raw = rest[0];
     const sessionId = raw === undefined || raw === '' ? LATEST_SESSION : decodeURIComponent(raw);
@@ -54,6 +59,8 @@ export function routeHash(route: Route): string {
   switch (route.name) {
     case 'plan':
       return '#/plan';
+    case 'goals':
+      return '#/goals';
     case 'summary':
       return route.sessionId === LATEST_SESSION
         ? '#/summary'
