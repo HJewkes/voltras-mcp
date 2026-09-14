@@ -141,8 +141,12 @@ export const PHASE_SETTLING_WEEKS = 2;
  * weeks. Week 9 is past the short end of both, and at RP's own 0.5-1%/week
  * fat-loss pace it is also past the ~7% cumulative loss that
  * rp-s11-diet-fatigue-pct-weight-lost-proxy calls noticeable diet fatigue.
+ *
+ * Exported for `bodyweight-rate-advisory.ts` (VW-373), whose salt-and-sweetener
+ * veto fires "late in a cut" and reuses this window rather than defining a
+ * second one for the same boundary.
  */
-const LONG_PHASE_WEEKS = 8;
+export const LONG_PHASE_WEEKS = 8;
 
 /**
  * What a phase and its elapsed weeks do to the band edges.
