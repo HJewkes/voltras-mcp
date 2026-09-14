@@ -128,18 +128,7 @@ function capWarnings(
 ): GoalGuardrailWarning[] {
   if (fatLoss) {
     return tier === 'beginner' && specialized.length > 0
-      ? [
-          {
-            code: 'fat_loss_specialize_beginner_exception',
-            message:
-              `A fat-loss phase normally disables specialization, but a beginner program does not ` +
-              `change across diet phases, so ${specialized.length} specialized item(s) stand as declared.`,
-            rpIds: [
-              'rp:rp-s5-fatloss-priority-training-rule',
-              'rp:rp-s4-training-invariant-across-diet-phase',
-            ],
-          },
-        ]
+      ? [beginnerExceptionWarning(specialized.length)]
       : [];
   }
   if (specialized.length <= T.maxSpecializeItems) return [];
@@ -156,6 +145,19 @@ function capWarnings(
       ],
     },
   ];
+}
+
+function beginnerExceptionWarning(specializedCount: number): GoalGuardrailWarning {
+  return {
+    code: 'fat_loss_specialize_beginner_exception',
+    message:
+      'A fat-loss phase normally disables specialization, but a beginner program does not ' +
+      `change across diet phases, so ${specializedCount} specialized item(s) stand as declared.`,
+    rpIds: [
+      'rp:rp-s5-fatloss-priority-training-rule',
+      'rp:rp-s4-training-invariant-across-diet-phase',
+    ],
+  };
 }
 
 /** A priority is held for a whole block; changing one inside it warns (rp-s6). */

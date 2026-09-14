@@ -257,6 +257,11 @@ interface StartMeasurement {
   ownSlope?: GoalBandInput['ownSlope'];
 }
 
+/** A metric with nothing measured behind it, carrying what to say about it. */
+function noStartValue(selection: GoalGainMetric, reason: string): SkippedMetric {
+  return { metric: selection.metric, exerciseId: selection.exerciseId, reason };
+}
+
 async function deriveLiftTarget(
   state: ServerState,
   context: GoalDerivationContext,
@@ -264,11 +269,7 @@ async function deriveLiftTarget(
 ): Promise<DerivedTarget | SkippedMetric> {
   const exerciseId = selection.exerciseId;
   if (exerciseId === null) {
-    return {
-      metric: selection.metric,
-      exerciseId,
-      reason: 'No exercise to read a start value from.',
-    };
+    return noStartValue(selection, 'No exercise to read a start value from.');
   }
   if (selection.metric === 'e1rm_trend')
     return deriveE1rmContext(state, context, selection, exerciseId);
@@ -278,13 +279,11 @@ async function deriveLiftTarget(
   const anchorReps = selection.anchorReps ?? modalRepCount(sets);
   const read = anchorReps === null ? null : topLoadAtReps(sets, anchorReps);
   if (read === null || anchorReps === null) {
-    return {
-      metric: selection.metric,
-      exerciseId,
-      reason:
-        `No working set on record for ${exerciseId}, so there is no measured start value. A start ` +
+    return noStartValue(
+      selection,
+      `No working set on record for ${exerciseId}, so there is no measured start value. A start ` +
         'value is read from history and never typed; log a set and ask again.',
-    };
+    );
   }
   const baseline = await state.store.getBaseline({ userId: LOCAL_USER_ID, exerciseId });
   return bandFor(context, selection, {

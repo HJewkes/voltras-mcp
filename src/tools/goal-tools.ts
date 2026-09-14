@@ -186,23 +186,30 @@ async function declarePriorities(
     declinedRefs: await readDeclinedRefs(state),
   });
   await recordDeclines(state, guardrails.declinedNow, dietState.phase, declaredAt);
-  const horizonWeeks = await resolveHorizonWeeks(state, input.horizonWeeks, input.blockId);
-  const priorities = [];
-  for (const item of input.items) {
-    priorities.push(
-      await state.store.putPriority(
-        mergePriority(item, existing, { declaredAt, horizonWeeks, blockId: input.blockId }),
-      ),
-    );
-  }
   return {
-    priorities,
+    priorities: await storeDeclaration(state, input, existing, declaredAt),
     warnings: guardrails.warnings,
     proposals: guardrails.proposals,
     dietPhase: dietState.phase,
     tierUsed: tier,
     thresholds: GOAL_GUARDRAIL_THRESHOLDS,
   };
+}
+
+/** Every declared item, written as declared. No guardrail reaches this. */
+async function storeDeclaration(
+  state: ServerState,
+  input: z.infer<typeof GoalDeclarePrioritiesInput>,
+  existing: readonly StoredPriority[],
+  declaredAt: string,
+): Promise<StoredPriority[]> {
+  const horizonWeeks = await resolveHorizonWeeks(state, input.horizonWeeks, input.blockId);
+  const stamp = { declaredAt, horizonWeeks, blockId: input.blockId };
+  const priorities: StoredPriority[] = [];
+  for (const item of input.items) {
+    priorities.push(await state.store.putPriority(mergePriority(item, existing, stamp)));
+  }
+  return priorities;
 }
 
 /** A re-declaration keeps its row, so `mesosHeld` keeps counting across blocks. */
