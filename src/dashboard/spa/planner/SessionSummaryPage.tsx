@@ -16,7 +16,7 @@
  *   verdict → evidence → aggregate → prescription → raw sets
  *
  * Concretely, per exercise: titan's `VerdictHero` + `FatigueLights` carry the
- * SAME fatigue language the live page already speaks (`TONE_COLOR` /
+ * SAME fatigue language the live page already speaks (`TONE_TOKEN` /
  * `STATE_LABEL` / the three VEL·ROM·TEMPO dots), so a completion screen reads as
  * the end of the live page rather than a different product. Then the real
  * evidence — a `StrengthTrendChart` of the exercise's within-session estimated
@@ -52,7 +52,9 @@ import {
   Surface,
   Typography,
   VerdictHero,
-  TONE_COLOR,
+  TONE_TOKEN,
+  getSemanticColors,
+  useSurfaceMode,
   type MetricTileData,
 } from '@titan-design/react-ui';
 
@@ -252,6 +254,7 @@ export function E1RMTrend(props: {
   changePct: number | null;
   displayUnit: MassUnit;
 }): React.JSX.Element {
+  const colors = getSemanticColors(useSurfaceMode());
   if (props.series.length < 2) {
     return (
       <Caption color="tertiary">
@@ -279,7 +282,11 @@ export function E1RMTrend(props: {
           variant="body2"
           style={{
             color:
-              changePct <= -5 ? TONE_COLOR.alarm : changePct < -1 ? TONE_COLOR.warn : TONE_COLOR.ok,
+              changePct <= -5
+                ? colors[TONE_TOKEN.alarm]
+                : changePct < -1
+                  ? colors[TONE_TOKEN.warn]
+                  : colors[TONE_TOKEN.ok],
           }}
         >
           {`${changePct >= 0 ? '+' : ''}${formatNumber(changePct)}% e1RM from first working set to last`}
@@ -293,6 +300,7 @@ function ProgressionBlock(props: {
   exercise: SessionSummaryExercise;
   displayUnit: MassUnit;
 }): React.JSX.Element {
+  const colors = getSemanticColors(useSurfaceMode());
   const { progression, progressionNote } = props.exercise;
   const { displayUnit } = props;
   if (progression === null) {
@@ -305,10 +313,10 @@ function ProgressionBlock(props: {
   }
   const tone =
     progression.delta > 0
-      ? TONE_COLOR.ok
+      ? colors[TONE_TOKEN.ok]
       : progression.delta < 0
-        ? TONE_COLOR.alarm
-        : TONE_COLOR.warn;
+        ? colors[TONE_TOKEN.alarm]
+        : colors[TONE_TOKEN.warn];
   return (
     <div style={{ marginTop: SPACE.sm }}>
       <Overline color="tertiary">Next session</Overline>
