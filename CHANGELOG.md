@@ -109,6 +109,22 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The wall dashboard gains `GET /api/muscle-week` (VW-329, B2 of the body-map plan): how
+  many working sets each of the 15 titan muscle groups (VW-328) got this week, and whether
+  that reads as `under`, `maintenance`, `productive` or `over`. Untrained muscles are
+  present with zeros, so a future body-map figure can paint every muscle. `?weekStart=`
+  picks a past week by any ISO instant inside it; the week starts Monday 00:00 UTC, the same
+  boundary `history.weekly_volume` uses. Sets count target-only (B47) — toward the
+  exercise's PRIMARY muscle group only, never a share to its secondary groups — and only
+  your own working sets with reps recorded count, never a guest's and never a mock-adapter
+  set. `lastTrainedAt` reaches back past the week itself, so a muscle you last trained a
+  fortnight ago still reports a date rather than a gap. **The MEV/MAV/MRV numbers it
+  classifies against are population defaults, not yours**, which is why every response says
+  `landmarkBasis: "population-default"` out loud: discovering your own landmarks from your
+  own history is a separate piece of work (VW-146) that has not landed. Nothing here
+  suggests adding sets or taking a deload. Internal plumbing for the body-map page (VW-323)
+  — no page renders it yet.
+
 - The wall dashboard gains `GET /api/muscle-plan` (VW-331, B4 of the body-map plan): for
   the active training week, planned vs. done working sets per titan muscle group (VW-328),
   plus the still-untrained planned exercises per muscle. Every one of the 15 titan slugs is

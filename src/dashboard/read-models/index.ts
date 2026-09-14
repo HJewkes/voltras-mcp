@@ -66,12 +66,29 @@ export {
 } from './session-pace.js';
 
 export {
-  buildMusclePlanView,
+  endOfCalendarWeekIso,
+  isEligibleWorkingSet,
   startOfCalendarWeekIso,
+  titanMusclesFor,
   type MuscleCatalogLookup,
+} from './muscle-set-scope.js';
+
+export {
+  buildMusclePlanView,
   type MusclePlanMuscleView,
   type MusclePlanRemainingExercise,
   type MusclePlanRows,
   type MusclePlanTemplateRow,
   type MusclePlanView,
 } from './muscle-plan.js';
+
+export {
+  buildMuscleWeekView,
+  classifyWeeklyVolume,
+  POPULATION_VOLUME_LANDMARKS,
+  type MuscleWeekMuscleView,
+  type MuscleWeekRows,
+  type MuscleWeekView,
+  type VolumeLandmarks,
+  type VolumeStatus,
+} from './muscle-week.js';
