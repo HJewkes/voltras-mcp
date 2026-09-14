@@ -90,6 +90,10 @@ describe('parseRoute', () => {
     expect(parseRoute('#/plan/')).toEqual({ name: 'plan' });
   });
 
+  it('routes the goal-coach wall page (VW-355)', () => {
+    expect(parseRoute('#/goals')).toEqual({ name: 'goals' });
+  });
+
   it('routes a summary with an explicit session id, decoding it', () => {
     expect(parseRoute('#/summary/sess%2F1')).toEqual({ name: 'summary', sessionId: 'sess/1' });
   });
@@ -99,7 +103,7 @@ describe('parseRoute', () => {
   });
 
   it('round-trips through routeHash', () => {
-    for (const hash of ['#/', '#/plan', '#/summary', '#/summary/sess-1']) {
+    for (const hash of ['#/', '#/plan', '#/goals', '#/summary', '#/summary/sess-1']) {
       expect(routeHash(parseRoute(hash))).toBe(hash);
     }
   });
