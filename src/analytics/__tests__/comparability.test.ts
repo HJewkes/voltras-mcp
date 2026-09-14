@@ -115,6 +115,36 @@ describe('isComparable', () => {
     );
   });
 
+  // The rows below pass unchanged on the commit that introduced the equivalence
+  // table (VW-366): an absent phase is the one case the table must not touch.
+  it.each([
+    [
+      'neither side records a phase',
+      {},
+      {},
+      true,
+      'phase (note): neither set records a training phase, so this clause passes unchecked',
+    ],
+    [
+      'only the earlier side records a phase',
+      { phase: 'maintenance' },
+      {},
+      false,
+      'phase: training phase recorded on only one side (maintenance vs unrecorded)',
+    ],
+    [
+      'only the later side records a phase',
+      {},
+      { phase: 'maintenance' },
+      false,
+      'phase: training phase recorded on only one side (unrecorded vs maintenance)',
+    ],
+  ])('pins the absent-phase pairing when %s', (_case, left, right, comparable, entry) => {
+    const verdict = isComparable(makeSubject(left), makeSubject({ id: 'set-b', ...right }));
+    expect(verdict.comparable).toBe(comparable);
+    expect(verdict.reasons).toContain(entry);
+  });
+
   it.each([
     [
       'exercise',
@@ -322,6 +352,71 @@ describe('isComparable', () => {
       expect(verdict.reasons).toContain(note);
     },
   );
+
+  // VW-366: the point of the equivalence table is that a RELABEL is not a
+  // context change, so the count a trend surface reads must not move.
+  const PHASE_NOTE =
+    'phase (note): maintenance and recomposition are the same training context, so the pair ' +
+    'is compared as like-vs-like despite the different label';
+
+  function matchedPairs(subjects: readonly ComparabilitySubject[]): number {
+    let matched = 0;
+    for (let i = 0; i < subjects.length; i += 1) {
+      for (let j = i + 1; j < subjects.length; j += 1) {
+        const left = subjects[i];
+        const right = subjects[j];
+        if (left === undefined || right === undefined) continue;
+        if (isComparable(left, right).comparable) matched += 1;
+      }
+    }
+    return matched;
+  }
+
+  function history(phaseAt: (index: number) => string): ComparabilitySubject[] {
+    return Array.from({ length: 8 }, (_unused, index) =>
+      makeSubject({ id: `set-${index}`, phase: phaseAt(index) }),
+    );
+  }
+
+  it('keeps the matched count when the later half of a history is relabelled', () => {
+    const before = history(() => 'maintenance');
+    const after = history((index) => (index < 4 ? 'maintenance' : 'recomposition'));
+    expect(matchedPairs(before)).toBe(28);
+    expect(matchedPairs(after)).toBe(matchedPairs(before));
+  });
+
+  it('says it treated the two labels as one training context', () => {
+    const verdict = isComparable(
+      makeSubject({ phase: 'maintenance' }),
+      makeSubject({ id: 'set-b', phase: 'recomposition' }),
+    );
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons).toContain(PHASE_NOTE);
+  });
+
+  it('leaves an unrelabelled pair without an equivalence note', () => {
+    const verdict = isComparable(
+      makeSubject({ phase: 'maintenance' }),
+      makeSubject({ id: 'set-b', phase: 'maintenance' }),
+    );
+    expect(verdict.comparable).toBe(true);
+    expect(verdict.reasons.some((r) => r.startsWith('phase'))).toBe(false);
+  });
+
+  it.each([
+    ['fat-loss', 'maintenance'],
+    ['fat-loss', 'recomposition'],
+    ['gain', 'maintenance'],
+    ['gain', 'recomposition'],
+    ['fat-loss', 'gain'],
+  ])('still blocks a %s set against a %s set', (left, right) => {
+    const verdict = isComparable(
+      makeSubject({ phase: left }),
+      makeSubject({ id: 'set-b', phase: right }),
+    );
+    expect(verdict.comparable).toBe(false);
+    expect(verdict.reasons).toContain(`phase: different training phase (${left} vs ${right})`);
+  });
 
   it('reports every failing clause, not just the first', () => {
     const verdict = isComparable(

@@ -30,7 +30,10 @@
 // (`profile.set_diet_phase`), so the phase clause is live on any pair whose
 // sessions fall inside a declared range. Absent on both sides — every session
 // recorded before the first declaration — still passes with a note, which is
-// why old history keeps comparing. `setupId` DOES have one as of VW-119 (`store/exercise-setups.ts`, stamped by
+// why old history keeps comparing. The clause asks `dietPhasesComparable`
+// (`store/diet-phase.ts`) rather than comparing the strings, so relabelling a
+// maintenance run as recomposition does not silently shrink the matched-session
+// count every trend surface reads (VW-366). `setupId` DOES have one as of VW-119 (`store/exercise-setups.ts`, stamped by
 // `stampSetSetup` on `set.end` and by `baselines.recalc { inferSetups: true }`),
 // so the setup clause is live on any set that has been clustered. Absent there
 // means "not clustered yet", never "the default setup" — which is why a stamp
@@ -80,6 +83,7 @@
 // clause here reads a position and none needs `normalisePositionsToMetres`
 // (VW-203) — that normalisation lives with the modules that do read ROM.
 
+import { dietPhasesComparable } from '../store/diet-phase.js';
 import { setPurposeOf, type PurposeBearing } from '../store/set-purpose.js';
 
 /**
@@ -322,10 +326,7 @@ const CLAUSES: readonly Clause[] = [
     evaluate: (a, b) => matchOrExplain(a.side, b.side, 'side'),
   },
   { name: 'load', evaluate: (a, b) => loadClause(a, b) },
-  {
-    name: 'phase',
-    evaluate: (a, b) => matchOrExplain(a.phase, b.phase, 'training phase'),
-  },
+  { name: 'phase', evaluate: (a, b) => phaseClause(a, b) },
   {
     name: 'setup',
     evaluate: (a, b) => matchOrExplain(a.setupId, b.setupId, 'physical setup'),
@@ -504,18 +505,49 @@ function corroborationLabel(count: number): string {
 }
 
 /**
+ * B34's training-phase clause, with the equivalence table (VW-366) standing in
+ * for string equality: two tags naming the same training context pair, and the
+ * note says so, because a reader seeing `maintenance` against `recomposition`
+ * in a matched pair is owed the reason it was allowed.
+ *
+ * What an ABSENT phase means is unchanged — that branch is `matchOrExplain`'s
+ * and always was, so relabelling can neither rescue nor break an old pair.
+ */
+function phaseClause(a: ComparabilitySubject, b: ComparabilitySubject): ClauseResult {
+  const result = matchOrExplain(a.phase, b.phase, 'training phase', dietPhasesComparable);
+  if (result.ok && a.phase !== undefined && b.phase !== undefined && a.phase !== b.phase) {
+    return {
+      ok: true,
+      note:
+        `${a.phase} and ${b.phase} are the same training context, so the pair is compared ` +
+        'as like-vs-like despite the different label',
+    };
+  }
+  return result;
+}
+
+/**
  * The shared clause shape for a value that must match: equal (including
  * absent-on-both) passes, one-sided absence blocks because an unrecorded value
  * is not evidence of a match, and a real difference blocks.
+ *
+ * `equals` lets a clause widen what "match" means without restating any of the
+ * absence handling or the copy; it is only consulted once both sides are
+ * recorded.
  */
-function matchOrExplain(a: string | undefined, b: string | undefined, what: string): ClauseResult {
+function matchOrExplain(
+  a: string | undefined,
+  b: string | undefined,
+  what: string,
+  equals: (left: string, right: string) => boolean = (left, right) => left === right,
+): ClauseResult {
   if (a === undefined && b === undefined) {
     return bothAbsent(`neither set records a ${what}, so this clause passes unchecked`);
   }
   if (a === undefined || b === undefined) {
     return { ok: false, reason: `${what} recorded on only one side (${label(a)} vs ${label(b)})` };
   }
-  return a === b ? OK : { ok: false, reason: `different ${what} (${a} vs ${b})` };
+  return equals(a, b) ? OK : { ok: false, reason: `different ${what} (${a} vs ${b})` };
 }
 
 function loadClause(a: ComparabilitySubject, b: ComparabilitySubject): ClauseResult {
