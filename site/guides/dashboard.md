@@ -11,17 +11,20 @@ voltras-mcp starts a local HTTP sidecar alongside the MCP transport: `127.0.0.1`
 network exposure beyond the machine it runs on (`README.md`). Its live-view routes —
 `/api/snapshot`, `/api/stream`, `/api/history`, `/api/session-plan`, `/api/exercises`,
 `/api/plan-tree`, `/api/muscle-plan`, `/api/muscle-week`, `/api/muscle-strength`,
-`/api/muscle-recovery`, `/api/session-summary/:sessionId` — are all reads. That's the
-surface the README calls "read-only," and it's the one this guide is mostly about.
-`/api/muscle-plan` (VW-331) rolls up the active training week into planned-vs-done working
-sets per titan muscle group (VW-328), plus the still-untrained planned exercises per muscle.
-`/api/muscle-week` (VW-329) answers the adjacent question — how much you actually trained
-each muscle this week, and whether that is a lot or a little. `/api/muscle-strength`
-(VW-330) answers the third — which muscles are actually getting stronger; it has
-[its own section below](#per-muscle-strength-api-muscle-strength). `/api/muscle-recovery`
-(VW-332) answers the fourth: when you last trained each muscle, and how that session went
-against the one before it. All four are internal plumbing for the body-map page (VW-323),
-not surfaced on a page of their own yet.
+`/api/muscle-recovery`, `/api/goals`, `/api/goal-progress`, `/api/session-summary/:sessionId`
+— are all reads. That's the surface the README calls "read-only," and it's the one this
+guide is mostly about. `/api/muscle-plan` (VW-331) rolls up the active training week into
+planned-vs-done working sets per titan muscle group (VW-328), plus the still-untrained
+planned exercises per muscle. `/api/muscle-week` (VW-329) answers the adjacent question —
+how much you actually trained each muscle this week, and whether that is a lot or a little.
+`/api/muscle-strength` (VW-330) answers the third — which muscles are actually getting
+stronger; it has [its own section below](#per-muscle-strength-api-muscle-strength).
+`/api/muscle-recovery` (VW-332) answers the fourth: when you last trained each muscle, and
+how that session went against the one before it. All four are internal plumbing for the
+body-map page (VW-323), not surfaced on a page of their own yet. `/api/goals` and
+`/api/goal-progress` (VW-352) are the equivalent plumbing for the `#/goals` page: what the
+coach is tracking, and how each target is reading this week; see
+[their own section below](#goal-coach-api-goals-api-goal-progress).
 
 ### `/api/muscle-week` — weekly sets per muscle
 
@@ -108,6 +111,27 @@ answer is `null` and `reason` says which piece was missing: `insufficient histor
 prior inside the window), `no matched-load prior` (you trained it, but at a different load —
 the common case after moving the pin), or `no comparable prior` (something else changed).
 The three are kept apart because they are not the same answer.
+
+### Goal coach (`/api/goals`, `/api/goal-progress`)
+
+`GET /api/goals` lists every declared priority (`goal.declare_priorities`) with its accepted
+targets and a rollup verdict — `on_track`, `behind`, `stalled` and the rest, the most
+actionable of the priority's own targets — computed the same way `GET /api/goal-progress`
+computes one target's own status. A priority with nothing accepted yet reports `rollup:
+null` rather than a verdict over zero targets.
+
+`GET /api/goal-progress?priorityId=<id>` returns the full progress view for every non-retired
+target under one priority: the weekly trajectory band, the committed and stretch edges you
+accepted, this week's status and why, the entry-depression confounder when one is behind, and
+— for a lift — the plateau read. An unknown or retired `priorityId` 404s the same
+`{ "error": "not_found" }` shape `GET /api/plan-tree` does for a route with nothing to answer.
+
+**The band shown is re-derived, never replayed.** Both routes re-run the same tier, diet-phase
+and band arithmetic `goal.propose_targets` runs, off the target's own stored metric and
+exercise, so the page can never show a trajectory the MCP tool path would disagree with. Only
+the weekly corridor moves with a fresh derivation; the committed and stretch numbers stay the
+fixed values you accepted (`src/store/types.ts`'s `StoredGoalTarget` — a target's own numbers
+never move once accepted).
 
 It isn't read-only end to end, though: the plan builder page writes through a small REST
 surface of its own — `POST /api/plan/programs`, `POST /api/plan/templates/:id/exercises`,

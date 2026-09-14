@@ -98,6 +98,14 @@ entry is written from the user's point of view is a review question, not a check
   a priority inside a block warns, as does dropping one you have held for less than two
   mesocycles. Whatever you declared is what gets stored.
 
+- The wall dashboard gains `GET /api/goals` and `GET /api/goal-progress?priorityId=`
+  (VW-352, G5 of the goal-coach plan): every declared priority with its accepted targets
+  and a rollup verdict across them, and — for one priority at a time — the full per-target
+  progress view, with its weekly trajectory band, status, entry-depression confounder, and
+  (for a lift) the plateau read. The band is re-derived fresh off the same reads
+  `goal.propose_targets` runs, never a second copy of that arithmetic, so the two can never
+  disagree. An unknown or retired `priorityId` 404s the same shape `GET /api/plan-tree` does.
+
 - `profile.log_bodyweight` now records four optional leanness inputs alongside the weigh-in
   (VW-364): a self-reported visual band (`high`, `moderate`, `lean`, `very-lean`), a waist
   tape in inches, an absolute body-fat percentage, the source that produced it, and free

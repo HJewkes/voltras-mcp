@@ -75,6 +75,15 @@
 //                          body-map plan). Elapsed days, the entry-depression read from
 //                          that session, and whether it matched or beat its previous
 //                          comparable session. No recovery window is computed.
+//
+//   ── Goal coach (VW-352, G5 of the goal-coach plan) ──────────────────────
+//   GET  /api/goals       — `{ priorities: [{ priority, targets, rollup }] }`. Every
+//                          declared priority (`goal.declare_priorities`), its ACCEPTED
+//                          targets, and the `buildPriorityRollup` verdict across them
+//                          (`null` when none are accepted yet).
+//   GET  /api/goal-progress?priorityId= — `{ targets: GoalProgressView[] }`, one view per
+//                          non-retired target under the priority, from `buildGoalProgressView`.
+//                          404 `{ error: 'not_found' }` for an unknown or retired priorityId.
 //   POST /api/plan/programs                      — create a program + its first
 //                          block/week/workout (see `plan-api.ts` for why).
 //   POST /api/plan/programs/:id/workouts         — add a workout template.
@@ -138,6 +147,11 @@ import {
   type DashboardPlanStore,
 } from './plan-api.js';
 import { fetchMuscleStrength, type MuscleStrengthStore } from './muscle-strength-api.js';
+import {
+  fetchGoalPriorityRows,
+  fetchGoalProgressViews,
+  type GoalProgressStore,
+} from './goal-progress-api.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -153,6 +167,7 @@ import {
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredExerciseSetup,
+  type StoredPriority,
   type StoredSet,
   type StoredTrainingProfile,
   type StoredTrainingWeek,
@@ -247,7 +262,8 @@ export interface DashboardServerState {
     /** Self-reported training background, read for the early-phase flag (VW-330). */
     getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
   } & Partial<DashboardPlanStore> &
-    Partial<DashboardSessionStore>;
+    Partial<DashboardSessionStore> &
+    Partial<GoalProgressStore>;
   /**
    * Exercise catalog lookup, used to join the active session's `exerciseId` to
    * its display name and its target muscle groups for the dashboard BodyMap
@@ -524,6 +540,14 @@ async function handleRequest(
   }
   if (pathname === '/api/muscle-recovery') {
     await serveMuscleRecovery(res, state);
+    return;
+  }
+  if (pathname === '/api/goals') {
+    await serveGoals(res, state);
+    return;
+  }
+  if (pathname === '/api/goal-progress') {
+    await serveGoalProgress(res, state, url);
     return;
   }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
@@ -843,6 +867,77 @@ async function serveMuscleRecovery(
     now,
   });
   sendJson(res, 200, view);
+}
+
+/** @see hasPlanStore — same narrowing, for the goal-coach routes (VW-352). */
+function hasGoalStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & GoalProgressStore {
+  return (
+    typeof store.listPriorities === 'function' &&
+    typeof store.listGoalTargets === 'function' &&
+    typeof store.getTrainingProfile === 'function' &&
+    typeof store.countSessions === 'function' &&
+    typeof store.getSessionDateSpan === 'function' &&
+    typeof store.getTrainingWeeksForBlock === 'function' &&
+    typeof store.getDietPhaseCovering === 'function' &&
+    typeof store.getTrainingBlock === 'function' &&
+    typeof store.getTrainingBlocksForProgram === 'function' &&
+    typeof store.listBodyMetrics === 'function' &&
+    typeof store.getSetsForExercise === 'function' &&
+    typeof store.getBaseline === 'function' &&
+    typeof store.chapterStartedAt === 'function'
+  );
+}
+
+/** The declared priority named by `id`, or `undefined` for an unknown or retired one. */
+async function findGoalPriority(
+  store: GoalProgressStore,
+  id: string,
+): Promise<StoredPriority | undefined> {
+  const priorities = await store.listPriorities(LOCAL_USER_ID);
+  return priorities.find((priority) => priority.id === id);
+}
+
+/**
+ * `GET /api/goals` (VW-352, G5 of the goal-coach plan): every declared
+ * priority, its accepted targets, and the `buildPriorityRollup` verdict
+ * across them.
+ */
+async function serveGoals(res: ServerResponse, state: DashboardServerState): Promise<void> {
+  if (!hasGoalStore(state.store)) {
+    sendJson(res, 501, { error: 'goal_store_unavailable' });
+    return;
+  }
+  const rows = await fetchGoalPriorityRows(state.store, new Date());
+  sendJson(res, 200, { priorities: rows });
+}
+
+/**
+ * `GET /api/goal-progress?priorityId=` (VW-352, G5 of the goal-coach plan):
+ * `buildGoalProgressView` for every non-retired target under one priority.
+ */
+async function serveGoalProgress(
+  res: ServerResponse,
+  state: DashboardServerState,
+  url: URL,
+): Promise<void> {
+  if (!hasGoalStore(state.store)) {
+    sendJson(res, 501, { error: 'goal_store_unavailable' });
+    return;
+  }
+  const priorityId = url.searchParams.get('priorityId');
+  if (priorityId === null || priorityId === '') {
+    sendJson(res, 400, { error: 'invalid_input', message: 'priorityId is required' });
+    return;
+  }
+  const priority = await findGoalPriority(state.store, priorityId);
+  if (priority === undefined) {
+    sendJson(res, 404, { error: 'not_found' });
+    return;
+  }
+  const targets = await fetchGoalProgressViews(state.store, priority, new Date());
+  sendJson(res, 200, { targets });
 }
 
 async function serveSessionSummary(
