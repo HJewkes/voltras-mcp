@@ -188,18 +188,117 @@ describe('diet state: what a declared phase does to a lift band', () => {
     expect(band.bandLowPctPerWeek).toBe(1.5625); // 1.25 span x0.75, off the high edge
   });
 
-  it('treats recomposition as maintenance and flags the band provisional', () => {
-    const recomp = deriveGoalBand(
-      rowInput({ dietState: { phase: 'recomposition', weeksInPhase: 4 } }),
-    );
-    const maintenance = deriveGoalBand(rowInput());
-    expect(recomp.provisional).toBe(true);
-    expect(recomp.expected).toEqual(maintenance.expected);
-    expect(recomp.notes.join(' ')).toContain('VW-346');
-  });
-
   it('is not provisional in a declared phase', () => {
     expect(deriveGoalBand(rowInput()).provisional).toBe(false);
+  });
+});
+
+describe('recomposition: the committed edge is hold and the stretch is the ramp (VW-365)', () => {
+  const recompInput = (overrides: Partial<GoalBandInput> = {}) =>
+    rowInput({
+      weeks: weeksOf(6, [6]),
+      dietState: { phase: 'recomposition', weeksInPhase: 4 },
+      ...overrides,
+    });
+
+  it('holds the low edge at the start value and ramps the high edge', () => {
+    const band = deriveGoalBand(recompInput());
+    expect(band.bandLowPctPerWeek).toBe(0);
+    expect(band.bandHighPctPerWeek).toBe(2.5);
+    expect(band.expected).toEqual([
+      { weekIndex: 1, low: 200, high: 200 },
+      { weekIndex: 2, low: 200, high: 205 },
+      { weekIndex: 3, low: 200, high: 210 },
+      { weekIndex: 4, low: 200, high: 215 },
+      { weekIndex: 5, low: 200, high: 220 },
+      { weekIndex: 6, low: 200, high: 220 },
+    ]);
+    expect(band.committedValue).toBe(200);
+    expect(band.stretchValue).toBe(220);
+    expect(band.direction).toBe('hold');
+  });
+
+  it('keeps the whole low edge on the start value, not on the ramp’s held-week edge', () => {
+    const band = deriveGoalBand(recompInput());
+    const maintenance = deriveGoalBand(rowInput({ weeks: weeksOf(6, [6]) }));
+    expect(band.expected.every((week) => week.low === 200)).toBe(true);
+    expect(band.expected.map((week) => week.high)).toEqual(
+      maintenance.expected.map((week) => week.high),
+    );
+  });
+
+  it('leaves a beginner on the full maintenance ramp, both edges', () => {
+    const beginner = deriveGoalBand(recompInput({ tier: 'beginner' }));
+    const maintenance = deriveGoalBand(rowInput({ tier: 'beginner', weeks: weeksOf(6, [6]) }));
+    expect(beginner.expected).toEqual(maintenance.expected);
+    expect(beginner.bandLowPctPerWeek).toBe(1.25);
+    expect(beginner.bandHighPctPerWeek).toBe(2.5);
+    expect(beginner.notes.join(' ')).toContain('rp-s4-training-invariant-across-diet-phase');
+  });
+
+  it('emits the specialization cap as an advisory note with its label and anchors', () => {
+    const notes = deriveGoalBand(recompInput()).notes.join(' ');
+    expect(notes).toContain(
+      `capped at ${GOAL_BAND_CONSTANTS.recompositionSpecializationCap} muscle`,
+    );
+    expect(notes).toContain('ENGINEERING DEFAULT');
+    expect(notes).toContain('rp-s5-fatloss-priority-training-rule');
+    expect(notes).toContain('never a block');
+  });
+
+  it('does not cap a beginner, whose program does not change across phases', () => {
+    expect(deriveGoalBand(recompInput({ tier: 'beginner' })).notes.join(' ')).not.toContain(
+      'capped at',
+    );
+  });
+
+  it('is a settled band, not a provisional one', () => {
+    expect(deriveGoalBand(recompInput()).provisional).toBe(false);
+    expect(deriveGoalBand(recompInput()).notes.join(' ')).not.toContain('VW-346');
+  });
+});
+
+describe('recomposition bodyweight: hold by default, slow loss when declared (VW-365)', () => {
+  const bodyweight = (slowLoss?: boolean) =>
+    deriveGoalBand(
+      rowInput({
+        metric: 'bodyweight',
+        startValue: 200,
+        horizonWeeks: 4,
+        weeks: weeksOf(4),
+        dietState: { phase: 'recomposition', weeksInPhase: 4, slowLoss },
+      }),
+    );
+
+  it('holds the maintenance corridor by default', () => {
+    const band = bodyweight();
+    expect(band.direction).toBe('hold');
+    expect(band.corridorPct).toBe(GOAL_BAND_CONSTANTS.bodyweightMaintenanceBufferPct);
+    expect(band.expected.every((week) => week.low === 196 && week.high === 204)).toBe(true);
+    expect(band.notes.join(' ')).toContain('rp-s12-maintenance-buffer-2pct');
+  });
+
+  it('runs one slow-loss line when the lifter declared it', () => {
+    const band = bodyweight(true);
+    expect(band.direction).toBe('down');
+    expect(band.bandLowPctPerWeek).toBe(-0.5);
+    expect(band.bandHighPctPerWeek).toBe(-0.5);
+    expect(band.corridorPct).toBeNull();
+    expect(band.expected).toEqual([
+      { weekIndex: 1, low: 200, high: 200 },
+      { weekIndex: 2, low: 199, high: 199 },
+      { weekIndex: 3, low: 198, high: 198 },
+      { weekIndex: 4, low: 197, high: 197 },
+    ]);
+    expect(band.committedValue).toBe(197);
+    expect(band.stretchValue).toBe(197);
+    expect(band.notes.join(' ')).toContain('rp-s11-fat-loss-rate-heuristic');
+  });
+
+  it('takes the slow edge from the cited fat-loss range rather than a constant of its own', () => {
+    expect(bodyweight(true).bandLowPctPerWeek).toBe(
+      GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek.low,
+    );
   });
 });
 

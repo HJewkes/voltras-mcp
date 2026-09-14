@@ -65,6 +65,25 @@ export const GOAL_BAND_CONSTANTS = {
    * the increment, not what a conservative edge should keep of it.
    */
   heldWeekFraction: 0.5,
+  /**
+   * The committed edge of a recomposition lift band: hold, not gain.
+   *
+   * HUMAN DECISION 2026-09-13 (VW-365). The stretch stays the tier's RP ramp,
+   * so the pair reads "specialization allowed, lower expectations" without a
+   * haircut constant anywhere: the committed number becomes hold and the
+   * stretch is unshaded.
+   */
+  recompositionLiftHoldPctPerWeek: 0,
+  /**
+   * How many muscles a recomposition may specialize. Advisory, never a block.
+   *
+   * ENGINEERING DEFAULT interpolating two cited anchors: a gain phase permits
+   * specialization, and a fat-loss phase forbids it outright and holds every
+   * muscle at maintenance volume (rp:rp-s5-fatloss-priority-training-rule).
+   * The corpus states no recomposition figure, so 1 is the midpoint of 2 and 0
+   * rather than a mined number.
+   */
+  recompositionSpecializationCap: 1,
   /** Weekly bodyweight loss in a deficit, committed then stretch. rp:rp-s11-fat-loss-rate-heuristic */
   bodyweightFatLossPctPerWeek: { low: -0.5, high: -1 },
   /** Weekly bodyweight gain in a surplus, committed then stretch. rp:rp-s11-muscle-gain-rate-heuristic */
@@ -132,16 +151,23 @@ export type GoalInfoLevel = 'cold' | 'ramp' | 'own';
 export type GoalBandBasis = 'execution_ramp' | 'rp_ramp' | 'own_slope';
 
 /**
- * The diet state the band is shaped by. `'recomposition'` is accepted as an
- * input value and treated as maintenance with `provisional: true` — its
- * semantics are VW-346's research, not settled here.
+ * The diet state the band is shaped by. `'recomposition'` is one of
+ * {@link DietPhase}'s own four values (VW-363) and carries its own band here
+ * (VW-365) rather than folding onto maintenance.
  */
-export type GoalDietPhase = DietPhase | 'recomposition' | 'unknown';
+export type GoalDietPhase = DietPhase | 'unknown';
 
 export interface GoalDietState {
   phase: GoalDietPhase;
   /** 1-based, as `weeksInPhaseAt` counts. `null` when the phase is unknown. */
   weeksInPhase: number | null;
+  /**
+   * The recomposition bodyweight target declared at the start: the cited
+   * slow-loss rate instead of the default hold corridor. Read only under
+   * `'recomposition'`, and never inferred from the weight series — under a hold
+   * band there is no rate to read (VW-367 §4).
+   */
+  slowLoss?: boolean;
 }
 
 /** One planned week of the horizon. A deload week flattens the band across it. */
@@ -198,7 +224,12 @@ export interface GoalBand {
   committedValue: number;
   stretchValue: number;
   direction: 'up' | 'down' | 'hold';
-  /** True when an input's meaning is not settled and the band inherits that. */
+  /**
+   * True when an input's meaning is not settled and the band inherits that.
+   * Nothing sets it since VW-365 gave `recomposition` a settled band; it stays
+   * in the shape because the next unsettled input should land here rather than
+   * in a consumer's own guesswork.
+   */
   provisional: boolean;
   notes: string[];
 }
@@ -221,7 +252,7 @@ interface BandShape {
 export function deriveGoalBand(input: GoalBandInput): GoalBand {
   assertUsableInput(input);
   const notes: string[] = [];
-  const { state: dietState, provisional } = normaliseDietState(input.dietState, notes);
+  const dietState = input.dietState;
   if (input.horizonWeeks > C.maxHorizonWeeks) {
     notes.push(
       `Horizon of ${input.horizonWeeks} weeks is past the 3-6 month planning window; ` +
@@ -244,7 +275,7 @@ export function deriveGoalBand(input: GoalBandInput): GoalBand {
     committedValue: last.low,
     stretchValue: last.high,
     direction: shape.direction,
-    provisional,
+    provisional: false,
     notes,
   };
 }
@@ -261,33 +292,6 @@ function assertUsableInput(input: GoalBandInput): void {
       `deriveGoalBand: weeks has ${input.weeks.length} entries for a ${input.horizonWeeks}-week horizon`,
     );
   }
-}
-
-/**
- * Fold `'recomposition'` onto maintenance and say so. It IS a
- * maintenance-calorie strategy (rp:rp-s12-recomposition-requires-maintenance-calories),
- * so maintenance is the right shape; what is unsettled is what the coach should
- * expect from it, which is VW-346.
- */
-function normaliseDietState(
-  declared: GoalDietState,
-  notes: string[],
-): { state: DietPhaseState; provisional: boolean } {
-  if (declared.phase !== 'recomposition') {
-    return {
-      state: { phase: declared.phase, weeksInPhase: declared.weeksInPhase },
-      provisional: false,
-    };
-  }
-  notes.push(
-    'Diet state "recomposition" is banded as maintenance: it is a maintenance-calorie ' +
-      'strategy (rp:rp-s12-recomposition-requires-maintenance-calories). What to expect ' +
-      'from it is still being researched (VW-346), so this band is provisional.',
-  );
-  return {
-    state: { phase: 'maintenance', weeksInPhase: declared.weeksInPhase },
-    provisional: true,
-  };
 }
 
 /** Route to the metric's own band rule, then let the diet phase reshape it. */
@@ -459,7 +463,35 @@ function bodyweightShape(
       C.bodyweightGainPctPerWeek.high,
     );
   }
+  if (dietState.phase === 'recomposition') {
+    return recompositionBodyweightShape(input, notes);
+  }
   return maintenanceCorridorShape(notes);
+}
+
+/**
+ * A recomposition holds the maintenance corridor unless the lifter declared the
+ * slow-loss target instead. The slow variant is one line rather than a band:
+ * both edges sit on the SLOW edge of the cited fat-loss range, because anything
+ * faster is a fat-loss phase wearing a recomposition label.
+ */
+function recompositionBodyweightShape(input: GoalBandInput, notes: string[]): BandShape {
+  if (input.dietState.slowLoss !== true) {
+    notes.push(
+      'Recomposition bodyweight holds the maintenance corridor by default, because a recomposition ' +
+        'runs on maintenance calories (rp:rp-s12-recomposition-requires-maintenance-calories). The ' +
+        'slow-loss target is declared at the start, never read off the scale.',
+    );
+    return maintenanceCorridorShape(notes);
+  }
+  const rate = C.bodyweightFatLossPctPerWeek.low;
+  notes.push(
+    `Recomposition declared as slow loss: both edges sit at ${rate}%/wk, the slow edge of the cited ` +
+      'fat-loss range (rp:rp-s11-fat-loss-rate-heuristic). There is no faster stretch to offer — a ' +
+      'faster loss is a fat-loss phase, not this one.',
+  );
+  notes.push(bodyweightNote('loss', input.startValue, rate));
+  return shapeOf('rp_ramp', 'ramp', rate, rate);
 }
 
 /** Maintenance names a corridor to stay inside, so there is no weekly rate. */
@@ -515,7 +547,8 @@ function sessionCountShape(notes: string[]): BandShape {
  * the phase and weeks-in-phase move it. Fat loss re-centres on hold, because a
  * deficit is expected to cost strength rather than add it; a gain phase keeps
  * the ramp's high edge and narrows toward it, because a surplus should be
- * delivering. A beginner's band is untouched in either phase
+ * delivering; a recomposition drops the committed edge to hold and keeps the
+ * ramp as the stretch. A beginner's band is untouched in every phase
  * (rp:rp-s4-training-invariant-across-diet-phase).
  */
 function reshapeForDiet(
@@ -532,6 +565,7 @@ function reshapeForDiet(
     );
     return shape;
   }
+  if (dietState.phase === 'recomposition') return recompositionLiftShape(shape, notes);
   const multiplier = dietPhaseTolerance(dietState, 0, 'flat').toleranceMultiplier;
   const halfSpan = ((shape.highPctPerWeek - shape.lowPctPerWeek) / 2) * multiplier;
   if (dietState.phase === 'fat-loss') {
@@ -548,6 +582,29 @@ function reshapeForDiet(
   );
   const low = shape.highPctPerWeek - (shape.highPctPerWeek - shape.lowPctPerWeek) * multiplier;
   return { ...shape, lowPctPerWeek: low, direction: directionOf(low, shape.highPctPerWeek) };
+}
+
+/**
+ * Recomposition: the committed edge drops to hold and the stretch stays the
+ * tier's RP ramp. Nothing is shaded and no haircut is invented — the pair says
+ * "specialization allowed, lower expectations" purely by where the two cited
+ * edges already sit (VW-346 §2c).
+ */
+function recompositionLiftShape(shape: BandShape, notes: string[]): BandShape {
+  const hold = C.recompositionLiftHoldPctPerWeek;
+  notes.push(
+    'Recomposition phase: the committed edge is hold and the stretch stays the programmed ramp. A ' +
+      'recomposition runs on maintenance calories and a non-beginner gets better absolute results ' +
+      'from sequenced phases (rp:rp-s12-recomposition-requires-maintenance-calories), so holding a ' +
+      'lift here is the commitment and the ramp is the upside.',
+  );
+  notes.push(
+    `Specialization stays allowed under recomposition, capped at ${C.recompositionSpecializationCap} ` +
+      'muscle. ENGINEERING DEFAULT: the corpus permits specialization in a gain phase and forbids it ' +
+      'in a deficit (rp:rp-s5-fatloss-priority-training-rule), and states nothing in between. This is ' +
+      'advisory copy, never a block.',
+  );
+  return { ...shape, lowPctPerWeek: hold, direction: directionOf(hold, shape.highPctPerWeek) };
 }
 
 /**
