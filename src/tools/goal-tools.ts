@@ -256,7 +256,7 @@ async function resolveHorizonWeeks(
  * already stores exactly this — an advisory, the inputs it fired on, the
  * thresholds in force, and what the lifter answered.
  */
-async function readDeclinedRefs(state: ServerState): Promise<string[]> {
+export async function readDeclinedRefs(state: ServerState): Promise<string[]> {
   const decisions = await state.store.listAdvisoryDecisions(LOCAL_USER_ID, {
     code: FAT_LOSS_DOWNGRADE_CODE,
     userResponse: 'declined',
@@ -317,15 +317,94 @@ export interface ProposedTarget {
   notes: string[];
 }
 
+/** One derived leg before anything is written: the same shape, minus the row. */
+export type PreviewedTarget = Omit<ProposedTarget, 'targetId' | 'acceptedBy'>;
+
 export interface ProposeTargetsResult {
   priorityId: string;
   targets: ProposedTarget[];
   /** Read-only legs: shown with their band, never scored and never stored. */
-  context: Omit<ProposedTarget, 'targetId' | 'acceptedBy'>[];
+  context: PreviewedTarget[];
   skipped: SkippedMetric[];
   selections: GoalMetricSelection[];
   horizonWeeks: number;
   notes: string[];
+}
+
+/** A primary leg that would be stored, with everything the writer needs. */
+export interface PreviewedLeg {
+  selection: GoalGainMetric;
+  derived: DerivedTarget;
+  entry: PreviewedTarget;
+}
+
+export interface GoalTargetPreview {
+  priorityId: string;
+  legs: PreviewedLeg[];
+  contextTargets: PreviewedTarget[];
+  skipped: SkippedMetric[];
+  selections: GoalMetricSelection[];
+  horizonWeeks: number;
+  notes: string[];
+  derivation: GoalDerivationContext;
+  /** Rows this preview was blocked against; a writer reuses their ids. */
+  stored: readonly StoredGoalTarget[];
+}
+
+/**
+ * Every band a priority would get, derived and nothing written.
+ *
+ * Split out of `goal.propose_targets` so the block-boundary re-ask (VW-359)
+ * can show the next block's bands without persisting a proposal nobody asked
+ * for. Proposing is this plus the writes; the band logic has one home.
+ */
+export async function previewTargets(
+  state: ServerState,
+  priority: StoredPriority,
+): Promise<GoalTargetPreview> {
+  const derivation = await readDerivationContext(state, priority);
+  const preview: GoalTargetPreview = {
+    priorityId: priority.id,
+    legs: [],
+    contextTargets: [],
+    skipped: [],
+    selections: selectGoalMetrics(priority, state.exercises.list()),
+    horizonWeeks: derivation.horizonWeeks,
+    notes: derivation.notes,
+    derivation,
+    stored: await state.store.listGoalTargets(
+      { priorityId: priority.id },
+      { includeRetired: true },
+    ),
+  };
+  for (const selection of preview.selections) {
+    if (selection.kind !== 'gain') continue;
+    await addPreviewLeg(state, preview, selection);
+  }
+  return preview;
+}
+
+async function addPreviewLeg(
+  state: ServerState,
+  preview: GoalTargetPreview,
+  selection: GoalGainMetric,
+): Promise<void> {
+  const blocked = blockingRow(preview.stored, selection);
+  if (blocked !== null) {
+    preview.skipped.push(blocked);
+    return;
+  }
+  const derived = await deriveTarget(state, preview.derivation, selection);
+  if (!('band' in derived)) {
+    preview.skipped.push(derived);
+    return;
+  }
+  const entry = previewEntry(derived, preview.derivation);
+  if (selection.role === 'context') {
+    preview.contextTargets.push(entry);
+    return;
+  }
+  preview.legs.push({ selection, derived, entry });
 }
 
 async function proposeTargets(
@@ -333,53 +412,23 @@ async function proposeTargets(
   input: z.infer<typeof GoalProposeTargetsInput>,
 ): Promise<ProposeTargetsResult> {
   const priority = await findPriority(state, input.priorityId);
-  const selections = selectGoalMetrics(priority, state.exercises.list());
-  const context = await readDerivationContext(state, priority);
-  const stored = await state.store.listGoalTargets(
-    { priorityId: priority.id },
-    { includeRetired: true },
-  );
-  const result: ProposeTargetsResult = {
-    priorityId: priority.id,
-    targets: [],
-    context: [],
-    skipped: [],
-    selections,
-    horizonWeeks: context.horizonWeeks,
-    notes: context.notes,
+  const preview = await previewTargets(state, priority);
+  const targets: ProposedTarget[] = [];
+  for (const leg of preview.legs) {
+    const row = await state.store.putGoalTarget(
+      toStoredTarget(leg.derived, preview.derivation, reusableId(preview.stored, leg.selection)),
+    );
+    targets.push({ targetId: row.id, acceptedBy: null, ...leg.entry });
+  }
+  return {
+    priorityId: preview.priorityId,
+    targets,
+    context: preview.contextTargets,
+    skipped: preview.skipped,
+    selections: preview.selections,
+    horizonWeeks: preview.horizonWeeks,
+    notes: preview.notes,
   };
-  for (const selection of selections) {
-    if (selection.kind !== 'gain') continue;
-    await addSelection(state, context, selection, stored, result);
-  }
-  return result;
-}
-
-async function addSelection(
-  state: ServerState,
-  context: GoalDerivationContext,
-  selection: GoalGainMetric,
-  stored: readonly StoredGoalTarget[],
-  result: ProposeTargetsResult,
-): Promise<void> {
-  const blocked = blockingRow(stored, selection);
-  if (blocked !== null) {
-    result.skipped.push(blocked);
-    return;
-  }
-  const derived = await deriveTarget(state, context, selection);
-  if (!('band' in derived)) {
-    result.skipped.push(derived);
-    return;
-  }
-  if (selection.role === 'context') {
-    result.context.push(contextEntry(derived, context));
-    return;
-  }
-  const row = await state.store.putGoalTarget(
-    toStoredTarget(derived, context, reusableId(stored, selection)),
-  );
-  result.targets.push({ targetId: row.id, acceptedBy: null, ...contextEntry(derived, context) });
 }
 
 /**
@@ -431,10 +480,7 @@ function sameLeg(row: StoredGoalTarget, selection: GoalGainMetric): boolean {
   return row.metric === selection.metric && (row.exerciseId ?? null) === selection.exerciseId;
 }
 
-function contextEntry(
-  derived: DerivedTarget,
-  context: GoalDerivationContext,
-): Omit<ProposedTarget, 'targetId' | 'acceptedBy'> {
+function previewEntry(derived: DerivedTarget, context: GoalDerivationContext): PreviewedTarget {
   return {
     metric: derived.metric,
     exerciseId: derived.exerciseId,

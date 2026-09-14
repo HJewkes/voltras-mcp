@@ -85,6 +85,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- Finishing the last workout of a block now asks about your declared priorities instead of
+  quoting the free-text goal on file (VW-359). `plan.complete_workout` and
+  `plan.next_workout` name each priority and how many mesocycles you have held it, offer
+  the three answers — keep, restate, re-architect — and show the bands each priority would
+  get for the NEXT block, derived from your history exactly as `goal.propose_targets`
+  derives them. Nothing is written and no target you already accepted is re-banded: an
+  accepted target comes back listed as skipped, because the re-ask re-proposes and never
+  silently lowers a number you committed to. If you would be switching a priority held for
+  fewer than two mesocycles, or changing one still bound to the block that just ended, the
+  prompt says so before you decide. A lifter who has declared no priorities gets the same
+  free-text prompt as before.
+
 - Relabelling a maintenance run as a recomposition no longer throws away your comparison
   history (VW-366). Sessions tagged `maintenance` and sessions tagged `recomposition` now
   count as the same training context, so every trend, PR and progression basis that was

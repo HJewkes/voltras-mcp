@@ -173,6 +173,10 @@ function makeStore(): SessionStore & {
     // models a lifter who has declared none, which is the pre-VW-277 case —
     // every number in this file is pinned against that.
     getDietPhaseCovering: vi.fn(async () => undefined),
+    // VW-359: a crossed block boundary reads the declaration. No priorities
+    // is the pre-VW-350 lifter, whose boundary keeps the free-text prompt
+    // every case below is pinned against; the re-ask has its own file.
+    listPriorities: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
 }

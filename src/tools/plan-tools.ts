@@ -52,6 +52,7 @@ import {
   type DietPhaseState,
 } from '../analytics/diet-phase-tolerance.js';
 import { readDietPhaseState, UNKNOWN_DIET_PHASE_STATE } from './diet-phase-state.js';
+import { buildGoalRealignment, type GoalRealignment } from './goal-realignment.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { peakConcentricBaseline } from '../state/channel-payloads.js';
 import { type ServerState } from '../state/server-state.js';
@@ -155,14 +156,25 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
   'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
-  'written by this tool.';
+  'written by this tool. When priorities have been declared (goal.declare_priorities) it also carries ' +
+  '`realignment`: the same re-ask `plan.complete_workout` describes.';
 const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'Mark a workout template as completed, optionally linking the real session that completed it ' +
   '(sessionId). Advances what `plan.next_workout` returns next. Returns `blockBoundary: null` unless ' +
   'the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in ' +
   'which case it carries the finished block, the next block (or null if none), the current goal on ' +
   'file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never ' +
-  'written by this tool.';
+  'written by this tool. Once priorities have been declared (goal.declare_priorities) the boundary ' +
+  'also carries `realignment` (VW-359): each declared priority with how many mesocycles it has been ' +
+  'held, the bands it would get for the NEXT block re-derived by the same path goal.propose_targets ' +
+  'uses, and `warningsIfChanged` — what the declaration guardrails would say if the lifter switched ' +
+  'now. A block-end re-evaluation is RP\u2019s own contracting pattern ' +
+  '(rp:rp-s10-three-month-planning-horizon); switching a priority held fewer than two mesocycles ' +
+  'draws the "commit to a couple more?" nudge (rp:rp-s5-goal-persistence-multi-meso) and changing ' +
+  'one still bound to the block that just ended draws the hold-it-for-the-whole-block warning ' +
+  '(rp:rp-s6-priority-muscle-held-constant-per-block). Nothing here is written and no accepted ' +
+  'target is re-banded: an accepted target comes back under `skipped`, because the re-ask ' +
+  're-proposes and never silently lowers a target you committed to.';
 const PLAN_ATTACH_TO_SESSION_DESCRIPTION =
   'Link a live/real session to a plan entity — either a specific plannedExerciseId or a whole ' +
   'workoutTemplateId (exactly one of the two). Use this to connect what the user is actually ' +
@@ -897,6 +909,8 @@ export interface BlockBoundary {
   finishedBlock: BlockBoundaryRef;
   nextBlock: BlockBoundaryRef | null;
   currentGoal: string | null;
+  /** The declared-priority re-ask (VW-359); null when nothing was declared. */
+  realignment: GoalRealignment | null;
   prompt: string;
 }
 
@@ -912,15 +926,42 @@ function buildGoalRealignmentPrompt(
   finishedBlock: BlockBoundaryRef,
   nextBlock: BlockBoundaryRef | null,
   currentGoal: string | null,
+  realignment: GoalRealignment | null,
 ): string {
   const beforeNext =
     nextBlock !== null ? `before ${nextBlock.name} starts` : 'before your next block';
+  if (realignment !== null) {
+    return declaredPrioritiesPrompt(finishedBlock, beforeNext, realignment);
+  }
   if (currentGoal === null) {
     return `Block ${finishedBlock.name} is done. You don't have a goal on file. State one ${beforeNext}.`;
   }
   return (
     `Block ${finishedBlock.name} is done. Your goal on file is '${currentGoal}'. ` +
     `Keep it, or restate it ${beforeNext}.`
+  );
+}
+
+/**
+ * The re-ask once a declaration exists: it names the priorities and how long
+ * each has been held, offers RP's three answers (keep / restate /
+ * re-architect, rp:rp-s10-three-month-planning-horizon), and reads out what a
+ * switch would be warned about instead of quoting the free-text goal.
+ */
+function declaredPrioritiesPrompt(
+  finishedBlock: BlockBoundaryRef,
+  beforeNext: string,
+  realignment: GoalRealignment,
+): string {
+  const named = realignment.priorities
+    .map((entry) => `${entry.ref} (${entry.level}, held ${entry.mesosHeld} mesocycle(s))`)
+    .join('; ');
+  const warnings = realignment.warningsIfChanged.map((warning) => warning.message).join(' ');
+  return (
+    `Block ${finishedBlock.name} is done. Your declared priorities are ${named}. Keep them, ` +
+    `restate them, or re-architect ${beforeNext} — the re-proposed targets below are advisory ` +
+    'until you declare against the new block and accept one.' +
+    (warnings === '' ? '' : ` If you change them: ${warnings}`)
   );
 }
 
@@ -932,20 +973,23 @@ function buildGoalRealignmentPrompt(
  * this one function computes the reported pair for both directions without
  * ever comparing block/template names.
  */
-function buildBlockBoundary(
+async function buildBlockBoundary(
+  state: ServerState,
   orderedBlocks: StoredTrainingBlock[],
   finishedBlockIndex: number,
   currentGoal: string | null,
-): BlockBoundary {
+): Promise<BlockBoundary> {
   const finishedBlock = toBlockBoundaryRef(orderedBlocks[finishedBlockIndex]);
   const nextBlockRow = orderedBlocks[finishedBlockIndex + 1];
   const nextBlock = nextBlockRow !== undefined ? toBlockBoundaryRef(nextBlockRow) : null;
+  const realignment = await buildGoalRealignment(state, finishedBlock.id);
   return {
     crossed: true,
     finishedBlock,
     nextBlock,
     currentGoal,
-    prompt: buildGoalRealignmentPrompt(finishedBlock, nextBlock, currentGoal),
+    realignment,
+    prompt: buildGoalRealignmentPrompt(finishedBlock, nextBlock, currentGoal, realignment),
   };
 }
 
@@ -966,7 +1010,7 @@ async function resolveNextWorkoutBlockBoundary(
   isFirstOfBlock: boolean,
 ): Promise<BlockBoundary | null> {
   if (!isFirstOfBlock || blockIndex === 0) return null;
-  return buildBlockBoundary(orderedBlocks, blockIndex - 1, await readCurrentGoal(state));
+  return buildBlockBoundary(state, orderedBlocks, blockIndex - 1, await readCurrentGoal(state));
 }
 
 /**
@@ -989,7 +1033,7 @@ async function resolveCompleteWorkoutBlockBoundary(
   const orderedBlocks = await state.store.getTrainingBlocksForProgram(block.programId);
   const blockIndex = orderedBlocks.findIndex((b) => b.id === block.id);
   if (blockIndex === -1) return null;
-  return buildBlockBoundary(orderedBlocks, blockIndex, await readCurrentGoal(state));
+  return buildBlockBoundary(state, orderedBlocks, blockIndex, await readCurrentGoal(state));
 }
 
 /** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
