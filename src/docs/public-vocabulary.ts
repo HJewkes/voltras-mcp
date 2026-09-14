@@ -444,6 +444,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'GOAL_TARGET_FIXED',
   'GOAL_TARGET_BELOW_BAND',
   'GOAL_TARGET_ABOVE_BAND',
+  // VW-359: the block-boundary re-ask on `blockBoundary`.
+  'realignment',
+  'warningsIfChanged',
+  'mesosHeld',
 ];
 
 /**
