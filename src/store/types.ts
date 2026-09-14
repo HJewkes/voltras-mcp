@@ -849,6 +849,12 @@ export interface StoredTrainingWeek {
   blockId: string;
   orderIndex: number;
   name?: string;
+  /** PRESCRIBED phase for this week (e.g. "deload", "accumulation") — free text, no enum. */
+  phaseType?: string;
+  /** `training_weeks.is_deload` is `NOT NULL DEFAULT 0`, so this is never absent on a read. */
+  isDeload: boolean;
+  /** Mesocycle week index — distinct from `orderIndex`, which is position within the block. */
+  weekIndex?: number;
 }
 
 /** A planned workout within a week (e.g. "Upper A"). */

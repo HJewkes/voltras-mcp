@@ -52,6 +52,7 @@ function makeWeek(overrides: Partial<StoredTrainingWeek> = {}): StoredTrainingWe
     blockId: 'block-1',
     orderIndex: 0,
     name: 'Week 1',
+    isDeload: false,
     ...overrides,
   };
 }
@@ -281,6 +282,38 @@ describe('SqliteSessionStore — v3 plan schema', () => {
         con: 1,
         pause_top: 0,
       });
+    });
+  });
+
+  describe('training_weeks.phaseType / isDeload / weekIndex (VW-326)', () => {
+    beforeEach(async () => {
+      await store.putTrainingProgram(makeProgram());
+      await store.putTrainingBlock(makeBlock());
+    });
+
+    it('round-trips phaseType, isDeload and weekIndex', async () => {
+      await store.putTrainingWeek(makeWeek({ phaseType: 'deload', isDeload: true, weekIndex: 4 }));
+      const week = await store.getTrainingWeek('week-1');
+      expect(week?.phaseType).toBe('deload');
+      expect(week?.isDeload).toBe(true);
+      expect(week?.weekIndex).toBe(4);
+    });
+
+    it('persists the DDL defaults when the new fields are omitted', async () => {
+      await store.putTrainingWeek(makeWeek());
+      const week = await store.getTrainingWeek('week-1');
+      expect(week?.isDeload).toBe(false);
+      expect(week?.phaseType).toBeUndefined();
+      expect(week?.weekIndex).toBeUndefined();
+    });
+
+    it('reads isDeload false for a pre-existing row inserted with raw SQL', async () => {
+      const raw = (store as unknown as { db: DatabaseSync }).db;
+      raw
+        .prepare(`INSERT INTO training_weeks (id, block_id, order_index, name) VALUES (?, ?, ?, ?)`)
+        .run('week-raw', 'block-1', 0, 'Raw Week');
+      const week = await store.getTrainingWeek('week-raw');
+      expect(week?.isDeload).toBe(false);
     });
   });
 

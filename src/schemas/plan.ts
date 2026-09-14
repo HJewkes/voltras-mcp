@@ -72,6 +72,12 @@ export const PlanWeekCreateInput = z
     blockId: IdSchema,
     orderIndex: z.number().int().min(0),
     name: z.string().optional(),
+    // PRESCRIBED phase for this week (e.g. "deload", "accumulation") — free text, no enum:
+    // a fixed set would be a new claim about training this ticket does not make.
+    phaseType: z.string().optional(),
+    isDeload: z.boolean().optional(),
+    // Mesocycle week index, distinct from `orderIndex` (position within the block).
+    weekIndex: z.number().int().min(0).optional(),
   })
   .strict();
 

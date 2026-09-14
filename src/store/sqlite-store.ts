@@ -1826,6 +1826,9 @@ interface TrainingWeekRow {
   block_id: string;
   order_index: number;
   name: string | null;
+  phase_type: string | null;
+  is_deload: number;
+  week_index: number | null;
 }
 
 /**
@@ -2758,14 +2761,25 @@ export class SqliteSessionStore implements SessionStore {
     this.db
       .prepare(
         `INSERT INTO training_weeks
-           (id, block_id, order_index, name)
-         VALUES (?, ?, ?, ?)
+           (id, block_id, order_index, name, phase_type, is_deload, week_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            block_id = excluded.block_id,
            order_index = excluded.order_index,
-           name = excluded.name`,
+           name = excluded.name,
+           phase_type = excluded.phase_type,
+           is_deload = excluded.is_deload,
+           week_index = excluded.week_index`,
       )
-      .run(w.id, w.blockId, w.orderIndex, w.name ?? null);
+      .run(
+        w.id,
+        w.blockId,
+        w.orderIndex,
+        w.name ?? null,
+        w.phaseType ?? null,
+        w.isDeload ? 1 : 0,
+        w.weekIndex ?? null,
+      );
     return Promise.resolve();
   }
 
@@ -4437,8 +4451,11 @@ function rowToTrainingWeek(row: TrainingWeekRow): StoredTrainingWeek {
     id: row.id,
     blockId: row.block_id,
     orderIndex: row.order_index,
+    isDeload: row.is_deload !== 0,
   };
   if (row.name !== null) out.name = row.name;
+  if (row.phase_type !== null) out.phaseType = row.phase_type;
+  if (row.week_index !== null) out.weekIndex = row.week_index;
   return out;
 }
 

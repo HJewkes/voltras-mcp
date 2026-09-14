@@ -401,14 +401,36 @@ describe('plan.week.create', () => {
     expect(body.week.id).toBe('w-explicit');
     expect(body.week.name).toBe('Week 1');
   });
+
+  it('defaults isDeload to false and omits phaseType/weekIndex when not supplied', async () => {
+    const r = await h.invoke('plan.week.create', { blockId: 'b1', orderIndex: 0 });
+    const body = parseResult(r) as { week: StoredTrainingWeek };
+    expect(body.week.isDeload).toBe(false);
+    expect(body.week.phaseType).toBeUndefined();
+    expect(body.week.weekIndex).toBeUndefined();
+  });
+
+  it('persists phaseType, isDeload and weekIndex when supplied', async () => {
+    const r = await h.invoke('plan.week.create', {
+      blockId: 'b1',
+      orderIndex: 0,
+      phaseType: 'deload',
+      isDeload: true,
+      weekIndex: 4,
+    });
+    const body = parseResult(r) as { week: StoredTrainingWeek };
+    expect(body.week.phaseType).toBe('deload');
+    expect(body.week.isDeload).toBe(true);
+    expect(body.week.weekIndex).toBe(4);
+  });
 });
 
 describe('plan.week.list_for_block', () => {
   it('returns store-ordered weeks for a block', async () => {
     const h = setup();
     const weeks: StoredTrainingWeek[] = [
-      { id: 'w1', blockId: 'b1', orderIndex: 0 },
-      { id: 'w2', blockId: 'b1', orderIndex: 1 },
+      { id: 'w1', blockId: 'b1', orderIndex: 0, isDeload: false },
+      { id: 'w2', blockId: 'b1', orderIndex: 1, isDeload: true, phaseType: 'deload', weekIndex: 5 },
     ];
     h.store.getTrainingWeeksForBlock.mockResolvedValueOnce(weeks);
     const r = await h.invoke('plan.week.list_for_block', { blockId: 'b1' });
@@ -609,7 +631,7 @@ describe('plan deletion cascade (schema-level guarantee)', () => {
         name: 'Block',
         weeksCount: 1,
       });
-      await store.putTrainingWeek({ id: 'w1', blockId: 'b1', orderIndex: 0 });
+      await store.putTrainingWeek({ id: 'w1', blockId: 'b1', orderIndex: 0, isDeload: false });
       await store.putWorkoutTemplate({
         id: 't1',
         weekId: 'w1',

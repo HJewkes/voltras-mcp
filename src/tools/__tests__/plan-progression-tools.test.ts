@@ -240,7 +240,12 @@ const BLOCK_1: StoredTrainingBlock = {
   weeksCount: 1,
 };
 
-const WEEK_1: StoredTrainingWeek = { id: 'week-1', blockId: 'block-1', orderIndex: 0 };
+const WEEK_1: StoredTrainingWeek = {
+  id: 'week-1',
+  blockId: 'block-1',
+  orderIndex: 0,
+  isDeload: false,
+};
 
 const TMPL_1: StoredWorkoutTemplate = {
   id: 'tmpl-1',
@@ -494,7 +499,12 @@ const BLOCK_2: StoredTrainingBlock = {
   focus: 'strength',
   weeksCount: 1,
 };
-const WEEK_2: StoredTrainingWeek = { id: 'week-2', blockId: 'block-2', orderIndex: 0 };
+const WEEK_2: StoredTrainingWeek = {
+  id: 'week-2',
+  blockId: 'block-2',
+  orderIndex: 0,
+  isDeload: false,
+};
 const TMPL_3: StoredWorkoutTemplate = {
   id: 'tmpl-3',
   weekId: 'week-2',
@@ -509,7 +519,12 @@ const BLOCK_SOLO: StoredTrainingBlock = {
   name: 'Only Block',
   weeksCount: 1,
 };
-const WEEK_SOLO: StoredTrainingWeek = { id: 'week-solo', blockId: 'block-solo', orderIndex: 0 };
+const WEEK_SOLO: StoredTrainingWeek = {
+  id: 'week-solo',
+  blockId: 'block-solo',
+  orderIndex: 0,
+  isDeload: false,
+};
 const TMPL_SOLO: StoredWorkoutTemplate = {
   id: 'tmpl-solo',
   weekId: 'week-solo',

@@ -115,8 +115,11 @@ const PLAN_BLOCK_LIST_DESCRIPTION = 'List the blocks belonging to one program (t
 
 const PLAN_WEEK_CREATE_DESCRIPTION =
   'Create a week under a block — takes the parent blockId. A week holds one or more workout ' +
-  'templates.';
-const PLAN_WEEK_LIST_DESCRIPTION = 'List the weeks belonging to one block (takes blockId).';
+  'templates. Optional `phaseType` (free text, e.g. "deload"), `isDeload` (defaults false) and ' +
+  '`weekIndex` (the mesocycle week, distinct from `orderIndex`) are persisted when supplied.';
+const PLAN_WEEK_LIST_DESCRIPTION =
+  'List the weeks belonging to one block (takes blockId). Each week reports `phaseType`, ' +
+  '`isDeload` and `weekIndex` alongside its `orderIndex`.';
 
 const PLAN_TEMPLATE_CREATE_DESCRIPTION =
   'Create a workout template under a week — takes the parent weekId. A template holds one or ' +
@@ -478,7 +481,10 @@ async function createWeek(
     id: input.id ?? randomUUID(),
     blockId: input.blockId,
     orderIndex: input.orderIndex,
+    isDeload: input.isDeload ?? false,
     ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.phaseType !== undefined ? { phaseType: input.phaseType } : {}),
+    ...(input.weekIndex !== undefined ? { weekIndex: input.weekIndex } : {}),
   };
   await state.store.putTrainingWeek(week);
   return { week };

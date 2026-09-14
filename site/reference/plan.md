@@ -68,7 +68,7 @@ List the blocks belonging to one program (takes programId).
 
 Create a week under a block — takes the parent blockId.
 
-A week holds one or more workout templates.
+A week holds one or more workout templates. Optional `phaseType` (free text, e.g. "deload"), `isDeload` (defaults false) and `weekIndex` (the mesocycle week, distinct from `orderIndex`) are persisted when supplied.
 
 **Parameters**
 
@@ -76,10 +76,15 @@ A week holds one or more workout templates.
 - `blockId` — `string`, **required**.
 - `orderIndex` — `integer` (min 0), **required**.
 - `name` — `string`, optional.
+- `phaseType` — `string`, optional.
+- `isDeload` — `boolean`, optional.
+- `weekIndex` — `integer` (min 0), optional.
 
 ## `plan.week.list_for_block`
 
 List the weeks belonging to one block (takes blockId).
+
+Each week reports `phaseType`, `isDeload` and `weekIndex` alongside its `orderIndex`.
 
 **Parameters**
 

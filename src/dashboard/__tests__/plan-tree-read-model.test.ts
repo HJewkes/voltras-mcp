@@ -28,7 +28,13 @@ const BLOCK: StoredTrainingBlock = {
   name: 'Block 1',
   weeksCount: 4,
 };
-const WEEK: StoredTrainingWeek = { id: 'wk-1', blockId: 'blk-1', orderIndex: 0, name: 'Week 1' };
+const WEEK: StoredTrainingWeek = {
+  id: 'wk-1',
+  blockId: 'blk-1',
+  orderIndex: 0,
+  name: 'Week 1',
+  isDeload: false,
+};
 const TEMPLATE: StoredWorkoutTemplate = {
   id: 'tpl-1',
   weekId: 'wk-1',
@@ -86,6 +92,27 @@ describe('buildPlanTreeView', () => {
     expect(view.program?.blocks[0]?.weeks[0]?.templates[0]?.exercises[0]?.name).toBe(
       'mystery-lift',
     );
+  });
+
+  it('carries phaseType, isDeload and weekIndex on the week view (VW-326)', () => {
+    const week = {
+      ...WEEK,
+      phaseType: 'deload',
+      isDeload: true,
+      weekIndex: 4,
+    };
+    const rows = { ...rowsWith([]), weeksByBlock: new Map([['blk-1', [week]]]) };
+    const view = buildPlanTreeView(rows, nameOf).program?.blocks[0]?.weeks[0];
+    expect(view?.phaseType).toBe('deload');
+    expect(view?.isDeload).toBe(true);
+    expect(view?.weekIndex).toBe(4);
+  });
+
+  it('defaults isDeload to false and omits phaseType/weekIndex on a plain week', () => {
+    const view = buildPlanTreeView(rowsWith([]), nameOf).program?.blocks[0]?.weeks[0];
+    expect(view?.isDeload).toBe(false);
+    expect(view?.phaseType).toBeUndefined();
+    expect(view?.weekIndex).toBeUndefined();
   });
 
   it('flags a template that already has an assignment as completed', () => {

@@ -391,6 +391,12 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // result.
   'isPR',
   'priorBest',
+  // VW-326: the prescribed-phase fields on a `training_weeks` row, returned
+  // by `plan.week.create` and `plan.week.list_for_block` and carried on the
+  // dashboard plan-tree's week view.
+  'phaseType',
+  'isDeload',
+  'weekIndex',
 ];
 
 /**

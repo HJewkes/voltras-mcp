@@ -107,6 +107,13 @@ entry is written from the user's point of view is a review question, not a check
   detectable rather than silently rewriting historical per-muscle rollups. Internal only —
   no tool exposes the map or the field yet.
 
+- A training week now carries its prescribed phase (VW-326): `plan.week.create` accepts
+  optional `phaseType` (free text, e.g. "deload"), `isDeload` and `weekIndex` (the mesocycle
+  week, distinct from `orderIndex`), and `plan.week.list_for_block` and the wall dashboard's
+  plan-tree view return them alongside the rest of the week. `isDeload` defaults to `false`
+  and `phaseType`/`weekIndex` are omitted when not set. No migration: the columns already
+  existed unused since v6.
+
 - `metrics.compute`'s `strength.e1rm` result now reports `isPR` and `priorBest` (VW-314):
   whether the fresh estimate beats this exercise's own best e1RM on record, and what that
   prior best was. It shares its comparison with the dashboard hero card's PR chip through
