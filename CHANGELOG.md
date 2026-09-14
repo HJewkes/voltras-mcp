@@ -62,6 +62,21 @@ entry is written from the user's point of view is a review question, not a check
   here: it is what a future rate advisory will use to tell an intake problem from an
   activity one. Sleep is recorded for context only and never drives anything on its own.
 
+- A long-running recomposition now gets asked, once, whether it is still the right label
+  (VW-369). At a block boundary, `plan.complete_workout` and `plan.next_workout` carry a
+  `recompReAsk` alongside the goal re-ask. It speaks up on any of three things: the phase
+  has run through its second block boundary, you are down 7% or 10% of the weight you
+  started the phase at, or you have reported yourself a rung leaner than you did at the
+  start. It offers a switch to a declared fat-loss or gain phase, or keeping the
+  recomposition on the target you declared, and `profile.respond_recomp_advisory` files
+  your answer.
+
+  **Nothing about your phase changes either way.** The declared phase is a record of what
+  you were doing, so the server never rewrites it: accepting records that you agreed, and
+  `profile.set_diet_phase` is still the only thing that switches a phase. Decline it and
+  the same evidence is not raised again until a later block boundary or a stronger signal.
+  When it stays quiet it says which test it failed, so silence is never ambiguous.
+
 - A recomposition now has a bodyweight target you declare, and it decides what "on track"
   means from week 1 (VW-378). `profile.set_diet_phase` requires `recompMode` whenever the
   phase is `recomposition`: `hold` to stay inside the maintenance corridor of plus or minus

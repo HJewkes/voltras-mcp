@@ -210,3 +210,16 @@ export const ProfileGetWeeklyCheckinInput = z
     weekOf: z.string().date().optional(),
   })
   .strict();
+
+// `profile.respond_recomp_advisory` (VW-369) — the accept/decline half of the
+// recomposition re-ask `plan.complete_workout` reports as
+// `blockBoundary.recompReAsk`.
+//
+// NEITHER ANSWER SWITCHES A PHASE. `profile.set_diet_phase` stays the only
+// writer of an observed phase, so accepting records agreement and nothing else;
+// declining is what stops the same evidence being offered again.
+export const ProfileRespondRecompAdvisoryInput = z
+  .object({
+    response: z.enum(['accepted', 'declined']),
+  })
+  .strict();

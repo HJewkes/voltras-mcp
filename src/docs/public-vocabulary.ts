@@ -472,6 +472,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'committedUnchanged',
   'readingCount',
   'reviewedAt',
+  // VW-369: the recomposition re-ask, also on `blockBoundary`. `proposal` is
+  // null whenever `silentReason` says why nothing was offered.
+  'recompReAsk',
+  'silentReason',
 ];
 
 /**

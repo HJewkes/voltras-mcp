@@ -26,7 +26,7 @@ is the description a client actually sees.
 | [`progression.*`](./progression)       | 1     | always registered |
 | [`isometric.*`](./isometric)           | 3     | always registered |
 | [`plan.*`](./plan)                     | 18    | always registered |
-| [`profile.*`](./profile)               | 10    | always registered |
+| [`profile.*`](./profile)               | 11    | always registered |
 | [`baselines.*`](./baselines)           | 2     | always registered |
 | [`driftguard.*`](./driftguard)         | 1     | always registered |
 | [`mrvguard.*`](./mrvguard)             | 1     | always registered |
