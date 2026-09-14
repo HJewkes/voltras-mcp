@@ -24,14 +24,23 @@
 // `LOCAL_USER_ID` for the profile row. Revisit this the day `sessions` gets a
 // real per-session `user_id` writer.
 
-import type { ServerState } from '../state/server-state.js';
-import { LOCAL_USER_ID } from '../store/types.js';
+import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
 
 export type TierConfidence = 'provisional' | 'confident';
 
 export type TierSource = 'default' | 'declared' | 'derived';
+
+/**
+ * The store slice `getTierSignal` reads. Declared narrow (rather than
+ * `ServerState`) so a non-tool caller — the goal-progress dashboard route,
+ * VW-352 — can satisfy it without fabricating a whole server state; the MCP
+ * tool path's `ServerState` still satisfies it structurally.
+ */
+export interface TierSignalState {
+  store: Pick<SessionStore, 'getTrainingProfile' | 'countSessions' | 'getSessionDateSpan'>;
+}
 
 export interface TierSignalEvidence {
   sessionsLogged: number;
@@ -94,7 +103,7 @@ function weeksBetween(first: string | null, last: string | null): number {
  * returns the clamped `tier`.)
  */
 export async function getTierSignal(
-  state: ServerState,
+  state: TierSignalState,
   userId: string = LOCAL_USER_ID,
 ): Promise<TierSignal> {
   const profile = await state.store.getTrainingProfile(userId);

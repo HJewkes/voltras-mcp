@@ -18,17 +18,41 @@ import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-
 import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
-import type { ServerState } from '../state/server-state.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import {
   LOCAL_USER_ID,
   type BaselineState,
+  type SessionStore,
   type StoredPriority,
   type StoredSet,
 } from '../store/types.js';
 import { readDietPhaseState } from './diet-phase-state.js';
 import { computeHistoryTrend } from './metrics-tools.js';
 import { getTierSignal, type Tier } from './tier-signal.js';
+
+/**
+ * The store slice this module reads. Declared narrow (rather than
+ * `ServerState`) so a non-tool caller — the goal-progress dashboard route,
+ * VW-352 — can re-derive a band without fabricating a whole server state; the
+ * MCP tool path's `ServerState` still satisfies it structurally.
+ */
+export interface GoalDerivationState {
+  store: Pick<
+    SessionStore,
+    | 'getTrainingProfile'
+    | 'countSessions'
+    | 'getSessionDateSpan'
+    | 'getTrainingWeeksForBlock'
+    | 'getDietPhaseCovering'
+    | 'listSessions'
+    | 'getTrainingBlock'
+    | 'getTrainingBlocksForProgram'
+    | 'listBodyMetrics'
+    | 'getSetsForExercise'
+    | 'getBaseline'
+    | 'chapterStartedAt'
+  >;
+}
 
 /** A gap of this long makes the next mesocycle a return, not a continuation. rp:rp-s7-early-strength-gains-not-pure-muscle-signal */
 const LAYOFF_GAP_DAYS = 90;
@@ -88,7 +112,7 @@ export interface DerivedTarget {
 }
 
 export async function readDerivationContext(
-  state: ServerState,
+  state: GoalDerivationState,
   priority: StoredPriority,
 ): Promise<GoalDerivationContext> {
   const derivedAt = new Date().toISOString();
@@ -124,7 +148,7 @@ export async function readDerivationContext(
  * the note says the deloads in it are unknown rather than absent.
  */
 async function readHorizonWeeks(
-  state: ServerState,
+  state: GoalDerivationState,
   priority: StoredPriority,
   notes: string[],
 ): Promise<GoalBandWeek[]> {
@@ -152,7 +176,7 @@ async function readHorizonWeeks(
  * a regain phase over-projects, and the timeline is what shows the gap
  * (plan §1.10).
  */
-async function hasRecentLayoff(state: ServerState): Promise<boolean> {
+async function hasRecentLayoff(state: GoalDerivationState): Promise<boolean> {
   const sessions = await state.store.listSessions({ sort: 'startedAt:asc', limit: 500 });
   const starts = sessions.map((session) => Date.parse(session.startedAt));
   let lastGapEndedAt: number | null = null;
@@ -174,7 +198,10 @@ async function hasRecentLayoff(state: ServerState): Promise<boolean> {
  * exactly what the `own` gate exists to keep out of a projection
  * (rp:rp-s5-intermediate-overplanning-risk).
  */
-async function countCompletedMesos(state: ServerState, priority: StoredPriority): Promise<number> {
+async function countCompletedMesos(
+  state: GoalDerivationState,
+  priority: StoredPriority,
+): Promise<number> {
   if (priority.blockId === undefined) return 0;
   const block = await state.store.getTrainingBlock(priority.blockId);
   if (block === undefined) return 0;
@@ -184,7 +211,7 @@ async function countCompletedMesos(state: ServerState, priority: StoredPriority)
 
 /** Derive one gain leg, or say why it has no band. */
 export async function deriveTarget(
-  state: ServerState,
+  state: GoalDerivationState,
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
@@ -206,7 +233,7 @@ function skipComposite(selection: GoalGainMetric): SkippedMetric {
 }
 
 async function deriveBodyweight(
-  state: ServerState,
+  state: GoalDerivationState,
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
@@ -231,7 +258,7 @@ async function deriveBodyweight(
 }
 
 async function deriveSessionCount(
-  state: ServerState,
+  state: GoalDerivationState,
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
@@ -270,7 +297,7 @@ function noStartValue(selection: GoalGainMetric, reason: string): SkippedMetric 
 }
 
 async function deriveLiftTarget(
-  state: ServerState,
+  state: GoalDerivationState,
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
@@ -310,7 +337,7 @@ async function deriveLiftTarget(
  * only — this leg is shown with its band and never stored as a target.
  */
 async function deriveE1rmContext(
-  state: ServerState,
+  state: GoalDerivationState,
   context: GoalDerivationContext,
   selection: GoalGainMetric,
   exerciseId: string,
@@ -347,7 +374,7 @@ async function deriveE1rmContext(
  * own slope, which the band's own gate then reports as a downgrade.
  */
 async function readOwnSlope(
-  state: ServerState,
+  state: GoalDerivationState,
   exerciseId: string,
   startValue: number,
 ): Promise<{ ownSlope?: GoalBandInput['ownSlope'] }> {
@@ -372,7 +399,7 @@ async function readOwnSlope(
  * number the reform was meant to retire.
  */
 async function tryHistoryTrend(
-  state: ServerState,
+  state: GoalDerivationState,
   exerciseId: string,
   metric: 'topLoad' | 'e1rm' = 'topLoad',
 ): Promise<FittedHistoryTrend | null> {
