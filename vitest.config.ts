@@ -2,6 +2,13 @@ import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import {
+  reactNativeBodyHighlighterEsm,
+  reactNativeSvgWebResolver,
+  svgWebAliases,
+  webResolveExtensions,
+} from './src/dashboard/spa/vite-rn-svg-plugins';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Spawns a real child process and waits on a boot-readiness line; under full-suite
@@ -10,12 +17,20 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const LAUNCHER_TEST_FILE = 'src/__tests__/launcher.test.ts';
 const ALL_TESTS_GLOB = 'src/**/*.{test,spec}.ts';
 
-const alias = {
-  '@': resolve(__dirname, 'src'),
-  // The SPA is react-native-web; the same alias `src/dashboard/spa/vite.config.ts`
+const alias = [
+  { find: '@', replacement: resolve(__dirname, 'src') },
+  // The SPA is react-native-web; the same aliases `src/dashboard/spa/vite.config.ts`
   // sets, so a test can render an SPA component with `renderToStaticMarkup`.
-  'react-native': 'react-native-web',
-};
+  ...svgWebAliases,
+  { find: /^react-native$/, replacement: 'react-native-web' },
+];
+
+// `@titan-design/react-ui/bodymap` (GoalMuscleCard) reaches react-native-svg and
+// react-native-body-highlighter, neither of which parses or resolves on web
+// unaided — see the plugin docs. Repeated per project: a project is its own Vite
+// config and inherits neither plugins nor resolution from the root.
+const plugins = [reactNativeSvgWebResolver(), reactNativeBodyHighlighterEsm()];
+const resolution = { alias, extensions: webResolveExtensions };
 
 // Vitest's project `extends` merges arrays (via Vite's mergeConfig) rather than
 // replacing them, so an `extends: true` project's `include` would concatenate with
@@ -28,19 +43,28 @@ const server = {
     // loader; inlining lets vitest transform it into a CJS-style module so tests
     // can `vi.spyOn(analytics, 'foo')` instead of rewriting every call to a
     // `vi.mock(...)` factory.
-    inline: ['@voltras/workout-analytics', '@titan-design/react-ui'],
+    // react-native-svg is inlined for the same reason the plugins exist: an
+    // externalised copy would load its native Flow sources under Node.
+    inline: [
+      '@voltras/workout-analytics',
+      '@titan-design/react-ui',
+      'react-native-svg',
+      'react-native-body-highlighter',
+    ],
   },
 };
 
 export default defineConfig({
-  resolve: { alias },
+  plugins,
+  resolve: resolution,
   test: {
     environment: 'node',
     globals: false,
     include: [ALL_TESTS_GLOB],
     projects: [
       {
-        resolve: { alias },
+        plugins,
+        resolve: resolution,
         test: {
           name: 'unit',
           environment: 'node',
@@ -51,7 +75,8 @@ export default defineConfig({
         },
       },
       {
-        resolve: { alias },
+        plugins,
+        resolve: resolution,
         test: {
           name: 'launcher',
           environment: 'node',

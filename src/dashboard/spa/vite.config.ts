@@ -1,7 +1,12 @@
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { webResolveExtensions } from './vite-rn-svg-plugins';
+import {
+  reactNativeBodyHighlighterEsm,
+  reactNativeSvgWebResolver,
+  svgWebAliases,
+  webResolveExtensions,
+} from './vite-rn-svg-plugins';
 
 /**
  * Vite config for the dashboard SPA (VMCP-01.44).
@@ -62,12 +67,20 @@ export default defineConfig({
   // shim it to `globalThis` (the standard react-native-web-on-Vite fix). esbuild
   // only rewrites bare `global` identifier reads, not `.global` property access.
   define: { global: 'globalThis' },
-  plugins: [stripCssInteropDoctorJsx(), react()],
+  plugins: [
+    stripCssInteropDoctorJsx(),
+    reactNativeSvgWebResolver(),
+    reactNativeBodyHighlighterEsm(),
+    react(),
+  ],
   css: {
     postcss: __dirname,
   },
+  // Pre-bundling would run esbuild's own resolver, which never sees the two
+  // plugins above; exclude both so the plugins own their resolution in dev too.
+  optimizeDeps: { exclude: ['react-native-svg', 'react-native-body-highlighter'] },
   resolve: {
-    alias: [{ find: /^react-native$/, replacement: 'react-native-web' }],
+    alias: [...svgWebAliases, { find: /^react-native$/, replacement: 'react-native-web' }],
     extensions: webResolveExtensions,
   },
   build: {
