@@ -8,9 +8,13 @@
  *
  * ── Layout ───────────────────────────────────────────────────────────────
  * Wall only (phone is VW-356): priority header + `GoalTrajectoryChart` +
- * milestone tiles, then a per-lift table, then muscle rollup rows, then a
- * whole-body panel with the priority rail and the bodyweight tile. Sections
- * come from plan G8'/§4, not invented here.
+ * milestone tiles, then a grid of `GoalLiftCard`, then a grid of
+ * `GoalMuscleCard`, then a whole-body panel with the priority rail and the
+ * bodyweight tile. Sections come from plan G8'/§4, not invented here.
+ *
+ * The two grids replaced full-width rows whose label and data sat at opposite
+ * edges of a 1920px viewport (VW-386, human 2026-09-14). Each card carries its
+ * own `Card` plane, so the grid itself adds only geometry.
  *
  * LAYOUT via `style`, never `className` — same rule as the planner pages;
  * titan components are react-native-web Views that silently drop Tailwind
@@ -19,17 +23,17 @@
  */
 import React from 'react';
 import {
-  Caption,
   EmptyState,
+  GoalLiftCard,
   GoalTrajectoryChart,
   MesoStatusCard,
   MetricTiles,
   Pill,
   PrBadge,
   Surface,
-  Typography,
   type MetricTileData,
 } from '@titan-design/react-ui';
+import { GoalMuscleCard } from '@titan-design/react-ui/bodymap';
 
 import type { StoredPriorityLevel } from '../../../store/types.js';
 import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
@@ -37,18 +41,22 @@ import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import {
   bodyweightTarget,
+  cardActuals,
+  cardMilestone,
   chartWeeks,
   dateOnly,
   directionOf,
+  hasPR,
   liftRows,
   mesoSubtitle,
-  muscleRollupRows,
+  muscleCardRows,
   priorityLabel,
   primaryTarget,
   sessionsTarget,
   statusBadgeVariant,
   statusLabel,
   targetLabel,
+  type GoalMuscleCardRow,
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
@@ -74,8 +82,8 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
       {primary !== null && <PrimaryGoalCard row={primary} />}
-      <PerLiftTable rows={liftRows(data)} />
-      <MuscleRollupPanel rows={muscleRollupRows(data)} />
+      <PerLiftGrid rows={liftRows(data)} />
+      <MuscleGrid rows={muscleCardRows(data)} />
       <WholeBodyPanel data={data} />
     </Surface>
   );
@@ -125,73 +133,74 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
   );
 }
 
-/** One row per exercise-tracked target (`top_load_at_reps`). */
-function PerLiftTable(props: { rows: GoalTargetRow[] }): React.JSX.Element | null {
+/**
+ * Four columns at 1920 and never narrower than the width below which the cards
+ * collapse their own status pill. `flex-*` classNames are not an option here:
+ * these grids sit inside react-native-web Views, which drop Tailwind layout
+ * utilities, so the geometry is inline `style` (same rule as the planner pages).
+ */
+const CARD_GRID: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: SPACE.md,
+  alignItems: 'stretch',
+};
+
+// Four 25% columns and three gaps come to exactly 100% of the row. `flexGrow`
+// stays 0 so a short last row keeps the column width instead of a lone card
+// stretching to the full 1780px the wall gives it.
+const CARD_CELL: React.CSSProperties = {
+  flexGrow: 0,
+  flexBasis: `calc(25% - ${(SPACE.md * 3) / 4}px)`,
+  minWidth: 320,
+};
+
+/** One card per exercise-tracked target (`top_load_at_reps`). */
+function PerLiftGrid(props: { rows: GoalTargetRow[] }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
     <PanelCard title="Per-lift">
-      {props.rows.map((row) => (
-        <div
-          key={row.view.target.id}
-          style={{
-            display: 'flex',
-            gap: SPACE.sm,
-            alignItems: 'center',
-            paddingTop: SPACE.xs,
-            paddingBottom: SPACE.xs,
-          }}
-        >
-          <div style={{ flex: '1 1 0', minWidth: 0 }}>
-            <Typography variant="body2">{targetLabel(row)}</Typography>
+      <div style={CARD_GRID}>
+        {props.rows.map((row) => (
+          <div key={row.view.target.id} style={CARD_CELL}>
+            <GoalLiftCard
+              name={targetLabel(row)}
+              status={row.view.status}
+              milestone={cardMilestone(row.view)}
+              committed={row.view.committed}
+              stretch={row.view.stretch}
+              actuals={cardActuals(row.view)}
+              isPR={hasPR(row.view)}
+            />
           </div>
-          <div style={{ width: 140 }}>
-            <Pill tone={statusBadgeVariant(row.view.status)} size="sm">
-              {statusLabel(row.view.status)}
-            </Pill>
-          </div>
-          <div style={{ width: 220 }}>
-            <Caption color="tertiary">{row.view.nextMilestone.label}</Caption>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </PanelCard>
   );
 }
 
-/** One row per `muscle`-kind priority, from its already-computed rollup. */
-function MuscleRollupPanel(props: {
-  rows: ReturnType<typeof muscleRollupRows>;
-}): React.JSX.Element | null {
-  const withRollup = props.rows.flatMap((row) =>
-    row.rollup === null ? [] : [{ priority: row.priority, rollup: row.rollup }],
-  );
-  if (withRollup.length === 0) return null;
+/** One card per `muscle`-kind priority, from its rollup and its contributing lifts. */
+function MuscleGrid(props: { rows: GoalMuscleCardRow[] }): React.JSX.Element | null {
+  if (props.rows.length === 0) return null;
   return (
     <PanelCard title="Muscle priorities">
-      {withRollup.map(({ priority, rollup }) => (
-        <div
-          key={priority.id}
-          style={{
-            display: 'flex',
-            gap: SPACE.sm,
-            alignItems: 'center',
-            paddingTop: SPACE.xs,
-            paddingBottom: SPACE.xs,
-          }}
-        >
-          <div style={{ flex: '1 1 0', minWidth: 0 }}>
-            <Typography variant="body2">{priorityLabel(priority)}</Typography>
+      <div style={CARD_GRID}>
+        {props.rows.map((row) => (
+          <div key={row.priority.id} style={CARD_CELL}>
+            <GoalMuscleCard
+              name={priorityLabel(row.priority)}
+              muscle={row.muscle}
+              side={row.side}
+              status={row.rollup.status}
+              liftsOnTrack={row.rollup.progressingCount}
+              liftsTotal={row.rollup.targetCount}
+              commonGoalWeek={row.commonGoalWeek}
+              lifts={row.lifts}
+            />
           </div>
-          <div style={{ width: 140 }}>
-            <Pill tone={statusBadgeVariant(rollup.status)} size="sm">
-              {statusLabel(rollup.status)}
-            </Pill>
-          </div>
-          <div style={{ width: 260 }}>
-            <Caption color="tertiary">{rollup.summary}</Caption>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </PanelCard>
   );
 }
