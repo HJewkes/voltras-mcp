@@ -1,4 +1,4 @@
-// Render test for the `#/goals` wall page (VW-355, plan G8').
+// Render test for the `#/goals` wall page (VW-355, plan G8'; card grids VW-386).
 //
 // Builds real `GoalProgressView`s with `buildGoalProgressView` (the same
 // function `/api/goal-progress` calls) over literal bands, so the fixtures are
@@ -179,18 +179,57 @@ function render(data: GoalsPageData): string {
   return renderToStaticMarkup(createElement(GoalsView, { data }));
 }
 
+/**
+ * One card's markup, from its own accessible label up to the next card's. The
+ * cards publish `aria-label="<name> goal, <status>"`, which is the only handle
+ * that survives their react-native-web class soup — and the one that says the
+ * PR star belongs to THIS card rather than to some ancestor's PrBadge.
+ */
+function cardMarkup(html: string, label: string): string {
+  const start = html.indexOf(`aria-label="${label}"`);
+  expect(start).toBeGreaterThan(-1);
+  const labels = [...html.matchAll(/aria-label="[^"]*goal[^"]*"/g)].map((m) => m.index);
+  return html.slice(start, labels.find((index) => index > start) ?? html.length);
+}
+
 describe('GoalsView (VW-355)', () => {
-  it('renders the priority header, per-lift table, muscle rollup and whole-body sections', () => {
+  it('renders the priority header, both card grids and the whole-body section', () => {
     const html = render(baseData().data);
 
     expect(html).toContain('BENCH PRESS'); // priority header
     expect(html).toContain('Committed'); // MesoStatusCard metrics
-    expect(html).toContain('CURL'); // per-lift table row
-    expect(html).toContain('HAMMER CURL');
-    expect(html).toContain('BICEPS'); // muscle rollup row
-    expect(html).toContain('lifts on track');
+    expect(html).toContain('Per-lift');
+    expect(html).toContain('Muscle priorities');
     expect(html).toContain('Whole body');
     expect(html).toContain('Sessions (28d)');
+  });
+
+  it('renders one lift card per exercise-tracked target, with its next milestone', () => {
+    const html = render(baseData().data);
+
+    expect(html).toContain('aria-label="BENCH PRESS goal, On track"');
+    expect(html).toContain('aria-label="CURL goal, Behind"');
+    expect(html).toContain('aria-label="HAMMER CURL goal, Behind"');
+    // reps x load, then the unit — the structured milestone from #433, not a parsed label.
+    expect(cardMarkup(html, 'CURL goal, Behind')).toContain('8 x 177.5');
+    expect(cardMarkup(html, 'CURL goal, Behind')).toContain('lb');
+  });
+
+  it('marks the PR on the lift card that set one, and only that card', () => {
+    const html = render(baseData().data);
+
+    expect(cardMarkup(html, 'BENCH PRESS goal, On track')).toContain('Personal record');
+    expect(cardMarkup(html, 'CURL goal, Behind')).not.toContain('Personal record');
+  });
+
+  it('renders a muscle card with its figure, on-track count and contributing lifts', () => {
+    const html = render(baseData().data);
+    const card = cardMarkup(html, 'BICEPS goal rollup, Behind');
+
+    expect(card).toContain('Biceps highlighted on the body map');
+    expect(card).toContain('0/2 on track');
+    expect(card).toContain('CURL');
+    expect(card).toContain('HAMMER CURL');
   });
 
   it('hides the bodyweight tile with no bodyweight target at all (VW-327 not landed)', () => {

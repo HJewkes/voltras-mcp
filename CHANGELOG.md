@@ -198,6 +198,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The goals page now shows each lift and each muscle priority as its own card rather than as a
+  full-width row (VW-386, titan 0.16.0). A lift card leads with the next milestone as reps by
+  load, says which week it is due, carries its status in the upper right, and draws the
+  trajectory against the committed and stretch lines across the whole mesocycle — so the label
+  and the numbers sit together instead of at opposite edges of a wall display. A personal
+  record is marked with a star on the card that set it. A muscle card lights that muscle on a
+  small figure, says how many of its lifts are on track, and lists each contributing lift with
+  its own next milestone; a lift due in a different week than the rest says so, and the others
+  stay quiet. The cards lay out four across at 1920 and reflow below that.
+
 - The dashboard now draws on titan 0.15.0 (VW-345, #431). Status badges on the planner page sit
   on a wider pill — 12px of padding either side instead of 8, and 4px above and below
   instead of 2 — so a label like `completed` reads as a chip rather than as tight text.
