@@ -1,5 +1,5 @@
 {
-  "definitionHash": "031b5376cb1ece3b81ad7e4621fa836defc93207dcd005d35d920b428fa80014",
+  "definitionHash": "4b4beb8dccd56410dcec01c16b613ffc8b4ddc5fc023e01316906dfb9782b1c4",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -173,6 +173,36 @@
       "height": 900,
       "bytes": 323424,
       "sha256": "d49487ac80fbbaeb47e4ed97f1b58805fca50b76034aa3a41ecce4f0fe3d8467"
+    },
+    {
+      "name": "body-week",
+      "scenario": "body",
+      "route": "/app#/body",
+      "caption": "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "file": "body-week.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 18
+      },
+      "assertedText": [
+        "Next up",
+        "Recent PRs",
+        "This week",
+        "Legend",
+        "Weekly sets by muscle"
+      ],
+      "assertedValues": [
+        "SETS 32 MUSCLES 7 PRODUCTIVE 1",
+        "BELOW MEV 11 OVER MRV 0",
+        "Chest 15/14",
+        "Lats 4/14",
+        "Cable Chest Press Chest 221.7 lb (+12.7)",
+        "Cable Lat Pulldown Pull B 4 sets"
+      ],
+      "width": 1920,
+      "height": 1080,
+      "bytes": 201918,
+      "sha256": "a0553719b29baa158a71011c7e61efb65e3bdf6cbdab81696997eb541d28e0ec"
     }
   ],
   "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",

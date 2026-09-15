@@ -53,6 +53,7 @@ import { DashboardChrome } from './panels/DashboardChrome';
 import { PlanBuilderPage } from './planner/PlanBuilderPage';
 import { SessionSummaryPage } from './planner/SessionSummaryPage';
 import { GoalsPage } from './goals/GoalsPage';
+import { BodyPage } from './body/BodyPage';
 import type { PrescriptionView } from './adapter';
 
 // Reconciliation backstop (VMCP-03.04): structural changes now arrive instantly via
@@ -167,6 +168,8 @@ function RoutePage(): React.JSX.Element | null {
       return <SessionSummaryPage sessionId={route.sessionId} />;
     case 'goals':
       return <GoalsPage />;
+    case 'body':
+      return <BodyPage />;
     case 'live':
       return null;
   }

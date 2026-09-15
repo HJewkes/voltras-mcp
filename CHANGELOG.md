@@ -39,6 +39,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The dashboard has a fourth page: `#/body`, reached from the Body item on the nav rail,
+  which has been in the rail's source since the shell landed and filtered out until now
+  (VW-338). It shows the week at a glance on two body figures — front and back, each muscle
+  filled by where its weekly working sets sit against the population MEV/MAV/MRV landmarks —
+  with the lifts the current training week still owes, the personal records the strength read
+  found, the week's set and muscle counts, and a strip of all fifteen muscles with sets
+  against target. The landmarks are labelled as population defaults on the page, because they
+  are: nothing here is fitted to you. The page shows no live telemetry at all; a set running
+  while it is open cues the Live rail item instead.
 - PR stars now actually appear on the goals page (VW-384). A reading on a lift target is a
   personal record when it is strictly greater than every earlier reading for that lift
   inside the window the page already shows — `history.trend`'s lookback, clamped to a

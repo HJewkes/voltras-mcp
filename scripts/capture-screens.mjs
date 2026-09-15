@@ -357,8 +357,12 @@ function pngDimensions(file) {
  * `holdsPageOpen` decides which side of the predicate the route is opened on,
  * and the definition explains why each shot picks the side it does.
  */
-async function captureShot(page, origin, port, shot, outDir) {
+async function captureShot(page, origin, port, shot, defs, outDir) {
   const target = `${origin}${shot.route}`;
+  // Per-shot geometry: the body page is laid out for a 1920x1080 wall and is
+  // cropped at the default size. Set unconditionally so the shot AFTER an
+  // override goes back to the default rather than inheriting it.
+  await page.setViewportSize({ ...defs.viewportFor(shot) });
   const open = async () => {
     if (page.url() === target) await page.reload({ waitUntil: 'networkidle' });
     else await page.goto(target, { waitUntil: 'networkidle' });
@@ -784,7 +788,7 @@ async function captureShots(browser, shots, defs, dbDir, outDir) {
     try {
       const origin = `http://127.0.0.1:${scene.port}`;
       for (const shot of wanted) {
-        captured.push(await captureShot(page, origin, scene.port, shot, outDir));
+        captured.push(await captureShot(page, origin, scene.port, shot, defs, outDir));
       }
     } catch (err) {
       throw new Error(`${scenario.name}: ${err.message}\n--- driver output ---\n${scene.tail()}`);
