@@ -66,6 +66,20 @@ function storedSet(over: Partial<StoredSet> & { id: string }): StoredSet {
   } as StoredSet;
 }
 
+/** One working set per named week, so each lands in its own weekly bucket. */
+function historyAt(exerciseId: string, readings: { daysBack: number; weightLbs: number }[]) {
+  return readings.map((reading, index) =>
+    storedSet({
+      id: `${exerciseId}-at-${index}`,
+      sessionId: `ses-${exerciseId}-at-${index}`,
+      exerciseId,
+      startedAt: daysAgo(reading.daysBack),
+      endedAt: daysAgo(reading.daysBack),
+      weightLbs: reading.weightLbs,
+    }),
+  );
+}
+
 /** A month of weekly working sets, so `history.trend` has points to fit. */
 function weeklyHistory(exerciseId: string): StoredSet[] {
   return [0, 1, 2, 3].map((week) =>
@@ -210,6 +224,7 @@ interface GoalProgressBody {
     priority: { id: string };
     target: { id: string };
     status: string;
+    actuals: { ts: string; value: number; isPR: boolean }[];
     nextMilestone: {
       label: string;
       value: number;
@@ -258,6 +273,86 @@ describe('GET /api/goal-progress', () => {
       goalWeek: expect.any(Number),
     });
     expect(milestone?.goalWeek).toBe(milestone?.dueWeek);
+  });
+
+  it('marks the reading that passed every earlier one in the window, and only that one', async () => {
+    const pri = priority({ id: 'pri-1' });
+    const tgt = target({ id: 'tgt-1', priorityId: 'pri-1' });
+    const store = new FakeStore(
+      [pri],
+      [tgt],
+      historyAt('bench-press', [
+        { daysBack: 21, weightLbs: 180 },
+        { daysBack: 14, weightLbs: 175 },
+        { daysBack: 7, weightLbs: 185 },
+      ]),
+    );
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goal-progress?priorityId=pri-1')).body as GoalProgressBody;
+
+    expect(body.targets[0]?.actuals.map((a) => [a.value, a.isPR])).toEqual([
+      [180, false],
+      [175, false],
+      [185, true],
+    ]);
+  });
+
+  it('does not call a repeated load a record', async () => {
+    const pri = priority({ id: 'pri-1' });
+    const tgt = target({ id: 'tgt-1', priorityId: 'pri-1' });
+    const store = new FakeStore(
+      [pri],
+      [tgt],
+      historyAt('bench-press', [
+        { daysBack: 14, weightLbs: 180 },
+        { daysBack: 7, weightLbs: 180 },
+      ]),
+    );
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goal-progress?priorityId=pri-1')).body as GoalProgressBody;
+
+    expect(body.targets[0]?.actuals.map((a) => a.isPR)).toEqual([false, false]);
+  });
+
+  it('does not treat a load from before the lookback window as an earlier reading', async () => {
+    const pri = priority({ id: 'pri-1' });
+    const tgt = target({ id: 'tgt-1', priorityId: 'pri-1' });
+    const store = new FakeStore(
+      [pri],
+      [tgt],
+      historyAt('bench-press', [
+        { daysBack: 140, weightLbs: 400 },
+        { daysBack: 14, weightLbs: 180 },
+        { daysBack: 7, weightLbs: 185 },
+      ]),
+    );
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goal-progress?priorityId=pri-1')).body as GoalProgressBody;
+
+    expect(body.targets[0]?.actuals.map((a) => [a.value, a.isPR])).toEqual([
+      [180, false],
+      [185, true],
+    ]);
+  });
+
+  it('never marks a rolling session count as a record', async () => {
+    const pri = priority({ id: 'pri-1', kind: 'muscle', ref: 'chest' });
+    const tgt = target({
+      id: 'tgt-1',
+      priorityId: 'pri-1',
+      metric: 'sessions_28d',
+      exerciseId: undefined,
+      anchorReps: undefined,
+    });
+    const store = new FakeStore([pri], [tgt], weeklyHistory('bench-press'));
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goal-progress?priorityId=pri-1')).body as GoalProgressBody;
+
+    expect(body.targets[0]?.actuals.every((a) => a.isPR === false)).toBe(true);
   });
 
   it('404s the plan-tree shape for an unknown priorityId', async () => {

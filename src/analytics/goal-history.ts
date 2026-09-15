@@ -59,6 +59,48 @@ export function topLoadAtReps(
   };
 }
 
+/** One reading of a tracked metric, in the shape `history.trend` reports its series. */
+export interface MetricReading {
+  ts: string;
+  value: number;
+}
+
+/** A reading with the personal-record verdict this module put on it. */
+export interface PersonalRecordReading extends MetricReading {
+  isPR: boolean;
+}
+
+/**
+ * Which readings are personal records: a reading is one when it is strictly
+ * greater than every EARLIER reading in the same series (VW-384).
+ *
+ * THE SERIES IS THE WINDOW. Callers pass `history.trend`'s own series, which is
+ * already clamped to its lookback window and to a declared chapter boundary
+ * (`tools/metrics-tools.ts`), so a reading that fell out of that window is not
+ * "earlier" — it is not in the comparison at all. That is what the clamp is
+ * for: loads set before a technique reform are not the record to beat
+ * (rp:rp-s3-old-prs-irrelevant-reframe).
+ *
+ * STRICTLY GREATER, AND NEVER THE FIRST READING. Equalling a load repeats a
+ * performance rather than passing it, and the first reading in the window has
+ * nothing behind it to beat. Both match `evaluateE1RMPr`'s contract
+ * (`analytics/e1rm-pr.ts`), so the two personal-record verdicts this system
+ * makes cannot disagree about what the word means.
+ *
+ * `ts` decides which readings are earlier, never array position, so an
+ * out-of-order series reads the same as a sorted one.
+ */
+export function markPersonalRecords(series: readonly MetricReading[]): PersonalRecordReading[] {
+  return series.map((reading) => {
+    const earlier = series.filter((other) => other.ts < reading.ts);
+    return {
+      ts: reading.ts,
+      value: reading.value,
+      isPR: earlier.length > 0 && earlier.every((other) => reading.value > other.value),
+    };
+  });
+}
+
 /**
  * The rep count this lifter works at most often on these sets, or `null` when
  * there are none.
