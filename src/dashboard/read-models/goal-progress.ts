@@ -205,6 +205,14 @@ export interface GoalMilestone {
   label: string;
   value: number;
   dueWeek: number;
+  /** The target's own rep anchor for `top_load_at_reps`; mirrors `load` for every other metric. */
+  reps: number;
+  /** The waypoint's rounded value — the same number `label` prints, sourced from the target, not from it. */
+  load: number;
+  /** Every stored value in this system is pounds (VW-230); no per-user kg preference exists yet. */
+  unit: 'lb' | 'kg';
+  /** Same as `dueWeek`, named for the card's own field (VW-386, additive). */
+  goalWeek: number;
 }
 
 export interface GoalConfounder {
@@ -712,15 +720,26 @@ function nextMilestoneOf(reading: Reading): GoalMilestone {
   const position = Math.min(reading.weekPosition + 1, weeks.length - 1);
   const expected = expectationAt(reading.input.band, weeks, position);
   const dueWeek = weeks[position]?.index ?? expected.weekIndex;
+  const target = reading.input.target;
+  const rounded = roundToTenth(expected.low);
+  const reps = target.metric === 'top_load_at_reps' ? (target.anchorReps ?? rounded) : rounded;
   return {
-    label: milestoneLabel(reading.input.target, expected.low, dueWeek),
+    label: milestoneLabel(target, rounded, dueWeek),
     value: expected.low,
     dueWeek,
+    reps,
+    load: rounded,
+    unit: 'lb',
+    goalWeek: dueWeek,
   };
 }
 
-function milestoneLabel(target: StoredGoalTarget, value: number, dueWeek: number): string {
-  const rounded = Math.round(value * 10) / 10;
+/** The single rounding this waypoint's `label`, `load` and `reps` all read off, so none can drift apart. */
+function roundToTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function milestoneLabel(target: StoredGoalTarget, rounded: number, dueWeek: number): string {
   const week = `in week ${dueWeek}`;
   switch (target.metric) {
     case 'top_load_at_reps':
