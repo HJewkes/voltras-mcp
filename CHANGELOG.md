@@ -39,6 +39,23 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The published docs screenshots now include the `#/goals` wall page: a declared priority,
+  the accepted committed/stretch band, its trajectory chart, and the PR star from a heavier
+  set passing last week's reading (VW-389).
+
+### Fixed
+
+- `npm run docs:captures`'s dual-Voltra screenshot no longer 404s partway through (VW-389).
+  Opening the page as soon as the scenario started raced the mock adapter's connect-time rep
+  against the wall dashboard's kiosk auto-navigate-to-summary, landing the capture on a
+  session that had not finished yet. Screenshots are also now reproducible byte-for-byte
+  across two runs on one machine, for every shot whose content is not itself real-time
+  (three of seven; the other four render a value — a pace ETA, a session timestamp, a
+  rep-shape curve — the server computed from its own clock, which no local capture-time
+  freeze reaches).
+
+### Added
+
 - PR stars now actually appear on the goals page (VW-384). A reading on a lift target is a
   personal record when it is strictly greater than every earlier reading for that lift
   inside the window the page already shows — `history.trend`'s lookback, clamped to a
