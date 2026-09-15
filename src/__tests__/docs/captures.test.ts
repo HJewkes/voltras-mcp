@@ -6,13 +6,16 @@
 // which is the half of "a screenshot rots silently" that is actually decidable.
 //
 // It does NOT compare pixels. Font hinting, GPU rasterisation and Skia's
-// antialiasing differ per machine, and the dashboard paints a wall clock and a
-// count-up rest timer, so no two runs agree even on one machine. A comparison
-// that cannot fail is worse than no comparison, so what is asserted is
-// everything around the pixels: the manifest agrees with the definition, every
-// declared shot is on disk at the declared geometry, each capture recorded the
-// assertions it had to satisfy, nothing extra is sitting in the directory, and
-// no site page links a capture that no longer exists.
+// antialiasing differ per machine regardless, and four of the seven shots
+// render a value the SERVER computed from its own real clock (a rep-shape
+// curve's frame-decode timestamp, a pace ETA, a session start/end stamp) that
+// no local determinism measure reaches — see docs/screenshot-harness.md for
+// the two-run proof and the exact split. A comparison that cannot fail is
+// worse than no comparison, so what is asserted is everything around the
+// pixels: the manifest agrees with the definition, every declared shot is on
+// disk at the declared geometry, each capture recorded the assertions it had
+// to satisfy, nothing extra is sitting in the directory, and no site page
+// links a capture that no longer exists.
 //
 // The VALUES on the page are gated too, but not here — they are pinned in the
 // definition (`expectValues`) and checked by the capture run itself, against
@@ -197,7 +200,7 @@ describe('the captures are safe to publish', () => {
 
   it('drives every shot against a no-hardware scenario, never a real device', () => {
     const scenarios = new Set(CAPTURE_SHOTS.map((shot) => shot.scenario));
-    expect([...scenarios].sort()).toEqual(['body', 'cold', 'dual', 'planned']);
+    expect([...scenarios].sort()).toEqual(['body', 'cold', 'dual', 'goals', 'planned']);
   });
 });
 
