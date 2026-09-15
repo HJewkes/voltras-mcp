@@ -206,7 +206,20 @@ async function start(state: DashboardServerState): Promise<number> {
 }
 
 interface GoalProgressBody {
-  targets: { priority: { id: string }; target: { id: string }; status: string }[];
+  targets: {
+    priority: { id: string };
+    target: { id: string };
+    status: string;
+    nextMilestone: {
+      label: string;
+      value: number;
+      dueWeek: number;
+      reps: number;
+      load: number;
+      unit: string;
+      goalWeek: number;
+    };
+  }[];
 }
 
 interface GoalsBody {
@@ -234,6 +247,17 @@ describe('GET /api/goal-progress', () => {
       target: { id: 'tgt-1' },
     });
     expect(typeof body.targets[0]?.status).toBe('string');
+    const milestone = body.targets[0]?.nextMilestone;
+    expect(milestone).toMatchObject({
+      label: expect.any(String),
+      value: expect.any(Number),
+      dueWeek: expect.any(Number),
+      reps: expect.any(Number),
+      load: expect.any(Number),
+      unit: 'lb',
+      goalWeek: expect.any(Number),
+    });
+    expect(milestone?.goalWeek).toBe(milestone?.dueWeek);
   });
 
   it('404s the plan-tree shape for an unknown priorityId', async () => {

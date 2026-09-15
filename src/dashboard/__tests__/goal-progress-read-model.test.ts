@@ -341,7 +341,37 @@ describe('buildGoalProgressView band pass-through', () => {
   it('names the next week committed edge as the milestone', () => {
     const view = buildGoalProgressView(input({ actuals: CONVERGING }));
 
-    expect(view.nextMilestone).toEqual({ label: '177.5 x 8 in week 4', value: 177.5, dueWeek: 4 });
+    expect(view.nextMilestone).toEqual({
+      label: '177.5 x 8 in week 4',
+      value: 177.5,
+      dueWeek: 4,
+      reps: 8,
+      load: 177.5,
+      unit: 'lb',
+      goalWeek: 4,
+    });
+  });
+
+  it('reads reps and load off the target, not off the label string', () => {
+    // Week 4's low needs rounding (177.549 -> 177.5) and the rep anchor (12) is
+    // deliberately far from the rounded load, so a milestone that re-split the
+    // label's "177.5 x 12" on ' x ' with the fields swapped — the hero card
+    // reads "reps x load", the label prints load first — would fail here.
+    const band: GoalBand = {
+      ...BAND,
+      expected: BAND.expected.map((week) =>
+        week.weekIndex === 4 ? { ...week, low: 177.549 } : week,
+      ),
+    };
+    const target: StoredGoalTarget = { ...TARGET, anchorReps: 12 };
+
+    const view = buildGoalProgressView(input({ target, band, actuals: CONVERGING }));
+
+    expect(view.nextMilestone.label).toBe('177.5 x 12 in week 4');
+    expect(view.nextMilestone.reps).toBe(12);
+    expect(view.nextMilestone.load).toBe(177.5);
+    expect(view.nextMilestone.unit).toBe('lb');
+    expect(view.nextMilestone.goalWeek).toBe(4);
   });
 });
 
