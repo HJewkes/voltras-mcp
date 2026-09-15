@@ -583,12 +583,15 @@ describe('system.speak — overlapping speech releases its own mute (VW-176)', (
     await harness.invoke({ text: 'long model line' });
     vi.advanceTimersByTime(3000);
     harness.setNextChild(new FakeChild());
-    await harness.invoke({ text: 'two reps left' });
+    // The queue holds the second line behind the hung one until its 8s
+    // playback ceiling, so the second mute begins exactly when the first ends.
+    const queued = harness.invoke({ text: 'two reps left' });
 
     vi.advanceTimersByTime(5000); // 8s failsafe for the first call only
+    await queued;
     expect(vl.active).toEqual(['two reps left']);
 
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(8000); // the second call's own failsafe
     expect(vl.active).toEqual([]);
     expect(vl.unmuteCalls).toBe(2);
   });
