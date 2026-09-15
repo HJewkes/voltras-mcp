@@ -23,6 +23,7 @@ import {
   readDerivationContext,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
+import { markPersonalRecords } from '../analytics/goal-history.js';
 import { computeHistoryTrend } from '../tools/metrics-tools.js';
 import { log } from '../logger.js';
 import {
@@ -102,6 +103,9 @@ function historyTrendMetricFor(metric: StoredGoalTarget['metric']): 'topLoad' | 
  * `history.trend` itself runs, so this page can never show a series or a
  * plateau call the MCP tool would disagree with. A `sessions_28d` target
  * reads the live rolling count; a `bodyweight` target reads the recent log.
+ *
+ * Only a lift's readings can carry a personal record (VW-384); the other two
+ * metrics say why they cannot inline below.
  */
 async function readActuals(
   store: GoalProgressStore,
@@ -111,6 +115,7 @@ async function readActuals(
     const from = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
     const count = await store.countSessions({ from, endedOnly: true });
     return {
+      // A rolling attendance count is a dose, not a performance — there is no record to beat.
       actuals: [{ ts: new Date().toISOString(), value: count, matched: true, isPR: false }],
     };
   }
@@ -121,6 +126,7 @@ async function readActuals(
         ts: entry.measuredAt,
         value: entry.bodyweightLbs,
         matched: true,
+        // A scale reading is a body-composition measurement, and a new high or low is never a PR.
         isPR: false,
       })),
     };
@@ -136,12 +142,12 @@ async function readActuals(
     // under NodeNext resolution (the same note `metrics-tools.ts` carries), so
     // the map callback is annotated explicitly rather than inferred.
     type Point = { ts: string; value: number };
-    const actuals = trend.series.map((point: Point) => ({
-      ts: point.ts,
-      value: point.value,
-      matched: true,
-      isPR: false,
-    }));
+    // The PR verdict is computed from the series, never from a label anyone
+    // stored: `markPersonalRecords` compares each reading against the earlier
+    // readings of the same window this page is already showing.
+    const actuals = markPersonalRecords(
+      trend.series.map((point: Point) => ({ ts: point.ts, value: point.value })),
+    ).map((reading) => ({ ...reading, matched: true }));
     // `plateau` is `null` in the VW-361 new-chapter state, where there is
     // nothing since the boundary to fit — that is an absent read, not a
     // `'none'` verdict, so no `plateauVerdict` is reported at all.

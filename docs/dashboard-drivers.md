@@ -26,6 +26,26 @@ run ([`scripts/lib/mock-burst.mjs`](../scripts/lib/mock-burst.mjs)). Off by defa
 free-running telemetry is what you want when watching a demo, and pinned is what
 `npm run docs:captures` needs ([screenshot-harness.md](screenshot-harness.md)).
 
+**`dashboard-mock-drive` records the load its sets were performed at, and can drive a
+PR (VW-384).** A stored set takes `weightLbs` / `trainingMode` from the slot's device
+snapshot, and that snapshot is only ever filled from the device's own settings echo
+(`src/tools/set-tools.ts`, `src/state/event-bridge.ts`). The SDK's mock adapter answers a
+weight write with nothing at all, so a stock mock run used to record sets performed
+against no load — which is why `goal.propose_targets` came back NOT_FOUND for a
+mock-driven lift. The driver now writes `--load=<lbs>` (default 100) with
+`device.set_weight` before the first set and boots the server with
+`--import scripts/mock-settings-echo-preload.mjs`, which replays that write back as the
+settings echo hardware sends.
+
+`--goal=<exerciseId>` runs the goal-coach loop on top of it: seed one working set in the
+previous ISO week, `goal.declare_priorities` the lift, `goal.propose_targets`,
+`goal.accept_target`, drive one set at the seeded load and one at `--goal-pr-load`
+(default +10 lb), `session.end`. Open `#/goals` afterwards and the accepted target's card
+carries the PR star. The prior week is seeded rather than driven because `history.trend`
+buckets its series by ISO week and keeps each bucket's heaviest load: both sets of one run
+land on a single point, and a single point has nothing earlier to beat
+(`src/analytics/goal-history.ts`).
+
 **Cues have no dashboard surface at all, on any driver.** Coaching cues are spoken
 audio (`system.speak`), not a rendered value — there is no `VMCP_CUES` / cue read-out
 anywhere under `src/dashboard`. The dashboard's own "cue" language (the nav item's

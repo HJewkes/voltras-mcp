@@ -39,6 +39,22 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- PR stars now actually appear on the goals page (VW-384). A reading on a lift target is a
+  personal record when it is strictly greater than every earlier reading for that lift
+  inside the window the page already shows — `history.trend`'s lookback, clamped to a
+  declared new chapter. The goal-coach plan states no definition of its own, so that is the
+  one in use, and it is the same one the e1RM badge already used: matching a load repeats a
+  performance rather than passing it, so a tie is not a record, and the first reading in the
+  window is not one either because there is nothing behind it to beat. Loads set before the
+  window, or before a chapter boundary you declared, are not counted as earlier. Session
+  counts and bodyweight readings are never marked: neither is a performance with a record to
+  beat.
+- You can now see that star without a device. The mock driver takes a `--goal` option that
+  drives the whole loop — declare the lift as a priority, take the coach's band and accept
+  it, work a set at your current top load and then a heavier one — and every set a mock run
+  records now carries the load and training mode it was performed at, which also gives
+  `goal.propose_targets` a start value to read.
+
 - The dashboard now has a `#/goals` wall page (VW-355): your declared priorities, the
   coach's committed/stretch band as a trajectory chart with PR stars, a per-lift table, a
   muscle-priority rollup, and a whole-body panel with the priority rail. Bodyweight only

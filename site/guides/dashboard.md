@@ -225,6 +225,26 @@ bilateral, and timers — rather than this page restating it. The
 [bilateral guide](/guides/bilateral#no-hardware-or-only-one-device-the-dual-mock-path) both
 walk through running `dashboard-mock-drive.mjs` end to end.
 
+### Seeing a PR star on the goals page
+
+`dashboard-mock-drive.mjs --goal=<exerciseId>` drives the whole goal-coach loop with no
+device: it puts one working set in the previous week, declares that lift as a priority,
+takes the coach's proposed band and accepts it, then drives a set at the current top load
+and a heavier one after it. Open `#/goals` when it finishes and the target's card carries
+the PR star, because the heavier set is the first reading in the window to pass every
+earlier one.
+
+```sh
+npm run build && npm run build:dashboard
+node scripts/dashboard-mock-drive.mjs --goal=cable-chest-press
+# then open http://127.0.0.1:7724/app#/goals
+```
+
+The load each set is performed at is written with `device.set_weight` (`--load`, default
+100 lb) and recorded on the set, so the same run also gives `goal.propose_targets` and
+`history.trend` something to read. Use `--goal-pr-load` to choose how much heavier the
+second set is.
+
 ## What to read next
 
 - The [dashboard walkthrough](/guides/) for the captures — before connection, mid-set, the

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  markPersonalRecords,
   modalRepCount,
   slopeStandardError,
   topLoadAtReps,
@@ -115,5 +116,46 @@ describe('slopeStandardError', () => {
   it('has no answer for a perfect or a zero fit', () => {
     expect(slopeStandardError(2, 1, 10)).toBeNull();
     expect(slopeStandardError(2, 0, 10)).toBeNull();
+  });
+});
+
+describe('markPersonalRecords', () => {
+  const reading = (ts: string, value: number) => ({ ts, value });
+
+  it('marks a reading that passes every earlier one, and leaves a lower one alone', () => {
+    const marked = markPersonalRecords([
+      reading('2026-08-03T00:00:00.000Z', 180),
+      reading('2026-08-10T00:00:00.000Z', 175),
+      reading('2026-08-17T00:00:00.000Z', 185),
+    ]);
+
+    expect(marked.map((r) => r.isPR)).toEqual([false, false, true]);
+  });
+
+  it('does not call a tie a record', () => {
+    const marked = markPersonalRecords([
+      reading('2026-08-03T00:00:00.000Z', 180),
+      reading('2026-08-10T00:00:00.000Z', 180),
+    ]);
+
+    expect(marked.map((r) => r.isPR)).toEqual([false, false]);
+  });
+
+  it('never marks the first reading, which has nothing behind it to beat', () => {
+    expect(markPersonalRecords([reading('2026-08-03T00:00:00.000Z', 180)])).toEqual([
+      { ts: '2026-08-03T00:00:00.000Z', value: 180, isPR: false },
+    ]);
+  });
+
+  it('reads an out-of-order series the same as a sorted one', () => {
+    const marked = markPersonalRecords([
+      reading('2026-08-17T00:00:00.000Z', 185),
+      reading('2026-08-03T00:00:00.000Z', 180),
+    ]);
+
+    expect(marked.map((r) => [r.value, r.isPR])).toEqual([
+      [185, true],
+      [180, false],
+    ]);
   });
 });

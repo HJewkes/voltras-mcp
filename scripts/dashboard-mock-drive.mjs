@@ -25,6 +25,41 @@
 // through any MCP tool (`mock.configure` is NOT_IMPLEMENTED), so cadence is fixed
 // unless the run injects the dual-slot preload (see below).
 //
+// ── RECORDED LOAD AND MODE (VW-384) ────────────────────────────────────────
+// Every run now issues `device.set_mode` + `device.set_weight` before the first
+// set, and boots the server with `--import scripts/mock-settings-echo-preload.mjs`
+// so those writes echo back as device settings the way hardware answers them.
+// Without that echo a mock-driven set stores no `weightLbs` and no
+// `trainingMode` at all, and every read that needs a load — `goal.propose_targets`,
+// `history.trend`, the goals page — sees a set that was apparently performed
+// against nothing. `--load` sets the figure (default 100 lb).
+//
+// ── PR-STAR LOOP (VW-384) ──────────────────────────────────────────────────
+// `--goal=<exerciseId>` runs the goal-coach loop instead of the plain N-set
+// drive, end to end through the real tools:
+//
+//   seed one working set in the PREVIOUS week → goal.declare_priorities (lift)
+//   → goal.propose_targets → goal.accept_target → session.start
+//   → set at the current top load → set at a heavier load → session.end
+//
+// Then open `http://127.0.0.1:<port>/app#/goals`: the accepted target's card
+// carries the PR star, because the heavier set is the first reading in the
+// window to pass every earlier one (`markPersonalRecords`,
+// src/analytics/goal-history.ts).
+//
+// WHY THE PREVIOUS WEEK IS SEEDED RATHER THAN DRIVEN. `history.trend` buckets
+// its series by ISO week and keeps the heaviest load in each bucket, so both
+// sets of a single run land on ONE point no matter how they are driven, and one
+// point can never be a record — there is nothing earlier to beat. The seed is
+// one prior reading written through the store's own `putSession` / `putSet`
+// before the server starts; the set that actually earns the star is driven
+// through the full pipeline like every other set here.
+//
+//   --goal=<exerciseId>     run the loop for this catalog exercise
+//   --goal-load=<lbs>       the seeded prior week's load, and the first set's
+//                           (default 100)
+//   --goal-pr-load=<lbs>    the heavier set's load (default `--goal-load` + 10)
+//
 // ── DUAL-SLOT MODE (VMCP-04.02) ────────────────────────────────────────────
 // `--dual` drives TWO slots (`left` + `right`) concurrently through the same
 // real tool pipeline, so dual-Voltra UI can be verified with no hardware. Stock
@@ -61,6 +96,9 @@
 //   # right side dies for good partway through set 2:
 //   node scripts/dashboard-mock-drive.mjs --dual --stall=right@2 --stall-ms=0
 //
+//   # the PR-star loop, then open http://127.0.0.1:7724/app#/goals:
+//   node scripts/dashboard-mock-drive.mjs --goal=cable-chest-press
+//
 // Then open http://127.0.0.1:7724/app in a browser BEFORE/DURING the run — the
 // set-log accumulates client-side across polls, so a late-joining page misses
 // the non-null→null set transitions it logs.
@@ -69,6 +107,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as os from 'node:os';
+
+import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
+import { createRep } from '@voltras/workout-analytics';
 
 import {
   armBursts,
@@ -81,6 +122,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const binPath = path.resolve(__dirname, '../dist/bin.js');
 const preloadPath = path.resolve(__dirname, 'mock-two-slot-preload.mjs');
+const settingsEchoPath = path.resolve(__dirname, 'mock-settings-echo-preload.mjs');
 
 // ── CLI flags (`--k=v` / `--k`), each falling back to its long-standing env var ──
 const flags = new Map(
@@ -117,6 +159,16 @@ const EXERCISE_ID = process.env.EXERCISE_ID ?? 'cable-chest-press';
 const EXERCISE = process.env.EXERCISE; // free-text fallback; only used if EXERCISE_ID=''
 // Keep server + dashboard alive after the workout (`--hold=0` / `HOLD=0` to exit).
 const HOLD = flag('hold', process.env.HOLD ?? '1') !== '0';
+// The load every driven set is performed at, written with `device.set_weight`
+// and echoed back by the settings preload so the stored set carries it.
+const LOAD_LBS = Number(flag('load', 100));
+const TRAINING_MODE = 'WeightTraining';
+// `--goal=<exerciseId>` swaps the plain N-set drive for the PR-star loop.
+const GOAL_EXERCISE_ID = flags.has('goal') ? flag('goal') : null;
+const GOAL_LOAD_LBS = Number(flag('goal-load', LOAD_LBS));
+const GOAL_PR_LOAD_LBS = Number(flag('goal-pr-load', GOAL_LOAD_LBS + 10));
+/** Reps on the seeded prior-week set — enough to anchor a matched-reps read. */
+const GOAL_SEED_REPS = 8;
 // Parallel-safe DB path so this never collides with a live session's sqlite.
 const DB_PATH =
   process.env.VMCP_DB_PATH ?? path.join(os.tmpdir(), `vmcp-mock-drive-${PORT}.sqlite`);
@@ -159,32 +211,83 @@ const PLAN = {
   stallAtSet: parseStall(flag('stall')),
 };
 
-const child = spawn(process.execPath, [...(DUAL ? ['--import', preloadPath] : []), binPath], {
-  env: {
-    ...process.env,
-    VOLTRA_ADAPTER: 'mock',
-    VOLTRA_LOG_LEVEL: 'warn',
-    VMCP_DASHBOARD_PORT: String(PORT),
-    VMCP_DB_PATH: DB_PATH,
-    VMCP_REST_TIMER: 'on',
-    VMCP_MOCK_CONTROL_PORT: String(CONTROL_PORT),
-    // Pinned runs need each slot parked from the first moment it connects, and
-    // the preload only applies what this env var declares.
-    ...(PINNED
-      ? {
-          VMCP_MOCK_DEVICES: JSON.stringify(
-            SLOTS.map((slot) => ({
-              deviceId: DEVICE_ID[slot],
-              deviceName: `VTR-Mock${slot === 'left' ? 'L' : 'R'}`,
-              weight: 100,
-              ...pinnedConnectProfile(),
-            })),
-          ),
-        }
-      : {}),
+/**
+ * Write one ended working set into the PREVIOUS ISO week, through the store's
+ * own `putSession` / `putSet`, BEFORE the server opens the same file — two
+ * processes must never hold one `VMCP_DB_PATH` (see the repo's CLAUDE.md).
+ *
+ * This is the reading the driven PR set has to pass. It cannot itself be
+ * driven: `history.trend` buckets by ISO week and keeps each bucket's heaviest
+ * load, so every set of one run collapses onto a single point, and a single
+ * point has nothing earlier to beat.
+ */
+async function seedPriorWeek(dbPath, exerciseId, weightLbs) {
+  const { SqliteSessionStore } = await import('../dist/store/sqlite-store.js');
+  const at = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const sessionId = `mock-drive-seed-${exerciseId}`;
+  const setId = `${sessionId}-set`;
+  const store = SqliteSessionStore.open(dbPath);
+  try {
+    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    await store.putSet({
+      id: setId,
+      sessionId,
+      userId: 'local',
+      startedAt: at,
+      endedAt: at,
+      partial: false,
+      exerciseId,
+      slot: 'primary',
+      setPurpose: 'working',
+      weightLbs,
+      trainingMode: TrainingModeNames[TrainingMode[TRAINING_MODE]],
+      reps: Array.from({ length: GOAL_SEED_REPS }, (_, i) => ({
+        ...createRep(i + 1),
+        id: `${setId}-rep-${i}`,
+        setId,
+        index: i,
+      })),
+    });
+  } finally {
+    await store.close();
+  }
+  log(`seeded last week: ${weightLbs} lb x ${GOAL_SEED_REPS} on ${exerciseId} (${at})`);
+}
+
+if (GOAL_EXERCISE_ID !== null) {
+  await seedPriorWeek(DB_PATH, GOAL_EXERCISE_ID, GOAL_LOAD_LBS);
+}
+
+const child = spawn(
+  process.execPath,
+  ['--import', settingsEchoPath, ...(DUAL ? ['--import', preloadPath] : []), binPath],
+  {
+    env: {
+      ...process.env,
+      VOLTRA_ADAPTER: 'mock',
+      VOLTRA_LOG_LEVEL: 'warn',
+      VMCP_DASHBOARD_PORT: String(PORT),
+      VMCP_DB_PATH: DB_PATH,
+      VMCP_REST_TIMER: 'on',
+      VMCP_MOCK_CONTROL_PORT: String(CONTROL_PORT),
+      // Pinned runs need each slot parked from the first moment it connects, and
+      // the preload only applies what this env var declares.
+      ...(PINNED
+        ? {
+            VMCP_MOCK_DEVICES: JSON.stringify(
+              SLOTS.map((slot) => ({
+                deviceId: DEVICE_ID[slot],
+                deviceName: `VTR-Mock${slot === 'left' ? 'L' : 'R'}`,
+                weight: 100,
+                ...pinnedConnectProfile(),
+              })),
+            ),
+          }
+        : {}),
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
   },
-  stdio: ['pipe', 'pipe', 'pipe'],
-});
+);
 
 // ── stdio JSON-RPC plumbing (same shape as scripts/smoke-test.mjs) ──────────
 let stdoutBuffer = '';
@@ -369,6 +472,7 @@ async function runDual() {
     log(`slot ${slot} ← ${DEVICE_ID[slot]} (mock telemetry streaming)`);
   }
   await sleep(500);
+  for (const slot of SLOTS) await applyLoad(LOAD_LBS, slot);
   if (PINNED) {
     // Wait out the one rep each adapter always streams on connect (only its own
     // set boundary can stop it), then arm each slot's burst size. Both happen
@@ -415,46 +519,121 @@ async function handshake() {
   log(`dashboard at http://127.0.0.1:${PORT}/app  (open it now)`);
 }
 
-async function runSingle() {
-  // 1. scan → find the mock device
+/**
+ * State the load and mode the coming sets are performed at. The settings-echo
+ * preload replays both back as the device's own settings, which is what puts
+ * `weightLbs` / `trainingMode` on every set this run stores (VW-384).
+ */
+async function applyLoad(lbs, slot) {
+  const slotArg = slot === undefined ? {} : { slot };
+  await callTool('device.set_mode', { mode: TRAINING_MODE, ...slotArg });
+  await callTool('device.set_weight', { lbs, ...slotArg });
+  log(`load set: ${lbs} lb, ${TRAINING_MODE}${slot === undefined ? '' : ` (${slot})`}`);
+}
+
+/** Scan, connect the first advertised mock device, and let telemetry settle. */
+async function connectSingle() {
   const scan = await callTool('device.scan', {});
   const devId = scan.devices?.[0]?.id;
   if (!devId) throw new Error('scan returned no device');
   log(`scanned: ${devId} (${scan.devices[0].name})`);
-
-  // 2. connect → mock telemetry starts streaming immediately
   await callTool('device.connect', { deviceId: devId });
   log('connected — mock telemetry streaming');
   await sleep(500);
+}
 
-  // 3. session — send exerciseId (catalog-resolved → lights BodyMap) or a name.
+/** One set: open, dwell while reps accrue off the mock's stream, close. */
+async function runOneSet(label, dwellMs) {
+  await callTool('set.start', {});
+  await sleep(300);
+  summarize(await snapshot(), `${label} start  `); // rev should bump vs prior (SSE snapshot push)
+  await sleep(dwellMs);
+  summarize(await snapshot(), `${label} mid    `); // reps accrued from mock frames
+  await callTool('set.end', {});
+  summarize(await snapshot(), `${label} end    `); // set finalized; rev bumps again
+}
+
+async function runSingle() {
+  // 1-2. scan → connect
+  await connectSingle();
+
+  // 3. state the load, so each stored set carries one
+  await applyLoad(LOAD_LBS);
+
+  // 4. session — send exerciseId (catalog-resolved → lights BodyMap) or a name.
   const sessionArgs = EXERCISE_ID
     ? { exerciseId: EXERCISE_ID }
     : { exerciseName: EXERCISE ?? 'Bench Press' };
   await callTool('session.start', sessionArgs);
   summarize(await snapshot(), 'session.start');
 
-  // 4. set.start → dwell (reps accrue) → set.end, repeated
+  // 5. set.start → dwell (reps accrue) → set.end, repeated
   for (let s = 1; s <= SETS; s++) {
-    await callTool('set.start', {});
-    await sleep(300);
-    summarize(await snapshot(), `set ${s} start  `); // rev should bump vs prior (SSE snapshot push)
-    await sleep(DWELL_MS);
-    summarize(await snapshot(), `set ${s} mid    `); // reps accrued from mock frames
-    await callTool('set.end', {});
-    summarize(await snapshot(), `set ${s} end    `); // set finalized; rev bumps again
+    await runOneSet(`set ${s}`, DWELL_MS);
     if (s < SETS) await sleep(REST_MS);
   }
 
-  // 5. close session
+  // 6. close session
   await callTool('session.end', {});
   summarize(await snapshot(), 'session.end');
   log(`workout complete: ${SETS} sets driven through the real pipeline`);
 }
 
+/**
+ * The PR-star loop (VW-384): declare the lift as a priority, let the coach
+ * derive and fix a band off the seeded prior week, then drive the current top
+ * load and a heavier set into this week.
+ */
+async function runGoal() {
+  await connectSingle();
+
+  const declared = await callTool('goal.declare_priorities', {
+    items: [{ kind: 'lift', ref: GOAL_EXERCISE_ID, level: 'specialize' }],
+  });
+  const priorityId = declared.priorities?.[0]?.id;
+  if (!priorityId)
+    throw new Error(`declare_priorities returned no priority for ${GOAL_EXERCISE_ID}`);
+  log(`priority declared: ${priorityId} (lift ${GOAL_EXERCISE_ID}, specialize)`);
+
+  const proposed = await callTool('goal.propose_targets', { priorityId });
+  const lift = (proposed.targets ?? []).find((t) => t.metric === 'top_load_at_reps');
+  if (!lift) {
+    const why = (proposed.skipped ?? []).map((s) => `${s.metric}: ${s.reason}`).join('; ');
+    throw new Error(`no top-load target proposed — ${why || 'nothing skipped either'}`);
+  }
+  log(
+    `target proposed: ${lift.targetId} from ${lift.startValue} lb x ${lift.anchorReps}, ` +
+      `committed ${lift.committedValue} / stretch ${lift.stretchValue}`,
+  );
+  await callTool('goal.accept_target', { targetId: lift.targetId });
+  log('target accepted — the band is now fixed');
+
+  await callTool('session.start', { exerciseId: GOAL_EXERCISE_ID });
+  summarize(await snapshot(), 'session.start');
+
+  await applyLoad(GOAL_LOAD_LBS);
+  await runOneSet('working set', DWELL_MS);
+  await sleep(REST_MS);
+
+  await applyLoad(GOAL_PR_LOAD_LBS);
+  await runOneSet('PR set     ', DWELL_MS);
+
+  await callTool('session.end', {});
+  summarize(await snapshot(), 'session.end');
+  log(
+    `goal loop complete: ${GOAL_PR_LOAD_LBS} lb passes last week's ${GOAL_LOAD_LBS} lb — ` +
+      `the star is on http://127.0.0.1:${PORT}/app#/goals`,
+  );
+}
+
+function runChosen() {
+  if (GOAL_EXERCISE_ID !== null) return runGoal();
+  return DUAL ? runDual() : runSingle();
+}
+
 async function main() {
   await handshake();
-  await (DUAL ? runDual() : runSingle());
+  await runChosen();
 
   if (HOLD) {
     log('HOLD=1 — server + dashboard staying up. Ctrl-C to exit.');
