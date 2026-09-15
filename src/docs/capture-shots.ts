@@ -8,14 +8,22 @@
 // against this definition. Change a shot without regenerating and the `test`
 // job goes red — the same property `npm run docs:reference` has.
 //
-// What this CANNOT gate is the pixels. Two machines render the same page
-// differently (font hinting, GPU rasterisation, Skia antialiasing), and two runs
-// on ONE machine still differ because the dashboard paints a wall clock and a
-// count-up rest timer. A byte or perceptual comparison of the images would
-// either fail constantly or be tuned until it could never fail, so this ships
-// neither. What is checked instead: the definition, the manifest agreeing with
-// it, the image geometry, the assertions each capture had to satisfy before it
-// was written, and that no site page points at a shot that no longer exists.
+// What this CANNOT gate is the pixels. `scripts/capture-screens.mjs` freezes the
+// clock and disables animations/transitions before every shot (VW-389), which
+// makes `dashboard-cold`, `plan-builder` and `goals` — the three shots with no
+// server-real-time field on the page — byte-identical across two runs on ONE
+// machine. The other four still carry a value the SERVER computed from its own
+// clock (a rep-shape curve's per-sample frame-decode timestamp, a pace ETA, a
+// session start/end stamp) that no client-side freeze reaches; see
+// `docs/screenshot-harness.md` for the exact split and the two-run proof, and
+// `guardLocalOverwrite` in the harness for what stops one of those four from
+// being silently replaced by an ordinary local run. Font hinting, GPU
+// rasterisation and Skia antialiasing differ machine to machine on top of all
+// of that, so a byte or perceptual comparison in CI would either fail
+// constantly or be tuned until it could never fail. This ships neither. What CI
+// checks instead: the definition, the manifest agreeing with it, the image
+// geometry, the assertions each capture had to satisfy before it was written,
+// and that no site page points at a shot that no longer exists.
 
 import { createHash } from 'node:crypto';
 
@@ -42,7 +50,7 @@ export const CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
 export const CAPTURE_DEVICE_SCALE_FACTOR = 1;
 
 /** Scenario names, each one no-hardware run of the real MCP pipeline. */
-export type CaptureScenarioName = 'cold' | 'planned' | 'dual';
+export type CaptureScenarioName = 'cold' | 'planned' | 'dual' | 'goals';
 
 /**
  * How a scenario is driven. `driver: null` boots `dist/bin.js` directly (nothing
@@ -86,16 +94,31 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     driver: 'scripts/dashboard-mock-drive.mjs',
     // Asymmetric on purpose: equal sides prove nothing about the diverging
     // stage. Pinned, the asymmetry is exact — 6 reps against 4, every run.
+    // ONE set: `live-dual-mid-set` is the only shot this scenario owns, and a
+    // second set pinned to the SAME target reps made the `set-open` predicate
+    // ambiguous between the two sets' parked windows — whichever one the
+    // capture actually landed on rendered a different `liveRepIndex` /
+    // velocity-curve state, so two runs on one machine disagreed on the PNG
+    // even with the content assertions both passing (VW-389).
     args: [
       '--dual',
       '--port={port}',
       '--control-port={controlPort}',
-      '--sets=2',
+      '--sets=1',
       '--pinned',
       '--reps=left:6,right:4',
       '--lag=right:2500',
       '--settle-ms=14000',
     ],
+  },
+  {
+    name: 'goals',
+    driver: 'scripts/dashboard-mock-drive.mjs',
+    // The PR-star loop (VW-384): seeds one prior-week reading, declares the
+    // lift a priority, accepts the coach's proposed band, then drives a
+    // working set and a heavier set that passes it — the reading the goals
+    // page's PR badge and trajectory chart need (VW-389).
+    args: ['--goal=cable-chest-press', '--port={port}', '--control-port={controlPort}'],
   },
 ];
 
@@ -287,11 +310,59 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectText: ['MOCK-VOLTRA-LEFT', 'MOCK-VOLTRA-RIGHT', 'L/R'],
     expectValues: [
       // Both sides' per-rep peaks in one string, so a slot that stopped
-      // updating or started mirroring its neighbour cannot pass.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      // updating or started mirroring its neighbour cannot pass. Six values
+      // left, four right — the scenario's own asymmetric target.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46',
       'L/R 2% Right leading',
     ],
-    holdsPageOpen: true,
+    // Unlike the other live-page shots, this is the ONLY shot in the `dual`
+    // scenario, so there is no later shot's continuity to preserve by holding
+    // the page open early. Opening early used to race the mock adapter's
+    // connect-time rep against the wall dashboard's kiosk auto-navigate
+    // (`SessionEndedView`, VW-261): that rep set `model.live` before
+    // `session.start` landed, which read as "session ended" and, after its
+    // 8s timer, auto-navigated to `#/summary` mid-capture — a 404 on
+    // `/api/session-summary/latest` for the session that hadn't finished yet
+    // (VW-389). The diverging stage's data (`entry.sets.active.reps`) comes
+    // straight off the snapshot poll, not off accumulated SSE, so a page
+    // opened fresh after the predicate holds renders the same content.
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption:
+      'The goal-coach wall page, with an accepted target and a personal record from the heavier set.',
+    // 2, not 1: the goal driver seeds one PREVIOUS-week session directly into
+    // the store before the server even opens (the reading the driven PR set
+    // has to pass), so `minSessions: 1` was satisfied at server startup,
+    // before `goal.declare_priorities` ever ran — the shot opened on an empty
+    // "No priorities declared" page every time (VW-389).
+    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    expectText: [
+      'CABLE CHEST PRESS',
+      'Calibrating',
+      'COMMITTED',
+      'STRETCH',
+      'Per-lift',
+      'Whole body',
+    ],
+    expectValues: [
+      // The band, fixed by the seeded prior-week reading (100 lb x 8) and the
+      // coach's own proposal — never asserted as a raw number elsewhere, so a
+      // wrong band here would pass every other shot's check.
+      'COMMITTED 127.5',
+      'STRETCH 127.5',
+      // The next milestone the trajectory chart projects toward, and the same
+      // reading repeated on the per-lift card — both derived from the fixed
+      // band above, not from wall-clock date.
+      '105 x 8 in week 3',
+      '8 x 105 lb in week 3',
+      // The whole-body panel's own line for the same priority.
+      'CABLE CHEST PRESS · specialize',
+    ],
+    holdsPageOpen: false,
   },
 ];
 

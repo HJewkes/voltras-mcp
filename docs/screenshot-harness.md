@@ -68,6 +68,7 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
 | `plan-builder`      | `dashboard-plan-drive.mjs`                    | the plan builder with a template |
 | `live-dual-mid-set` | `dashboard-mock-drive.mjs --dual`, asymmetric | the diverging two-slot stage     |
+| `goals`             | `dashboard-mock-drive.mjs --goal`, PR loop    | the goal-coach page with a PR    |
 
 `dashboard-plan-drive.mjs` is the only driver that can show a prescription; `dashboard-sim`
 carries no plan data and plain `dashboard-mock-drive` attaches none
@@ -106,15 +107,79 @@ told. A canned `/api/snapshot` would prove only that the SPA can render a fixtur
 Still not deterministic, and therefore never asserted: the wall clock, the rest countdown,
 session start/end stamps, `DURATION`, and anything else derived from frame timestamps (a
 frame is stamped with `Date.now()` at decode). The `expectValues` comment in the definition
-lists them.
+lists them. VW-389 made two of those — the wall clock and CSS/JS-animation settle — no
+longer matter to the PNG's bytes either (see "Byte-reproducibility" below); the rest are
+genuinely on the page and stay excluded from `expectValues` for the reason above.
+
+## Byte-reproducibility on one machine (VW-389)
+
+Two runs of `npm run docs:captures` on identical code, same machine, used to disagree on
+every PNG. `scripts/capture-screens.mjs` now removes the two causes that were ours to
+remove:
+
+- **The wall clock.** `installShotDeterminism` calls `page.clock.setFixedTime(...)` before
+  any navigation, pinning `Date.now()`/`new Date()` for every shot's page while leaving
+  real timers (the 2s poll, the SSE stream) running. `emulateMedia({ reducedMotion: 'reduce' })`
+  plus an injected stylesheet forcing every CSS animation/transition's duration to `0s` remove
+  the second cause: a screenshot landing mid-transition.
+- **JS-driven animation.** titan-design's charts animate through `requestAnimationFrame`
+  directly, which no stylesheet reaches. `waitForVisualStability` screenshots on a loop until
+  three consecutive samples come back byte-identical, so the shot only writes once the pixels
+  have actually stopped moving, whatever is moving them.
+
+That reaches every shot whose non-determinism was ours (the harness's) to fix. It does
+**not** reach a shot whose page renders a value the SERVER computed from ITS OWN real clock:
+
+| Shot                | Server-real-time field                                         | Byte-reproducible? |
+| ------------------- | -------------------------------------------------------------- | ------------------ |
+| `dashboard-cold`    | none                                                           | yes                |
+| `plan-builder`      | none                                                           | yes                |
+| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
+| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | no                 |
+| `live-dual-mid-set` | same, both slots' curves                                       | no                 |
+| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | no                 |
+| `session-summary`   | session start/end stamps in the header                         | no                 |
+
+The two-run proof, `shasum -a 256` of both runs' PNGs:
+
+```
+dashboard-cold.png    b11546ad26685360…  ==  b11546ad26685360…   (identical)
+plan-builder.png      394145cba5f0fca4…  ==  394145cba5f0fca4…   (identical)
+goals.png              4297aa81fb5e0e31…  ==  4297aa81fb5e0e31…   (identical)
+live-mid-set.png      eb4e162a55e574cb…  !=  427cd243b7e06b21…   (differs — rep-shape curve)
+live-dual-mid-set.png ae6e3d3fe9f6836c…  !=  48689e74a5b3a48e…   (differs — rep-shape curve)
+live-rest.png         8f26f272b75b9b9e…  !=  2e86ba1804cfe7fc…   (differs — pace ETA)
+session-summary.png   20ea181a64dcd1fc…  !=  c622e3bf3ac5037e…   (differs — start/end stamps)
+```
+
+The four "differs" rows are not flakiness: each one's pixel diff isolates to exactly the
+field named, confirmed by cropping the diff bounding box (`ImageChops.difference`) — e.g.
+`live-rest`'s two runs differ only inside an 8×12px region that reads `8:49 PM` in one and
+`8:55 PM` in the other, the rendered `ETA` tile. Fixing these at the pixel level would mean
+injecting a fake clock into the server process itself (frame-decode timestamps, session
+`startedAt`/`endedAt`, `resolveSessionPace`'s `Date.now()` call) — a change to production
+session/analytics timing code, not to the capture harness, and outside VW-389's scope.
+
+**The mutation proof**, showing the clock-freeze measure specifically is load-bearing:
+commenting out the `page.clock.setFixedTime(...)` call in `installShotDeterminism` and
+rerunning `dashboard-cold` renders the header clock at the real time (`21:15`, that run)
+instead of the fixed `12:00` every frozen run shows, and its digest
+(`5df1d5e1c80c2cdc…`) differs from the frozen baseline (`b11546ad26685360…`) above.
+Restoring the call brings the `12:00` clock and the `b11546ad26685360…` digest straight
+back.
+
+`guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four non-reproducible shots can't drift by
+accident on a routine local run — regenerating one is still a normal, deliberate action, just
+an explicit one.
 
 ## What the staleness gate can and cannot check
 
-**It cannot compare pixels.** Font hinting, GPU rasterisation and Skia antialiasing differ
-between machines, and even on one machine two runs differ: the dashboard paints a wall
-clock, a count-up rest timer, and session ids and timestamps that change every run. A byte
-comparison would fail on every run; a perceptual threshold loose enough to survive that
-would be loose enough never to fail. Neither is shipped.
+**It cannot compare pixels ACROSS MACHINES.** Font hinting, GPU rasterisation and Skia
+antialiasing differ between machines regardless of anything above, and four of the seven shots
+carry a genuine server-real-time field even on one machine (see above). A byte comparison run
+in CI would fail on every run there; a perceptual threshold loose enough to survive that would
+be loose enough never to fail. Neither is shipped.
 
 **It checks everything around the pixels**, and each of these does fail:
 
