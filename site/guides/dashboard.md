@@ -1,6 +1,6 @@
 # The wall dashboard
 
-This page is about the sidecar itself — what it is, how to find it, its three pages, and
+This page is about the sidecar itself — what it is, how to find it, its four pages, and
 how it stays current. For what each page actually looks like mid-workout, see the
 [dashboard walkthrough](/guides/) on the guides index; that page carries the captures, this
 one doesn't repeat them.
@@ -154,7 +154,7 @@ the sidecar binds an OS-assigned port instead of failing, so don't assume 7723. 
 verbatim; `dashboardAvailable` is `false` and `dashboardDisabledReason` explains why when
 there's nothing to point at (`README.md`, `site/reference/server.md`).
 
-## The three pages
+## The four pages
 
 The SPA hash-routes, since the sidecar serves one static `index.html` with no server-side
 fallback (`src/dashboard/README.md`):
@@ -164,6 +164,12 @@ fallback (`src/dashboard/README.md`):
 | `/app` or `/app#/` | The live page — the wall display, deliberately chrome-free.                                             |
 | `/app#/plan`       | The plan builder: browse the exercise catalog, see the workout being planned, edit it by hand.          |
 | `/app#/summary`    | The session-completion screen for the most recent session; `#/summary/<sessionId>` pins a specific one. |
+| `/app#/body`       | The body map: this week's volume per muscle, what the plan still owes, and recent PRs.                  |
+
+![The body page: a training week's volume per muscle, what is due next, and recent PRs.](/captures/body-week.png)
+
+`/app#/goals` is a fifth route with no rail entry yet — reachable by URL only, same as
+`#/body` was before VW-338.
 
 `/` redirects to `/app`. `?variant=live` / `?variant=live-dual` pins the single or diverging
 live-page stage for testing; without it, the page picks the stage from live state — which
@@ -186,7 +192,7 @@ during a run**: a browser that connects after the last set has nothing to show
 
 ## Per-muscle strength (`/api/muscle-strength`)
 
-One read answers "which muscles are getting stronger" without a page of its own yet. For
+One read answers "which muscles are getting stronger"; `#/body` renders its PR rows. For
 each of the 15 body-map muscle slugs it returns the exercises whose **primary** muscle maps
 to that slug, and for each one: the best e1RM in a 12-week window with its error band, the
 fitted weekly slope, the plateau verdict, and whether the newest session was a personal

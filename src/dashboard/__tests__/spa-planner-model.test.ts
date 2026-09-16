@@ -94,6 +94,10 @@ describe('parseRoute', () => {
     expect(parseRoute('#/goals')).toEqual({ name: 'goals' });
   });
 
+  it('routes the body-map wall page (VW-338)', () => {
+    expect(parseRoute('#/body')).toEqual({ name: 'body' });
+  });
+
   it('routes a summary with an explicit session id, decoding it', () => {
     expect(parseRoute('#/summary/sess%2F1')).toEqual({ name: 'summary', sessionId: 'sess/1' });
   });
@@ -103,7 +107,7 @@ describe('parseRoute', () => {
   });
 
   it('round-trips through routeHash', () => {
-    for (const hash of ['#/', '#/plan', '#/goals', '#/summary', '#/summary/sess-1']) {
+    for (const hash of ['#/', '#/plan', '#/goals', '#/body', '#/summary', '#/summary/sess-1']) {
       expect(routeHash(parseRoute(hash))).toBe(hash);
     }
   });

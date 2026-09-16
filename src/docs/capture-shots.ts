@@ -33,6 +33,20 @@ export const CAPTURE_MANIFEST = `${CAPTURE_DIR}/manifest.json`;
  */
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
 
+/** A capture viewport. The default is {@link CAPTURE_VIEWPORT}; a shot may override it. */
+export interface CaptureViewport {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The wall frame the body page is laid out for (VW-338). Its two `size="wall"`
+ * figures are 480x960 each and they sit between two rails — at 1440 the rails
+ * squeeze and at 900 the figures are cropped, so a capture at the default size
+ * would publish a picture of a page nobody runs.
+ */
+export const WALL_VIEWPORT = { width: 1920, height: 1080 } as const;
+
 /**
  * 1x. The docs site renders these into a ~700px content column, so a 1440px-wide
  * capture is already 2x there; a device scale factor of 2 would make it 4x and
@@ -41,14 +55,15 @@ export const CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
  */
 export const CAPTURE_DEVICE_SCALE_FACTOR = 1;
 
-/** Scenario names, each one no-hardware run of the real MCP pipeline. */
-export type CaptureScenarioName = 'cold' | 'planned' | 'dual';
+/** Scenario names, each one no-hardware run. */
+export type CaptureScenarioName = 'cold' | 'planned' | 'dual' | 'body';
 
 /**
  * How a scenario is driven. `driver: null` boots `dist/bin.js` directly (nothing
  * connects, nothing opens) — the only way to hold the empty state still. The
- * other two reuse the established mock drivers rather than re-implementing a
- * workout, so `set.end` is always called and nothing is stubbed at the HTTP layer.
+ * workout scenarios reuse the established mock drivers rather than
+ * re-implementing a workout, so `set.end` is always called and nothing is
+ * stubbed at the HTTP layer. `body` is the one exception, and says why inline.
  *
  * `{port}` / `{controlPort}` are substituted at run time with probed-free ports,
  * so the definition (and its hash) carries no machine-specific value.
@@ -96,6 +111,18 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
       '--lag=right:2500',
       '--settle-ms=14000',
     ],
+  },
+  {
+    name: 'body',
+    // The one scenario that does NOT drive the pipeline, and it cannot: every
+    // driver runs `VOLTRA_ADAPTER=mock`, `set.end` stamps those sets
+    // `source: 'mock'`, and the per-muscle read models exclude mock sets by
+    // design (`read-models/muscle-set-scope.ts`) so synthetic work never reads
+    // as this athlete's volume. A mock-driven body page is therefore correctly,
+    // and uselessly, empty. This driver seeds recorded outcomes into the store
+    // instead and boots the same server; the analytics over them are real.
+    driver: 'scripts/dashboard-body-seed.mjs',
+    args: [],
   },
 ];
 
@@ -176,6 +203,13 @@ export interface CaptureShot {
    * when it mounted and never updates.
    */
   readonly holdsPageOpen: boolean;
+  /** Overrides {@link CAPTURE_VIEWPORT} for this shot alone. @see viewportFor */
+  readonly viewport?: CaptureViewport;
+}
+
+/** The viewport a shot is taken at — its own, or the default. */
+export function viewportFor(shot: CaptureShot): CaptureViewport {
+  return shot.viewport ?? CAPTURE_VIEWPORT;
 }
 
 /**
@@ -292,6 +326,34 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       'L/R 2% Right leading',
     ],
     holdsPageOpen: true,
+  },
+  {
+    name: 'body-week',
+    scenario: 'body',
+    route: '/app#/body',
+    caption:
+      "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+    // The seed is written before the server boots, so this holds from the first
+    // poll — it is here to fail loudly if the seed ever writes fewer sessions.
+    waitFor: { kind: 'sessions-ended', minSessions: 18 },
+    viewport: WALL_VIEWPORT,
+    expectText: ['Next up', 'Recent PRs', 'This week', 'Legend', 'Weekly sets by muscle'],
+    expectValues: [
+      // The four glance tiles with their own labels: swapping two tiles' data
+      // sources leaves every one of these numbers on the page, and this string
+      // still fails.
+      'SETS 32 MUSCLES 7 PRODUCTIVE 1',
+      'BELOW MEV 11 OVER MRV 0',
+      // The one muscle over its MAV and the one still under its MEV, off the
+      // strip — the two ends of the status scale the figure paints.
+      'Chest 15/14',
+      'Lats 4/14',
+      // A PR the strength read model found, not one the seed declared.
+      'Cable Chest Press Chest 221.7 lb (+12.7)',
+      // The plan's remaining work, folded to one row per lift.
+      'Cable Lat Pulldown Pull B 4 sets',
+    ],
+    holdsPageOpen: false,
   },
 ];
 

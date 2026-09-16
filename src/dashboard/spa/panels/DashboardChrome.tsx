@@ -13,9 +13,9 @@
  * the wall — the rail was always there — it just stops being decorative.
  *
  * The rail is deliberately narrowed to the routes that EXIST. `defaultNavItems`
- * ships four categories (Live · Review · Plan · Body); `Body` has no route, and
- * a nav button that does nothing is worse chrome than no button. Adding it back
- * is one entry in {@link NAV_ITEMS} when the body view lands.
+ * ships four categories (Live · Review · Plan · Body); a nav button that does
+ * nothing is worse chrome than no button, so an item appears only once its
+ * route is in {@link NAV_ROUTES}. `body` joined them with VW-338.
  *
  * Chrome inputs (devices, session state) are read from the store here rather
  * than passed down, so a route that knows nothing about BLE still renders a
@@ -34,6 +34,7 @@ const NAV_ROUTES: Record<string, Route> = {
   live: { name: 'live' },
   program: { name: 'plan' },
   review: { name: 'summary', sessionId: 'latest' },
+  body: { name: 'body' },
 };
 
 /** titan's default categories, filtered to the ones that route somewhere. */
@@ -48,11 +49,31 @@ export function navKeyForRoute(route: Route): string {
       return 'review';
     case 'live':
       return 'live';
+    case 'body':
+      return 'body';
     case 'goals':
       // No rail entry yet (`NAV_ITEMS` has no `goals` key) — the route is reached
       // by URL only, same as `#/goals` itself; this key simply matches nothing.
       return 'goals';
   }
+}
+
+/**
+ * The rail item that carries the live cue, or `null` for none (VW-121, VW-338).
+ *
+ * A set running while the operator is on another route is exactly what titan's
+ * `liveKey` is for — the Live item picks up a quiet green cue instead of the
+ * athlete's set going unannounced off-view. The route the operator is ON never
+ * cues itself, which is also how the body page stays free of live telemetry
+ * while a set runs (plan §3, NAV-D02).
+ */
+export function liveNavKey(state: SessionState, activeKey: string): string | null {
+  return state === 'live' && activeKey !== 'live' ? 'live' : null;
+}
+
+/** Live and body are both read-at-a-distance wall surfaces; the rest are operator documents. */
+function subtitleForRoute(route: Route): string {
+  return route.name === 'live' || route.name === 'body' ? 'wall dashboard' : 'planning';
 }
 
 /**
@@ -102,10 +123,7 @@ export function DashboardChrome(props: {
   const devices = snapshot ? buildTopBarDevices(snapshot, status) : [];
   const sessionState: SessionState = snapshot ? buildSessionState(snapshot) : 'idle';
   const activeKey = navKeyForRoute(props.route);
-  // A set running while the operator is on a planner route is exactly what
-  // `liveKey` is for — the Live item picks up a quiet green cue instead of the
-  // athlete's set going unannounced off-view.
-  const liveKey = sessionState === 'live' && activeKey !== 'live' ? 'live' : null;
+  const liveKey = liveNavKey(sessionState, activeKey);
   const shellRef = useNavSelectedShim(activeKey);
 
   return (
@@ -119,7 +137,7 @@ export function DashboardChrome(props: {
         liveKey={liveKey}
         state={sessionState}
         devices={devices}
-        subtitle={props.route.name === 'live' ? 'wall dashboard' : 'planning'}
+        subtitle={subtitleForRoute(props.route)}
         onNavigate={(key) => {
           const target = NAV_ROUTES[key];
           if (target !== undefined) window.location.hash = routeHash(target);

@@ -30,8 +30,12 @@ export interface SummaryRoute {
 export interface GoalsRoute {
   name: 'goals';
 }
+/** The body-map wall page (VW-338): weekly volume, next up and recent PRs. */
+export interface BodyRoute {
+  name: 'body';
+}
 
-export type Route = LiveRoute | PlanRoute | SummaryRoute | GoalsRoute;
+export type Route = LiveRoute | PlanRoute | SummaryRoute | GoalsRoute | BodyRoute;
 
 /** Sentinel the server accepts in place of a real session id. */
 export const LATEST_SESSION = 'latest';
@@ -46,6 +50,7 @@ export function parseRoute(hash: string): Route {
   const [head, ...rest] = normalized.split('/');
   if (head === 'plan') return { name: 'plan' };
   if (head === 'goals') return { name: 'goals' };
+  if (head === 'body') return { name: 'body' };
   if (head === 'summary') {
     const raw = rest[0];
     const sessionId = raw === undefined || raw === '' ? LATEST_SESSION : decodeURIComponent(raw);
@@ -61,6 +66,8 @@ export function routeHash(route: Route): string {
       return '#/plan';
     case 'goals':
       return '#/goals';
+    case 'body':
+      return '#/body';
     case 'summary':
       return route.sessionId === LATEST_SESSION
         ? '#/summary'
