@@ -58,10 +58,12 @@ entry is written from the user's point of view is a review question, not a check
   Opening the page as soon as the scenario started raced the mock adapter's connect-time rep
   against the wall dashboard's kiosk auto-navigate-to-summary, landing the capture on a
   session that had not finished yet. Screenshots are also now reproducible byte-for-byte
-  across two runs on one machine, for every shot whose content is not itself real-time
-  (four of eight; the other four render a value — a pace ETA, a session timestamp, a
+  across two runs on one machine, for every shot whose content is not itself real-time (four
+  of eight, guaranteed). The other four render a value — a pace ETA, a session timestamp, a
   rep-shape curve — the server computed from its own clock, which no local capture-time
-  freeze reaches).
+  freeze reaches, so whether a given run's PNG matches the previous one is down to timing:
+  it can come out identical when the underlying value happens to coincide, and differ when
+  it doesn't.
 
 ### Added
 

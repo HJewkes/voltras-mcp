@@ -136,33 +136,46 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | `plan-builder`      | none                                                           | yes                |
 | `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
 | `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
-| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | no                 |
-| `live-dual-mid-set` | same, both slots' curves                                       | no                 |
-| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | no                 |
-| `session-summary`   | session start/end stamps in the header                         | no                 |
+| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | not guaranteed     |
+| `live-dual-mid-set` | same, both slots' curves                                       | not guaranteed     |
+| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
+| `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
 
-The two-run proof, `shasum -a 256` of both runs' PNGs compared pairwise (full digests are not
+"Not guaranteed" means exactly that and no more: the four rows above render a value the
+SERVER computed from its own real clock, so nothing on the harness side pins it, and whether
+two runs land on the same value is down to timing, not design. A fast back-to-back run can
+have the frame-decode clock, the pace ETA or the session start/end stamp land on the same
+value both times and come out byte-identical; a slower run, or one that straddles a clock
+tick the faster run did not, comes out different. Neither outcome says anything about
+correctness — both runs still have to satisfy every `expectValues` assertion.
+
+Two two-run comparisons, `shasum -a 256` of each pair of PNGs (full digests are not
 reproduced here — this page is published, and a 256-bit hex string is indistinguishable by
-shape from a protocol value; they are on the PR that shipped this section instead):
+shape from a protocol value; they are on the PR that shipped this section instead), taken on
+two different machines:
 
-| PNG                     | Two-run `shasum -a 256`    |
-| ----------------------- | -------------------------- |
-| `dashboard-cold.png`    | identical                  |
-| `plan-builder.png`      | identical                  |
-| `goals.png`             | identical                  |
-| `body-week.png`         | identical                  |
-| `live-mid-set.png`      | differs — rep-shape curve  |
-| `live-dual-mid-set.png` | differs — rep-shape curve  |
-| `live-rest.png`         | differs — pace ETA         |
-| `session-summary.png`   | differs — start/end stamps |
+| PNG                     | Run A                      | Run B                     |
+| ----------------------- | -------------------------- | ------------------------- |
+| `dashboard-cold.png`    | identical                  | identical                 |
+| `plan-builder.png`      | identical                  | identical                 |
+| `goals.png`             | identical                  | identical                 |
+| `body-week.png`         | identical                  | identical                 |
+| `live-mid-set.png`      | differs — rep-shape curve  | differs — rep-shape curve |
+| `live-rest.png`         | differs — pace ETA         | differs — pace ETA        |
+| `live-dual-mid-set.png` | differs — rep-shape curve  | identical                 |
+| `session-summary.png`   | differs — start/end stamps | identical                 |
 
-The four "differs" rows are not flakiness: each one's pixel diff isolates to exactly the
-field named, confirmed by cropping the diff bounding box (`ImageChops.difference`) — e.g.
-`live-rest`'s two runs differ only inside an 8×12px region that reads `8:49 PM` in one and
-`8:55 PM` in the other, the rendered `ETA` tile. Fixing these at the pixel level would mean
-injecting a fake clock into the server process itself (frame-decode timestamps, session
-`startedAt`/`endedAt`, `resolveSessionPace`'s `Date.now()` call) — a change to production
-session/analytics timing code, not to the capture harness, and outside VW-389's scope.
+The four rows above the "not guaranteed" line hold on every run seen so far, because nothing
+on the page they render is time-derived. Below that line, a diff isn't guaranteed on any given
+run — Run B's `live-dual-mid-set` and `session-summary` happened to land on the same
+frame-decode time and the same session stamps both times — but when a diff DOES appear it
+isolates to exactly the field named, confirmed by cropping the diff bounding box
+(`ImageChops.difference`) — e.g. Run A's `live-rest` pair differs only inside an 8×12px region
+that reads `8:49 PM` in one and `8:55 PM` in the other, the rendered `ETA` tile. Fixing this at
+the pixel level would mean injecting a fake clock into the server process itself (frame-decode
+timestamps, session `startedAt`/`endedAt`, `resolveSessionPace`'s `Date.now()` call) — a change
+to production session/analytics timing code, not to the capture harness, and outside VW-389's
+scope.
 
 **The mutation proof**, showing the clock-freeze measure specifically is load-bearing:
 commenting out the `page.clock.setFixedTime(...)` call in `installShotDeterminism` and
@@ -172,9 +185,9 @@ matches the frozen baseline above. Restoring the call brings both the `12:00` cl
 the matching digest straight back.
 
 `guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
-one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four non-reproducible shots can't drift by
-accident on a routine local run — regenerating one is still a normal, deliberate action, just
-an explicit one.
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four not-guaranteed-reproducible shots can't
+drift by accident on a routine local run — regenerating one is still a normal, deliberate
+action, just an explicit one.
 
 ## What the staleness gate can and cannot check
 
