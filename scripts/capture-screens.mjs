@@ -96,6 +96,13 @@ const TEXT_TIMEOUT_MS = 20_000;
 /** How long the dashboard sidecar gets to bind after the driver starts. */
 const DASHBOARD_BIND_TIMEOUT_MS = 60_000;
 /**
+ * The wall clock every shot's page sees, fixed so the header clock and any
+ * elapsed-time readout render the same text on every run. Only `Date.now()`/
+ * `new Date()` are pinned ({@link installShotDeterminism}) — real timers keep
+ * firing, so the 2s snapshot poll and the live SSE stream are untouched.
+ */
+const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
+/**
  * Connection-level `fetch` retries per snapshot read. Three at {@link POLL_MS}
  * apart covers the intermittent reject a heavily loaded machine produces without
  * masking a sidecar that has actually gone away — the predicate's own timeout
@@ -105,6 +112,33 @@ const TRANSIENT_FETCH_RETRIES = 3;
 
 const log = (...args) => console.error('[capture]', ...args);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Refuse to silently replace a committed PNG with a DIFFERENT one on an
+ * ordinary local run, unless `CAPTURES_ALLOW_LOCAL=1` says the replacement is
+ * intentional.
+ *
+ * `installShotDeterminism` + `waitForVisualStability` make most shots repeat
+ * byte-for-byte, but four of the seven (VW-389: `live-mid-set`, `live-rest`,
+ * `session-summary`, `live-dual-mid-set`) render a value the SERVER computed
+ * from its own real clock — a rep-shape curve's per-sample frame-decode
+ * timestamp, a pace ETA, a session start/end stamp — and no amount of
+ * client-side clock-freezing reaches that; `docs/screenshot-harness.md` has
+ * the count and the exact fields. Regenerating one of those shots is still a
+ * normal, deliberate maintainer action — this only stops it from happening
+ * BY ACCIDENT as a side effect of running the harness for some other reason.
+ */
+function guardLocalOverwrite(file, buffer, name) {
+  if (process.env.CAPTURES_ALLOW_LOCAL === '1' || !fs.existsSync(file)) return;
+  const existing = fs.readFileSync(file);
+  if (existing.equals(buffer)) return;
+  throw new Error(
+    `${name}: the fresh capture differs from the committed PNG. If this is an ` +
+      `intentional regeneration, rerun with CAPTURES_ALLOW_LOCAL=1 and commit the ` +
+      `result; if it is not, see docs/screenshot-harness.md for which shots carry a ` +
+      'server-real-time field and are expected to differ run to run.',
+  );
+}
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
@@ -322,6 +356,30 @@ async function waitForText(page, expected, label) {
 }
 
 /**
+ * Pin everything about a shot's page that a wall clock or a CSS transition
+ * would otherwise make differ run to run: `Date.now()`/`new Date()` fixed at
+ * {@link CAPTURE_FIXED_TIME_ISO} (timers keep running — see its note), the
+ * `prefers-reduced-motion` media query set to `reduce`, and a stylesheet
+ * forcing every animation/transition to complete instantly. The stylesheet is
+ * an init script rather than a one-off `addStyleTag` because `captureShot`
+ * navigates this same page repeatedly (`page.goto`/`page.reload`) and an init
+ * script re-applies on each one; a style tag added once would not survive the
+ * first reload.
+ */
+async function installShotDeterminism(page) {
+  await page.clock.setFixedTime(CAPTURE_FIXED_TIME_ISO);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    const style = document.createElement('style');
+    style.textContent =
+      '*, *::before, *::after { animation-duration: 0s !important; ' +
+      'animation-delay: 0s !important; transition-duration: 0s !important; ' +
+      'transition-delay: 0s !important; scroll-behavior: auto !important; }';
+    (document.head ?? document.documentElement).appendChild(style);
+  });
+}
+
+/**
  * Block until the bundled webfonts have loaded and the browser has produced two
  * frames. Signals, not a sleep: a shot taken before `document.fonts.ready`
  * captures fallback metrics and reflows a moment later.
@@ -331,6 +389,40 @@ async function settlePaint(page) {
     await document.fonts.ready;
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
+}
+
+/** How far apart two stability samples are taken. */
+const STABILITY_SAMPLE_MS = 150;
+/** Consecutive identical samples required before the page counts as settled. */
+const STABILITY_ROUNDS = 3;
+/** Ceiling on the whole poll — a page that never settles is a real bug, not a slow one. */
+const STABILITY_TIMEOUT_MS = 5_000;
+
+/**
+ * Screenshot on a loop until `STABILITY_ROUNDS` consecutive samples come back
+ * byte-identical, and return the settled buffer. `installShotDeterminism`'s CSS
+ * override only reaches `animation`/`transition` CSS properties; titan-design's
+ * charts (the diverging stage's velocity curve, VW-389) animate their entrance
+ * through `requestAnimationFrame` directly, which no stylesheet can freeze. This
+ * is the general fix: wait for the PIXELS to stop moving, whatever is moving
+ * them, rather than special-casing one more animation mechanism.
+ */
+async function waitForVisualStability(page, screenshotOptions) {
+  let last = null;
+  let streak = 0;
+  const deadline = Date.now() + STABILITY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const buffer = await page.screenshot(screenshotOptions);
+    if (last !== null && buffer.equals(last)) {
+      streak++;
+      if (streak >= STABILITY_ROUNDS) return buffer;
+    } else {
+      streak = 0;
+    }
+    last = buffer;
+    await sleep(STABILITY_SAMPLE_MS);
+  }
+  throw new Error('page never settled visually — an animation is still running past the timeout');
 }
 
 /** Width and height straight out of the PNG's IHDR — no image library needed. */
@@ -363,9 +455,15 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
   // cropped at the default size. Set unconditionally so the shot AFTER an
   // override goes back to the default rather than inheriting it.
   await page.setViewportSize({ ...defs.viewportFor(shot) });
+  // `domcontentloaded`, NOT `networkidle` — same reason `recordClip` picks it
+  // (below): the live page holds `/api/stream` (SSE) open for as long as it is
+  // mounted, so a busy stream (two slots, VW-389's `live-dual-mid-set`) can keep
+  // bytes flowing past `networkidle`'s 500ms quiet window and time the goto out
+  // at 30s. Nothing is lost — `waitForState` and `waitForText` below are the
+  // real gates; this `waitUntil` only needed to get the initial bundle running.
   const open = async () => {
-    if (page.url() === target) await page.reload({ waitUntil: 'networkidle' });
-    else await page.goto(target, { waitUntil: 'networkidle' });
+    if (page.url() === target) await page.reload({ waitUntil: 'domcontentloaded' });
+    else await page.goto(target, { waitUntil: 'domcontentloaded' });
   };
 
   const expected = [...shot.expectText, ...shot.expectValues];
@@ -376,7 +474,19 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
   await settlePaint(page);
 
   const file = path.join(outDir, `${shot.name}.png`);
-  await page.screenshot({ path: file, fullPage: false });
+  // `animations: 'disabled'` is Playwright's own belt to installShotDeterminism's
+  // braces: it finishes any CSS transition/animation the stylesheet missed
+  // (an inline `style` attribute, for one) before each sample. `caret: 'hide'`
+  // removes the one other per-frame variable, a blinking caret in a focused
+  // input. `waitForVisualStability` (not a plain `page.screenshot`) is what
+  // catches everything neither reaches — see its own note.
+  const buffer = await waitForVisualStability(page, {
+    fullPage: false,
+    animations: 'disabled',
+    caret: 'hide',
+  });
+  guardLocalOverwrite(file, buffer, shot.name);
+  fs.writeFileSync(file, buffer);
 
   const after = await pageText(page);
   const stillMissing = missingIn(after, expected);
@@ -400,9 +510,14 @@ async function captureShot(page, origin, port, shot, defs, outDir) {
     width,
     height,
     bytes,
-    // Informational: reruns differ (the page paints a wall clock and a count-up
-    // rest timer), so nothing gates on this. It is here to make "did this shot
-    // actually change" answerable from the diff.
+    // Two runs on ONE machine now agree for shots with no server-real-time
+    // field (`installShotDeterminism` + `waitForVisualStability` remove the
+    // client-side wall-clock and animation variance that used to make every
+    // rerun differ). The other shots still churn on THEIR OWN data, not on
+    // anything this harness controls — see `guardLocalOverwrite`'s note and
+    // docs/screenshot-harness.md's two-run proof for the exact split. Nothing
+    // gates on this field regardless: font hinting, GPU rasterisation and
+    // Skia's antialiasing still differ machine to machine either way.
     sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
   };
 }
@@ -775,11 +890,12 @@ async function captureShots(browser, shots, defs, dbDir, outDir) {
   const page = await browser.newPage({
     viewport: { ...defs.CAPTURE_VIEWPORT },
     deviceScaleFactor: defs.CAPTURE_DEVICE_SCALE_FACTOR,
-    // Fixed so the wall clock the live page renders is at least in a known
-    // zone across machines. It still differs run to run — see the manifest note.
+    // UTC so a fixed clock (installShotDeterminism) reads the same wall-clock
+    // text on every machine, not just on every run of this one.
     timezoneId: 'UTC',
     locale: 'en-US',
   });
+  await installShotDeterminism(page);
   const captured = [];
   for (const scenario of defs.CAPTURE_SCENARIOS) {
     const wanted = shots.filter((s) => s.scenario === scenario.name);
