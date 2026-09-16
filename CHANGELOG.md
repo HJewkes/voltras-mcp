@@ -51,6 +51,8 @@ entry is written from the user's point of view is a review question, not a check
 - The published docs screenshots now include the `#/goals` wall page: a declared priority,
   the accepted committed/stretch band, its trajectory chart, and the PR star from a heavier
   set passing last week's reading (VW-389).
+- The `#/goals` page now stacks to one column on a phone-width screen instead of squeezing
+  its four-card grid and 1200px-wide trajectory chart into a viewport neither fits (VW-356).
 
 ### Fixed
 
