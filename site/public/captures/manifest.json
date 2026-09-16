@@ -1,5 +1,5 @@
 {
-  "definitionHash": "840054465fc6a9dee1523171f228328bc205d48872c6d2a0302fe19d91395706",
+  "definitionHash": "346f5f2a78f51e1d134795038b5584877ee68703b13633503adbba7d588c8a72",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -171,6 +171,36 @@
       "height": 900,
       "bytes": 131655,
       "sha256": "4297aa81fb5e0e316efe7482db1c01a16b1f6f0bb17c2c9e659b82a868f4395a"
+    },
+    {
+      "name": "goals-phone",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "The goal-coach page at phone width, cards and chart stacked to one column.",
+      "file": "goals-phone.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 2
+      },
+      "assertedText": [
+        "CABLE CHEST PRESS",
+        "Calibrating",
+        "COMMITTED",
+        "STRETCH",
+        "Per-lift",
+        "Whole body"
+      ],
+      "assertedValues": [
+        "COMMITTED 127.5",
+        "STRETCH 127.5",
+        "105 x 8 in week 3",
+        "8 x 105 lb in week 3",
+        "CABLE CHEST PRESS · specialize"
+      ],
+      "width": 390,
+      "height": 844,
+      "bytes": 69200,
+      "sha256": "1b1a2e905f197dac624785626ba7c7a84189457f400af4d9884ccca40b9853ed"
     },
     {
       "name": "body-week",

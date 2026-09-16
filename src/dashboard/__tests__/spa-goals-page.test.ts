@@ -1,15 +1,23 @@
-// Render test for the `#/goals` wall page (VW-355, plan G8'; card grids VW-386).
+// Render test for the `#/goals` wall page (VW-355, plan G8'; card grids VW-386;
+// phone layout VW-356).
 //
 // Builds real `GoalProgressView`s with `buildGoalProgressView` (the same
 // function `/api/goal-progress` calls) over literal bands, so the fixtures are
 // exactly the shape the route returns — then renders `GoalsView` with
 // `renderToStaticMarkup`, same technique as `spa-session-summary-e1rm-toggle.test.ts`.
 // Asserts the sections plan G8' names and the hidden bodyweight tile.
+//
+// `useIsNarrowViewport` is mocked rather than driven by a real `matchMedia`:
+// the suite runs under vitest's `node` environment (no `window`), so the real
+// hook's own `typeof window === 'undefined'` guard would always report wide.
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => false) }));
+
+import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
 import type { GoalsPageData } from '../spa/goals/goals-model.js';
 import {
@@ -276,5 +284,23 @@ describe('GoalsView (VW-355)', () => {
   it('renders an empty state with no priorities declared', () => {
     const html = render({ priorities: [], progress: {} });
     expect(html).toContain('No priorities declared');
+  });
+});
+
+describe('GoalsView phone layout (VW-356)', () => {
+  it('stacks the card grids to one full-width column below the narrow breakpoint', () => {
+    vi.mocked(useIsNarrowViewport).mockReturnValue(true);
+    try {
+      const html = render(baseData().data);
+      // Wide is a four-column `calc(25% - ...)` cell (see the render test
+      // above's card grids); narrow drops straight to a full-width row.
+      expect(html).not.toContain('calc(25%');
+      expect(html.match(/flex-basis:100%/g)?.length).toBe(4); // 3 lift cards + 1 muscle card
+      // The trajectory chart's phone-density width, not the 1200px wall one.
+      expect(html).toContain('width:240px');
+      expect(html).not.toContain('width:1200px');
+    } finally {
+      vi.mocked(useIsNarrowViewport).mockReturnValue(false);
+    }
   });
 });

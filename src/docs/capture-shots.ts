@@ -55,6 +55,9 @@ export interface CaptureViewport {
  */
 export const WALL_VIEWPORT = { width: 1920, height: 1080 } as const;
 
+/** An iPhone-class portrait frame — the `#/goals` phone layout (VW-356). */
+export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
+
 /**
  * 1x. The docs site renders these into a ~700px content column, so a 1440px-wide
  * capture is already 2x there; a device scale factor of 2 would make it 4x and
@@ -394,6 +397,33 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       '105 x 8 in week 3',
       '8 x 105 lb in week 3',
       // The whole-body panel's own line for the same priority.
+      'CABLE CHEST PRESS · specialize',
+    ],
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals-phone',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption: 'The goal-coach page at phone width, cards and chart stacked to one column.',
+    // Same state as `goals` — this shot proves the phone layout (VW-356), not
+    // a different read of the pipeline, so it reuses that shot's predicate
+    // and content rather than re-deriving one.
+    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    viewport: PHONE_VIEWPORT,
+    expectText: [
+      'CABLE CHEST PRESS',
+      'Calibrating',
+      'COMMITTED',
+      'STRETCH',
+      'Per-lift',
+      'Whole body',
+    ],
+    expectValues: [
+      'COMMITTED 127.5',
+      'STRETCH 127.5',
+      '105 x 8 in week 3',
+      '8 x 105 lb in week 3',
       'CABLE CHEST PRESS · specialize',
     ],
     holdsPageOpen: false,

@@ -7,10 +7,10 @@
  * fixtures directly (plan G8' done_when).
  *
  * ── Layout ───────────────────────────────────────────────────────────────
- * Wall only (phone is VW-356): priority header + `GoalTrajectoryChart` +
- * milestone tiles, then a grid of `GoalLiftCard`, then a grid of
- * `GoalMuscleCard`, then a whole-body panel with the priority rail and the
- * bodyweight tile. Sections come from plan G8'/§4, not invented here.
+ * Priority header + `GoalTrajectoryChart` + milestone tiles, then a grid of
+ * `GoalLiftCard`, then a grid of `GoalMuscleCard`, then a whole-body panel
+ * with the priority rail and the bodyweight tile. Sections come from plan
+ * G8'/§4, not invented here.
  *
  * The two grids replaced full-width rows whose label and data sat at opposite
  * edges of a 1920px viewport (VW-386, human 2026-09-14). Each card carries its
@@ -20,6 +20,13 @@
  * titan components are react-native-web Views that silently drop Tailwind
  * layout utilities. Colour comes from `<Surface level>` / `useOnSurfaceColor`
  * / semantic tokens only, never a raw hex.
+ *
+ * Phone (VW-356): below `NARROW_BREAKPOINT_PX` the two grids collapse each
+ * card to a full-width row (`useIsNarrowViewport`, same hook the planner and
+ * `#/body` pages use) and the trajectory chart drops to its own `phone`
+ * density width so the card it sits in still fits inside the viewport —
+ * `PanelCard`'s `px-5` plus the page gutter is 80px of fixed chrome the chart
+ * has to leave room for.
  */
 import React from 'react';
 import {
@@ -39,6 +46,7 @@ import type { StoredPriorityLevel } from '../../../store/types.js';
 import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
+import { useIsNarrowViewport } from '../use-viewport.js';
 import {
   bodyweightTarget,
   cardActuals,
@@ -62,10 +70,20 @@ import {
 } from './goals-model.js';
 
 const CHART_WIDTH = 1200;
+/**
+ * The chart's own `phone` density kicks in below its 720px `WALL_BREAKPOINT`
+ * regardless of the width passed — this value is about fitting the 390px
+ * viewport, not the density switch. On that frame the fixed chrome outside
+ * this component is titan's 60px `SideNav` rail (plus its 1px border) and,
+ * inside it, `PAGE_PADDING` (20px) and `PanelCard`'s own `px-5` (20px) each
+ * side: 141px total, leaving 249px. 240 keeps a few px of slack.
+ */
+const CHART_WIDTH_NARROW = 240;
 const CHART_HEIGHT = 340;
 
 export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   const { data } = props;
+  const narrow = useIsNarrowViewport();
   if (data.priorities.length === 0) {
     return (
       <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING }}>
@@ -81,16 +99,16 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
 
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
-      {primary !== null && <PrimaryGoalCard row={primary} />}
-      <PerLiftGrid rows={liftRows(data)} />
-      <MuscleGrid rows={muscleCardRows(data)} />
+      {primary !== null && <PrimaryGoalCard row={primary} narrow={narrow} />}
+      <PerLiftGrid rows={liftRows(data)} narrow={narrow} />
+      <MuscleGrid rows={muscleCardRows(data)} narrow={narrow} />
       <WholeBodyPanel data={data} />
     </Surface>
   );
 }
 
 /** Header + `GoalTrajectoryChart` + milestone tile for the lead priority (plan §4, wall). */
-function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
+function PrimaryGoalCard(props: { row: GoalTargetRow; narrow: boolean }): React.JSX.Element {
   const { priority, view } = props.row;
   return (
     <PanelCard
@@ -124,7 +142,7 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
           weeks={chartWeeks(view)}
           status={view.status}
           direction={directionOf(view)}
-          width={CHART_WIDTH}
+          width={props.narrow ? CHART_WIDTH_NARROW : CHART_WIDTH}
           height={CHART_HEIGHT}
           metricLabel={priorityLabel(priority)}
         />
@@ -147,23 +165,29 @@ const CARD_GRID: React.CSSProperties = {
   alignItems: 'stretch',
 };
 
-// Four 25% columns and three gaps come to exactly 100% of the row. `flexGrow`
-// stays 0 so a short last row keeps the column width instead of a lone card
-// stretching to the full 1780px the wall gives it.
-const CARD_CELL: React.CSSProperties = {
-  flexGrow: 0,
-  flexBasis: `calc(25% - ${(SPACE.md * 3) / 4}px)`,
-  minWidth: 320,
-};
+/**
+ * Four 25% columns and three gaps come to exactly 100% of the row. `flexGrow`
+ * stays 0 so a short last row keeps the column width instead of a lone card
+ * stretching to the full 1780px the wall gives it.
+ *
+ * Narrow (VW-356): one column, full width, and `minWidth` drops rather than
+ * shrinking — the wall's 320px floor is wider than a 390px viewport minus its
+ * own page and card gutters, so keeping it would push the card off the edge.
+ */
+function cardCellStyle(narrow: boolean): React.CSSProperties {
+  if (narrow) return { flexGrow: 0, flexBasis: '100%', minWidth: 0 };
+  return { flexGrow: 0, flexBasis: `calc(25% - ${(SPACE.md * 3) / 4}px)`, minWidth: 320 };
+}
 
 /** One card per exercise-tracked target (`top_load_at_reps`). */
-function PerLiftGrid(props: { rows: GoalTargetRow[] }): React.JSX.Element | null {
+function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
+  const cell = cardCellStyle(props.narrow);
   return (
     <PanelCard title="Per-lift">
       <div style={CARD_GRID}>
         {props.rows.map((row) => (
-          <div key={row.view.target.id} style={CARD_CELL}>
+          <div key={row.view.target.id} style={cell}>
             <GoalLiftCard
               name={targetLabel(row)}
               status={row.view.status}
@@ -181,13 +205,17 @@ function PerLiftGrid(props: { rows: GoalTargetRow[] }): React.JSX.Element | null
 }
 
 /** One card per `muscle`-kind priority, from its rollup and its contributing lifts. */
-function MuscleGrid(props: { rows: GoalMuscleCardRow[] }): React.JSX.Element | null {
+function MuscleGrid(props: {
+  rows: GoalMuscleCardRow[];
+  narrow: boolean;
+}): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
+  const cell = cardCellStyle(props.narrow);
   return (
     <PanelCard title="Muscle priorities">
       <div style={CARD_GRID}>
         {props.rows.map((row) => (
-          <div key={row.priority.id} style={CARD_CELL}>
+          <div key={row.priority.id} style={cell}>
             <GoalMuscleCard
               name={priorityLabel(row.priority)}
               muscle={row.muscle}
