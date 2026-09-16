@@ -1,5 +1,5 @@
 {
-  "definitionHash": "PENDING_REGEN",
+  "definitionHash": "840054465fc6a9dee1523171f228328bc205d48872c6d2a0302fe19d91395706",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -182,13 +182,7 @@
         "kind": "sessions-ended",
         "minSessions": 18
       },
-      "assertedText": [
-        "Next up",
-        "Recent PRs",
-        "This week",
-        "Legend",
-        "Weekly sets by muscle"
-      ],
+      "assertedText": ["Next up", "Recent PRs", "This week", "Legend", "Weekly sets by muscle"],
       "assertedValues": [
         "SETS 32 MUSCLES 7 PRODUCTIVE 1",
         "BELOW MEV 11 OVER MRV 0",
@@ -199,8 +193,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 201918,
-      "sha256": "a0553719b29baa158a71011c7e61efb65e3bdf6cbdab81696997eb541d28e0ec"
+      "bytes": 201657,
+      "sha256": "495a9519c2e9b05b062f5517aebcd8bd2366a4f3024218deb6b303f8af43229b"
     }
   ],
   "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",

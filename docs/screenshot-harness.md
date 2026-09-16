@@ -135,6 +135,7 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | `dashboard-cold`    | none                                                           | yes                |
 | `plan-builder`      | none                                                           | yes                |
 | `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
+| `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
 | `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | no                 |
 | `live-dual-mid-set` | same, both slots' curves                                       | no                 |
 | `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | no                 |
@@ -149,6 +150,7 @@ shape from a protocol value; they are on the PR that shipped this section instea
 | `dashboard-cold.png`    | identical                  |
 | `plan-builder.png`      | identical                  |
 | `goals.png`             | identical                  |
+| `body-week.png`         | identical                  |
 | `live-mid-set.png`      | differs — rep-shape curve  |
 | `live-dual-mid-set.png` | differs — rep-shape curve  |
 | `live-rest.png`         | differs — pace ETA         |
@@ -177,7 +179,7 @@ an explicit one.
 ## What the staleness gate can and cannot check
 
 **It cannot compare pixels ACROSS MACHINES.** Font hinting, GPU rasterisation and Skia
-antialiasing differ between machines regardless of anything above, and four of the seven shots
+antialiasing differ between machines regardless of anything above, and four of the eight shots
 carry a genuine server-real-time field even on one machine (see above). A byte comparison run
 in CI would fail on every run there; a perceptual threshold loose enough to survive that would
 be loose enough never to fail. Neither is shipped.

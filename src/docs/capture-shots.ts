@@ -10,11 +10,11 @@
 //
 // What this CANNOT gate is the pixels. `scripts/capture-screens.mjs` freezes the
 // clock and disables animations/transitions before every shot (VW-389), which
-// makes `dashboard-cold`, `plan-builder` and `goals` — the three shots with no
-// server-real-time field on the page — byte-identical across two runs on ONE
-// machine. The other four still carry a value the SERVER computed from its own
-// clock (a rep-shape curve's per-sample frame-decode timestamp, a pace ETA, a
-// session start/end stamp) that no client-side freeze reaches; see
+// makes `dashboard-cold`, `plan-builder`, `goals` and `body-week` — the four
+// shots with no server-real-time field on the page — byte-identical across two
+// runs on ONE machine. The other four still carry a value the SERVER computed
+// from its own clock (a rep-shape curve's per-sample frame-decode timestamp, a
+// pace ETA, a session start/end stamp) that no client-side freeze reaches; see
 // `docs/screenshot-harness.md` for the exact split and the two-run proof, and
 // `guardLocalOverwrite` in the harness for what stops one of those four from
 // being silently replaced by an ordinary local run. Font hinting, GPU

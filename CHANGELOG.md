@@ -59,7 +59,7 @@ entry is written from the user's point of view is a review question, not a check
   against the wall dashboard's kiosk auto-navigate-to-summary, landing the capture on a
   session that had not finished yet. Screenshots are also now reproducible byte-for-byte
   across two runs on one machine, for every shot whose content is not itself real-time
-  (three of eight; the other five render a value — a pace ETA, a session timestamp, a
+  (four of eight; the other four render a value — a pace ETA, a session timestamp, a
   rep-shape curve — the server computed from its own clock, which no local capture-time
   freeze reaches).
 

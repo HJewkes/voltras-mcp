@@ -6,7 +6,7 @@
 // which is the half of "a screenshot rots silently" that is actually decidable.
 //
 // It does NOT compare pixels. Font hinting, GPU rasterisation and Skia's
-// antialiasing differ per machine regardless, and four of the seven shots
+// antialiasing differ per machine regardless, and four of the eight shots
 // render a value the SERVER computed from its own real clock (a rep-shape
 // curve's frame-decode timestamp, a pace ETA, a session start/end stamp) that
 // no local determinism measure reaches — see docs/screenshot-harness.md for
