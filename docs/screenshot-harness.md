@@ -140,17 +140,19 @@ That reaches every shot whose non-determinism was ours (the harness's) to fix. I
 | `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | no                 |
 | `session-summary`   | session start/end stamps in the header                         | no                 |
 
-The two-run proof, `shasum -a 256` of both runs' PNGs:
+The two-run proof, `shasum -a 256` of both runs' PNGs compared pairwise (full digests are not
+reproduced here — this page is published, and a 256-bit hex string is indistinguishable by
+shape from a protocol value; they are on the PR that shipped this section instead):
 
-```
-dashboard-cold.png    b11546ad26685360…  ==  b11546ad26685360…   (identical)
-plan-builder.png      394145cba5f0fca4…  ==  394145cba5f0fca4…   (identical)
-goals.png              4297aa81fb5e0e31…  ==  4297aa81fb5e0e31…   (identical)
-live-mid-set.png      eb4e162a55e574cb…  !=  427cd243b7e06b21…   (differs — rep-shape curve)
-live-dual-mid-set.png ae6e3d3fe9f6836c…  !=  48689e74a5b3a48e…   (differs — rep-shape curve)
-live-rest.png         8f26f272b75b9b9e…  !=  2e86ba1804cfe7fc…   (differs — pace ETA)
-session-summary.png   20ea181a64dcd1fc…  !=  c622e3bf3ac5037e…   (differs — start/end stamps)
-```
+| PNG                     | Two-run `shasum -a 256`    |
+| ----------------------- | -------------------------- |
+| `dashboard-cold.png`    | identical                  |
+| `plan-builder.png`      | identical                  |
+| `goals.png`             | identical                  |
+| `live-mid-set.png`      | differs — rep-shape curve  |
+| `live-dual-mid-set.png` | differs — rep-shape curve  |
+| `live-rest.png`         | differs — pace ETA         |
+| `session-summary.png`   | differs — start/end stamps |
 
 The four "differs" rows are not flakiness: each one's pixel diff isolates to exactly the
 field named, confirmed by cropping the diff bounding box (`ImageChops.difference`) — e.g.
@@ -163,10 +165,9 @@ session/analytics timing code, not to the capture harness, and outside VW-389's 
 **The mutation proof**, showing the clock-freeze measure specifically is load-bearing:
 commenting out the `page.clock.setFixedTime(...)` call in `installShotDeterminism` and
 rerunning `dashboard-cold` renders the header clock at the real time (`21:15`, that run)
-instead of the fixed `12:00` every frozen run shows, and its digest
-(`5df1d5e1c80c2cdc…`) differs from the frozen baseline (`b11546ad26685360…`) above.
-Restoring the call brings the `12:00` clock and the `b11546ad26685360…` digest straight
-back.
+instead of the fixed `12:00` every frozen run shows, and its `shasum -a 256` no longer
+matches the frozen baseline above. Restoring the call brings both the `12:00` clock and
+the matching digest straight back.
 
 `guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
 one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four non-reproducible shots can't drift by
