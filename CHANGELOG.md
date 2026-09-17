@@ -58,9 +58,10 @@ entry is written from the user's point of view is a review question, not a check
 
 - The goal trajectory chart is drawn on a recessed plane with a lit bottom lip, a labelled
   value axis and gridlines, and its band edges are interpolated rather than joined
-  straight (`@titan-design/react-ui` 0.17.0, VW-401). A goal whose committed and stretch
-  targets are the same number — every goal still calibrating — currently renders that band
-  as a sub-pixel fill, so the chart reads as empty until the two targets separate.
+  straight (`@titan-design/react-ui` 0.17.1, VW-401). A goal whose committed and stretch
+  targets are the same number — every goal still calibrating — draws that band as a single
+  ramp edge and merges the two target labels into one, instead of stacking two labels over
+  a band with no width.
 
 ### Fixed
 
