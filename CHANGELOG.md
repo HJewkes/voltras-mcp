@@ -54,6 +54,15 @@ entry is written from the user's point of view is a review question, not a check
 - The `#/goals` page now stacks to one column on a phone-width screen instead of squeezing
   its four-card grid and 1200px-wide trajectory chart into a viewport neither fits (VW-356).
 
+### Changed
+
+- The goal trajectory chart is drawn on a recessed plane with a lit bottom lip, a labelled
+  value axis and gridlines, and its band edges are interpolated rather than joined
+  straight (`@titan-design/react-ui` 0.17.1, VW-401). A goal whose committed and stretch
+  targets are the same number — every goal still calibrating — draws that band as a single
+  ramp edge and merges the two target labels into one, instead of stacking two labels over
+  a band with no width.
+
 ### Fixed
 
 - `npm run docs:captures`'s dual-Voltra screenshot no longer 404s partway through (VW-389).
