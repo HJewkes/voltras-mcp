@@ -428,6 +428,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'fat_loss_specialize_beginner_exception',
   'declineFatLossDowngrade',
   'anchorReps',
+  'anchorLoad',
   'startValue',
   'startMeasuredAt',
   'matchedSessionCount',
@@ -456,6 +457,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'GOAL_TARGET_FIXED',
   'GOAL_TARGET_BELOW_BAND',
   'GOAL_TARGET_ABOVE_BAND',
+  // VW-399: the anchor load a `reps_at_load` target is counted at, and its refusal code.
+  'reps_at_load',
+  'GOAL_ANCHOR_LOAD_NOT_APPLICABLE',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',

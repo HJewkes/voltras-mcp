@@ -123,7 +123,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 30;
+const SCHEMA_VERSION = 31;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -246,6 +246,8 @@ const GOAL_TARGETS_DDL = `
     )),
     exercise_id TEXT,
     anchor_reps INTEGER,
+    -- v31 (VW-399): the fixed load a reps_at_load target is counted at; NULL elsewhere.
+    anchor_load REAL,
     start_value REAL NOT NULL,
     start_measured_at TEXT NOT NULL,
     band_low_pct_per_week REAL NOT NULL,
@@ -1661,6 +1663,16 @@ function migrateV29ToV30(db: DatabaseSync): void {
   );
 }
 
+/**
+ * v30 -> v31: `goal_targets.anchor_load` (VW-399). PURELY ADDITIVE — one
+ * nullable column, nothing back-filled. A `reps_at_load` target accepted
+ * before v31 never recorded the load its reps were counted at, and guessing
+ * one would print a set the lifter never agreed to.
+ */
+function migrateV30ToV31(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'goal_targets', 'anchor_load', 'REAL');
+}
+
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
@@ -1924,6 +1936,7 @@ interface GoalTargetRow {
   metric: string;
   exercise_id: string | null;
   anchor_reps: number | null;
+  anchor_load: number | null;
   start_value: number;
   start_measured_at: string;
   band_low_pct_per_week: number;
@@ -4648,6 +4661,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 29) {
     migrateV29ToV30(db);
   }
+  if (current <= 30) {
+    migrateV30ToV31(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4832,6 +4848,7 @@ function rowToGoalTarget(row: GoalTargetRow): StoredGoalTarget {
   };
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
   if (row.anchor_reps !== null) out.anchorReps = row.anchor_reps;
+  if (row.anchor_load !== null) out.anchorLoad = row.anchor_load;
   if (row.accepted_by !== null) out.acceptedBy = row.accepted_by as StoredGoalTargetAcceptedBy;
   if (row.retired_at !== null) out.retiredAt = row.retired_at;
   if (row.outcome !== null) out.outcome = row.outcome as StoredGoalTargetOutcome;
@@ -4924,15 +4941,16 @@ function priorityBindings(p: StoredPriority): (string | number | null)[] {
 
 const PUT_GOAL_TARGET_SQL = `
   INSERT INTO goal_targets
-    (id, priority_id, metric, exercise_id, anchor_reps, start_value, start_measured_at,
-     band_low_pct_per_week, band_high_pct_per_week, committed_value, stretch_value, basis,
-     info_level, tier_used, tier_provisional, diet_phase_at_derivation, accepted_by,
-     acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, priority_id, metric, exercise_id, anchor_reps, anchor_load, start_value,
+     start_measured_at, band_low_pct_per_week, band_high_pct_per_week, committed_value,
+     stretch_value, basis, info_level, tier_used, tier_provisional, diet_phase_at_derivation,
+     accepted_by, acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     metric = excluded.metric,
     exercise_id = excluded.exercise_id,
     anchor_reps = excluded.anchor_reps,
+    anchor_load = excluded.anchor_load,
     start_value = excluded.start_value,
     start_measured_at = excluded.start_measured_at,
     band_low_pct_per_week = excluded.band_low_pct_per_week,
@@ -4960,6 +4978,7 @@ function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
     t.metric,
     t.exerciseId ?? null,
     t.anchorReps ?? null,
+    t.anchorLoad ?? null,
     t.startValue,
     t.startMeasuredAt,
     t.bandLowPctPerWeek,

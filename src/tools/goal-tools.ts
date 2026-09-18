@@ -587,6 +587,7 @@ async function acceptTarget(
 ): Promise<AcceptTargetResult> {
   const target = await findTarget(state, input.targetId);
   assertAcceptable(target);
+  assertAnchorLoadApplies(target, input.anchorLoad);
   const committed = input.committedValue ?? target.committedValue;
   const stretch = input.stretchValue ?? target.stretchValue;
   const custom = input.committedValue !== undefined || input.stretchValue !== undefined;
@@ -595,6 +596,7 @@ async function acceptTarget(
     ...target,
     committedValue: committed,
     stretchValue: stretch,
+    ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
     acceptedBy: custom ? 'user' : 'coach-default',
     acknowledgedStretch: outside,
   });
@@ -624,6 +626,15 @@ function assertAcceptable(target: StoredGoalTarget): void {
         'an outcome, or stamp a new chapter, and derive a new target.',
     );
   }
+}
+
+/** Only a `reps_at_load` target counts its reps at a fixed load (VW-399). */
+function assertAnchorLoadApplies(target: StoredGoalTarget, anchorLoad: number | undefined): void {
+  if (anchorLoad === undefined || target.metric === 'reps_at_load') return;
+  throw new ToolError(
+    'GOAL_ANCHOR_LOAD_NOT_APPLICABLE',
+    `goal target ${target.id} tracks ${target.metric}; anchorLoad only applies to reps_at_load.`,
+  );
 }
 
 /**

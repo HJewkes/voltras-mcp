@@ -54,7 +54,9 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   '(`GOAL_TARGET_BELOW_BAND`): that edge is already the conservative one ' +
   '(rp:rp-s10-underpromise-overdeliver-goal-setting). A value past the stretch edge needs ' +
   '`acknowledgeStretch: true` and is then recorded as `acknowledgedStretch` — THE BAND ITSELF IS ' +
-  'NEVER MOVED to make it look supported (B55). Returns `target`, `acceptedBy`, ' +
+  'NEVER MOVED to make it look supported (B55). For a `reps_at_load` target pass `anchorLoad`, ' +
+  'the load its reps are counted at, so the target reads as a whole set; it is fixed with the ' +
+  'rest, and any other metric refuses it (`GOAL_ANCHOR_LOAD_NOT_APPLICABLE`). Returns `target`, `acceptedBy`, ' +
   '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`.';
 
 export const GOAL_LIST_DESCRIPTION =
