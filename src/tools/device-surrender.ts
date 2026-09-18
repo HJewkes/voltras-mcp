@@ -124,8 +124,12 @@ export async function surrenderDevice(state: ServerState): Promise<SurrenderResu
 
     connectedCount += 1;
     try {
-      await unloadSlot(state, slotId);
-      outcome.unloaded = true;
+      const release = await unloadSlot(state, slotId);
+      outcome.unloaded = release === 'confirmed';
+      if (release === 'unconfirmed') {
+        unloadFailures += 1;
+        appendError(outcome, 'the unload was sent but the device did not confirm the release');
+      }
     } catch (err) {
       unloadFailures += 1;
       appendError(outcome, `failed to unload: ${String(err)}`);

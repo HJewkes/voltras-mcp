@@ -681,6 +681,16 @@ describe('buildSetEndedPayload', () => {
 });
 
 describe('buildConnectionChangedPayload', () => {
+  it('awaitingAcceptance: tells the coach the device is waiting to accept', () => {
+    const { meta, content } = buildConnectionChangedPayload(
+      'awaitingAcceptance',
+      { connected: false },
+      null,
+    );
+    expect(meta.state).toBe('awaitingAcceptance');
+    expect((JSON.parse(content) as { summary: string }).summary).toMatch(/accept/);
+  });
+
   it('connected: meta carries state + summary, content carries device snapshot', () => {
     const device: DeviceSnapshot = {
       connected: true,
@@ -1292,7 +1302,7 @@ describe('buildSetEndedPayload — device_summary', () => {
       stored,
       'device_signal',
       undefined,
-      { repCount: 4, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      { repCount: 4, totalPullMovingTimeMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
       5,
     );
     // meta carries the reconciled total, not the stale frame value.
@@ -1306,7 +1316,7 @@ describe('buildSetEndedPayload — device_summary', () => {
     const stored = buildStored([makeRep(1, 800, 500), makeRep(2, 600, 400)]);
     const { meta } = buildSetEndedPayload(stored, 'device_signal', undefined, {
       repCount: 2,
-      repDurationMs: 1000,
+      totalPullMovingTimeMs: 1000,
       targetWeightTenths: 200,
       schemaVersion: 1,
     });
@@ -1317,7 +1327,7 @@ describe('buildSetEndedPayload — device_summary', () => {
     const stored = buildStored([makeRep(1, 800, 500)]);
     const { content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
       repCount: 1,
-      repDurationMs: 1000,
+      totalPullMovingTimeMs: 1000,
       targetWeightTenths: 1700,
       schemaVersion: 1,
       peakForceTenths: 886,
@@ -1335,7 +1345,7 @@ describe('buildSetEndedPayload — device_summary', () => {
     const stored = buildStored([makeRep(1, 800, 500)]);
     const { content } = buildSetEndedPayload(stored, 'device_signal', undefined, {
       repCount: 1,
-      repDurationMs: 1000,
+      totalPullMovingTimeMs: 1000,
       targetWeightTenths: 1700,
       schemaVersion: 1,
     });
@@ -1376,7 +1386,7 @@ describe('buildSetEndedPayload — rep_count_disagreement (VMCP-02.59)', () => {
       buildStored(13, 14),
       'device_signal',
       { repCount: 12, schemaVersion: 1 },
-      { repCount: 12, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      { repCount: 12, totalPullMovingTimeMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
       14,
     );
     const block = parseBlock(content);
@@ -1395,7 +1405,7 @@ describe('buildSetEndedPayload — rep_count_disagreement (VMCP-02.59)', () => {
       buildStored(13, 14),
       'device_signal',
       undefined,
-      { repCount: 12, repDurationMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
+      { repCount: 12, totalPullMovingTimeMs: 5765, targetWeightTenths: 200, schemaVersion: 1 },
       14,
     );
     expect(meta.rep_count).toBe('13');
@@ -1413,7 +1423,7 @@ describe('buildSetEndedPayload — rep_count_disagreement (VMCP-02.59)', () => {
       buildStored(2, 2),
       'device_signal',
       undefined,
-      { repCount: 2, repDurationMs: 1000, targetWeightTenths: 200, schemaVersion: 1 },
+      { repCount: 2, totalPullMovingTimeMs: 1000, targetWeightTenths: 200, schemaVersion: 1 },
       2,
     );
     expect(parseBlock(content)).toBeUndefined();
@@ -1435,7 +1445,7 @@ describe('buildSetEndedPayload — rep_count_disagreement (VMCP-02.59)', () => {
     // numbers for the same set.
     const { content } = buildSetEndedPayload(buildStored(13, 14), 'device_signal', undefined, {
       repCount: 12,
-      repDurationMs: 5765,
+      totalPullMovingTimeMs: 5765,
       targetWeightTenths: 200,
       schemaVersion: 1,
     });

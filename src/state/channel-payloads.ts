@@ -552,7 +552,8 @@ export interface DeviceSummaryBlock {
  */
 export interface DeviceSetSummaryBlock {
   repCount: number;
-  repDurationMs: number;
+  /** The whole set's pull moving time, not one rep's duration. */
+  totalPullMovingTimeMs: number;
   targetWeightTenths: number;
   schemaVersion: number;
   /** Firmware peak force for the set, in tenths of a pound. */
@@ -655,7 +656,7 @@ export function buildSetEndedPayload(
     // 4 for a 5-rep set). The reconstructed total restores it. The raw frame
     // count is still echoed verbatim in `content.device_set_summary.rep_count`.
     meta.device_rep_count = String(firmwareReconciledTotal ?? deviceSetSummary.repCount);
-    meta.device_set_rep_duration_ms = String(deviceSetSummary.repDurationMs);
+    meta.device_set_pull_moving_time_ms = String(deviceSetSummary.totalPullMovingTimeMs);
     meta.device_schema_version = String(deviceSetSummary.schemaVersion);
   }
 
@@ -726,7 +727,7 @@ export function buildSetEndedPayload(
       ? {
           device_set_summary: {
             rep_count: deviceSetSummary.repCount,
-            rep_duration_ms: deviceSetSummary.repDurationMs,
+            total_pull_moving_time_ms: deviceSetSummary.totalPullMovingTimeMs,
             target_weight_tenths: deviceSetSummary.targetWeightTenths,
             schema_version: deviceSetSummary.schemaVersion,
             // Force is published in lb; power is published raw because its
@@ -1431,7 +1432,12 @@ export function triggerDedupeKey(spec: ResolvedTriggerSpec): string {
  * SDK connection-state values, mirrored locally so this module doesn't pull
  * in the SDK type. Matches `@voltras/node-sdk`'s connection-state union.
  */
-export type ConnectionState = 'connected' | 'disconnected' | 'connecting' | 'authenticating';
+export type ConnectionState =
+  | 'connected'
+  | 'disconnected'
+  | 'connecting'
+  | 'authenticating'
+  | 'awaitingAcceptance';
 
 /**
  * Compact summary of the active set at the moment a disconnect lands. Used
@@ -1449,14 +1455,14 @@ export interface ActiveSetAtDisconnect {
 /**
  * Build the meta + content for a `connection_changed` channel event. Fires
  * on every state transition (connected / disconnected / connecting /
- * authenticating). The `device` snapshot should reflect post-transition
+ * authenticating / awaitingAcceptance). The `device` snapshot should reflect post-transition
  * state — for the disconnect case that means after `markDisconnected`, so
  * `device.disconnectedAt` is populated. The `activeSet` snapshot, on the
  * other hand, is taken from BEFORE any disconnect cascade so the payload
  * still carries the mid-set context the model can reason over.
  *
  * `device.connected` is forwarded as the boolean `connected` flag in the
- * content body — separate from the four-state `state` so the model can
+ * content body — separate from the five-state `state` so the model can
  * filter on either axis without parsing.
  */
 export function buildConnectionChangedPayload(
@@ -1702,6 +1708,9 @@ function buildConnectionChangedSummary(
     const setIdShort = activeSet.set_id.slice(0, 8);
     const weight = activeSet.weight_lbs ?? 0;
     return `Voltra disconnected mid-set (rep ${activeSet.rep_count_so_far} of set ${setIdShort}, ${weight} lbs).`;
+  }
+  if (state === 'awaitingAcceptance') {
+    return 'Voltra is waiting for the device to accept the connection; accept it on the device if it asks.';
   }
   return `Voltra ${state}.`;
 }
@@ -2328,8 +2337,13 @@ export function buildDeterministicStopTriggeredPayload(args: {
   matchedPhrase: string;
   predicateReason: string;
   trigger?: 'warranted' | 'bilateral_sweep';
+  /** Whether the device reported the release; an unconfirmed one is never called unloaded. */
+  release?: 'confirmed' | 'unconfirmed';
 }): { meta: Record<string, string>; content: string } {
-  const { slot, setId, matchedPhrase, predicateReason, trigger = 'warranted' } = args;
+  const { slot, setId, matchedPhrase, predicateReason } = args;
+  const trigger = args.trigger ?? 'warranted';
+  const release = args.release ?? 'confirmed';
+  const unloaded = release === 'confirmed';
   const meta: Record<string, string> = {
     source: 'voltras',
     event_type: 'deterministic_stop_triggered',
@@ -2337,14 +2351,17 @@ export function buildDeterministicStopTriggeredPayload(args: {
     matched_phrase: matchedPhrase,
     predicate_reason: predicateReason,
     trigger,
-    unloaded: 'true',
+    unloaded: unloaded ? 'true' : 'unconfirmed',
   };
   if (setId !== null) {
     meta.set_id = setId;
   }
   const scope =
     trigger === 'bilateral_sweep' ? `slot ${slot}, cut with the warranted side` : `slot ${slot}`;
-  const summary = `Emergency stop: heard "${matchedPhrase}" — cable unloaded (${scope}).`;
+  const outcome = unloaded
+    ? 'cable unloaded'
+    : 'unload sent but the device did not confirm the release; check the cable, and call device.unload to retry';
+  const summary = `Emergency stop: heard "${matchedPhrase}" — ${outcome} (${scope}).`;
   const content = JSON.stringify({
     summary,
     slot,
@@ -2352,7 +2369,8 @@ export function buildDeterministicStopTriggeredPayload(args: {
     matched_phrase: matchedPhrase,
     predicate_reason: predicateReason,
     trigger,
-    unloaded: true,
+    unloaded,
+    release,
   });
   return { meta, content };
 }

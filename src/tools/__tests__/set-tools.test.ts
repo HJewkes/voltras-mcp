@@ -1598,6 +1598,49 @@ describe('set.end', () => {
     h = setup();
   });
 
+  type StopClient = {
+    endSet: ReturnType<typeof vi.fn>;
+    isRecording?: boolean;
+    motorState?: string;
+  };
+  const stopClient = (): StopClient =>
+    (h.state.slots as unknown as Map<string, { client: StopClient }>).get('primary')!.client;
+
+  async function endRecordingSet(): Promise<Record<string, unknown>> {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    stopClient().isRecording = true;
+    const r = await h.invoke('set.end', {});
+    expect(r.isError).toBeUndefined();
+    return parseResult(r) as Record<string, unknown>;
+  }
+
+  it('saves the set and says so when the stop write fails, rather than failing the call', async () => {
+    stopClient().endSet.mockRejectedValueOnce(new Error('write failed'));
+    const body = await endRecordingSet();
+    expect(body).toMatchObject({ ok: true, motor_stop: 'failed' });
+    expect(body.motor_stop_note).toMatch(/device\.unload/);
+    expect(h.store.putSet).toHaveBeenCalled();
+    expect(h.live.set).toBeUndefined();
+  });
+
+  it('reports a stop the device did not confirm as unconfirmed', async () => {
+    stopClient().endSet.mockImplementationOnce(async () => {
+      stopClient().motorState = 'unknown';
+    });
+    const body = await endRecordingSet();
+    expect(body).toMatchObject({ ok: true, motor_stop: 'unconfirmed' });
+  });
+
+  it('adds nothing when the device confirmed the stop', async () => {
+    stopClient().endSet.mockImplementationOnce(async () => {
+      stopClient().motorState = 'unloaded';
+    });
+    const body = await endRecordingSet();
+    expect(body).not.toHaveProperty('motor_stop');
+  });
+
   it('gives a chains set and an inverse-chains set different settings hashes', async () => {
     // THE point of capturing inverse chains. The two modes are mechanical
     // opposites — chains add resistance through the concentric, inverse chains
@@ -2252,10 +2295,10 @@ describe('set.live_metrics', () => {
 
     h.live.applyInProgress(
       {
-        peakForceTenths: 1500,
-        currentForceTenths: 900,
-        velocityCmPerSec: 42,
-        targetWeightTenths: 1350,
+        meanPullForceTenths: 1500,
+        meanReturnForceTenths: 900,
+        meanReturnSpeedMmPerSec: 42,
+        pullVolumeRawTenths: 1350,
         raw: new Uint8Array(79),
       },
       1_700_000_000_000,
@@ -2264,18 +2307,18 @@ describe('set.live_metrics', () => {
     const r = await h.invoke('set.live_metrics', {});
     const body = parseResult(r) as {
       latestInProgress?: {
-        peakForceTenths: number;
-        currentForceTenths: number;
-        velocityCmPerSec: number;
-        targetWeightTenths: number;
+        meanPullForceTenths: number;
+        meanReturnForceTenths: number;
+        meanReturnSpeedMmPerSec: number;
+        pullVolumeRawTenths: number;
         capturedAt: number;
       };
     };
     expect(body.latestInProgress).toEqual({
-      peakForceTenths: 1500,
-      currentForceTenths: 900,
-      velocityCmPerSec: 42,
-      targetWeightTenths: 1350,
+      meanPullForceTenths: 1500,
+      meanReturnForceTenths: 900,
+      meanReturnSpeedMmPerSec: 42,
+      pullVolumeRawTenths: 1350,
       capturedAt: 1_700_000_000_000,
     });
   });

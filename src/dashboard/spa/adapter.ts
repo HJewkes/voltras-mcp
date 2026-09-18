@@ -150,9 +150,6 @@ export interface PrescriptionView {
   title?: string;
 }
 
-/** tenths-of-a-pound → pounds divisor (targetWeightTenths). */
-const TENTHS_PER_LB = 10;
-
 /** Client-side view of a single device entry in the snapshot. */
 export interface SnapshotDevice {
   connected?: boolean;
@@ -163,6 +160,8 @@ export interface SnapshotDevice {
   batteryPercent?: number;
   /** ISO timestamp of the last connection drop (DeviceSnapshot.disconnectedAt). */
   disconnectedAt?: string;
+  /** A connect is waiting on the device to accept it (DeviceSnapshot.awaitingAcceptance). */
+  awaitingAcceptance?: boolean;
   /** ISO timestamp set while the snapshot is cached pre-disconnect state. */
   staleSinceDisconnect?: string;
   /** Convenience mirror of `staleSinceDisconnect !== undefined`. */
@@ -181,7 +180,6 @@ export interface SnapshotWatchTrigger {
 /** Client-side view of the active set in the snapshot. */
 export interface SnapshotActiveSet {
   reps?: Rep[];
-  latestInProgress?: { targetWeightTenths?: number };
   /** Trigger DSL registered at set.start — carries the configured rep target. */
   watch?: { notifyOn?: SnapshotWatchTrigger[] };
   /** Who is performing this set, when it is not the owner (VW-169). */
@@ -318,7 +316,6 @@ export interface CurrentSetView {
   /** Numeric sibling of {@link velocityLoss}: raw loss %, or null when unshown. */
   velocityLossPct: number | null;
   latestPeakVelocity: string;
-  targetWeight: string;
   /** Per-rep peak velocities in m/s, ordered by rep, for the VelocityStrip. */
   velocitiesMps: number[];
   /** Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set. */
@@ -388,11 +385,9 @@ function fmtVelocityLoss(reps: Rep[]): string {
   return pct === null ? '—' : `${Math.round(pct)}%`;
 }
 
-/** Weight precedence: live device weight, else the in-progress target (tenths/10). */
-function resolveWeightLbs(device: SnapshotDevice | null, set: SnapshotActiveSet): number | null {
-  if (device?.weightLbs != null) return device.weightLbs;
-  const tenths = set.latestInProgress?.targetWeightTenths;
-  return tenths != null ? tenths / TENTHS_PER_LB : null;
+/** The device's own weight setting; the in-progress heartbeat carries no weight. */
+function resolveWeightLbs(device: SnapshotDevice | null): number | null {
+  return device?.weightLbs ?? null;
 }
 
 export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs'): CurrentSetView {
@@ -408,7 +403,6 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
       velocityLoss: '—',
       velocityLossPct: null,
       latestPeakVelocity: '—',
-      targetWeight: '—',
       velocitiesMps: [],
       autoCreatedBy: null,
     };
@@ -416,7 +410,6 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
   const device = pickRepresentativeDevice(snapshot);
   const reps = Array.isArray(set.reps) ? set.reps : [];
   const latest = reps.length > 0 ? reps[reps.length - 1] : null;
-  const targetTenths = set.latestInProgress?.targetWeightTenths;
   const repTarget = resolveRepTarget(set);
 
   // MEAN concentric velocity per rep (not peak): the VelocityStrip bars must
@@ -430,7 +423,7 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
 
   return {
     active: true,
-    weight: fmtWeight(resolveWeightLbs(device, set), displayUnit),
+    weight: fmtWeight(resolveWeightLbs(device), displayUnit),
     mode: fmtMode(device?.trainingMode),
     reps: reps.length,
     repTarget,
@@ -438,7 +431,6 @@ export function buildCurrentSet(snapshot: Snapshot, displayUnit: MassUnit = 'lbs
     velocityLoss: fmtVelocityLoss(reps),
     velocityLossPct: computeVelocityLossPct(reps),
     latestPeakVelocity: fmtVelocity(latest ? repPeakVelocityMps(latest) : null),
-    targetWeight: targetTenths != null ? fmtWeight(targetTenths / TENTHS_PER_LB, displayUnit) : '—',
     velocitiesMps,
     autoCreatedBy: set.autoCreatedBy ?? null,
   };
@@ -467,7 +459,7 @@ export interface ConnectionStatus {
 
 /**
  * Fold the device snapshot + HTTP poll status into one header state.
- * Priority: sidecar-unreachable → device-offline → device-stale → poll-lag →
+ * Priority: sidecar-unreachable → awaiting-acceptance → device-offline → device-stale → poll-lag →
  * awaiting-first-connect → live.
  */
 export function buildConnectionStatus(
@@ -483,6 +475,15 @@ export function buildConnectionStatus(
       connected: false,
       disconnectedAt: device?.disconnectedAt ?? null,
       showBanner: true,
+    };
+  }
+  if (device?.awaitingAcceptance === true) {
+    return {
+      tone: 'warning',
+      label: 'ACCEPT ON DEVICE',
+      connected: false,
+      disconnectedAt: null,
+      showBanner: false,
     };
   }
   if (device && device.connected === false) {
@@ -544,6 +545,7 @@ function deviceConnState(
 ): DeviceRowState {
   // Sidecar unreachable — we can't vouch for device state at all.
   if (pollStatus === 'error') return 'lost';
+  if (device.awaitingAcceptance === true) return 'available';
   if (device.connected === false) return 'lost';
   if (device.staleSinceDisconnect != null || device.isStale) return 'degraded';
   if (pollStatus === 'stale') return device.connected ? 'degraded' : 'lost';
@@ -672,7 +674,7 @@ function summariseClosedSet(
     const f = repPeakConcentricForceLbs(rep);
     if (f != null && (peakForce === null || f > peakForce)) peakForce = f;
   }
-  const weightLbs = resolveWeightLbs(device, set);
+  const weightLbs = resolveWeightLbs(device);
   return {
     weightLbs,
     mode: device?.trainingMode ?? null,

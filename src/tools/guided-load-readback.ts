@@ -21,10 +21,11 @@
 //   * `exit_guided_load` — the SDK stops the status poll BEFORE writing the
 //     exit, so nothing reads the device afterwards at all. The phase reaching
 //     `exited` is this server's own bookkeeping and is reported as such.
-//   * `unload` — one fire-and-forget write with no echo, and `deriveLoadState`
-//     reads `unloaded` during ordinary weight reps too, so it cannot tell a
-//     released cable from a cable that is merely slack between reps. Nothing
-//     available here can confirm the cable dropped.
+//   * `unload` — since SDK 0.15.0 the SDK waits for the device to report the
+//     motor release and exposes the answer as `motorState`, so a reported
+//     release is a device-sourced confirmation. Without that report the cable
+//     is unverified: `deriveLoadState` reads `unloaded` during ordinary weight
+//     reps too, so it cannot tell a released cable from a slack one.
 //
 // What all three CAN do is refuse to call an observed contradiction a success.
 // That is what the mismatch errors below are for, and it is the half of
@@ -114,14 +115,14 @@ const EXIT_UNCONFIRMED_REASON =
   'The exit was written and this server moved its own phase off the active ' +
   'set, but nothing read the device back: the SDK stops the status poll ' +
   'before it writes the exit, so no device-sourced observation of the exit ' +
-  'exists. Exit also does not release residual cable tension — call ' +
-  'device.unload for that.';
+  'exists. The exit also releases the motor, but nothing confirms that ' +
+  'either — call device.unload for a release the device confirms.';
 
 const UNLOAD_UNCONFIRMED_REASON =
-  'The unload was written, but the device acknowledges it with nothing this ' +
-  'server can read, and `load_state` reads `unloaded` during ordinary weight ' +
-  'reps too — so it cannot tell a released cable from a slack one. Treat the ' +
-  'cable as unverified and confirm by eye before loading a lifter.';
+  'The unload was written, but the device did not report the motor release ' +
+  'in time, and `load_state` reads `unloaded` during ordinary weight reps too ' +
+  '— so it cannot tell a released cable from a slack one. Treat the cable as ' +
+  'unverified: call device.unload again, and confirm by eye before loading a lifter.';
 
 export interface ReadBackWaitOptions {
   timeoutMs?: number | undefined;
@@ -217,14 +218,15 @@ export function readBackGuidedLoadExit(slotId: string, phase: string): GuidedLoa
 /**
  * Read back `device.unload`. When the unload tore down a live guided-load
  * flow, a phase still inside the active set is an observed contradiction and
- * fails the call. The cable itself is never confirmable — see the module
- * comment — so the verdict is `unconfirmed` on every success.
+ * fails the call. Otherwise the verdict is `confirmed` exactly when the device
+ * reported the motor release.
  */
 export function readBackUnload(ctx: {
   slotId: string;
   phase: string;
   loadState: 'loaded' | 'unloaded';
   guidedLoadWasActive: boolean;
+  release: 'confirmed' | 'unconfirmed';
 }): UnloadReadBack {
   if (ctx.guidedLoadWasActive && GUIDED_LOAD_ACTIVE_PHASES.has(ctx.phase)) {
     readBackError(
@@ -234,6 +236,14 @@ export function readBackUnload(ctx: {
         'and the cable may still be holding load. Call device.exit_guided_load, then ' +
         'device.unload again.',
     );
+  }
+  if (ctx.release === 'confirmed') {
+    return {
+      verdict: 'confirmed',
+      source: 'device',
+      observed_phase: ctx.phase,
+      observed_load_state: ctx.loadState,
+    };
   }
   return {
     verdict: 'unconfirmed',
