@@ -55,15 +55,7 @@ function latest(view: GoalProgressView): number {
   return view.actuals.filter((actual) => actual.matched).at(-1)!.value;
 }
 
-const CLIMB: GoalPreviewState = {
-  name: 'on_track',
-  expectedStatus: 'ahead',
-  summary: 'Five weeks climbing from 100 to 146.',
-  weeklyLoadsLbs: [100, 110, 121, 133, 146],
-  targetStartWeeksAgo: 4,
-  committedLbs: 160,
-  stretchLbs: 175,
-};
+const CLIMB = goalPreviewState('fast_climb');
 
 describe('the goal band is anchored in the target frame (VW-449)', () => {
   it('starts week 1 at the target start value, not at the latest lift', async () => {

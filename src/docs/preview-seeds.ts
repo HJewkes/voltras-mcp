@@ -94,6 +94,7 @@ const SETS_PER_SESSION = 3;
 export type GoalPreviewStateName =
   | 'calibrating'
   | 'on_track'
+  | 'fast_climb'
   | 'behind'
   | 'ahead'
   | 'hit_exact'
@@ -157,6 +158,18 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     targetStartWeeksAgo: 4,
     committedLbs: 110,
     stretchLbs: 120,
+  },
+  {
+    name: 'fast_climb',
+    expectedStatus: 'ahead',
+    summary:
+      'Five weeks climbing 100 to 146, far faster than the programmed ramp: ahead of a band ' +
+      'anchored where the goal began (VW-449; this read on_track while the band restarted at ' +
+      'the latest lift).',
+    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    targetStartWeeksAgo: 4,
+    committedLbs: 160,
+    stretchLbs: 175,
   },
   {
     name: 'behind',
