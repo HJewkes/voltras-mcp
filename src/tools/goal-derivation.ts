@@ -23,6 +23,7 @@ import {
   LOCAL_USER_ID,
   type BaselineState,
   type SessionStore,
+  type StoredGoalTarget,
   type StoredPriority,
   type StoredSet,
 } from '../store/types.js';
@@ -415,6 +416,51 @@ async function tryHistoryTrend(
 interface FittedHistoryTrend {
   series: Awaited<ReturnType<typeof computeHistoryTrend>>['series'];
   trend: NonNullable<Awaited<ReturnType<typeof computeHistoryTrend>>['trend']>;
+}
+
+/** The lift metrics whose band is anchored to a stored target's own frame. */
+const FRAMED_METRICS: readonly GoalMetric[] = ['top_load_at_reps', 'reps_at_load', 'e1rm_trend'];
+
+/** The gain selection a stored target was derived from. */
+export function selectionOf(target: StoredGoalTarget): GoalGainMetric {
+  return {
+    kind: 'gain',
+    metric: target.metric,
+    exerciseId: target.exerciseId ?? null,
+    anchorReps: target.anchorReps ?? null,
+    role: 'primary',
+  };
+}
+
+/**
+ * A stored lift target's band, re-derived INSIDE its own frame (VW-449): the
+ * target's start value on week 1 of its block, never today's latest lift.
+ * Today's evidence still decides the info level and, where earned, supplies
+ * the fitted slope, expressed against the frame's own start value. Other
+ * metrics derive as `deriveTarget` does.
+ */
+export async function deriveTargetInFrame(
+  state: GoalDerivationState,
+  context: GoalDerivationContext,
+  frame: StoredGoalTarget,
+): Promise<DerivedTarget | SkippedMetric> {
+  const selection = selectionOf(frame);
+  const today = await deriveTarget(state, context, selection);
+  if (!('band' in today) || !FRAMED_METRICS.includes(frame.metric)) return today;
+  if (frame.exerciseId === undefined || frame.startValue <= 0) return today;
+  const anchorReps = frame.anchorReps ?? today.anchorReps;
+  const slope =
+    frame.metric === 'e1rm_trend'
+      ? {}
+      : await readOwnSlope(state, frame.exerciseId, frame.startValue);
+  return bandFor(context, selection, {
+    startValue: frame.startValue,
+    startMeasuredAt: frame.startMeasuredAt,
+    matchedSessionCount: today.matchedSessionCount,
+    baselineState: today.baselineState,
+    ...(anchorReps === null ? {} : { anchorReps }),
+    ...slope,
+  });
 }
 
 function bandFor(

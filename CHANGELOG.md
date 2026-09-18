@@ -139,6 +139,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- A lift goal's band now starts where the goal did. The goals page drew each band from the
+  lifter's latest top load, so the line restarted wherever they were now and moved with them
+  on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged
+  against it. The band is now anchored at the goal's own start value on week 1 of its block.
+  Today's history still decides whether it is the programmed ramp or the lifter's own
+  fitted slope. Pace verdicts change with it: a lifter well above where the goal began now
+  reads `ahead` instead of `on_track`, and one well below it reads `behind` (VW-449).
 - The goal trajectory now starts where the band starts, and the current week has its reading
   (VW-421). A goal's weeks are calendar weeks (Monday to Sunday, UTC): week 1 is the week the
   starting set was lifted in. Before, weeks were counted in seven-day steps from that set, so

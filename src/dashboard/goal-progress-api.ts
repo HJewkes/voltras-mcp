@@ -1,13 +1,18 @@
 // Gathers the inputs `read-models/goal-progress.ts` projects, for `GET
 // /api/goals` and `GET /api/goal-progress` (VW-352, plan G5).
 //
-// THE BAND IS RE-DERIVED, NEVER RE-COMPUTED HERE. `deriveTarget` (the same
-// function `goal.propose_targets` runs) is imported and re-run against the
-// target's own stored metric/exercise/anchor selection, so this route can
-// never disagree with the tool path about what a band looks like. Only the
-// weekly `expected` corridor comes from that fresh band; `committed` and
-// `stretch` on the view are the target's own FIXED numbers, read straight
-// off the stored row (`buildGoalProgressView`'s own contract).
+// THE BAND IS RE-DERIVED, NEVER RE-COMPUTED HERE. `deriveTargetInFrame` runs
+// the same derivation `goal.propose_targets` runs, against the target's own
+// stored selection, so this route can never disagree with the tool path about
+// what a band looks like. Only the weekly `expected` corridor comes from that
+// fresh band; `committed` and `stretch` on the view are the target's own FIXED
+// numbers, read straight off the stored row (`buildGoalProgressView`'s own
+// contract).
+//
+// THE BAND IS ANCHORED IN THE TARGET'S FRAME (VW-449). A lift band starts at the
+// target's stored start value on week 1 of its block. Re-deriving it from today's
+// latest lift restarted the line at wherever the lifter is now, on every read,
+// so a lifter was judged against a band that moved with them.
 //
 // `mrvVerdict` IS NEVER WIRED HERE. `checkMrvGuard` needs three specific,
 // ordered session ids and VW-131 already decided `mrvguard.check` stays
@@ -19,7 +24,7 @@
 // protocol data (NF-07).
 
 import {
-  deriveTarget,
+  deriveTargetInFrame,
   readDerivationContext,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
@@ -60,13 +65,7 @@ export async function fetchGoalProgressViews(
   const context = await readDerivationContext({ store }, priority);
   const views: GoalProgressView[] = [];
   for (const target of targets) {
-    const derived = await deriveTarget({ store }, context, {
-      kind: 'gain',
-      metric: target.metric,
-      exerciseId: target.exerciseId ?? null,
-      anchorReps: target.anchorReps ?? null,
-      role: 'primary',
-    });
+    const derived = await deriveTargetInFrame({ store }, context, target);
     if (!('band' in derived)) {
       log.debug(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
       continue;

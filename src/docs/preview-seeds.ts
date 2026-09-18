@@ -122,6 +122,7 @@ export interface GoalPreviewState {
   /**
    * How many weeks before the newest session the target was measured, which is
    * what puts `now` in a meso week. Dated by {@link seededAt}, like the sessions.
+   * The target's start value is that week's load: the band is anchored there (VW-449).
    */
   readonly targetStartWeeksAgo: number;
   readonly committedLbs: number;
@@ -147,11 +148,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'on_track',
     expectedStatus: 'on_track',
-    summary: 'Five weeks of climbing top loads: behind the line today, converging on it.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    summary: 'Top loads rising from 100 through a lighter week 3, inside the band anchored at 100.',
+    // Inside a band anchored at its start (VW-449) the programmed ramp adds
+    // about 2.5% a week, and three weekly readings that close together are
+    // what `history.trend`'s plateau detector calls a flatline. The lighter
+    // week 3 keeps the run wider than that without leaving the band.
+    weeklyLoadsLbs: [100, 103, 97, 104, 108],
     targetStartWeeksAgo: 4,
-    committedLbs: 160,
-    stretchLbs: 175,
+    committedLbs: 110,
+    stretchLbs: 120,
   },
   {
     name: 'behind',
@@ -401,14 +406,15 @@ function targetRow(
   now: Date,
 ): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
   const startMeasuredAt = seededAt(now, state.targetStartWeeksAgo);
-  const first = state.weeklyLoadsLbs[0] ?? 0;
+  const loads = state.weeklyLoadsLbs;
+  const startLoad = loads[Math.max(0, loads.length - 1 - state.targetStartWeeksAgo)] ?? 0;
   return {
     id: 'preview-goal-target',
     priorityId: 'preview-goal-priority',
     metric: 'top_load_at_reps',
     exerciseId: GOAL_PREVIEW_EXERCISE.id,
     anchorReps: GOAL_PREVIEW_ANCHOR_REPS,
-    startValue: first,
+    startValue: startLoad,
     startMeasuredAt,
     bandLowPctPerWeek: 1,
     bandHighPctPerWeek: 2,
