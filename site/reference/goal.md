@@ -54,7 +54,7 @@ Every declared priority with the targets derived under it, newest declaration fi
 
 End one priority (`priorityId`) or one target (`targetId`) with the `outcome` it ended on: `met`, `missed` or `abandoned`.
 
-Pass exactly one id. RETIRING A PRIORITY CASCADES to every live target under it, in one transaction; the targets are MARKED, never deleted, because a band the lifter worked toward is a fact about what was attempted. A cascade defaults its targets to `abandoned` — the honest outcome for a target whose priority went away — and an explicit `met` or `missed` restamps them. This is also the decline path for a proposal: retiring an unaccepted target as `abandoned` means it is never re-proposed. Retiring a recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns `declinedOffer: true`; the starting ramp stays accepted. Returns `priority`, `targets` and `cascaded`.
+Pass exactly one id. RETIRING A PRIORITY CASCADES to every live target under it, in one transaction; the targets are MARKED, never deleted, because a band the lifter worked toward is a fact about what was attempted. A cascade defaults its targets to `abandoned` — the honest outcome for a target whose priority went away — and an explicit `met` or `missed` restamps them. This is also the decline path for a proposal: retiring an unaccepted target as `abandoned` means it is never re-proposed. Retiring a recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns `declinedOffer: true`; the starting ramp stays accepted. Retiring the starting ramp itself withdraws its open offer. Returns `priority`, `targets` and `cascaded`.
 
 **Parameters**
 

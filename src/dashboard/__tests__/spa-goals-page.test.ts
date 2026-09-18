@@ -379,13 +379,12 @@ describe('a calibrated starting ramp (VW-444 part 2)', () => {
   }
 
   it('says a target based on the lifts is ready under the card', () => {
-    expect(render(rampData(false))).toContain('a target based on your lifts is ready');
+    expect(render(rampData(false))).toContain(
+      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.',
+    );
   });
 
-  it('says the ramp was kept once the lifter declined', () => {
-    const html = render(rampData(true));
-
-    expect(html).toContain('Calibrated; you kept the starting ramp.');
-    expect(html).not.toContain('is ready');
+  it('shows no line at all once the lifter declined', () => {
+    expect(render(rampData(true))).not.toContain('Calibrated');
   });
 });

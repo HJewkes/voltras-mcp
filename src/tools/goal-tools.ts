@@ -87,6 +87,7 @@ import {
   listOfferDecisions,
   offerRowIds,
   reconcileRecalibrationOffers,
+  withdrawOffersFor,
   type RecalibrationOffer,
 } from './goal-recalibration.js';
 import {
@@ -799,6 +800,7 @@ async function retireGoal(
     const target = await state.store.retireGoalTarget(input.targetId, input.outcome, retiredAt);
     if (target === undefined) throw notFound('goal target', input.targetId);
     const declinedOffer = await declineOfferFor(state, target.id);
+    await withdrawOffersFor(state, [target.id]);
     return { priority: null, targets: [target], cascaded: 0, declinedOffer };
   }
   const priorityId = input.priorityId as string;
@@ -807,6 +809,10 @@ async function retireGoal(
   const targets = await state.store.listGoalTargets({ priorityId }, { includeRetired: true });
   const cascaded = targets.filter((target) => target.retiredAt === retiredAt).length;
   await applyOutcome(state, targets, input.outcome, retiredAt);
+  await withdrawOffersFor(
+    state,
+    targets.map((target) => target.id),
+  );
   return { priority, targets: await refreshTargets(state, priorityId), cascaded };
 }
 

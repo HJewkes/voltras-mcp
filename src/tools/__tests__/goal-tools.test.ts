@@ -1109,6 +1109,29 @@ describe('the recalibration offer (VW-444 part 2)', () => {
     expect(kept?.retiredAt).toBeUndefined();
   });
 
+  it('withdraws the open offer when the ramp itself is retired directly', async () => {
+    const [offer] = await offers();
+    await harness.invoke('goal.retire', { targetId: ramp.id, outcome: 'missed' });
+
+    const [decision] = await decisions();
+    expect(decision.userResponse).toBe('ignored');
+    expect(decision.inputs.withdrawnAt).toEqual(expect.any(String));
+    const row = (await rows()).find((target) => target.id === offer.offerTargetId);
+    expect(row).toMatchObject({ outcome: 'abandoned' });
+    expect(row?.retiredAt).toBeDefined();
+    const error = await harness.expectError('goal.accept_target', {
+      targetId: offer.offerTargetId,
+    });
+    expect(error.code).toBe('GOAL_TARGET_RETIRED');
+  });
+
+  it('withdraws the open offer when the ramp goes with its whole priority', async () => {
+    await offers();
+    await harness.invoke('goal.retire', { priorityId: ramp.priorityId, outcome: 'abandoned' });
+
+    expect((await decisions())[0].userResponse).toBe('ignored');
+  });
+
   it('never re-offers the declined row as "a declined proposal" once the ramp is retired', async () => {
     const [offer] = await offers();
     await harness.invoke('goal.retire', { targetId: offer.offerTargetId, outcome: 'abandoned' });

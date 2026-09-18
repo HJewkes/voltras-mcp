@@ -59,9 +59,10 @@ entry is written from the user's point of view is a review question, not a check
   `recalibrationOffers`. It keeps the ramp's block (same start, end and weeks), and only the
   numbers change. Accepting it (`goal.accept_target` on the offer) retires the ramp and never
   edits it. Declining it (`goal.retire` on the offer) keeps the ramp and is not asked again
-  that block. An offer whose lift stops being calibrated is withdrawn. Under the card, the
-  goals page reads "a target based on your lifts is ready" while the offer stands, and
-  "Calibrated; you kept the starting ramp." after a decline (VW-444).
+  that block. An offer whose lift stops being calibrated, or whose ramp is retired, is
+  withdrawn. Under the card, the goals page reads "Calibrated. Your goal is still the starting
+  ramp; a target based on your lifts is ready." while the offer stands, and nothing after a
+  decline (VW-444).
 - A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
   the goals page reads "Starting ramp, not yet based on your lifts." followed by what
   calibration still waits on: "1 more comparable session to calibrate.", or a set taken near

@@ -8,11 +8,7 @@
  * the band arrives with history. A baseline blocker names what it waits on and
  * never a count, because the baseline has no count the view can promise.
  */
-import type {
-  GoalCalibrationView,
-  GoalProgressView,
-  GoalRecalibrationView,
-} from '../../read-models/index.js';
+import type { GoalCalibrationView, GoalProgressView } from '../../read-models/index.js';
 
 export interface CalibrationCopy {
   sentence: string;
@@ -52,17 +48,17 @@ function baselineNeed(state: GoalCalibrationView['baselineState']): string {
   return state === 'COLD' ? 'more working sets of this lift' : 'a set taken near failure';
 }
 
-/** An accepted starting ramp whose lift has calibrated since (VW-444 part 2). */
-export function recalibrationSentence(recalibration: GoalRecalibrationView): string {
-  return recalibration.state === 'offered'
-    ? 'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready. ' +
-        'Ask your coach.'
-    : 'Calibrated; you kept the starting ramp.';
-}
+/**
+ * An accepted starting ramp whose lift has calibrated since, while its offer
+ * stands (VW-444 part 2). A declined offer gets no line: the decline is recorded
+ * and suppresses the offer, and the card says nothing more (human, review round 2).
+ */
+export const RECALIBRATION_OFFERED_LINE =
+  'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
 
 /** The one line a card carries about calibration, or `null` when it has nothing to say. */
 export function calibrationLine(view: GoalProgressView): string | null {
   if (view.calibration !== undefined) return calibrationCopy(view.calibration).sentence;
-  if (view.recalibration !== undefined) return recalibrationSentence(view.recalibration);
+  if (view.recalibration?.state === 'offered') return RECALIBRATION_OFFERED_LINE;
   return null;
 }

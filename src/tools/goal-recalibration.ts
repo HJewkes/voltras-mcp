@@ -14,7 +14,8 @@
 // - DECLINING is `goal.retire` on that row. The answer suppresses the offer for
 //   the rest of the accepted target's block.
 // - EVIDENCE GOING BACKWARDS withdraws an unanswered offer: its row is retired
-//   and the record says so, and a later calibration may offer afresh.
+//   and the record says so, and a later calibration may offer afresh. So does
+//   retiring the ramp itself by any other path.
 //
 // The answer lives in `advisory_decisions` under its own code, so no column and
 // no migration is needed. `goal.new_chapter` is deliberately not the mechanism:
@@ -347,6 +348,24 @@ async function answerOffer(
   now: string,
 ): Promise<void> {
   await state.store.putAdvisoryDecision({ ...open, userResponse: response, respondedAt: now });
+}
+
+/**
+ * A ramp retired by any path other than accepting its offer takes its open
+ * offer with it: the offer row is retired and the record closed as withdrawn,
+ * so no offer outlives the target it would replace.
+ */
+export async function withdrawOffersFor(
+  state: ServerState,
+  retiredTargetIds: readonly string[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  const open = (await listOfferDecisions(state.store)).filter(
+    (decision) =>
+      decision.userResponse === undefined &&
+      retiredTargetIds.includes(offerInputsOf(decision).targetId),
+  );
+  for (const decision of open) await withdrawOffer(state, decision, now);
 }
 
 /** Every proposal row an offer ever wrote: they are answers, never "a declined proposal" for the leg. */

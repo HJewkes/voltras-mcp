@@ -89,7 +89,8 @@ export const GOAL_RETIRE_DESCRIPTION =
   'explicit `met` or `missed` restamps them. This is also the decline path for a proposal: ' +
   'retiring an unaccepted target as `abandoned` means it is never re-proposed. Retiring a ' +
   'recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns ' +
-  '`declinedOffer: true`; the starting ramp stays accepted. Returns `priority`, `targets` and ' +
+  '`declinedOffer: true`; the starting ramp stays accepted. Retiring the starting ramp itself ' +
+  'withdraws its open offer. Returns `priority`, `targets` and ' +
   '`cascaded`.';
 
 export const GOAL_WEEKLY_REVIEW_DESCRIPTION =

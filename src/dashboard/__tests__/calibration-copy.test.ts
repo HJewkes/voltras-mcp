@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { calibrationCopy, recalibrationSentence } from '../spa/goals/calibration-copy.js';
+import { RECALIBRATION_OFFERED_LINE, calibrationCopy } from '../spa/goals/calibration-copy.js';
 import type { GoalCalibrationView } from '../read-models/index.js';
 
 function calibration(over: Partial<GoalCalibrationView>): GoalCalibrationView {
@@ -76,17 +76,10 @@ describe('calibrationCopy', () => {
   });
 });
 
-describe('recalibrationSentence (VW-444 part 2)', () => {
-  it('says a target based on the lifts is ready while it is offered', () => {
-    expect(recalibrationSentence({ state: 'offered' })).toBe(
-      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready. ' +
-        'Ask your coach.',
-    );
-  });
-
-  it('says the ramp was kept after a decline', () => {
-    expect(recalibrationSentence({ state: 'kept_starting_ramp' })).toBe(
-      'Calibrated; you kept the starting ramp.',
+describe('the recalibration line (VW-444 part 2)', () => {
+  it('says a target based on the lifts is ready, with no call to action', () => {
+    expect(RECALIBRATION_OFFERED_LINE).toBe(
+      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.',
     );
   });
 });
