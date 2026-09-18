@@ -35,6 +35,15 @@ workflow: this file is the record a reader trusts, so a human writes it.
 An empty `[Unreleased]` is the normal state after a release and never fails. Whether an
 entry is written from the user's point of view is a review question, not a check.
 
+### Fixed
+
+- The wall's type finally matches its designs. The goal hero ("+16 lb beyond goal") drew at
+  16 px regular instead of 40 px bold, and the same fault flattened the bold set facts, the
+  top bar lockup, breadcrumb, idle pill and clock, the nav labels, and the top bar dividers
+  (0 px tall, now 16). Cause: titan's published build dropped every size, weight and leading
+  override a component passed to its text; fixed upstream in `@titan-design/react-ui` 0.18.1
+  and picked up here. Nothing was redesigned, the intended styles now apply (VW-420).
+
 ## [Unreleased]
 
 ### Added
