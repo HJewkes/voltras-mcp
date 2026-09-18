@@ -39,6 +39,17 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The goal coach now says when a goal is met. A target reads `goal_met` once a matched set
+  lifts the committed number and `beyond_goal` once one passes it, and keeps that verdict for
+  the rest of the block rather than slipping back to a pace word after a lighter week. Each
+  target also carries its block-end milestone (the committed set, the current week, the latest
+  reading, and whether it is still open, hit, or missed at the block boundary) and a per-week
+  verdict against that week's band, so the goal card needs no maths of its own (VW-400).
+  `dashboard:preview -- goals --state hit_exact|beyond_goal` now lands on those two verdicts.
+- `goal.accept_target` takes `anchorLoad` for a `reps_at_load` target, so the goal reads as a
+  whole set ("12 reps at 185 lb") rather than a bare rep count. It is fixed with the rest of
+  the target, and any other metric refuses it (VW-399).
+
 - `npm run dashboard:preview -- goals` (also `body` and `plan`) opens one wall dashboard
   page in a browser with no Voltra, no PT session and no risk to your training history: it
   seeds a scratch store, boots a mock-adapter server over it on a free port, prints the URL

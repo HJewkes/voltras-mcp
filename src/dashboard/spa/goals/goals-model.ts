@@ -235,6 +235,10 @@ export type { GoalTrajectoryStatus };
 
 export function statusLabel(status: GoalProgressView['status']): string {
   switch (status) {
+    case 'beyond_goal':
+      return 'Beyond goal';
+    case 'goal_met':
+      return 'Goal met';
     case 'on_track':
       return 'On track';
     case 'ahead':
@@ -257,6 +261,9 @@ export function statusBadgeVariant(
   status: GoalProgressView['status'],
 ): 'success' | 'warning' | 'error' | 'info' {
   switch (status) {
+    case 'beyond_goal':
+      return 'info';
+    case 'goal_met':
     case 'on_track':
       return 'success';
     case 'ahead':

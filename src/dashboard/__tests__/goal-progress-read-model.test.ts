@@ -399,11 +399,11 @@ describe('buildGoalProgressView advisories', () => {
     expect(view.advisory?.prompt).toContain('The target itself does not move.');
   });
 
-  it('asks the ahead question only in the block last week', () => {
+  it('asks the ahead question in the block last week, where past stretch is past the goal', () => {
     const actuals = [actual(4, 186), actual(5, 193), actual(6, 200)];
     const view = buildGoalProgressView(input({ actuals, now: WEEK_6 }));
 
-    expect(view.status).toBe('ahead');
+    expect(view.status).toBe('beyond_goal');
     expect(view.advisory?.kind).toBe('ahead_decision');
   });
 });
@@ -420,7 +420,7 @@ describe('buildGoalProgressView praise cadence', () => {
     const actuals = [actual(4, 178), actual(5, 182), actual(6, 186)];
     const view = buildGoalProgressView(input({ actuals, now: WEEK_6 }));
 
-    expect(view.status).toBe('on_track');
+    expect(view.status).toBe('beyond_goal');
     expect(view.praise?.level).toBe('loud');
     expect(view.praise?.text).toContain('128%');
     expect(view.praise?.text).toContain('rp:rp-s12-praise-relative-to-goal-not-magnitude');

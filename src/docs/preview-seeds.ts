@@ -18,12 +18,11 @@
 // ones, re-derived by the same `deriveTarget` the MCP tools run.
 //
 // WHAT EACH STATE IS. `expectedStatus` is the verdict the read model must reach,
-// pinned by `src/dashboard/__tests__/preview-seeds.test.ts`. `hit_exact` and
-// `beyond_goal` are not statuses — the read model has none for "met the number"
-// — they are readings placed against the committed target, and both land
-// `on_track`. The test pins that relationship too, so a seed that stopped
-// reaching the committed line would fail rather than quietly preview a page
-// that no longer shows what its name says.
+// pinned by `src/dashboard/__tests__/preview-seeds.test.ts`. `hit_exact` lands
+// `goal_met` and `beyond_goal` lands `beyond_goal` (VW-400); the test also pins
+// where each newest reading sits against the committed number, so a seed that
+// stopped reaching it would fail rather than quietly preview a page that no
+// longer shows what its name says.
 //
 // Confidentiality: exercise ids, loads, rep counts and velocities only —
 // derived fitness metadata, no protocol data of any kind (NF-07).
@@ -155,16 +154,16 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'ahead',
     expectedStatus: 'ahead',
-    summary: 'A heavy set in week 2 puts the reading past the stretch edge of the band.',
+    summary: 'A heavy set in week 2 passes the stretch edge of the band, short of the goal.',
     weeklyLoadsLbs: [100, 110, 121, 133, 146],
-    heavySingleLbs: 190,
+    heavySingleLbs: 155,
     targetStartWeeksAgo: 1,
     committedLbs: 160,
     stretchLbs: 175,
   },
   {
     name: 'hit_exact',
-    expectedStatus: 'on_track',
+    expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
     weeklyLoadsLbs: [100, 110, 121, 133, 146],
     targetStartWeeksAgo: 4,
@@ -173,7 +172,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   },
   {
     name: 'beyond_goal',
-    expectedStatus: 'on_track',
+    expectedStatus: 'beyond_goal',
     summary: 'The newest reading passes the committed target with weeks of the block left.',
     weeklyLoadsLbs: [100, 110, 121, 133, 146],
     targetStartWeeksAgo: 4,

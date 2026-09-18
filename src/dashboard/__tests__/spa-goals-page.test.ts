@@ -143,8 +143,8 @@ function baseData(): { data: GoalsPageData; benchPriority: StoredPriority } {
     priorityId: armsPriority.id,
     metric: 'top_load_at_reps',
     exerciseId: 'curl',
-    committedValue: 45,
-    stretchValue: 50,
+    committedValue: 50,
+    stretchValue: 55,
   });
   const curlView = view(armsPriority, curlTarget, [actual(2, 44), actual(3, 46)]); // ahead
   const hammerCurlTarget = target({
