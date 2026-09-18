@@ -239,6 +239,42 @@ const C = GOAL_BAND_CONSTANTS;
 /** Baseline tiers a gain band may not be claimed from (plan §2c `cold`). */
 const SHAPE_ONLY_OR_COLDER: readonly BaselineState[] = ['COLD', 'SHAPE_ONLY'];
 
+/** Which of the two calibration gates is still shut. */
+export type CalibrationBlocker = 'sessions' | 'baseline' | 'both';
+
+/** What still keeps a gain band from being claimed (VW-444). */
+export interface CalibrationGap {
+  /** Matched sessions still to come. `0` when only the baseline blocks. */
+  sessionsNeeded: number;
+  blockedBy: CalibrationBlocker;
+}
+
+/**
+ * The calibration gates, stated once: the band's own downgrade and the progress
+ * view's structured shortfall both read this. `null` baseline means the caller
+ * has no baseline to judge, so only the session count can block.
+ */
+export function calibrationGapOf(
+  matchedSessionCount: number,
+  baselineState: BaselineState | null,
+): CalibrationGap | null {
+  const sessionsNeeded = Math.max(0, C.minMatchedSessionsForRamp - matchedSessionCount);
+  const baselineBlocks = baselineState !== null && SHAPE_ONLY_OR_COLDER.includes(baselineState);
+  if (sessionsNeeded > 0 && baselineBlocks) return { sessionsNeeded, blockedBy: 'both' };
+  if (sessionsNeeded > 0) return { sessionsNeeded, blockedBy: 'sessions' };
+  if (baselineBlocks) return { sessionsNeeded, blockedBy: 'baseline' };
+  return null;
+}
+
+/**
+ * A lift target derived before calibration: the generic programmed ramp, the
+ * same for any new lifter. A `sessions_28d` band is cold by construction and
+ * is a commitment, never a ramp, so it is excluded.
+ */
+export function isStartingRamp(metric: GoalMetric, infoLevel: GoalInfoLevel): boolean {
+  return infoLevel === 'cold' && metric !== 'sessions_28d';
+}
+
 /** The edges and framing a metric-plus-evidence combination produces. */
 interface BandShape {
   basis: GoalBandBasis;
@@ -313,13 +349,10 @@ function shapeFor(input: GoalBandInput, dietState: DietPhaseState, notes: string
  * matched sessions" is copy the page needs (plan §2c).
  */
 function earnedInfoLevel(input: GoalBandInput, notes: string[]): GoalInfoLevel {
-  if (
-    input.matchedSessionCount < C.minMatchedSessionsForRamp ||
-    SHAPE_ONLY_OR_COLDER.includes(input.baselineState)
-  ) {
-    const missing = Math.max(0, C.minMatchedSessionsForRamp - input.matchedSessionCount);
+  const gap = calibrationGapOf(input.matchedSessionCount, input.baselineState);
+  if (gap !== null) {
     notes.push(
-      `Calibrating: ${missing} more matched session(s) and a baseline past SHAPE_ONLY before ` +
+      `Calibrating: ${gap.sessionsNeeded} more matched session(s) and a baseline past SHAPE_ONLY before ` +
         'a gain band is claimed. Until then the band is the programmed ramp itself.',
     );
     return 'cold';

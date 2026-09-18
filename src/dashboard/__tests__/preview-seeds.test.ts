@@ -90,6 +90,17 @@ describe('dashboard:preview goal states', () => {
     expect(latestReading(view)).toBeGreaterThan(view.committed);
   });
 
+  it('states what the calibrating seed still waits on, off a target stored cold (VW-444)', async () => {
+    const view = await viewFor(goalPreviewState('calibrating'));
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      targetBasis: 'execution_ramp',
+      targetInfoLevel: 'cold',
+    });
+  });
+
   it('keeps the ahead reading short of the committed target, so pace is what it shows', async () => {
     const view = await viewFor(goalPreviewState('ahead'));
 

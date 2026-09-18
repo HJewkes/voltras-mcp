@@ -126,6 +126,11 @@ export interface GoalPreviewState {
   readonly targetStartWeeksAgo: number;
   readonly committedLbs: number;
   readonly stretchLbs: number;
+  /**
+   * Stored as `goal.propose_targets` stores a target derived before
+   * calibration: the execution ramp at `cold`, committed equal to stretch.
+   */
+  readonly acceptedCold?: boolean;
 }
 
 export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
@@ -136,7 +141,8 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     weeklyLoadsLbs: [100],
     targetStartWeeksAgo: 4,
     committedLbs: 110,
-    stretchLbs: 115,
+    stretchLbs: 110,
+    acceptedCold: true,
   },
   {
     name: 'on_track',
@@ -408,8 +414,8 @@ function targetRow(
     bandHighPctPerWeek: 2,
     committedValue: state.committedLbs,
     stretchValue: state.stretchLbs,
-    basis: 'rp_ramp',
-    infoLevel: 'ramp',
+    basis: state.acceptedCold === true ? 'execution_ramp' : 'rp_ramp',
+    infoLevel: state.acceptedCold === true ? 'cold' : 'ramp',
     tierUsed: 'intermediate',
     tierProvisional: false,
     dietPhaseAtDerivation: 'maintenance',
