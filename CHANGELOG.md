@@ -74,6 +74,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The `#/goals` page leads with one goal card instead of a header block over a chart (VW-385).
+  The title row carries the lift, its priority mark, a PR star and the verdict, with the reason
+  for the verdict one hover away on the pill. Below it sit the block-end target, the gap to it
+  and one cell per week standing on the chart's own week columns, and the chart marks next
+  week's target as a hollow dot. `Goal met` and `Beyond goal` now show as themselves rather than
+  as the nearest pace word. The per-lift cards carry the same summary over a week-column chart,
+  and both card grids fill as many columns as fit: four across a 1920px wall, three at 1440, one
+  on a phone (`@titan-design/react-ui` 0.18.0).
 - Connecting now waits for the Voltra to accept the connection (`@voltras/node-sdk` 0.15.0,
   VW-415, #441). A first pairing asks the lifter to accept on the device, so `device.connect` can
   take up to 30 seconds; meanwhile `device.get_state` reports

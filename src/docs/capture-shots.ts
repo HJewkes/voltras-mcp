@@ -239,6 +239,22 @@ export function viewportFor(shot: CaptureShot): CaptureViewport {
 }
 
 /**
+ * The goals scenario's computed numbers, shared by its wall and phone shots:
+ * both read the same pipeline state, so a wrong number fails both.
+ */
+const GOALS_VALUES: readonly string[] = [
+  // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
+  // and the coach's own proposal. Never asserted as a raw number elsewhere,
+  // so a wrong target here would pass every other shot's check.
+  'Goal 8 x 127.5 lb',
+  // The driven PR set as the block's best, and the gap it leaves to the goal.
+  'Best 8 x 110 lb',
+  '17.5 lb to goal',
+  // The whole-body panel's own line for the same priority.
+  'CABLE CHEST PRESS · specialize',
+];
+
+/**
  * Order matters within a scenario: shots are taken in listed order against one
  * run, so each `waitFor` must be reachable at or after the previous one. The
  * planned run ends with the two post-run pages, which stay put while the driver
@@ -377,28 +393,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // before `goal.declare_priorities` ever ran — the shot opened on an empty
     // "No priorities declared" page every time (VW-389).
     waitFor: { kind: 'sessions-ended', minSessions: 2 },
-    expectText: [
-      'CABLE CHEST PRESS',
-      'Calibrating',
-      'COMMITTED',
-      'STRETCH',
-      'Per-lift',
-      'Whole body',
-    ],
-    expectValues: [
-      // The band, fixed by the seeded prior-week reading (100 lb x 8) and the
-      // coach's own proposal — never asserted as a raw number elsewhere, so a
-      // wrong band here would pass every other shot's check.
-      'COMMITTED 127.5',
-      'STRETCH 127.5',
-      // The next milestone the trajectory chart projects toward, and the same
-      // reading repeated on the per-lift card — both derived from the fixed
-      // band above, not from wall-clock date.
-      '105 x 8 in week 3',
-      '8 x 105 lb in week 3',
-      // The whole-body panel's own line for the same priority.
-      'CABLE CHEST PRESS · specialize',
-    ],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+    expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
   {
@@ -411,21 +407,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // and content rather than re-deriving one.
     waitFor: { kind: 'sessions-ended', minSessions: 2 },
     viewport: PHONE_VIEWPORT,
-    expectText: [
-      'CABLE CHEST PRESS',
-      'Calibrating',
-      'COMMITTED',
-      'STRETCH',
-      'Per-lift',
-      'Whole body',
-    ],
-    expectValues: [
-      'COMMITTED 127.5',
-      'STRETCH 127.5',
-      '105 x 8 in week 3',
-      '8 x 105 lb in week 3',
-      'CABLE CHEST PRESS · specialize',
-    ],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+    expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
   {

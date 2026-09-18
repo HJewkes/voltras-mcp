@@ -1,5 +1,5 @@
 {
-  "definitionHash": "346f5f2a78f51e1d134795038b5584877ee68703b13633503adbba7d588c8a72",
+  "definitionHash": "745bbf6372fa35d979400320bc88234b7e68c6a4b41493b76b0bcd93a4b27659",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -152,25 +152,17 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": [
-        "CABLE CHEST PRESS",
-        "Calibrating",
-        "COMMITTED",
-        "STRETCH",
-        "Per-lift",
-        "Whole body"
-      ],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
       "assertedValues": [
-        "COMMITTED 127.5",
-        "STRETCH 127.5",
-        "105 x 8 in week 3",
-        "8 x 105 lb in week 3",
+        "Goal 8 x 127.5 lb",
+        "Best 8 x 110 lb",
+        "17.5 lb to goal",
         "CABLE CHEST PRESS · specialize"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 135043,
-      "sha256": "205037575b2f204f965ca1465e8b265f88b1ad1421d2e8718e13100bef0e1757"
+      "bytes": 69506,
+      "sha256": "20c2d4f84a5ecce3b349400018d708943a0ac84c36452f4f7011283a2f8b7b7f"
     },
     {
       "name": "goals-phone",
@@ -182,25 +174,17 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": [
-        "CABLE CHEST PRESS",
-        "Calibrating",
-        "COMMITTED",
-        "STRETCH",
-        "Per-lift",
-        "Whole body"
-      ],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
       "assertedValues": [
-        "COMMITTED 127.5",
-        "STRETCH 127.5",
-        "105 x 8 in week 3",
-        "8 x 105 lb in week 3",
+        "Goal 8 x 127.5 lb",
+        "Best 8 x 110 lb",
+        "17.5 lb to goal",
         "CABLE CHEST PRESS · specialize"
       ],
       "width": 390,
       "height": 844,
-      "bytes": 72867,
-      "sha256": "ce85290d17c25cc3d9b27b5140793649ad8965deddc7cc69bf6361b309e8bfa6"
+      "bytes": 42361,
+      "sha256": "e92f6c749a1aab6832a324b963026aa3daeaf273b45238278b6fe9211663df36"
     },
     {
       "name": "body-week",

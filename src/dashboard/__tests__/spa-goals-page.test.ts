@@ -19,12 +19,7 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import {
-  statusBadgeVariant,
-  statusLabel,
-  titanStatus,
-  type GoalsPageData,
-} from '../spa/goals/goals-model.js';
+import { cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -206,26 +201,28 @@ function cardMarkup(html: string, label: string): string {
 }
 
 describe('GoalsView (VW-355)', () => {
-  it('renders the priority header, both card grids and the whole-body section', () => {
+  it('renders the lead goal card, both card grids and the whole-body section', () => {
     const html = render(baseData().data);
 
-    expect(html).toContain('BENCH PRESS'); // priority header
-    expect(html).toContain('Committed'); // MesoStatusCard metrics
+    expect(html).toContain('data-testid="goal-card-title"');
+    expect(html).toContain('BENCH PRESS');
     expect(html).toContain('Per-lift');
     expect(html).toContain('Muscle priorities');
     expect(html).toContain('Whole body');
     expect(html).toContain('Sessions (28d)');
   });
 
-  it('renders one lift card per exercise-tracked target, with its next milestone', () => {
+  it('renders one lift card per exercise-tracked target, with its block-end target', () => {
     const html = render(baseData().data);
 
     expect(html).toContain('aria-label="BENCH PRESS goal, On track"');
     expect(html).toContain('aria-label="CURL goal, Behind"');
     expect(html).toContain('aria-label="HAMMER CURL goal, Behind"');
-    // reps x load, then the unit — the structured milestone from #433, not a parsed label.
-    expect(cardMarkup(html, 'CURL goal, Behind')).toContain('8 x 177.5');
-    expect(cardMarkup(html, 'CURL goal, Behind')).toContain('lb');
+    // The committed set as reps x load, and the block's best against it (VW-400).
+    const curl = cardMarkup(html, 'CURL goal, Behind');
+    expect(curl).toContain('8 x 50 lb');
+    expect(curl).toContain('8 x 46 lb');
+    expect(curl).toContain('Week 3 of 6');
   });
 
   it('marks the PR on the lift card that set one, and only that card', () => {
@@ -297,34 +294,41 @@ describe('GoalsView phone layout (VW-356)', () => {
     vi.mocked(useIsNarrowViewport).mockReturnValue(true);
     try {
       const html = render(baseData().data);
-      // Wide is a four-column `calc(25% - ...)` cell (see the render test
-      // above's card grids); narrow drops straight to a full-width row.
-      expect(html).not.toContain('calc(25%');
-      expect(html.match(/flex-basis:100%/g)?.length).toBe(4); // 3 lift cards + 1 muscle card
-      // The trajectory chart's phone-density width, not the 1200px wall one.
-      expect(html).toContain('width:240px');
-      expect(html).not.toContain('width:1200px');
+      expect(html).not.toContain('auto-fill');
+      expect(html.match(/grid-template-columns:1fr/g)?.length).toBe(2); // lift grid + muscle grid
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
     }
   });
+
+  it('lays the wall grids out as auto-fill columns', () => {
+    const html = render(baseData().data);
+    expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(2);
+  });
 });
 
 describe('the two block verdicts on the goals page (VW-400)', () => {
-  it('labels and tones goal_met and beyond_goal', () => {
-    expect([statusLabel('goal_met'), statusBadgeVariant('goal_met')]).toEqual([
-      'Goal met',
-      'success',
-    ]);
-    expect([statusLabel('beyond_goal'), statusBadgeVariant('beyond_goal')]).toEqual([
-      'Beyond goal',
-      'info',
-    ]);
+  it('passes goal_met straight through to the cards once a matched reading reaches committed', () => {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const met = view(benchPriority, benchTarget, [actual(2, 175), actual(3, 182.5)]);
+    data.progress[benchPriority.id] = [met];
+
+    expect(met.status).toBe('goal_met');
+    expect(render(data)).toContain('aria-label="BENCH PRESS goal, Goal met"');
   });
 
-  it('hands titan 0.17.1 the nearest pace status it knows, and passes the rest through', () => {
-    expect(titanStatus('goal_met')).toBe('on_track');
-    expect(titanStatus('beyond_goal')).toBe('ahead');
-    expect(titanStatus('stalled')).toBe('stalled');
+  it("hands the summary the read model's block-end target, state and week cells", () => {
+    const benchView = baseData().data.progress['pri-bench']![0]!;
+    const milestone = cardMilestone(benchView);
+
+    expect(milestone.target).toEqual({
+      metric: 'top_load_at_reps',
+      reps: 8,
+      load: 182.5,
+      unit: 'lb',
+    });
+    expect(milestone.state).toBe(benchView.mesoMilestone.state);
+    expect(milestone.weeks).toHaveLength(benchView.weekOutcomes.length);
   });
 });
