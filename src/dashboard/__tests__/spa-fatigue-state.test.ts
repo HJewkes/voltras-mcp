@@ -135,7 +135,7 @@ describe('setFatigueState across surfaces (VW-440)', () => {
   it('names the default when the exercise carries no intent', () => {
     const model = modelFor(undefined, closedSet(repsLosing(15)));
 
-    expect(model.live!.fatigueStop).toEqual({ pct: 30, intent: null, source: 'default' });
+    expect(model.live!.fatigueStop).toMatchObject({ pct: 30, intent: null, source: 'default' });
   });
 
   it('judges a set by its own watch threshold, the number the server fires at', () => {

@@ -117,6 +117,30 @@ export interface FatigueStop {
   readonly pct: number;
   readonly intent: TrainingIntent | null;
   readonly source: VelocityLossThresholdSource | 'default';
+  /** Per-rep colour band edges in loss %, ascending; the last is always {@link pct} (VW-448). */
+  readonly bands: readonly [number, number, number];
+  /** The rule that produced {@link bands}, so a research-backed source can replace it by name. */
+  readonly bandsSource: FatigueBandsSource;
+}
+
+/** `stop_thirds`: the stop split into thirds; the only rule until VW-448 lands a researched one. */
+export type FatigueBandsSource = 'stop_thirds';
+
+/**
+ * Colour band edges for a stop threshold: one third, two thirds and the stop itself, the
+ * first two rounded to one decimal place, e.g. 20% gives 6.7 / 13.3 / 20.
+ */
+export function stopThirdsBands(pct: number): readonly [number, number, number] {
+  const third = (n: number) => Math.round(((pct * n) / 3) * 10) / 10;
+  return [third(1), third(2), pct];
+}
+
+function fatigueStop(
+  pct: number,
+  intent: TrainingIntent | null,
+  source: FatigueStop['source'],
+): FatigueStop {
+  return { pct, intent, source, bands: stopThirdsBands(pct), bandsSource: 'stop_thirds' };
 }
 
 /**
@@ -126,7 +150,7 @@ export interface FatigueStop {
 export function exerciseFatigueStop(planIntent: TrainingIntent | undefined): FatigueStop {
   const resolved = resolveVelocityLossSpec({ type: 'velocity_loss_exceeded' }, planIntent);
   if (resolved === undefined) {
-    return { pct: VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT], intent: null, source: 'default' };
+    return fatigueStop(VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT], null, 'default');
   }
   return fromResolved(resolved);
 }
@@ -152,5 +176,5 @@ interface WatchTriggerLike {
 }
 
 function fromResolved(spec: ResolvedVelocityLossSpec): FatigueStop {
-  return { pct: spec.pct, intent: spec.intent ?? null, source: spec.thresholdSource ?? 'explicit' };
+  return fatigueStop(spec.pct, spec.intent ?? null, spec.thresholdSource ?? 'explicit');
 }

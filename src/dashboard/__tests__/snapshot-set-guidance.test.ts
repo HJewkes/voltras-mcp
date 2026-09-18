@@ -209,18 +209,27 @@ describe('snapshot rest (VW-441)', () => {
 
 describe('snapshot fatigueStop (VW-440)', () => {
   it.each([
-    ['strength', 20],
-    ['hypertrophy', 30],
-    ['power', 10],
-  ] as const)("keys a %s exercise's stop to %i%% from the plan", async (intent, pct) => {
-    const body = await snapshotGuidance({ sets: [], plan: planned({ trainingIntent: intent }) });
+    ['strength', 20, [6.7, 13.3, 20]],
+    ['hypertrophy', 30, [10, 20, 30]],
+    ['power', 10, [3.3, 6.7, 10]],
+  ] as const)(
+    "keys a %s exercise's stop to %s percent from the plan",
+    async (intent, pct, bands) => {
+      const body = await snapshotGuidance({ sets: [], plan: planned({ trainingIntent: intent }) });
 
-    expect(body.fatigueStop).toEqual({ pct, intent, source: 'plan_intent' });
-  });
+      expect(body.fatigueStop).toEqual({
+        pct,
+        intent,
+        source: 'plan_intent',
+        bands,
+        bandsSource: 'stop_thirds',
+      });
+    },
+  );
 
   it('falls to the named 30% default with no plan intent', async () => {
     const body = await snapshotGuidance({ sets: [] });
 
-    expect(body.fatigueStop).toEqual({ pct: 30, intent: null, source: 'default' });
+    expect(body.fatigueStop).toMatchObject({ pct: 30, intent: null, source: 'default' });
   });
 });

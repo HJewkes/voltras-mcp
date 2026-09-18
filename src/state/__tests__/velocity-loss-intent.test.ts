@@ -12,6 +12,7 @@ import {
   VELOCITY_LOSS_RANGE_PCT,
   exerciseFatigueStop,
   fatigueStopForSet,
+  stopThirdsBands,
 } from '../velocity-loss-intent.js';
 
 const VL = { type: 'velocity_loss_exceeded' } as const;
@@ -95,7 +96,7 @@ describe('fatigueStopForSet (VW-440)', () => {
         { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' as const },
       ],
     };
-    expect(fatigueStopForSet(watch, planStop)).toEqual({
+    expect(fatigueStopForSet(watch, planStop)).toMatchObject({
       pct: 25,
       intent: null,
       source: 'explicit',
@@ -113,7 +114,7 @@ describe('fatigueStopForSet (VW-440)', () => {
         },
       ],
     };
-    expect(fatigueStopForSet(watch, planStop)).toEqual({
+    expect(fatigueStopForSet(watch, planStop)).toMatchObject({
       pct: 10,
       intent: 'power',
       source: 'set_intent',
@@ -128,6 +129,39 @@ describe('fatigueStopForSet (VW-440)', () => {
   });
 
   it('names the default when the exercise states no intent', () => {
-    expect(exerciseFatigueStop(undefined)).toEqual({ pct: 30, intent: null, source: 'default' });
+    expect(exerciseFatigueStop(undefined)).toMatchObject({
+      pct: 30,
+      intent: null,
+      source: 'default',
+    });
+  });
+});
+
+describe('fatigue colour bands (VW-448 seam)', () => {
+  it.each([
+    ['strength', [6.7, 13.3, 20]],
+    ['hypertrophy', [10, 20, 30]],
+    ['power', [3.3, 6.7, 10]],
+  ] as const)('splits the %s stop into thirds, rounded to one decimal', (intent, bands) => {
+    expect(exerciseFatigueStop(intent)).toMatchObject({ bands, bandsSource: 'stop_thirds' });
+  });
+
+  it('bands the named default the same way', () => {
+    expect(exerciseFatigueStop(undefined).bands).toEqual([10, 20, 30]);
+  });
+
+  it("bands a set-watch threshold off the set's own number", () => {
+    const watch = {
+      notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' as const }],
+    };
+    expect(fatigueStopForSet(watch, exerciseFatigueStop('strength'))).toMatchObject({
+      pct: 25,
+      bands: [8.3, 16.7, 25],
+      bandsSource: 'stop_thirds',
+    });
+  });
+
+  it('keeps the stop itself unrounded as the last edge', () => {
+    expect(stopThirdsBands(17.5)).toEqual([5.8, 11.7, 17.5]);
   });
 });
