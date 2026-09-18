@@ -123,7 +123,7 @@ function liftsUnder(data: GoalsPageData, priority: StoredPriority): GoalMuscleLi
     .filter((view) => view.target.metric === 'top_load_at_reps')
     .map((view) => ({
       name: targetLabel({ priority, view }),
-      status: view.status,
+      status: titanStatus(view.status),
       reps: view.nextMilestone.reps,
       load: view.nextMilestone.load,
       unit: view.nextMilestone.unit,
@@ -232,6 +232,15 @@ export function dateOnly(ts: string): string {
 
 /** The chart's own status vocabulary is the read model's, unchanged — named for the import site. */
 export type { GoalTrajectoryStatus };
+
+/** The pace statuses titan 0.17.1 knows; the two block verdicts map onto their nearest pace. */
+export type TitanGoalStatus = Exclude<GoalProgressView['status'], 'goal_met' | 'beyond_goal'>;
+
+// VW-385 port removes this once titan >= 0.18.0 carries the statuses.
+export function titanStatus(status: GoalProgressView['status']): TitanGoalStatus {
+  if (status === 'goal_met') return 'on_track';
+  return status === 'beyond_goal' ? 'ahead' : status;
+}
 
 export function statusLabel(status: GoalProgressView['status']): string {
   switch (status) {

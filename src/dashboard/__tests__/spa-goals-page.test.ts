@@ -19,7 +19,12 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import type { GoalsPageData } from '../spa/goals/goals-model.js';
+import {
+  statusBadgeVariant,
+  statusLabel,
+  titanStatus,
+  type GoalsPageData,
+} from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -302,5 +307,24 @@ describe('GoalsView phone layout (VW-356)', () => {
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
     }
+  });
+});
+
+describe('the two block verdicts on the goals page (VW-400)', () => {
+  it('labels and tones goal_met and beyond_goal', () => {
+    expect([statusLabel('goal_met'), statusBadgeVariant('goal_met')]).toEqual([
+      'Goal met',
+      'success',
+    ]);
+    expect([statusLabel('beyond_goal'), statusBadgeVariant('beyond_goal')]).toEqual([
+      'Beyond goal',
+      'info',
+    ]);
+  });
+
+  it('hands titan 0.17.1 the nearest pace status it knows, and passes the rest through', () => {
+    expect(titanStatus('goal_met')).toBe('on_track');
+    expect(titanStatus('beyond_goal')).toBe('ahead');
+    expect(titanStatus('stalled')).toBe('stalled');
   });
 });
