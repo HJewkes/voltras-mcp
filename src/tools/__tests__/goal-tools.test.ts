@@ -551,6 +551,21 @@ describe('goal.accept_target', () => {
     });
   });
 
+  it('ends the block at the Monday after its last calendar week, counted from the start week', async () => {
+    const accepted = await harness.invoke('goal.accept_target', { targetId: target.targetId });
+    const { startMeasuredAt, endsAt } = accepted.target as {
+      startMeasuredAt: string;
+      endsAt: string;
+    };
+
+    const ends = new Date(endsAt);
+    const span = ends.getTime() - Date.parse(startMeasuredAt);
+    expect(ends.getUTCDay()).toBe(1);
+    expect(endsAt.endsWith('T00:00:00.000Z')).toBe(true);
+    expect(span).toBeGreaterThan(5 * 7 * DAY_MS);
+    expect(span).toBeLessThanOrEqual(6 * 7 * DAY_MS);
+  });
+
   it('refuses a committed value past the stretch edge without an acknowledgement', async () => {
     const error = await harness.expectError('goal.accept_target', {
       targetId: target.targetId,

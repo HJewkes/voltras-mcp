@@ -15,7 +15,7 @@
 //
 // Confidentiality: fitness units and plan metadata only, no protocol data (NF-07).
 
-import { weeksInPhaseAt } from '../../analytics/diet-phase-tolerance.js';
+import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
 import type { GoalBand, GoalBandExpectation, GoalBandWeek } from '../../analytics/goal-band.js';
 import type { StoredGoalMetric, StoredGoalTarget } from '../../store/types.js';
 
@@ -133,12 +133,9 @@ export function blockReadingsOf(
   weeks: readonly GoalBandWeek[],
   matched: readonly { ts: string; value: number }[],
 ): BlockReading[] {
-  const startedMs = Date.parse(target.startMeasuredAt);
   return matched.flatMap((actual) => {
-    const takenMs = Date.parse(actual.ts);
-    if (Number.isNaN(startedMs) || Number.isNaN(takenMs) || takenMs < startedMs) return [];
-    const position = weeksInPhaseAt(target.startMeasuredAt, actual.ts) - 1;
-    return position < weeks.length ? [{ value: actual.value, position }] : [];
+    const position = blockWeekAt(target.startMeasuredAt, actual.ts) - 1;
+    return position >= 0 && position < weeks.length ? [{ value: actual.value, position }] : [];
   });
 }
 
@@ -171,7 +168,7 @@ function atPrecision(metric: StoredGoalMetric, value: number): number {
 export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
   const { target, band, weeks, readings } = input;
   const weekCount = weeks.length;
-  const currentWeek = weeksInPhaseAt(target.startMeasuredAt, input.now);
+  const currentWeek = Math.max(1, blockWeekAt(target.startMeasuredAt, input.now));
   const last = readings[readings.length - 1];
   const ended = currentWeek > weekCount;
   return {

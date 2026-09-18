@@ -29,7 +29,9 @@
 
 import { EMPTY_PHASE } from '@voltras/workout-analytics';
 
+import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
+import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
 import {
   LOCAL_USER_ID,
   type SessionStore,
@@ -117,7 +119,10 @@ export interface GoalPreviewState {
    * anchor), and that gap is the only way a reading lands past the stretch edge.
    */
   readonly heavySingleLbs?: number;
-  /** How far back the target was measured, which is what puts `now` in a meso week. */
+  /**
+   * How many weeks before the newest session the target was measured, which is
+   * what puts `now` in a meso week. Dated by {@link seededAt}, like the sessions.
+   */
   readonly targetStartWeeksAgo: number;
   readonly committedLbs: number;
   readonly stretchLbs: number;
@@ -231,6 +236,17 @@ export async function seedGoalPreview(
   };
 }
 
+/**
+ * When the session `weeksBack` weeks before the newest one happened. The newest
+ * sits halfway between the Monday of `now`'s ISO week and `now`: in the past and
+ * in the current calendar week on any weekday, so it is the current week's reading.
+ */
+export function seededAt(now: Date, weeksBack: number): string {
+  const monday = Date.parse(startOfCalendarWeekIso(now));
+  const newest = monday + (now.getTime() - monday) / 2;
+  return new Date(newest - weeksBack * 7 * DAY_MS).toISOString();
+}
+
 /** One session per weekly load, oldest first, seven days apart so each lands in its own week. */
 async function seedSessions(
   store: GoalPreviewStore,
@@ -240,9 +256,7 @@ async function seedSessions(
   const weeks = state.weeklyLoadsLbs.length;
   let sets = 0;
   for (const [index, load] of state.weeklyLoadsLbs.entries()) {
-    // One day short of a whole number of weeks, so the newest session is
-    // yesterday and every session sits in the past on any weekday.
-    const at = new Date(now.getTime() - ((weeks - index) * 7 - 6) * DAY_MS).toISOString();
+    const at = seededAt(now, weeks - 1 - index);
     const sessionId = `preview-goal-session-${index + 1}`;
     await store.putSession({
       id: sessionId,
@@ -252,12 +266,20 @@ async function seedSessions(
       exerciseName: GOAL_PREVIEW_EXERCISE.name,
     });
     const newest = index === weeks - 1;
-    for (const set of sessionSets(state, load, newest)) {
-      await store.putSet(workingSet(sessionId, at, sets++, set.weightLbs, set.reps));
+    const planned = sessionSets(state, load, newest);
+    const spacingMs = setSpacingMs(at, now, planned.length);
+    for (const [order, set] of planned.entries()) {
+      const setAt = new Date(Date.parse(at) + order * spacingMs).toISOString();
+      await store.putSet(workingSet(sessionId, setAt, sets++, set.weightLbs, set.reps));
     }
   }
   const latest = state.weeklyLoadsLbs[weeks - 1] ?? 0;
   return { sessions: weeks, sets, latestLoadLbs: state.heavySingleLbs ?? latest };
+}
+
+/** Five minutes between sets, squeezed when the session is so recent that five would run past `now`. */
+function setSpacingMs(sessionAt: string, now: Date, setCount: number): number {
+  return Math.min(5 * 60_000, (now.getTime() - Date.parse(sessionAt)) / (setCount + 1));
 }
 
 /** One session's working sets: the week's load at the anchor, plus the newest week's heavy set. */
@@ -277,7 +299,7 @@ function sessionSets(
 }
 
 /**
- * One recorded working set, five minutes after the one before it.
+ * One recorded working set, at `at`.
  *
  * `source: 'local'` rather than `'mock'`: these stand in for the lifter's own
  * recorded work, and the per-muscle read models exclude mock sets by design
@@ -286,13 +308,12 @@ function sessionSets(
  */
 function workingSet(
   sessionId: string,
-  sessionAt: string,
+  at: string,
   index: number,
   weightLbs: number,
   reps: number,
 ): StoredSet {
   const id = `preview-goal-set-${index + 1}`;
-  const at = new Date(Date.parse(sessionAt) + index * 5 * 60_000).toISOString();
   return {
     id,
     sessionId,
@@ -373,9 +394,7 @@ function targetRow(
   state: GoalPreviewState,
   now: Date,
 ): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
-  const startMeasuredAt = new Date(
-    now.getTime() - state.targetStartWeeksAgo * 7 * DAY_MS,
-  ).toISOString();
+  const startMeasuredAt = seededAt(now, state.targetStartWeeksAgo);
   const first = state.weeklyLoadsLbs[0] ?? 0;
   return {
     id: 'preview-goal-target',
@@ -397,8 +416,6 @@ function targetRow(
     acceptedBy: 'user',
     acknowledgedStretch: false,
     derivedAt: startMeasuredAt,
-    endsAt: new Date(
-      Date.parse(startMeasuredAt) + GOAL_PREVIEW_HORIZON_WEEKS * 7 * DAY_MS,
-    ).toISOString(),
+    endsAt: blockEndsAt(startMeasuredAt, GOAL_PREVIEW_HORIZON_WEEKS),
   };
 }

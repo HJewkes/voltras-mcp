@@ -121,6 +121,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- The goal trajectory now starts where the band starts, and the current week has its reading
+  (VW-421). A goal's weeks are calendar weeks (Monday to Sunday, UTC): week 1 is the week the
+  starting set was lifted in. Before, weeks were counted in seven-day steps from that set, so
+  the first week's lift fell off the chart and every later lift was drawn one week early. The
+  week a reading is drawn on, the current week, the band row it is judged against, which
+  readings count toward `goal_met` / `beyond_goal`, and a new target's `endsAt` all use that
+  one calendar. Existing targets are not rewritten; their `endsAt` keeps the date it was
+  stored with. `dashboard:preview -- goals` also dates its target on its first session, where
+  it was a day later (VW-422).
 - `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415, #441). It
   used to report success while the device stayed loaded. `device.unload` remains the stop
   the device confirms.

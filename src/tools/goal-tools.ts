@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 
 import type { GoalBand } from '../analytics/goal-band.js';
+import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import {
   selectGoalMetrics,
   type GoalGainMetric,
@@ -565,7 +566,7 @@ function toStoredTarget(
     dietPhaseAtDerivation: context.dietState.phase,
     acknowledgedStretch: false,
     derivedAt: context.derivedAt,
-    endsAt: context.endsAt,
+    endsAt: blockEndsAt(derived.startMeasuredAt, context.horizonWeeks),
     ...(newChapterAt !== null ? { newChapterAt } : {}),
   };
 }

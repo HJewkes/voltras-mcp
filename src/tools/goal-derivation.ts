@@ -88,7 +88,6 @@ export interface GoalDerivationContext {
   layoff: boolean;
   completedMesoCount: number;
   derivedAt: string;
-  endsAt: string;
   notes: string[];
 }
 
@@ -137,7 +136,6 @@ export async function readDerivationContext(
     layoff: await hasRecentLayoff(state),
     completedMesoCount: await countCompletedMesos(state, priority),
     derivedAt,
-    endsAt: new Date(Date.parse(derivedAt) + weeks.length * 7 * DAY_MS).toISOString(),
     notes,
   };
 }
