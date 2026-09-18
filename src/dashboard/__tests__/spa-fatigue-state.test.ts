@@ -104,15 +104,15 @@ const TILE: Record<FatigueState, string> = { productive: 'LOW', threshold: 'MOD'
 
 describe('setFatigueState across surfaces (VW-440)', () => {
   it.each<[TrainingIntent | undefined, number, FatigueState]>([
-    ['strength', 15, 'productive'],
-    ['strength', 22, 'stop'],
-    ['strength', 32, 'stop'],
+    ['strength', 12, 'productive'],
+    ['strength', 14, 'threshold'],
+    ['strength', 21, 'stop'],
+    ['power', 5, 'productive'],
+    ['power', 7, 'threshold'],
+    ['power', 11, 'stop'],
     ['hypertrophy', 15, 'productive'],
     ['hypertrophy', 22, 'threshold'],
     ['hypertrophy', 32, 'stop'],
-    ['power', 15, 'stop'],
-    ['power', 22, 'stop'],
-    ['power', 32, 'stop'],
     [undefined, 15, 'productive'],
     [undefined, 22, 'threshold'],
     [undefined, 32, 'stop'],
