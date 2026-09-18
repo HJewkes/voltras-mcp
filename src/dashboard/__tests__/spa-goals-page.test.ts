@@ -108,6 +108,7 @@ function view(
     priority: pri,
     target: tgt,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals,
     weeks: WEEKS,
     now: WEEK_3,
@@ -330,5 +331,30 @@ describe('the two block verdicts on the goals page (VW-400)', () => {
     });
     expect(milestone.state).toBe(benchView.mesoMilestone.state);
     expect(milestone.weeks).toHaveLength(benchView.weekOutcomes.length);
+  });
+});
+
+describe('a goal accepted while calibrating (VW-444)', () => {
+  const SENTENCE =
+    'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.';
+
+  it('says under the card that the target is a starting ramp, with the sessions still needed', () => {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const cold = view(
+      benchPriority,
+      { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 174)],
+    );
+    data.progress[benchPriority.id] = [cold];
+
+    const html = render(data);
+
+    expect(cold.status).toBe('calibrating');
+    expect(html.split(SENTENCE)).toHaveLength(3);
+  });
+
+  it('adds no calibration sentence once no target is calibrating', () => {
+    expect(render(baseData().data)).not.toContain('to calibrate');
   });
 });

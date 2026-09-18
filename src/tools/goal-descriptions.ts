@@ -42,7 +42,10 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'show both, and never present the committed value alone as the forecast — the displayed ' +
   'projection is never shaded (B55). `infoLevel` says how much the evidence earned: `cold` is an ' +
   'execution ramp with no gain claim, `ramp` is the programmed increment, `own` is this lifter’s ' +
-  'own fitted slope. A metric whose proposal was declined is never re-offered.';
+  'own fitted slope. A cold lift target also carries `startingRamp` (`sessionsNeeded`, ' +
+  '`blockedBy`, `baselineState`, `reProposeAfterCalibration`, `note`): its number is the generic ' +
+  'starting ramp, so tell the lifter so, and re-propose a data-based target once calibration ' +
+  'ends. A metric whose proposal was declined is never re-offered.';
 
 export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'Fix one proposed target’s numbers. Omit `committedValue` and `stretchValue` to take the ' +
@@ -57,7 +60,9 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'NEVER MOVED to make it look supported (B55). For a `reps_at_load` target pass `anchorLoad`, ' +
   'the load its reps are counted at, so the target reads as a whole set; it is fixed with the ' +
   'rest, and any other metric refuses it (`GOAL_ANCHOR_LOAD_NOT_APPLICABLE`). Returns `target`, `acceptedBy`, ' +
-  '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`.';
+  '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`, plus `startingRamp` when the ' +
+  'target is a cold lift target: accepted as the generic starting ramp, to be re-proposed as a ' +
+  'new chapter once calibrated, never edited in place.';
 
 export const GOAL_LIST_DESCRIPTION =
   'READ-ONLY. Every declared priority with the targets derived under it, newest declaration ' +

@@ -460,6 +460,13 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-399: the anchor load a `reps_at_load` target is counted at, and its refusal code.
   'reps_at_load',
   'GOAL_ANCHOR_LOAD_NOT_APPLICABLE',
+  // VW-444: the starting-ramp notice on a cold lift target in
+  // `goal.propose_targets` and `goal.accept_target`.
+  'startingRamp',
+  'sessionsNeeded',
+  'blockedBy',
+  'baselineState',
+  'reProposeAfterCalibration',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',

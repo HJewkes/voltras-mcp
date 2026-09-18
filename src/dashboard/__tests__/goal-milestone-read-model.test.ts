@@ -88,6 +88,7 @@ function input(overrides: Partial<GoalProgressInput> = {}): GoalProgressInput {
     priority: PRIORITY,
     target: TARGET,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals: [],
     weeks: WEEKS,
     now: tsInWeek(3),

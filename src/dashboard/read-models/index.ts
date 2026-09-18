@@ -88,6 +88,8 @@ export {
   type GoalActual,
   type GoalActualView,
   type GoalAdvisory,
+  type GoalCalibrationEvidence,
+  type GoalCalibrationView,
   type GoalConfounder,
   type GoalE1RMContextView,
   type GoalE1RMInput,

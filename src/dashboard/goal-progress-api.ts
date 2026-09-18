@@ -78,6 +78,10 @@ export async function fetchGoalProgressViews(
         priority,
         target,
         band: derived.band,
+        calibrationEvidence: {
+          matchedSessionCount: derived.matchedSessionCount,
+          baselineState: derived.baselineState,
+        },
         actuals,
         weeks: context.weeks,
         now: now.toISOString(),

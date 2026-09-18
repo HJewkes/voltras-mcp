@@ -16,6 +16,7 @@ import {
   buildGoalProgressView,
   buildPriorityRollup,
   type GoalActual,
+  type GoalCalibrationEvidence,
   type GoalProgressInput,
   type GoalProgressView,
 } from '../read-models/goal-progress.js';
@@ -107,6 +108,7 @@ function input(overrides: Partial<GoalProgressInput> = {}): GoalProgressInput {
     priority: PRIORITY,
     target: TARGET,
     band: BAND,
+    calibrationEvidence: { matchedSessionCount: 6, baselineState: 'CALIBRATED' },
     actuals: [],
     weeks: WEEKS,
     now: WEEK_3,
@@ -424,6 +426,111 @@ describe('buildGoalProgressView praise cadence', () => {
     expect(view.praise?.level).toBe('loud');
     expect(view.praise?.text).toContain('128%');
     expect(view.praise?.text).toContain('rp:rp-s12-praise-relative-to-goal-not-magnitude');
+  });
+});
+
+describe('buildGoalProgressView calibration facts (VW-444)', () => {
+  /** What `goal.propose_targets` stores for a lift derived before calibration. */
+  const COLD_TARGET: StoredGoalTarget = {
+    ...TARGET,
+    committedValue: 185,
+    stretchValue: 185,
+    basis: 'execution_ramp',
+    infoLevel: 'cold',
+  };
+
+  function coldView(evidence: GoalCalibrationEvidence): GoalProgressView {
+    const band = deriveGoalBand({
+      metric: 'top_load_at_reps',
+      startValue: 170,
+      horizonWeeks: 6,
+      weeks: WEEKS,
+      tier: 'intermediate',
+      infoLevel: 'own',
+      dietState: { phase: 'maintenance', weeksInPhase: 4 },
+      layoff: false,
+      ...evidence,
+      completedMesoCount: 0,
+    });
+    return buildGoalProgressView(
+      input({
+        target: COLD_TARGET,
+        band,
+        calibrationEvidence: evidence,
+        actuals: [actual(2, 172)],
+      }),
+    );
+  }
+
+  it('counts the sessions still needed when only the session count blocks', () => {
+    const view = coldView({ matchedSessionCount: 1, baselineState: 'PROVISIONAL' });
+
+    expect(view.status).toBe('calibrating');
+    expect(view.calibration).toEqual({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      baselineState: 'PROVISIONAL',
+      targetBasis: 'execution_ramp',
+      targetInfoLevel: 'cold',
+    });
+  });
+
+  it('names the baseline, with no sessions owed, when only the baseline blocks', () => {
+    const view = coldView({ matchedSessionCount: 4, baselineState: 'SHAPE_ONLY' });
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 0,
+      blockedBy: 'baseline',
+      baselineState: 'SHAPE_ONLY',
+    });
+  });
+
+  it('reports both gates when the count and the baseline both block', () => {
+    const view = coldView({ matchedSessionCount: 0, baselineState: 'COLD' });
+
+    expect(view.calibration).toMatchObject({
+      sessionsNeeded: 2,
+      blockedBy: 'both',
+      baselineState: 'COLD',
+    });
+  });
+
+  it('leaves statusBasis prose as it was', () => {
+    const view = coldView({ matchedSessionCount: 1, baselineState: 'PROVISIONAL' });
+
+    expect(view.statusBasis).toContain('Calibrating: the band is the programmed execution ramp');
+  });
+
+  it('counts matched readings when the band is warm but the readings are not', () => {
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 174)] }));
+
+    expect(view.calibration).toEqual({
+      sessionsNeeded: 1,
+      blockedBy: 'sessions',
+      baselineState: 'CALIBRATED',
+      targetBasis: 'rp_ramp',
+      targetInfoLevel: 'ramp',
+    });
+  });
+
+  it('carries no calibration facts once the target is judged against its band', () => {
+    const view = buildGoalProgressView(input({ actuals: CONVERGING }));
+
+    expect(view.status).toBe('on_track');
+    expect(view).not.toHaveProperty('calibration');
+  });
+
+  it('carries no calibration facts for a session-count commitment with nothing counted', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: { ...COLD_TARGET, metric: 'sessions_28d', exerciseId: undefined },
+        band: { ...BAND, infoLevel: 'cold', basis: 'execution_ramp' },
+        calibrationEvidence: { matchedSessionCount: 0, baselineState: 'CALIBRATED' },
+      }),
+    );
+
+    expect(view.status).toBe('calibrating');
+    expect(view).not.toHaveProperty('calibration');
   });
 });
 

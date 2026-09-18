@@ -78,6 +78,12 @@ import {
   GOAL_WEEKLY_REVIEW_DESCRIPTION,
 } from './goal-descriptions.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
+import {
+  acceptedStartingRamp,
+  proposedStartingRamp,
+  type ProposedStartingRamp,
+  type StartingRampNotice,
+} from './goal-starting-ramp.js';
 
 /** Weeks a horizon falls back to. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
@@ -326,6 +332,8 @@ export interface ProposedTarget {
   acceptedBy: null;
   rpIds: string[];
   notes: string[];
+  /** A cold lift target: the generic starting ramp, re-proposed after calibration (VW-444). */
+  startingRamp?: ProposedStartingRamp;
 }
 
 /** One derived leg before anything is written: the same shape, minus the row. */
@@ -509,6 +517,7 @@ function sameLeg(row: StoredGoalTarget, selection: GoalGainMetric): boolean {
 }
 
 function previewEntry(derived: DerivedTarget, context: GoalDerivationContext): PreviewedTarget {
+  const startingRamp = proposedStartingRamp(derived);
   return {
     metric: derived.metric,
     exerciseId: derived.exerciseId,
@@ -528,6 +537,7 @@ function previewEntry(derived: DerivedTarget, context: GoalDerivationContext): P
     provisional: derived.band.provisional,
     rpIds: citedRpIds(derived.band),
     notes: derived.band.notes,
+    ...(startingRamp === undefined ? {} : { startingRamp }),
   };
 }
 
@@ -580,6 +590,8 @@ export interface AcceptTargetResult {
   bandUnchanged: true;
   rpIds: string[];
   note: string;
+  /** A cold lift target: the generic starting ramp, re-proposed after calibration (VW-444). */
+  startingRamp?: StartingRampNotice;
 }
 
 async function acceptTarget(
@@ -601,6 +613,7 @@ async function acceptTarget(
     acceptedBy: custom ? 'user' : 'coach-default',
     acknowledgedStretch: outside,
   });
+  const startingRamp = acceptedStartingRamp(saved);
   return {
     target: saved,
     acceptedBy: saved.acceptedBy ?? 'coach-default',
@@ -610,6 +623,7 @@ async function acceptTarget(
     note:
       'Accepted and now fixed: these numbers do not move again. The band itself is unchanged — ' +
       'accepting a value past its edge never re-draws the projection to match (B55).',
+    ...(startingRamp === undefined ? {} : { startingRamp }),
   };
 }
 

@@ -66,6 +66,9 @@ import {
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
 import {
   GOAL_BAND_CONSTANTS,
+  calibrationGapOf,
+  type CalibrationBlocker,
+  type CalibrationGap,
   type GoalBand,
   type GoalBandExpectation,
   type GoalBandWeek,
@@ -85,6 +88,9 @@ import {
   type GoalWeekOutcomeEntry,
 } from './goal-milestone.js';
 import type {
+  BaselineState,
+  StoredGoalBandBasis,
+  StoredGoalInfoLevel,
   StoredGoalTarget,
   StoredPriority,
   StoredPriorityKind,
@@ -200,11 +206,33 @@ export interface GoalE1RMContextView {
   priorBest: number | null;
 }
 
+/** The evidence the band's calibration gates read, as `deriveTarget` measured it. */
+export interface GoalCalibrationEvidence {
+  matchedSessionCount: number;
+  baselineState: BaselineState;
+}
+
+/**
+ * Why a `calibrating` target is still calibrating, structured so the page never
+ * parses `statusBasis` (VW-444). `targetBasis` / `targetInfoLevel` are the
+ * ACCEPTED target's own, which say whether its number is the generic starting ramp.
+ */
+export interface GoalCalibrationView {
+  /** Matched sessions still to come. `0` when only the baseline blocks. */
+  sessionsNeeded: number;
+  blockedBy: CalibrationBlocker;
+  baselineState: BaselineState;
+  targetBasis: StoredGoalBandBasis;
+  targetInfoLevel: StoredGoalInfoLevel;
+}
+
 export interface GoalProgressInput {
   priority: StoredPriority;
   target: StoredGoalTarget;
   /** Recomputed by `deriveGoalBand` or rebuilt from the stored row; must cover every week. */
   band: GoalBand;
+  /** What the band was derived from; the source of a calibrating view's shortfall. */
+  calibrationEvidence: GoalCalibrationEvidence;
   actuals: readonly GoalActual[];
   weeks: readonly GoalBandWeek[];
   /** ISO instant the view is being built for. The model never reads the clock itself. */
@@ -272,6 +300,8 @@ export interface GoalProgressView {
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
   statusBasis: string;
+  /** Present only while `status` is `calibrating` for a lift; absent for every other status. */
+  calibration?: GoalCalibrationView;
   /**
    * Present and `null` for a muscle priority, absent for a lift: corroboration
    * is a claim across a priority's lifts, so `buildPriorityRollup` decides it.
@@ -311,12 +341,13 @@ interface Reading {
 interface StatusRead {
   status: GoalProgressStatus;
   statusBasis: string;
+  gap?: CalibrationGap;
 }
 
 export function buildGoalProgressView(input: GoalProgressInput): GoalProgressView {
   assertUsableInput(input);
   const reading = read(input);
-  const { status, statusBasis } = resolveStatus(reading);
+  const { status, statusBasis, gap } = resolveStatus(reading);
   const advisory = advisoryFor(status, reading);
   const confounder = confounderFor(status, input.fatigue);
   const praise = praiseFor(status, reading);
@@ -330,6 +361,7 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     actuals: input.actuals.map((entry) => placeOnWeekAxis(entry, input)),
     status,
     statusBasis,
+    ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
     nextMilestone: nextMilestoneOf(reading),
     mesoMilestone: mesoMilestoneOf({
@@ -551,21 +583,34 @@ function windowFractionElapsed(reading: Reading): number {
 }
 
 function calibratingRead(reading: Reading): StatusRead | undefined {
-  const needed = GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp;
+  const evidence = reading.input.calibrationEvidence;
   if (reading.input.band.infoLevel === 'cold') {
+    const gap = calibrationGapOf(evidence.matchedSessionCount, evidence.baselineState);
     return {
       status: 'calibrating',
       statusBasis:
         'Calibrating: the band is the programmed execution ramp, which is a claim about ' +
         'completing the work rather than about strength gained (rp:rp-s5-load-increment-by-exercise-type).',
+      ...(gap === null ? {} : { gap }),
     };
   }
-  if (reading.matched.length >= needed) return undefined;
+  const gap = calibrationGapOf(reading.matched.length, null);
+  if (gap === null) return undefined;
   return {
     status: 'calibrating',
     statusBasis:
-      `Calibrating: ${needed - reading.matched.length} more matched session(s) before a reading ` +
+      `Calibrating: ${gap.sessionsNeeded} more matched session(s) before a reading ` +
       'is judged against the band (rp:rp-s7-like-vs-like-progress-comparison-rule).',
+    gap,
+  };
+}
+
+function calibrationViewOf(gap: CalibrationGap, input: GoalProgressInput): GoalCalibrationView {
+  return {
+    ...gap,
+    baselineState: input.calibrationEvidence.baselineState,
+    targetBasis: input.target.basis,
+    targetInfoLevel: input.target.infoLevel,
   };
 }
 
