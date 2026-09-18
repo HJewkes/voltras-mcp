@@ -24,6 +24,7 @@
     "build:dashboard": "vite build --config src/dashboard/spa/vite.config.ts",
     "start": "node ./dist/bin.js",
     "dashboard:sim": "node scripts/dashboard-sim.mjs",
+    "dashboard:preview": "node scripts/dashboard-preview.mjs",
     "postinstall": "node scripts/ensure-whisper.mjs",
     "preflight": "node scripts/preflight.mjs",
     "test": "vitest run",

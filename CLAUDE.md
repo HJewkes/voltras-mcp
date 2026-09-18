@@ -10,6 +10,7 @@ MCP (Model Context Protocol) server that exposes Voltra device control, session/
 - `npm run build` — emit `dist/` (the `voltras-mcp` bin)
 - `npm run format` / `npm run format:check` — Prettier (globs are `src/**` and `scripts/**` only; markdown is not format-gated)
 - `npm run docs:captures` — regenerate the published dashboard screenshots (needs a one-time `npx playwright@1.63.0 install chromium`; see `docs/screenshot-harness.md`)
+- `npm run dashboard:preview -- <goals|body|plan>` — open one wall page on a seeded scratch store and hold it; `goals` takes `--state` (see `src/docs/preview-seeds.ts`)
 
 CI gate: lint + typecheck + test + build. The pre-commit hook runs `lint-staged` only; `.husky/pre-push` runs `prettier --check` over files changed vs `origin/main` under `src/**`, `scripts/**`, or `site/**` markdown. Typecheck and the full test suite run in CI, not locally.
 
@@ -42,7 +43,7 @@ Stdio is single-client by transport design — each Claude Code session spawns i
 - `src/resources/` — `voltra://device/current`, `voltra://session/active`, `voltra://set/active`
 - `src/state/` — in-process `LiveState` collector + SDK `event-bridge`
 - `src/store/` — `node:sqlite`-backed `SessionStore`
-- `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, and the screenshot definition behind `npm run docs:captures`
+- `src/docs/` — pure renderers + confidentiality guard behind `npm run docs:reference`, the screenshot definition behind `npm run docs:captures`, and the preview seeds behind `npm run dashboard:preview`
 - `src/errors.ts` — shared `errorResult` / `textResult` helpers
 - `eslint-rules/` — repo-local ESLint rules loaded by `eslint.config.mjs`
 
