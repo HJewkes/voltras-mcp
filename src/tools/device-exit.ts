@@ -6,6 +6,9 @@
 // its SDK enum imports) to do it. `device-tools.ts` re-exports `unloadSlot`,
 // so every existing import site keeps working.
 
+import type { VoltraClient } from '@voltras/node-sdk';
+
+import { log } from '../logger.js';
 import { reapGuidedLoadScaffold } from '../state/guided-load-reap.js';
 import { getSlot, type ServerState } from '../state/server-state.js';
 
@@ -18,23 +21,58 @@ export const GUIDED_LOAD_ACTIVE_PHASES = new Set(['armed', 'countdown', 'engagin
  * unload WITHOUT the MCP/LLM round-trip, so it cannot go through the tool).
  *
  * VMCP-02.41: capture whether we are tearing down an active guided-load flow
- * BEFORE the mode-bounce. `unloadDevice()` physically drops the cable but never
- * touches the SDK's guided-load state machine, so `guidedLoadState.phase` — and
- * the `load_state` / `guided_load.phase` that get_state derives from it — would
- * stay stale at `active` / `loaded` after the unload. When unload is the
- * teardown for an active flow, drive the SDK through `exitGuidedLoad()` too:
- * that transitions the phase to `exited` (refreshing get_state), fires
- * onGuidedLoadState so the bridge publishes the terminal `guided_load_state`
- * channel event (outcome: 'ended'), and lets us reap the auto-created scaffold.
+ * BEFORE the unload. `unloadDevice()` never touches the SDK's guided-load
+ * state machine, so `guidedLoadState.phase` — and the `load_state` /
+ * `guided_load.phase` that get_state derives from it — would stay stale at
+ * `active` / `loaded` after the unload. When unload is the teardown for an
+ * active flow, drive the SDK through `exitGuidedLoad()` too: that transitions
+ * the phase to `exited`, fires onGuidedLoadState so the bridge publishes the
+ * terminal `guided_load_state` channel event (outcome: 'ended'), and lets us
+ * reap the auto-created scaffold.
+ *
+ * Unload runs first and is the one whose release the device confirms. Since
+ * SDK 0.15.0 the exit releases the motor as well, but it waits for no report,
+ * so it cannot stand in for the confirmed unload; after it, the exit's own
+ * release is a redundant write to a slack cable.
+ *
+ * Resolves with whether the device reported the release. Rejects when the
+ * unload write itself fails.
  */
-export async function unloadSlot(state: ServerState, slotId: string): Promise<void> {
+export async function unloadSlot(state: ServerState, slotId: string): Promise<MotorRelease> {
   const slot = getSlot(state, slotId);
   const wasGuidedLoadActive = GUIDED_LOAD_ACTIVE_PHASES.has(slot.client.guidedLoadState.phase);
   await slot.client.unloadDevice();
+  const release = readRelease(slot.client);
   if (wasGuidedLoadActive) {
     await slot.client.exitGuidedLoad();
     await reapGuidedLoadScaffold(state, slotId);
   }
+  return release;
+}
+
+/** Whether the device reported a motor release after a stop, or left it unknown. */
+export type MotorRelease = 'confirmed' | 'unconfirmed';
+
+/** How a between-sets motor stop went: `not_recording` means there was nothing to stop. */
+export type SetStopOutcome = MotorRelease | 'failed' | 'not_recording';
+
+function readRelease(client: VoltraClient): MotorRelease {
+  return client.motorState === 'unloaded' ? 'confirmed' : 'unconfirmed';
+}
+
+/**
+ * Disengage the motor between sets. Never rejects: a set being closed must
+ * still be persisted when the stop write fails, so the failure is returned.
+ */
+export async function stopMotorForRest(client: VoltraClient): Promise<SetStopOutcome> {
+  const wasRecording = client.isRecording;
+  try {
+    await client.endSet();
+  } catch (err) {
+    log.warn('set stop write failed; the motor state is unknown', err);
+    return 'failed';
+  }
+  return wasRecording ? readRelease(client) : 'not_recording';
 }
 
 /**

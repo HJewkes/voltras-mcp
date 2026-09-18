@@ -34,7 +34,7 @@
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrainingMode, TrainingModeNames } from '@voltras/node-sdk';
-import type { GuidedLoadState } from '@voltras/node-sdk';
+import type { DiscoveredDevice, GuidedLoadState, VoltraClient } from '@voltras/node-sdk';
 import { activeMode } from '../state/active-mode.js';
 import { deriveLoadState } from '../state/load-state.js';
 import { z } from 'zod';
@@ -155,7 +155,11 @@ const DEVICE_CONNECT_DESCRIPTION =
   '(written by slot.bind) — the device routes to slot `left` or `right` ' +
   'based on the saved side. Returns NO_PERSISTED_BINDING when the deviceId ' +
   "has no saved binding and slot is 'auto'; fall back to an explicit slot id " +
-  'plus the side-ID ritual in that case.';
+  'plus the side-ID ritual in that case. The device must accept the connection ' +
+  '(a first pairing asks the lifter on the device), so the call can take up to ' +
+  '30 s; a refusal or no answer returns CONNECTION_REFUSED and is never retried ' +
+  'automatically. `stateConfirmed: false` on success means setters will refuse ' +
+  'with DEVICE_STATE_UNKNOWN until the device reports its settings.';
 
 const DeviceDisconnectInput = z
   .object({
@@ -403,7 +407,7 @@ const START_GUIDED_LOAD_DESCRIPTION =
 
 const EXIT_GUIDED_LOAD_DESCRIPTION =
   '@experimental — Exit the firmware "direct-load" flow. Writes the exit command and stops the SDK polling loop. The bridge will emit a `guided_load_state` event with `phase: "exited"`. Returns NOT_IN_GUIDED_LOAD if the slot is not currently in an active guided-load phase (armed/countdown/engaging/active). Safe to call after a timeout — the SDK stops polling on its own, but only the exit write clears the direct-load state the firmware is still holding. ' +
-  '**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed. `read_back.verdict` is always `unconfirmed` with `source: "server"`, because the SDK stops the status poll BEFORE writing the exit — no device-sourced observation of the exit exists to have. A phase still inside the active set afterwards is a `GUIDED_LOAD_EXIT_UNCONFIRMED` error rather than a success. Exit does not release residual cable tension; `device.unload` is what does.';
+  '**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed. `read_back.verdict` is always `unconfirmed` with `source: "server"`, because the SDK stops the status poll BEFORE writing the exit — no device-sourced observation of the exit exists to have. A phase still inside the active set afterwards is a `GUIDED_LOAD_EXIT_UNCONFIRMED` error rather than a success. The exit also releases the motor (SDK 0.15.0+), but nothing confirms that release; `device.unload` is the release the device confirms.';
 
 const SET_ECCENTRIC_DESCRIPTION =
   'Set the eccentric overload weight on the device. `overloadLbs` is the additional pounds applied during the eccentric (return) phase of each rep, on top of the base `setWeight` value. Range -195..+195 in pound steps; positive values add load on the eccentric, negative values reduce it (assisted eccentric). ' +
@@ -414,12 +418,12 @@ const SET_ECCENTRIC_DESCRIPTION =
 
 const UNLOAD_DESCRIPTION =
   'Drive the device into a fully-unloaded mechanical state by issuing a mode-bounce (Damper → WeightTraining). ' +
-  "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — `device.exit_guided_load` clears software-side guided-load state but does NOT physically release residual cable tension, so a subsequent `start_guided_load` short-circuits to `phase: active` with no countdown and no assisted-eccentric ramp. " +
+  "This is the prerequisite for `device.start_guided_load`'s visible countdown ceremony — a cable still under tension at trigger time makes `start_guided_load` short-circuit to `phase: active` with no countdown and no assisted-eccentric ramp. " +
   'Mechanism: two back-to-back mode writes (Damper, then WeightTraining). The Damper write drives the firmware through its internal idle/unload transition and physically slackens the cable; the WeightTraining write returns the device to the normal strength-training screen. Validated on hardware 2026-05-12. ' +
   "The alternative — the single write rowing's `exitWorkout()` exits through — was considered but not chosen: it has not been verified to physically unload the cable for non-rowing modes. " +
   'Idempotent — safe to call on an already-unloaded device. Note: `device.start_guided_load` auto-invokes unload before triggering the direct-load flow, so explicit `device.unload` is only needed for callers driving custom flows that bypass `start_guided_load`. ' +
   'When called while a guided-load flow is active (phase armed/countdown/engaging/active), this also drives `exitGuidedLoad` and reaps the auto-created session/set, so `device.get_state` reports `load_state: unloaded` / `guided_load.phase: exited` and a terminal `guided_load_state` channel event (outcome: ended) is published — no separate `device.exit_guided_load` call is needed (VMCP-02.41). ' +
-  '**Read-back (VMCP-02.88):** `ok: true` reports only that the write completed. `read_back.verdict` is always `unconfirmed`: the device acknowledges the unload with nothing this server can read, and `observed_load_state` reads `unloaded` during ordinary weight reps too, so it cannot tell a released cable from a slack one. Confirm by eye before loading a lifter. When the call tore down a live guided-load flow and the phase is still inside the active set afterwards, that is an `UNLOAD_UNCONFIRMED` error rather than a success.';
+  '**Read-back (VMCP-02.88):** `read_back.verdict` is `confirmed` with `source: "device"` when the device reported the motor release, and `unconfirmed` when it did not. Unconfirmed means the cable is unverified: call again, and confirm by eye before loading a lifter — `observed_load_state` reads `unloaded` during ordinary weight reps too, so it cannot tell a released cable from a slack one. When the call tore down a live guided-load flow and the phase is still inside the active set afterwards, that is an `UNLOAD_UNCONFIRMED` error rather than a success.';
 
 const DeviceExitGuidedLoadInput = z
   .object({
@@ -449,7 +453,7 @@ const SET_CHAINS_DESCRIPTION =
   'Set the chains contribution for one slot (0-100 lbs, integer). Chains are a MODIFIER layered on the base weight, not a mode of their own. The firmware caps chains at the current base weight, so a request above it comes back as a `setting_coerced` channel event at the capped value rather than as an error here. The ramp DIRECTION across the rep is contested (open in workout-analytics KNOWN-ISSUES) — do not tell the user which end of the range is heavier. Confirm the applied value with device.get_state (`chainSettingLbs`).';
 
 const GET_STATE_DESCRIPTION =
-  "Read one slot's current device state. Call it after EVERY setter and after every bilateral.cascade: the setters resolve on BLE-write completion rather than on a device acknowledgement, so this is the only confirmation a request actually landed. Fields are FLAT, not nested — `weightLbs`, `chainSettingLbs`, `active_mode`, `requested_mode`, `load_state`, `mode_revert_latched`. VW-156 vocabulary: SETTINGS (`weightLbs`, `chainSettingLbs`) are what the device will apply next; MODE splits into what was asked for (`requested_mode`) and what the device reports (`active_mode`); `load_state` is the mechanical state of the cable and is independent of both; the SET LIFECYCLE (session.start / set.start / set.end) is recording state this tool neither reads nor drives. `mode_revert_latched` means the device bounced back out of the requested mode. Values are the preserved last-known ones across a disconnect window rather than defaults, and a delayed drop advisory is drained into `disconnect_notice` exactly once.";
+  "Read one slot's current device state. Call it after EVERY setter and after every bilateral.cascade: the setters resolve on BLE-write completion rather than on a device acknowledgement, so this is the only confirmation a request actually landed. Fields are FLAT, not nested — `weightLbs`, `chainSettingLbs`, `active_mode`, `requested_mode`, `load_state`, `mode_revert_latched`. VW-156 vocabulary: SETTINGS (`weightLbs`, `chainSettingLbs`) are what the device will apply next; MODE splits into what was asked for (`requested_mode`) and what the device reports (`active_mode`); `load_state` is the mechanical state of the cable and is independent of both; the SET LIFECYCLE (session.start / set.start / set.end) is recording state this tool neither reads nor drives. `mode_revert_latched` means the device bounced back out of the requested mode. Values are the preserved last-known ones across a disconnect window rather than defaults, and a delayed drop advisory is drained into `disconnect_notice` exactly once. `connectionState: awaitingAcceptance` means a connect is waiting for the lifter to accept it on the device; `state_confirmed: false` means the device has not yet reported its settings on this connection, and setters refuse with DEVICE_STATE_UNKNOWN until it does.";
 
 type Placeholders = Map<string, RegisteredTool>;
 
@@ -611,7 +615,7 @@ export function registerDeviceTools(
       // land on the right object. For new slots we allocate via
       // `createSlot`, which self-wires the bridge against the new client
       // (see slot-manager.ts).
-      const client = await state.manager.connect(device);
+      const client = await connectAwaitingAcceptance(state, slotId, isNewSlot, device);
       if (isNewSlot) {
         createSlot(state, slotId, client);
       } else {
@@ -638,15 +642,17 @@ export function registerDeviceTools(
       // the caller didn't pass `slot: 'auto'` — the existing single-device
       // contract was `{ ok: true, deviceId }`. The `auto` path surfaces the
       // resolved slot so the model can see which side the device routed to.
+      const stateReport = connectStateReport(client.hasConfirmedState);
       if (input.slot === AUTO_SLOT) {
         return {
           ok: true,
           deviceId: input.deviceId,
           slot: slotId,
           resolvedFrom: 'persisted_binding',
+          ...stateReport,
         };
       }
-      return { ok: true, deviceId: input.deviceId };
+      return { ok: true, deviceId: input.deviceId, ...stateReport };
     }),
     DEVICE_CONNECT_DESCRIPTION,
   );
@@ -1129,7 +1135,7 @@ export function registerDeviceTools(
       // UNLOAD_UNCONFIRMED that reads as a device fault and invites a retry
       // against a device another session now owns.
       const unloadFence = fenceHolderOnly(state, 'device.unload', self);
-      await unloadSlot(state, slotId);
+      const release = await unloadSlot(state, slotId);
       unloadFence?.check(slotId);
       return {
         ok: true,
@@ -1142,6 +1148,7 @@ export function registerDeviceTools(
             slot.client.isRowingActive,
           ),
           guidedLoadWasActive,
+          release,
         }),
       };
     }),
@@ -1343,7 +1350,7 @@ export function registerDeviceTools(
   // Without this, the set sits empty until the inactivity watchdog kills
   // it ~93s later. We finalize with `partialReason: 'guided_load_exited'`
   // and `disengageMotor: false` (the SDK's `exitGuidedLoad()` already
-  // wrote the exit frame — re-firing `Workout.STOP` would be redundant).
+  // released the motor — re-firing the stop would be redundant).
   //
   // F8 (VMCP-01.24) — when the closed set leaves the auto-created
   // session empty, end it too. Without the reap, a stale "Guided Load
@@ -1525,7 +1532,7 @@ export function registerDeviceTools(
       const latched = slot.modeRevertGuard.peekAbort();
       const response = buildDeviceGetStateResponse(
         slot.client.isConnected,
-        slot.client.connectionState,
+        device.awaitingAcceptance === true ? 'awaitingAcceptance' : slot.client.connectionState,
         slot.client.isRowingActive,
         slot.client.isRecording,
         slot.client.guidedLoadState,
@@ -1543,6 +1550,7 @@ export function registerDeviceTools(
       // VMCP-02.32: drain any delayed disconnect advisory so the agent learns
       // of a drop that landed while push channels were off — before it acts on
       // the state. Drain-once: not re-delivered on the next get_state.
+      response.state_confirmed = slot.client.hasConfirmedState;
       const disconnectNotice = slot.live.takePendingDisconnectNotice();
       if (disconnectNotice !== undefined) {
         response.disconnect_notice = disconnectNotice;
@@ -1765,6 +1773,36 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
 }
 
 /**
+ * Run `manager.connect`, flagging the slot as awaiting acceptance meanwhile.
+ * The manager exposes no client until the connect resolves, so the flag spans
+ * the whole attempt; the device's acceptance prompt is what dominates it. A
+ * slot allocated by this connect has no snapshot to flag until it exists.
+ */
+async function connectAwaitingAcceptance(
+  state: ServerState,
+  slotId: string,
+  isNewSlot: boolean,
+  device: DiscoveredDevice,
+): Promise<VoltraClient> {
+  const live = isNewSlot ? undefined : getSlot(state, slotId).live;
+  live?.setAwaitingAcceptance(true);
+  try {
+    return await state.manager.connect(device);
+  } finally {
+    live?.setAwaitingAcceptance(false);
+  }
+}
+
+const STATE_PENDING_NOTE =
+  'Connected, but the device has not reported its current settings yet. Setters ' +
+  'return DEVICE_STATE_UNKNOWN until it does; device.get_state shows `state_confirmed`.';
+
+/** `device.connect`'s account of whether the device has reported its settings. */
+function connectStateReport(confirmed: boolean): { stateConfirmed: boolean; note?: string } {
+  return confirmed ? { stateConfirmed: true } : { stateConfirmed: false, note: STATE_PENDING_NOTE };
+}
+
+/**
  * Compose the `device.get_state` tool response from a preserved
  * `DeviceSnapshot` plus the client's live transient fields and server-side
  * context. Mirrors the field shape of `voltra://device/{slot}/current` for
@@ -1773,7 +1811,10 @@ function snapshotSlotBindings(state: ServerState): Record<string, { deviceId: st
  * damperLevel, chainSettingLbs, plus the state-dump fields).
  *
  * Tool-only additions (transient, not preserved):
- *   * `connectionState`
+ *   * `connectionState` — `awaitingAcceptance` while a connect waits on the
+ *     device to accept it.
+ *   * `state_confirmed` — the device has reported its settings on this
+ *     connection; setters refuse with DEVICE_STATE_UNKNOWN until it has.
  *   * `isRowingActive`
  *   * `is_recording` — `client.isRecording`, true between Workout.GO and STOP.
  *   * `guided_load` — `{ phase, countdown_remaining_ms, fitness_mode_raw }`

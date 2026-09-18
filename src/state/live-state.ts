@@ -63,6 +63,12 @@ export interface DeviceSnapshot {
   /** ISO timestamp of the last connection drop, when one is known. */
   disconnectedAt?: string;
   /**
+   * A connect is in flight and the device has not accepted it yet. A first
+   * pairing waits on the lifter to accept on the device, so this is what the
+   * dashboard and `device.get_state` show while that prompt is up.
+   */
+  awaitingAcceptance?: true;
+  /**
    * Assist-mode raw value from the last state dump (Bug 26). Reported as the
    * device gives it; the device distinguishes assist-off from a device-idle
    * sentinel. Absent until the first state dump has been received.
@@ -352,16 +358,18 @@ export interface ActiveSet {
    * Most recent `onInProgress` payload while the set is active. Single-slot
    * — every heartbeat overwrites the prior tick rather than accumulating.
    * Exposed through `set.live_metrics` so coaching reads see the latest
-   * peak-force / velocity / target-weight values without subscribing to the
-   * raw frame stream. Cleared implicitly when `endSet` discards the active
+   * heartbeat without subscribing to the raw frame stream. Every value is a
+   * per-rep mean the device repeats until the next rep, never a live or peak
+   * reading, and `pullVolumeRawTenths` is a relative per-set accumulator, not
+   * a weight. Cleared implicitly when `endSet` discards the active
    * set; once the set ends, `set.live_metrics` returns `{ active: false }`
    * anyway, so there's nothing to dangle.
    */
   latestInProgress?: {
-    peakForceTenths: number;
-    currentForceTenths: number;
-    velocityCmPerSec: number;
-    targetWeightTenths: number;
+    meanPullForceTenths: number;
+    meanReturnForceTenths: number;
+    meanReturnSpeedMmPerSec: number;
+    pullVolumeRawTenths: number;
     /** `Date.now()` ms at the time the bridge captured the heartbeat. */
     capturedAt: number;
   };
@@ -389,7 +397,8 @@ export interface ActiveSet {
    */
   latestSetSummary?: {
     repCount: number;
-    repDurationMs: number;
+    /** The whole set's pull moving time, not one rep's duration. */
+    totalPullMovingTimeMs: number;
     targetWeightTenths: number;
     schemaVersion: number;
     /** Firmware peak force for the set, in tenths of a pound. */
@@ -1030,10 +1039,10 @@ export class LiveState {
     this.set = {
       ...this.set,
       latestInProgress: {
-        peakForceTenths: payload.peakForceTenths,
-        currentForceTenths: payload.currentForceTenths,
-        velocityCmPerSec: payload.velocityCmPerSec,
-        targetWeightTenths: payload.targetWeightTenths,
+        meanPullForceTenths: payload.meanPullForceTenths,
+        meanReturnForceTenths: payload.meanReturnForceTenths,
+        meanReturnSpeedMmPerSec: payload.meanReturnSpeedMmPerSec,
+        pullVolumeRawTenths: payload.pullVolumeRawTenths,
         capturedAt,
       },
     };
@@ -1104,7 +1113,7 @@ export class LiveState {
       lastActivityAt: capturedAt,
       latestSetSummary: {
         repCount: payload.repCount,
-        repDurationMs: payload.repDurationMs,
+        totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
         targetWeightTenths: payload.targetWeightTenths,
         schemaVersion: payload.schemaVersion,
         // Copied verbatim, and only when the device actually sent a number: a
@@ -1164,6 +1173,14 @@ export class LiveState {
     if (this.session !== undefined) {
       this.session = { ...this.session, disconnectedAt: at };
     }
+  }
+
+  /** Record whether a connect is waiting on the device to accept it. */
+  setAwaitingAcceptance(pending: boolean): void {
+    const next: DeviceSnapshot = { ...this.device };
+    if (pending) next.awaitingAcceptance = true;
+    else delete next.awaitingAcceptance;
+    this.device = next;
   }
 
   /**

@@ -130,7 +130,7 @@ describe('buildCurrentSet', () => {
     expect(view.velocitiesMps).toEqual([]);
   });
 
-  it('maps weight/mode/reps/latest-peak/target, bars use MEAN concentric', () => {
+  it('maps weight/mode/reps/latest-peak, bars use MEAN concentric', () => {
     // Reps with DISTINCT peak vs mean, so the bar series (mean) and the
     // latest-peak readout (peak) can be told apart (VW-58).
     const view = buildCurrentSet(
@@ -139,7 +139,6 @@ describe('buildCurrentSet', () => {
         device: { connected: true, weightLbs: 135, trainingMode: 'isokinetic' },
         activeSet: {
           reps: [repWithMean(1, 900, 800), repWithMean(2, 800, 700), repWithMean(3, 750, 650)],
-          latestInProgress: { targetWeightTenths: 1400 },
         },
       }),
     );
@@ -149,32 +148,34 @@ describe('buildCurrentSet', () => {
     expect(view.reps).toBe(3);
     // latestPeakVelocity stays PEAK (latest rep peak 750 mm/s → 0.75 m/s).
     expect(view.latestPeakVelocity).toBe('0.75 m/s');
-    expect(view.targetWeight).toBe('140.0 lbs'); // tenths/10
     // VelocityStrip bars are MEAN concentric (mm/s→m/s), NOT the peaks above.
     expect(view.velocitiesMps).toEqual([0.8, 0.7, 0.65]);
   });
 
-  it('converts weight/targetWeight to kg when the display unit is kg (VW-63)', () => {
+  it('converts weight to kg when the display unit is kg (VW-63)', () => {
     const view = buildCurrentSet(
       snapshot({
         sessionId: 's1',
         device: { connected: true, weightLbs: 100, trainingMode: 'weight' },
-        activeSet: { reps: [], latestInProgress: { targetWeightTenths: 1000 } },
+        activeSet: { reps: [] },
       }),
       'kg',
     );
     expect(view.weight).toBe('45.4 kg');
-    expect(view.targetWeight).toBe('45.4 kg');
   });
 
-  it('falls back to target weight when device weight is absent', () => {
+  // SDK 0.15.0: the heartbeat's old "target weight" is a per-set accumulator, not a weight.
+  it('shows no weight rather than a heartbeat value when device weight is absent', () => {
     const view = buildCurrentSet(
       snapshot({
         sessionId: 's1',
-        activeSet: { reps: [], latestInProgress: { targetWeightTenths: 1000 } },
+        activeSet: {
+          reps: [],
+          latestInProgress: { pullVolumeRawTenths: 3000 },
+        } as SnapshotActiveSet,
       }),
     );
-    expect(view.weight).toBe('100.0 lbs');
+    expect(view.weight).toBe('—');
   });
 
   it('renders "N of M reps" from the watch rep_count_reached target', () => {
@@ -240,6 +241,19 @@ describe('buildConnectionStatus — device-derived header state', () => {
       'ok',
     );
     expect(s).toMatchObject({ tone: 'success', label: 'LIVE', showBanner: false });
+  });
+
+  it('asks for acceptance on the device while a connect waits for it, not OFFLINE', () => {
+    const s = buildConnectionStatus(
+      snapshot({ sessionId: null, device: { connected: false, awaitingAcceptance: true } }),
+      'ok',
+    );
+    expect(s).toMatchObject({
+      tone: 'warning',
+      label: 'ACCEPT ON DEVICE',
+      connected: false,
+      showBanner: false,
+    });
   });
 
   it('reports OFFLINE (error) + banner when the device is disconnected', () => {

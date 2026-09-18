@@ -957,7 +957,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           schemaVersion: payload.schemaVersion,
           targetWeightTenths: payload.targetWeightTenths,
           repCount: payload.repCount,
-          repDurationMs: payload.repDurationMs,
+          totalPullMovingTimeMs: payload.totalPullMovingTimeMs,
           rawHex: Buffer.from(payload.raw).toString('hex'),
           rawLength: payload.raw.length,
         },
@@ -970,7 +970,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
       // `onSetSummary` is the canonical per-set close marker in WT/RB/Damper —
       // it fires after all reps complete with the final rep count, not
       // before. `finalizeSet` reads `consumeLatestSetSummary()` and threads
-      // the device's repCount/repDurationMs/targetWeightTenths into the
+      // the device's repCount/totalPullMovingTimeMs/targetWeightTenths into the
       // persisted `set_ended` event payload (with `meta.closed_by='device'`).
       //
       // Modes that don't emit a per-set close (rowing, iso, custom-curves)
@@ -1031,7 +1031,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         return;
       }
       // Apply the payload to live state so `set.live_metrics` reflects
-      // the freshest peak-force / velocity / target-weight tick.
+      // the freshest heartbeat (per-rep means, not live readings).
       const activeSet = live.snapshotSet();
       if (activeSet !== undefined) {
         live.applyInProgress(payload, Date.now());
@@ -1045,10 +1045,10 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         type: 'set_boundary',
         payload: {
           hadActiveSet: activeSet !== undefined,
-          peakForceTenths: payload.peakForceTenths,
-          currentForceTenths: payload.currentForceTenths,
-          velocityCmPerSec: payload.velocityCmPerSec,
-          targetWeightTenths: payload.targetWeightTenths,
+          meanPullForceTenths: payload.meanPullForceTenths,
+          meanReturnForceTenths: payload.meanReturnForceTenths,
+          meanReturnSpeedMmPerSec: payload.meanReturnSpeedMmPerSec,
+          pullVolumeRawTenths: payload.pullVolumeRawTenths,
           rawHex: Buffer.from(payload.raw).toString('hex'),
           rawLength: payload.raw.length,
         },
@@ -1376,6 +1376,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
         settingsDelta.deviceId = client.connectedDeviceId;
       }
       live.applySettings(settingsDelta);
+      live.setAwaitingAcceptance(connState === 'awaitingAcceptance');
       notifySlot(server, slotId, DEVICE_URI, deviceUriForSlot);
       if (connState === 'disconnected') {
         live.markDisconnected(new Date().toISOString());

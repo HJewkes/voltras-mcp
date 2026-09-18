@@ -121,7 +121,7 @@ server derived from telemetry:
 {
   "device_set_summary": {
     "rep_count": 7, // the raw frame count, verbatim; meta.device_rep_count is reconciled
-    "rep_duration_ms": 5730, // a SET-level aggregate despite the name — not a per-rep figure
+    "total_pull_moving_time_ms": 5730, // the whole set's pull moving time, not a per-rep figure
     "target_weight_tenths": 200,
     "schema_version": 1,
     "peak_force_lbs": 88.6,
@@ -340,8 +340,10 @@ Empty text is also dropped, since it makes no sound.
 
 `system.listen_start` acts on two classes of utterance without a model turn. Safety
 phrases (stop, unload, cut the weight, …) unload every connected slot and publish
-`deterministic_stop_triggered`. Weight commands change the load and publish
-`voice_command_applied`.
+`deterministic_stop_triggered`. Its `unloaded` is `true` only when the device reported the
+release; otherwise it is `unconfirmed` (`release: "unconfirmed"` in the content), and the
+spoken ack says to check the cable instead of "weight off". Weight commands change the load
+and publish `voice_command_applied`.
 
 Recognized weight cues, wake phrase optional:
 

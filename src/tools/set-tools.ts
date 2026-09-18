@@ -90,6 +90,7 @@ import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
 import { wrapHandler } from './helpers.js';
 import { isModeRevertStillActive } from './device-handler-helpers.js';
+import { stopMotorForRest, type SetStopOutcome } from './device-exit.js';
 
 /**
  * The v7 capture fields stamped onto a stored set at close. A subset of
@@ -881,7 +882,7 @@ async function fetchPreviousSetSummary(
 async function endSetTool(
   state: ServerState,
   slotIdInput: string | undefined,
-): Promise<{ ok: true; reps: number }> {
+): Promise<{ ok: true; reps: number; motor_stop?: SetStopOutcome; motor_stop_note?: string }> {
   const slotId = slotIdInput ?? PRIMARY_SLOT;
   if (getSlot(state, slotId).live.set === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active. Call set.start first.');
@@ -890,11 +891,37 @@ async function endSetTool(
   // emits a `set_ended` event with no `partialReason`. Step 4 of P0
   // dual-Voltras threads the slot id all the way through `finalizeSet` so
   // bilateral flows close the right slot's set instead of always primary.
-  const stored = await finalizeSet(state, slotId, { cause: 'tool', disengageMotor: true });
+  let motorStop: SetStopOutcome | undefined;
+  const stored = await finalizeSet(state, slotId, {
+    cause: 'tool',
+    disengageMotor: true,
+    onMotorStop: (outcome) => {
+      motorStop = outcome;
+    },
+  });
   if (stored === undefined) {
     throw new ToolError('NO_ACTIVE_SET', 'No set is active.');
   }
-  return { ok: true, reps: stored.reps.length };
+  return { ok: true, reps: stored.reps.length, ...motorStopReport(motorStop) };
+}
+
+const MOTOR_STOP_NOTES: Partial<Record<SetStopOutcome, string>> = {
+  unconfirmed:
+    'The set is saved, but the device did not confirm the motor released. Check the ' +
+    'cable before the lifter lets go; device.unload retries the release.',
+  failed:
+    'The set is saved, but the stop could not be sent to the device, so the motor may ' +
+    'still be engaged. Call device.unload before the lifter lets go.',
+};
+
+/** `set.end`'s account of the between-sets stop; silent when it was confirmed or not needed. */
+function motorStopReport(outcome: SetStopOutcome | undefined): {
+  motor_stop?: SetStopOutcome;
+  motor_stop_note?: string;
+} {
+  if (outcome === undefined) return {};
+  const note = MOTOR_STOP_NOTES[outcome];
+  return note === undefined ? {} : { motor_stop: outcome, motor_stop_note: note };
 }
 
 /**
@@ -932,6 +959,8 @@ export async function finalizeSet(
     cause: SetEndedCause;
     disengageMotor: boolean;
     partialReason?: 'inactivity_timeout' | 'guided_load_exited' | 'session_end';
+    /** Told how the `disengageMotor` stop went; not called when no stop was sent. */
+    onMotorStop?: (outcome: SetStopOutcome) => void;
   },
 ): Promise<StoredSet | undefined> {
   const slot = getSlot(state, slotId);
@@ -979,7 +1008,8 @@ export async function finalizeSet(
     // open so a subsequent set.start can re-engage without re-arming. The
     // tool path and auto-stop path both run this; the device-signal path
     // skips it because the device already de-engaged on its own.
-    await slot.client.endSet();
+    const outcome = await stopMotorForRest(slot.client);
+    opts.onMotorStop?.(outcome);
   }
 
   // Use the snapshot captured at `set.start`; fall back to the current
@@ -1548,7 +1578,7 @@ function buildSetCapture(
   active: ActiveSet,
   device: DeviceSnapshot,
   deviceSetSummary:
-    | { repDurationMs: number; peakForceTenths?: number; peakPowerRaw?: number }
+    | { totalPullMovingTimeMs: number; peakForceTenths?: number; peakPowerRaw?: number }
     | undefined,
 ): SetCapture {
   const settings = readSettingsContext(device);
@@ -1594,13 +1624,11 @@ function buildSetCapture(
     ...(active.firmwareReps !== undefined && active.firmwareReps.length > 0
       ? { firmwareRepsJson: JSON.stringify(active.firmwareReps) }
       : {}),
-    // Firmware ground truth off the set-summary frame. Stored under a
-    // provenance name because the SDK's "final rep duration" label is refuted
-    // by the captures — see StoredSet.firmwareSummaryDurationMs. Recorded now
-    // and interpreted later; discarding it would make the eventual
-    // interpretation impossible.
+    // Firmware ground truth off the set-summary frame: the set's total pull
+    // moving time (SDK 0.15.0 renamed it from a per-rep label the captures
+    // refuted). See StoredSet.firmwareSummaryDurationMs.
     ...(deviceSetSummary !== undefined
-      ? { firmwareSummaryDurationMs: deviceSetSummary.repDurationMs }
+      ? { firmwareSummaryDurationMs: deviceSetSummary.totalPullMovingTimeMs }
       : {}),
     // The device's own per-set peaks, for cross-checking the ones we derive
     // from telemetry. Force is converted tenths → lb; power is stored raw

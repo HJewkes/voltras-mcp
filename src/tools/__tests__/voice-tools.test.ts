@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@voltras/node-sdk', () => ({}));
 
-const { registerVoiceTools, makeVoiceHolder } = await import('../voice-tools.js');
+const { registerVoiceTools, makeVoiceHolder, SAFETY_ACK_UNCONFIRMED } =
+  await import('../voice-tools.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ChannelEvent, ChannelPublisher } from '../../state/channel-publisher.js';
@@ -237,6 +238,7 @@ function fakeSafety(over?: Partial<VoiceSafetyContext>): FakeSafety {
       over?.unload ??
       (async (slotId: string) => {
         unloadCalls.push(slotId);
+        return 'confirmed' as const;
       }),
     speakAck: over?.speakAck ?? ((text: string) => acks.push(text)),
   };
@@ -286,6 +288,20 @@ describe('Tier-A safety fast-path (VMCP-02.78)', () => {
       unloaded: 'true',
     });
     expect(h.events.some((e) => e.meta.event_type === 'voice_input')).toBe(false);
+  });
+
+  it('an unload the device did not confirm is not announced as weight off', async () => {
+    const safety = fakeSafety({ unload: async () => 'unconfirmed' as const });
+    const h = buildHarness(safety.ctx);
+    await driveSafetyPhrase(h);
+
+    expect(safety.acks).toEqual([SAFETY_ACK_UNCONFIRMED]);
+    const stop = h.events.find((e) => e.meta.event_type === 'deterministic_stop_triggered');
+    expect(stop?.meta.unloaded).toBe('unconfirmed');
+    expect(JSON.parse(stop?.content ?? '{}')).toMatchObject({
+      unloaded: false,
+      release: 'unconfirmed',
+    });
   });
 
   it('not warranted → no unload, falls back to voice_input', async () => {
@@ -382,6 +398,7 @@ describe('Tier-A safety fast-path — slot resolution (VMCP-02.86)', () => {
       unload: async (slotId: string) => {
         unloadCalls.push(slotId);
         if (slotId === 'right') throw new Error('BLE write failed');
+        return 'confirmed' as const;
       },
     });
     const h = buildHarness(safety.ctx);

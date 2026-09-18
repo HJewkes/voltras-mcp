@@ -63,6 +63,36 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- Connecting now waits for the Voltra to accept the connection (`@voltras/node-sdk` 0.15.0,
+  VW-415). A first pairing asks the lifter to accept on the device, so `device.connect` can
+  take up to 30 seconds; meanwhile `device.get_state` reports
+  `connectionState: awaitingAcceptance` and the dashboard badge reads ACCEPT ON DEVICE
+  instead of OFFLINE. A refusal, or no answer in time, is a `CONNECTION_REFUSED` error that
+  tells you to accept on the device and try again; the server never retries on its own.
+- After connecting, setters refuse with `DEVICE_STATE_UNKNOWN` until the device has reported
+  its current settings, rather than writing over a state nobody has seen.
+  `device.connect` returns `stateConfirmed` and `device.get_state` returns
+  `state_confirmed` so you can tell. Stops are never held back this way.
+- Stopping the cable now reports whether the device confirmed it. `device.unload`'s
+  `read_back.verdict` is `confirmed` when the device reported the release, and
+  `unconfirmed` (call it again, check the cable) when it did not. `set.end` still saves the
+  set when the stop is unconfirmed or cannot be sent, and adds `motor_stop` and a
+  `motor_stop_note` saying so. A spoken "stop" the device did not confirm is answered with
+  "Check the cable, the weight may still be on" instead of "Weight off", and its
+  `deterministic_stop_triggered` event carries `release: unconfirmed`. A forced
+  `system.lease_acquire` counts an unconfirmed release as a slot it could not unload, so
+  it refuses unless `acceptLoadedDevice: true` is also passed.
+- The device's per-set duration on `set_ended` is named for what it is: the whole set's
+  pull moving time. `device_set_summary.rep_duration_ms` is now `total_pull_moving_time_ms`
+  and `meta.device_set_rep_duration_ms` is now `meta.device_set_pull_moving_time_ms`.
+- `set.live_metrics`' `latestInProgress` carries the device heartbeat under its real names:
+  `meanPullForceTenths`, `meanReturnForceTenths`, `meanReturnSpeedMmPerSec` and
+  `pullVolumeRawTenths`. Each is a per-rep mean the device repeats until the next rep, not
+  a live or peak reading. The speed is new: the old velocity field was read from the wrong
+  place and meant nothing. `pullVolumeRawTenths` grows through the set and is not a weight.
+- The dashboard's current-set weight comes only from the device's weight setting. It used
+  to fall back to the heartbeat's "target weight", which turned out to be a per-set
+  accumulator, so with no weight setting known it now shows a dash instead of a wrong number.
 - The goal trajectory chart is drawn on a recessed plane with a lit bottom lip, a labelled
   value axis and gridlines, and its band edges are interpolated rather than joined
   straight (`@titan-design/react-ui` 0.17.1, VW-401). A goal whose committed and stretch
@@ -72,6 +102,9 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415). It
+  used to report success while the device stayed loaded. `device.unload` remains the stop
+  the device confirms.
 - `npm run docs:captures`'s dual-Voltra screenshot no longer 404s partway through (VW-389).
   Opening the page as soon as the scenario started raced the mock adapter's connect-time rep
   against the wall dashboard's kiosk auto-navigate-to-summary, landing the capture on a

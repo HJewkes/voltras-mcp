@@ -622,7 +622,7 @@ describe('firmware peak force / peak power persistence (VMCP-02.87)', () => {
       schemaVersion: 1,
       targetWeightTenths: 1700,
       repCount: 1,
-      repDurationMs: 5730,
+      totalPullMovingTimeMs: 5730,
       peakForceTenths: 886,
       peakPowerRaw: 412,
       raw: new Uint8Array(0),
