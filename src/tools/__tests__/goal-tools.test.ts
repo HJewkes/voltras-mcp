@@ -194,6 +194,13 @@ interface ProposedTargetShape {
   stretchValue: number;
   rpIds: string[];
   acceptedBy: null;
+  startingRamp?: {
+    sessionsNeeded: number;
+    blockedBy: string;
+    baselineState: string;
+    reProposeAfterCalibration: boolean;
+    note: string;
+  };
 }
 
 /** The band edges VW-378's declared mode is supposed to move. */
@@ -394,6 +401,46 @@ describe('goal.propose_targets', () => {
     expect(target.committedValue).toBe(target.stretchValue);
   });
 
+  it('says a cold lift target is a starting ramp to re-propose once calibrated (VW-444)', async () => {
+    await seedLiftHistory(harness.store, { sessionCount: 1, weightLbs: 135, reps: 8 });
+    const target = await proposeFirstTarget(harness, await declareLift(harness));
+    expect(target.startingRamp).toMatchObject({
+      sessionsNeeded: 1,
+      blockedBy: 'both',
+      baselineState: 'COLD',
+      reProposeAfterCalibration: true,
+    });
+    expect(target.startingRamp?.note).toContain('generic programmed ramp');
+    expect(target.startingRamp?.note).toContain('1 more comparable session(s)');
+    expect(target.startingRamp?.note).toContain('never changed in place');
+  });
+
+  it('blames only the baseline, with no session count, once the sessions are in (VW-444)', async () => {
+    await seedLiftHistory(harness.store, { sessionCount: 2, weightLbs: 135, reps: 8 });
+    await harness.store.recalcBaseline({ userId: LOCAL_USER_ID, exerciseId: 'bench-press' });
+    const target = await proposeFirstTarget(harness, await declareLift(harness));
+    expect(target.startingRamp).toMatchObject({
+      sessionsNeeded: 0,
+      blockedBy: 'baseline',
+      baselineState: 'SHAPE_ONLY',
+    });
+    expect(target.startingRamp?.note).toContain(
+      'Calibration needs a rep baseline past its shape-only stage.',
+    );
+    expect(target.startingRamp?.note).not.toContain('session(s)');
+  });
+
+  it('adds no starting-ramp notice to a target banded from data (VW-444)', async () => {
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+    const target = await proposeFirstTarget(harness, await declareLift(harness));
+    expect(target).not.toHaveProperty('startingRamp');
+  });
+
   it('says what it cannot derive rather than banding an invented start value', async () => {
     const proposed = await harness.invoke('goal.propose_targets', {
       priorityId: await declareLift(harness),
@@ -549,6 +596,22 @@ describe('goal.accept_target', () => {
       committedValue: target.committedValue,
       stretchValue: target.stretchValue,
     });
+    expect(accepted).not.toHaveProperty('startingRamp');
+  });
+
+  it('accepts a cold target unchanged and says it is a starting ramp (VW-444)', async () => {
+    const cold = setup();
+    await seedLiftHistory(cold.store, { sessionCount: 1, weightLbs: 135, reps: 8 });
+    const proposed = await proposeFirstTarget(cold, await declareLift(cold));
+    const accepted = await cold.invoke('goal.accept_target', { targetId: proposed.targetId });
+    expect(accepted.target).toMatchObject({
+      committedValue: proposed.committedValue,
+      stretchValue: proposed.stretchValue,
+      basis: 'execution_ramp',
+      infoLevel: 'cold',
+    });
+    expect(accepted.startingRamp).toMatchObject({ reProposeAfterCalibration: true });
+    expect((accepted.startingRamp as { note: string }).note).toContain('new chapter');
   });
 
   it('ends the block at the Monday after its last calendar week, counted from the start week', async () => {
