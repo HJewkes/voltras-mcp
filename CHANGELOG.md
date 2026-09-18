@@ -64,7 +64,7 @@ entry is written from the user's point of view is a review question, not a check
 ### Changed
 
 - Connecting now waits for the Voltra to accept the connection (`@voltras/node-sdk` 0.15.0,
-  VW-415). A first pairing asks the lifter to accept on the device, so `device.connect` can
+  VW-415, #441). A first pairing asks the lifter to accept on the device, so `device.connect` can
   take up to 30 seconds; meanwhile `device.get_state` reports
   `connectionState: awaitingAcceptance` and the dashboard badge reads ACCEPT ON DEVICE
   instead of OFFLINE. A refusal, or no answer in time, is a `CONNECTION_REFUSED` error that
@@ -102,7 +102,7 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
-- `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415). It
+- `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415, #441). It
   used to report success while the device stayed loaded. `device.unload` remains the stop
   the device confirms.
 - `npm run docs:captures`'s dual-Voltra screenshot no longer 404s partway through (VW-389).
