@@ -532,6 +532,30 @@ describe('timer.start default rest resolution (VW-297)', () => {
     expect(body.durationMs).toBe((105 + 30) * 1000);
   });
 
+  it("takes the plan's rest as-is, never extended, when the coach set one", async () => {
+    const prev = makeSet('set-1', [1.0, 0.95, 0.9, 0.85, 0.8, 0.68, 0.6, 0.55]);
+    const curr = makeSet('set-2', [1.0, 0.92, 0.85, 0.78, 0.68]);
+    const { state } = makeRestState({
+      sets: [prev, curr],
+      assignments: [
+        {
+          id: 'a1',
+          sessionId: SESSION_ID,
+          workoutTemplateId: 'template-1',
+          assignedAt: prev.startedAt,
+        },
+      ],
+      planned: [plannedExercise({ trainingIntent: 'hypertrophy', restSec: 90 })],
+    });
+    const startCb = withStartCallback(state);
+
+    const result = await startCb({ label: 'rest' });
+
+    const body = payload(result) as { durationMs: number; restBasis: { source: string } };
+    expect(body.durationMs).toBe(90_000);
+    expect(body.restBasis).toMatchObject({ source: 'explicit_plan', extensionSeconds: 0 });
+  });
+
   it('never overrides an explicit duration', async () => {
     const prev = makeSet('set-1', [1.0, 0.95, 0.9, 0.85, 0.8, 0.68, 0.6, 0.55]);
     const curr = makeSet('set-2', [1.0, 0.92, 0.85, 0.78, 0.68]);

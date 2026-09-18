@@ -43,16 +43,17 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import {
+  completedSetsForExercise,
   defaultRestSeconds,
-  repsToVelocityLossThreshold,
-  restExtensionSeconds,
+  resolveRestLength,
+  type RestSource,
 } from '../analytics/rest-defaults.js';
 import { TimerCancelInput, TimerStartInput, TimerWaitInput } from '../schemas/timer.js';
 import type { TrainingIntent } from '../schemas/set.js';
 import { PRIMARY_SLOT, type ServerState } from '../state/server-state.js';
 import { fence, LeaseLostError, type LeaseFence } from '../state/lease-fence.js';
-import { VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
-import type { StoredPlannedExercise, StoredSet } from '../store/types.js';
+import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
+import type { StoredPlannedExercise } from '../store/types.js';
 import { normaliseVelocityToMps } from '../store/velocity-units.js';
 import { errorResult, textResult, type ToolResult } from './helpers.js';
 
@@ -139,7 +140,9 @@ const START_TOOL_DESCRIPTION = [
   'Multiple `timer.start` timers can be in flight at once; cancel a specific',
   'one with `timer.cancel({ timer_id })`.',
   '',
-  'Omit `durationMs` for a rest timer to default it by training goal (VW-297):',
+  "Omit `durationMs` for a rest timer to take the plan's `restSec` for the",
+  "session's current exercise when the coach set one (never extended), else to",
+  'default it by training goal (VW-297):',
   '>=120s for a `strength`-intent exercise (Grgic et al. 2018 — over 2 minutes',
   'needed to maximise strength gains in trained lifters), 90-120s for',
   '`hypertrophy` (Singer et al. 2024 — no further benefit past 90s), or a named',
@@ -150,7 +153,8 @@ const START_TOOL_DESCRIPTION = [
   'insufficient rest (their proposed mechanism is volume-load preservation:',
   'reps-to-threshold holding steady set to set means rest was long enough).',
   'The result reports `restBasis` — `source` (`explicit` when `durationMs`',
-  'was given, `intent_default` or `intent_default_extended` otherwise),',
+  "was given, `explicit_plan` for the plan's rest, `intent_default` or",
+  '`intent_default_extended` otherwise),',
   '`intent`, `prevRepsToThreshold`, `currRepsToThreshold`, and',
   '`extensionSeconds` — so the basis for the duration is always visible. An',
   'explicit `durationMs` is never overridden.',
@@ -277,56 +281,20 @@ function runBlockingTimer(
  * or resolved.
  */
 export interface RestBasis {
-  readonly source: 'explicit' | 'intent_default' | 'intent_default_extended';
+  readonly source: 'explicit' | RestSource;
   readonly intent?: TrainingIntent | null;
   readonly prevRepsToThreshold?: number | null;
   readonly currRepsToThreshold?: number | null;
   readonly extensionSeconds?: number;
 }
 
-/**
- * The active session's most recent completed sets for `exerciseId`, oldest
- * first — used to compare the last two sets of the same exercise. A set with
- * no exercise of its own inherits the session's (matches `report-tools.ts`'s
- * `groupByExercise`).
- */
-function completedSetsForExercise(
-  sets: readonly StoredSet[],
-  sessionExerciseId: string | undefined,
-  exerciseId: string,
-): StoredSet[] {
-  return sets.filter(
-    (set) =>
-      set.endedAt !== undefined &&
-      set.reps.length > 0 &&
-      (set.exerciseId ?? sessionExerciseId) === exerciseId,
-  );
-}
-
-/**
- * The planned exercise (if any) carrying `exerciseId`, looked up the same way
- * `report-tools.ts`'s `loadPlannedExercises` resolves an assignment: a whole
- * template, or a single planned exercise.
- */
-export async function resolvePlannedExercise(
+/** The planned exercise (if any) carrying `exerciseId` in this session. */
+export function resolvePlannedExercise(
   state: ServerState,
   sessionId: string,
   exerciseId: string,
 ): Promise<StoredPlannedExercise | undefined> {
-  const assignments = await state.store.getAssignmentsForSession(sessionId);
-  for (const assignment of assignments) {
-    if (assignment.workoutTemplateId !== undefined) {
-      const planned = await state.store.getPlannedExercisesForTemplate(
-        assignment.workoutTemplateId,
-      );
-      const match = planned.find((p) => p.exerciseId === exerciseId);
-      if (match !== undefined) return match;
-    } else if (assignment.plannedExerciseId !== undefined) {
-      const one = await state.store.getPlannedExercise(assignment.plannedExerciseId);
-      if (one?.exerciseId === exerciseId) return one;
-    }
-  }
-  return undefined;
+  return findPlannedExerciseForSession(state.store, sessionId, exerciseId);
 }
 
 /**
@@ -334,63 +302,43 @@ export async function resolvePlannedExercise(
  *
  * With no active session, or the session's current exercise unresolvable,
  * there is nothing to derive from but the goal itself — `intent` reads as
- * unknown and the named default applies.
- *
- * The velocity-loss threshold used to derive `prevRepsToThreshold` /
- * `currRepsToThreshold` is the SAME goal-keyed default `velocity_loss_exceeded`
- * resolves to for this exercise (`VELOCITY_LOSS_DEFAULT_PCT`, from
- * `state/velocity-loss-intent.ts`) — the two sets are only comparable when
- * judged against the same threshold. An unknown intent falls to the
- * hypertrophy default (30%), the same VL band `report.weekly`'s
- * velocity-loss-hold flag and the dashboard's stop verdict already treat as
- * canonical.
+ * unknown and the named default applies. Otherwise {@link resolveRestLength}
+ * decides, the same function the dashboard snapshot's rest countdown uses.
  */
 async function resolveRestDuration(
   state: ServerState,
 ): Promise<{ durationMs: number; restBasis: RestBasis }> {
   const session = state.slots.get(PRIMARY_SLOT)?.live.session;
-  if (session === undefined) {
-    return {
-      durationMs: defaultRestSeconds(undefined) * 1000,
-      restBasis: { source: 'intent_default', intent: null },
-    };
-  }
+  if (session === undefined) return noSessionRest();
   const sessionId = session.sessionId;
 
   const allSets = await state.store.getSetsForSession(sessionId);
   const completed = allSets.filter((set) => set.endedAt !== undefined && set.reps.length > 0);
-  const lastSet = completed[completed.length - 1];
-  const exerciseId = lastSet?.exerciseId ?? session.exerciseId;
-  if (exerciseId === undefined) {
-    return {
-      durationMs: defaultRestSeconds(undefined) * 1000,
-      restBasis: { source: 'intent_default', intent: null },
-    };
-  }
+  const exerciseId = completed[completed.length - 1]?.exerciseId ?? session.exerciseId;
+  if (exerciseId === undefined) return noSessionRest();
 
-  const planned = await resolvePlannedExercise(state, sessionId, exerciseId);
-  const intent = planned?.trainingIntent;
-  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[intent ?? 'hypertrophy'];
-  const exerciseSets = completedSetsForExercise(completed, session.exerciseId, exerciseId);
-  const currSet = exerciseSets[exerciseSets.length - 1];
-  const prevSet = exerciseSets[exerciseSets.length - 2];
-  const currRepsToThreshold = currSet
-    ? repsToVelocityLossThreshold(normaliseVelocityToMps(currSet).reps, thresholdPct)
-    : null;
-  const prevRepsToThreshold = prevSet
-    ? repsToVelocityLossThreshold(normaliseVelocityToMps(prevSet).reps, thresholdPct)
-    : null;
-  const extensionSeconds = restExtensionSeconds(prevRepsToThreshold, currRepsToThreshold);
-
+  const rest = resolveRestLength({
+    planned: await resolvePlannedExercise(state, sessionId, exerciseId),
+    exerciseSets: completedSetsForExercise(completed, session.exerciseId, exerciseId).map(
+      normaliseVelocityToMps,
+    ),
+  });
   return {
-    durationMs: (defaultRestSeconds(intent) + extensionSeconds) * 1000,
+    durationMs: rest.seconds * 1000,
     restBasis: {
-      source: extensionSeconds > 0 ? 'intent_default_extended' : 'intent_default',
-      intent: intent ?? null,
-      prevRepsToThreshold,
-      currRepsToThreshold,
-      extensionSeconds,
+      source: rest.source,
+      intent: rest.intent,
+      prevRepsToThreshold: rest.prevRepsToThreshold,
+      currRepsToThreshold: rest.currRepsToThreshold,
+      extensionSeconds: rest.extensionSeconds,
     },
+  };
+}
+
+function noSessionRest(): { durationMs: number; restBasis: RestBasis } {
+  return {
+    durationMs: defaultRestSeconds(undefined) * 1000,
+    restBasis: { source: 'intent_default', intent: null },
   };
 }
 

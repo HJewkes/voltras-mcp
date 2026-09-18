@@ -392,6 +392,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-297: `timer.start`'s rest-duration basis, when no explicit `durationMs`
   // was given.
   'restBasis',
+  // VW-441: a coach-set plan rest, taken as-is.
+  'explicit_plan',
   'intent_default',
   'intent_default_extended',
   'prevRepsToThreshold',

@@ -97,6 +97,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- `timer.start` with no `durationMs` now uses the plan's rest for the current exercise when
+  the coach set one. It used to ignore it and take the training-goal default (150 s strength,
+  105 s hypertrophy, 120 s otherwise), so a 90 s planned rest ran as 105 s or longer. The
+  coach's number is never auto-extended; `restBasis.source` reads `explicit_plan` for it. The
+  dashboard's rest countdown uses the same rule, so the tool and the wall give one number
+  (VW-441).
+
 - The `#/goals` page leads with one goal card instead of a header block over a chart (VW-385).
   The title row carries the lift, its priority mark, a PR star and the verdict, with the reason
   for the verdict one hover away on the pill. Below it sit the block-end target, the gap to it
