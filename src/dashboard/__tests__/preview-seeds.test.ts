@@ -74,10 +74,8 @@ describe('dashboard:preview goal states', () => {
     });
   }
 
-  // `hit_exact` and `beyond_goal` share `on_track` with the plain rising seed,
-  // so the status alone cannot tell the three apart. What makes them what they
-  // are is where the newest reading sits against the committed number, which is
-  // the thing a human opens the page to look at.
+  // The status names the verdict; where the newest reading sits against the
+  // committed number is what a human opens the page to look at, so it is pinned too.
   it('puts the newest reading exactly on the committed target for hit_exact', async () => {
     const state = goalPreviewState('hit_exact');
     const view = await viewFor(state);
@@ -90,6 +88,12 @@ describe('dashboard:preview goal states', () => {
     const view = await viewFor(state);
 
     expect(latestReading(view)).toBeGreaterThan(view.committed);
+  });
+
+  it('keeps the ahead reading short of the committed target, so pace is what it shows', async () => {
+    const view = await viewFor(goalPreviewState('ahead'));
+
+    expect(latestReading(view)).toBeLessThan(view.committed);
   });
 
   it('keeps the newest reading under the committed target for on_track', async () => {

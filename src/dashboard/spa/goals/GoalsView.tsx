@@ -64,6 +64,7 @@ import {
   statusBadgeVariant,
   statusLabel,
   targetLabel,
+  titanStatus,
   type GoalMuscleCardRow,
   type GoalTargetRow,
   type GoalsPageData,
@@ -140,7 +141,8 @@ function PrimaryGoalCard(props: { row: GoalTargetRow; narrow: boolean }): React.
             matched: a.matched,
           }))}
           weeks={chartWeeks(view)}
-          status={view.status}
+          // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
+          status={titanStatus(view.status)}
           direction={directionOf(view)}
           width={props.narrow ? CHART_WIDTH_NARROW : CHART_WIDTH}
           height={CHART_HEIGHT}
@@ -190,7 +192,8 @@ function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.J
           <div key={row.view.target.id} style={cell}>
             <GoalLiftCard
               name={targetLabel(row)}
-              status={row.view.status}
+              // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
+              status={titanStatus(row.view.status)}
               milestone={cardMilestone(row.view)}
               committed={row.view.committed}
               stretch={row.view.stretch}
@@ -220,7 +223,8 @@ function MuscleGrid(props: {
               name={priorityLabel(row.priority)}
               muscle={row.muscle}
               side={row.side}
-              status={row.rollup.status}
+              // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
+              status={titanStatus(row.rollup.status)}
               liftsOnTrack={row.rollup.progressingCount}
               liftsTotal={row.rollup.targetCount}
               commonGoalWeek={row.commonGoalWeek}

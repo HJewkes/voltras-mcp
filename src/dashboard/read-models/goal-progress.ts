@@ -44,6 +44,11 @@
 // swallow it forever and describe it in execution-ramp words. It gets its own
 // branch instead, judged on pace against the count due by now.
 //
+// A MET GOAL OUTRANKS PACE. Once a matched reading reaches the committed
+// number the target is `goal_met` (or `beyond_goal` past it) for the rest of
+// the block, ahead of every pace rule: the verdict reads the block's BEST
+// reading, so a later dip cannot take it back (VW-400).
+//
 // Confidentiality: fitness units, plan metadata and coaching prose only — no
 // protocol data (NF-07).
 
@@ -66,6 +71,19 @@ import {
   type GoalBandWeek,
   type GoalDietState,
 } from '../../analytics/goal-band.js';
+import {
+  aheadOfEdge,
+  behindEdge,
+  blockReadingsOf,
+  expectationAt,
+  goalReachOf,
+  mesoMilestoneOf,
+  weekOutcomesOf,
+  type BlockReading,
+  type GoalMesoMilestone,
+  type GoalReachRead,
+  type GoalWeekOutcomeEntry,
+} from './goal-milestone.js';
 import type {
   StoredGoalTarget,
   StoredPriority,
@@ -112,8 +130,13 @@ export const GOAL_PROGRESS_CONSTANTS = {
   sessionWindowDays: 28,
 } as const;
 
-/** The seven words the page may say about a target. `calibrating` replaces v1's `insufficient_data`. */
+/**
+ * The nine words the page may say about a target. `calibrating` replaces v1's
+ * `insufficient_data`; `goal_met` and `beyond_goal` are block verdicts, not paces (VW-400).
+ */
 export type GoalProgressStatus =
+  | 'goal_met'
+  | 'beyond_goal'
   | 'on_track'
   | 'ahead'
   | 'behind'
@@ -207,7 +230,10 @@ export interface GoalMilestone {
   dueWeek: number;
   /** The target's own rep anchor for `top_load_at_reps`; mirrors `load` for every other metric. */
   reps: number;
-  /** The waypoint's rounded value — the same number `label` prints, sourced from the target, not from it. */
+  /**
+   * The waypoint's rounded value — the same number `label` prints. A `reps_at_load`
+   * target's own `anchorLoad` instead, when it recorded one (VW-399).
+   */
   load: number;
   /** Every stored value in this system is pounds (VW-230); no per-user kg preference exists yet. */
   unit: 'lb' | 'kg';
@@ -252,6 +278,10 @@ export interface GoalProgressView {
    */
   corroborated?: boolean | null;
   nextMilestone: GoalMilestone;
+  /** The committed number as the block-end milestone, and whether it has been reached (VW-400). */
+  mesoMilestone: GoalMesoMilestone;
+  /** Every week of the block against its own band row, aligned to week 1 (VW-400). */
+  weekOutcomes: GoalWeekOutcomeEntry[];
   confounder?: GoalConfounder;
   advisory?: GoalAdvisory;
   praise?: GoalPraise;
@@ -273,6 +303,9 @@ interface Reading {
   effect: 'softened' | 'hardened' | 'none';
   belowCommitted: boolean;
   beyondStretch: boolean;
+  /** Matched readings inside the block, each with its week. */
+  inBlock: BlockReading[];
+  reach: GoalReachRead | null;
 }
 
 interface StatusRead {
@@ -299,6 +332,15 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     statusBasis,
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
     nextMilestone: nextMilestoneOf(reading),
+    mesoMilestone: mesoMilestoneOf({
+      target: input.target,
+      band: input.band,
+      weeks: input.weeks,
+      readings: reading.inBlock,
+      now: input.now,
+      reach: reading.reach,
+    }),
+    weekOutcomes: weekOutcomesOf(input.target, input.band, input.weeks, reading.inBlock),
     ...(input.e1rm === undefined ? {} : { e1rmContext: e1rmContextOf(input.e1rm) }),
     ...(confounder === undefined ? {} : { confounder }),
     ...(advisory === undefined ? {} : { advisory }),
@@ -324,6 +366,7 @@ function read(input: GoalProgressInput): Reading {
   const slope = slopeOf(matched, input.band.direction, mid);
   const deviationPct = latest === undefined ? 0 : deviationOf(expected, latest.value, input.band);
   const verdict = dietPhaseTolerance(dietPhaseStateOf(input.dietState), deviationPct, slope);
+  const inBlock = blockReadingsOf(input.target, input.weeks, matched);
   return {
     input,
     weekPosition,
@@ -337,6 +380,8 @@ function read(input: GoalProgressInput): Reading {
     effect: toleranceEffect(verdict),
     belowCommitted: latest !== undefined && behindEdge(expected.low, latest.value, input.band),
     beyondStretch: latest !== undefined && aheadOfEdge(expected.high, latest.value, input.band),
+    inBlock,
+    reach: goalReachOf(input.target, input.band.direction, inBlock),
   };
 }
 
@@ -362,17 +407,6 @@ function placeOnWeekAxis(entry: GoalActual, input: GoalProgressInput): GoalActua
   if (Number.isNaN(startedMs) || Number.isNaN(takenMs) || takenMs < startedMs) return { ...entry };
   const week = input.weeks[weeksInPhaseAt(input.target.startMeasuredAt, entry.ts) - 1];
   return week === undefined ? { ...entry } : { ...entry, weekIndex: week.index };
-}
-
-/** The band row for a week, by `weekIndex` first so a reordered band still lines up. */
-function expectationAt(
-  band: GoalBand,
-  weeks: readonly GoalBandWeek[],
-  position: number,
-): GoalBandExpectation {
-  const week = weeks[position];
-  const byIndex = week && band.expected.find((row) => row.weekIndex === week.index);
-  return byIndex ?? band.expected[position] ?? band.expected[band.expected.length - 1];
 }
 
 /**
@@ -409,20 +443,6 @@ function signOf(direction: GoalBand['direction']): number {
   return direction === 'down' ? -1 : 1;
 }
 
-/** Below the conservative edge, whichever numeric side of it that is (VW-348). */
-function behindEdge(committedEdge: number, value: number, band: GoalBand): boolean {
-  if (band.direction === 'down') return value > committedEdge;
-  if (band.direction === 'hold') return false;
-  return value < committedEdge;
-}
-
-/** Past the stretch edge. A `hold` goal has no stretch to pass. */
-function aheadOfEdge(stretchEdge: number, value: number, band: GoalBand): boolean {
-  if (band.direction === 'down') return value < stretchEdge;
-  if (band.direction === 'hold') return false;
-  return value > stretchEdge;
-}
-
 /**
  * The trend of the matched readings, in the lifter's favour. A `hold` goal
  * trends on distance from the corridor's middle: closing on it is improving.
@@ -456,6 +476,7 @@ function mesoWeekOf(weeks: readonly GoalBandWeek[], position: number): GoalMesoW
 /** First rule that fires wins; the chain is the precedence, top to bottom. */
 function resolveStatus(reading: Reading): StatusRead {
   return (
+    reachRead(reading) ??
     deloadRead(reading) ??
     sessionCountRead(reading) ??
     calibratingRead(reading) ??
@@ -465,6 +486,30 @@ function resolveStatus(reading: Reading): StatusRead {
     behindRead(reading) ??
     onTrackRead(reading)
   );
+}
+
+/**
+ * The committed number, reached. It reads the block's BEST matched reading, so
+ * once earned it holds for the rest of the block whatever a later set does:
+ * the target was set to be barely achievable, and delivering it is the verdict.
+ */
+function reachRead(reading: Reading): StatusRead | undefined {
+  const reach = reading.reach;
+  if (reach === null || reach.reach === 'short') return undefined;
+  const committed = reading.input.target.committedValue;
+  const rule =
+    'It holds for the rest of the block, and what the block does next is decided at its ' +
+    'boundary (rp:rp-s10-underpromise-overdeliver-goal-setting).';
+  if (reach.reach === 'beyond') {
+    return {
+      status: 'beyond_goal',
+      statusBasis: `Beyond the goal: the block's best matched reading, ${reach.best}, is past the committed ${committed}. ${rule}`,
+    };
+  }
+  return {
+    status: 'goal_met',
+    statusBasis: `Goal met: a matched reading reached the committed ${committed}. ${rule}`,
+  };
 }
 
 /** A deload week flattens the band and suspends the verdict, before any other question. */
@@ -627,7 +672,8 @@ function onTrackRead(reading: Reading): StatusRead {
  */
 function advisoryFor(status: GoalProgressStatus, reading: Reading): GoalAdvisory | undefined {
   if (status === 'behind' || status === 'stalled') return programmingAdvisory(reading);
-  if (status === 'ahead' && reading.isLastWeek) return aheadDecisionAdvisory(reading);
+  const past = status === 'ahead' || status === 'beyond_goal';
+  if (past && reading.isLastWeek) return aheadDecisionAdvisory(reading);
   return undefined;
 }
 
@@ -691,7 +737,7 @@ function confounderFor(
 
 /** Quiet per set, loud per mesocycle (human decision 2026-09-13). A miss is never scored. */
 function praiseFor(status: GoalProgressStatus, reading: Reading): GoalPraise | undefined {
-  if (reading.isLastWeek && (status === 'on_track' || status === 'ahead')) {
+  if (reading.isLastWeek && PROGRESSING.includes(status)) {
     return { level: 'loud', text: mesoPraiseText(reading) };
   }
   const latest = reading.input.actuals[reading.input.actuals.length - 1];
@@ -723,12 +769,13 @@ function nextMilestoneOf(reading: Reading): GoalMilestone {
   const target = reading.input.target;
   const rounded = roundToTenth(expected.low);
   const reps = target.metric === 'top_load_at_reps' ? (target.anchorReps ?? rounded) : rounded;
+  const load = target.metric === 'reps_at_load' ? (target.anchorLoad ?? rounded) : rounded;
   return {
     label: milestoneLabel(target, rounded, dueWeek),
     value: expected.low,
     dueWeek,
     reps,
-    load: rounded,
+    load,
     unit: 'lb',
     goalWeek: dueWeek,
   };
@@ -745,7 +792,9 @@ function milestoneLabel(target: StoredGoalTarget, rounded: number, dueWeek: numb
     case 'top_load_at_reps':
       return `${rounded} x ${target.anchorReps ?? '?'} ${week}`;
     case 'reps_at_load':
-      return `${rounded} reps ${week}`;
+      return target.anchorLoad === undefined
+        ? `${rounded} reps ${week}`
+        : `${rounded} reps at ${target.anchorLoad} lb ${week}`;
     case 'bodyweight':
       return `bodyweight ${rounded} ${week}`;
     case 'sessions_28d':
@@ -791,13 +840,15 @@ export interface PriorityRollupView {
 }
 
 /** Statuses that count as the lift moving in the right direction. */
-const PROGRESSING: readonly GoalProgressStatus[] = ['on_track', 'ahead'];
+const PROGRESSING: readonly GoalProgressStatus[] = ['on_track', 'ahead', 'goal_met', 'beyond_goal'];
 
 /**
  * How actionable each status is. The rollup reports the highest: one lift that
  * stalled is the thing worth saying about a priority whose others are fine.
  */
 const STATUS_RANK: Record<GoalProgressStatus, number> = {
+  beyond_goal: -2,
+  goal_met: -1,
   ahead: 0,
   on_track: 1,
   deload_week: 2,
@@ -808,6 +859,8 @@ const STATUS_RANK: Record<GoalProgressStatus, number> = {
 };
 
 const STATUS_LABEL: Record<GoalProgressStatus, string> = {
+  beyond_goal: 'beyond goal',
+  goal_met: 'goal met',
   ahead: 'ahead',
   on_track: 'on track',
   deload_week: 'deload week, no verdict',

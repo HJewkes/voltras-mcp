@@ -101,6 +101,17 @@ export {
   type GoalProgressView,
   type PriorityRollupView,
 } from './goal-progress.js';
+export {
+  type GoalMesoLoadTarget,
+  type GoalMesoMilestone,
+  type GoalMesoMilestoneState,
+  type GoalMesoReading,
+  type GoalMesoTarget,
+  type GoalMesoValueTarget,
+  type GoalReach,
+  type GoalWeekOutcome,
+  type GoalWeekOutcomeEntry,
+} from './goal-milestone.js';
 
 export {
   endOfCalendarWeekIso,
