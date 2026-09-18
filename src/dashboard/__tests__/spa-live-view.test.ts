@@ -31,6 +31,7 @@ import {
 } from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
 import { mmsToMps } from '../../state/live-signal.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 /** A session read-model with honest empty defaults, overridable per test. */
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
@@ -60,6 +61,8 @@ function railModel(session: SessionModel): DashboardModel {
 /** A completed set tagged with the exercise that owned it (VW-50). */
 function completed(exerciseName: string, repCount: number, weightLbs = 100): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName,
     weightLbs,
     mode: 'weight',
@@ -706,6 +709,7 @@ describe('set-strip columns read the PLAN rep target, not just the device watch'
   function plannedLive(over: Partial<SessionModel> = {}): DashboardModel {
     return {
       live: {
+        fatigueStop: exerciseFatigueStop(undefined),
         phase: 'concentric',
         phaseElapsedMs: 0,
         velocity: 0.5,
@@ -759,6 +763,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -782,6 +788,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -791,6 +799,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
             setPurpose: 'working',
           },
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',
@@ -813,6 +823,8 @@ describe('set-strip velocities are normalized to the ratio domain titan bands on
       sessionModel({
         completedSets: [
           {
+            fatigueStop: exerciseFatigueStop(undefined),
+            fatigueVerdict: null,
             exerciseName: 'Cable Chest Press',
             weightLbs: 140,
             mode: 'weight',

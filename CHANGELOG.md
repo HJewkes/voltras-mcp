@@ -97,6 +97,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The live page's red "stop" now comes from the exercise's training goal, the same threshold
+  the server's `velocity_loss_exceeded` fires at: 20% velocity loss for strength, 30% for
+  hypertrophy, 10% for power, and 30% when the plan names no goal. A set started with its own
+  threshold is judged by that number. Before, the single-Voltra stage never went red on
+  velocity loss at all (only on a form breakdown), and the dual stage and rest recap went red at
+  30% for every goal. A form breakdown (a range-of-motion or dropped-negative alarm) still stops
+  the set; between 20% and the stop the stage reads amber. The rest recap's Fatigue tile uses
+  the same rule and now also reflects range-of-motion and tempo breakdown (VW-440).
 - `timer.start` with no `durationMs` now uses the plan's rest for the current exercise when
   the coach set one. It used to ignore it and take the training-goal default (150 s strength,
   105 s hypertrophy, 120 s otherwise), so a 90 s planned rest ran as 105 s or longer. The

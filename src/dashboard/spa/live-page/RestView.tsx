@@ -23,13 +23,13 @@ import {
   deriveRecapPrescription,
   velocityLossPct,
   velocityRatios,
-  verdictFromLoss,
   type CompletedSet,
   type DashboardModel,
   type PrescriptionCells,
   type SessionModel,
   type SetPurpose,
 } from './model';
+import { setFatigueState } from './fatigue-state';
 import { type MassUnit, formatMass } from './mass';
 import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
 import { dashboardStore } from '../store';
@@ -145,7 +145,10 @@ function verdictMetrics(
   displayUnit: MassUnit,
 ): MetricSpec[] {
   const loss = velocityLossPct(set.reps);
-  const verdict = loss === null ? null : verdictFromLoss(loss);
+  const verdict =
+    loss === null
+      ? null
+      : setFatigueState({ lossPct: loss, stop: set.fatigueStop, verdict: set.fatigueVerdict });
   // The load's UNIT is its label (e.g. value "20", label "lbs"/"kg") — no separate "Load"
   // caption. Converted to the client display unit (VW-63); the store stays lbs.
   const load = set.weightLbs !== null ? formatMass(set.weightLbs, displayUnit) : null;

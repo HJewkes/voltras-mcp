@@ -17,12 +17,7 @@ import {
   getSetRepPeakVelocities,
   getSetTempoSeconds,
 } from '@voltras/workout-analytics/view';
-import type {
-  ExerciseCardProps,
-  SetRowProps,
-  StatusPillStatus,
-  TempoDisplayProps,
-} from '@titan-design/react-ui';
+import type { ExerciseCardProps, SetRowProps, TempoDisplayProps } from '@titan-design/react-ui';
 import { evaluateE1RMPr } from '../../../analytics/e1rm-pr';
 import { type WorkoutSetView } from '../adapter';
 import { convertMass, type MassUnit } from '../live-page/mass';
@@ -54,27 +49,6 @@ type HeroLiveRow = Omit<Extract<SetRowProps, { state: 'live' }>, 'weight' | 'tar
 
 /** {@link SetRowProps}, but `weight`/`target.weight` may be absent instead of a fabricated 0. */
 export type HeroSetRowProps = HeroDoneRow | HeroLiveRow;
-
-/**
- * Coaching auto-regulation verdict from live velocity-loss %. Shared by the
- * live surface's `StatusPill` (verdict text) and `LiveAuraFrame` (flood), which
- * take the same `productive | threshold | stop` domain: below VL20 keep going,
- * VL20–VL30 approaching fatigue, VL30+ terminate the set. Null (no verdict / no
- * flood) when loss is not yet derivable (<2 reps).
- *
- * CANONICAL BANDS: 20/30 — identical to the rest view's `verdictFromLoss`
- * (`live-page/model.ts`), so the live StatusPill and the rest-view aura never
- * disagree (they previously split at 28 vs 30).
- * TODO(VW-64): decide whether to adopt WA's now-published `velocityLossVerdict`
- * (the eventual SSOT) in place of this local banding — a wiring choice, not a
- * blocked dependency.
- */
-export function toAutoRegStatus(lossPct: number | null): StatusPillStatus | null {
-  if (lossPct === null) return null;
-  if (lossPct >= 30) return 'stop';
-  if (lossPct >= 20) return 'threshold';
-  return 'productive';
-}
 
 /**
  * Map a canonical set view onto titan `SetRow` props (titan 0.7.0 unified table:

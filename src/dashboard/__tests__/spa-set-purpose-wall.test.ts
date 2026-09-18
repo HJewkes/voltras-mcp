@@ -19,6 +19,7 @@ import {
   type SessionModel,
   type SetPurpose,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -45,6 +46,8 @@ function model(over: Partial<DashboardModel> = {}): DashboardModel {
 
 function completed(setPurpose: SetPurpose, repCount = 8): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName: 'Cable Chest Press',
     weightLbs: 140,
     mode: 'weight',

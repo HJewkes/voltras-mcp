@@ -16,6 +16,7 @@ import {
   type LiveModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -38,6 +39,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
 
 function liveModel(over: Partial<LiveModel> = {}): LiveModel {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
     velocity: 0.4,
     force: 100,
     phase: 'concentric',

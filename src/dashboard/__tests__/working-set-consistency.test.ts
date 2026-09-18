@@ -25,6 +25,7 @@ import {
   type CompletedSet,
   type SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 /** One rep of real WA samples so the fatigue/verdict calls don't throw. */
 function buildReps(repCount: number): Rep[] {
@@ -101,6 +102,8 @@ function fixture(): StoredSet[] {
 
 function asCompletedSets(sets: StoredSet[]): CompletedSet[] {
   return sets.map((set) => ({
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName: 'Cable Row',
     weightLbs: set.weightLbs ?? null,
     mode: 'weight',

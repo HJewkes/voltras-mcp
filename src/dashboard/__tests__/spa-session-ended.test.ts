@@ -16,6 +16,7 @@ import {
   type DashboardModel,
   type SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -42,6 +43,8 @@ function model(over: Partial<DashboardModel> = {}): DashboardModel {
 
 function completed(exerciseName: string, repCount = 8): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName,
     weightLbs: 140,
     mode: 'weight',

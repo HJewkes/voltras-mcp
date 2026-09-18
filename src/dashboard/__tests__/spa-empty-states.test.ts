@@ -20,6 +20,7 @@ import {
   type SessionModel,
 } from '../spa/live-page/model.js';
 import { mapStoreToDashboardModel, type LiveViewSources } from '../spa/panels/live-view.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -46,6 +47,8 @@ function model(over: Partial<DashboardModel> = {}): DashboardModel {
 
 function completed(exerciseName: string, repCount = 8): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName,
     weightLbs: 140,
     mode: 'weight',
@@ -58,6 +61,7 @@ function completed(exerciseName: string, repCount = 8): CompletedSet {
 
 /** A minimal live overlay for the "mid-set" branch. */
 const liveOverlay: LiveModel = {
+  fatigueStop: exerciseFatigueStop(undefined),
   velocity: 0.4,
   force: 480,
   phase: 'concentric',

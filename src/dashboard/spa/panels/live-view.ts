@@ -15,7 +15,13 @@
  * template · block title, null when no plan is attached or the block can't resolve.
  * Wiring each is additive here — no consumer change.
  */
-import { type Rep } from '@voltras/workout-analytics';
+import { getSetFatigueVerdict, type Rep } from '@voltras/workout-analytics';
+
+import {
+  exerciseFatigueStop,
+  fatigueStopForSet,
+  type FatigueStop,
+} from '../../../state/velocity-loss-intent.js';
 import {
   buildConnectionStatus,
   buildCurrentSet,
@@ -187,6 +193,7 @@ function mapLive(
   velocityLossPct: number | null,
   repVelocities: number[],
   autoCreatedBy: 'guided_load' | 'idle_rep' | null,
+  fatigueStop: FatigueStop,
 ): LiveModel {
   return {
     velocity: live.velocity,
@@ -198,11 +205,17 @@ function mapLive(
     velocityLossPct,
     peakForce: live.peakForce,
     autoCreatedBy,
+    fatigueStop,
   };
 }
 
+/** The active exercise's stop for sets with no watch threshold; the server's named default on an older snapshot. */
+function exerciseStopOf(snapshot: Snapshot): FatigueStop {
+  return snapshot.fatigueStop ?? exerciseFatigueStop(undefined);
+}
+
 /** A closed set on the session read-model. */
-function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
+function mapCompletedSet(set: StoreCompletedSet, exerciseStop: FatigueStop): CompletedSet {
   return {
     exerciseName: set.exerciseName,
     weightLbs: set.weightLbs,
@@ -212,6 +225,8 @@ function mapCompletedSet(set: StoreCompletedSet): CompletedSet {
     peakForceLbs: set.peakForceLbs,
     setPurpose: set.setPurpose,
     autoCreatedBy: set.autoCreatedBy,
+    fatigueStop: fatigueStopForSet(set.watch, exerciseStop),
+    fatigueVerdict: set.reps.length < 2 ? null : getSetFatigueVerdict({ reps: set.reps }),
   };
 }
 
@@ -276,7 +291,9 @@ function mapSession(
     // Drop 0-rep sets (an armed-then-abandoned set force-closes empty via the inactivity
     // watchdog) so they never reach the recap, the rail tally, or the rollup — the store
     // keeps them, the wall does not show them. See `isRealCompletedSet`.
-    completedSets: setLog.map(mapCompletedSet).filter(isRealCompletedSet),
+    completedSets: setLog
+      .map((set) => mapCompletedSet(set, exerciseStopOf(snapshot)))
+      .filter(isRealCompletedSet),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
     plannedExercises,
     // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
@@ -327,7 +344,13 @@ export function mapStoreToDashboardModel(sources: LiveViewSources): DashboardMod
 
   return {
     live: live
-      ? mapLive(live, currentSet.velocityLossPct, repVelocities, currentSet.autoCreatedBy)
+      ? mapLive(
+          live,
+          currentSet.velocityLossPct,
+          repVelocities,
+          currentSet.autoCreatedBy,
+          fatigueStopForSet(snapshot.sets.active?.watch, exerciseStopOf(snapshot)),
+        )
       : null,
     restElapsedMs,
     connection: mapConnection(snapshot, pollStatus),

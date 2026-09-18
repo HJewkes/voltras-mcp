@@ -12,7 +12,7 @@ const { PRIMARY_SLOT } = await import('../../state/server-state.js');
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DashboardServerHandle, DashboardServerState } from '../server.js';
-import type { ActiveSession, ActiveSet } from '../../state/live-state.js';
+import type { ActiveSession, ActiveSet, DeviceSnapshot } from '../../state/live-state.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { ToolResult } from '../../tools/helpers.js';
 import type {
@@ -35,6 +35,8 @@ const EMPTY_PHASE: Phase = {
   _totalLoad: 0,
   _movementSampleCount: 0,
   _totalHoldDuration: 0,
+  _peakVelocityTime: 0,
+  _lastMovementVelocity: 0,
   peakVelocity: 0,
   peakForce: 0,
   peakLoad: 0,
@@ -115,10 +117,11 @@ function dashboardState(fixture: Fixture): DashboardServerState {
         'primary',
         {
           live: {
-            snapshotDevice: () => ({ connected: true }),
+            snapshotDevice: (): DeviceSnapshot => ({ connected: true }),
             snapshotSession: () => (fixture.noSession ? undefined : session),
             snapshotSet: () => undefined,
-            snapshotCompletedSets: () => fixture.sets.map((set) => ({ set, device: {} })),
+            snapshotCompletedSets: () =>
+              fixture.sets.map((set) => ({ set, device: { connected: true } })),
           },
         },
       ],
