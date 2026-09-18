@@ -28,6 +28,7 @@ import { DashboardShell, defaultNavItems, type SessionState } from '@titan-desig
 import { dashboardStore } from '../store';
 import { buildSessionState, buildTopBarDevices } from '../adapter';
 import { routeHash, type Route } from '../routing';
+import { PinnedLiveStripSlot } from './PinnedLiveStripSlot';
 
 /** Nav key ⇄ route. The nav rail renders exactly these, in this order. */
 const NAV_ROUTES: Record<string, Route> = {
@@ -144,8 +145,11 @@ export function DashboardChrome(props: {
         }}
       >
         {props.scroll === true ? (
-          <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
-            {props.children}
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <PinnedLiveStripSlot route={props.route} />
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+              {props.children}
+            </div>
           </div>
         ) : (
           props.children
