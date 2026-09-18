@@ -173,7 +173,14 @@ import {
   type StoredTrainingWeek,
   type SetupCard,
 } from '../store/types.js';
+import {
+  completedSetsForExercise,
+  resolveRestLength,
+  type ResolvedRest,
+} from '../analytics/rest-defaults.js';
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
+import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
+import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -1323,6 +1330,56 @@ async function resolveSessionPace(
 }
 
 /**
+ * The active exercise's stop threshold (VW-440) and the rest to count down (VW-441).
+ * Rest follows `timer.start`'s rule exactly: the exercise of the last completed set,
+ * else the session's, through the same {@link resolveRestLength}.
+ */
+async function resolveSetGuidance(
+  state: DashboardServerState,
+  gathered: GatheredSnapshotState,
+): Promise<{ fatigueStop: FatigueStop; rest?: ResolvedRest }> {
+  const { session, completedSets } = gathered;
+  if (session === undefined) return { fatigueStop: exerciseFatigueStop(undefined) };
+  const planned = (exerciseId: string | undefined) =>
+    exerciseId === undefined
+      ? Promise.resolve(undefined)
+      : findPlannedForDashboard(state.store, session.sessionId, exerciseId);
+  const fatigueStop = exerciseFatigueStop((await planned(session.exerciseId))?.trainingIntent);
+  const sets = completedSets.map((record) => record.set);
+  const withReps = sets.filter((set) => set.endedAt !== undefined && set.reps.length > 0);
+  const restExerciseId = withReps[withReps.length - 1]?.exerciseId ?? session.exerciseId;
+  if (restExerciseId === undefined) {
+    return { fatigueStop, rest: resolveRestLength({ planned: undefined, exerciseSets: [] }) };
+  }
+  const rest = resolveRestLength({
+    planned: await planned(restExerciseId),
+    exerciseSets: completedSetsForExercise(sets, session.exerciseId, restExerciseId),
+  });
+  return { fatigueStop, rest };
+}
+
+/** The shared planned-exercise lookup, when the store slice carries all three reads it needs. */
+function findPlannedForDashboard(
+  store: DashboardServerState['store'],
+  sessionId: string,
+  exerciseId: string,
+): Promise<StoredPlannedExercise | undefined> {
+  const { getAssignmentsForSession, getPlannedExercisesForTemplate, getPlannedExercise } = store;
+  if (!getAssignmentsForSession || !getPlannedExercisesForTemplate || !getPlannedExercise) {
+    return Promise.resolve(undefined);
+  }
+  return findPlannedExerciseForSession(
+    {
+      getAssignmentsForSession: (id) => getAssignmentsForSession.call(store, id),
+      getPlannedExercisesForTemplate: (id) => getPlannedExercisesForTemplate.call(store, id),
+      getPlannedExercise: (id) => getPlannedExercise.call(store, id),
+    },
+    sessionId,
+    exerciseId,
+  );
+}
+
+/**
  * Logged sets that advance the plan. Warm-up / probe / technique rungs do not
  * (VW-260), and neither does a 0-rep set — an armed-then-abandoned set the
  * inactivity watchdog force-closed, which the rail already drops from its own
@@ -1360,9 +1417,11 @@ async function buildSnapshotWithRev(state: DashboardServerState): Promise<RevSna
   const rev = ++snapshotRev;
   const expectedSetupCard = await resolveExpectedSetupCard(state, gathered.exerciseId);
   const sessionPace = await resolveSessionPace(state, gathered);
+  const guidance = await resolveSetGuidance(state, gathered);
   return {
     ...buildSnapshotView({
       ...gathered,
+      ...guidance,
       ...(expectedSetupCard !== undefined ? { expectedSetupCard } : {}),
       ...(sessionPace !== undefined ? { sessionPace } : {}),
     }),

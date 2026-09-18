@@ -24,7 +24,7 @@ import { getRepPeakVelocity, type Rep } from '@voltras/workout-analytics';
 
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import type { TrainingIntent } from '../schemas/set.js';
-import { VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
+import { DEFAULT_STOP_INTENT, VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
 
 /** >=120s floor; sits comfortably inside Grgic 2018's "over 2 minutes" trained-lifter finding. */
 export const STRENGTH_REST_SECONDS = 150;
@@ -125,11 +125,11 @@ export interface RestLengthInput {
  * the intent default plus the reps-to-threshold extension. A coach-set rest is never extended.
  *
  * The extension's threshold is the goal-keyed stop default for this exercise, falling to
- * the hypertrophy value with no intent — the same fallback the session summary uses.
+ * `DEFAULT_STOP_INTENT` with no intent — the same fallback the session summary uses.
  */
 export function resolveRestLength(input: RestLengthInput): ResolvedRest {
   const intent = input.planned?.trainingIntent;
-  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[intent ?? 'hypertrophy'];
+  const thresholdPct = VELOCITY_LOSS_DEFAULT_PCT[intent ?? DEFAULT_STOP_INTENT];
   const sets = input.exerciseSets;
   const currSet = sets[sets.length - 1];
   const prevSet = sets[sets.length - 2];

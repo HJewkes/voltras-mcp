@@ -10,6 +10,8 @@ import {
   resolveVelocityLossSpec,
   VELOCITY_LOSS_DEFAULT_PCT,
   VELOCITY_LOSS_RANGE_PCT,
+  exerciseFatigueStop,
+  fatigueStopForSet,
 } from '../velocity-loss-intent.js';
 
 const VL = { type: 'velocity_loss_exceeded' } as const;
@@ -80,5 +82,52 @@ describe('resolveVelocityLossSpec', () => {
       expect(pct).toBeGreaterThanOrEqual(low);
       expect(pct).toBeLessThanOrEqual(high);
     }
+  });
+});
+
+describe('fatigueStopForSet (VW-440)', () => {
+  const planStop = exerciseFatigueStop('hypertrophy');
+
+  it("uses the threshold the set's own watch pinned, the number the server fires at", () => {
+    const watch = {
+      notifyOn: [
+        { type: 'rep_count_reached', value: 8 },
+        { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' as const },
+      ],
+    };
+    expect(fatigueStopForSet(watch, planStop)).toEqual({
+      pct: 25,
+      intent: null,
+      source: 'explicit',
+    });
+  });
+
+  it('keeps a set-intent watch its intent and source', () => {
+    const watch = {
+      notifyOn: [
+        {
+          type: 'velocity_loss_exceeded',
+          pct: 10,
+          intent: 'power' as const,
+          thresholdSource: 'set_intent' as const,
+        },
+      ],
+    };
+    expect(fatigueStopForSet(watch, planStop)).toEqual({
+      pct: 10,
+      intent: 'power',
+      source: 'set_intent',
+    });
+  });
+
+  it("falls back to the exercise's stop when the set watches no velocity loss", () => {
+    expect(
+      fatigueStopForSet({ notifyOn: [{ type: 'rep_count_reached', value: 8 }] }, planStop),
+    ).toBe(planStop);
+    expect(fatigueStopForSet(undefined, planStop)).toBe(planStop);
+  });
+
+  it('names the default when the exercise states no intent', () => {
+    expect(exerciseFatigueStop(undefined)).toEqual({ pct: 30, intent: null, source: 'default' });
   });
 });

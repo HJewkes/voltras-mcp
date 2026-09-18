@@ -108,3 +108,49 @@ function withProvenance(
     thresholdSource,
   };
 }
+
+/** Intent whose stop threshold applies when nothing names one; the rest resolver and session summary use it too. */
+export const DEFAULT_STOP_INTENT: TrainingIntent = 'hypertrophy';
+
+/** The velocity-loss % at which a set reads as "stop", with where the number came from. */
+export interface FatigueStop {
+  readonly pct: number;
+  readonly intent: TrainingIntent | null;
+  readonly source: VelocityLossThresholdSource | 'default';
+}
+
+/**
+ * The stop threshold for sets of an exercise with no watch of their own: the plan's
+ * intent through {@link resolveVelocityLossSpec}, else the {@link DEFAULT_STOP_INTENT} value.
+ */
+export function exerciseFatigueStop(planIntent: TrainingIntent | undefined): FatigueStop {
+  const resolved = resolveVelocityLossSpec({ type: 'velocity_loss_exceeded' }, planIntent);
+  if (resolved === undefined) {
+    return { pct: VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT], intent: null, source: 'default' };
+  }
+  return fromResolved(resolved);
+}
+
+/**
+ * The stop threshold one set is judged against: the threshold its own `watch` pinned at
+ * `set.start` (the number the server's `velocity_loss_exceeded` fires at), else `exerciseStop`.
+ */
+export function fatigueStopForSet(
+  watch: { readonly notifyOn?: readonly WatchTriggerLike[] } | undefined,
+  exerciseStop: FatigueStop,
+): FatigueStop {
+  const spec = watch?.notifyOn?.find(
+    (t): t is ResolvedVelocityLossSpec =>
+      t.type === 'velocity_loss_exceeded' && typeof t.pct === 'number',
+  );
+  return spec === undefined ? exerciseStop : fromResolved(spec);
+}
+
+interface WatchTriggerLike {
+  readonly type: string;
+  readonly pct?: number;
+}
+
+function fromResolved(spec: ResolvedVelocityLossSpec): FatigueStop {
+  return { pct: spec.pct, intent: spec.intent ?? null, source: spec.thresholdSource ?? 'explicit' };
+}
