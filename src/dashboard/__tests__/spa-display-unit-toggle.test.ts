@@ -31,6 +31,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: 2,
     targetReps: 8,
     expectedSetupCard: null,

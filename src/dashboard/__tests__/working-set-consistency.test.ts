@@ -162,6 +162,7 @@ describe('working-set count parity across the wall, the summary page and progres
       completedSets: asCompletedSets(sets),
       plannedExercises: [],
       restSec: null,
+      restBasis: null,
       plannedSets: null,
       targetReps: null,
       expectedSetupCard: null,

@@ -28,6 +28,7 @@ function sessionModel(): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: null,
     targetReps: null,
     expectedSetupCard: null,

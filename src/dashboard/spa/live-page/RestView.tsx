@@ -30,6 +30,7 @@ import {
   type SetPurpose,
 } from './model';
 import { setFatigueState } from './fatigue-state';
+import { restBasisCaption } from './live-copy';
 import { type MassUnit, formatMass } from './mass';
 import { deriveCoachLineCaption, type CoachLineCaption } from './coach-line-model';
 import { dashboardStore } from '../store';
@@ -51,9 +52,9 @@ import { dashboardStore } from '../store';
  *     `peakForce`/VW-45 is gone the instant rest begins). Hidden when the fold is null.
  *   - Avg ROM: `CompletedSet` carries no rom → still omitted.
  *   - RPE: the specimen fabricated `8 + i*0.5`; the store has no RPE → omitted from rows.
- *   - The countdown ring needs a rest TARGET (`session.restSec`/VW-51); when the coach left
- *     it unset we do NOT invent one (the lab hardcoded 120s) — we fall back to the honest
- *     count-UP the legacy `RestTimerPanel` shows.
+ *   - The countdown ring counts down the resolved rest (`session.restSec`, VW-441): the
+ *     coach's, else the training-goal default `timer.start` uses, captioned as a default so
+ *     it never reads as coach-set. With no session it falls back to the honest count-UP.
  */
 
 /** Rest countdown ring diameter (px) — the across-the-room wall treatment. */
@@ -204,28 +205,38 @@ function Eyebrow({ children }: { children: string }): ReactElement {
 }
 
 /**
- * The rest countdown. A ring (draining) when the plan prescribes a rest target
- * ({@link DashboardModel.session.restSec}); otherwise an honest count-UP readout — we never
- * invent a target just to draw a ring. Hidden entirely before any rest clock is running.
+ * The rest countdown. A draining ring whenever a rest length resolved
+ * ({@link DashboardModel.session.restSec}: the plan's, else the goal default, VW-441), with a
+ * caption under it when that length is derived rather than coach-set. Without one (no
+ * session) an honest count-UP readout. Hidden entirely before any rest clock is running.
  */
 function RestCountdown({ model }: { model: DashboardModel }): ReactElement | null {
   const { session, restElapsedMs } = model;
   const info = nextSetInfo(model);
   // Hoisted above the early returns so the hook count stays stable (rules of hooks).
   const nextInfoColor = useOnSurfaceColor('secondary');
+  const basisColor = useOnSurfaceColor('tertiary');
   if (session.restSec !== null) {
+    const caption = session.restBasis === null ? null : restBasisCaption(session.restBasis);
     return (
-      <RestTimer
-        variant="ring"
-        size={RING_SIZE}
-        totalSeconds={session.restSec}
-        elapsedMs={restElapsedMs ?? 0}
-        visible
-        displayOnly
-        nextSetInfo={info}
-        onSkip={() => {}}
-        onAddTime={() => {}}
-      />
+      <View style={{ gap: 8, alignItems: 'center' }}>
+        <RestTimer
+          variant="ring"
+          size={RING_SIZE}
+          totalSeconds={session.restSec}
+          elapsedMs={restElapsedMs ?? 0}
+          visible
+          displayOnly
+          nextSetInfo={info}
+          onSkip={() => {}}
+          onAddTime={() => {}}
+        />
+        {caption && (
+          <Text testID="rest-basis-caption" style={{ color: basisColor, fontSize: 13 }}>
+            {caption}
+          </Text>
+        )}
+      </View>
     );
   }
   if (restElapsedMs === null) return null;

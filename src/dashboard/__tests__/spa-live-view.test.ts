@@ -45,6 +45,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: null,
     targetReps: null,
     expectedSetupCard: null,
@@ -204,20 +205,37 @@ describe('mapStoreToDashboardModel', () => {
     });
   });
 
-  describe('session.restSec (VW-51)', () => {
-    it('carries the prescribed inter-set rest onto the session model', () => {
-      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4, restSec: 120 } }));
-      expect(model?.session.restSec).toBe(120);
+  describe('session.restSec (VW-441)', () => {
+    const rest = {
+      seconds: 135,
+      source: 'intent_default_extended' as const,
+      intent: 'hypertrophy' as const,
+      prevRepsToThreshold: 6,
+      currRepsToThreshold: 5,
+      extensionSeconds: 30,
+    };
+
+    it("carries the snapshot's resolved rest and its provenance onto the session model", () => {
+      const model = mapStoreToDashboardModel(sources({ snapshot: { ...snapshot(), rest } }));
+      expect(model?.session.restSec).toBe(135);
+      expect(model?.session.restBasis).toEqual({
+        source: 'intent_default_extended',
+        intent: 'hypertrophy',
+        extensionSeconds: 30,
+      });
     });
 
-    it('leaves rest null when the prescription carries none', () => {
-      const model = mapStoreToDashboardModel(sources({ prescription: { sets: 4 } }));
-      expect(model?.session.restSec).toBeNull();
+    it("takes the snapshot's rest over the slower plan fetch's", () => {
+      const model = mapStoreToDashboardModel(
+        sources({ snapshot: { ...snapshot(), rest }, prescription: { sets: 4, restSec: 90 } }),
+      );
+      expect(model?.session.restSec).toBe(135);
     });
 
-    it('leaves rest null when the session carries no plan', () => {
-      const model = mapStoreToDashboardModel(sources());
+    it('leaves rest null when the snapshot resolved none (no session open)', () => {
+      const model = mapStoreToDashboardModel(sources({ snapshot: { ...snapshot(), rest: null } }));
       expect(model?.session.restSec).toBeNull();
+      expect(model?.session.restBasis).toBeNull();
     });
   });
 

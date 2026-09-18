@@ -97,6 +97,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The live page's rest timer now counts down after every set, not only when the plan set a
+  rest. Without a planned rest it counts down the training-goal default `timer.start` uses
+  (150 s strength, 105 s hypertrophy, 120 s otherwise, and up to 60 s more when the last set
+  reached its stop in fewer reps than the one before). A caption under the ring says "Default
+  rest" so a derived length never reads as the coach's. Before, an unplanned session got a
+  count-up with no target (VW-441).
 - The live page's red "stop" now comes from the exercise's training goal, the same threshold
   the server's `velocity_loss_exceeded` fires at: 20% velocity loss for strength, 30% for
   hypertrophy, 10% for power, and 30% when the plan names no goal. A set started with its own

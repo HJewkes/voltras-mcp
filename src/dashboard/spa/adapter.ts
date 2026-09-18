@@ -36,6 +36,7 @@ import type { SetupCard } from '../../store/types.js';
 import type { SessionPaceView } from '../read-models/session-pace.js';
 import type { TrainingIntent, VelocityLossThresholdSource } from '../../schemas/set.js';
 import type { FatigueStop } from '../../state/velocity-loss-intent.js';
+import type { ResolvedRest } from '../../analytics/rest-defaults.js';
 // Every user-facing limb/side label goes through here — never off `slotId` inline
 // (VMCP-04.12), so the coming snapshot `side` field is a one-function change.
 import { limbLabel, limbSlotBadge } from './limb';
@@ -270,6 +271,11 @@ export interface Snapshot {
    * threshold of its own. Absent on an older server or a hand-built test snapshot.
    */
   fatigueStop?: FatigueStop;
+  /**
+   * The rest to count down after the last set, with its provenance (VW-441). Null with no
+   * session open; absent on an older server or a hand-built test snapshot.
+   */
+  rest?: ResolvedRest | null;
   /**
    * Monotonic server send-order stamp (VMCP-03.04). Present on both the poll
    * response and the `snapshot` SSE push; the store applies a snapshot only when

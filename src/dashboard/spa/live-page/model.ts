@@ -29,6 +29,7 @@ import type { SetupCard } from '../../../store/types.js';
 // Type-only, same rationale: the server-computed session pace (VW-290).
 import type { SessionPaceView } from '../../read-models/session-pace.js';
 import type { FatigueStop } from './fatigue-state';
+import type { ResolvedRest } from '../../../analytics/rest-defaults.js';
 
 export type { SetPurpose, SetupCard, SessionPaceView };
 
@@ -194,10 +195,13 @@ export interface SessionModel {
    */
   plannedExercises: PlannedExerciseModel[];
   /**
-   * Prescribed rest between sets, seconds (VW-51). Null when the coach left it unset or
-   * no plan is attached — the rest timer then hides its target rather than inventing one.
+   * The rest to count down after a set, seconds (VW-441): the plan's rest, else the
+   * training-goal default, resolved server-side by the rule `timer.start` uses. Null only
+   * with no session open, when the rest stage falls back to a count-up.
    */
   restSec: number | null;
+  /** Where {@link restSec} came from, so a derived rest never reads as coach-set. Null with it. */
+  restBasis: RestBasisModel | null;
   /** Prescribed set count. Null until `targetSets` reaches the view (VW-42). */
   plannedSets: number | null;
   /**
@@ -219,6 +223,9 @@ export interface SessionModel {
    */
   sessionPace: SessionPaceView | null;
 }
+
+/** The provenance of a resolved rest (VW-441), from the snapshot's `rest`. */
+export type RestBasisModel = Pick<ResolvedRest, 'source' | 'intent' | 'extensionSeconds'>;
 
 /**
  * A coarse connection read-out folded from the device snapshot (VW-68) — enough for the idle

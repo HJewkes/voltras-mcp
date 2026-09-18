@@ -43,6 +43,7 @@ import {
   type LiveModel,
   type PlannedExerciseModel,
   type RepModel,
+  type RestBasisModel,
   type SessionModel,
 } from '../live-page/model';
 import { type MassUnit } from '../live-page/mass';
@@ -259,6 +260,12 @@ function resolveExerciseName(snapshot: Snapshot, plannedExercises: PlannedExerci
   return `Exercise ${activeIdx >= 0 ? activeIdx + 1 : 1}`;
 }
 
+/** The resolved rest's provenance, without the reps-to-threshold working the server kept. */
+function mapRestBasis(rest: Snapshot['rest']): RestBasisModel | null {
+  if (rest == null) return null;
+  return { source: rest.source, intent: rest.intent, extensionSeconds: rest.extensionSeconds };
+}
+
 /** The session read-model. */
 function mapSession(
   snapshot: Snapshot,
@@ -296,8 +303,9 @@ function mapSession(
       .filter(isRealCompletedSet),
     // The full ordered planned-exercise list (VW-49) — empty without a plan.
     plannedExercises,
-    // Prescribed inter-set rest (VW-51); null when the coach left it unset or no plan.
-    restSec: prescription?.restSec ?? null,
+    // Resolved rest (VW-441): the plan's, else the goal default; null with no session.
+    restSec: snapshot.rest?.seconds ?? null,
+    restBasis: mapRestBasis(snapshot.rest),
     // Null when the session carries no plan attachment at all — the view then hides the
     // set count rather than implying a one-set prescription.
     plannedSets: prescription?.sets ?? null,
