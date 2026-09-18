@@ -937,3 +937,185 @@ describe('the in-frame band against numbers accepted through the tools (VW-449)'
     expect(last.low).toBeLessThan(target.committedValue);
   });
 });
+
+describe('the recalibration offer (VW-444 part 2)', () => {
+  let harness: Harness;
+  let ramp: Record<string, unknown>;
+
+  interface Offer {
+    decisionId: string;
+    targetId: string;
+    offerTargetId: string;
+    acceptedCommittedValue: number;
+    committedValue: number;
+    infoLevel: string;
+    startMeasuredAt: string;
+    endsAt: string;
+  }
+
+  /** A starting ramp accepted cold off one session, then a second session and an anchor that calibrate it. */
+  beforeEach(async () => {
+    harness = setup();
+    await seedLiftHistory(harness.store, { sessionCount: 1, weightLbs: 135, reps: 8 });
+    const proposed = await proposeFirstTarget(harness, await declareLift(harness));
+    const accepted = await harness.invoke('goal.accept_target', { targetId: proposed.targetId });
+    ramp = accepted.target as Record<string, unknown>;
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+  });
+
+  async function offers(tool = 'goal.propose_targets'): Promise<Offer[]> {
+    const args = tool === 'goal.propose_targets' ? { priorityId: ramp.priorityId } : {};
+    const result = await harness.invoke(tool, args);
+    return result.recalibrationOffers as Offer[];
+  }
+
+  async function decisions() {
+    return harness.store.listAdvisoryDecisions(LOCAL_USER_ID, {
+      code: 'goal_calibrated_reproposal',
+    });
+  }
+
+  async function rows(): Promise<Record<string, unknown>[]> {
+    const listed = await harness.invoke('goal.list', { includeRetired: true });
+    return (listed.priorities as { targets: Record<string, unknown>[] }[])[0].targets;
+  }
+
+  /** The newest session's sets become warm-ups, so the lift is back under two matched sessions. */
+  async function loseASession(): Promise<void> {
+    for (const suffix of ['a', 'b']) {
+      const id = `bench-press-set-1${suffix}`;
+      await harness.store.putSet({
+        id,
+        sessionId: 'bench-press-sess-1',
+        userId: LOCAL_USER_ID,
+        exerciseId: 'bench-press',
+        startedAt: daysAgo(7),
+        endedAt: daysAgo(7),
+        partial: false,
+        weightLbs: 135,
+        setPurpose: 'warmup',
+        reps: makeReps(id, 8),
+      });
+    }
+  }
+
+  it('offers a data-based target inside the accepted ramp’s own block, and records it', async () => {
+    const [offer] = await offers();
+
+    expect(offer).toMatchObject({
+      targetId: ramp.id,
+      acceptedCommittedValue: ramp.committedValue,
+      infoLevel: 'ramp',
+      startMeasuredAt: ramp.startMeasuredAt,
+      endsAt: ramp.endsAt,
+    });
+    const [decision] = await decisions();
+    expect(decision.inputs).toEqual({
+      targetId: ramp.id,
+      offerTargetId: offer.offerTargetId,
+      committedValue: offer.committedValue,
+      stretchValue: expect.any(Number),
+    });
+    expect(decision.userResponse).toBeUndefined();
+  });
+
+  it('makes no offer while the lift is still calibrating', async () => {
+    await loseASession();
+
+    expect(await offers()).toEqual([]);
+    expect(await decisions()).toEqual([]);
+  });
+
+  it('refreshes the one open offer rather than stacking a second, from the Sunday review too', async () => {
+    const [first] = await offers();
+    const [again] = await offers('goal.weekly_review');
+
+    expect(again.offerTargetId).toBe(first.offerTargetId);
+    expect(await decisions()).toHaveLength(1);
+  });
+
+  it('accepts the offer by retiring the ramp, never by editing it, and keeps the block', async () => {
+    const [offer] = await offers();
+    const accepted = await harness.invoke('goal.accept_target', { targetId: offer.offerTargetId });
+
+    expect(accepted.recalibration).toEqual({
+      decisionId: offer.decisionId,
+      supersededTargetId: ramp.id,
+    });
+    const all = await rows();
+    const old = all.find((row) => row.id === ramp.id);
+    expect(old).toMatchObject({
+      committedValue: ramp.committedValue,
+      stretchValue: ramp.stretchValue,
+      outcome: 'abandoned',
+    });
+    expect(old?.retiredAt).toBeDefined();
+    expect(accepted.target).toMatchObject({
+      startMeasuredAt: ramp.startMeasuredAt,
+      endsAt: ramp.endsAt,
+      startValue: ramp.startValue,
+      acceptedBy: 'coach-default',
+    });
+    const [decision] = await decisions();
+    expect(decision.userResponse).toBe('accepted');
+    expect(decision.inputs.newTargetId).toBe(offer.offerTargetId);
+  });
+
+  it('records a decline, keeps the ramp as it was, and does not offer again this block', async () => {
+    const [offer] = await offers();
+    const retired = await harness.invoke('goal.retire', {
+      targetId: offer.offerTargetId,
+      outcome: 'abandoned',
+    });
+
+    expect(retired.declinedOffer).toBe(true);
+    expect((await decisions())[0].userResponse).toBe('declined');
+    expect(await offers()).toEqual([]);
+    expect(await offers('goal.weekly_review')).toEqual([]);
+    const kept = (await rows()).find((row) => row.id === ramp.id);
+    expect(kept).toMatchObject({
+      committedValue: ramp.committedValue,
+      acceptedBy: 'coach-default',
+    });
+    expect(kept?.retiredAt).toBeUndefined();
+  });
+
+  it('withdraws an unanswered offer when the evidence goes backwards', async () => {
+    const [offer] = await offers();
+    await loseASession();
+
+    expect(await offers()).toEqual([]);
+    const [decision] = await decisions();
+    expect(decision.userResponse).toBe('ignored');
+    expect(decision.inputs.withdrawnAt).toEqual(expect.any(String));
+    expect((await rows()).find((row) => row.id === offer.offerTargetId)?.retiredAt).toBeDefined();
+  });
+
+  it('refuses to accept an offer whose evidence went backwards, and leaves the ramp standing', async () => {
+    const [offer] = await offers();
+    await loseASession();
+
+    const error = await harness.expectError('goal.accept_target', {
+      targetId: offer.offerTargetId,
+    });
+
+    expect(error.code).toBe('GOAL_RECALIBRATION_WITHDRAWN');
+    const kept = (await rows()).find((row) => row.id === ramp.id);
+    expect(kept?.retiredAt).toBeUndefined();
+  });
+
+  it('never re-offers the declined row as "a declined proposal" once the ramp is retired', async () => {
+    const [offer] = await offers();
+    await harness.invoke('goal.retire', { targetId: offer.offerTargetId, outcome: 'abandoned' });
+    await harness.invoke('goal.retire', { targetId: ramp.id, outcome: 'missed' });
+
+    const proposed = await harness.invoke('goal.propose_targets', { priorityId: ramp.priorityId });
+
+    expect(proposed.targets).toHaveLength(1);
+  });
+});

@@ -67,6 +67,7 @@ import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
 import {
   GOAL_BAND_CONSTANTS,
   calibrationGapOf,
+  isStartingRamp,
   type CalibrationBlocker,
   type CalibrationGap,
   type GoalBand,
@@ -226,6 +227,15 @@ export interface GoalCalibrationView {
   targetInfoLevel: StoredGoalInfoLevel;
 }
 
+/**
+ * An accepted starting ramp whose lift has since calibrated (VW-444 part 2).
+ * `offered` while a data-based target is on offer, `kept_starting_ramp` once the
+ * lifter declined it for this block. The accepted number is never edited.
+ */
+export interface GoalRecalibrationView {
+  state: 'offered' | 'kept_starting_ramp';
+}
+
 export interface GoalProgressInput {
   priority: StoredPriority;
   target: StoredGoalTarget;
@@ -233,6 +243,8 @@ export interface GoalProgressInput {
   band: GoalBand;
   /** What the band was derived from; the source of a calibrating view's shortfall. */
   calibrationEvidence: GoalCalibrationEvidence;
+  /** The lifter declined this target's recalibration offer (an `advisory_decisions` answer). */
+  recalibrationDeclined?: boolean;
   actuals: readonly GoalActual[];
   weeks: readonly GoalBandWeek[];
   /** ISO instant the view is being built for. The model never reads the clock itself. */
@@ -302,6 +314,8 @@ export interface GoalProgressView {
   statusBasis: string;
   /** Present only while `status` is `calibrating` for a lift; absent for every other status. */
   calibration?: GoalCalibrationView;
+  /** Present only for an accepted starting ramp whose lift has calibrated since. */
+  recalibration?: GoalRecalibrationView;
   /**
    * Present and `null` for a muscle priority, absent for a lift: corroboration
    * is a claim across a priority's lifts, so `buildPriorityRollup` decides it.
@@ -351,6 +365,7 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
   const advisory = advisoryFor(status, reading);
   const confounder = confounderFor(status, input.fatigue);
   const praise = praiseFor(status, reading);
+  const recalibration = recalibrationOf(input);
   return {
     priority: input.priority,
     target: input.target,
@@ -362,6 +377,7 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     status,
     statusBasis,
     ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
+    ...(recalibration === undefined ? {} : { recalibration }),
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
     nextMilestone: nextMilestoneOf(reading),
     mesoMilestone: mesoMilestoneOf({
@@ -603,6 +619,18 @@ function calibratingRead(reading: Reading): StatusRead | undefined {
       'is judged against the band (rp:rp-s7-like-vs-like-progress-comparison-rule).',
     gap,
   };
+}
+
+/** Evidence going backwards closes a gate again, and with it the offer: no state is latched. */
+function recalibrationOf(input: GoalProgressInput): GoalRecalibrationView | undefined {
+  const { target, calibrationEvidence: evidence } = input;
+  if (target.acceptedBy === undefined || !isStartingRamp(target.metric, target.infoLevel)) {
+    return undefined;
+  }
+  if (calibrationGapOf(evidence.matchedSessionCount, evidence.baselineState) !== null) {
+    return undefined;
+  }
+  return { state: input.recalibrationDeclined === true ? 'kept_starting_ramp' : 'offered' };
 }
 
 function calibrationViewOf(gap: CalibrationGap, input: GoalProgressInput): GoalCalibrationView {

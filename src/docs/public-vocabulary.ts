@@ -469,6 +469,16 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'blockedBy',
   'baselineState',
   'reProposeAfterCalibration',
+  // VW-444 part 2: the recalibration offer on `goal.propose_targets`,
+  // `goal.weekly_review`, `goal.accept_target` and `goal.retire`.
+  'recalibrationOffers',
+  'offerTargetId',
+  'acceptedCommittedValue',
+  'recalibration',
+  'supersededTargetId',
+  'decisionId',
+  'declinedOffer',
+  'GOAL_RECALIBRATION_WITHDRAWN',
   // VW-359: the block-boundary re-ask on `blockBoundary`.
   'realignment',
   'warningsIfChanged',

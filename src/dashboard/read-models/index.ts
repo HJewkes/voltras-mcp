@@ -101,6 +101,7 @@ export {
   type GoalProgressInput,
   type GoalProgressStatus,
   type GoalProgressView,
+  type GoalRecalibrationView,
   type PriorityRollupView,
 } from './goal-progress.js';
 export {

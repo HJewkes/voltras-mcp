@@ -41,6 +41,7 @@ import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scop
 import {
   LOCAL_USER_ID,
   type SessionStore,
+  type StoredGoalTarget,
   type StoredRep,
   type StoredSet,
 } from '../store/types.js';
@@ -49,6 +50,10 @@ import {
   type GoalDerivationContext,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
+import {
+  RECALIBRATION_OFFER_CODE,
+  RECALIBRATION_OFFER_VERSION,
+} from '../tools/goal-recalibration.js';
 import type { CaptureScenarioName } from './capture-shots.js';
 
 /** The pages `npm run dashboard:preview -- <page>` can open. */
@@ -104,6 +109,8 @@ const SETS_PER_SESSION = 3;
 
 export type GoalPreviewStateName =
   | 'calibrating'
+  | 'recalibration_offered'
+  | 'recalibration_declined'
   | 'on_track'
   | 'fast_climb'
   | 'behind'
@@ -142,6 +149,11 @@ export interface GoalPreviewState {
    * calibration: the execution ramp at `cold`, committed equal to stretch.
    */
   readonly acceptedCold?: boolean;
+  /**
+   * The lifter's recorded answer to the recalibration offer on this target
+   * (VW-444 part 2), written as `goal.retire` on the offer row records it.
+   */
+  readonly recalibrationAnswer?: 'declined';
 }
 
 export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
@@ -152,6 +164,25 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     weeklyLoadsLbs: [100],
     targetStartWeeksAgo: 4,
     acceptedCold: true,
+  },
+  {
+    name: 'recalibration_offered',
+    expectedStatus: 'on_track',
+    summary:
+      'A starting ramp accepted cold, and five weeks of history since: calibrated, so a target ' +
+      'based on the lifts is on offer.',
+    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    targetStartWeeksAgo: 4,
+    acceptedCold: true,
+  },
+  {
+    name: 'recalibration_declined',
+    expectedStatus: 'on_track',
+    summary: 'The same calibrated starting ramp, after the lifter declined the offer.',
+    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    targetStartWeeksAgo: 4,
+    acceptedCold: true,
+    recalibrationAnswer: 'declined',
   },
   {
     name: 'on_track',
@@ -216,7 +247,13 @@ export function goalPreviewState(name: string): GoalPreviewState {
 /** The store slice the seed writes through. Every write is a public store method. */
 export type GoalPreviewStore = Pick<
   SessionStore,
-  'putSession' | 'putSet' | 'putPriority' | 'putGoalTarget' | 'reharvestExercise' | 'recalcBaseline'
+  | 'putSession'
+  | 'putSet'
+  | 'putPriority'
+  | 'putGoalTarget'
+  | 'reharvestExercise'
+  | 'recalcBaseline'
+  | 'putAdvisoryDecision'
 > &
   GoalDerivationState['store'];
 
@@ -248,12 +285,37 @@ export async function seedGoalPreview(
   const priority = await store.putPriority(priorityRow(now));
   const context = await readDerivationContext({ store }, priority);
   const target = await store.putGoalTarget(targetRow(state, now, context));
+  if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, target, now);
   return {
     priorityId: priority.id,
     targetId: target.id,
     ...written,
     baselineState: baseline.state,
   };
+}
+
+/** The lifter's "no" to the recalibration offer, as `goal.retire` on the offer row records it. */
+async function seedDeclinedOffer(
+  store: GoalPreviewStore,
+  target: StoredGoalTarget,
+  now: Date,
+): Promise<void> {
+  await store.putAdvisoryDecision({
+    userId: LOCAL_USER_ID,
+    code: RECALIBRATION_OFFER_CODE,
+    issuedAt: now.toISOString(),
+    inputs: {
+      targetId: target.id,
+      offerTargetId: 'preview-goal-offer',
+      committedValue: target.committedValue,
+      stretchValue: target.stretchValue,
+    },
+    thresholds: {},
+    algorithmVersion: RECALIBRATION_OFFER_VERSION,
+    verdict: 'recalibrated_target_offered',
+    userResponse: 'declined',
+    respondedAt: now.toISOString(),
+  });
 }
 
 /**

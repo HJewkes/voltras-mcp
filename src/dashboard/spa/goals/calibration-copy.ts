@@ -8,7 +8,11 @@
  * the band arrives with history. A baseline blocker names what it waits on and
  * never a count, because the baseline has no count the view can promise.
  */
-import type { GoalCalibrationView } from '../../read-models/index.js';
+import type {
+  GoalCalibrationView,
+  GoalProgressView,
+  GoalRecalibrationView,
+} from '../../read-models/index.js';
 
 export interface CalibrationCopy {
   sentence: string;
@@ -46,4 +50,19 @@ function sessionCount(needed: number): string {
 /** COLD waits on enough working sets to read the lift's rep pattern; SHAPE_ONLY waits on a set near failure. */
 function baselineNeed(state: GoalCalibrationView['baselineState']): string {
   return state === 'COLD' ? 'more working sets of this lift' : 'a set taken near failure';
+}
+
+/** An accepted starting ramp whose lift has calibrated since (VW-444 part 2). */
+export function recalibrationSentence(recalibration: GoalRecalibrationView): string {
+  return recalibration.state === 'offered'
+    ? 'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready. ' +
+        'Ask your coach.'
+    : 'Calibrated; you kept the starting ramp.';
+}
+
+/** The one line a card carries about calibration, or `null` when it has nothing to say. */
+export function calibrationLine(view: GoalProgressView): string | null {
+  if (view.calibration !== undefined) return calibrationCopy(view.calibration).sentence;
+  if (view.recalibration !== undefined) return recalibrationSentence(view.recalibration);
+  return null;
 }

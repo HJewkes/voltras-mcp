@@ -46,6 +46,7 @@ import {
 import type { ServerState } from '../state/server-state.js';
 import {
   LOCAL_USER_ID,
+  type StoredAdvisoryDecision,
   type StoredGoalTarget,
   type StoredPriority,
   type StoredPriorityLevel,
@@ -78,6 +79,16 @@ import {
   GOAL_WEEKLY_REVIEW_DESCRIPTION,
 } from './goal-descriptions.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
+import {
+  checkOffer,
+  completeOffer,
+  declineOfferFor,
+  findOpenOffer,
+  listOfferDecisions,
+  offerRowIds,
+  reconcileRecalibrationOffers,
+  type RecalibrationOffer,
+} from './goal-recalibration.js';
 import {
   acceptedStartingRamp,
   proposedStartingRamp,
@@ -155,7 +166,10 @@ export function registerGoalTools(
     placeholders,
     'goal.weekly_review',
     GoalWeeklyReviewInput,
-    wrapHandler(GoalWeeklyReviewInput, (input) => runWeeklyReview(state, input)),
+    wrapHandler(GoalWeeklyReviewInput, async (input) => ({
+      ...(await runWeeklyReview(state, input)),
+      recalibrationOffers: await reconcileRecalibrationOffers(state),
+    })),
     GOAL_WEEKLY_REVIEW_DESCRIPTION,
   );
 }
@@ -348,6 +362,8 @@ export interface ProposeTargetsResult {
   selections: GoalMetricSelection[];
   horizonWeeks: number;
   notes: string[];
+  /** Calibrated starting ramps under this priority, each with its data-based offer (VW-444). */
+  recalibrationOffers: RecalibrationOffer[];
 }
 
 /** A primary leg that would be stored, with everything the writer needs. */
@@ -368,6 +384,8 @@ export interface GoalTargetPreview {
   derivation: GoalDerivationContext;
   /** Rows this preview was blocked against; a writer reuses their ids. */
   stored: readonly StoredGoalTarget[];
+  /** Proposal rows written by a recalibration offer: answers, never a declined leg. */
+  offerRows: ReadonlySet<string>;
 }
 
 /**
@@ -395,6 +413,7 @@ export async function previewTargets(
       { priorityId: priority.id },
       { includeRetired: true },
     ),
+    offerRows: offerRowIds(await listOfferDecisions(state.store)),
   };
   for (const selection of preview.selections) {
     if (selection.kind !== 'gain') continue;
@@ -408,7 +427,7 @@ async function addPreviewLeg(
   preview: GoalTargetPreview,
   selection: GoalGainMetric,
 ): Promise<void> {
-  const blocked = blockingRow(preview.stored, selection);
+  const blocked = blockingRow(preview.stored, selection, preview.offerRows);
   if (blocked !== null) {
     preview.skipped.push(blocked);
     return;
@@ -452,6 +471,7 @@ async function proposeTargets(
     selections: preview.selections,
     horizonWeeks: preview.horizonWeeks,
     notes: preview.notes,
+    recalibrationOffers: await reconcileRecalibrationOffers(state, [priority.id]),
   };
 }
 
@@ -475,8 +495,9 @@ async function chapterStamp(state: ServerState, derived: DerivedTarget): Promise
 function blockingRow(
   stored: readonly StoredGoalTarget[],
   selection: GoalGainMetric,
+  offerRows: ReadonlySet<string>,
 ): SkippedMetric | null {
-  const matching = stored.filter((row) => sameLeg(row, selection));
+  const matching = stored.filter((row) => sameLeg(row, selection) && !offerRows.has(row.id));
   const accepted = matching.find(
     (row) => row.acceptedBy !== undefined && row.retiredAt === undefined,
   );
@@ -592,6 +613,8 @@ export interface AcceptTargetResult {
   note: string;
   /** A cold lift target: the generic starting ramp, re-proposed after calibration (VW-444). */
   startingRamp?: StartingRampNotice;
+  /** Present when this acceptance answered a recalibration offer: the ramp it retired. */
+  recalibration?: { decisionId: string; supersededTargetId: string };
 }
 
 async function acceptTarget(
@@ -601,6 +624,7 @@ async function acceptTarget(
   const target = await findTarget(state, input.targetId);
   assertAcceptable(target);
   assertAnchorLoadApplies(target, input.anchorLoad);
+  const offer = await liveOffer(state, target);
   const committed = input.committedValue ?? target.committedValue;
   const stretch = input.stretchValue ?? target.stretchValue;
   const custom = input.committedValue !== undefined || input.stretchValue !== undefined;
@@ -613,6 +637,12 @@ async function acceptTarget(
     acceptedBy: custom ? 'user' : 'coach-default',
     acknowledgedStretch: outside,
   });
+  if (offer === undefined) return acceptedResult(saved);
+  const supersededTargetId = await completeOffer(state, offer, saved.id);
+  return { ...acceptedResult(saved), recalibration: { decisionId: offer.id, supersededTargetId } };
+}
+
+function acceptedResult(saved: StoredGoalTarget): AcceptTargetResult {
   const startingRamp = acceptedStartingRamp(saved);
   return {
     target: saved,
@@ -625,6 +655,28 @@ async function acceptTarget(
       'accepting a value past its edge never re-draws the projection to match (B55).',
     ...(startingRamp === undefined ? {} : { startingRamp }),
   };
+}
+
+/**
+ * The open recalibration offer this row answers, re-checked now (VW-444). An
+ * offer whose evidence went backwards is withdrawn and refused rather than
+ * accepted on stale calibration; one whose starting ramp is already gone is
+ * accepted as an ordinary proposal.
+ */
+async function liveOffer(
+  state: ServerState,
+  target: StoredGoalTarget,
+): Promise<StoredAdvisoryDecision | undefined> {
+  const open = await findOpenOffer(state, target.id);
+  if (open === undefined) return undefined;
+  const check = await checkOffer(state, open, target);
+  if (check === 'live') return open;
+  if (check === 'orphaned') return undefined;
+  throw new ToolError(
+    'GOAL_RECALIBRATION_WITHDRAWN',
+    `The recalibration offer ${target.id} was withdrawn: the lift is no longer calibrated, so ` +
+      'the accepted starting ramp stays. It is offered again once calibration returns.',
+  );
 }
 
 function assertAcceptable(target: StoredGoalTarget): void {
@@ -727,6 +779,8 @@ export interface RetireGoalResult {
   priority: StoredPriority | null;
   targets: StoredGoalTarget[];
   cascaded: number;
+  /** True when the retired row was an open recalibration offer, now recorded as declined (VW-444). */
+  declinedOffer?: boolean;
 }
 
 async function retireGoal(
@@ -744,7 +798,8 @@ async function retireGoal(
   if (input.targetId !== undefined) {
     const target = await state.store.retireGoalTarget(input.targetId, input.outcome, retiredAt);
     if (target === undefined) throw notFound('goal target', input.targetId);
-    return { priority: null, targets: [target], cascaded: 0 };
+    const declinedOffer = await declineOfferFor(state, target.id);
+    return { priority: null, targets: [target], cascaded: 0, declinedOffer };
   }
   const priorityId = input.priorityId as string;
   const priority = await state.store.retirePriority(priorityId, retiredAt);

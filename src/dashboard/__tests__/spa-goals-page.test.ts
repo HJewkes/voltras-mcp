@@ -358,3 +358,34 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     expect(render(baseData().data)).not.toContain('to calibrate');
   });
 });
+
+describe('a calibrated starting ramp (VW-444 part 2)', () => {
+  function rampData(declined: boolean): GoalsPageData {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const ramp = buildGoalProgressView({
+      priority: benchPriority,
+      target: { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      band: BAND,
+      calibrationEvidence: { matchedSessionCount: 3, baselineState: 'PROVISIONAL' },
+      recalibrationDeclined: declined,
+      actuals: [actual(1, 168), actual(2, 171), actual(3, 174)],
+      weeks: WEEKS,
+      now: WEEK_3,
+      dietState: { phase: 'maintenance', weeksInPhase: 4 },
+    });
+    data.progress[benchPriority.id] = [ramp];
+    return data;
+  }
+
+  it('says a target based on the lifts is ready under the card', () => {
+    expect(render(rampData(false))).toContain('a target based on your lifts is ready');
+  });
+
+  it('says the ramp was kept once the lifter declined', () => {
+    const html = render(rampData(true));
+
+    expect(html).toContain('Calibrated; you kept the starting ramp.');
+    expect(html).not.toContain('is ready');
+  });
+});

@@ -101,6 +101,14 @@ describe('dashboard:preview goal states', () => {
     });
   });
 
+  it('lands the two recalibration states on their page lines (VW-444 part 2)', async () => {
+    const offered = await viewFor(goalPreviewState('recalibration_offered'));
+    const declined = await viewFor(goalPreviewState('recalibration_declined'));
+
+    expect(offered.recalibration).toEqual({ state: 'offered' });
+    expect(declined.recalibration).toEqual({ state: 'kept_starting_ramp' });
+  });
+
   it('keeps the ahead reading short of the committed target, so pace is what it shows', async () => {
     const view = await viewFor(goalPreviewState('ahead'));
 

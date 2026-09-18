@@ -47,7 +47,7 @@ import { PanelCard, PANEL_GAP } from '../planner/PanelCard.js';
 import { SPACE } from '../planner/design.js';
 import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
-import { calibrationCopy } from './calibration-copy.js';
+import { calibrationLine } from './calibration-copy.js';
 import {
   bodyweightTarget,
   cardChart,
@@ -111,21 +111,22 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
 }
 
 /**
- * A calibrating target's plain sentence under its card (VW-444). It stands in
- * until titan's chart takes the same copy as `calibratingNote` (titan #262);
- * every other status renders the card alone, with no wrapper.
+ * A calibrating target's plain sentence under its card (VW-444), or the line
+ * an accepted starting ramp carries once its lift has calibrated. The first
+ * stands in until titan's chart takes the same copy as `calibratingNote`
+ * (titan #262); a card with nothing to say renders alone, with no wrapper.
  */
 function WithCalibrationNote(props: {
   view: GoalTargetRow['view'];
   children: React.JSX.Element;
 }): React.JSX.Element {
   const color = useOnSurfaceColor('secondary');
-  const calibration = props.view.calibration;
-  if (calibration === undefined) return props.children;
+  const line = calibrationLine(props.view);
+  if (line === null) return props.children;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SPACE.xs }}>
       {props.children}
-      <Text style={{ color, fontSize: 14 }}>{calibrationCopy(calibration).sentence}</Text>
+      <Text style={{ color, fontSize: 14 }}>{line}</Text>
     </div>
   );
 }
