@@ -139,8 +139,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 290073,
-      "sha256": "b89ac1eecf0330c1fa9695e90530ff2a3d8447481570416f718650c0b51250f4"
+      "bytes": 289614,
+      "sha256": "fbe923688167815da98b41d57e47cb44ef22e3c2f3ebf8fac342e75c9bf2b5a6"
     },
     {
       "name": "goals",
@@ -161,8 +161,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 70978,
-      "sha256": "fb623b7cbef105dbfa2be0583cde7e8dbbcdd9b8b8616a9fa6f0b18089d8d8f2"
+      "bytes": 70599,
+      "sha256": "79554f6d88c003773b3273631b6a5fe1812e1fb795d4317ec5a90dd28ce358bd"
     },
     {
       "name": "goals-phone",
@@ -183,8 +183,8 @@
       ],
       "width": 390,
       "height": 844,
-      "bytes": 43086,
-      "sha256": "093ae0e5be4d65d9bfa678fa4bc9545049389b3d01c809c5d435aed26c180dd3"
+      "bytes": 44750,
+      "sha256": "2873d756445c8d54d9598080fe1e93a778664dc47a2ac64be2906d6b467e051a"
     },
     {
       "name": "body-week",
@@ -207,8 +207,8 @@
       ],
       "width": 1920,
       "height": 1080,
-      "bytes": 201657,
-      "sha256": "495a9519c2e9b05b062f5517aebcd8bd2366a4f3024218deb6b303f8af43229b"
+      "bytes": 200752,
+      "sha256": "3c621e2eee44951e7013a2079aa4e230a05f8da134ae4c262a2584a1f07ffe51"
     }
   ],
   "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",
