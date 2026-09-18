@@ -110,7 +110,8 @@ entry is written from the user's point of view is a review question, not a check
   velocity loss at all (only on a form breakdown), and the dual stage and rest recap went red at
   30% for every goal. A form breakdown (a range-of-motion or dropped-negative alarm) still stops
   the set. From two thirds of the stop (13.3% strength, 20% hypertrophy, 6.7% power) the
-  stage reads amber, so every goal gets a warning before the red. The rest recap's Fatigue tile uses
+  stage reads amber, so every goal gets a warning before the red; a range-of-motion or tempo
+  warning also reads amber. The rest recap's Fatigue tile uses
   the same rule and now also reflects range-of-motion and tempo breakdown (VW-440).
 - `timer.start` with no `durationMs` now uses the plan's rest for the current exercise when
   the coach set one. It used to ignore it and take the training-goal default (150 s strength,

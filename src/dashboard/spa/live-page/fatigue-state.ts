@@ -6,8 +6,8 @@
  * the exercise's plan intent, else the named default), so the wall turns red when the
  * server's `velocity_loss_exceeded` fires. WA's combined verdict also stops a set on form
  * breakdown (a ROM or eccentric alarm, titan's `auraForVerdict` rule). The approaching band
- * starts at the stop's second colour edge (`stop.bands[1]`, server-resolved, VW-448), or on
- * any other non-ok WA verdict tone.
+ * starts at the stop's second colour edge (`stop.bands[1]`, server-resolved, VW-448), the one
+ * source for velocity, or on a non-ok ROM or tempo light from WA's verdict.
  */
 import type { FatigueVerdict } from '@voltras/workout-analytics';
 
@@ -30,6 +30,8 @@ export function setFatigueState({ lossPct, stop, verdict }: SetFatigueInput): Fa
   if (lossPct !== null && lossPct >= stop.pct) return 'stop';
   if (verdict?.state === 'form-breakdown') return 'stop';
   if (lossPct !== null && lossPct >= stop.bands[1]) return 'threshold';
-  if (verdict != null && verdict.tone !== 'ok') return 'threshold';
+  if (verdict != null && (verdict.dimensions.rom !== 'ok' || verdict.dimensions.tempo !== 'ok')) {
+    return 'threshold';
+  }
   return 'productive';
 }

@@ -150,6 +150,42 @@ describe('setFatigueState across surfaces (VW-440)', () => {
     );
   });
 
+  it.each<[number, FatigueState]>([
+    [22, 'productive'],
+    [27, 'threshold'],
+    [40, 'stop'],
+  ])('a set watching an explicit 40%% stop reads %s%% loss as %s', (lossPct, expected) => {
+    const watch = {
+      notifyOn: [{ type: 'velocity_loss_exceeded', pct: 40, thresholdSource: 'explicit' as const }],
+    };
+    const model = modelFor('hypertrophy', closedSet(repsLosing(lossPct), watch), watch);
+    const recapSet = model.session.completedSets[0];
+
+    expect(setFatigueState({ lossPct, stop: model.live!.fatigueStop })).toBe(expected);
+    expect(
+      setFatigueState({ lossPct, stop: recapSet.fatigueStop, verdict: recapSet.fatigueVerdict }),
+    ).toBe(expected);
+  });
+
+  it("ignores the WA verdict's own velocity light; the bands own velocity", () => {
+    const velocityOnly: FatigueVerdict = {
+      state: 'slowing',
+      tone: 'warn',
+      dimensions: { velocityLoss: 'warn', rom: 'ok', tempo: 'ok' },
+    };
+
+    expect(
+      setFatigueState({ lossPct: 22, stop: exerciseFatigueStop(undefined), verdict: velocityOnly }),
+    ).toBe('threshold');
+    expect(
+      setFatigueState({
+        lossPct: 22,
+        stop: { ...exerciseFatigueStop(undefined), pct: 40, bands: [13.3, 26.7, 40] },
+        verdict: velocityOnly,
+      }),
+    ).toBe('productive');
+  });
+
   it("stops a set on WA's form breakdown even under the velocity threshold", () => {
     const breakdown: FatigueVerdict = {
       state: 'form-breakdown',
@@ -171,6 +207,13 @@ describe('setFatigueState across surfaces (VW-440)', () => {
 
     expect(
       setFatigueState({ lossPct: 5, stop: exerciseFatigueStop('hypertrophy'), verdict: slowing }),
+    ).toBe('threshold');
+    const shortRom: FatigueVerdict = {
+      ...slowing,
+      dimensions: { velocityLoss: 'ok', rom: 'warn', tempo: 'ok' },
+    };
+    expect(
+      setFatigueState({ lossPct: 5, stop: exerciseFatigueStop('hypertrophy'), verdict: shortRom }),
     ).toBe('threshold');
   });
 });
