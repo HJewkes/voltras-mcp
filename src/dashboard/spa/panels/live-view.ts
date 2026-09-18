@@ -211,7 +211,7 @@ function mapLive(
 }
 
 /** The active exercise's stop for sets with no watch threshold; the server's named default on an older snapshot. */
-function exerciseStopOf(snapshot: Snapshot): FatigueStop {
+export function exerciseStopOf(snapshot: Snapshot): FatigueStop {
   return snapshot.fatigueStop ?? exerciseFatigueStop(undefined);
 }
 

@@ -51,8 +51,9 @@ entry is written from the user's point of view is a review question, not a check
 - A set in progress or a rest countdown now stays in view on every dashboard page, not just
   the live one. A one-row strip above the page shows the exercise, set n of m, the rep count,
   the last rep's velocity with one bar per rep, and the rest seconds left; pressing it returns
-  to the live page. It appears only for a planned exercise, and a rest shows only when the plan
-  prescribes its length (VW-429, #448).
+  to the live page. It appears only for a planned exercise. Its rest counts down the same length
+  as the live page (the plan's, else the goal default), and it turns red at the same stop
+  (VW-429, #448; VW-440, VW-441).
 - A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
   the goals page reads "Starting ramp, not yet based on your lifts." followed by what
   calibration still waits on: "1 more comparable session to calibrate.", or a set taken near

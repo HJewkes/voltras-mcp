@@ -8,8 +8,8 @@
  * page cannot disagree about the same set. No new server state: every field here is
  * already on the snapshot, the prescription, or the client rest clock.
  *
- * Each provisional rule (zone source, fatigue cut, rest without a target, no plan) lives
- * in its own small function so a ruling on it is a one-function change.
+ * Each provisional rule (zone source, no plan) lives in its own small function so a
+ * ruling on it is a one-function change. Fatigue and rest are the live page's own rules.
  */
 import { categorizeVelocity, type VelocityZoneId } from '@voltras/workout-analytics';
 
@@ -19,12 +19,15 @@ import {
   activeCompletedSets,
   plannedRepCount,
   velocityLossPct,
-  verdictFromLoss,
+  type CompletedSet,
   type DashboardModel,
   type SessionModel,
 } from '../live-page/model';
 import { formatMass, type MassUnit } from '../live-page/mass';
-import { mapStoreToDashboardModel, type LiveViewSources } from './live-view';
+import { setFatigueState, type SetFatigueInput } from '../live-page/fatigue-state';
+import { fatigueStopForSet } from '../../../state/velocity-loss-intent.js';
+import { mapStoreToFatigueModel } from './fatigue-view';
+import { exerciseStopOf, mapStoreToDashboardModel, type LiveViewSources } from './live-view';
 
 /** One performed rep on the strip: mean concentric velocity (m/s) and its analytics zone. */
 export interface LiveStripRepModel {
@@ -52,9 +55,24 @@ export function repZone(meanVelocityMps: number): VelocityZoneId {
   return categorizeVelocity(meanVelocityMps);
 }
 
-/** Red on the strip exactly when the live aura is red: the same call on the same loss. */
-export function isFatiguedFromLoss(lossPct: number | null): boolean {
-  return verdictFromLoss(lossPct) === 'stop';
+/** Red on the strip exactly when the live aura is red: the same rule on the same inputs. */
+export function isFatiguedFromLoss(input: SetFatigueInput): boolean {
+  return setFatigueState(input) === 'stop';
+}
+
+/** The open set's fatigue inputs, as the live stage reads them. */
+function liveSetFatigue(sources: LiveViewSources, lossPct: number | null): SetFatigueInput {
+  const snapshot = sources.snapshot!;
+  return {
+    lossPct,
+    stop: fatigueStopForSet(snapshot.sets.active?.watch, exerciseStopOf(snapshot)),
+    verdict: mapStoreToFatigueModel(sources)?.verdict ?? null,
+  };
+}
+
+/** A closed set's fatigue inputs, as the rest recap reads them. */
+function closedSetFatigue(set: CompletedSet): SetFatigueInput {
+  return { lossPct: velocityLossPct(set.reps), stop: set.fatigueStop, verdict: set.fatigueVerdict };
 }
 
 /** No plan means no honest "set n of m", so the strip hides rather than inventing a count. */
@@ -62,7 +80,7 @@ function plannedSetCount(session: SessionModel): number | null {
   return session.plannedSets;
 }
 
-/** Rest with no prescribed length has no countdown to show, so the strip hides. */
+/** The resolved rest (VW-441): the plan's, else the goal default; null only with no session. */
 function restDurationMs(session: SessionModel): number | null {
   return session.restSec === null ? null : session.restSec * 1000;
 }
@@ -96,7 +114,7 @@ function setStrip(
     loadLabel: loadLabel(session.weightLbs, unit),
     reps: stripReps(current.velocitiesMps),
     targetReps: plannedRepCount(session) ?? Math.max(current.reps, 1),
-    isFatigued: isFatiguedFromLoss(current.velocityLossPct),
+    isFatigued: isFatiguedFromLoss(liveSetFatigue(sources, current.velocityLossPct)),
   };
 }
 
@@ -119,7 +137,7 @@ function restStrip(model: DashboardModel, unit: MassUnit): LiveStripModel | null
     loadLabel: loadLabel(last?.weightLbs ?? session.weightLbs, unit),
     reps: stripReps(last?.reps ?? []),
     targetReps: plannedRepCount(session) ?? Math.max(last?.repCount ?? 0, 1),
-    isFatigued: isFatiguedFromLoss(velocityLossPct(last?.reps ?? [])),
+    isFatigued: last !== undefined && isFatiguedFromLoss(closedSetFatigue(last)),
     restRemainingMs: remainingMs,
     restDurationMs: durationMs,
   };
