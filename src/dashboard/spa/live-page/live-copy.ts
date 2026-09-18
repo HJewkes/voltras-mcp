@@ -37,5 +37,5 @@ export function restBasisCaption(basis: {
   if (basis.source === 'explicit_plan') return null;
   const base = basis.intent === null ? 'Default rest' : `Default rest for ${basis.intent}`;
   if (basis.source === 'intent_default') return base;
-  return `${base} +${basis.extensionSeconds} s: fewer reps than the set before`;
+  return `${base} +${basis.extensionSeconds} s`;
 }

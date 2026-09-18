@@ -84,7 +84,8 @@ describe('rest countdown (VW-441)', () => {
     });
 
     expect(text(html)).toContain('1:45');
-    expect(text(html)).toContain('Default rest for hypertrophy +30 s');
+    expect(text(html)).toContain('Default rest for hypertrophy +30 s ');
+    expect(text(html)).not.toContain('fewer reps');
   });
 
   it('counts up only when no rest resolved', () => {
