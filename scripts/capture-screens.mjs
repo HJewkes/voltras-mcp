@@ -60,14 +60,15 @@
 // so `npm ci` downloads no browser and CI stays untouched. Installing the
 // browser is a documented one-time manual step (see docs/screenshot-harness.md).
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
-import * as net from 'node:net';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+
+import { POLL_MS, getJson, sleep, startScenario } from './lib/dashboard-launch.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
@@ -75,8 +76,6 @@ const SPA_INDEX = path.join(REPO_ROOT, 'dist/spa/index.html');
 const DEFINITION = path.join(REPO_ROOT, 'dist/docs/capture-shots.js');
 const CLIP_DEFINITION = path.join(REPO_ROOT, 'dist/docs/capture-clips.js');
 
-/** How often the predicate re-reads `/api/snapshot`. Well under the SPA's own 2s poll. */
-const POLL_MS = 250;
 /**
  * Per-shot ceiling. The longest predicate (`sessions-ended`) waits out a whole
  * planned run — three exercises of two 12s sets with 10s rests, ~2 minutes — so
@@ -93,8 +92,6 @@ const PREDICATE_TIMEOUT_MS = 300_000;
  * wrong.
  */
 const TEXT_TIMEOUT_MS = 20_000;
-/** How long the dashboard sidecar gets to bind after the driver starts. */
-const DASHBOARD_BIND_TIMEOUT_MS = 60_000;
 /**
  * The wall clock every shot's page sees, fixed so the header clock and any
  * elapsed-time readout render the same text on every run. Only `Date.now()`/
@@ -102,16 +99,7 @@ const DASHBOARD_BIND_TIMEOUT_MS = 60_000;
  * firing, so the 2s snapshot poll and the live SSE stream are untouched.
  */
 const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
-/**
- * Connection-level `fetch` retries per snapshot read. Three at {@link POLL_MS}
- * apart covers the intermittent reject a heavily loaded machine produces without
- * masking a sidecar that has actually gone away — the predicate's own timeout
- * still expires on schedule.
- */
-const TRANSIENT_FETCH_RETRIES = 3;
-
 const log = (...args) => console.error('[capture]', ...args);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Refuse to silently replace a committed PNG with a DIFFERENT one on an
@@ -174,36 +162,7 @@ function narrow(all, name, otherName, label) {
   return picked;
 }
 
-/** An OS-assigned free port, released immediately before we hand it to a child. */
-function probeFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 // ── the running dashboard ──────────────────────────────────────────────────
-
-async function getJson(port, route) {
-  // A connection-level failure is retried; an HTTP status is not. On a loaded
-  // machine `fetch` to the sidecar intermittently rejects outright, and one of
-  // those used to abort a six-minute run several scenarios in. A 500 is a real
-  // answer from a server that is up, so retrying it would only hide it.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}${route}`);
-      if (!res.ok) throw new Error(`${route} -> ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      if (attempt >= TRANSIENT_FETCH_RETRIES || /^\S+ -> \d+$/.test(err.message)) throw err;
-      await sleep(POLL_MS);
-    }
-  }
-}
 
 /** Reps on one slot as the dashboard sees them (`devices[].sets.active`), or null. */
 function slotReps(snapshot, slot) {
@@ -799,88 +758,15 @@ async function captureClip(browser, clip, port, clipsDir, cfg, tmpDir, previous)
 }
 
 // ── scenarios ──────────────────────────────────────────────────────────────
+//
+// Launching one is `scripts/lib/dashboard-launch.mjs`' job — the same helper
+// `npm run dashboard:preview` boots a page with (VW-416). What stays here is
+// what a CAPTURE adds on top: the per-scenario `{port}` substitution lives with
+// the launcher, the predicates and the assertions live above.
 
-/** Minimal MCP handshake: the dashboard sidecar only binds once a client activates. */
-function handshake(child) {
-  const send = (msg) => child.stdin.write(JSON.stringify(msg) + '\n');
-  send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'capture-screens', version: '0.1.0' },
-    },
-  });
-  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}
-
-/**
- * Start a scenario and return `{ child, port, stop }`. `driver: null` boots the
- * server directly and holds the empty state indefinitely; a driver is spawned
- * detached so stopping it signals the whole group, including the MCP server it
- * owns as a grandchild.
- */
-async function startScenario(scenario, dbDir) {
-  const port = await probeFreePort();
-  const controlPort = await probeFreePort();
-  // One store per scenario: never shared, never `~/.voltras/vmcp.sqlite`.
-  const dbPath = path.join(dbDir, `${scenario.name}.sqlite`);
-  const substitute = (arg) =>
-    arg.replace('{port}', String(port)).replace('{controlPort}', String(controlPort));
-  const env = {
-    ...process.env,
-    VOLTRA_ADAPTER: 'mock',
-    VOLTRA_LOG_LEVEL: 'warn',
-    VMCP_DASHBOARD_PORT: String(port),
-    VMCP_DB_PATH: dbPath,
-  };
-
-  const child = scenario.driver
-    ? spawn(process.execPath, [scenario.driver, ...scenario.args.map(substitute)], {
-        cwd: REPO_ROOT,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
-      })
-    : spawn(process.execPath, [BIN_PATH], { cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let tail = '';
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.on('data', (chunk) => {
-      tail = (tail + chunk.toString()).slice(-4000);
-    });
-  }
-  if (!scenario.driver) handshake(child);
-
-  const deadline = Date.now() + DASHBOARD_BIND_TIMEOUT_MS;
-  for (;;) {
-    try {
-      await getJson(port, '/api/snapshot');
-      break;
-    } catch (err) {
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `${scenario.name}: dashboard never bound on :${port} (${err.message})\n${tail}`,
-        );
-      }
-      await sleep(POLL_MS);
-    }
-  }
-  log(`${scenario.name}: dashboard on :${port}`);
-
-  const stop = () => {
-    try {
-      if (scenario.driver) process.kill(-child.pid, 'SIGINT');
-      else child.stdin.end();
-    } catch {
-      // already gone
-    }
-    child.kill('SIGKILL');
-  };
-  return { port, stop, tail: () => tail };
-}
+/** Start one capture scenario, logging through this script's own prefix. */
+const startCaptureScenario = (scenario, dbDir) =>
+  startScenario(scenario, dbDir, { log, clientName: 'capture-screens' });
 
 // ── main ───────────────────────────────────────────────────────────────────
 
@@ -900,7 +786,7 @@ async function captureShots(browser, shots, defs, dbDir, outDir) {
   for (const scenario of defs.CAPTURE_SCENARIOS) {
     const wanted = shots.filter((s) => s.scenario === scenario.name);
     if (wanted.length === 0) continue;
-    const scene = await startScenario(scenario, dbDir);
+    const scene = await startCaptureScenario(scenario, dbDir);
     try {
       const origin = `http://127.0.0.1:${scene.port}`;
       for (const shot of wanted) {
@@ -925,7 +811,7 @@ async function captureClips(browser, clips, cfg, dbDir, clipsDir, tmpDir, previo
   for (const scenario of cfg.scenarios) {
     const wanted = clips.filter((c) => c.scenario === scenario.name);
     if (wanted.length === 0) continue;
-    const scene = await startScenario(scenario, dbDir);
+    const scene = await startCaptureScenario(scenario, dbDir);
     try {
       for (const clip of wanted) {
         const was = byName.get(clip.name);

@@ -9,6 +9,7 @@ interaction.
 | `src/docs/capture-shots.ts`           | The stills definition: shots, routes, viewport, predicates, assertions |
 | `src/docs/capture-clips.ts`           | The clips definition: clips, scenarios, video constants, narration     |
 | `scripts/lib/mock-burst.mjs`          | The determinism lever: exact rep bursts from a parked mock device      |
+| `scripts/lib/dashboard-launch.mjs`    | Booting one scenario: free port, scratch store, bind wait, stop        |
 | `scripts/capture-screens.mjs`         | The harness: boots a scenario, waits, captures, asserts, writes        |
 | `site/guides/*.narration.txt`         | The spoken scripts, beside the guides that embed the clips             |
 | `site/public/captures/*.png`          | The stills, served by VitePress at `/captures/…`                       |
@@ -338,6 +339,31 @@ and to both guides carrying the synthetic-narration notice and a link to the scr
 
 The clip definition has its **own** hash, separate from `captureDefinitionHash()`. Editing
 a clip must not invalidate six screenshots it never touched.
+
+## Watching a page instead of capturing it (VW-416)
+
+The same scenarios drive `npm run dashboard:preview`, which boots one of them and holds it
+open in a browser instead of screenshotting it — the way to look at a wall page without a
+Voltra or a PT session:
+
+```bash
+npm run dashboard:preview -- goals                  # #/goals, held until Ctrl-C
+npm run dashboard:preview -- goals --state behind   # …in a chosen goal state
+npm run dashboard:preview -- body                   # #/body, the capture's own seed
+npm run dashboard:preview -- plan                   # #/plan, the capture's own driver
+```
+
+`body` and `plan` reuse `CAPTURE_SCENARIOS` verbatim, so what you browse is what the
+published image was taken of. `goals` does not: a driven goal run can only ever land on
+`calibrating`, because a band with no baseline past `SHAPE_ONLY` is the execution ramp by
+construction. Its six `--state` seeds are defined in
+[`src/docs/preview-seeds.ts`](../src/docs/preview-seeds.ts) and the status each one reaches
+is pinned by `src/dashboard/__tests__/preview-seeds.test.ts`, so a read-model change that
+moved one shows up as a failing test rather than as a page that no longer shows what its
+flag says.
+
+The launcher is shared rather than copied: `scripts/lib/dashboard-launch.mjs` owns the free
+port, the scratch `VMCP_DB_PATH`, the MCP handshake and the bind wait for both commands.
 
 ## Isolation
 

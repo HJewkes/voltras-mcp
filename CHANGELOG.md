@@ -39,6 +39,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `npm run dashboard:preview -- goals` (also `body` and `plan`) opens one wall dashboard
+  page in a browser with no Voltra, no PT session and no risk to your training history: it
+  seeds a scratch store, boots a mock-adapter server over it on a free port, prints the URL
+  and holds it open until Ctrl-C, deleting the store on the way out (VW-416). The goals page
+  takes `--state calibrating|on_track|behind|ahead|hit_exact|beyond_goal`, which seeds the
+  readings that land the goal coach in that state — the statuses a driven mock run cannot
+  reach, because a band with no established baseline is always still calibrating (#440).
 - The dashboard has a fourth page: `#/body`, reached from the Body item on the nav rail,
   which has been in the rail's source since the shell landed and filtered out until now
   (VW-338). It shows the week at a glance on two body figures — front and back, each muscle

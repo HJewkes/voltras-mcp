@@ -65,6 +65,30 @@ node scripts/dashboard-mock-drive.mjs   # port 7724 — boots the real MCP serve
 
 ([README.md § Your first workout, Option B](https://github.com/HJewkes/voltras-mcp/blob/main/README.md#option-b-without-a-device))
 
+Both of those animate the live page. To browse one of the other wall pages — the goal
+coach, the body wall, the plan builder — `npm run dashboard:preview` seeds a scratch store,
+boots a mock-adapter server over it on a free port, prints the URL and holds it open until
+Ctrl-C. It runs the same scenarios the published screenshots on this site are captured from
+(`npm run docs:captures`), so what you browse is what the images were taken of:
+
+```bash
+npm run dashboard:preview -- goals                  # #/goals
+npm run dashboard:preview -- goals --state behind   # …with a chosen goal state
+npm run dashboard:preview -- body                   # #/body
+npm run dashboard:preview -- plan                   # #/plan
+```
+
+`--state` takes `calibrating`, `on_track`, `behind`, `ahead`, `hit_exact` or `beyond_goal`
+and seeds the readings that put the goal read model there; the scratch store is deleted on
+exit, and the real one at `~/.voltras/vmcp.sqlite` is never opened
+([docs/screenshot-harness.md](https://github.com/HJewkes/voltras-mcp/blob/main/docs/screenshot-harness.md)).
+
+That is the page the first command opens. This image is the published capture of it, taken
+from the harness's own driven goal run, which is why it reads `Calibrating` — one of the
+six states `--state` can seed:
+
+![The goal-coach wall page, with an accepted target and a personal record from the heavier set.](/captures/goals.png)
+
 That is what the wall dashboard looks like mid-set with a plan attached — no device
 involved, every number driven through the real tool pipeline against the mock adapter:
 
