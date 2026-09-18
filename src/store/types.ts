@@ -930,6 +930,8 @@ export interface StoredGoalTarget {
   metric: StoredGoalMetric;
   exerciseId?: string;
   anchorReps?: number;
+  /** The fixed load a `reps_at_load` target counts reps at (VW-399, v31). Absent on older rows. */
+  anchorLoad?: number;
   startValue: number;
   startMeasuredAt: string;
   bandLowPctPerWeek: number;

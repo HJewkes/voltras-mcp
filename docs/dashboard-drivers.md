@@ -66,3 +66,31 @@ ever runs. There is no real capture on this machine yet; a capture is produced b
 the MCP server with `VMCP_RECORD_SESSION=1` against a real Voltra
 (`src/state/session-recorder.ts`) — captures hold raw device frames and stay private
 (never committed; see the confidentiality section of the repo's `CLAUDE.md`).
+
+## The ladder is about the LIVE page. `dashboard:preview` is about the others (VW-416)
+
+Every driver above exists to put reps on the live page. The wall's other three pages —
+`#/goals`, `#/body`, `#/plan` — read the STORE, not the live state, so a driver that
+streams telemetry into a fresh store renders them empty or nearly so. `npm run
+dashboard:preview -- <goals|body|plan>` is the other shape: seed the store, boot the same
+`dist/bin.js` in mock mode over it on a probed-free port, print the URL, hold it open until
+Ctrl-C, and delete the scratch store on the way out.
+
+```bash
+npm run dashboard:preview -- goals --state behind
+```
+
+It is not a sixth rung on this ladder — it drives nothing. `body` and `plan` reuse the
+capture harness's own scenarios (`src/docs/capture-shots.ts`), which means `plan` runs
+`dashboard-plan-drive.mjs` from the row above and `body` runs the store seed
+`dashboard-body-seed.mjs`. Only `goals` has a seed of its own
+([`src/docs/preview-seeds.ts`](../src/docs/preview-seeds.ts)), because
+`dashboard-mock-drive.mjs --goal=` can only ever produce the `calibrating` state: a band
+derived with no baseline past `SHAPE_ONLY` is the programmed execution ramp by
+construction, whatever the driven sets do. The six `--state` names seed the readings for
+the other verdicts, and `src/dashboard/__tests__/preview-seeds.test.ts` pins which status
+each one reaches.
+
+`dashboard-sim` cannot stand in for any of this, for the same reason it cannot show a
+prescription: its fake store answers `listSessions` with an empty array and carries no plan
+or goal data at all.

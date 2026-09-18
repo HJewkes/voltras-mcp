@@ -88,7 +88,12 @@ type RestTimerRegistryT = InstanceType<typeof RestTimerRegistry>;
 // Local typings for the fake client so the test file does not depend on the
 // real SDK module shape — we only model the listener-registration surface
 // the bridge uses.
-type ConnectionState = 'disconnected' | 'connecting' | 'authenticating' | 'connected';
+type ConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'authenticating'
+  | 'awaitingAcceptance'
+  | 'connected';
 
 // Mirrors the SDK 0.6.0 `PerRepEvent` shape; redeclared structurally so the
 // test file does not import from the mocked package.
@@ -102,10 +107,10 @@ interface PerRepEvent {
 
 // Mirrors the SDK 0.6.0 `InProgressEvent` shape (the ~1 Hz heartbeat).
 interface InProgressEvent {
-  peakForceTenths: number;
-  currentForceTenths: number;
-  velocityCmPerSec: number;
-  targetWeightTenths: number;
+  meanPullForceTenths: number;
+  meanReturnForceTenths: number;
+  meanReturnSpeedMmPerSec: number;
+  pullVolumeRawTenths: number;
   raw: Uint8Array;
 }
 
@@ -122,7 +127,7 @@ interface SetSummaryEvent {
   schemaVersion: number;
   targetWeightTenths: number;
   repCount: number;
-  repDurationMs: number;
+  totalPullMovingTimeMs: number;
   raw: Uint8Array;
 }
 
@@ -204,10 +209,10 @@ const makePerRepEvent = (overrides: Partial<PerRepEvent> = {}): PerRepEvent => (
 });
 
 const makeInProgressEvent = (overrides: Partial<InProgressEvent> = {}): InProgressEvent => ({
-  peakForceTenths: 0,
-  currentForceTenths: 0,
-  velocityCmPerSec: 0,
-  targetWeightTenths: 0,
+  meanPullForceTenths: 0,
+  meanReturnForceTenths: 0,
+  meanReturnSpeedMmPerSec: 0,
+  pullVolumeRawTenths: 0,
   raw: new Uint8Array(79),
   ...overrides,
 });
@@ -224,7 +229,7 @@ const makeSetSummaryEvent = (overrides: Partial<SetSummaryEvent> = {}): SetSumma
   schemaVersion: 1,
   targetWeightTenths: 1000,
   repCount: 5,
-  repDurationMs: 1800,
+  totalPullMovingTimeMs: 1800,
   raw: new Uint8Array(110),
   ...overrides,
 });
@@ -1338,7 +1343,7 @@ describe('wireEventBridge', () => {
         schemaVersion: 1,
         targetWeightTenths: 200,
         repCount: 7,
-        repDurationMs: 5730,
+        totalPullMovingTimeMs: 5730,
         raw: new Uint8Array(110),
       });
       await flushMicrotasks();
@@ -1351,19 +1356,19 @@ describe('wireEventBridge', () => {
       expect(setEnded.meta.event_type).toBe('set_ended');
       expect(setEnded.meta.closed_by).toBe('device');
       expect(setEnded.meta.device_rep_count).toBe('7');
-      expect(setEnded.meta.device_set_rep_duration_ms).toBe('5730');
+      expect(setEnded.meta.device_set_pull_moving_time_ms).toBe('5730');
       expect(setEnded.meta.device_schema_version).toBe('1');
       const parsed = JSON.parse(setEnded.content) as {
         device_set_summary: {
           rep_count: number;
-          rep_duration_ms: number;
+          total_pull_moving_time_ms: number;
           target_weight_tenths: number;
           schema_version: number;
         };
       };
       expect(parsed.device_set_summary).toEqual({
         rep_count: 7,
-        rep_duration_ms: 5730,
+        total_pull_moving_time_ms: 5730,
         target_weight_tenths: 200,
         schema_version: 1,
       });
@@ -1385,7 +1390,7 @@ describe('wireEventBridge', () => {
         schemaVersion: 1,
         targetWeightTenths: 200,
         repCount: 7,
-        repDurationMs: 5730,
+        totalPullMovingTimeMs: 5730,
         raw: new Uint8Array(110),
       });
       await flushMicrotasks();
@@ -1470,7 +1475,7 @@ describe('wireEventBridge', () => {
         schemaVersion: 1,
         targetWeightTenths: 1000,
         repCount: 3,
-        repDurationMs: 1800,
+        totalPullMovingTimeMs: 1800,
         raw: new Uint8Array(110),
       });
       await flushMicrotasks();
@@ -1515,7 +1520,7 @@ describe('wireEventBridge', () => {
         schemaVersion: 1,
         targetWeightTenths: 1000,
         repCount: 3,
-        repDurationMs: 1800,
+        totalPullMovingTimeMs: 1800,
         raw: new Uint8Array(110),
       });
       await flushMicrotasks();
@@ -1555,7 +1560,7 @@ describe('wireEventBridge', () => {
           schemaVersion: 1,
           targetWeightTenths: 1000,
           repCount: 1,
-          repDurationMs: 1800,
+          totalPullMovingTimeMs: 1800,
           raw: new Uint8Array(110),
         });
       }
@@ -2251,18 +2256,18 @@ describe('wireEventBridge', () => {
     it('onInProgress captures payload into live.activeSet.latestInProgress within the grace window', () => {
       startSetNow(); // startedAt = now → still in grace window
       client.fire.inProgress({
-        peakForceTenths: 1500,
-        currentForceTenths: 900,
-        velocityCmPerSec: 42,
-        targetWeightTenths: 1350,
+        meanPullForceTenths: 1500,
+        meanReturnForceTenths: 900,
+        meanReturnSpeedMmPerSec: 42,
+        pullVolumeRawTenths: 1350,
         raw: new Uint8Array(79),
       });
       const snap = live.snapshotSet();
       expect(snap?.latestInProgress).toMatchObject({
-        peakForceTenths: 1500,
-        currentForceTenths: 900,
-        velocityCmPerSec: 42,
-        targetWeightTenths: 1350,
+        meanPullForceTenths: 1500,
+        meanReturnForceTenths: 900,
+        meanReturnSpeedMmPerSec: 42,
+        pullVolumeRawTenths: 1350,
       });
       expect(typeof snap?.latestInProgress?.capturedAt).toBe('number');
     });
@@ -2270,24 +2275,24 @@ describe('wireEventBridge', () => {
     it('onInProgress captures the most recent tick when fired multiple times', () => {
       startSetNow();
       client.fire.inProgress({
-        peakForceTenths: 100,
-        currentForceTenths: 50,
-        velocityCmPerSec: 10,
-        targetWeightTenths: 500,
+        meanPullForceTenths: 100,
+        meanReturnForceTenths: 50,
+        meanReturnSpeedMmPerSec: 10,
+        pullVolumeRawTenths: 500,
         raw: new Uint8Array(79),
       });
       client.fire.inProgress({
-        peakForceTenths: 2000,
-        currentForceTenths: 1500,
-        velocityCmPerSec: 60,
-        targetWeightTenths: 1800,
+        meanPullForceTenths: 2000,
+        meanReturnForceTenths: 1500,
+        meanReturnSpeedMmPerSec: 60,
+        pullVolumeRawTenths: 1800,
         raw: new Uint8Array(79),
       });
       expect(live.snapshotSet()?.latestInProgress).toMatchObject({
-        peakForceTenths: 2000,
-        currentForceTenths: 1500,
-        velocityCmPerSec: 60,
-        targetWeightTenths: 1800,
+        meanPullForceTenths: 2000,
+        meanReturnForceTenths: 1500,
+        meanReturnSpeedMmPerSec: 60,
+        pullVolumeRawTenths: 1800,
       });
     });
 
@@ -2358,7 +2363,7 @@ describe('wireEventBridge', () => {
         schemaVersion: 2,
         targetWeightTenths: 1500,
         repCount: 6,
-        repDurationMs: 2200,
+        totalPullMovingTimeMs: 2200,
         raw: new Uint8Array(110),
       });
       // Synchronously (before the async finalizeSet resolves) there is no
@@ -2585,6 +2590,13 @@ describe('wireEventBridge', () => {
       expect(server.server.sendResourceUpdated).toHaveBeenCalledWith({
         uri: 'voltra://device/current',
       });
+    });
+
+    it('flags the device as awaiting acceptance until the connect settles', () => {
+      client.fire.connectionStateChange('awaitingAcceptance');
+      expect(live.snapshotDevice().awaitingAcceptance).toBe(true);
+      client.fire.connectionStateChange('connected');
+      expect(live.snapshotDevice()).not.toHaveProperty('awaitingAcceptance');
     });
 
     it("on 'disconnected' marks disconnected, propagates to session, and notifies all three URIs (R24)", () => {

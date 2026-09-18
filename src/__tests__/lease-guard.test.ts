@@ -229,6 +229,18 @@ function breakUnload(slot: { client: unknown }): void {
   });
 }
 
+/** Make this slot's unload go out and leave the motor in `motorState` afterwards. */
+function unloadReporting(slot: { client: unknown }, motorState: 'unloaded' | 'unknown'): void {
+  Object.defineProperty(slot.client, 'unloadDevice', {
+    value: () => Promise.resolve(),
+    configurable: true,
+  });
+  Object.defineProperty(slot.client, 'motorState', {
+    get: () => motorState,
+    configurable: true,
+  });
+}
+
 /** Override the SDK client's connection/guided-load getters for one test. */
 function fakeClientState(
   slot: { client: unknown },
@@ -339,6 +351,28 @@ describe('surrendering the device on transfer', () => {
     // The old holder keeps it — a refusal must not half-transfer.
     expect(state.lease.isHeldBy('client-a')).toBe(true);
     expect(String(result.payload.warning)).toContain('MAY STILL BE LOADED');
+  });
+
+  it('REFUSES a forced steal when the device did not confirm the release', async () => {
+    await startSetOn(a);
+    unloadReporting(state.slots.get('primary')!, 'unknown');
+
+    const result = await call(b, 'system.lease_acquire', { force: true });
+
+    expect(result.payload.acquired).toBe(false);
+    expect(state.lease.isHeldBy('client-a')).toBe(true);
+    const slots = result.payload.surrender as Array<Record<string, unknown>>;
+    expect(slots.find((entry) => entry.slotId === 'primary')).toMatchObject({ unloaded: false });
+  });
+
+  it('transfers a forced steal once the device confirmed the release', async () => {
+    await startSetOn(a);
+    unloadReporting(state.slots.get('primary')!, 'unloaded');
+
+    const result = await call(b, 'system.lease_acquire', { force: true });
+
+    expect(result.payload.acquired).toBe(true);
+    expect(result.payload.warning).toBeUndefined();
   });
 
   it('transfers anyway once the caller accepts a possibly-loaded device', async () => {

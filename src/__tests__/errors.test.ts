@@ -25,6 +25,26 @@ describe('mapSdkError', () => {
     expect(result).toEqual({ code: 'CONNECTION_LOST', message: 'lost link' });
   });
 
+  it('words a device-state-unknown refusal itself, keeping the code', () => {
+    const err = new FakeVoltraSDKError('internal wording', 'DEVICE_STATE_UNKNOWN');
+    const result = mapSdkError(err);
+    expect(result.code).toBe('DEVICE_STATE_UNKNOWN');
+    expect(result.message).toMatch(/nothing was written/);
+  });
+
+  it('finds a connection refusal wrapped as the cause of a generic connect failure', () => {
+    const refusal = new FakeVoltraSDKError('refused, status 7', 'CONNECTION_REFUSED');
+    const wrapped = Object.assign(
+      new FakeVoltraSDKError('Connection failed', 'CONNECTION_FAILED'),
+      {
+        cause: refusal,
+      },
+    );
+    const result = mapSdkError(wrapped);
+    expect(result.code).toBe('CONNECTION_REFUSED');
+    expect(result.message).not.toMatch(/status/);
+  });
+
   it('preserves a string `code` field on a plain Error', () => {
     const err = Object.assign(new Error('already paired'), {
       code: 'ALREADY_CONNECTED',

@@ -116,7 +116,14 @@ interface FakeSettings {
 
 interface FakeClient {
   isConnected: boolean;
-  connectionState: 'disconnected' | 'connecting' | 'authenticating' | 'connected';
+  connectionState:
+    | 'disconnected'
+    | 'connecting'
+    | 'authenticating'
+    | 'awaitingAcceptance'
+    | 'connected';
+  hasConfirmedState: boolean;
+  motorState: 'unknown' | 'pending' | 'engaged' | 'unloaded';
   connectedDeviceId: string | null;
   settings: FakeSettings;
   setAdapter: Mock<(adapter: unknown) => void>;
@@ -182,6 +189,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
   const client: FakeClient = {
     isConnected: false,
     connectionState: 'disconnected',
+    hasConfirmedState: true,
+    motorState: 'unloaded',
     connectedDeviceId: null,
     settings: {
       weight: 5,
@@ -343,6 +352,7 @@ interface FakeLive {
     staleSinceDisconnect?: string;
     isStale?: boolean;
     disconnectedAt?: string;
+    awaitingAcceptance?: true;
   };
   snapshotSet: () =>
     | undefined
@@ -357,6 +367,7 @@ interface FakeLive {
   // device.connect's primary-rebind path seeds `{connected, deviceId}` via
   // applySettings (see seedConnectedState in slot-manager.ts).
   applySettings: (delta: Record<string, unknown>) => void;
+  setAwaitingAcceptance: Mock<(pending: boolean) => void>;
   // VMCP-02.32: get_state / bilateral.cascade drain a one-shot disconnect
   // advisory off the slot's live state. The fake returns `undefined` (no
   // pending notice) by default; dedicated tests override it.
@@ -423,6 +434,7 @@ function makeFakeLive(overrides: Partial<ReturnType<FakeLive['snapshotDevice']>>
     snapshotSet: () => undefined,
     markDisconnected: vi.fn(),
     applySettings: vi.fn(),
+    setAwaitingAcceptance: vi.fn(),
     takePendingDisconnectNotice: vi.fn(() => undefined),
   };
 }
@@ -547,7 +559,7 @@ describe('registerDeviceTools', () => {
       const reg = placeholders.get('device.connect')!;
       const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true, deviceId: 'V-1' });
+      expect(payload).toEqual({ ok: true, deviceId: 'V-1', stateConfirmed: true });
       // Handler must hand the DiscoveredDevice (not a bare string) to manager.connect.
       expect(state.manager.connect).toHaveBeenCalledWith({
         id: 'V-1',
@@ -607,6 +619,48 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, { deviceId: 'V-1' });
       expect(isError).toBe(true);
       expect(payload.code).toBe('CONNECTION_LOST');
+    });
+
+    it('reports a refused connection as CONNECTION_REFUSED even when wrapped in a generic failure', async () => {
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const refusal = new FakeVoltraSDKError('refused', 'CONNECTION_REFUSED');
+      const wrapped = Object.assign(new Error('Connection failed: refused'), {
+        code: 'CONNECTION_FAILED',
+        cause: refusal,
+      });
+      state.manager.connect.mockRejectedValueOnce(wrapped);
+      const { isError, payload } = await invoke(placeholders.get('device.connect')!, {
+        deviceId: 'V-1',
+      });
+      expect(isError).toBe(true);
+      expect(payload.code).toBe('CONNECTION_REFUSED');
+      expect(payload.message).toMatch(/accept the connection on the device/i);
+    });
+
+    it('flags the slot as awaiting acceptance only while the connect is in flight', async () => {
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      const live = state.slots.get('primary')!.live;
+      state.manager.connect.mockImplementationOnce(async () => {
+        expect(live.setAwaitingAcceptance).toHaveBeenLastCalledWith(true);
+        throw new FakeVoltraSDKError('refused', 'CONNECTION_REFUSED');
+      });
+      await invoke(placeholders.get('device.connect')!, { deviceId: 'V-1' });
+      expect(live.setAwaitingAcceptance).toHaveBeenLastCalledWith(false);
+    });
+
+    it('says when the device has not reported its settings yet after connecting', async () => {
+      state.manager.devices = [{ id: 'V-1', name: null, rssi: null }];
+      state.manager.connect.mockResolvedValueOnce(
+        makeFakeClient({
+          isConnected: true,
+          connectionState: 'connected',
+          connectedDeviceId: 'V-1',
+          hasConfirmedState: false,
+        }),
+      );
+      const { payload } = await invoke(placeholders.get('device.connect')!, { deviceId: 'V-1' });
+      expect(payload.stateConfirmed).toBe(false);
+      expect(payload.note).toMatch(/DEVICE_STATE_UNKNOWN/);
     });
   });
 
@@ -740,7 +794,7 @@ describe('registerDeviceTools', () => {
 
       const { isError, payload } = await invoke(reg, { deviceId: 'V-1', slot: 'left' });
       expect(isError).toBeUndefined();
-      expect(payload).toEqual({ ok: true, deviceId: 'V-1' });
+      expect(payload).toEqual({ ok: true, deviceId: 'V-1', stateConfirmed: true });
 
       // Slot map now has both 'primary' and 'left'.
       expect(state.slots.size).toBe(2);
@@ -1200,8 +1254,34 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await invoke(reg, {});
       expect(isError).toBeUndefined();
       expect(payload.ok).toBe(true);
-      expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
+      expect(payload.read_back).toMatchObject({ verdict: 'confirmed', source: 'device' });
       expect(primaryClient(state).unloadDevice).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports an unload the device did not answer as unconfirmed, not done', async () => {
+      primaryClient(state).unloadDevice.mockImplementationOnce(async () => {
+        primaryClient(state).motorState = 'unknown';
+      });
+      const { isError, payload } = await invoke(placeholders.get('device.unload')!, {});
+      expect(isError).toBeUndefined();
+      expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed', source: 'server' });
+      expect(payload.read_back).toHaveProperty('unconfirmed_reason');
+    });
+
+    it('unloads before exiting a live guided-load flow, so the confirmed release comes first', async () => {
+      const client = primaryClient(state);
+      client.guidedLoadState.phase = 'active';
+      const order: string[] = [];
+      client.unloadDevice.mockImplementationOnce(async () => {
+        order.push('unload');
+      });
+      const exit = client.exitGuidedLoad.getMockImplementation();
+      client.exitGuidedLoad.mockImplementationOnce(async () => {
+        order.push('exit');
+        await exit?.();
+      });
+      await invoke(placeholders.get('device.unload')!, {});
+      expect(order).toEqual(['unload', 'exit']);
     });
 
     // VMCP-02.88 mismatch path: the teardown was asked to end a live flow and
@@ -1226,6 +1306,18 @@ describe('registerDeviceTools', () => {
     // client. This keeps the tool aligned with the resource across the
     // disconnect window so callers see preserved last-known values during
     // the soft-reset gap instead of post-cleanup defaults.
+
+    it('reports a connect waiting on the device to accept, and whether state is confirmed', async () => {
+      const slot = state.slots.get('primary')!;
+      slot.live = makeFakeLive({ awaitingAcceptance: true });
+      primaryClient(state).hasConfirmedState = false;
+      const { payload } = await invoke(placeholders.get('device.get_state')!, {});
+      expect(payload).toMatchObject({
+        connected: false,
+        connectionState: 'awaitingAcceptance',
+        state_confirmed: false,
+      });
+    });
 
     it('composes the response from live.snapshotDevice plus client live state', async () => {
       const slot = state.slots.get('primary')!;
@@ -2542,7 +2634,7 @@ describe('registerDeviceTools', () => {
       const { isError, payload } = await call;
 
       expect(isError).toBeUndefined();
-      expect(payload.read_back).toMatchObject({ verdict: 'unconfirmed' });
+      expect(payload.read_back).toMatchObject({ verdict: 'confirmed' });
     });
 
     // VW-200: `startGuidedLoad` resolves once the trigger is written and the

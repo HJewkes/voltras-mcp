@@ -9,6 +9,7 @@ interaction.
 | `src/docs/capture-shots.ts`           | The stills definition: shots, routes, viewport, predicates, assertions |
 | `src/docs/capture-clips.ts`           | The clips definition: clips, scenarios, video constants, narration     |
 | `scripts/lib/mock-burst.mjs`          | The determinism lever: exact rep bursts from a parked mock device      |
+| `scripts/lib/dashboard-launch.mjs`    | Booting one scenario: free port, scratch store, bind wait, stop        |
 | `scripts/capture-screens.mjs`         | The harness: boots a scenario, waits, captures, asserts, writes        |
 | `site/guides/*.narration.txt`         | The spoken scripts, beside the guides that embed the clips             |
 | `site/public/captures/*.png`          | The stills, served by VitePress at `/captures/…`                       |
@@ -68,6 +69,7 @@ event bridge, real `LiveState`, real `set.end`. Nothing is stubbed at the HTTP l
 | `session-summary`   | `dashboard-plan-drive.mjs`                    | the completion screen            |
 | `plan-builder`      | `dashboard-plan-drive.mjs`                    | the plan builder with a template |
 | `live-dual-mid-set` | `dashboard-mock-drive.mjs --dual`, asymmetric | the diverging two-slot stage     |
+| `goals`             | `dashboard-mock-drive.mjs --goal`, PR loop    | the goal-coach page with a PR    |
 
 `dashboard-plan-drive.mjs` is the only driver that can show a prescription; `dashboard-sim`
 carries no plan data and plain `dashboard-mock-drive` attaches none
@@ -106,15 +108,95 @@ told. A canned `/api/snapshot` would prove only that the SPA can render a fixtur
 Still not deterministic, and therefore never asserted: the wall clock, the rest countdown,
 session start/end stamps, `DURATION`, and anything else derived from frame timestamps (a
 frame is stamped with `Date.now()` at decode). The `expectValues` comment in the definition
-lists them.
+lists them. VW-389 made two of those — the wall clock and CSS/JS-animation settle — no
+longer matter to the PNG's bytes either (see "Byte-reproducibility" below); the rest are
+genuinely on the page and stay excluded from `expectValues` for the reason above.
+
+## Byte-reproducibility on one machine (VW-389)
+
+Two runs of `npm run docs:captures` on identical code, same machine, used to disagree on
+every PNG. `scripts/capture-screens.mjs` now removes the two causes that were ours to
+remove:
+
+- **The wall clock.** `installShotDeterminism` calls `page.clock.setFixedTime(...)` before
+  any navigation, pinning `Date.now()`/`new Date()` for every shot's page while leaving
+  real timers (the 2s poll, the SSE stream) running. `emulateMedia({ reducedMotion: 'reduce' })`
+  plus an injected stylesheet forcing every CSS animation/transition's duration to `0s` remove
+  the second cause: a screenshot landing mid-transition.
+- **JS-driven animation.** titan-design's charts animate through `requestAnimationFrame`
+  directly, which no stylesheet reaches. `waitForVisualStability` screenshots on a loop until
+  three consecutive samples come back byte-identical, so the shot only writes once the pixels
+  have actually stopped moving, whatever is moving them.
+
+That reaches every shot whose non-determinism was ours (the harness's) to fix. It does
+**not** reach a shot whose page renders a value the SERVER computed from ITS OWN real clock:
+
+| Shot                | Server-real-time field                                         | Byte-reproducible? |
+| ------------------- | -------------------------------------------------------------- | ------------------ |
+| `dashboard-cold`    | none                                                           | yes                |
+| `plan-builder`      | none                                                           | yes                |
+| `goals`             | none (the trajectory chart's x-axis is meso WEEKS, not time)   | yes                |
+| `body-week`         | none (a seeded historical week, not the live wall clock)       | yes                |
+| `live-mid-set`      | rep-shape curve `tMs` — real per-sample frame-decode time      | not guaranteed     |
+| `live-dual-mid-set` | same, both slots' curves                                       | not guaranteed     |
+| `live-rest`         | pace footer `ETA` — `resolveSessionPace`'s `nowMs: Date.now()` | not guaranteed     |
+| `session-summary`   | session start/end stamps in the header                         | not guaranteed     |
+
+"Not guaranteed" means exactly that and no more: the four rows above render a value the
+SERVER computed from its own real clock, so nothing on the harness side pins it, and whether
+two runs land on the same value is down to timing, not design. A fast back-to-back run can
+have the frame-decode clock, the pace ETA or the session start/end stamp land on the same
+value both times and come out byte-identical; a slower run, or one that straddles a clock
+tick the faster run did not, comes out different. Neither outcome says anything about
+correctness — both runs still have to satisfy every `expectValues` assertion.
+
+Two two-run comparisons, `shasum -a 256` of each pair of PNGs (full digests are not
+reproduced here — this page is published, and a 256-bit hex string is indistinguishable by
+shape from a protocol value; they are on the PR that shipped this section instead), taken on
+two different machines:
+
+| PNG                     | Run A                      | Run B                     |
+| ----------------------- | -------------------------- | ------------------------- |
+| `dashboard-cold.png`    | identical                  | identical                 |
+| `plan-builder.png`      | identical                  | identical                 |
+| `goals.png`             | identical                  | identical                 |
+| `body-week.png`         | identical                  | identical                 |
+| `live-mid-set.png`      | differs — rep-shape curve  | differs — rep-shape curve |
+| `live-rest.png`         | differs — pace ETA         | differs — pace ETA        |
+| `live-dual-mid-set.png` | differs — rep-shape curve  | identical                 |
+| `session-summary.png`   | differs — start/end stamps | identical                 |
+
+The four rows above the "not guaranteed" line hold on every run seen so far, because nothing
+on the page they render is time-derived. Below that line, a diff isn't guaranteed on any given
+run — Run B's `live-dual-mid-set` and `session-summary` happened to land on the same
+frame-decode time and the same session stamps both times — but when a diff DOES appear it
+isolates to exactly the field named, confirmed by cropping the diff bounding box
+(`ImageChops.difference`) — e.g. Run A's `live-rest` pair differs only inside an 8×12px region
+that reads `8:49 PM` in one and `8:55 PM` in the other, the rendered `ETA` tile. Fixing this at
+the pixel level would mean injecting a fake clock into the server process itself (frame-decode
+timestamps, session `startedAt`/`endedAt`, `resolveSessionPace`'s `Date.now()` call) — a change
+to production session/analytics timing code, not to the capture harness, and outside VW-389's
+scope.
+
+**The mutation proof**, showing the clock-freeze measure specifically is load-bearing:
+commenting out the `page.clock.setFixedTime(...)` call in `installShotDeterminism` and
+rerunning `dashboard-cold` renders the header clock at the real time (`21:15`, that run)
+instead of the fixed `12:00` every frozen run shows, and its `shasum -a 256` no longer
+matches the frozen baseline above. Restoring the call brings both the `12:00` clock and
+the matching digest straight back.
+
+`guardLocalOverwrite` in the harness refuses to overwrite a committed PNG with a byte-different
+one unless `CAPTURES_ALLOW_LOCAL=1` is set, so the four not-guaranteed-reproducible shots can't
+drift by accident on a routine local run — regenerating one is still a normal, deliberate
+action, just an explicit one.
 
 ## What the staleness gate can and cannot check
 
-**It cannot compare pixels.** Font hinting, GPU rasterisation and Skia antialiasing differ
-between machines, and even on one machine two runs differ: the dashboard paints a wall
-clock, a count-up rest timer, and session ids and timestamps that change every run. A byte
-comparison would fail on every run; a perceptual threshold loose enough to survive that
-would be loose enough never to fail. Neither is shipped.
+**It cannot compare pixels ACROSS MACHINES.** Font hinting, GPU rasterisation and Skia
+antialiasing differ between machines regardless of anything above, and four of the eight shots
+carry a genuine server-real-time field even on one machine (see above). A byte comparison run
+in CI would fail on every run there; a perceptual threshold loose enough to survive that would
+be loose enough never to fail. Neither is shipped.
 
 **It checks everything around the pixels**, and each of these does fail:
 
@@ -257,6 +339,31 @@ and to both guides carrying the synthetic-narration notice and a link to the scr
 
 The clip definition has its **own** hash, separate from `captureDefinitionHash()`. Editing
 a clip must not invalidate six screenshots it never touched.
+
+## Watching a page instead of capturing it (VW-416)
+
+The same scenarios drive `npm run dashboard:preview`, which boots one of them and holds it
+open in a browser instead of screenshotting it — the way to look at a wall page without a
+Voltra or a PT session:
+
+```bash
+npm run dashboard:preview -- goals                  # #/goals, held until Ctrl-C
+npm run dashboard:preview -- goals --state behind   # …in a chosen goal state
+npm run dashboard:preview -- body                   # #/body, the capture's own seed
+npm run dashboard:preview -- plan                   # #/plan, the capture's own driver
+```
+
+`body` and `plan` reuse `CAPTURE_SCENARIOS` verbatim, so what you browse is what the
+published image was taken of. `goals` does not: a driven goal run can only ever land on
+`calibrating`, because a band with no baseline past `SHAPE_ONLY` is the execution ramp by
+construction. Its six `--state` seeds are defined in
+[`src/docs/preview-seeds.ts`](../src/docs/preview-seeds.ts) and the status each one reaches
+is pinned by `src/dashboard/__tests__/preview-seeds.test.ts`, so a read-model change that
+moved one shows up as a failing test rather than as a page that no longer shows what its
+flag says.
+
+The launcher is shared rather than copied: `scripts/lib/dashboard-launch.mjs` owns the free
+port, the scratch `VMCP_DB_PATH`, the MCP handshake and the bind wait for both commands.
 
 ## Isolation
 

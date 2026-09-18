@@ -6,13 +6,16 @@
 // which is the half of "a screenshot rots silently" that is actually decidable.
 //
 // It does NOT compare pixels. Font hinting, GPU rasterisation and Skia's
-// antialiasing differ per machine, and the dashboard paints a wall clock and a
-// count-up rest timer, so no two runs agree even on one machine. A comparison
-// that cannot fail is worse than no comparison, so what is asserted is
-// everything around the pixels: the manifest agrees with the definition, every
-// declared shot is on disk at the declared geometry, each capture recorded the
-// assertions it had to satisfy, nothing extra is sitting in the directory, and
-// no site page links a capture that no longer exists.
+// antialiasing differ per machine regardless, and four of the eight shots
+// render a value the SERVER computed from its own real clock (a rep-shape
+// curve's frame-decode timestamp, a pace ETA, a session start/end stamp) that
+// no local determinism measure reaches — see docs/screenshot-harness.md for
+// the two-run proof and the exact split. A comparison that cannot fail is
+// worse than no comparison, so what is asserted is everything around the
+// pixels: the manifest agrees with the definition, every declared shot is on
+// disk at the declared geometry, each capture recorded the assertions it had
+// to satisfy, nothing extra is sitting in the directory, and no site page
+// links a capture that no longer exists.
 //
 // The VALUES on the page are gated too, but not here — they are pinned in the
 // definition (`expectValues`) and checked by the capture run itself, against
@@ -32,6 +35,7 @@ import {
   CAPTURE_VIEWPORT,
   CAPTURE_DEVICE_SCALE_FACTOR,
   captureDefinitionHash,
+  viewportFor,
 } from '../../docs/capture-shots.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -99,6 +103,8 @@ describe('the capture manifest tracks the capture definition', () => {
   });
 
   it('records the geometry the definition asks for', () => {
+    // The manifest's own `viewport` is the DEFAULT; a shot that overrides it
+    // is held to its own size by the per-shot geometry check below.
     expect(manifest.viewport).toEqual({ ...CAPTURE_VIEWPORT });
     expect(manifest.deviceScaleFactor).toBe(CAPTURE_DEVICE_SCALE_FACTOR);
   });
@@ -129,22 +135,26 @@ describe('the capture manifest tracks the capture definition', () => {
 });
 
 describe('the captures on disk', () => {
-  it.each(CAPTURE_SHOTS.map((shot) => [shot.name] as const))('%s is a real PNG', (name) => {
-    const entry = byName.get(name);
-    const file = join(CAPTURES, `${name}.png`);
-    expect(existsSync(file), `${file} missing — ${REGENERATE}`).toBe(true);
-    const { width, height } = pngDimensions(file);
-    expect({ width, height }).toEqual({
-      width: CAPTURE_VIEWPORT.width * CAPTURE_DEVICE_SCALE_FACTOR,
-      height: CAPTURE_VIEWPORT.height * CAPTURE_DEVICE_SCALE_FACTOR,
-    });
-    expect(entry?.width).toBe(width);
-    expect(entry?.height).toBe(height);
-    // A chrome-rendered dashboard page is tens of kB; a blank one is ~2 kB. This
-    // is a floor against an empty render, not a content check — the assertions
-    // the harness ran at capture time are what actually prove the content.
-    expect(entry?.bytes).toBeGreaterThan(10_000);
-  });
+  it.each(CAPTURE_SHOTS.map((shot) => [shot.name, shot] as const))(
+    '%s is a real PNG',
+    (name, shot) => {
+      const entry = byName.get(name);
+      const file = join(CAPTURES, `${name}.png`);
+      expect(existsSync(file), `${file} missing — ${REGENERATE}`).toBe(true);
+      const { width, height } = pngDimensions(file);
+      const want = viewportFor(shot);
+      expect({ width, height }).toEqual({
+        width: want.width * CAPTURE_DEVICE_SCALE_FACTOR,
+        height: want.height * CAPTURE_DEVICE_SCALE_FACTOR,
+      });
+      expect(entry?.width).toBe(width);
+      expect(entry?.height).toBe(height);
+      // A chrome-rendered dashboard page is tens of kB; a blank one is ~2 kB. This
+      // is a floor against an empty render, not a content check — the assertions
+      // the harness ran at capture time are what actually prove the content.
+      expect(entry?.bytes).toBeGreaterThan(10_000);
+    },
+  );
 
   it('holds nothing the definition does not declare', () => {
     // `clips/` is the recordings' half of the same published tree, declared by
@@ -188,9 +198,9 @@ describe('the captures are safe to publish', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('drives every shot against a mock scenario, never a real device', () => {
+  it('drives every shot against a no-hardware scenario, never a real device', () => {
     const scenarios = new Set(CAPTURE_SHOTS.map((shot) => shot.scenario));
-    expect([...scenarios].sort()).toEqual(['cold', 'dual', 'planned']);
+    expect([...scenarios].sort()).toEqual(['body', 'cold', 'dual', 'goals', 'planned']);
   });
 });
 

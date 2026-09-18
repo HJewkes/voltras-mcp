@@ -576,6 +576,30 @@ describe('goal.accept_target', () => {
     });
   });
 
+  it('refuses an anchor load on a metric that is not counted at one (VW-399)', async () => {
+    const error = await harness.expectError('goal.accept_target', {
+      targetId: target.targetId,
+      anchorLoad: 185,
+    });
+    expect(error.code).toBe('GOAL_ANCHOR_LOAD_NOT_APPLICABLE');
+    const stored = await harness.store.listGoalTargets({ userId: LOCAL_USER_ID });
+    expect(stored[0].acceptedBy).toBeUndefined();
+  });
+
+  it('fixes the anchor load of a reps_at_load target with the rest of it (VW-399)', async () => {
+    const [proposal] = await harness.store.listGoalTargets({ userId: LOCAL_USER_ID });
+    await harness.store.putGoalTarget({ ...proposal, id: 'tgt-reps', metric: 'reps_at_load' });
+
+    const accepted = await harness.invoke('goal.accept_target', {
+      targetId: 'tgt-reps',
+      anchorLoad: 185,
+    });
+
+    expect(accepted.target).toMatchObject({ metric: 'reps_at_load', anchorLoad: 185 });
+    const stored = await harness.store.listGoalTargets({ userId: LOCAL_USER_ID });
+    expect(stored.find((row) => row.id === 'tgt-reps')?.anchorLoad).toBe(185);
+  });
+
   it('refuses a value short of the committed edge outright', async () => {
     const error = await harness.expectError('goal.accept_target', {
       targetId: target.targetId,

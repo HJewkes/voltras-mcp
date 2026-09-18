@@ -638,10 +638,10 @@ describe('LiveState', () => {
 
   describe('applyInProgress (typed-payload live-state plumbing)', () => {
     const payload = {
-      peakForceTenths: 1234,
-      currentForceTenths: 800,
-      velocityCmPerSec: 45,
-      targetWeightTenths: 1350,
+      meanPullForceTenths: 1234,
+      meanReturnForceTenths: 800,
+      meanReturnSpeedMmPerSec: 45,
+      pullVolumeRawTenths: 1350,
       raw: new Uint8Array(79),
     };
 
@@ -656,10 +656,10 @@ describe('LiveState', () => {
       live.startSet(makeSet());
       live.applyInProgress(payload, 1_700_000_000_000);
       expect(live.snapshotSet()?.latestInProgress).toEqual({
-        peakForceTenths: 1234,
-        currentForceTenths: 800,
-        velocityCmPerSec: 45,
-        targetWeightTenths: 1350,
+        meanPullForceTenths: 1234,
+        meanReturnForceTenths: 800,
+        meanReturnSpeedMmPerSec: 45,
+        pullVolumeRawTenths: 1350,
         capturedAt: 1_700_000_000_000,
       });
     });
@@ -670,19 +670,19 @@ describe('LiveState', () => {
       live.applyInProgress(payload, 1_000);
       live.applyInProgress(
         {
-          peakForceTenths: 9999,
-          currentForceTenths: 7777,
-          velocityCmPerSec: 88,
-          targetWeightTenths: 2000,
+          meanPullForceTenths: 9999,
+          meanReturnForceTenths: 7777,
+          meanReturnSpeedMmPerSec: 88,
+          pullVolumeRawTenths: 2000,
           raw: new Uint8Array(79),
         },
         2_000,
       );
       expect(live.snapshotSet()?.latestInProgress).toEqual({
-        peakForceTenths: 9999,
-        currentForceTenths: 7777,
-        velocityCmPerSec: 88,
-        targetWeightTenths: 2000,
+        meanPullForceTenths: 9999,
+        meanReturnForceTenths: 7777,
+        meanReturnSpeedMmPerSec: 88,
+        pullVolumeRawTenths: 2000,
         capturedAt: 2_000,
       });
     });
@@ -891,7 +891,7 @@ describe('applySetSummary / consumeLatestSetSummary — firmware peaks', () => {
       schemaVersion: 1,
       targetWeightTenths: 1700,
       repCount: 7,
-      repDurationMs: 5730,
+      totalPullMovingTimeMs: 5730,
       peakForceTenths: 886,
       peakPowerRaw: 412,
       raw: new Uint8Array(0),
@@ -924,7 +924,7 @@ describe('applySetSummary / consumeLatestSetSummary — firmware peaks', () => {
     live.applySetSummary(withoutPeaks);
 
     const consumed = live.consumeLatestSetSummary();
-    expect(consumed?.repDurationMs).toBe(5730);
+    expect(consumed?.totalPullMovingTimeMs).toBe(5730);
     expect(consumed).not.toHaveProperty('peakForceTenths');
     expect(consumed).not.toHaveProperty('peakPowerRaw');
   });

@@ -113,11 +113,20 @@ made here (`src/tools/guided-load-readback.ts`):
   `GUIDED_LOAD_NOT_ARMED` error.
 - **`device.exit_guided_load`** cannot be confirmed at all. The SDK stops the status poll
   before writing the exit, so nothing reads the device afterwards. A phase still inside
-  the active set is a `GUIDED_LOAD_EXIT_UNCONFIRMED` error.
-- **`device.unload`** cannot be confirmed at all. The write has no echo, and `load_state`
-  reads `unloaded` during ordinary weight reps too, so it cannot tell a released cable
-  from a slack one. When the call tore down a live flow and the phase is still inside the
-  active set, that is an `UNLOAD_UNCONFIRMED` error.
+  the active set is a `GUIDED_LOAD_EXIT_UNCONFIRMED` error. Since SDK 0.15.0 the exit also
+  releases the motor, but nothing confirms that release either.
+- **`device.unload`** is confirmed when the device reports the motor release (SDK 0.15.0
+  waits for that report). Without it the verdict is `unconfirmed`: `load_state` reads
+  `unloaded` during ordinary weight reps too, so it cannot tell a released cable from a
+  slack one. When the call tore down a live flow, it unloads first and exits second, so
+  the release the device confirms is the one reported. A phase still inside the active
+  set afterwards is an `UNLOAD_UNCONFIRMED` error.
+
+`set.end` stops the motor between sets the same way. The set is always saved; when the
+stop was not confirmed or could not be sent, the result adds `motor_stop` (`unconfirmed`
+or `failed`) and a `motor_stop_note`. A spoken stop whose release the device did not
+confirm says so aloud instead of "weight off", and its `deterministic_stop_triggered`
+event carries `release: unconfirmed`.
 
 Four things the mock adapter cannot reach, so no test result speaks to any of them:
 
@@ -136,6 +145,19 @@ Two phase names promise more than they deliver, and the names are the SDK's (VMC
 not a device-reported failure. Whether `active` coincides with the cable mechanically
 engaging or merely with the device entering the mode is unverified; the mock cannot answer
 it and no hardware measurement exists.
+
+### Connecting (SDK 0.15.0)
+
+A connect is not done when the link comes up: the device has to accept it, and a first
+pairing asks the lifter to accept on the device. While that is pending,
+`device.get_state` reports `connectionState: awaitingAcceptance` and the dashboard badge
+reads ACCEPT ON DEVICE. A refusal, or no answer inside the SDK's window, fails
+`device.connect` with `CONNECTION_REFUSED`; nothing retries it automatically.
+
+After acceptance the device is asked for its current settings. Until it answers,
+`device.get_state` reports `state_confirmed: false`, `device.connect` returns
+`stateConfirmed: false`, and every setter refuses with `DEVICE_STATE_UNKNOWN` rather than
+write over a state it has not seen. Stops are never gated this way.
 
 ## 4. RECORDING LIFECYCLE
 

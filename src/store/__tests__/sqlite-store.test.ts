@@ -410,7 +410,7 @@ describe('SqliteSessionStore.open() error paths', () => {
     // `/var/folders/...` paths nearly always contain a '3') while failing on
     // CI's short `/tmp/...`. It had also gone stale before: SCHEMA_VERSION is 22.
     expect(e.message).toContain('user_version=99');
-    expect(e.message).toMatch(/expected 30\b/);
+    expect(e.message).toMatch(/expected 31\b/);
   });
 
   it('migrates a v1 DB forward by dropping chains_lbs and eccentric_percent columns', async () => {
@@ -452,7 +452,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(30);
+      expect(version.user_version).toBe(31);
     } finally {
       await store.close();
     }
@@ -489,7 +489,7 @@ describe('SqliteSessionStore.open() error paths', () => {
       );
       expect(names).toContain('is_warmup');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(30);
+      expect(version.user_version).toBe(31);
       // The pre-flag row backfills as a working set (no isWarmup key on read).
       expect(await store.getSet('legacy')).not.toHaveProperty('isWarmup');
     } finally {
@@ -660,7 +660,7 @@ describe('v4 → v5 migration: device / side / slot identity on sets', () => {
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
       // A v4 DB runs the whole forward chain in one open, so it lands on the
       // CURRENT version, not on v5. v5 is a waypoint, never a resting state.
-      expect(version.user_version).toBe(30);
+      expect(version.user_version).toBe(31);
     } finally {
       await store.close();
     }
@@ -1030,7 +1030,7 @@ describe('v5 → v6 migration: isometric assessment tables', () => {
       expect(tables).toContain('isometric_measurements');
       expect(tables).toContain('isometric_trials');
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as { user_version?: number };
-      expect(version.user_version).toBe(30);
+      expect(version.user_version).toBe(31);
     } finally {
       await store.close();
     }

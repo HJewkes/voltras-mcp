@@ -93,8 +93,8 @@ export interface VoiceSafetyContext {
   connectedSlots(): string[];
   /** Whether an emergency unload is warranted for the slot, + the active set id. */
   evaluate(slotId: string): { warranted: boolean; reason: string; setId: string | null };
-  /** Unload the slot (idempotent mode-bounce that slackens the cable). */
-  unload(slotId: string): Promise<void>;
+  /** Unload the slot; resolves with whether the device reported the release. */
+  unload(slotId: string): Promise<'confirmed' | 'unconfirmed'>;
   /** Speak a deterministic ack, interrupting any in-flight speech. */
   speakAck(text: string): void;
 }
@@ -111,6 +111,9 @@ export const SAFETY_ACK_PHRASES: readonly string[] = [
   'Stopping. All weight off.',
   'Stopping right away. Weight off.',
 ];
+
+/** Spoken instead of the pool when the device did not confirm every release. */
+export const SAFETY_ACK_UNCONFIRMED = 'Stopping. Check the cable, the weight may still be on.';
 
 /** Picks a pool phrase via an injected index function — fixed in tests, random in production. */
 export function pickSafetyAck(pick: (n: number) => number): string {
@@ -184,17 +187,20 @@ async function executeStop(
   ev: StopEvent,
 ): Promise<void> {
   const results = await Promise.all(
-    verdicts.map(async (verdict) => ({ verdict, error: await unloadError(safety, verdict.slot) })),
+    verdicts.map(async (verdict) => ({ verdict, ...(await tryUnload(safety, verdict.slot)) })),
   );
-  const cut = results.filter((r) => r.error === null);
-  const failed = results.filter((r) => r.error !== null);
+  const cut = results.flatMap((r) =>
+    r.release === null ? [] : [{ verdict: r.verdict, release: r.release }],
+  );
+  const failed = results.filter((r) => r.release === null);
   if (cut.length === 0) {
     publishVoiceInput(channels, ev);
     for (const f of failed) channels.publish(safetyUnloadFailedPayload(f.error, f.verdict.slot));
     return;
   }
-  safety.speakAck(pickSafetyAck(randomIndex));
-  for (const { verdict } of cut) {
+  const allConfirmed = cut.every((r) => r.release === 'confirmed');
+  safety.speakAck(allConfirmed ? pickSafetyAck(randomIndex) : SAFETY_ACK_UNCONFIRMED);
+  for (const { verdict, release } of cut) {
     channels.publish(
       buildDeterministicStopTriggeredPayload({
         slot: verdict.slot,
@@ -202,19 +208,23 @@ async function executeStop(
         matchedPhrase: ev.matchedPhrase,
         predicateReason: verdict.reason,
         trigger: verdict.warranted ? 'warranted' : 'bilateral_sweep',
+        release,
       }),
     );
   }
   for (const f of failed) channels.publish(safetyUnloadFailedPayload(f.error, f.verdict.slot));
 }
 
+type UnloadAttempt =
+  | { error: null; release: 'confirmed' | 'unconfirmed' }
+  | { error: unknown; release: null };
+
 /** Unload, returning the error instead of throwing so one slot can't abort the other. */
-async function unloadError(safety: VoiceSafetyContext, slot: string): Promise<unknown | null> {
+async function tryUnload(safety: VoiceSafetyContext, slot: string): Promise<UnloadAttempt> {
   try {
-    await safety.unload(slot);
-    return null;
+    return { error: null, release: await safety.unload(slot) };
   } catch (err) {
-    return err ?? new Error('unload rejected');
+    return { error: err ?? new Error('unload rejected'), release: null };
   }
 }
 

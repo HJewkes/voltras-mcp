@@ -84,6 +84,9 @@ export const GoalProposeTargetsInput = z
  * make "met" meaningless. A value above the high edge needs
  * `acknowledgeStretch`, which records that the lifter went past what the
  * evidence supports with their eyes open.
+ *
+ * `anchorLoad` (VW-399) is the fixed load a `reps_at_load` target counts reps
+ * at, fixed with the rest of the target; any other metric refuses it.
  */
 export const GoalAcceptTargetInput = z
   .object({
@@ -91,6 +94,7 @@ export const GoalAcceptTargetInput = z
     committedValue: z.number().optional(),
     stretchValue: z.number().optional(),
     acknowledgeStretch: z.boolean().optional(),
+    anchorLoad: z.number().positive().optional(),
   })
   .strict();
 

@@ -94,6 +94,7 @@ interface FakeClient {
   isConnected: boolean;
   connectionState: string;
   connectedDeviceId: string | null;
+  hasConfirmedState: boolean;
   isRowingActive: boolean;
   settings: Record<string, unknown>;
   getAdapter: Mock<() => null>;
@@ -107,6 +108,7 @@ function makeFakeClient(
     isConnected: opts.connected,
     connectionState: opts.connected ? 'connected' : 'disconnected',
     connectedDeviceId: opts.connected ? (opts.deviceId ?? 'V-?') : null,
+    hasConfirmedState: opts.connected,
     isRowingActive: false,
     settings: {},
     getAdapter: vi.fn(() => null),
@@ -348,6 +350,7 @@ describe("device.connect with slot: 'auto'", () => {
       deviceId: 'V-LEFT',
       slot: 'left',
       resolvedFrom: 'persisted_binding',
+      stateConfirmed: true,
     });
     expect(state.slots.has('left')).toBe(true);
     expect(state.slots.has('right')).toBe(false);
@@ -389,7 +392,7 @@ describe("device.connect with slot: 'auto'", () => {
     const r = await invoke('device.connect', { deviceId: 'V-1', slot: 'left' });
     expect(r.isError).toBeUndefined();
     // No `slot` / `resolvedFrom` keys on the non-auto path.
-    expect(r.payload).toEqual({ ok: true, deviceId: 'V-1' });
+    expect(r.payload).toEqual({ ok: true, deviceId: 'V-1', stateConfirmed: true });
   });
 
   it('touches lastSeen on the persisted binding after a successful connect', async () => {

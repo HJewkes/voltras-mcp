@@ -8,14 +8,22 @@
 // against this definition. Change a shot without regenerating and the `test`
 // job goes red — the same property `npm run docs:reference` has.
 //
-// What this CANNOT gate is the pixels. Two machines render the same page
-// differently (font hinting, GPU rasterisation, Skia antialiasing), and two runs
-// on ONE machine still differ because the dashboard paints a wall clock and a
-// count-up rest timer. A byte or perceptual comparison of the images would
-// either fail constantly or be tuned until it could never fail, so this ships
-// neither. What is checked instead: the definition, the manifest agreeing with
-// it, the image geometry, the assertions each capture had to satisfy before it
-// was written, and that no site page points at a shot that no longer exists.
+// What this CANNOT gate is the pixels. `scripts/capture-screens.mjs` freezes the
+// clock and disables animations/transitions before every shot (VW-389), which
+// makes `dashboard-cold`, `plan-builder`, `goals` and `body-week` — the four
+// shots with no server-real-time field on the page — byte-identical across two
+// runs on ONE machine. The other four still carry a value the SERVER computed
+// from its own clock (a rep-shape curve's per-sample frame-decode timestamp, a
+// pace ETA, a session start/end stamp) that no client-side freeze reaches; see
+// `docs/screenshot-harness.md` for the exact split and the two-run proof, and
+// `guardLocalOverwrite` in the harness for what stops one of those four from
+// being silently replaced by an ordinary local run. Font hinting, GPU
+// rasterisation and Skia antialiasing differ machine to machine on top of all
+// of that, so a byte or perceptual comparison in CI would either fail
+// constantly or be tuned until it could never fail. This ships neither. What CI
+// checks instead: the definition, the manifest agreeing with it, the image
+// geometry, the assertions each capture had to satisfy before it was written,
+// and that no site page points at a shot that no longer exists.
 
 import { createHash } from 'node:crypto';
 
@@ -33,6 +41,23 @@ export const CAPTURE_MANIFEST = `${CAPTURE_DIR}/manifest.json`;
  */
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
 
+/** A capture viewport. The default is {@link CAPTURE_VIEWPORT}; a shot may override it. */
+export interface CaptureViewport {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The wall frame the body page is laid out for (VW-338). Its two `size="wall"`
+ * figures are 480x960 each and they sit between two rails — at 1440 the rails
+ * squeeze and at 900 the figures are cropped, so a capture at the default size
+ * would publish a picture of a page nobody runs.
+ */
+export const WALL_VIEWPORT = { width: 1920, height: 1080 } as const;
+
+/** An iPhone-class portrait frame — the `#/goals` phone layout (VW-356). */
+export const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
+
 /**
  * 1x. The docs site renders these into a ~700px content column, so a 1440px-wide
  * capture is already 2x there; a device scale factor of 2 would make it 4x and
@@ -41,14 +66,15 @@ export const CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
  */
 export const CAPTURE_DEVICE_SCALE_FACTOR = 1;
 
-/** Scenario names, each one no-hardware run of the real MCP pipeline. */
-export type CaptureScenarioName = 'cold' | 'planned' | 'dual';
+/** Scenario names, each one no-hardware run. */
+export type CaptureScenarioName = 'cold' | 'planned' | 'dual' | 'goals' | 'body';
 
 /**
  * How a scenario is driven. `driver: null` boots `dist/bin.js` directly (nothing
  * connects, nothing opens) — the only way to hold the empty state still. The
- * other two reuse the established mock drivers rather than re-implementing a
- * workout, so `set.end` is always called and nothing is stubbed at the HTTP layer.
+ * workout scenarios reuse the established mock drivers rather than
+ * re-implementing a workout, so `set.end` is always called and nothing is
+ * stubbed at the HTTP layer. `body` is the one exception, and says why inline.
  *
  * `{port}` / `{controlPort}` are substituted at run time with probed-free ports,
  * so the definition (and its hash) carries no machine-specific value.
@@ -86,16 +112,43 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     driver: 'scripts/dashboard-mock-drive.mjs',
     // Asymmetric on purpose: equal sides prove nothing about the diverging
     // stage. Pinned, the asymmetry is exact — 6 reps against 4, every run.
+    // ONE set: `live-dual-mid-set` is the only shot this scenario owns, and a
+    // second set pinned to the SAME target reps made the `set-open` predicate
+    // ambiguous between the two sets' parked windows — whichever one the
+    // capture actually landed on rendered a different `liveRepIndex` /
+    // velocity-curve state, so two runs on one machine disagreed on the PNG
+    // even with the content assertions both passing (VW-389).
     args: [
       '--dual',
       '--port={port}',
       '--control-port={controlPort}',
-      '--sets=2',
+      '--sets=1',
       '--pinned',
       '--reps=left:6,right:4',
       '--lag=right:2500',
       '--settle-ms=14000',
     ],
+  },
+  {
+    name: 'goals',
+    driver: 'scripts/dashboard-mock-drive.mjs',
+    // The PR-star loop (VW-384): seeds one prior-week reading, declares the
+    // lift a priority, accepts the coach's proposed band, then drives a
+    // working set and a heavier set that passes it — the reading the goals
+    // page's PR badge and trajectory chart need (VW-389).
+    args: ['--goal=cable-chest-press', '--port={port}', '--control-port={controlPort}'],
+  },
+  {
+    name: 'body',
+    // The one scenario that does NOT drive the pipeline, and it cannot: every
+    // driver runs `VOLTRA_ADAPTER=mock`, `set.end` stamps those sets
+    // `source: 'mock'`, and the per-muscle read models exclude mock sets by
+    // design (`read-models/muscle-set-scope.ts`) so synthetic work never reads
+    // as this athlete's volume. A mock-driven body page is therefore correctly,
+    // and uselessly, empty. This driver seeds recorded outcomes into the store
+    // instead and boots the same server; the analytics over them are real.
+    driver: 'scripts/dashboard-body-seed.mjs',
+    args: [],
   },
 ];
 
@@ -176,7 +229,30 @@ export interface CaptureShot {
    * when it mounted and never updates.
    */
   readonly holdsPageOpen: boolean;
+  /** Overrides {@link CAPTURE_VIEWPORT} for this shot alone. @see viewportFor */
+  readonly viewport?: CaptureViewport;
 }
+
+/** The viewport a shot is taken at — its own, or the default. */
+export function viewportFor(shot: CaptureShot): CaptureViewport {
+  return shot.viewport ?? CAPTURE_VIEWPORT;
+}
+
+/**
+ * The goals scenario's computed numbers, shared by its wall and phone shots:
+ * both read the same pipeline state, so a wrong number fails both.
+ */
+const GOALS_VALUES: readonly string[] = [
+  // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
+  // and the coach's own proposal. Never asserted as a raw number elsewhere,
+  // so a wrong target here would pass every other shot's check.
+  'Goal 8 x 127.5 lb',
+  // The driven PR set as the block's best, and the gap it leaves to the goal.
+  'Best 8 x 110 lb',
+  '17.5 lb to goal',
+  // The whole-body panel's own line for the same priority.
+  'CABLE CHEST PRESS · specialize',
+];
 
 /**
  * Order matters within a scenario: shots are taken in listed order against one
@@ -287,11 +363,81 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectText: ['MOCK-VOLTRA-LEFT', 'MOCK-VOLTRA-RIGHT', 'L/R'],
     expectValues: [
       // Both sides' per-rep peaks in one string, so a slot that stopped
-      // updating or started mirroring its neighbour cannot pass.
-      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 VL 20% VL 30% 0.50 0.49 0.47 0.46',
+      // updating or started mirroring its neighbour cannot pass. Six values
+      // left, four right — the scenario's own asymmetric target.
+      'VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46',
       'L/R 2% Right leading',
     ],
-    holdsPageOpen: true,
+    // Unlike the other live-page shots, this is the ONLY shot in the `dual`
+    // scenario, so there is no later shot's continuity to preserve by holding
+    // the page open early. Opening early used to race the mock adapter's
+    // connect-time rep against the wall dashboard's kiosk auto-navigate
+    // (`SessionEndedView`, VW-261): that rep set `model.live` before
+    // `session.start` landed, which read as "session ended" and, after its
+    // 8s timer, auto-navigated to `#/summary` mid-capture — a 404 on
+    // `/api/session-summary/latest` for the session that hadn't finished yet
+    // (VW-389). The diverging stage's data (`entry.sets.active.reps`) comes
+    // straight off the snapshot poll, not off accumulated SSE, so a page
+    // opened fresh after the predicate holds renders the same content.
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption:
+      'The goal-coach wall page, with an accepted target and a personal record from the heavier set.',
+    // 2, not 1: the goal driver seeds one PREVIOUS-week session directly into
+    // the store before the server even opens (the reading the driven PR set
+    // has to pass), so `minSessions: 1` was satisfied at server startup,
+    // before `goal.declare_priorities` ever ran — the shot opened on an empty
+    // "No priorities declared" page every time (VW-389).
+    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+    expectValues: GOALS_VALUES,
+    holdsPageOpen: false,
+  },
+  {
+    name: 'goals-phone',
+    scenario: 'goals',
+    route: '/app#/goals',
+    caption: 'The goal-coach page at phone width, cards and chart stacked to one column.',
+    // Same state as `goals` — this shot proves the phone layout (VW-356), not
+    // a different read of the pipeline, so it reuses that shot's predicate
+    // and content rather than re-deriving one.
+    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    viewport: PHONE_VIEWPORT,
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Per-lift', 'Whole body'],
+    expectValues: GOALS_VALUES,
+    holdsPageOpen: false,
+  },
+  {
+    name: 'body-week',
+    scenario: 'body',
+    route: '/app#/body',
+    caption:
+      "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+    // The seed is written before the server boots, so this holds from the first
+    // poll — it is here to fail loudly if the seed ever writes fewer sessions.
+    waitFor: { kind: 'sessions-ended', minSessions: 18 },
+    viewport: WALL_VIEWPORT,
+    expectText: ['Next up', 'Recent PRs', 'This week', 'Legend', 'Weekly sets by muscle'],
+    expectValues: [
+      // The four glance tiles with their own labels: swapping two tiles' data
+      // sources leaves every one of these numbers on the page, and this string
+      // still fails.
+      'SETS 32 MUSCLES 7 PRODUCTIVE 1',
+      'BELOW MEV 11 OVER MRV 0',
+      // The one muscle over its MAV and the one still under its MEV, off the
+      // strip — the two ends of the status scale the figure paints.
+      'Chest 15/14',
+      'Lats 4/14',
+      // A PR the strength read model found, not one the seed declared.
+      'Cable Chest Press Chest 221.7 lb (+12.7)',
+      // The plan's remaining work, folded to one row per lift.
+      'Cable Lat Pulldown Pull B 4 sets',
+    ],
+    holdsPageOpen: false,
   },
 ];
 

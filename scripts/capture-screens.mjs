@@ -60,14 +60,15 @@
 // so `npm ci` downloads no browser and CI stays untouched. Installing the
 // browser is a documented one-time manual step (see docs/screenshot-harness.md).
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
-import * as net from 'node:net';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright-core';
+
+import { POLL_MS, getJson, sleep, startScenario } from './lib/dashboard-launch.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN_PATH = path.join(REPO_ROOT, 'dist/bin.js');
@@ -75,8 +76,6 @@ const SPA_INDEX = path.join(REPO_ROOT, 'dist/spa/index.html');
 const DEFINITION = path.join(REPO_ROOT, 'dist/docs/capture-shots.js');
 const CLIP_DEFINITION = path.join(REPO_ROOT, 'dist/docs/capture-clips.js');
 
-/** How often the predicate re-reads `/api/snapshot`. Well under the SPA's own 2s poll. */
-const POLL_MS = 250;
 /**
  * Per-shot ceiling. The longest predicate (`sessions-ended`) waits out a whole
  * planned run — three exercises of two 12s sets with 10s rests, ~2 minutes — so
@@ -93,18 +92,41 @@ const PREDICATE_TIMEOUT_MS = 300_000;
  * wrong.
  */
 const TEXT_TIMEOUT_MS = 20_000;
-/** How long the dashboard sidecar gets to bind after the driver starts. */
-const DASHBOARD_BIND_TIMEOUT_MS = 60_000;
 /**
- * Connection-level `fetch` retries per snapshot read. Three at {@link POLL_MS}
- * apart covers the intermittent reject a heavily loaded machine produces without
- * masking a sidecar that has actually gone away — the predicate's own timeout
- * still expires on schedule.
+ * The wall clock every shot's page sees, fixed so the header clock and any
+ * elapsed-time readout render the same text on every run. Only `Date.now()`/
+ * `new Date()` are pinned ({@link installShotDeterminism}) — real timers keep
+ * firing, so the 2s snapshot poll and the live SSE stream are untouched.
  */
-const TRANSIENT_FETCH_RETRIES = 3;
-
+const CAPTURE_FIXED_TIME_ISO = '2026-01-01T12:00:00.000Z';
 const log = (...args) => console.error('[capture]', ...args);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Refuse to silently replace a committed PNG with a DIFFERENT one on an
+ * ordinary local run, unless `CAPTURES_ALLOW_LOCAL=1` says the replacement is
+ * intentional.
+ *
+ * `installShotDeterminism` + `waitForVisualStability` make most shots repeat
+ * byte-for-byte, but four of the seven (VW-389: `live-mid-set`, `live-rest`,
+ * `session-summary`, `live-dual-mid-set`) render a value the SERVER computed
+ * from its own real clock — a rep-shape curve's per-sample frame-decode
+ * timestamp, a pace ETA, a session start/end stamp — and no amount of
+ * client-side clock-freezing reaches that; `docs/screenshot-harness.md` has
+ * the count and the exact fields. Regenerating one of those shots is still a
+ * normal, deliberate maintainer action — this only stops it from happening
+ * BY ACCIDENT as a side effect of running the harness for some other reason.
+ */
+function guardLocalOverwrite(file, buffer, name) {
+  if (process.env.CAPTURES_ALLOW_LOCAL === '1' || !fs.existsSync(file)) return;
+  const existing = fs.readFileSync(file);
+  if (existing.equals(buffer)) return;
+  throw new Error(
+    `${name}: the fresh capture differs from the committed PNG. If this is an ` +
+      `intentional regeneration, rerun with CAPTURES_ALLOW_LOCAL=1 and commit the ` +
+      `result; if it is not, see docs/screenshot-harness.md for which shots carry a ` +
+      'server-real-time field and are expected to differ run to run.',
+  );
+}
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
@@ -140,36 +162,7 @@ function narrow(all, name, otherName, label) {
   return picked;
 }
 
-/** An OS-assigned free port, released immediately before we hand it to a child. */
-function probeFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 // ── the running dashboard ──────────────────────────────────────────────────
-
-async function getJson(port, route) {
-  // A connection-level failure is retried; an HTTP status is not. On a loaded
-  // machine `fetch` to the sidecar intermittently rejects outright, and one of
-  // those used to abort a six-minute run several scenarios in. A 500 is a real
-  // answer from a server that is up, so retrying it would only hide it.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}${route}`);
-      if (!res.ok) throw new Error(`${route} -> ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      if (attempt >= TRANSIENT_FETCH_RETRIES || /^\S+ -> \d+$/.test(err.message)) throw err;
-      await sleep(POLL_MS);
-    }
-  }
-}
 
 /** Reps on one slot as the dashboard sees them (`devices[].sets.active`), or null. */
 function slotReps(snapshot, slot) {
@@ -322,6 +315,30 @@ async function waitForText(page, expected, label) {
 }
 
 /**
+ * Pin everything about a shot's page that a wall clock or a CSS transition
+ * would otherwise make differ run to run: `Date.now()`/`new Date()` fixed at
+ * {@link CAPTURE_FIXED_TIME_ISO} (timers keep running — see its note), the
+ * `prefers-reduced-motion` media query set to `reduce`, and a stylesheet
+ * forcing every animation/transition to complete instantly. The stylesheet is
+ * an init script rather than a one-off `addStyleTag` because `captureShot`
+ * navigates this same page repeatedly (`page.goto`/`page.reload`) and an init
+ * script re-applies on each one; a style tag added once would not survive the
+ * first reload.
+ */
+async function installShotDeterminism(page) {
+  await page.clock.setFixedTime(CAPTURE_FIXED_TIME_ISO);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    const style = document.createElement('style');
+    style.textContent =
+      '*, *::before, *::after { animation-duration: 0s !important; ' +
+      'animation-delay: 0s !important; transition-duration: 0s !important; ' +
+      'transition-delay: 0s !important; scroll-behavior: auto !important; }';
+    (document.head ?? document.documentElement).appendChild(style);
+  });
+}
+
+/**
  * Block until the bundled webfonts have loaded and the browser has produced two
  * frames. Signals, not a sleep: a shot taken before `document.fonts.ready`
  * captures fallback metrics and reflows a moment later.
@@ -331,6 +348,40 @@ async function settlePaint(page) {
     await document.fonts.ready;
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
+}
+
+/** How far apart two stability samples are taken. */
+const STABILITY_SAMPLE_MS = 150;
+/** Consecutive identical samples required before the page counts as settled. */
+const STABILITY_ROUNDS = 3;
+/** Ceiling on the whole poll — a page that never settles is a real bug, not a slow one. */
+const STABILITY_TIMEOUT_MS = 5_000;
+
+/**
+ * Screenshot on a loop until `STABILITY_ROUNDS` consecutive samples come back
+ * byte-identical, and return the settled buffer. `installShotDeterminism`'s CSS
+ * override only reaches `animation`/`transition` CSS properties; titan-design's
+ * charts (the diverging stage's velocity curve, VW-389) animate their entrance
+ * through `requestAnimationFrame` directly, which no stylesheet can freeze. This
+ * is the general fix: wait for the PIXELS to stop moving, whatever is moving
+ * them, rather than special-casing one more animation mechanism.
+ */
+async function waitForVisualStability(page, screenshotOptions) {
+  let last = null;
+  let streak = 0;
+  const deadline = Date.now() + STABILITY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const buffer = await page.screenshot(screenshotOptions);
+    if (last !== null && buffer.equals(last)) {
+      streak++;
+      if (streak >= STABILITY_ROUNDS) return buffer;
+    } else {
+      streak = 0;
+    }
+    last = buffer;
+    await sleep(STABILITY_SAMPLE_MS);
+  }
+  throw new Error('page never settled visually — an animation is still running past the timeout');
 }
 
 /** Width and height straight out of the PNG's IHDR — no image library needed. */
@@ -357,11 +408,21 @@ function pngDimensions(file) {
  * `holdsPageOpen` decides which side of the predicate the route is opened on,
  * and the definition explains why each shot picks the side it does.
  */
-async function captureShot(page, origin, port, shot, outDir) {
+async function captureShot(page, origin, port, shot, defs, outDir) {
   const target = `${origin}${shot.route}`;
+  // Per-shot geometry: the body page is laid out for a 1920x1080 wall and is
+  // cropped at the default size. Set unconditionally so the shot AFTER an
+  // override goes back to the default rather than inheriting it.
+  await page.setViewportSize({ ...defs.viewportFor(shot) });
+  // `domcontentloaded`, NOT `networkidle` — same reason `recordClip` picks it
+  // (below): the live page holds `/api/stream` (SSE) open for as long as it is
+  // mounted, so a busy stream (two slots, VW-389's `live-dual-mid-set`) can keep
+  // bytes flowing past `networkidle`'s 500ms quiet window and time the goto out
+  // at 30s. Nothing is lost — `waitForState` and `waitForText` below are the
+  // real gates; this `waitUntil` only needed to get the initial bundle running.
   const open = async () => {
-    if (page.url() === target) await page.reload({ waitUntil: 'networkidle' });
-    else await page.goto(target, { waitUntil: 'networkidle' });
+    if (page.url() === target) await page.reload({ waitUntil: 'domcontentloaded' });
+    else await page.goto(target, { waitUntil: 'domcontentloaded' });
   };
 
   const expected = [...shot.expectText, ...shot.expectValues];
@@ -372,7 +433,19 @@ async function captureShot(page, origin, port, shot, outDir) {
   await settlePaint(page);
 
   const file = path.join(outDir, `${shot.name}.png`);
-  await page.screenshot({ path: file, fullPage: false });
+  // `animations: 'disabled'` is Playwright's own belt to installShotDeterminism's
+  // braces: it finishes any CSS transition/animation the stylesheet missed
+  // (an inline `style` attribute, for one) before each sample. `caret: 'hide'`
+  // removes the one other per-frame variable, a blinking caret in a focused
+  // input. `waitForVisualStability` (not a plain `page.screenshot`) is what
+  // catches everything neither reaches — see its own note.
+  const buffer = await waitForVisualStability(page, {
+    fullPage: false,
+    animations: 'disabled',
+    caret: 'hide',
+  });
+  guardLocalOverwrite(file, buffer, shot.name);
+  fs.writeFileSync(file, buffer);
 
   const after = await pageText(page);
   const stillMissing = missingIn(after, expected);
@@ -396,9 +469,14 @@ async function captureShot(page, origin, port, shot, outDir) {
     width,
     height,
     bytes,
-    // Informational: reruns differ (the page paints a wall clock and a count-up
-    // rest timer), so nothing gates on this. It is here to make "did this shot
-    // actually change" answerable from the diff.
+    // Two runs on ONE machine now agree for shots with no server-real-time
+    // field (`installShotDeterminism` + `waitForVisualStability` remove the
+    // client-side wall-clock and animation variance that used to make every
+    // rerun differ). The other shots still churn on THEIR OWN data, not on
+    // anything this harness controls — see `guardLocalOverwrite`'s note and
+    // docs/screenshot-harness.md's two-run proof for the exact split. Nothing
+    // gates on this field regardless: font hinting, GPU rasterisation and
+    // Skia's antialiasing still differ machine to machine either way.
     sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
   };
 }
@@ -680,88 +758,15 @@ async function captureClip(browser, clip, port, clipsDir, cfg, tmpDir, previous)
 }
 
 // ── scenarios ──────────────────────────────────────────────────────────────
+//
+// Launching one is `scripts/lib/dashboard-launch.mjs`' job — the same helper
+// `npm run dashboard:preview` boots a page with (VW-416). What stays here is
+// what a CAPTURE adds on top: the per-scenario `{port}` substitution lives with
+// the launcher, the predicates and the assertions live above.
 
-/** Minimal MCP handshake: the dashboard sidecar only binds once a client activates. */
-function handshake(child) {
-  const send = (msg) => child.stdin.write(JSON.stringify(msg) + '\n');
-  send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'capture-screens', version: '0.1.0' },
-    },
-  });
-  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}
-
-/**
- * Start a scenario and return `{ child, port, stop }`. `driver: null` boots the
- * server directly and holds the empty state indefinitely; a driver is spawned
- * detached so stopping it signals the whole group, including the MCP server it
- * owns as a grandchild.
- */
-async function startScenario(scenario, dbDir) {
-  const port = await probeFreePort();
-  const controlPort = await probeFreePort();
-  // One store per scenario: never shared, never `~/.voltras/vmcp.sqlite`.
-  const dbPath = path.join(dbDir, `${scenario.name}.sqlite`);
-  const substitute = (arg) =>
-    arg.replace('{port}', String(port)).replace('{controlPort}', String(controlPort));
-  const env = {
-    ...process.env,
-    VOLTRA_ADAPTER: 'mock',
-    VOLTRA_LOG_LEVEL: 'warn',
-    VMCP_DASHBOARD_PORT: String(port),
-    VMCP_DB_PATH: dbPath,
-  };
-
-  const child = scenario.driver
-    ? spawn(process.execPath, [scenario.driver, ...scenario.args.map(substitute)], {
-        cwd: REPO_ROOT,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
-      })
-    : spawn(process.execPath, [BIN_PATH], { cwd: REPO_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'] });
-
-  let tail = '';
-  for (const stream of [child.stdout, child.stderr]) {
-    stream.on('data', (chunk) => {
-      tail = (tail + chunk.toString()).slice(-4000);
-    });
-  }
-  if (!scenario.driver) handshake(child);
-
-  const deadline = Date.now() + DASHBOARD_BIND_TIMEOUT_MS;
-  for (;;) {
-    try {
-      await getJson(port, '/api/snapshot');
-      break;
-    } catch (err) {
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `${scenario.name}: dashboard never bound on :${port} (${err.message})\n${tail}`,
-        );
-      }
-      await sleep(POLL_MS);
-    }
-  }
-  log(`${scenario.name}: dashboard on :${port}`);
-
-  const stop = () => {
-    try {
-      if (scenario.driver) process.kill(-child.pid, 'SIGINT');
-      else child.stdin.end();
-    } catch {
-      // already gone
-    }
-    child.kill('SIGKILL');
-  };
-  return { port, stop, tail: () => tail };
-}
+/** Start one capture scenario, logging through this script's own prefix. */
+const startCaptureScenario = (scenario, dbDir) =>
+  startScenario(scenario, dbDir, { log, clientName: 'capture-screens' });
 
 // ── main ───────────────────────────────────────────────────────────────────
 
@@ -771,20 +776,21 @@ async function captureShots(browser, shots, defs, dbDir, outDir) {
   const page = await browser.newPage({
     viewport: { ...defs.CAPTURE_VIEWPORT },
     deviceScaleFactor: defs.CAPTURE_DEVICE_SCALE_FACTOR,
-    // Fixed so the wall clock the live page renders is at least in a known
-    // zone across machines. It still differs run to run — see the manifest note.
+    // UTC so a fixed clock (installShotDeterminism) reads the same wall-clock
+    // text on every machine, not just on every run of this one.
     timezoneId: 'UTC',
     locale: 'en-US',
   });
+  await installShotDeterminism(page);
   const captured = [];
   for (const scenario of defs.CAPTURE_SCENARIOS) {
     const wanted = shots.filter((s) => s.scenario === scenario.name);
     if (wanted.length === 0) continue;
-    const scene = await startScenario(scenario, dbDir);
+    const scene = await startCaptureScenario(scenario, dbDir);
     try {
       const origin = `http://127.0.0.1:${scene.port}`;
       for (const shot of wanted) {
-        captured.push(await captureShot(page, origin, scene.port, shot, outDir));
+        captured.push(await captureShot(page, origin, scene.port, shot, defs, outDir));
       }
     } catch (err) {
       throw new Error(`${scenario.name}: ${err.message}\n--- driver output ---\n${scene.tail()}`);
@@ -805,7 +811,7 @@ async function captureClips(browser, clips, cfg, dbDir, clipsDir, tmpDir, previo
   for (const scenario of cfg.scenarios) {
     const wanted = clips.filter((c) => c.scenario === scenario.name);
     if (wanted.length === 0) continue;
-    const scene = await startScenario(scenario, dbDir);
+    const scene = await startCaptureScenario(scenario, dbDir);
     try {
       for (const clip of wanted) {
         const was = byName.get(clip.name);

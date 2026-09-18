@@ -39,6 +39,104 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The goal coach now says when a goal is met. A target reads `goal_met` once a matched set
+  lifts the committed number and `beyond_goal` once one passes it, and keeps that verdict for
+  the rest of the block rather than slipping back to a pace word after a lighter week. Each
+  target also carries its block-end milestone (the committed set, the current week, the latest
+  reading, and whether it is still open, hit, or missed at the block boundary) and a per-week
+  verdict against that week's band, so the goal card needs no maths of its own (VW-400).
+  `dashboard:preview -- goals --state hit_exact|beyond_goal` now lands on those two verdicts.
+- `goal.accept_target` takes `anchorLoad` for a `reps_at_load` target, so the goal reads as a
+  whole set ("12 reps at 185 lb") rather than a bare rep count. It is fixed with the rest of
+  the target, and any other metric refuses it (VW-399).
+
+- `npm run dashboard:preview -- goals` (also `body` and `plan`) opens one wall dashboard
+  page in a browser with no Voltra, no PT session and no risk to your training history: it
+  seeds a scratch store, boots a mock-adapter server over it on a free port, prints the URL
+  and holds it open until Ctrl-C, deleting the store on the way out (VW-416). The goals page
+  takes `--state calibrating|on_track|behind|ahead|hit_exact|beyond_goal`, which seeds the
+  readings that land the goal coach in that state — the statuses a driven mock run cannot
+  reach, because a band with no established baseline is always still calibrating (#440).
+- The dashboard has a fourth page: `#/body`, reached from the Body item on the nav rail,
+  which has been in the rail's source since the shell landed and filtered out until now
+  (VW-338). It shows the week at a glance on two body figures — front and back, each muscle
+  filled by where its weekly working sets sit against the population MEV/MAV/MRV landmarks —
+  with the lifts the current training week still owes, the personal records the strength read
+  found, the week's set and muscle counts, and a strip of all fifteen muscles with sets
+  against target. The landmarks are labelled as population defaults on the page, because they
+  are: nothing here is fitted to you. The page shows no live telemetry at all; a set running
+  while it is open cues the Live rail item instead.
+- The published docs screenshots now include the `#/goals` wall page: a declared priority,
+  the accepted committed/stretch band, its trajectory chart, and the PR star from a heavier
+  set passing last week's reading (VW-389).
+- The `#/goals` page now stacks to one column on a phone-width screen instead of squeezing
+  its four-card grid and 1200px-wide trajectory chart into a viewport neither fits (VW-356).
+
+### Changed
+
+- The `#/goals` page leads with one goal card instead of a header block over a chart (VW-385).
+  The title row carries the lift, its priority mark, a PR star and the verdict, with the reason
+  for the verdict one hover away on the pill. Below it sit the block-end target, the gap to it
+  and one cell per week standing on the chart's own week columns, and the chart marks next
+  week's target as a hollow dot. `Goal met` and `Beyond goal` now show as themselves rather than
+  as the nearest pace word. The per-lift cards carry the same summary over a week-column chart,
+  and both card grids fill as many columns as fit: four across a 1920px wall, three at 1440, one
+  on a phone (`@titan-design/react-ui` 0.18.0).
+- Connecting now waits for the Voltra to accept the connection (`@voltras/node-sdk` 0.15.0,
+  VW-415, #441). A first pairing asks the lifter to accept on the device, so `device.connect` can
+  take up to 30 seconds; meanwhile `device.get_state` reports
+  `connectionState: awaitingAcceptance` and the dashboard badge reads ACCEPT ON DEVICE
+  instead of OFFLINE. A refusal, or no answer in time, is a `CONNECTION_REFUSED` error that
+  tells you to accept on the device and try again; the server never retries on its own.
+- After connecting, setters refuse with `DEVICE_STATE_UNKNOWN` until the device has reported
+  its current settings, rather than writing over a state nobody has seen.
+  `device.connect` returns `stateConfirmed` and `device.get_state` returns
+  `state_confirmed` so you can tell. Stops are never held back this way.
+- Stopping the cable now reports whether the device confirmed it. `device.unload`'s
+  `read_back.verdict` is `confirmed` when the device reported the release, and
+  `unconfirmed` (call it again, check the cable) when it did not. `set.end` still saves the
+  set when the stop is unconfirmed or cannot be sent, and adds `motor_stop` and a
+  `motor_stop_note` saying so. A spoken "stop" the device did not confirm is answered with
+  "Check the cable, the weight may still be on" instead of "Weight off", and its
+  `deterministic_stop_triggered` event carries `release: unconfirmed`. A forced
+  `system.lease_acquire` counts an unconfirmed release as a slot it could not unload, so
+  it refuses unless `acceptLoadedDevice: true` is also passed.
+- The device's per-set duration on `set_ended` is named for what it is: the whole set's
+  pull moving time. `device_set_summary.rep_duration_ms` is now `total_pull_moving_time_ms`
+  and `meta.device_set_rep_duration_ms` is now `meta.device_set_pull_moving_time_ms`.
+- `set.live_metrics`' `latestInProgress` carries the device heartbeat under its real names:
+  `meanPullForceTenths`, `meanReturnForceTenths`, `meanReturnSpeedMmPerSec` and
+  `pullVolumeRawTenths`. Each is a per-rep mean the device repeats until the next rep, not
+  a live or peak reading. The speed is new: the old velocity field was read from the wrong
+  place and meant nothing. `pullVolumeRawTenths` grows through the set and is not a weight.
+- The dashboard's current-set weight comes only from the device's weight setting. It used
+  to fall back to the heartbeat's "target weight", which turned out to be a per-set
+  accumulator, so with no weight setting known it now shows a dash instead of a wrong number.
+- The goal trajectory chart is drawn on a recessed plane with a lit bottom lip, a labelled
+  value axis and gridlines, and its band edges are interpolated rather than joined
+  straight (`@titan-design/react-ui` 0.17.1, VW-401). A goal whose committed and stretch
+  targets are the same number — every goal still calibrating — draws that band as a single
+  ramp edge and merges the two target labels into one, instead of stacking two labels over
+  a band with no width.
+
+### Fixed
+
+- `device.exit_guided_load` now releases the cable (`@voltras/node-sdk` 0.15.0, VW-415, #441). It
+  used to report success while the device stayed loaded. `device.unload` remains the stop
+  the device confirms.
+- `npm run docs:captures`'s dual-Voltra screenshot no longer 404s partway through (VW-389).
+  Opening the page as soon as the scenario started raced the mock adapter's connect-time rep
+  against the wall dashboard's kiosk auto-navigate-to-summary, landing the capture on a
+  session that had not finished yet. Screenshots are also now reproducible byte-for-byte
+  across two runs on one machine, for every shot whose content is not itself real-time (four
+  of eight, guaranteed). The other four render a value — a pace ETA, a session timestamp, a
+  rep-shape curve — the server computed from its own clock, which no local capture-time
+  freeze reaches, so whether a given run's PNG matches the previous one is down to timing:
+  it can come out identical when the underlying value happens to coincide, and differ when
+  it doesn't.
+
+### Added
+
 - PR stars now actually appear on the goals page (VW-384). A reading on a lift target is a
   personal record when it is strictly greater than every earlier reading for that lift
   inside the window the page already shows — `history.trend`'s lookback, clamped to a

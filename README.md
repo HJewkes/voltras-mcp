@@ -265,6 +265,25 @@ last set has nothing to show. `dashboard-sim` takes `PORT=` and `LOOP=1` (repeat
 `dashboard-mock-drive` takes `VMCP_DASHBOARD_PORT=`. Read each script's header comment for
 the rest.
 
+Both of those animate the **live** page. To browse one of the other wall pages instead —
+the goal coach, the body wall, the plan builder — `npm run dashboard:preview` seeds a
+scratch store, boots a mock-adapter server over it on a free port, prints the URL and holds
+it open until Ctrl-C:
+
+```bash
+npm run dashboard:preview -- goals                  # #/goals
+npm run dashboard:preview -- goals --state behind   # …with a chosen goal state
+npm run dashboard:preview -- body                   # #/body
+npm run dashboard:preview -- plan                   # #/plan
+```
+
+`--state` takes `calibrating`, `on_track`, `behind`, `ahead`, `hit_exact` or `beyond_goal`
+and seeds the readings that land the goal read model there (`hit_exact` and `beyond_goal`
+put the newest reading on and past the committed target; both read `on_track`, which is the
+verdict, not the number). The scratch store is removed on exit and
+`~/.voltras/vmcp.sqlite` is never opened. See
+[`docs/dashboard-drivers.md`](docs/dashboard-drivers.md).
+
 ---
 
 ## The dashboard
@@ -690,6 +709,12 @@ npm run format           # prettier
 npm run build            # server → dist/
 npm run build:dashboard  # SPA → dist/spa
 npm start                # node ./dist/bin.js
+
+npm run dashboard:preview -- goals   # browse one wall page, seeded, no device
+npm run docs:captures                # regenerate the docs site's screenshots and clips
+npm run docs:reference               # regenerate the generated capability reference
+npm run changelog:check              # CHANGELOG.md conventions
+npm run docs:check                   # every cited path, line and tool on a published page
 ```
 
 CI gates on lint + typecheck + test + build. A pre-commit hook runs lint-staged, typecheck,

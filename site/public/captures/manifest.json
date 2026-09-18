@@ -1,5 +1,5 @@
 {
-  "definitionHash": "031b5376cb1ece3b81ad7e4621fa836defc93207dcd005d35d920b428fa80014",
+  "definitionHash": "745bbf6372fa35d979400320bc88234b7e68c6a4b41493b76b0bcd93a4b27659",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -15,17 +15,12 @@
       "waitFor": {
         "kind": "idle"
       },
-      "assertedText": [
-        "No Voltra connected",
-        "VELOCITY · this set"
-      ],
-      "assertedValues": [
-        "Session 0/0 sets"
-      ],
+      "assertedText": ["No Voltra connected", "VELOCITY · this set"],
+      "assertedValues": ["Session 0/0 sets"],
       "width": 1440,
       "height": 900,
-      "bytes": 43042,
-      "sha256": "7bdb23d3ef374758cfc205b3c46586383c4aa12302d6223f71fd0ab23356c886"
+      "bytes": 43802,
+      "sha256": "b11546ad26685360100c9a4932625bd6e44a01347e33460c565d9c5f9c339330"
     },
     {
       "name": "live-mid-set",
@@ -35,12 +30,7 @@
       "file": "live-mid-set.png",
       "waitFor": {
         "kind": "set-open",
-        "reps": [
-          [
-            "primary",
-            5
-          ]
-        ]
+        "reps": [["primary", 5]]
       },
       "assertedText": [
         "Push A · Hypertrophy",
@@ -56,8 +46,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 768564,
-      "sha256": "9200dd916096652d4e269cc2b12b69a600a8ebf00bf7c776b54efd44eabf17f8"
+      "bytes": 732548,
+      "sha256": "bea2051395765e5c9cbb36d8963864aec1c263f75fd37e33512c706375912d72"
     },
     {
       "name": "live-rest",
@@ -68,11 +58,7 @@
       "waitFor": {
         "kind": "rest"
       },
-      "assertedText": [
-        "TONNAGE",
-        "Cable Chest Press",
-        "Push A · Hypertrophy"
-      ],
+      "assertedText": ["TONNAGE", "Cable Chest Press", "Push A · Hypertrophy"],
       "assertedValues": [
         "VOLUME 5 TONNAGE 0 lbs",
         "1/8 sets",
@@ -82,8 +68,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 95592,
-      "sha256": "894ce3655aab3adf3d492a080a06918bab5db551926cd1254c50a33dba2272fa"
+      "bytes": 104539,
+      "sha256": "47b8cb0ebaa548eabb0d1c63c60148ed2928f269fe5db2505a1159b9bc17e267"
     },
     {
       "name": "session-summary",
@@ -95,11 +81,7 @@
         "kind": "sessions-ended",
         "minSessions": 3
       },
-      "assertedText": [
-        "Session complete",
-        "EXERCISES",
-        "NEXT SESSION"
-      ],
+      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
       "assertedValues": [
         "EXERCISES 1 SETS 2 REPS 10 VOLUME —",
         "FATIGUE 5.0 RPE Good",
@@ -111,8 +93,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 72391,
-      "sha256": "ab60eec06d8d8cb958802ee2eba6a4115563207cbcc046904b1231e3a20a2422"
+      "bytes": 72554,
+      "sha256": "4862d5fc891a05084bf097f5ea0c37b79d2849944ae2169894e6089821be6d72"
     },
     {
       "name": "plan-builder",
@@ -124,11 +106,7 @@
         "kind": "plan-seeded",
         "minExercises": 3
       },
-      "assertedText": [
-        "Push A — planned exercises",
-        "Cable Incline Chest Press",
-        "Save targets"
-      ],
+      "assertedText": ["Push A — planned exercises", "Cable Incline Chest Press", "Save targets"],
       "assertedValues": [
         "30 exercises",
         "Push A Block 1 · Week 1 · 3 exercises completed",
@@ -138,8 +116,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 120564,
-      "sha256": "c2fa0dc524cbad6a041d319752aa86cfd12f0e50eef7c9db0275ba4db5dd093b"
+      "bytes": 118887,
+      "sha256": "394145cba5f0fca4bbcc4ff74616ddc8e0bd7a7c164ee90fc7ca57ac3fbe0225"
     },
     {
       "name": "live-dual-mid-set",
@@ -150,29 +128,87 @@
       "waitFor": {
         "kind": "set-open",
         "reps": [
-          [
-            "left",
-            6
-          ],
-          [
-            "right",
-            4
-          ]
+          ["left", 6],
+          ["right", 4]
         ]
       },
-      "assertedText": [
-        "MOCK-VOLTRA-LEFT",
-        "MOCK-VOLTRA-RIGHT",
-        "L/R"
-      ],
+      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R"],
       "assertedValues": [
-        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 VL 20% VL 30% 0.50 0.49 0.47 0.46",
+        "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46",
         "L/R 2% Right leading"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 323424,
-      "sha256": "d49487ac80fbbaeb47e4ed97f1b58805fca50b76034aa3a41ecce4f0fe3d8467"
+      "bytes": 290073,
+      "sha256": "b89ac1eecf0330c1fa9695e90530ff2a3d8447481570416f718650c0b51250f4"
+    },
+    {
+      "name": "goals",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "The goal-coach wall page, with an accepted target and a personal record from the heavier set.",
+      "file": "goals.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 2
+      },
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
+      "assertedValues": [
+        "Goal 8 x 127.5 lb",
+        "Best 8 x 110 lb",
+        "17.5 lb to goal",
+        "CABLE CHEST PRESS · specialize"
+      ],
+      "width": 1440,
+      "height": 900,
+      "bytes": 69506,
+      "sha256": "20c2d4f84a5ecce3b349400018d708943a0ac84c36452f4f7011283a2f8b7b7f"
+    },
+    {
+      "name": "goals-phone",
+      "scenario": "goals",
+      "route": "/app#/goals",
+      "caption": "The goal-coach page at phone width, cards and chart stacked to one column.",
+      "file": "goals-phone.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 2
+      },
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
+      "assertedValues": [
+        "Goal 8 x 127.5 lb",
+        "Best 8 x 110 lb",
+        "17.5 lb to goal",
+        "CABLE CHEST PRESS · specialize"
+      ],
+      "width": 390,
+      "height": 844,
+      "bytes": 42361,
+      "sha256": "e92f6c749a1aab6832a324b963026aa3daeaf273b45238278b6fe9211663df36"
+    },
+    {
+      "name": "body-week",
+      "scenario": "body",
+      "route": "/app#/body",
+      "caption": "The body page: a training week's volume per muscle, what is due next, and recent PRs.",
+      "file": "body-week.png",
+      "waitFor": {
+        "kind": "sessions-ended",
+        "minSessions": 18
+      },
+      "assertedText": ["Next up", "Recent PRs", "This week", "Legend", "Weekly sets by muscle"],
+      "assertedValues": [
+        "SETS 32 MUSCLES 7 PRODUCTIVE 1",
+        "BELOW MEV 11 OVER MRV 0",
+        "Chest 15/14",
+        "Lats 4/14",
+        "Cable Chest Press Chest 221.7 lb (+12.7)",
+        "Cable Lat Pulldown Pull B 4 sets"
+      ],
+      "width": 1920,
+      "height": 1080,
+      "bytes": 201657,
+      "sha256": "495a9519c2e9b05b062f5517aebcd8bd2366a4f3024218deb6b303f8af43229b"
     }
   ],
   "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",
@@ -192,15 +228,10 @@
       "narrationAudio": "clips/planned-set.narration.m4a",
       "narrationHash": "2cb6b2dd24b254919c94ee632e7fdb0c285bb4ec7296dae54b041d2bcc0ac51c",
       "narrationSeconds": 24.405,
-      "narrationRegenerated": true,
+      "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [
-          [
-            "primary",
-            1
-          ]
-        ]
+        "reps": [["primary", 1]]
       },
       "endWhen": {
         "kind": "rest"
@@ -220,26 +251,26 @@
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.32,
-      "bytes": 605590,
+      "seconds": 33.36,
+      "bytes": 609738,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 226213,
-          "sha256": "7a037ebb85cb2a49c6cfe1789f7546cf031529804d31de22a35402fbdf619c7d"
+          "bytes": 239920,
+          "sha256": "16b7e3d6a7fdf0358dfa4cd35bcb863fd5861222505f79f718dd3261f3150389"
         },
         {
-          "atSeconds": 16.66,
-          "bytes": 187003,
-          "sha256": "b0ca1b51b31df04c7a984f4933646e76c44763b21f054d0f9c2e1325b8f31031"
+          "atSeconds": 16.68,
+          "bytes": 196857,
+          "sha256": "ba968e8ae3d91f1f05887f40d1e77a56bd974435f15953762ec4593871d0c4b2"
         },
         {
-          "atSeconds": 28.32,
-          "bytes": 191169,
-          "sha256": "1ad67b0a98a97ce8e8489c8e17c4d0b3cf1890ccfcabe30436a8197377abcb3c"
+          "atSeconds": 28.36,
+          "bytes": 201241,
+          "sha256": "6b2ac2d2082642e3b879e6fdbd74732ad22344e334e15eb81ff8078648c645ba"
         }
       ],
-      "sha256": "7db709365e6bc5af423f8928a05d83c4e701cd8b2236f3b5ca64e49c6f51d573"
+      "sha256": "e011a88fe8c5362a2d7a7bb93f752db1c3f5af4d998740e3e6af0b19a1ceb1ad"
     },
     {
       "name": "dual-divergence",
@@ -251,56 +282,42 @@
       "narrationAudio": "clips/dual-divergence.narration.m4a",
       "narrationHash": "c96d6c0b48e0999db57e3ad2ad1e8321fd624d455ed1bb17711caa3bd5935dea",
       "narrationSeconds": 23.189,
-      "narrationRegenerated": true,
+      "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [
-          [
-            "left",
-            1
-          ]
-        ]
+        "reps": [["left", 1]]
       },
       "endWhen": {
         "kind": "slots-rest",
-        "slots": [
-          "left",
-          "right"
-        ]
+        "slots": ["left", "right"]
       },
-      "assertedText": [
-        "MOCK-VOLTRA-LEFT",
-        "MOCK-VOLTRA-RIGHT",
-        "L/R",
-        "CON ECC",
-        "TONNAGE"
-      ],
+      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R", "CON ECC", "TONNAGE"],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 36.96,
-      "bytes": 578944,
+      "seconds": 37,
+      "bytes": 522272,
       "frames": [
         {
-          "atSeconds": 5.54,
-          "bytes": 205539,
-          "sha256": "e08b5289f6ca0c5ea970d656fa441fa000cd63c3078921d60b8cb2cce2e1df05"
+          "atSeconds": 5.55,
+          "bytes": 184571,
+          "sha256": "9d3f3c29bee99bf933a4e373788e7ec5f20399a0b3af77e02ab557385e113703"
         },
         {
-          "atSeconds": 18.48,
-          "bytes": 196982,
-          "sha256": "5bca93e4ff878d9c20550157f99125ee287863ff910ed6db1d9461bf1460a1a0"
+          "atSeconds": 18.5,
+          "bytes": 199595,
+          "sha256": "1f0dd8a670ee894908f3eac69a671528bf357a9c318dfb8cd2c441d292434120"
         },
         {
-          "atSeconds": 31.42,
-          "bytes": 103085,
-          "sha256": "86f1b197f33974aa7bd44bb81dfbd138dc412bd7d02884d1217c49379046905f"
+          "atSeconds": 31.45,
+          "bytes": 110488,
+          "sha256": "0a0bb599d5c47332900d2a4d89107d5c7848238d929d8d3259818f0cbe3f1d65"
         }
       ],
-      "sha256": "7bed488c9fa417c503b8757136bb6e60d3368cbf1efb631a94b46f18449346cd"
+      "sha256": "590d256e41aba48f36446991ea8524ec507da257455b1ccefac9faee63acf8d0"
     }
   ]
 }
