@@ -161,8 +161,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 70599,
-      "sha256": "79554f6d88c003773b3273631b6a5fe1812e1fb795d4317ec5a90dd28ce358bd"
+      "bytes": 79489,
+      "sha256": "3a0d18c4930c44086a8dcd8c50585d7b1e0ac784d523f79d637a00734d6ce759"
     },
     {
       "name": "goals-phone",
@@ -183,8 +183,8 @@
       ],
       "width": 390,
       "height": 844,
-      "bytes": 44750,
-      "sha256": "2873d756445c8d54d9598080fe1e93a778664dc47a2ac64be2906d6b467e051a"
+      "bytes": 52520,
+      "sha256": "1cf3926f5d647b699f821d740cd4d6a32fcb928953a238c3d26daf139b96cb9a"
     },
     {
       "name": "body-week",

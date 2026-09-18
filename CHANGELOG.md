@@ -48,6 +48,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
+  the goals page reads "Starting ramp, not yet based on your lifts." followed by what
+  calibration still waits on: "1 more comparable session to calibrate.", or a set taken near
+  failure, or more working sets of the lift, with no invented count when the baseline is what
+  blocks. `/api/goal-progress` carries the same facts as a structured `calibration` field
+  (sessions still needed, which gate blocks, the baseline state, and the accepted target's
+  basis). `goal.propose_targets` and `goal.accept_target` add a `startingRamp` notice to a
+  cold lift target telling the coach to re-propose a data-based target once calibration ends.
+  Nothing stored changes, and nothing is refused (VW-444).
 - The goal coach now says when a goal is met. A target reads `goal_met` once a matched set
   lifts the committed number and `beyond_goal` once one passes it, and keeps that verdict for
   the rest of the block rather than slipping back to a pace word after a lighter week. Each
