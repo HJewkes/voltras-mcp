@@ -481,7 +481,7 @@ function plannedRepTarget(session: SessionModel): number | string | null {
  * real but are not columns here — titan's `SetStripSet` has a `range` variant for exactly
  * that, and it needs `repsHigh` carried through the mapper as a number. Noted, not guessed.
  */
-function plannedRepCount(session: SessionModel): number | null {
+export function plannedRepCount(session: SessionModel): number | null {
   const active = session.plannedExercises.find((e) => e.active);
   return active?.targetReps ?? session.targetReps;
 }
