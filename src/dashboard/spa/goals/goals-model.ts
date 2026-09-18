@@ -5,11 +5,15 @@
  * server and the render test can hand it fixtures directly.
  */
 import type {
-  GoalTrajectoryStatus,
+  GoalCardChart,
+  GoalCardMilestone,
+  GoalCardTrend,
   GoalDirection,
   GoalLiftActual,
-  GoalLiftMilestone,
+  GoalMilestoneTarget,
   GoalMuscleLift,
+  GoalNextTarget,
+  GoalWeekEntry,
 } from '@titan-design/react-ui';
 // The muscle taxonomy's VALUE export lives on this subpath, not on the root
 // barrel: the root `.d.ts` re-declares `MuscleGroup` but `dist/index.mjs` never
@@ -17,6 +21,7 @@ import type {
 import { MuscleGroup } from '@titan-design/react-ui/bodymap';
 
 import type { GoalProgressView, PriorityRollupView } from '../../read-models/index.js';
+import type { GoalMesoTarget } from '../../read-models/goal-milestone.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 import type { StoredPriority } from '../../../store/types.js';
 import { mapCatalogMuscle } from '../../../exercises/muscle-map.js';
@@ -56,9 +61,12 @@ export function primaryTarget(data: GoalsPageData): GoalTargetRow | null {
   return specialized ?? rows[0] ?? null;
 }
 
-/** One row per exercise-tracked target (`top_load_at_reps`), for the per-lift table. */
+/** One row per exercise-tracked target (`top_load_at_reps`) with a set to print, for the per-lift grid. */
 export function liftRows(data: GoalsPageData): GoalTargetRow[] {
-  return allViews(data).filter((row) => row.view.target.metric === 'top_load_at_reps');
+  return allViews(data).filter(
+    (row) =>
+      row.view.target.metric === 'top_load_at_reps' && 'reps' in row.view.mesoMilestone.target,
+  );
 }
 
 /** One row per `muscle`-kind priority, from its already-computed rollup. */
@@ -73,10 +81,75 @@ export function cardActuals(view: GoalProgressView): GoalLiftActual[] {
   );
 }
 
-/** The card's four milestone fields, taken from the read model (#433) and never parsed from `label`. */
-export function cardMilestone(view: GoalProgressView): GoalLiftMilestone {
-  const { reps, load, unit, goalWeek } = view.nextMilestone;
-  return { reps, load, unit, goalWeek };
+/**
+ * The block-end milestone the card's summary leads with, from the read model's
+ * own verdict and week cells (VW-400). The summary is told the state, so it
+ * never re-derives a verdict the read model already ruled on.
+ */
+export function cardMilestone(view: GoalProgressView): GoalCardMilestone {
+  const meso = view.mesoMilestone;
+  return {
+    target: milestoneTarget(meso.target),
+    weekCount: meso.weekCount,
+    currentWeek: meso.currentWeek,
+    state: meso.state,
+    status: view.status,
+    weeks: weekEntries(view),
+    ...(meso.latest === undefined ? {} : { latest: meso.latest }),
+    ...(meso.direction === 'hold' ? {} : { direction: meso.direction }),
+  };
+}
+
+/**
+ * Only a load-shaped target reaches here: `liftRows` drops a lift target whose
+ * anchor was never recorded, and goal derivation refuses to store one.
+ */
+function milestoneTarget(target: GoalMesoTarget): GoalMilestoneTarget {
+  if ('reps' in target) return target;
+  throw new Error(`goal target ${target.metric} has no set to print on a lift card`);
+}
+
+function weekEntries(view: GoalProgressView): GoalWeekEntry[] {
+  return view.weekOutcomes.map(({ outcome, reading }) =>
+    reading === undefined ? { outcome } : { outcome, reading },
+  );
+}
+
+/** The next week's waypoint as the chart's hollow marker; its label becomes the marker's tip. */
+export function nextTarget(view: GoalProgressView): GoalNextTarget {
+  const { dueWeek, value, label } = view.nextMilestone;
+  return { weekIndex: dueWeek, value, label };
+}
+
+/** The full card's trajectory chart, everything but the box the card measures itself. */
+export function cardChart(view: GoalProgressView): GoalCardChart {
+  return {
+    expected: view.expected,
+    committed: view.committed,
+    stretch: view.stretch,
+    actuals: view.actuals.map((a) => ({
+      ts: dateOnly(a.ts),
+      ...(a.weekIndex === undefined ? {} : { weekIndex: a.weekIndex }),
+      value: a.value,
+      isPR: a.isPR,
+      matched: a.matched,
+    })),
+    weeks: chartWeeks(view),
+    direction: directionOf(view),
+    nextTarget: nextTarget(view),
+  };
+}
+
+/** The compact card's week-column chart, running to the block's last week. */
+export function cardTrend(view: GoalProgressView): GoalCardTrend {
+  return {
+    committed: view.committed,
+    stretch: view.stretch,
+    actuals: cardActuals(view),
+    goalWeek: view.mesoMilestone.goalWeek,
+    unit: view.nextMilestone.unit,
+    nextTarget: nextTarget(view),
+  };
 }
 
 /** Whether any reading in this target set a personal record — the card's star. */
@@ -123,7 +196,7 @@ function liftsUnder(data: GoalsPageData, priority: StoredPriority): GoalMuscleLi
     .filter((view) => view.target.metric === 'top_load_at_reps')
     .map((view) => ({
       name: targetLabel({ priority, view }),
-      status: titanStatus(view.status),
+      status: view.status,
       reps: view.nextMilestone.reps,
       load: view.nextMilestone.load,
       unit: view.nextMilestone.unit,
@@ -228,68 +301,6 @@ export function chartWeeks(view: GoalProgressView): { index: number; isDeload: b
 /** `GoalActualView.ts` (an ISO instant) trimmed to the `YYYY-MM-DD` the chart's date parser wants. */
 export function dateOnly(ts: string): string {
   return ts.slice(0, 10);
-}
-
-/** The chart's own status vocabulary is the read model's, unchanged — named for the import site. */
-export type { GoalTrajectoryStatus };
-
-/** The pace statuses titan 0.17.1 knows; the two block verdicts map onto their nearest pace. */
-export type TitanGoalStatus = Exclude<GoalProgressView['status'], 'goal_met' | 'beyond_goal'>;
-
-// VW-385 port removes this once titan >= 0.18.0 carries the statuses.
-export function titanStatus(status: GoalProgressView['status']): TitanGoalStatus {
-  if (status === 'goal_met') return 'on_track';
-  return status === 'beyond_goal' ? 'ahead' : status;
-}
-
-export function statusLabel(status: GoalProgressView['status']): string {
-  switch (status) {
-    case 'beyond_goal':
-      return 'Beyond goal';
-    case 'goal_met':
-      return 'Goal met';
-    case 'on_track':
-      return 'On track';
-    case 'ahead':
-      return 'Ahead';
-    case 'behind':
-      return 'Behind';
-    case 'tolerated':
-      return 'Tolerated';
-    case 'deload_week':
-      return 'Deload week';
-    case 'calibrating':
-      return 'Calibrating';
-    case 'stalled':
-      return 'Stalled';
-  }
-}
-
-/** Badge tone per status. `ahead` is brand/info, never warning-amber (plan §2e / REJECTED.md). */
-export function statusBadgeVariant(
-  status: GoalProgressView['status'],
-): 'success' | 'warning' | 'error' | 'info' {
-  switch (status) {
-    case 'beyond_goal':
-      return 'info';
-    case 'goal_met':
-    case 'on_track':
-      return 'success';
-    case 'ahead':
-      return 'info';
-    case 'tolerated':
-    case 'calibrating':
-    case 'deload_week':
-      return 'info';
-    case 'behind':
-    case 'stalled':
-      return 'warning';
-  }
-}
-
-export function mesoSubtitle(view: GoalProgressView): string {
-  if (view.mesoWeek === null) return 'Calibrating';
-  return `Week ${view.mesoWeek.n} of ${view.mesoWeek.of}`;
 }
 
 export function priorityLabel(priority: StoredPriority): string {

@@ -7,10 +7,13 @@
  * fixtures directly (plan G8' done_when).
  *
  * ── Layout ───────────────────────────────────────────────────────────────
- * Priority header + `GoalTrajectoryChart` + milestone tiles, then a grid of
- * `GoalLiftCard`, then a grid of `GoalMuscleCard`, then a whole-body panel
- * with the priority rail and the bodyweight tile. Sections come from plan
- * G8'/§4, not invented here.
+ * The lead lift as titan's full `GoalCard` (title row, folded block-end
+ * summary with its week cells, trajectory chart), then a grid of compact
+ * `GoalCard`s, then a grid of `GoalMuscleCard`, then a whole-body panel with
+ * the priority rail and the bodyweight tile. Sections come from plan G8'/§4,
+ * not invented here. The old header block is gone rather than restyled
+ * (VW-385): the week, committed/stretch, next target and status basis each
+ * read off something the card already draws.
  *
  * The two grids replaced full-width rows whose label and data sat at opposite
  * edges of a 1920px viewport (VW-386, human 2026-09-14). Each card carries its
@@ -21,22 +24,17 @@
  * layout utilities. Colour comes from `<Surface level>` / `useOnSurfaceColor`
  * / semantic tokens only, never a raw hex.
  *
- * Phone (VW-356): below `NARROW_BREAKPOINT_PX` the two grids collapse each
- * card to a full-width row (`useIsNarrowViewport`, same hook the planner and
- * `#/body` pages use) and the trajectory chart drops to its own `phone`
- * density width so the card it sits in still fits inside the viewport —
- * `PanelCard`'s `px-5` plus the page gutter is 80px of fixed chrome the chart
- * has to leave room for.
+ * Phone (VW-356): below `NARROW_BREAKPOINT_PX` the two grids collapse to one
+ * full-width column (`useIsNarrowViewport`, same hook the planner and `#/body`
+ * pages use). The lead card measures its own box, so its chart follows the
+ * viewport without a width of ours.
  */
 import React from 'react';
 import {
   EmptyState,
-  GoalLiftCard,
-  GoalTrajectoryChart,
-  MesoStatusCard,
+  GoalCard,
   MetricTiles,
   Pill,
-  PrBadge,
   Surface,
   type MetricTileData,
 } from '@titan-design/react-ui';
@@ -49,38 +47,20 @@ import { PAGE_PADDING } from '../planner/PlanBuilderPage.js';
 import { useIsNarrowViewport } from '../use-viewport.js';
 import {
   bodyweightTarget,
-  cardActuals,
+  cardChart,
   cardMilestone,
-  chartWeeks,
-  dateOnly,
-  directionOf,
+  cardTrend,
   hasPR,
   liftRows,
-  mesoSubtitle,
   muscleCardRows,
   priorityLabel,
   primaryTarget,
   sessionsTarget,
-  statusBadgeVariant,
-  statusLabel,
   targetLabel,
-  titanStatus,
   type GoalMuscleCardRow,
   type GoalTargetRow,
   type GoalsPageData,
 } from './goals-model.js';
-
-const CHART_WIDTH = 1200;
-/**
- * The chart's own `phone` density kicks in below its 720px `WALL_BREAKPOINT`
- * regardless of the width passed — this value is about fitting the 390px
- * viewport, not the density switch. On that frame the fixed chrome outside
- * this component is titan's 60px `SideNav` rail (plus its 1px border) and,
- * inside it, `PAGE_PADDING` (20px) and `PanelCard`'s own `px-5` (20px) each
- * side: 141px total, leaving 249px. 240 keeps a few px of slack.
- */
-const CHART_WIDTH_NARROW = 240;
-const CHART_HEIGHT = 340;
 
 export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   const { data } = props;
@@ -100,7 +80,7 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
 
   return (
     <Surface level="base" style={{ minHeight: '100%', padding: PAGE_PADDING, gap: PANEL_GAP }}>
-      {primary !== null && <PrimaryGoalCard row={primary} narrow={narrow} />}
+      {primary !== null && <PrimaryGoalCard row={primary} />}
       <PerLiftGrid rows={liftRows(data)} narrow={narrow} />
       <MuscleGrid rows={muscleCardRows(data)} narrow={narrow} />
       <WholeBodyPanel data={data} />
@@ -108,99 +88,59 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
   );
 }
 
-/** Header + `GoalTrajectoryChart` + milestone tile for the lead priority (plan §4, wall). */
-function PrimaryGoalCard(props: { row: GoalTargetRow; narrow: boolean }): React.JSX.Element {
+/** The lead priority's lift as the full goal card (plan §4, wall; VW-385). */
+function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
   const { priority, view } = props.row;
   return (
-    <PanelCard
+    <GoalCard
+      size="full"
       title={priorityLabel(priority)}
-      titleRight={view.actuals.some((a) => a.isPR) ? <PrBadge type="weight" compact /> : undefined}
-    >
-      <MesoStatusCard
-        mesoName={priorityLabel(priority)}
-        mesoSubtitle={`${mesoSubtitle(view)} · ${priority.level}`}
-        basis={view.statusBasis}
-        statusBadge={{ label: statusLabel(view.status), variant: statusBadgeVariant(view.status) }}
-        metrics={[
-          { label: 'Committed', value: round1(view.committed) },
-          { label: 'Stretch', value: round1(view.stretch) },
-        ]}
-        gauges={[]}
-        nextTarget={{ icon: '→', text: view.nextMilestone.label }}
-      />
-      <div style={{ marginTop: SPACE.md }}>
-        <GoalTrajectoryChart
-          expected={view.expected}
-          committed={view.committed}
-          stretch={view.stretch}
-          actuals={view.actuals.map((a) => ({
-            ts: dateOnly(a.ts),
-            ...(a.weekIndex === undefined ? {} : { weekIndex: a.weekIndex }),
-            value: a.value,
-            isPR: a.isPR,
-            matched: a.matched,
-          }))}
-          weeks={chartWeeks(view)}
-          // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
-          status={titanStatus(view.status)}
-          direction={directionOf(view)}
-          width={props.narrow ? CHART_WIDTH_NARROW : CHART_WIDTH}
-          height={CHART_HEIGHT}
-          metricLabel={priorityLabel(priority)}
-        />
-      </div>
-    </PanelCard>
+      priority={priority.level}
+      status={view.status}
+      basis={view.statusBasis}
+      isPR={hasPR(view)}
+      milestone={cardMilestone(view)}
+      goal={cardChart(view)}
+    />
   );
 }
 
 /**
- * Four columns at 1920 and never narrower than the width below which the cards
- * collapse their own status pill. `flex-*` classNames are not an option here:
+ * Auto-fill columns no narrower than `CARD_MIN_WIDTH`: four at 1920, three at
+ * 1440 (human decision, VW-385). `flex-*` classNames are not an option here:
  * these grids sit inside react-native-web Views, which drop Tailwind layout
  * utilities, so the geometry is inline `style` (same rule as the planner pages).
  */
-const CARD_GRID: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: SPACE.md,
-  alignItems: 'stretch',
-};
+const CARD_MIN_WIDTH = 420;
 
-/**
- * Four 25% columns and three gaps come to exactly 100% of the row. `flexGrow`
- * stays 0 so a short last row keeps the column width instead of a lone card
- * stretching to the full 1780px the wall gives it.
- *
- * Narrow (VW-356): one column, full width, and `minWidth` drops rather than
- * shrinking — the wall's 320px floor is wider than a 390px viewport minus its
- * own page and card gutters, so keeping it would push the card off the edge.
- */
-function cardCellStyle(narrow: boolean): React.CSSProperties {
-  if (narrow) return { flexGrow: 0, flexBasis: '100%', minWidth: 0 };
-  return { flexGrow: 0, flexBasis: `calc(25% - ${(SPACE.md * 3) / 4}px)`, minWidth: 320 };
+/** Narrow (VW-356): one full-width column; the wall's minimum is wider than a phone's content box. */
+function cardGridStyle(narrow: boolean): React.CSSProperties {
+  return {
+    display: 'grid',
+    gridTemplateColumns: narrow ? '1fr' : `repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`,
+    gap: SPACE.md,
+    alignItems: 'stretch',
+  };
 }
 
 /** One card per exercise-tracked target (`top_load_at_reps`). */
 function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
-  const cell = cardCellStyle(props.narrow);
   return (
     <PanelCard title="Per-lift">
-      <div style={CARD_GRID}>
+      <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
-          <div key={row.view.target.id} style={cell}>
-            <GoalLiftCard
-              name={targetLabel(row)}
-              // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
-              status={titanStatus(row.view.status)}
-              milestone={cardMilestone(row.view)}
-              committed={row.view.committed}
-              stretch={row.view.stretch}
-              actuals={cardActuals(row.view)}
-              isPR={hasPR(row.view)}
-            />
-          </div>
+          <GoalCard
+            key={row.view.target.id}
+            size="compact"
+            title={targetLabel(row)}
+            priority={row.priority.level}
+            status={row.view.status}
+            basis={row.view.statusBasis}
+            isPR={hasPR(row.view)}
+            milestone={cardMilestone(row.view)}
+            trend={cardTrend(row.view)}
+          />
         ))}
       </div>
     </PanelCard>
@@ -213,24 +153,21 @@ function MuscleGrid(props: {
   narrow: boolean;
 }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
-  const cell = cardCellStyle(props.narrow);
   return (
     <PanelCard title="Muscle priorities">
-      <div style={CARD_GRID}>
+      <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
-          <div key={row.priority.id} style={cell}>
-            <GoalMuscleCard
-              name={priorityLabel(row.priority)}
-              muscle={row.muscle}
-              side={row.side}
-              // VW-385 port removes this once titan >= 0.18.0 carries the statuses.
-              status={titanStatus(row.rollup.status)}
-              liftsOnTrack={row.rollup.progressingCount}
-              liftsTotal={row.rollup.targetCount}
-              commonGoalWeek={row.commonGoalWeek}
-              lifts={row.lifts}
-            />
-          </div>
+          <GoalMuscleCard
+            key={row.priority.id}
+            name={priorityLabel(row.priority)}
+            muscle={row.muscle}
+            side={row.side}
+            status={row.rollup.status}
+            liftsOnTrack={row.rollup.progressingCount}
+            liftsTotal={row.rollup.targetCount}
+            commonGoalWeek={row.commonGoalWeek}
+            lifts={row.lifts}
+          />
         ))}
       </div>
     </PanelCard>
