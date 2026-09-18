@@ -59,11 +59,11 @@ import {
   SMALL_DEVIATION_PCT,
   dietPhaseTolerance,
   toleranceEffect,
-  weeksInPhaseAt,
   type DietPhaseState,
   type ToleranceVerdict,
   type TrendSlope,
 } from '../../analytics/diet-phase-tolerance.js';
+import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
 import {
   GOAL_BAND_CONSTANTS,
   type GoalBand,
@@ -385,14 +385,10 @@ function read(input: GoalProgressInput): Reading {
   };
 }
 
-/**
- * Which week of the horizon `now` falls in, clamped to the horizon's ends.
- * `weeksInPhaseAt` is the repo's one 1-based weeks-elapsed helper; a second
- * spelling of the same arithmetic here would be a bug waiting to happen.
- */
-function positionAt(fromIso: string, nowIso: string, weekCount: number): number {
-  const elapsed = weeksInPhaseAt(fromIso, nowIso);
-  return Math.min(elapsed, weekCount) - 1;
+/** Which week of the horizon `atIso` falls in, 0-based and clamped to the horizon's ends. */
+function positionAt(fromIso: string, atIso: string, weekCount: number): number {
+  const week = blockWeekAt(fromIso, atIso);
+  return Number.isNaN(week) ? 0 : Math.min(Math.max(week, 1), weekCount) - 1;
 }
 
 /**
@@ -402,10 +398,7 @@ function positionAt(fromIso: string, nowIso: string, weekCount: number): number 
  * into week 1 would draw it on a week it was not measured in.
  */
 function placeOnWeekAxis(entry: GoalActual, input: GoalProgressInput): GoalActualView {
-  const startedMs = Date.parse(input.target.startMeasuredAt);
-  const takenMs = Date.parse(entry.ts);
-  if (Number.isNaN(startedMs) || Number.isNaN(takenMs) || takenMs < startedMs) return { ...entry };
-  const week = input.weeks[weeksInPhaseAt(input.target.startMeasuredAt, entry.ts) - 1];
+  const week = input.weeks[blockWeekAt(input.target.startMeasuredAt, entry.ts) - 1];
   return week === undefined ? { ...entry } : { ...entry, weekIndex: week.index };
 }
 

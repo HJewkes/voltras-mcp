@@ -402,3 +402,74 @@ describe('the calibrating capture', () => {
     expect(view.status).toBe('goal_met');
   });
 });
+
+// VW-421: a lift target starts at its top set, mid-week, while `history.trend`
+// stamps each weekly reading at that week's Monday. Both must land on one grid.
+describe('the calendar-week block grid', () => {
+  const THURSDAY_TARGET: StoredGoalTarget = {
+    ...TARGET,
+    startMeasuredAt: '2026-08-06T18:05:00.000Z',
+    derivedAt: '2026-08-06T18:05:00.000Z',
+  };
+
+  function mondayBucket(weekIndex: number, value: number): GoalActual {
+    const ts = new Date(Date.parse(START) + (weekIndex - 1) * 7 * DAY_MS).toISOString();
+    return { ts, value, matched: true, isPR: false };
+  }
+
+  function thursdayInput(overrides: Partial<GoalProgressInput>): GoalProgressInput {
+    return input({ target: THURSDAY_TARGET, ...overrides });
+  }
+
+  it('plots a Thursday-measured target and its Monday-stamped bucket from that week on week 1', () => {
+    const view = buildGoalProgressView(
+      thursdayInput({ actuals: [mondayBucket(1, 170), mondayBucket(2, 173)], now: tsInWeek(2) }),
+    );
+
+    expect(view.actuals.map((entry) => entry.weekIndex)).toEqual([1, 2]);
+    expect(view.weekOutcomes[0]).toMatchObject({ weekIndex: 1, reading: { reps: 8, load: 170 } });
+    expect(view.weekOutcomes[1]).toMatchObject({ weekIndex: 2, reading: { reps: 8, load: 173 } });
+  });
+
+  it('does not count a reading from the calendar week after the block toward goal_met', () => {
+    const view = buildGoalProgressView(
+      thursdayInput({ actuals: [mondayBucket(6, 181), mondayBucket(7, 190)], now: tsInWeek(7) }),
+    );
+
+    expect(view.actuals.map((entry) => entry.weekIndex)).toEqual([6, undefined]);
+    expect(view.mesoMilestone.latest).toEqual({ reps: 8, load: 181 });
+    expect(view.mesoMilestone.state).toBe('missed');
+    expect(view.status).not.toBe('goal_met');
+    expect(view.status).not.toBe('beyond_goal');
+  });
+
+  it('counts the last Sunday of the block toward goal_met', () => {
+    const lastSunday = { ts: '2026-09-13T21:00:00.000Z', value: 182.5, matched: true, isPR: false };
+    const view = buildGoalProgressView(thursdayInput({ actuals: [lastSunday], now: tsInWeek(7) }));
+
+    expect(view.actuals[0]?.weekIndex).toBe(6);
+    expect(view.status).toBe('goal_met');
+  });
+
+  it('never has the current week trail the newest reading, on any day of that week', () => {
+    for (let day = 0; day < 7; day += 1) {
+      const now = new Date(Date.parse(START) + (14 + day) * DAY_MS + 12 * 60 * 60 * 1000);
+      const view = buildGoalProgressView(
+        thursdayInput({
+          actuals: [mondayBucket(2, 173), mondayBucket(3, 176)],
+          now: now.toISOString(),
+        }),
+      );
+
+      expect(view.mesoMilestone.currentWeek).toBe(3);
+      expect(view.actuals[view.actuals.length - 1]?.weekIndex).toBe(3);
+    }
+  });
+
+  it('places an exact-instant reading late on Sunday in that week, not the next', () => {
+    const lateSunday = { ts: '2026-08-16T23:30:00.000Z', value: 172, matched: true, isPR: false };
+    const view = buildGoalProgressView(thursdayInput({ actuals: [lateSunday], now: tsInWeek(3) }));
+
+    expect(view.actuals[0]?.weekIndex).toBe(2);
+  });
+});

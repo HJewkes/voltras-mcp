@@ -15,7 +15,7 @@
 // A fake that answered `getBaseline: () => undefined` would pass this file while
 // the command previewed one status for all six names.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,6 +100,50 @@ describe('dashboard:preview goal states', () => {
     const view = await viewFor(goalPreviewState('on_track'));
 
     expect(latestReading(view)).toBeLessThan(view.committed);
+  });
+
+  // VW-421: the target used to start a day AFTER the oldest seeded session, so
+  // the first lift fell outside the block and the line began a week late.
+  const blockLongStates = GOAL_PREVIEW_STATES.filter(
+    (state) => state.weeklyLoadsLbs.length === state.targetStartWeeksAgo + 1,
+  );
+  for (const state of blockLongStates) {
+    it(`draws the first lift of ${state.name} on week 1, where the band starts`, async () => {
+      const view = await viewFor(state);
+
+      const firstMatched = view.actuals.find((actual) => actual.matched);
+      expect(firstMatched?.value).toBe(state.weeklyLoadsLbs[0]);
+      expect(firstMatched?.weekIndex).toBe(1);
+    });
+  }
+
+  // VW-422: the newest session is the current week's reading, never a week behind it.
+  for (const state of GOAL_PREVIEW_STATES) {
+    it(`gives the current week of ${state.name} a reading`, async () => {
+      const view = await viewFor(state);
+
+      const matched = view.actuals.filter((actual) => actual.matched);
+      expect(matched[matched.length - 1]?.weekIndex).toBe(view.mesoMilestone.currentWeek);
+    });
+  }
+
+  // The newest session has to share `now`'s calendar week, even seconds after it turned.
+  it('keeps every state on its status and its current-week reading just past Monday midnight UTC', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
+    try {
+      for (const state of GOAL_PREVIEW_STATES) {
+        const view = await viewFor(state);
+
+        const matched = view.actuals.filter((actual) => actual.matched);
+        expect(view.status, state.name).toBe(state.expectedStatus);
+        expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
+          view.mesoMilestone.currentWeek,
+        );
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a state nobody defined, naming the ones that exist', () => {
