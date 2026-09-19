@@ -73,8 +73,10 @@ import {
   type GoalBand,
   type GoalBandExpectation,
   type GoalBandWeek,
+  type GoalDietPhase,
   type GoalDietState,
 } from '../../analytics/goal-band.js';
+import type { RecompMode } from '../../store/diet-phase.js';
 import {
   aheadOfEdge,
   behindEdge,
@@ -236,6 +238,51 @@ export interface GoalRecalibrationView {
   state: 'offered' | 'kept_starting_ramp';
 }
 
+/** Which way "better" points, taken from the band: a hold is a corridor, never a gain. */
+export type GoalProgressDirection = GoalBand['direction'];
+
+/** The declared diet phase NOW, not the phase the target was derived under. */
+export interface GoalDietPhaseView {
+  phase: GoalDietPhase;
+  weeksInPhase: number | null;
+  recompMode: RecompMode | null;
+}
+
+/**
+ * The bodyweight rate against the phase's rate, from the same
+ * `computeBodyweightRateAdvisory` call `goal.weekly_review` makes.
+ */
+export interface GoalBodyweightRateView {
+  observedPctPerWeek: number | null;
+  bandLowPctPerWeek: number | null;
+  bandHighPctPerWeek: number | null;
+  weeksOutsideBand: number;
+  /** A veto held the week back: settling, the noise floor, a spike or creep. */
+  vetoed: boolean;
+}
+
+/** What a bodyweight target carries beyond the band. `rate` is `null` without a declared phase. */
+export interface GoalBodyweightView {
+  dietPhase: GoalDietPhaseView;
+  rate: GoalBodyweightRateView | null;
+}
+
+/** The training days a `sessions_28d` read counted, gathered by the caller (rule: `training-days.ts`). */
+export interface GoalSessionWindowInput {
+  /** ISO dates, one per training day in the window ending at `now`, oldest first. */
+  days: readonly string[];
+  /** Training days that leave the window in the next 7 days unless replaced. */
+  agingOutNext7d: number;
+}
+
+/** The rolling session window, read from the view's `now`. */
+export interface GoalSessionsView {
+  /** The committed count pro-rated by how much of the first window has run. */
+  dueByNow: number;
+  sessionDays: string[];
+  agingOutNext7d: number;
+}
+
 export interface GoalProgressInput {
   priority: StoredPriority;
   target: StoredGoalTarget;
@@ -256,6 +303,10 @@ export interface GoalProgressInput {
   /** `history.trend`'s plateau read. When present it decides `stalled`; absent falls back. */
   plateauVerdict?: GoalPlateauVerdict;
   e1rm?: GoalE1RMInput;
+  /** Read only for a `bodyweight` target. */
+  bodyweight?: GoalBodyweightView;
+  /** Read only for a `sessions_28d` target. */
+  sessionWindow?: GoalSessionWindowInput;
 }
 
 export interface GoalMesoWeek {
@@ -307,7 +358,12 @@ export interface GoalProgressView {
   /** The target's own fixed numbers, never the band's recomputed edges. */
   committed: number;
   stretch: number;
+  direction: GoalProgressDirection;
   actuals: GoalActualView[];
+  /** Present only for a `bodyweight` target. */
+  bodyweight?: GoalBodyweightView;
+  /** Present only for a `sessions_28d` target. */
+  sessions?: GoalSessionsView;
   e1rmContext?: GoalE1RMContextView;
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
@@ -358,8 +414,9 @@ interface StatusRead {
   gap?: CalibrationGap;
 }
 
-export function buildGoalProgressView(input: GoalProgressInput): GoalProgressView {
-  assertUsableInput(input);
+export function buildGoalProgressView(given: GoalProgressInput): GoalProgressView {
+  assertUsableInput(given);
+  const input = withWeekOneOpened(given);
   const reading = read(input);
   const { status, statusBasis, gap } = resolveStatus(reading);
   const advisory = advisoryFor(status, reading);
@@ -373,7 +430,9 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     expected: [...input.band.expected],
     committed: input.target.committedValue,
     stretch: input.target.stretchValue,
+    direction: input.band.direction,
     actuals: input.actuals.map((entry) => placeOnWeekAxis(entry, input)),
+    ...wholeBodyViewOf(reading),
     status,
     statusBasis,
     ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
@@ -394,6 +453,45 @@ export function buildGoalProgressView(input: GoalProgressInput): GoalProgressVie
     ...(advisory === undefined ? {} : { advisory }),
     ...(praise === undefined ? {} : { praise }),
   };
+}
+
+/**
+ * WEEK 1 OF A BODYWEIGHT RATE BAND OPENS AT THE START WEIGHT. A band row is the
+ * line at the start of its week, so week 1 is the start weight alone, and a
+ * first weigh-in a few tenths off it reads outside a zero-width band. Week 1
+ * instead keeps the start weight on the committed edge and runs the stretch
+ * edge to the end of the week's step, the ground a cut or a gain may cover in
+ * its first week.
+ * Every later week, the stored numbers and every other metric are unchanged.
+ */
+function withWeekOneOpened(input: GoalProgressInput): GoalProgressInput {
+  const { band, target } = input;
+  const [first, next, ...rest] = band.expected;
+  if (target.metric !== 'bodyweight' || band.direction === 'hold' || first === undefined) {
+    return input;
+  }
+  // Week 2's row opens where week 1's stretch step ends; a lone week has no step to show.
+  const opened = { ...first, high: next?.high ?? first.high };
+  const expected = next === undefined ? [opened] : [opened, next, ...rest];
+  return { ...input, band: { ...band, expected } };
+}
+
+/** The metric-specific block a whole-body target carries, and nothing for any other metric. */
+function wholeBodyViewOf(reading: Reading): Pick<GoalProgressView, 'bodyweight' | 'sessions'> {
+  const { input } = reading;
+  if (input.target.metric === 'bodyweight' && input.bodyweight !== undefined) {
+    return { bodyweight: input.bodyweight };
+  }
+  if (input.target.metric === 'sessions_28d' && input.sessionWindow !== undefined) {
+    return {
+      sessions: {
+        dueByNow: round(dueByNowOf(reading)),
+        sessionDays: [...input.sessionWindow.days],
+        agingOutNext7d: input.sessionWindow.agingOutNext7d,
+      },
+    };
+  }
+  return {};
 }
 
 function assertUsableInput(input: GoalProgressInput): void {
@@ -575,7 +673,7 @@ function sessionCountRead(reading: Reading): StatusRead | undefined {
   if (reading.input.target.metric !== 'sessions_28d') return undefined;
   const counted = reading.latest?.value;
   const committed = reading.input.target.committedValue;
-  const dueByNow = committed * windowFractionElapsed(reading);
+  const dueByNow = dueByNowOf(reading);
   const commitment =
     'A 28-day session count is a commitment, not a progression (goal / plan / commitment, ' +
     'rp:rp-s10-three-month-planning-horizon): the count holds and the rolling window moves.';
@@ -587,6 +685,11 @@ function sessionCountRead(reading: Reading): StatusRead | undefined {
     return { status: 'on_track', statusBasis: `On pace: ${pace}. ${commitment}` };
   }
   return { status: 'behind', statusBasis: `Under pace: ${pace}. ${commitment}` };
+}
+
+/** The committed count pro-rated by the elapsed share of the first window. */
+function dueByNowOf(reading: Reading): number {
+  return reading.input.target.committedValue * windowFractionElapsed(reading);
 }
 
 /** How much of the rolling window has run, 0 to 1. A full window is the whole commitment. */

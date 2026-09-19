@@ -29,6 +29,12 @@ import {
   readTrainingDays,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
+import { sessionWindowFrom } from '../analytics/training-days.js';
+import { readDietPhaseState } from '../tools/diet-phase-state.js';
+import {
+  readBodyweightRateAdvisory,
+  type WeeklyReviewReadState,
+} from '../tools/goal-weekly-review.js';
 import { markPersonalRecords } from '../analytics/goal-history.js';
 import { listOfferDecisions, offerInputsOf } from '../tools/goal-recalibration.js';
 import { computeHistoryTrend, type HistoryTrendResult } from '../tools/metrics-tools.js';
@@ -38,9 +44,12 @@ import {
   buildGoalProgressView,
   buildPriorityRollup,
   type GoalActual,
+  type GoalBodyweightView,
   type GoalFatigueContext,
   type GoalPlateauVerdict,
+  type GoalProgressInput,
   type GoalProgressView,
+  type GoalSessionWindowInput,
   type PriorityRollupView,
 } from './read-models/index.js';
 import {
@@ -56,6 +65,8 @@ export type GoalProgressStore = GoalDerivationState['store'] & {
   listGoalTargets: SessionStore['listGoalTargets'];
   /** Optional: a store without the advisory log simply has no recalibration answers to show. */
   listAdvisoryDecisions?: SessionStore['listAdvisoryDecisions'];
+  /** Optional: without the weekly check-in read there is no rate to show beside the band. */
+  getSelfReportsForUser?: SessionStore['getSelfReportsForUser'];
 };
 
 /** The recalibration answers the page reads (VW-444 part 2). */
@@ -111,11 +122,12 @@ async function viewFor(
   const { priority, target, context } = read;
   const derived = await deriveTargetInFrame({ store }, context, target);
   if (!('band' in derived)) {
-    log.debug(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
+    log.warn(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
     return undefined;
   }
   const { actuals, plateauVerdict } = await readActuals(store, target, read.now);
   const fatigue = await readFatigue(store, target);
+  const wholeBody = await readWholeBody(store, target, read.now);
   return buildGoalProgressView({
     priority,
     target,
@@ -129,9 +141,64 @@ async function viewFor(
     weeks: context.weeks,
     now: read.now.toISOString(),
     dietState: context.dietState,
+    ...wholeBody,
     ...(fatigue === undefined ? {} : { fatigue }),
     ...(plateauVerdict === undefined ? {} : { plateauVerdict }),
   });
+}
+
+/** The metric-specific reads a whole-body target carries beside its band. */
+async function readWholeBody(
+  store: GoalProgressStore,
+  target: StoredGoalTarget,
+  now: Date,
+): Promise<Pick<GoalProgressInput, 'bodyweight' | 'sessionWindow'>> {
+  if (target.metric === 'bodyweight') return { bodyweight: await readBodyweight(store, now) };
+  if (target.metric === 'sessions_28d')
+    return { sessionWindow: await readSessionWindow(store, now) };
+  return {};
+}
+
+/** The phase now, and the rate `goal.weekly_review` would judge this week. */
+async function readBodyweight(store: GoalProgressStore, now: Date): Promise<GoalBodyweightView> {
+  const diet = await readDietPhaseState({ store }, now.toISOString());
+  const advisory = hasRateReads(store) ? await readBodyweightRateAdvisory({ store }, now) : null;
+  const observed = advisory?.observation;
+  return {
+    dietPhase: {
+      phase: diet.phase,
+      weeksInPhase: diet.weeksInPhase,
+      recompMode: diet.recompMode ?? null,
+    },
+    rate:
+      advisory === null || observed === undefined
+        ? null
+        : {
+            observedPctPerWeek: observed.observedPctPerWeek,
+            bandLowPctPerWeek: observed.bandLowPctPerWeek,
+            bandHighPctPerWeek: observed.bandHighPctPerWeek,
+            weeksOutsideBand: observed.weeksOutsideBand,
+            vetoed: advisory.vetoes.length > 0,
+          },
+  };
+}
+
+function hasRateReads(
+  store: GoalProgressStore,
+): store is GoalProgressStore & WeeklyReviewReadState['store'] {
+  return store.listAdvisoryDecisions !== undefined && store.getSelfReportsForUser !== undefined;
+}
+
+/** The window's training days, and how many leave it in the next 7 days unless replaced. */
+async function readSessionWindow(
+  store: GoalProgressStore,
+  now: Date,
+): Promise<GoalSessionWindowInput> {
+  const nowIso = now.toISOString();
+  const days = await readTrainingDays(store, nowIso);
+  const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const staying = await readTrainingDays(store, nowIso, sessionWindowFrom(weekAhead));
+  return { days, agingOutNext7d: days.length - staying.length };
 }
 
 /** `history.trend`'s metric name for a target's own metric, or `null` for a non-lift metric. */

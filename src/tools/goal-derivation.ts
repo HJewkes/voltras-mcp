@@ -285,12 +285,14 @@ async function deriveSessionCount(
 /**
  * The training days in the rolling window that ends at `nowIso`, oldest first.
  * The one store read behind every `sessions_28d` number (rule: `training-days.ts`).
+ * `fromIso` raises the lower edge, which is how the aging-out count asks what stays.
  */
 export async function readTrainingDays(
   store: Pick<SessionStore, 'listSessionEndTimes'>,
   nowIso: string,
+  fromIso: string = sessionWindowFrom(nowIso),
 ): Promise<string[]> {
-  const endTimes = await store.listSessionEndTimes({ from: sessionWindowFrom(nowIso), to: nowIso });
+  const endTimes = await store.listSessionEndTimes({ from: fromIso, to: nowIso });
   return trainingDaysOf(endTimes);
 }
 
@@ -473,6 +475,9 @@ export async function deriveTargetInFrame(
 ): Promise<DerivedTarget | SkippedMetric> {
   const selection = selectionOf(frame);
   const today = await deriveTarget(state, context, selection);
+  if (!('band' in today) && frame.metric === 'bodyweight' && frame.startValue > 0) {
+    return bodyweightFrameWithoutReadings(context, selection, frame);
+  }
   if (!('band' in today) || !FRAMED_METRICS.includes(frame.metric)) return today;
   if (frame.startValue <= 0) return today;
   const anchorReps = frame.anchorReps ?? today.anchorReps;
@@ -487,6 +492,24 @@ export async function deriveTargetInFrame(
     baselineState: today.baselineState,
     ...(anchorReps === null ? {} : { anchorReps }),
     ...slope,
+  });
+}
+
+/**
+ * An accepted bodyweight target with no recent reading still has its frame:
+ * the band starts at the stored start weight, and the missing readings are the
+ * page's to show, not a reason to hide the goal.
+ */
+function bodyweightFrameWithoutReadings(
+  context: GoalDerivationContext,
+  selection: GoalGainMetric,
+  frame: StoredGoalTarget,
+): DerivedTarget {
+  return bandFor(context, selection, {
+    startValue: frame.startValue,
+    startMeasuredAt: frame.startMeasuredAt,
+    matchedSessionCount: 0,
+    baselineState: 'CALIBRATED',
   });
 }
 

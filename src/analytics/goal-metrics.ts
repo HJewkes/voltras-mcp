@@ -77,6 +77,16 @@ export const WHOLE_BODY_METRICS: Record<string, GoalMetric> = {
   strength: 'composite_strength',
 };
 
+/**
+ * The whole-body ref a priority names, normalised, or `null` when it names a
+ * muscle or a lift. A lift priority never tracks a whole-body metric.
+ */
+export function wholeBodyRefOf(priority: { kind: string; ref: string }): string | null {
+  if (priority.kind === 'lift') return null;
+  const ref = normalizeRef(priority.ref);
+  return WHOLE_BODY_METRICS[ref] === undefined ? null : ref;
+}
+
 /** Refs a human may reasonably declare that nothing can measure today. */
 export const NOT_MEASURABLE_REFS: Record<string, string> = {
   size: 'Nothing writes a circumference, a photo or a lean-mass figure, and RP tracks size through strength rather than directly (rp:rp-s7-multi-exercise-confirmation-for-muscle-gain). Declare the muscle instead and its lifts are tracked.',

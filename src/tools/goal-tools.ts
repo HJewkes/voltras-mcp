@@ -31,6 +31,7 @@ import type { GoalBand } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import {
   selectGoalMetrics,
+  wholeBodyRefOf,
   type GoalGainMetric,
   type GoalMetricSelection,
 } from '../analytics/goal-metrics.js';
@@ -209,6 +210,7 @@ async function declarePriorities(
   const tier = signal.declared ?? signal.tier;
   const dietState = await readDietPhaseState(state, declaredAt);
   const existing = await state.store.listPriorities(LOCAL_USER_ID);
+  assertOneWholeBodyPriorityPerRef(input.items, existing);
   const guardrails = evaluateDeclaration({
     items: input.items,
     existing,
@@ -226,6 +228,41 @@ async function declarePriorities(
     tierUsed: tier,
     thresholds: GOAL_GUARDRAIL_THRESHOLDS,
   };
+}
+
+type DeclaredItem = { kind: StoredPriority['kind']; ref: string };
+
+/**
+ * One live priority per whole-body ref. Two would each derive a target for the
+ * same metric, and the page would draw one goal twice. Re-declaring the same
+ * kind and ref is a re-declaration, which `mergePriority` folds into its row.
+ */
+function assertOneWholeBodyPriorityPerRef(
+  items: readonly DeclaredItem[],
+  existing: readonly StoredPriority[],
+): void {
+  const seen = new Set<string>();
+  for (const item of items) {
+    const ref = wholeBodyRefOf(item);
+    if (ref === null) continue;
+    const other = existing.find(
+      (row) => wholeBodyRefOf(row) === ref && !(row.kind === item.kind && row.ref === item.ref),
+    );
+    if (seen.has(ref) || other !== undefined) throw duplicateWholeBody(ref, other);
+    seen.add(ref);
+  }
+}
+
+function duplicateWholeBody(ref: string, other: StoredPriority | undefined): ToolError {
+  const where =
+    other === undefined
+      ? 'twice in this declaration'
+      : `already, as priority ${other.id} with ref "${other.ref}"`;
+  return new ToolError(
+    'GOAL_WHOLE_BODY_PRIORITY_EXISTS',
+    `The whole-body priority "${ref}" is declared ${where}. Declare it once: re-declare the same ` +
+      'ref to change its level, or retire the other priority first.',
+  );
 }
 
 /** Every declared item, written as declared. No guardrail reaches this. */

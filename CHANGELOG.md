@@ -107,6 +107,20 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The goals page's whole-body goals now carry what the page needs to explain them. Each
+  goal says which way better points (`up`, `down` or `hold`), so a maintenance corridor no
+  longer draws as a gain and a slow-loss recomposition draws as a loss. A bodyweight goal
+  carries the diet phase in force now and its weekly rate against the phase's rate. The rate
+  is computed by the same code `goal.weekly_review` runs, so the two cannot disagree. A
+  sessions goal carries the count due by now, the days trained in the window, and how many of
+  them leave the window in the next week. Week 1 of a cut or gain band now runs from the start
+  weight to the end of the first week's stretch step, so a first weigh-in at the start weight
+  reads inside it (VW-459, #PR).
+- An accepted bodyweight goal with no recent weigh-in stays on the goals page instead of
+  disappearing, and a goal the page cannot draw is logged as a warning (VW-459, #PR).
+- `goal.declare_priorities` refuses a second whole-body priority for the same ref (for example
+  `bodyweight` and `Bodyweight`) with `GOAL_WHOLE_BODY_PRIORITY_EXISTS`, instead of storing two
+  goals that track one number (VW-459, #PR).
 - A sessions-per-28-days goal now counts training days, not recorded sessions: a day with
   several exercises logged as separate sessions counts once. The count is taken from the
   lifter's local calendar day. Any accepted session-count goal made under the old count is
