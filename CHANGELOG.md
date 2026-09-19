@@ -144,12 +144,12 @@ entry is written from the user's point of view is a review question, not a check
   library, the fitted RIR curve and the studies the 20/30/10 thresholds come from all use
   the MEAN. The thresholds keep their numbers: on the mean they finally match their source.
   A replay of 94 stored working sets moves the stop by a median of 0 reps, but individual
-  sets move either way, so a set may now cue its stop on a different rep (VW-484).
+  sets move either way, so a set may now cue its stop on a different rep (VW-484, #474).
 - The `set_ended` VBT summary renames `peak_rep_v` and `peak_rep_number` to
   `baseline_rep_v` and `baseline_rep_number`, and adds `velocity_measure`, since the
   baseline is no longer a peak. Its `mean_velocity`, and the previous-set summary's
   `mean_concentric_velocity`, now average each rep's mean concentric velocity: they
-  averaged per-rep peaks under a name that says mean (VW-484).
+  averaged per-rep peaks under a name that says mean (VW-484, #474).
 - When the next block is due to be planned, the coach is told to ask about it. The prompt
   appears from the Monday of the current block's final week, in a gap, and while nothing is
   dated, on `plan.next_workout`, `plan.complete_workout`, `plan.current_block` and the Sunday
