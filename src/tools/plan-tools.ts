@@ -21,6 +21,7 @@ import {
   PlanBlockCreateInput,
   PlanBlockListForProgramInput,
   PlanCompleteWorkoutInput,
+  PlanCurrentBlockInput,
   PlanExerciseCreateInput,
   PlanExerciseListForTemplateInput,
   PlanNextWorkoutInput,
@@ -77,13 +78,10 @@ import {
   type TrainingFocus,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
-import {
-  assertCreateKeepsSchedule,
-  calendarOf,
-  datingRow,
-  todayLocal,
-} from './plan-schedule-tools.js';
+import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
+import { todayLocal } from '../analytics/training-days.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
+import { resolveCurrentBlock, type CurrentBlockRead } from '../plan/current-block.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
 class ToolError extends Error {
@@ -169,9 +167,29 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
+const PLAN_CURRENT_BLOCK_DESCRIPTION =
+  'Which block and program are in force today, by their dates (VW-475). `state` is `current` ' +
+  '(a dated block contains today: `block`, `calendar` and `week` n of N are set), `upcoming` ' +
+  '(nothing has started yet; `nextBlock` names the first dated block), `gap` (a dated block ' +
+  'has ended and none is current: `block` is the one that ended; training continues ' +
+  'unplanned) or `undated_only` (no block has dates: `program` is the newest program with ' +
+  'workouts left, else the newest). Archived programs never count, and once any block is ' +
+  'dated an undated program is never picked. `planning` says whether the next block is due ' +
+  'to be planned: `due`, `windowOpensOn` (the Monday of the current block\u2019s final week) ' +
+  'and `reason`. It is due in the final week of a current block with nothing dated after it, ' +
+  'in a gap with nothing planned, and while no block has dates. Reads only.';
+
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
-  'Get the next un-completed workout template for a program (or the active/default program if ' +
-  'programId is omitted). Use this to answer "what should the user do today per their plan?" ' +
+  'Get the next un-completed workout template. With `programId`, that program is walked in ' +
+  'order. Without it, the plan in force today decides (plan.current_block): in a CURRENT ' +
+  'dated block only that block is walked; when no block is dated, the newest program with ' +
+  'workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE ' +
+  'the first dated block starts, there is no planned workout today and the result is ' +
+  '`{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter ' +
+  'training continues unplanned today, and, when `nextBlock` is null, offer to plan the next ' +
+  'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
+  'means every workout in scope is done. ' +
+  'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
   'an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never ' +
@@ -184,7 +202,8 @@ const PLAN_COMPLETE_WORKOUT_DESCRIPTION =
   'the completed template is the last template of the last week in its block (VMCP-06.06 / B48), in ' +
   'which case it carries the finished block, the next block (or null if none), the current goal on ' +
   'file, and an advisory goal-realignment prompt — never auto-applied, and the goal itself is never ' +
-  'written by this tool. Once priorities have been declared (goal.declare_priorities) the boundary ' +
+  'written by this tool. It also returns `current`: plan.current_block as it stands after the ' +
+  'write. Once priorities have been declared (goal.declare_priorities) the boundary ' +
   'also carries `realignment` (VW-359): each declared priority with how many mesocycles it has been ' +
   'held, the bands it would get for the NEXT block re-derived by the same path goal.propose_targets ' +
   'uses, and `warningsIfChanged` — what the declaration guardrails would say if the lifter switched ' +
@@ -361,6 +380,13 @@ export function registerPlanTools(
   );
 
   // progression / session-link tools
+  install(
+    placeholders,
+    'plan.current_block',
+    PlanCurrentBlockInput,
+    wrapHandler(PlanCurrentBlockInput, () => resolveCurrentBlock(state.store, todayLocal())),
+    PLAN_CURRENT_BLOCK_DESCRIPTION,
+  );
   install(
     placeholders,
     'plan.next_workout',
@@ -967,10 +993,10 @@ function setCarriesVelocity(set: StoredSet): boolean {
 }
 
 /**
- * Resolve the program a progression-tool call refers to. If `programId` is
- * supplied, fetch + verify it exists. Otherwise, pick the most-recent
- * non-archived program (the store returns rows ordered by `created_at DESC`).
- * Throws `NO_PROGRAM_FOUND` when no eligible program exists.
+ * Resolve the program a tool call refers to. If `programId` is supplied, fetch + verify it
+ * exists. Otherwise the current-block rule picks it (VW-475): the program of the block in force
+ * by date, else the newest program with work remaining. Throws `NO_PROGRAM_FOUND` when no
+ * eligible program exists.
  */
 export async function resolveDefaultProgram(
   state: ServerState,
@@ -983,15 +1009,17 @@ export async function resolveDefaultProgram(
     }
     return program;
   }
-  const programs = await state.store.listTrainingPrograms({ includeArchived: false });
-  const latest = programs[0];
-  if (latest === undefined) {
+  return requireProgram(await resolveCurrentBlock(state.store, todayLocal()));
+}
+
+function requireProgram(read: CurrentBlockRead): StoredTrainingProgram {
+  if (read.program === null) {
     throw new ToolError(
       'NO_PROGRAM_FOUND',
       'No training programs exist. Create one with plan.program.create.',
     );
   }
-  return latest;
+  return read.program;
 }
 
 /** The block-tree reference `blockBoundary.finishedBlock`/`nextBlock` carry (VMCP-06.06 / B48). */
@@ -1161,11 +1189,7 @@ async function resolveCompleteWorkoutBlockBoundary(
   return buildBlockBoundary(state, orderedBlocks, blockIndex, await readCurrentGoal(state), true);
 }
 
-/** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
-export async function nextWorkout(
-  state: ServerState,
-  input: z.infer<typeof PlanNextWorkoutInput>,
-): Promise<
+type NextWorkoutResult =
   | {
       template: StoredWorkoutTemplate;
       plannedExercises: StoredPlannedExercise[];
@@ -1174,28 +1198,66 @@ export async function nextWorkout(
       blockBoundary: BlockBoundary | null;
     }
   | { ok: true; completed: true }
-> {
-  const program = await resolveDefaultProgram(state, input.programId);
-  const blocks = await state.store.getTrainingBlocksForProgram(program.id);
+  | {
+      ok: true;
+      unplanned: true;
+      state: 'gap' | 'upcoming';
+      reason: string;
+      endedBlock: BlockBoundaryRef | null;
+      nextBlock: CurrentBlockRead['nextBlock'];
+    };
+
+/** Exported for `accountability.preview` (VW-291): the same lookup, never re-implemented. */
+export async function nextWorkout(
+  state: ServerState,
+  input: z.infer<typeof PlanNextWorkoutInput>,
+): Promise<NextWorkoutResult> {
+  if (input.programId !== undefined) {
+    const program = await resolveDefaultProgram(state, input.programId);
+    return walkForNextWorkout(state, await state.store.getTrainingBlocksForProgram(program.id));
+  }
+  const read = await resolveCurrentBlock(state.store, todayLocal());
+  if (read.state === 'gap' || read.state === 'upcoming') return unplannedResult(read, read.state);
+  const blocks = await state.store.getTrainingBlocksForProgram(requireProgram(read).id);
+  return walkForNextWorkout(state, blocks, read.state === 'current' ? read.block : null);
+}
+
+/** In a gap or before the first dated block, nothing is planned today: say so, never continue. */
+function unplannedResult(read: CurrentBlockRead, state: 'gap' | 'upcoming'): NextWorkoutResult {
+  return {
+    ok: true,
+    unplanned: true,
+    state,
+    reason: read.planning.reason,
+    endedBlock: read.block === null ? null : toBlockBoundaryRef(read.block),
+    nextBlock: read.nextBlock,
+  };
+}
+
+/** The first template with no assignment, in program order; only `onlyBlock` when given. */
+async function walkForNextWorkout(
+  state: ServerState,
+  blocks: StoredTrainingBlock[],
+  onlyBlock: StoredTrainingBlock | null = null,
+): Promise<NextWorkoutResult> {
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const block = blocks[blockIndex];
+    if (onlyBlock !== null && block.id !== onlyBlock.id) continue;
     const weeks = await state.store.getTrainingWeeksForBlock(block.id);
     for (let weekIndex = 0; weekIndex < weeks.length; weekIndex++) {
       const week = weeks[weekIndex];
       const templates = await state.store.getWorkoutTemplatesForWeek(week.id);
       for (let templateIndex = 0; templateIndex < templates.length; templateIndex++) {
         const template = templates[templateIndex];
-        const assignments = await state.store.getAssignmentsForTemplate(template.id);
-        if (assignments.length === 0) {
-          const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
-          const blockBoundary = await resolveNextWorkoutBlockBoundary(
-            state,
-            blocks,
-            blockIndex,
-            weekIndex === 0 && templateIndex === 0,
-          );
-          return { template, plannedExercises, block, week, blockBoundary };
-        }
+        if ((await state.store.getAssignmentsForTemplate(template.id)).length > 0) continue;
+        const plannedExercises = await state.store.getPlannedExercisesForTemplate(template.id);
+        const blockBoundary = await resolveNextWorkoutBlockBoundary(
+          state,
+          blocks,
+          blockIndex,
+          weekIndex === 0 && templateIndex === 0,
+        );
+        return { template, plannedExercises, block, week, blockBoundary };
       }
     }
   }
@@ -1205,7 +1267,11 @@ export async function nextWorkout(
 async function completeWorkout(
   state: ServerState,
   input: z.infer<typeof PlanCompleteWorkoutInput>,
-): Promise<{ assignment: StoredProgramAssignment; blockBoundary: BlockBoundary | null }> {
+): Promise<{
+  assignment: StoredProgramAssignment;
+  blockBoundary: BlockBoundary | null;
+  current: CurrentBlockRead;
+}> {
   const sessionId = input.sessionId ?? resolveActiveSessionId(state);
   if (sessionId === null) {
     throw new ToolError(
@@ -1233,7 +1299,7 @@ async function completeWorkout(
   const existing = await state.store.getAssignmentsForSession(sessionId);
   const prior = existing.find((a) => a.workoutTemplateId === input.workoutTemplateId);
   if (prior !== undefined) {
-    return { assignment: prior, blockBoundary };
+    return { assignment: prior, blockBoundary, current: await readCurrent(state) };
   }
   const assignment: StoredProgramAssignment = {
     id: randomUUID(),
@@ -1242,7 +1308,12 @@ async function completeWorkout(
     assignedAt: new Date().toISOString(),
   };
   await state.store.putProgramAssignment(assignment);
-  return { assignment, blockBoundary };
+  return { assignment, blockBoundary, current: await readCurrent(state) };
+}
+
+/** The current-block read as it stands after a write (VW-475). */
+async function readCurrent(state: ServerState): Promise<CurrentBlockRead> {
+  return resolveCurrentBlock(state.store, todayLocal());
 }
 
 async function attachToSession(

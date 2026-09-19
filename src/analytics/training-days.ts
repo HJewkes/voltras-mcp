@@ -38,6 +38,11 @@ export function localDate(iso: string): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
+/** Today's local calendar date: the one clock every dated-block rule reads (VW-474). */
+export function todayLocal(): string {
+  return localDate(new Date().toISOString());
+}
+
 /** The inclusive lower edge of the window that ends at `nowIso`, as an ISO instant. */
 export function sessionWindowFrom(nowIso: string): string {
   return new Date(Date.parse(nowIso) - SESSION_WINDOW_DAYS * DAY_MS).toISOString();

@@ -234,6 +234,8 @@ export const PlanExerciseListForTemplateInput = z
  * goal on file, and an advisory realignment prompt — the goal is never
  * written by this tool.
  */
+export const PlanCurrentBlockInput = z.object({}).strict();
+
 export const PlanNextWorkoutInput = z
   .object({
     programId: IdSchema.optional(),

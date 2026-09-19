@@ -181,6 +181,8 @@ import {
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
+import { todayLocal } from '../analytics/training-days.js';
+import { resolveCurrentBlock } from '../plan/current-block.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -592,7 +594,8 @@ function hasPlanStore(
     typeof store.putTrainingBlock === 'function' &&
     typeof store.putTrainingWeek === 'function' &&
     typeof store.putWorkoutTemplate === 'function' &&
-    typeof store.getTrainingProgram === 'function'
+    typeof store.getTrainingProgram === 'function' &&
+    typeof store.getLiveBlockSchedule === 'function'
   );
 }
 
@@ -680,13 +683,18 @@ interface ActiveWeek {
  * The active training week — the same "first template with no assignment" walk
  * `plan.next_workout` (`plan-tools.ts`) runs, reimplemented here against
  * `DashboardPlanStore` for the same reason `fetchPlanTree` reimplements its own
- * tree walk rather than importing the MCP-bound tool handler (VW-331).
+ * tree walk rather than importing the MCP-bound tool handler (VW-331). The plan
+ * in force comes from the shared current-block rule (VW-475): only a current
+ * block is walked, and a gap has no active week.
  */
 async function findActiveWeek(store: DashboardPlanStore): Promise<ActiveWeek | null> {
-  const programs = await store.listTrainingPrograms({ includeArchived: true });
-  const program = programs.find((p) => p.archivedAt === undefined);
-  if (program === undefined) return null;
-  for (const block of await store.getTrainingBlocksForProgram(program.id)) {
+  const read = await resolveCurrentBlock(store, todayLocal());
+  if (read.program === null || read.state === 'gap' || read.state === 'upcoming') return null;
+  const blocks =
+    read.state === 'current' && read.block !== null
+      ? [read.block]
+      : await store.getTrainingBlocksForProgram(read.program.id);
+  for (const block of blocks) {
     for (const week of await store.getTrainingWeeksForBlock(block.id)) {
       const templates: MusclePlanTemplateRow[] = [];
       let hasIncomplete = false;

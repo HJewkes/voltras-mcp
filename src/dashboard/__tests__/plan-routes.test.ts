@@ -90,6 +90,8 @@ class FakePlanStore {
   getPlannedExercisesForTemplate = async (templateId: string): Promise<StoredPlannedExercise[]> =>
     ordered([...this.plannedExercises.values()].filter((e) => e.workoutTemplateId === templateId));
   deletePlannedExercise = async (id: string): Promise<boolean> => this.plannedExercises.delete(id);
+  // No block here is dated (VW-475), so the current-block rule falls back to work remaining.
+  getLiveBlockSchedule = async (): Promise<undefined> => undefined;
 
   putProgramAssignment = async (a: StoredProgramAssignment): Promise<void> => {
     this.assignments.set(a.id, a);

@@ -48,6 +48,10 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `plan.current_block` says which block and program are in force today: a dated block that
+  has started, the first dated block still to come, a gap after a block ended, or no dated
+  block at all. It also says whether the next block is due to be planned, from the Monday of
+  the current block's final week, in a gap, or while nothing is dated (VW-475, #467).
 - Training blocks can carry real dates. `plan.block.create` takes a Monday `startsOn`, and can
   build the block's empty weeks and flag its deloads in the same call. `plan.block.schedule`
   dates, moves or un-dates a block that has not started, and with `cascade` moves the blocks
@@ -117,6 +121,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The coach, `plan.next_workout`, the weekly report's progression lines and the dashboard's
+  plan page now agree on one current plan. The block whose dates contain today wins. When no
+  block is dated, the newest program that still has workouts left wins, so a finished test
+  program no longer hides the real one (VW-469). `plan.next_workout` only offers workouts
+  from the current block. After a block ends with none current, it returns `unplanned: true`
+  instead of a workout: training continues unplanned and the coach offers to plan the next
+  block. `plan.complete_workout` now also returns the current-block reading (VW-475, #467).
 - The experience tier counts training days and has a path for a returning lifter (VW-462, #460).
   - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
     `evidence.trainingDaysLogged`: a visit logged as one session per exercise is one day.

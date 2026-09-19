@@ -521,6 +521,12 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'sessionDays',
   'templateCount',
   'week_skipped',
+  // VW-475: `plan.current_block`'s states and planning read, and the blocks
+  // `plan.next_workout` names when nothing is planned today.
+  'undated_only',
+  'windowOpensOn',
+  'nextBlock',
+  'endedBlock',
 ];
 
 /**

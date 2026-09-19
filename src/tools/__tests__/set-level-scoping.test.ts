@@ -223,6 +223,7 @@ describe('plan.suggest_progression — set-level scoping', () => {
     'plan.template.list_for_week',
     'plan.exercise.create',
     'plan.exercise.list_for_template',
+    'plan.current_block',
     'plan.next_workout',
     'plan.complete_workout',
     'plan.attach_to_session',
