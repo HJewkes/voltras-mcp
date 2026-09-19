@@ -4,8 +4,9 @@
 // is not a visit to the gym: one visit can hold a row per exercise, so twelve
 // rows on one day are one training day.
 //
-// THE RULE, used by derivation, the goals read model and anything that lists
-// the days themselves, so no two readers can count differently:
+// THE RULE, used by every lifter-facing session count (VW-462): derivation, the
+// goals read model, report.weekly, the accountability copy, the tier signal and
+// the check-in gate, so no two readers can count differently:
 //
 // - WINDOW: an ended session is in the window when its START instant is in
 //   [now - 28 x 24 h, now]. The lower edge is inclusive.
@@ -15,7 +16,10 @@
 // - COUNT: the number of distinct days. A day counts once however many
 //   sessions it holds.
 //
-// Pure: callers fetch the end times and pass `now`, so fixtures can pin both.
+// The rule itself is pure. The two readers at the bottom are the only store
+// reads behind a training-day count, and both take `now` from the caller.
+
+import type { SessionCountFilter, SessionStore } from '../store/types.js';
 
 /** The rolling window a `sessions_28d` commitment is counted over, in days. */
 export const SESSION_WINDOW_DAYS = 28;
@@ -42,4 +46,32 @@ export function sessionWindowFrom(nowIso: string): string {
 /** The distinct local days the given session end times fall on, oldest first. */
 export function trainingDaysOf(endTimes: readonly string[]): string[] {
   return [...new Set(endTimes.map(localDate))].sort();
+}
+
+/** The store slice a training-day read needs. */
+export type TrainingDayStore = Pick<SessionStore, 'listSessionEndTimes'>;
+
+/** The training days of the ended sessions `filter` matches, oldest first. */
+export async function readTrainingDaysMatching(
+  store: TrainingDayStore,
+  filter: SessionCountFilter,
+): Promise<string[]> {
+  return trainingDaysOf(await store.listSessionEndTimes(filter));
+}
+
+/**
+ * The training days in the rolling window that ends at `nowIso`, oldest first.
+ * `from` raises the lower edge, which is how the aging-out count asks what stays;
+ * `lifter` reads a guest's days instead of the owner's.
+ */
+export async function readTrainingDays(
+  store: TrainingDayStore,
+  nowIso: string,
+  options: { from?: string; lifter?: string } = {},
+): Promise<string[]> {
+  return readTrainingDaysMatching(store, {
+    from: options.from ?? sessionWindowFrom(nowIso),
+    to: nowIso,
+    ...(options.lifter !== undefined ? { lifter: options.lifter } : {}),
+  });
 }

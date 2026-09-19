@@ -20,8 +20,8 @@ import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js'
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
 import {
   SESSION_WINDOW_DAYS,
-  sessionWindowFrom,
-  trainingDaysOf,
+  readTrainingDays,
+  readTrainingDaysMatching,
 } from '../analytics/training-days.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import {
@@ -46,7 +46,6 @@ export interface GoalDerivationState {
   store: Pick<
     SessionStore,
     | 'getTrainingProfile'
-    | 'countSessions'
     | 'listSessionEndTimes'
     | 'getSessionDateSpan'
     | 'getTrainingWeeksForBlock'
@@ -65,14 +64,15 @@ export interface GoalDerivationState {
 const LAYOFF_GAP_DAYS = 90;
 
 /**
- * Sessions since a gap that make a return a continuation again.
+ * Training days since a gap that make a return a continuation again.
  *
  * ENGINEERING DEFAULT. A mesocycle's session count is a plan fact this module
  * cannot read for a lifter with no plan tree, and the corpus gives no regain
  * figure at all ("Silent: any regain-rate figure", plan §1.10). Twelve is four
- * weeks at three sessions, the shortest ordinary mesocycle.
+ * weeks at three workouts, the shortest ordinary mesocycle. Counted in training
+ * days (VW-462), so one visit logged as a row per exercise is one workout.
  */
-const SESSIONS_PER_MESO = 12;
+const TRAINING_DAYS_PER_MESO = 12;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
@@ -137,7 +137,7 @@ export async function readDerivationContext(
     },
     horizonWeeks: weeks.length,
     weeks,
-    layoff: await hasRecentLayoff(state),
+    layoff: await hasRecentLayoff(state, derivedAt),
     completedMesoCount: await countCompletedMesos(state, priority),
     derivedAt,
     notes,
@@ -178,7 +178,7 @@ async function readHorizonWeeks(
  * a regain phase over-projects, and the timeline is what shows the gap
  * (plan §1.10).
  */
-async function hasRecentLayoff(state: GoalDerivationState): Promise<boolean> {
+async function hasRecentLayoff(state: GoalDerivationState, nowIso: string): Promise<boolean> {
   const sessions = await state.store.listSessions({ sort: 'startedAt:asc', limit: 500 });
   const starts = sessions.map((session) => Date.parse(session.startedAt));
   let lastGapEndedAt: number | null = null;
@@ -189,7 +189,8 @@ async function hasRecentLayoff(state: GoalDerivationState): Promise<boolean> {
     }
   }
   if (lastGapEndedAt === null) return false;
-  return starts.filter((start) => start >= lastGapEndedAt).length < SESSIONS_PER_MESO;
+  const since = { from: new Date(lastGapEndedAt).toISOString(), to: nowIso };
+  return (await readTrainingDaysMatching(state.store, since)).length < TRAINING_DAYS_PER_MESO;
 }
 
 /**
@@ -280,20 +281,6 @@ async function deriveSessionCount(
     matchedSessionCount: count,
     baselineState: 'CALIBRATED',
   });
-}
-
-/**
- * The training days in the rolling window that ends at `nowIso`, oldest first.
- * The one store read behind every `sessions_28d` number (rule: `training-days.ts`).
- * `fromIso` raises the lower edge, which is how the aging-out count asks what stays.
- */
-export async function readTrainingDays(
-  store: Pick<SessionStore, 'listSessionEndTimes'>,
-  nowIso: string,
-  fromIso: string = sessionWindowFrom(nowIso),
-): Promise<string[]> {
-  const endTimes = await store.listSessionEndTimes({ from: fromIso, to: nowIso });
-  return trainingDaysOf(endTimes);
 }
 
 /** The measured start of a lift leg, plus the evidence that gates its band. */

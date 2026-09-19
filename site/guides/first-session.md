@@ -139,8 +139,9 @@ feeling about the next session or week, soreness, joint discomfort, and motivati
 did it go?" is never actually asked — completion (loads, reps, sets) is already
 telemetry-derivable, so Claude shows you your own numbers back instead, and the code
 exists only to store whatever you volunteer on top of that. Of the four 3-point
-questions, soreness, joint discomfort, and motivation are withheld entirely before your
-first completed training week, since that early the answers are uniformly positive and
+questions, soreness, joint discomfort, and motivation are withheld entirely until you have
+trained on an earlier day: every session of your first training day skips them, since that
+early the answers are uniformly positive and
 asking can seed unwarranted concern — RP's cadence otherwise is after the very first
 session, then at the end of every completed week.
 

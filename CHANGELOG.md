@@ -107,6 +107,23 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- Every other session count now counts training days too, by the same rule as the
+  sessions goal: a day with a dozen exercises logged as separate sessions counts once
+  (VW-462).
+  - `report.weekly` reads "Training days: N" and "Last 28 days: N training days". JSON
+    fields renamed: `header.sessionsCompleted` to `header.trainingDaysCompleted`, and
+    `header.rolling28DayCompletedSessions` to `header.rolling28DayTrainingDays`.
+  - The coach's Sunday and realign messages read "Rolling 28-day training days: N."
+    `accountability.preview` renames `inputsUsed.rolling28DayCompletedSessions` to
+    `inputsUsed.rolling28DayTrainingDays`, and a preview with `at` now counts as of `at`
+    instead of the current time.
+  - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
+    `evidence.trainingDaysLogged`. The ceiling still needs 24, now 24 training days.
+  - `session.checkin` withholds soreness, joint and motivation until the lifter has
+    trained on an earlier day, so every session of a first training day withholds them.
+    Before, the second exercise of that first day already asked.
+  - A lifter back from a 3+ month gap stays in the return mesocycle for 12 training days,
+    not 12 sessions, so one long first day back no longer ends it.
 - The goals page's whole-body goals now carry what the page needs to explain them. Each
   goal says which way better points (`up`, `down` or `hold`), so a maintenance corridor no
   longer draws as a gain and a slow-loss recomposition draws as a loss. A bodyweight goal
