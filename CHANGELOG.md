@@ -111,7 +111,7 @@ entry is written from the user's point of view is a review question, not a check
   several exercises logged as separate sessions counts once. The count is taken from the
   lifter's local calendar day. Any accepted session-count goal made under the old count is
   retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
-  one in days (VW-460, #PR).
+  one in days (VW-460, #455).
 - A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
   session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
   no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no
