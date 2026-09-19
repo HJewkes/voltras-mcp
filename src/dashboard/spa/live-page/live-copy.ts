@@ -24,3 +24,18 @@ export function exertionMessage(velocityLossPct: number | null): string {
   if (velocityLossPct === null) return 'warming up — velocity loss needs a second rep';
   return `VL${Math.round(velocityLossPct)}% · approaching threshold — 1–2 productive reps left`;
 }
+
+/**
+ * The caption that marks a derived rest (VW-441), so a goal default never reads as the
+ * coach's number. Null for a coach-set rest, which needs no marking.
+ */
+export function restBasisCaption(basis: {
+  source: 'explicit_plan' | 'intent_default' | 'intent_default_extended';
+  intent: string | null;
+  extensionSeconds: number;
+}): string | null {
+  if (basis.source === 'explicit_plan') return null;
+  const base = basis.intent === null ? 'Default rest' : `Default rest for ${basis.intent}`;
+  if (basis.source === 'intent_default') return base;
+  return `${base} +${basis.extensionSeconds} s`;
+}

@@ -33,8 +33,14 @@ import {
 } from '@titan-design/react-ui';
 import { LiveControlsRow } from './LiveView';
 import { exertionMessage } from './live-copy';
-import { type LiveDashboardModel, verdictFromLoss } from './model';
-import type { DivergingHeroModel, LimbAsymmetry, SetupComparabilityVerdict } from './fatigue-model';
+import { type LiveDashboardModel } from './model';
+import { setFatigueState } from './fatigue-state';
+import type {
+  DivergingHeroModel,
+  FatigueVerdict,
+  LimbAsymmetry,
+  SetupComparabilityVerdict,
+} from './fatigue-model';
 import { toStream, toGhostCurves, missingSides, hasGhostCurves } from './diverging-stage-model';
 
 /** Fallback hero height before the first layout pass, matching the single view's dual case. */
@@ -158,11 +164,14 @@ export function DivergingLiveStage({
   hero,
   asymmetry,
   asymmetrySetup = null,
+  fatigueVerdict = null,
 }: {
   model: LiveDashboardModel;
   hero: DivergingHeroModel;
   asymmetry: LimbAsymmetry | null;
   asymmetrySetup?: SetupComparabilityVerdict | null;
+  /** WA's combined verdict over the folded limbs, off the page's one fatigue model. */
+  fatigueVerdict?: FatigueVerdict | null;
 }) {
   const { live, session } = model;
   const [contentW, setContentW] = useState(0);
@@ -170,7 +179,11 @@ export function DivergingLiveStage({
 
   // The verdict floods the whole stage, exactly as the single view does — one athlete,
   // one aura, regardless of how many devices are reporting into it.
-  const verdict = verdictFromLoss(live.velocityLossPct);
+  const verdict = setFatigueState({
+    lossPct: live.velocityLossPct,
+    stop: live.fatigueStop,
+    verdict: fatigueVerdict,
+  });
   const message = exertionMessage(live.velocityLossPct);
 
   return (

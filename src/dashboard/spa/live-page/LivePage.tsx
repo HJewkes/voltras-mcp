@@ -15,6 +15,7 @@ import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
 import { EmptyLiveView, SessionEndedView } from './EmptyLiveView';
+import { setFatigueState } from './fatigue-state';
 import { IsometricWalkthrough } from './IsometricWalkthrough';
 import { IsometricVerdictCard } from './IsometricVerdictCard';
 import { deriveIsometricVerdictCard } from './isometric-verdict-model';
@@ -151,6 +152,11 @@ function SingleFatigueStage({
     >
       <LiveFatiguePanel
         model={fatigue}
+        aura={setFatigueState({
+          lossPct: live.velocityLossPct,
+          stop: live.fatigueStop,
+          verdict: fatigue.verdict,
+        })}
         // The hero's own source — per-rep MEAN concentric velocity, not on the fatigue
         // model. `liveRepIndex` marks the rep in progress as the last one streamed.
         velocity={{
@@ -306,6 +312,7 @@ export function LivePage({ variant = 'live', model, hero, asymmetry, fatigue }: 
               hero={hero}
               asymmetry={asymmetry ?? null}
               asymmetrySetup={fatigue?.asymmetrySetup ?? null}
+              fatigueVerdict={fatigue?.verdict ?? null}
             />
           ) : model.live !== null && fatigue ? (
             // The single-Voltra stage (VMCP-05.02) — velocity hero + the real fatigue card.

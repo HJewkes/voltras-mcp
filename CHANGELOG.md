@@ -51,8 +51,9 @@ entry is written from the user's point of view is a review question, not a check
 - A set in progress or a rest countdown now stays in view on every dashboard page, not just
   the live one. A one-row strip above the page shows the exercise, set n of m, the rep count,
   the last rep's velocity with one bar per rep, and the rest seconds left; pressing it returns
-  to the live page. It appears only for a planned exercise, and a rest shows only when the plan
-  prescribes its length (VW-429, #448).
+  to the live page. It appears only for a planned exercise. Its rest counts down the same length
+  as the live page (the plan's, else the goal default), and it turns red at the same stop
+  (VW-429, #448; VW-440, VW-441).
 - A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
   the goals page reads "Starting ramp, not yet based on your lifts." followed by what
   calibration still waits on: "1 more comparable session to calibrate.", or a set taken near
@@ -96,6 +97,29 @@ entry is written from the user's point of view is a review question, not a check
   its four-card grid and 1200px-wide trajectory chart into a viewport neither fits (VW-356).
 
 ### Changed
+
+- The live page's rest timer now counts down after every set, not only when the plan set a
+  rest. Without a planned rest it counts down the training-goal default `timer.start` uses
+  (150 s strength, 105 s hypertrophy, 120 s otherwise, and up to 60 s more when the last set
+  reached its stop in fewer reps than the one before). A caption under the ring says "Default
+  rest" so a derived length never reads as the coach's. Before, an unplanned session got a
+  count-up with no target (VW-441).
+- The live page's red "stop" now comes from the exercise's training goal, the same threshold
+  the server's `velocity_loss_exceeded` fires at: 20% velocity loss for strength, 30% for
+  hypertrophy, 10% for power, and 30% when the plan names no goal. A set started with its own
+  threshold is judged by that number. Before, the single-Voltra stage never went red on
+  velocity loss at all (only on a form breakdown), and the dual stage and rest recap went red at
+  30% for every goal. A form breakdown (a range-of-motion or dropped-negative alarm) still stops
+  the set. From two thirds of the stop (13.3% strength, 20% hypertrophy, 6.7% power) the
+  stage reads amber, so every goal gets a warning before the red; a range-of-motion or tempo
+  warning also reads amber. The rest recap's Fatigue tile uses
+  the same rule and now also reflects range-of-motion and tempo breakdown (VW-440).
+- `timer.start` with no `durationMs` now uses the plan's rest for the current exercise when
+  the coach set one. It used to ignore it and take the training-goal default (150 s strength,
+  105 s hypertrophy, 120 s otherwise), so a 90 s planned rest ran as 105 s or longer. The
+  coach's number is never auto-extended; `restBasis.source` reads `explicit_plan` for it. The
+  dashboard's rest countdown uses the same rule, so the tool and the wall give one number
+  (VW-441).
 
 - The `#/goals` page leads with one goal card instead of a header block over a chart (VW-385).
   The title row carries the lift, its priority mark, a PR star and the verdict, with the reason

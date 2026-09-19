@@ -17,6 +17,7 @@
  * two-`LiveView` stage it fed and the fixture-fabricating `deriveDualModel` before that.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
+import type { FatigueVerdict } from '@voltras/workout-analytics';
 import { targetVerdict, type TargetVerdict } from '../../../analytics/target-verdict.js';
 import { selectWorkingSets } from '../../../store/working-sets.js';
 import { type MassUnit, convertMass, formatMass } from './mass';
@@ -27,6 +28,8 @@ import type { SetPurpose } from '../../../store/types.js';
 import type { SetupCard } from '../../../store/types.js';
 // Type-only, same rationale: the server-computed session pace (VW-290).
 import type { SessionPaceView } from '../../read-models/session-pace.js';
+import type { FatigueStop } from './fatigue-state';
+import type { ResolvedRest } from '../../../analytics/rest-defaults.js';
 
 export type { SetPurpose, SetupCard, SessionPaceView };
 
@@ -64,6 +67,8 @@ export interface LiveModel {
   velocityLossPct: number | null;
   /** Peak concentric force this set (lbs); the store folds a running set-level max (VW-45). */
   peakForce: number | null;
+  /** The velocity-loss % at which this set reads as "stop" (VW-440). */
+  fatigueStop: FatigueStop;
   /**
    * Which auto-arm mechanism opened this set (VW-265), or null for a lifter-started set.
    * Optional so a fixture built before this field existed still type-checks.
@@ -125,6 +130,10 @@ export interface CompletedSet {
    * Optional so a fixture built before this field existed still type-checks.
    */
   autoCreatedBy?: 'guided_load' | 'idle_rep' | null;
+  /** The velocity-loss % at which this set read as "stop" (VW-440): its own watch, else the exercise's. */
+  fatigueStop: FatigueStop;
+  /** WA's combined verdict (velocity, ROM, tempo) for the closed set; null under 2 reps. */
+  fatigueVerdict: FatigueVerdict | null;
 }
 
 /**
@@ -186,10 +195,13 @@ export interface SessionModel {
    */
   plannedExercises: PlannedExerciseModel[];
   /**
-   * Prescribed rest between sets, seconds (VW-51). Null when the coach left it unset or
-   * no plan is attached — the rest timer then hides its target rather than inventing one.
+   * The rest to count down after a set, seconds (VW-441): the plan's rest, else the
+   * training-goal default, resolved server-side by the rule `timer.start` uses. Null only
+   * with no session open, when the rest stage falls back to a count-up.
    */
   restSec: number | null;
+  /** Where {@link restSec} came from, so a derived rest never reads as coach-set. Null with it. */
+  restBasis: RestBasisModel | null;
   /** Prescribed set count. Null until `targetSets` reaches the view (VW-42). */
   plannedSets: number | null;
   /**
@@ -211,6 +223,9 @@ export interface SessionModel {
    */
   sessionPace: SessionPaceView | null;
 }
+
+/** The provenance of a resolved rest (VW-441), from the snapshot's `rest`. */
+export type RestBasisModel = Pick<ResolvedRest, 'source' | 'intent' | 'extensionSeconds'>;
 
 /**
  * A coarse connection read-out folded from the device snapshot (VW-68) — enough for the idle
@@ -284,31 +299,6 @@ export function stageIsEnded(model: DashboardModel): boolean {
 export function meanVelocity(reps: number[]): number {
   if (reps.length === 0) return 0;
   return reps.reduce((a, v) => a + v, 0) / reps.length;
-}
-
-/**
- * Verdict status from velocity loss %, on the canonical VL20/VL30 bands: below VL20
- * keep going (`productive`), VL20–VL30 approaching fatigue (`threshold`), VL30+
- * terminate the set (`stop`).
- *
- * Null loss (fewer than 2 reps, so no loss is computable yet) reads as `productive`:
- * no fatigue signal is not a fatigue signal.
- *
- * CANONICAL BANDS: 20/30. The dashboard's `toAutoRegStatus`
- * (`panels/exercise-hero-view.ts`) now bands identically, so the rest-view aura and the
- * live StatusPill agree across the whole 20–30% range. The autoregulation spec frames
- * velocity loss as a configurable fatigue proxy (its moderate-fatigue zone is 20–30%),
- * so it does not mandate exact productive/threshold/stop cutpoints — 20/30 is the
- * dashboard default the rest of the surface already names.
- * TODO(VW-64): decide whether to adopt WA's now-published `velocityLossVerdict`
- * (the eventual SSOT) in place of this local banding — a wiring choice, not a
- * blocked dependency.
- */
-export function verdictFromLoss(lossPct: number | null): 'productive' | 'threshold' | 'stop' {
-  if (lossPct === null) return 'productive';
-  if (lossPct >= 30) return 'stop';
-  if (lossPct >= 20) return 'threshold';
-  return 'productive';
 }
 
 /** Placeholder shown where the rail demands a value the store cannot supply yet. */
@@ -399,7 +389,7 @@ export function peakVelocity(reps: number[]): number | null {
 /**
  * Velocity loss of a completed set (%): the drop from the set's fastest rep to its last,
  * as a non-negative percentage — the same "vs the set's best rep" definition
- * {@link verdictFromLoss} bands on. Null when fewer than 2 reps landed (no loss is
+ * `setFatigueState` (`fatigue-state.ts`) bands on. Null when fewer than 2 reps landed (no loss is
  * computable from one point).
  *
  * This is RE-DERIVED from the recorded per-rep velocities — the store does not retain the

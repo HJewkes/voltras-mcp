@@ -24,6 +24,7 @@ import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
 import type { ServerState } from '../state/server-state.js';
 import { evaluateWeightImplied } from '../state/weight-implied-watch.js';
+import { DEFAULT_STOP_INTENT, VELOCITY_LOSS_DEFAULT_PCT } from '../state/velocity-loss-intent.js';
 import { checkFeatureGate } from '../store/baseline-gate.js';
 import { scopeSetsToLifter } from '../store/set-scope.js';
 import {
@@ -330,15 +331,8 @@ const DEFAULT_RANGE_DAYS = 7;
 const MAX_SESSIONS_IN_RANGE = 500;
 /** `self_reports.question_code` for "this muscle felt off" (extension 3). */
 const OFF_QUESTION_CODE = 'off';
-/**
- * VL30 — the autoregulation "stop" band, identical to the 20/30 split used
- * throughout this codebase (`toAutoRegStatus` in the dashboard SPA, the
- * `velocity_loss_exceeded` trigger docs). `@voltras/workout-analytics` now
- * publishes an equivalent `velocityLossVerdict`, but adopting it in place of
- * this hand-rolled threshold is an open wiring decision (VW-64) elsewhere in
- * the codebase, not something this report should preempt.
- */
-const VELOCITY_LOSS_STOP_PCT = 30;
+/** The no-intent stop threshold the dashboard and rest timer also fall back to; this report does not key it per intent. */
+const VELOCITY_LOSS_STOP_PCT = VELOCITY_LOSS_DEFAULT_PCT[DEFAULT_STOP_INTENT];
 
 export interface WeeklyAdherence {
   planned: number;

@@ -10,6 +10,9 @@ import {
   resolveVelocityLossSpec,
   VELOCITY_LOSS_DEFAULT_PCT,
   VELOCITY_LOSS_RANGE_PCT,
+  exerciseFatigueStop,
+  fatigueStopForSet,
+  stopThirdsBands,
 } from '../velocity-loss-intent.js';
 
 const VL = { type: 'velocity_loss_exceeded' } as const;
@@ -80,5 +83,85 @@ describe('resolveVelocityLossSpec', () => {
       expect(pct).toBeGreaterThanOrEqual(low);
       expect(pct).toBeLessThanOrEqual(high);
     }
+  });
+});
+
+describe('fatigueStopForSet (VW-440)', () => {
+  const planStop = exerciseFatigueStop('hypertrophy');
+
+  it("uses the threshold the set's own watch pinned, the number the server fires at", () => {
+    const watch = {
+      notifyOn: [
+        { type: 'rep_count_reached', value: 8 },
+        { type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' as const },
+      ],
+    };
+    expect(fatigueStopForSet(watch, planStop)).toMatchObject({
+      pct: 25,
+      intent: null,
+      source: 'explicit',
+    });
+  });
+
+  it('keeps a set-intent watch its intent and source', () => {
+    const watch = {
+      notifyOn: [
+        {
+          type: 'velocity_loss_exceeded',
+          pct: 10,
+          intent: 'power' as const,
+          thresholdSource: 'set_intent' as const,
+        },
+      ],
+    };
+    expect(fatigueStopForSet(watch, planStop)).toMatchObject({
+      pct: 10,
+      intent: 'power',
+      source: 'set_intent',
+    });
+  });
+
+  it("falls back to the exercise's stop when the set watches no velocity loss", () => {
+    expect(
+      fatigueStopForSet({ notifyOn: [{ type: 'rep_count_reached', value: 8 }] }, planStop),
+    ).toBe(planStop);
+    expect(fatigueStopForSet(undefined, planStop)).toBe(planStop);
+  });
+
+  it('names the default when the exercise states no intent', () => {
+    expect(exerciseFatigueStop(undefined)).toMatchObject({
+      pct: 30,
+      intent: null,
+      source: 'default',
+    });
+  });
+});
+
+describe('fatigue colour bands (VW-448 seam)', () => {
+  it.each([
+    ['strength', [6.7, 13.3, 20]],
+    ['hypertrophy', [10, 20, 30]],
+    ['power', [3.3, 6.7, 10]],
+  ] as const)('splits the %s stop into thirds, rounded to one decimal', (intent, bands) => {
+    expect(exerciseFatigueStop(intent)).toMatchObject({ bands, bandsSource: 'stop_thirds' });
+  });
+
+  it('bands the named default the same way', () => {
+    expect(exerciseFatigueStop(undefined).bands).toEqual([10, 20, 30]);
+  });
+
+  it("bands a set-watch threshold off the set's own number", () => {
+    const watch = {
+      notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25, thresholdSource: 'explicit' as const }],
+    };
+    expect(fatigueStopForSet(watch, exerciseFatigueStop('strength'))).toMatchObject({
+      pct: 25,
+      bands: [8.3, 16.7, 25],
+      bandsSource: 'stop_thirds',
+    });
+  });
+
+  it('keeps the stop itself unrounded as the last edge', () => {
+    expect(stopThirdsBands(17.5)).toEqual([5.8, 11.7, 17.5]);
   });
 });

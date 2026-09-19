@@ -19,6 +19,8 @@ import type {
   ActiveSet,
   CompletedSetRecord,
 } from '../../state/live-state.js';
+import type { ResolvedRest } from '../../analytics/rest-defaults.js';
+import { exerciseFatigueStop, type FatigueStop } from '../../state/velocity-loss-intent.js';
 import type { SetupCard } from '../../store/types.js';
 import type { SessionPaceView } from './session-pace.js';
 
@@ -73,6 +75,16 @@ export interface SnapshotResponse {
    * footer renders only when this is present, never from a fabricated budget.
    */
   sessionPace: SessionPaceView | null;
+  /**
+   * The velocity-loss % at which a set of the active exercise reads as "stop" when the set
+   * pinned no threshold of its own (VW-440): the plan's intent, else the named default.
+   */
+  fatigueStop: FatigueStop;
+  /**
+   * The rest to count down after the last set (VW-441), from the same resolver
+   * `timer.start` uses, with its provenance. Null with no session open.
+   */
+  rest: ResolvedRest | null;
 }
 
 /**
@@ -107,6 +119,10 @@ export interface SnapshotInput {
   expectedSetupCard?: SetupCard;
   /** The session's plan-derived pace (VW-290), if one was resolved. */
   sessionPace?: SessionPaceView;
+  /** The active exercise's stop threshold (VW-440); the named default when absent. */
+  fatigueStop?: FatigueStop;
+  /** The resolved rest (VW-441), if a session is open. */
+  rest?: ResolvedRest;
 }
 
 /**
@@ -160,5 +176,7 @@ export function buildSnapshotView(input: SnapshotInput): SnapshotResponse {
     activeExercise: resolveActiveExerciseMuscles(input.activeExercise),
     expectedSetupCard: input.expectedSetupCard ?? null,
     sessionPace: input.sessionPace ?? null,
+    fatigueStop: input.fatigueStop ?? exerciseFatigueStop(undefined),
+    rest: input.rest ?? null,
   };
 }

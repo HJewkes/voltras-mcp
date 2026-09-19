@@ -18,6 +18,7 @@ import type {
   PlannedExerciseModel,
   SessionModel,
 } from '../spa/live-page/model.js';
+import { exerciseFatigueStop } from '../../state/velocity-loss-intent.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
   return {
@@ -30,6 +31,7 @@ function sessionModel(over: Partial<SessionModel> = {}): SessionModel {
     completedSets: [],
     plannedExercises: [],
     restSec: null,
+    restBasis: null,
     plannedSets: 2,
     targetReps: 8,
     expectedSetupCard: null,
@@ -52,6 +54,8 @@ function planned(over: Partial<PlannedExerciseModel> = {}): PlannedExerciseModel
 
 function completed(weightLbs: number | null, reps: number[]): CompletedSet {
   return {
+    fatigueStop: exerciseFatigueStop(undefined),
+    fatigueVerdict: null,
     exerciseName: 'Cable Chest Press',
     weightLbs,
     mode: 'weight',

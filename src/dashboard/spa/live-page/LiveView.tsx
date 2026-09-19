@@ -26,8 +26,9 @@ import {
   deriveActiveSetStates,
   derivePrescription,
   stageIsEnded,
-  verdictFromLoss,
 } from './model';
+import type { FatigueVerdict } from './fatigue-model';
+import { setFatigueState } from './fatigue-state';
 import { type MassUnit } from './mass';
 import { exertionMessage } from './live-copy';
 
@@ -615,13 +616,20 @@ export function LiveView({
   model,
   side,
   slot,
+  fatigueVerdict = null,
 }: {
   model: LiveDashboardModel;
   side?: 'left' | 'right';
   slot?: VoltraSlot;
+  /** WA's combined verdict for the set, off the page's one fatigue model. */
+  fatigueVerdict?: FatigueVerdict | null;
 }) {
   const { live, session } = model;
-  const verdict = verdictFromLoss(live.velocityLossPct);
+  const verdict = setFatigueState({
+    lossPct: live.velocityLossPct,
+    stop: live.fatigueStop,
+    verdict: fatigueVerdict,
+  });
   const dual = side != null;
   const badgeSlot: VoltraSlot | null = side ? (side === 'left' ? 'L' : 'R') : (slot ?? null);
 
