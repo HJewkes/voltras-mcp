@@ -157,6 +157,7 @@ class FakeStore {
 
   getTrainingProfile = async (): Promise<StoredTrainingProfile | undefined> => undefined;
   countSessions = async (): Promise<number> => new Set(this.sets.map((s) => s.sessionId)).size;
+  listSessionEndTimes = async (): Promise<string[]> => this.sets.map((s) => s.endedAt);
   getSessionDateSpan = async (): Promise<{ first: string | null; last: string | null }> => ({
     first: daysAgo(28),
     last: daysAgo(0),

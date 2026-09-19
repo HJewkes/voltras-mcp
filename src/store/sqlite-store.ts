@@ -123,7 +123,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 32;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -1673,6 +1673,91 @@ function migrateV30ToV31(db: DatabaseSync): void {
   addColumnIfMissing(db, 'goal_targets', 'anchor_load', 'REAL');
 }
 
+/**
+ * v31 -> v32: `sessions_28d` counts training days, not session rows (VW-460).
+ * No shape change; the unit of every live session-count row changed under it.
+ *
+ * - An ACCEPTED live row is retired `'abandoned'`. Its committed number is a
+ *   row count, and judging it against a day count silently moves the goal,
+ *   while editing it rewrites a commitment the lifter made. The priority stays
+ *   declared, so the next `goal.propose_targets` offers a day-count target.
+ * - An UNACCEPTED live row is a draft and is deleted. Retiring it would read as
+ *   a declined proposal, which blocks that metric from ever being re-offered.
+ *
+ * Retired rows are history and are left alone. Idempotent: a second run finds
+ * no live `sessions_28d` row from before the change.
+ */
+function migrateV31ToV32(db: DatabaseSync): void {
+  const live = `metric = 'sessions_28d' AND retired_at IS NULL`;
+  db.exec('BEGIN');
+  try {
+    const retired = db
+      .prepare(
+        `UPDATE goal_targets SET retired_at = ?, outcome = 'abandoned'
+           WHERE ${live} AND accepted_by IS NOT NULL`,
+      )
+      .run(new Date().toISOString());
+    const deleted = db
+      .prepare(`DELETE FROM goal_targets WHERE ${live} AND accepted_by IS NULL`)
+      .run();
+    db.exec('COMMIT');
+    if (retired.changes > 0 || deleted.changes > 0) {
+      log.warn(
+        `store v32: sessions_28d now counts training days; retired ${retired.changes} accepted ` +
+          `and deleted ${deleted.changes} proposed session-count target(s). Propose again.`,
+      );
+    }
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * The WHERE half every session count shares: the same predicates as
+ * `listSessions` plus `userId` and `endedOnly`, never a page.
+ */
+function sessionCountPredicates(filter: SessionCountFilter): {
+  where: string[];
+  params: (string | number)[];
+} {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (filter.from !== undefined) {
+    where.push('started_at >= ?');
+    params.push(filter.from);
+  }
+  if (filter.to !== undefined) {
+    where.push('started_at <= ?');
+    params.push(filter.to);
+  }
+  if (filter.exerciseId !== undefined) {
+    // VMCP-01.72b (S6): same set-level OR-subquery as `listSessions` — see
+    // the comment there. A session-column-only WHERE here would silently
+    // break the contract: `list` would find a session `count` doesn't.
+    where.push(
+      '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
+    );
+    params.push(filter.exerciseId, filter.exerciseId);
+  }
+  if (filter.userId !== undefined) {
+    where.push('user_id = ?');
+    params.push(filter.userId);
+  }
+  // Same owner-only default as `listSessions` (VW-169): the tier signal counts
+  // through here, and a guest's sessions must not become the owner's evidence.
+  if (filter.lifter === undefined) {
+    where.push('lifter IS NULL');
+  } else {
+    where.push('lifter = ?');
+    params.push(filter.lifter);
+  }
+  if (filter.endedOnly === true) {
+    where.push('ended_at IS NOT NULL');
+  }
+  return { where, params };
+}
+
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
@@ -2574,43 +2659,7 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async countSessions(filter: SessionCountFilter = {}): Promise<number> {
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (filter.from !== undefined) {
-      where.push('started_at >= ?');
-      params.push(filter.from);
-    }
-    if (filter.to !== undefined) {
-      where.push('started_at <= ?');
-      params.push(filter.to);
-    }
-    if (filter.exerciseId !== undefined) {
-      // VMCP-01.72b (S6): same set-level OR-subquery as `listSessions` — see
-      // the comment there. This method's own doc contract ("same predicates
-      // as listSessions") is a promise a session-column-only WHERE here
-      // would silently break: `list` would find a session `count` doesn't.
-      where.push(
-        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
-      );
-      params.push(filter.exerciseId, filter.exerciseId);
-    }
-    if (filter.userId !== undefined) {
-      where.push('user_id = ?');
-      params.push(filter.userId);
-    }
-    // Same owner-only default as `listSessions` (VW-169). This method's
-    // contract is "the same predicates as listSessions", and the tier signal
-    // counts through here — a guest's sessions must not become the owner's
-    // graduation evidence.
-    if (filter.lifter === undefined) {
-      where.push('lifter IS NULL');
-    } else {
-      where.push('lifter = ?');
-      params.push(filter.lifter);
-    }
-    if (filter.endedOnly === true) {
-      where.push('ended_at IS NOT NULL');
-    }
+    const { where, params } = sessionCountPredicates(filter);
     // `sort` / `limit` / `offset` are intentionally not applied: they describe
     // a page, and the count of a page is not a count.
     const sql =
@@ -2620,41 +2669,7 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async getSessionDateSpan(filter: SessionCountFilter = {}): Promise<SessionDateSpan> {
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (filter.from !== undefined) {
-      where.push('started_at >= ?');
-      params.push(filter.from);
-    }
-    if (filter.to !== undefined) {
-      where.push('started_at <= ?');
-      params.push(filter.to);
-    }
-    if (filter.exerciseId !== undefined) {
-      // Same set-level OR-subquery as `listSessions`/`countSessions` — see
-      // the comment on `listSessions`.
-      where.push(
-        '(exercise_id = ? OR id IN (SELECT DISTINCT session_id FROM sets WHERE exercise_id = ?))',
-      );
-      params.push(filter.exerciseId, filter.exerciseId);
-    }
-    if (filter.userId !== undefined) {
-      where.push('user_id = ?');
-      params.push(filter.userId);
-    }
-    // Same owner-only default as `listSessions` (VW-169). This method's
-    // contract is "the same predicates as listSessions", and the tier signal
-    // counts through here — a guest's sessions must not become the owner's
-    // graduation evidence.
-    if (filter.lifter === undefined) {
-      where.push('lifter IS NULL');
-    } else {
-      where.push('lifter = ?');
-      params.push(filter.lifter);
-    }
-    if (filter.endedOnly === true) {
-      where.push('ended_at IS NOT NULL');
-    }
+    const { where, params } = sessionCountPredicates(filter);
     const sql =
       `SELECT MIN(started_at) AS first, MAX(started_at) AS last FROM sessions` +
       (where.length ? ` WHERE ${where.join(' AND ')}` : '');
@@ -2662,6 +2677,14 @@ export class SqliteSessionStore implements SessionStore {
       | { first: string | null; last: string | null }
       | undefined;
     return Promise.resolve({ first: row?.first ?? null, last: row?.last ?? null });
+  }
+
+  async listSessionEndTimes(filter: SessionCountFilter = {}): Promise<string[]> {
+    const { where, params } = sessionCountPredicates({ ...filter, endedOnly: true });
+    const sql =
+      `SELECT ended_at FROM sessions WHERE ${where.join(' AND ')}` + ` ORDER BY started_at ASC`;
+    const rows = this.db.prepare(sql).all(...params) as { ended_at: string }[];
+    return Promise.resolve(rows.map((row) => row.ended_at));
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -4663,6 +4686,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 30) {
     migrateV30ToV31(db);
+  }
+  if (current <= 31) {
+    migrateV31ToV32(db);
   }
 }
 

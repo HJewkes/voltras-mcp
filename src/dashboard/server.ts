@@ -885,6 +885,7 @@ function hasGoalStore(
     typeof store.listGoalTargets === 'function' &&
     typeof store.getTrainingProfile === 'function' &&
     typeof store.countSessions === 'function' &&
+    typeof store.listSessionEndTimes === 'function' &&
     typeof store.getSessionDateSpan === 'function' &&
     typeof store.getTrainingWeeksForBlock === 'function' &&
     typeof store.getDietPhaseCovering === 'function' &&

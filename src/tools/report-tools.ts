@@ -19,6 +19,7 @@ import type { z } from 'zod';
 
 import type { RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
+import { localDate } from '../analytics/training-days.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -282,18 +283,6 @@ async function plannedExercisesFor(
 
 function pluralSets(count: number): string {
   return count === 1 ? 'set' : 'sets';
-}
-
-/**
- * The calendar date the lifter would call this workout, not the UTC one. A
- * 9pm session ends after midnight UTC, and logging it against the next day
- * puts it on the wrong row of the coach's week.
- */
-function localDate(iso: string): string {
-  const d = new Date(iso);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 // ---------------------------------------------------------------------------

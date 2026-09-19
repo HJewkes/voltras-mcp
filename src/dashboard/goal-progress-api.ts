@@ -26,6 +26,7 @@
 import {
   deriveTargetInFrame,
   readDerivationContext,
+  readTrainingDays,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
 import { markPersonalRecords } from '../analytics/goal-history.js';
@@ -113,7 +114,7 @@ async function viewFor(
     log.debug(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
     return undefined;
   }
-  const { actuals, plateauVerdict } = await readActuals(store, target);
+  const { actuals, plateauVerdict } = await readActuals(store, target, read.now);
   const fatigue = await readFatigue(store, target);
   return buildGoalProgressView({
     priority,
@@ -155,7 +156,7 @@ function plateauVerdictOf(plateau: NonNullable<HistoryTrendResult['plateau']>): 
  * metric is a lift — both come from the SAME `computeHistoryTrend` call
  * `history.trend` itself runs, so this page can never show a series or a
  * plateau call the MCP tool would disagree with. A `sessions_28d` target
- * reads the live rolling count; a `bodyweight` target reads the recent log.
+ * reads the training days in the window ending at the view's `now`; a `bodyweight` target reads the recent log.
  *
  * Only a lift's readings can carry a personal record (VW-384); the other two
  * metrics say why they cannot inline below.
@@ -163,13 +164,14 @@ function plateauVerdictOf(plateau: NonNullable<HistoryTrendResult['plateau']>): 
 async function readActuals(
   store: GoalProgressStore,
   target: StoredGoalTarget,
+  now: Date,
 ): Promise<{ actuals: GoalActual[]; plateauVerdict?: GoalPlateauVerdict }> {
   if (target.metric === 'sessions_28d') {
-    const from = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
-    const count = await store.countSessions({ from, endedOnly: true });
+    const ts = now.toISOString();
+    const days = await readTrainingDays(store, ts);
     return {
       // A rolling attendance count is a dose, not a performance — there is no record to beat.
-      actuals: [{ ts: new Date().toISOString(), value: count, matched: true, isPR: false }],
+      actuals: [{ ts, value: days.length, matched: true, isPR: false }],
     };
   }
   if (target.metric === 'bodyweight') {

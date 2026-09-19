@@ -29,7 +29,7 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'Derive the coach’s expected band for every metric one priority is tracked by, and store ' +
   'each as a PROPOSAL (`acceptedBy` absent) for the lifter to accept. Takes only `priorityId`: ' +
   'EVERY INPUT IS READ, NONE IS TYPED — the start value comes from history (top load at matched ' +
-  'reps for a lift, the recent bodyweight mean, the rolling 28-day session count), the tier from ' +
+  'reps for a lift, the recent bodyweight mean, the rolling 28-day count of training days, one per day trained), the tier from ' +
   'the tier signal, the phase from the declared diet phase, the weeks from the plan tree. Returns ' +
   '`targets` (each with `targetId`, `metric`, `exerciseId`, `anchorReps`, `startValue`, ' +
   '`startMeasuredAt`, `matchedSessionCount`, `bandLowPctPerWeek`, `bandHighPctPerWeek`, ' +
