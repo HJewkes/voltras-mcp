@@ -17,6 +17,7 @@ import {
   type DashboardServerState,
 } from '../server.js';
 import type {
+  StoredBlockSchedule,
   ExerciseSetsFilter,
   GoalTargetSelector,
   ListGoalTargetsOptions,
@@ -165,7 +166,34 @@ class FakeStore {
   getTrainingWeeksForBlock = async () => [];
   getDietPhaseCovering = async () => undefined;
   getTrainingBlock = async () => undefined;
-  getTrainingBlocksForProgram = async () => [];
+  // VW-480: the payload's `mesocycle`. Undated until `dateBlock` is called.
+  private dated: StoredBlockSchedule | undefined;
+
+  dateBlock(startsOn: string, weeksCount: number): void {
+    this.dated = {
+      id: 'sched',
+      blockId: 'blk',
+      seq: 1,
+      startsOn,
+      weeksCount,
+      skips: [],
+      kind: 'planned',
+      changedBy: 'user',
+      declaredAt: daysAgo(1),
+    };
+  }
+
+  listTrainingPrograms = async () =>
+    this.dated === undefined
+      ? []
+      : [{ id: 'prog', name: 'Voltra Return — 2026', createdAt: daysAgo(90) }];
+  getTrainingBlocksForProgram = async () =>
+    this.dated === undefined
+      ? []
+      : [{ id: 'blk', programId: 'prog', orderIndex: 0, name: 'Block 2', weeksCount: 2 }];
+  getLiveBlockSchedule = async () => this.dated;
+  getWorkoutTemplatesForWeek = async () => [];
+  getAssignmentsForTemplate = async () => [];
   listBodyMetrics = async () => [];
   getBaseline = async () => undefined;
   chapterStartedAt = async () => null;
@@ -244,6 +272,15 @@ interface GoalsBody {
     targets: { id: string }[];
     rollup: { status: string } | null;
   }[];
+  mesocycle: { programName: string; blockName: string; state: string } | null;
+}
+
+/** The Monday of the current local week: a block dated from it is in progress today. */
+function mondayThisWeek(): string {
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  return monday.toISOString().slice(0, 10);
 }
 
 describe('GET /api/goal-progress', () => {
@@ -375,6 +412,21 @@ describe('GET /api/goal-progress', () => {
     expect(res.status).toBe(400);
   });
 
+  it('names the dated block the page is in (VW-480)', async () => {
+    const store = new FakeStore([priority({ id: 'pri-1' })], [], weeklyHistory('bench-press'));
+    store.dateBlock(mondayThisWeek(), 2);
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goals')).body as GoalsBody;
+
+    expect(body.mesocycle).toMatchObject({
+      programName: 'Voltra Return — 2026',
+      blockName: 'Block 2',
+      state: 'current',
+      week: { n: 1, of: 2 },
+    });
+  });
+
   it('501s when the wired store carries no goal-read methods', async () => {
     const port = await start({ slots: new Map(), store: { listSessions: async () => [] } });
     const res = await call(port, '/api/goal-progress?priorityId=pri-1');
@@ -400,6 +452,15 @@ describe('GET /api/goals', () => {
     expect(typeof body.priorities[0]?.rollup?.status).toBe('string');
   });
 
+  it('carries a null mesocycle while no block has dates (VW-480)', async () => {
+    const store = new FakeStore([priority({ id: 'pri-1' })], [], weeklyHistory('bench-press'));
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goals')).body as GoalsBody;
+
+    expect(body.mesocycle).toBeNull();
+  });
+
   it('reports a null rollup when no target under a priority is accepted', async () => {
     const pri = priority({ id: 'pri-1' });
     const tgt = target({ id: 'tgt-1', priorityId: 'pri-1', acceptedBy: undefined });
@@ -410,6 +471,21 @@ describe('GET /api/goals', () => {
 
     expect(body.priorities[0]?.targets).toEqual([]);
     expect(body.priorities[0]?.rollup).toBeNull();
+  });
+
+  it('names the dated block the page is in (VW-480)', async () => {
+    const store = new FakeStore([priority({ id: 'pri-1' })], [], weeklyHistory('bench-press'));
+    store.dateBlock(mondayThisWeek(), 2);
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goals')).body as GoalsBody;
+
+    expect(body.mesocycle).toMatchObject({
+      programName: 'Voltra Return — 2026',
+      blockName: 'Block 2',
+      state: 'current',
+      week: { n: 1, of: 2 },
+    });
   });
 
   it('501s when the wired store carries no goal-read methods', async () => {
