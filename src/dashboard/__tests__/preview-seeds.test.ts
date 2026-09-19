@@ -26,12 +26,14 @@ import {
   GOAL_PREVIEW_EXERCISE,
   GOAL_PREVIEW_STATES,
   PREVIEW_PAGES,
+  acceptedBandOf,
   goalPreviewState,
   seedGoalPreview,
   type GoalPreviewState,
 } from '../../docs/preview-seeds.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
+import { readDerivationContext } from '../../tools/goal-derivation.js';
 import type { GoalProgressView } from '../read-models/index.js';
 
 /** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
@@ -226,6 +228,19 @@ describe('dashboard:preview companion lifts (VW-467)', () => {
       }
       const lead = await fetchGoalProgressViews(store, priorities[0]!, now);
       expect(lead[0]!.status).toBe('on_track');
+
+      // Each lift ramps at its own exercise class (VW-482): the isolation tricep extension's
+      // band is the isolation one, not the chest press's upper-compound one.
+      const tricep = priorities[2]!;
+      const [tricepView] = await fetchGoalProgressViews(store, tricep, now);
+      const context = await readDerivationContext({ store }, tricep);
+      const start = tricepView!.target.startValue;
+      expect(tricepView!.target.stretchValue).toBe(
+        acceptedBandOf(context, start, 'ramp', tricep.ref).stretchValue,
+      );
+      expect(tricepView!.target.stretchValue).toBeLessThan(
+        acceptedBandOf(context, start, 'ramp', GOAL_PREVIEW_EXERCISE.id).stretchValue,
+      );
     } finally {
       store.close();
     }

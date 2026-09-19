@@ -27,7 +27,7 @@
 // Confidentiality: exercise ids, loads, rep counts and velocities only —
 // derived fitness metadata, no protocol data of any kind (NF-07).
 
-import { EMPTY_PHASE } from '@voltras/workout-analytics';
+import { EMPTY_PHASE, setCatalog } from '@voltras/workout-analytics';
 
 import {
   GOAL_BAND_CONSTANTS,
@@ -37,6 +37,7 @@ import {
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import { rampClassForExerciseId } from '../exercises/ramp-class.js';
+import { SEED_CABLE_EXERCISES } from '../exercises/seed-catalog.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
 import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
 import {
@@ -323,6 +324,9 @@ export async function seedGoalPreview(
   now: Date,
   options: { companions?: boolean } = {},
 ): Promise<GoalPreviewSeedReport> {
+  // The tools derive with the catalog the server loads at boot; this seed runs before any
+  // server exists, so it loads the same one, or every lift would ramp as the unknown class.
+  setCatalog(SEED_CABLE_EXERCISES);
   const lead: SeededLift = {
     key: 'goal',
     exercise: GOAL_PREVIEW_EXERCISE,
@@ -567,7 +571,12 @@ function targetRow(
   const { history } = lift;
   const startMeasuredAt = seededAt(now, history.targetStartWeeksAgo);
   const startValue = startLoadOf(history);
-  const band = acceptedBandOf(context, startValue, history.acceptedCold === true ? 'cold' : 'ramp');
+  const band = acceptedBandOf(
+    context,
+    startValue,
+    history.acceptedCold === true ? 'cold' : 'ramp',
+    lift.exercise.id,
+  );
   return {
     id: `preview-${lift.key}-target`,
     priorityId: `preview-${lift.key}-priority`,
@@ -602,12 +611,14 @@ export function startLoadOf(state: GoalPreviewHistory): number {
  * The band the target was accepted with: `deriveGoalBand` over the seed's own
  * start and block, at the level it was accepted at. A cold acceptance is one
  * made before calibration, so the evidence handed in is a calibrating lift's;
- * a ramp acceptance is one made with the gates open and no fitted slope.
+ * a ramp acceptance is one made with the gates open and no fitted slope. The
+ * ramp's step is the lift's own exercise class (VW-482).
  */
 export function acceptedBandOf(
   context: GoalDerivationContext,
   startValue: number,
   infoLevel: Exclude<GoalInfoLevel, 'own'>,
+  exerciseId: string,
 ): GoalBand {
   const cold = infoLevel === 'cold';
   return deriveGoalBand({
@@ -616,7 +627,7 @@ export function acceptedBandOf(
     horizonWeeks: context.horizonWeeks,
     weeks: context.weeks,
     tier: context.tier,
-    rampClass: rampClassForExerciseId(GOAL_PREVIEW_EXERCISE.id),
+    rampClass: rampClassForExerciseId(exerciseId),
     infoLevel,
     dietState: context.dietState,
     layoff: context.layoff,
