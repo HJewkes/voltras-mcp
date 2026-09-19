@@ -1897,10 +1897,10 @@ function migrateV34ToV35(db: DatabaseSync): void {
  * so an existing DB picks the table up there. Same pattern as v2 -> v3; the
  * function exists to make the version bump explicit and to hold this note.
  *
- * The rung below reads `current <= 35`, which is the ladder's rule (see
- * `applyMigrations`) and not a statement about which versions exist: a store at
- * 34 and a store at 35 both fall into it and both reach v36. That is what lets
- * the v34 -> v35 step above be inserted without touching this one.
+ * The rung below reads `current <= 35`, which is the ladder's rule (stated
+ * above `applyMigrations`) and not a claim about which versions exist: a store
+ * at 34 and a store at 35 both fall into it and both reach v36. That is what
+ * let the v34 -> v35 step above be inserted without touching this one.
  */
 function migrateV35ToV36(_db: DatabaseSync): void {
   // Intentionally empty. See the note above.
@@ -5193,6 +5193,11 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
  * shape and skip every migration body.
  */
 function applyMigrations(db: DatabaseSync): void {
+  // THE RULE FOR EVERY RUNG BELOW: its condition is `current <= its
+  // from-version`, never `current === it`. Read the ladder as buckets, not as
+  // steps that must chain — a store several versions back has to fall into
+  // every rung above it. An equality test would silently skip such a store,
+  // and a rung inserted between two others would strand it.
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const current = row?.user_version ?? 0;
   if (current === 1) {

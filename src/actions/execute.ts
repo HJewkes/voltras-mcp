@@ -56,7 +56,12 @@ export interface ActionStore {
   completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction>;
 }
 
-/** One submitted action. */
+/**
+ * One submitted action. The `actor` is the CALLER's claim about itself, and it
+ * is only as trustworthy as the caller: `POST /api/actions` pins it to `user`
+ * for that reason (see `readActionRequest` in `dashboard/server.ts`), and an
+ * in-process caller stamps its own.
+ */
 export interface ActionRequest {
   name: string;
   actionId: string;

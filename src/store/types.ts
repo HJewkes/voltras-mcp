@@ -872,6 +872,12 @@ export interface ListAdvisoryDecisionsFilter {
  * Who submitted an action. Extends the `block_schedules.changed_by` vocabulary
  * rather than inventing a parallel one: a wall tap by the lifter is `user`, and
  * `surface` says which screen it came from. `tick` is the agent-free scheduler.
+ *
+ * NOT the client's to assert. `POST /api/actions` pins it to `user`, because a
+ * request arriving there came from a browser on this machine and is a human
+ * tap; `coach` and `tick` belong to in-process callers of `executeAudited`,
+ * which stamp their own. Otherwise anyone holding the write token could file a
+ * human tap as an agent decision, and the column would prove nothing.
  */
 export const UI_ACTION_ACTORS = ['user', 'coach', 'tick'] as const;
 export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];

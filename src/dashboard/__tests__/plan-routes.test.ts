@@ -990,6 +990,49 @@ describe('POST /api/actions/:name', () => {
     expect(counter.runs).toBe(1);
   });
 
+  it('records a human tap as `user`, and refuses a body claiming otherwise', async () => {
+    // The audit trail's actor column has to mean something. A request here came
+    // from a browser on this machine, so it IS a human tap; the coach and the
+    // tick call the layer in-process and stamp their own actor there.
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const actor of ['coach', 'tick']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${actor}`,
+        actor,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: 'invalid_input' });
+    }
+    expect(audit.rows.size).toBe(0);
+  });
+
+  it('refuses a surface no browser can be', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    for (const surface of ['telegram', 'voice', 'nonsense']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${surface}`,
+        surface,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('keeps the wall/phone distinction, which only the client knows', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-phone',
+      surface: 'phone',
+      input: { weightLbs: 180 },
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ surface: 'phone', actor: 'user' });
+  });
+
   it('405s anything but a POST', async () => {
     const port = await start(
       actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
@@ -1059,6 +1102,35 @@ describe('the plan routes through the action layer', () => {
       resultStatus: 'error',
       resultCode: 'invalid_input',
     });
+  });
+
+  it('forces the actor and narrows the surface on the plan routes too', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const refused = await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-bad-surface',
+      surface: 'telegram',
+    });
+    expect(refused.status).toBe(400);
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-phone',
+      surface: 'phone',
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ actor: 'user', surface: 'phone' });
+  });
+
+  it('never lets the surface reach the plan payload', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'Clean',
+      actionId: 'act-1',
+      surface: 'phone',
+    });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('surface');
   });
 
   it('keeps the plan builder working on a store with no audit table', async () => {

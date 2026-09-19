@@ -106,6 +106,20 @@ bound to the shared state. `capture-handlers.test.ts` pins it: the captured
 handler runs with another client holding the lease and does not answer
 `LEASE_HELD`, where the connection's callback does.
 
+### Who an action says it was
+
+`POST /api/actions` **pins the actor to `user`** and refuses a body claiming
+`coach` or `tick`. A request reaching that route came from a browser on this
+machine — that is what the write guard establishes — so it is a human tap. The
+coach and the agent-free tick do not arrive that way: they call `executeAudited`
+in-process and stamp their own actor there. Without the pin, anyone holding the
+write token could file a human tap as an agent decision and the column would
+prove nothing.
+
+The **surface** stays the client's to say, narrowed to `wall` or `phone`. Both
+are the owner's own browser and the server cannot tell them apart, so refusing
+the distinction would lose a fact and gain nothing.
+
 ### Idempotency
 
 The client sends one `actionId` per SUBMIT, reused across retries.

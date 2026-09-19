@@ -170,6 +170,7 @@ import {
   WRITE_TOKEN_HEADER,
 } from './write-guard.js';
 import type { CapturedTools } from '../actions/capture-handlers.js';
+import type { UiActionSurface } from '../store/types.js';
 import {
   executeAction,
   executeAudited,
@@ -179,7 +180,7 @@ import {
   type ActionStore,
   type HandlerOutcome,
 } from '../actions/execute.js';
-import { UI_ACTION_ACTORS, UI_ACTION_SURFACES } from '../store/types.js';
+
 import {
   fetchGoalPriorityRows,
   fetchGoalProgressViews,
@@ -1174,10 +1175,43 @@ function sendActionOutcome(res: ServerResponse, outcome: ActionOutcome): void {
 }
 
 /**
+ * Surfaces a request over HTTP can honestly claim. Both are the human's own
+ * browser; `voice` and `telegram` do not reach the server this way.
+ *
+ * The surface is a LABEL, not an authorization input. It is the client's own
+ * assertion and the server cannot check it, so nothing may ever branch on it
+ * to decide what a request is allowed to do.
+ */
+const BROWSER_SURFACES = ['wall', 'phone'] as const;
+
+/** The claimed surface, or `null` when it is not one a browser can be. */
+function readBrowserSurface(claimed: unknown): UiActionSurface | null {
+  const surface = claimed ?? 'wall';
+  return isOneOf(surface, BROWSER_SURFACES) ? surface : null;
+}
+
+/**
  * Read the envelope around an action's input. `actionId` is required and has
  * no server-side default: a client that cannot produce one cannot have retry
  * safety, and silently minting one here would hand it a guarantee it does not
  * have.
+ *
+ * ── Why the actor is not the client's to assert ──────────────────────────
+ *
+ * A request reaching this route came from a page in a browser on this machine
+ * — that is what the VW-500 guard establishes. It is therefore a human tap, and
+ * the actor is `user`. The coach and the tick do not arrive this way: they run
+ * in-process and call `executeAudited` directly, stamping their own actor
+ * there. So a body claiming `actor: 'coach'` is either a confused client or one
+ * trying to file a human tap as an agent decision, and it is REFUSED rather
+ * than honoured or silently downgraded. Without this the audit trail's actor
+ * column would be forgeable by anyone holding the write token, which is a
+ * weaker claim than an audit trail should make.
+ *
+ * The surface stays the client's to say, narrowed to the two browser surfaces:
+ * wall and phone are both the owner's own browser and the server cannot tell
+ * them apart, so nothing is gained by refusing the distinction and a later
+ * read would lose it.
  */
 function readActionRequest(
   name: string,
@@ -1187,16 +1221,21 @@ function readActionRequest(
   if (typeof actionId !== 'string' || actionId.trim() === '') {
     return { error: 'actionId is required, and must be a non-empty string' };
   }
-  const actor = body.actor ?? 'user';
-  const surface = body.surface ?? 'wall';
-  if (!isOneOf(actor, UI_ACTION_ACTORS)) return { error: `unknown actor: ${String(actor)}` };
-  if (!isOneOf(surface, UI_ACTION_SURFACES)) {
-    return { error: `unknown surface: ${String(surface)}` };
+  if (body.actor !== undefined && body.actor !== 'user') {
+    return {
+      error: `an action over HTTP is a human tap and is recorded as 'user'; ${String(
+        body.actor,
+      )} cannot be claimed`,
+    };
+  }
+  const surface = readBrowserSurface(body.surface);
+  if (surface === null) {
+    return { error: `a browser action is 'wall' or 'phone', not ${String(body.surface)}` };
   }
   return {
     name,
     actionId,
-    actor,
+    actor: 'user',
     surface,
     ...(typeof body.flowId === 'string' ? { flowId: body.flowId } : {}),
     ...(typeof body.flowStep === 'string' ? { flowStep: body.flowStep } : {}),
@@ -1246,7 +1285,15 @@ async function handlePlanMutation(
   const { store } = state;
   // `actionId` is the audit envelope's, never the plan payload's. Stripped so
   // `plan-api.ts` sees exactly the body it saw before this route was audited.
-  const { actionId: submittedId, ...payload } = body;
+  const { actionId: submittedId, surface: submittedSurface, ...payload } = body;
+  const surface = readBrowserSurface(submittedSurface);
+  if (surface === null) {
+    sendJson(res, 400, {
+      error: 'invalid_input',
+      message: `a browser action is 'wall' or 'phone', not ${String(submittedSurface)}`,
+    });
+    return;
+  }
   const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
   if (!hasActionStore(store)) {
     // No audit table (a test fake, an older store): the write still happens.
@@ -1262,8 +1309,9 @@ async function handlePlanMutation(
       // but buys NO retry safety: a retry mints another id and runs again.
       // The SPA sends its own; see `spa/api-client.ts`.
       actionId: typeof submittedId === 'string' ? submittedId : randomUUID(),
+      // Forced, never read from the body: see `readActionRequest`.
       actor: 'user',
-      surface: 'wall',
+      surface,
       inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
       run,
     },
