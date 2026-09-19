@@ -117,6 +117,13 @@
 //                          best e1RM, 12-week slope, PR flag and a
 //                          multi-exercise agreement flag. One row per side.
 //
+//   ── Banners (VW-504, coach stage 1.5) ───────────────────────────────────
+//   GET /api/banners      — `{ banner: BannerRecord | null }`: the single
+//                          highest-priority banner that currently holds, or
+//                          `null`. A store without the planning reads answers
+//                          200 `{ banner: null }` — nothing to say is a valid
+//                          answer here, unlike the plan routes' 501.
+//
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -219,6 +226,7 @@ import { findPlannedExerciseForSession } from '../store/planned-exercise-for-ses
 import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
 import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
+import { readTopBanner, type BannerStore } from './read-models/banners.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -656,6 +664,10 @@ async function handleRequest(
     await serveGoalProgress(res, state, url);
     return;
   }
+  if (pathname === '/api/banners') {
+    await serveBanners(res, state);
+    return;
+  }
   const summaryMatch = /^\/api\/session-summary\/([^/]+)$/.exec(pathname);
   if (summaryMatch !== null) {
     await serveSessionSummary(res, state, decodeURIComponent(summaryMatch[1]));
@@ -1061,6 +1073,36 @@ async function serveGoalProgress(
   }
   const targets = await fetchGoalProgressViews(state.store, priority, new Date());
   sendJson(res, 200, { targets });
+}
+
+/** @see hasPlanStore — same narrowing, for the banner read (VW-504). */
+function hasBannerStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & BannerStore {
+  return (
+    typeof store.listTrainingPrograms === 'function' &&
+    typeof store.getTrainingBlocksForProgram === 'function' &&
+    typeof store.getTrainingWeeksForBlock === 'function' &&
+    typeof store.getWorkoutTemplatesForWeek === 'function' &&
+    typeof store.getAssignmentsForTemplate === 'function' &&
+    typeof store.getLiveBlockSchedule === 'function' &&
+    typeof store.listSessionEndTimes === 'function'
+  );
+}
+
+/**
+ * `GET /api/banners` (VW-504): the one banner the wall should show, or `null`.
+ * A store without the planning reads has nothing to raise, which is an answer
+ * rather than a failure, so this 200s with `null` instead of 501ing.
+ */
+async function serveBanners(res: ServerResponse, state: DashboardServerState): Promise<void> {
+  if (!hasBannerStore(state.store)) {
+    sendJson(res, 200, { banner: null });
+    return;
+  }
+  const now = new Date();
+  const banner = await readTopBanner(state.store, localDate(now.toISOString()), now.toISOString());
+  sendJson(res, 200, { banner });
 }
 
 async function serveSessionSummary(
