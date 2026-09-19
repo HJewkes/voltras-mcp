@@ -127,6 +127,24 @@ export function commitsToHold(band: GoalBand): boolean {
   return band.direction !== 'hold' && band.bandLowPctPerWeek === 0;
 }
 
+/**
+ * A two-sided corridor: the maintenance bodyweight band, where a departure
+ * either way is a departure (VW-457). A lift held through a deficit is not one.
+ */
+export function isCorridor(band: GoalBand): boolean {
+  return band.direction === 'hold' && (band.corridorPct ?? 0) > 0;
+}
+
+/** Which side of its corridor a reading sits on, or `null` inside it. */
+export function corridorSideOf(
+  expected: GoalBandExpectation,
+  value: number,
+): 'above' | 'below' | null {
+  const [low, high] = [expected.low, expected.high].sort((a, b) => a - b);
+  if (value > high) return 'above';
+  return value < low ? 'below' : null;
+}
+
 /** How far past a hold commitment still reads as holding: one week's noise floor. */
 function holdToleranceOf(band: GoalBand): number {
   return commitsToHold(band) ? GOAL_BAND_CONSTANTS.bodyweightNoiseFloorLbsPerWeek : 0;
@@ -161,7 +179,7 @@ export function blockReadingsOf(
 
 /**
  * The block's best matched reading against the committed number. `null` for a
- * `hold` goal, which has no side to be past; `short` with no reading at all.
+ * lift held through a diet phase, which has no side to be past; `short` with no reading at all.
  */
 export function goalReachOf(
   target: StoredGoalTarget,
@@ -170,6 +188,7 @@ export function goalReachOf(
   weekCount: number,
 ): GoalReachRead | null {
   const direction = band.direction;
+  if (isCorridor(band)) return corridorReachOf(target, band, readings, weekCount);
   if (direction === 'hold' || readings.length === 0) {
     return direction === 'hold' ? null : { reach: 'short', best: target.startValue };
   }
@@ -193,6 +212,23 @@ function holdReachOf(
   const latest = readings[readings.length - 1];
   if (latest.position < weekCount - 1) return { reach: 'short', best: latest.value };
   return reachAt(target, band.direction, latest.value, holdToleranceOf(band));
+}
+
+/**
+ * A corridor is kept to the end the same way (VW-468): judged in the final week off
+ * the latest reading, met inside the corridor, and never beyond it (VW-457).
+ */
+function corridorReachOf(
+  target: StoredGoalTarget,
+  band: GoalBand,
+  readings: readonly BlockReading[],
+  weekCount: number,
+): GoalReachRead {
+  const latest = readings[readings.length - 1];
+  if (latest === undefined) return { reach: 'short', best: target.startValue };
+  const inFinalWeek = latest.position >= weekCount - 1;
+  const inside = corridorSideOf(band.expected[band.expected.length - 1], latest.value) === null;
+  return { reach: inFinalWeek && inside ? 'met' : 'short', best: latest.value };
 }
 
 function reachAt(
@@ -232,8 +268,8 @@ export function mesoMilestoneOf(input: MesoMilestoneInput): GoalMesoMilestone {
 
 /**
  * Hit the moment the committed number is lifted; missed only once the block
- * has ended without it. A `hold` goal has no number to lift, so it is judged
- * at the boundary alone: held if its last reading sits inside that week's corridor.
+ * has ended without it. A lift held through a diet phase has no number to lift, so
+ * it is judged at the boundary alone: held if its last reading sits inside that week's band.
  */
 function milestoneState(
   input: MesoMilestoneInput,
@@ -277,8 +313,7 @@ function outcomeAgainst(
 }
 
 function insideCorridor(expected: GoalBandExpectation, value: number): boolean {
-  const [low, high] = [expected.low, expected.high].sort((a, b) => a - b);
-  return value >= low && value <= high;
+  return corridorSideOf(expected, value) === null;
 }
 
 /** The committed number as the card prints it: a whole set when both anchors are known. */
