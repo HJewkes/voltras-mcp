@@ -15,7 +15,7 @@
 //   * the committed line on the chart is read and never written;
 //   * the declared diet phase is never written, by anything, ever.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WEEKLY_CHECKIN_CODES, WEEKLY_CHECKIN_KIND } from '../../schemas/profile.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -169,6 +169,10 @@ describe('goal.weekly_review', () => {
     await seedPhaseAndTarget(harness.store);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('proposes an unsized advisory and records it with its inputs and thresholds', async () => {
     await seedReadings(harness.store, 0.6);
     const result = await harness.invoke('goal.weekly_review');
@@ -289,5 +293,33 @@ describe('goal.weekly_review', () => {
     expect(result.checkin).toMatchObject({ dietPlanAdherence: 'low' });
     expect(result.lowConfidence).toBe(true);
     expect(String(result.confounders)).toContain('low-confidence');
+  });
+
+  it('judges a back-dated week on the readings taken by its end, not later ones (VW-463)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const weekOf = Date.parse(`${mostRecentSunday()}T00:00:00.000Z`) - 21 * DAY_MS;
+    const weekEnd = weekOf + 7 * DAY_MS;
+    const args = { weekOf: new Date(weekOf).toISOString().slice(0, 10) };
+    const withLaterCrash = setup();
+    const pastOnly = setup();
+    await seedPhaseAndTarget(withLaterCrash.store);
+    await seedPhaseAndTarget(pastOnly.store);
+    for (let day = 0; day <= PHASE_DAYS; day += 1) {
+      const measuredAt = daysAgo(PHASE_DAYS - day);
+      const later = Date.parse(measuredAt) > weekEnd;
+      const reading = {
+        userId: LOCAL_USER_ID,
+        measuredAt,
+        bodyweightLbs: START_WEIGHT_LBS - (0.6 * day) / 7 - (later ? 8 : 0),
+      };
+      await withLaterCrash.store.putBodyMetric(reading);
+      if (!later) await pastOnly.store.putBodyMetric(reading);
+    }
+
+    const judged = await withLaterCrash.invoke('goal.weekly_review', args);
+    const expected = await pastOnly.invoke('goal.weekly_review', args);
+
+    expect(judged.observation).toEqual(expected.observation);
+    expect(judged.readingCount).toBe(expected.readingCount);
   });
 });

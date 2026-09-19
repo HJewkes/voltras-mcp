@@ -73,6 +73,27 @@ describe('rp-s12-no-adjustment-under-half-pound-weekly-change: noise floor', () 
   });
 });
 
+describe('now is the only clock: readings after it are not seen (VW-463)', () => {
+  it('computes the same trend with or without readings taken after now', () => {
+    const upToNow = readings([
+      ['2026-03-01', 182.0],
+      ['2026-03-04', 181.5],
+      ['2026-03-08', 181.0],
+      ['2026-03-11', 180.5],
+      ['2026-03-15', 180.0],
+    ]);
+    const later = readings([
+      ['2026-03-18', 176.0],
+      ['2026-03-22', 172.0],
+    ]);
+    const input = { now: '2026-03-15', phaseStartedAt: '2026-01-01', targetLine: FLAT_TARGET };
+
+    const withLater = computeBodyweightTrend({ ...input, readings: [...upToNow, ...later] });
+
+    expect(withLater).toEqual(computeBodyweightTrend({ ...input, readings: upToNow }));
+  });
+});
+
 describe('rp-s12-scale-opacity-salt-and-water: single-day spike down-weighting', () => {
   // 03-09 -> 03-10 is a +3 lb jump, at/above `singleDaySpikeThresholdLbs`
   // (2.5). The window ending 03-10 down-weights that one reading by
