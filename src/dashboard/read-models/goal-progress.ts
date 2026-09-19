@@ -527,7 +527,7 @@ function read(input: GoalProgressInput): Reading {
     belowCommitted: latest !== undefined && behindEdge(expected.low, latest.value, input.band),
     beyondStretch: latest !== undefined && aheadOfEdge(expected.high, latest.value, input.band),
     inBlock,
-    reach: goalReachOf(input.target, input.band.direction, inBlock),
+    reach: goalReachOf(input.target, input.band, inBlock, input.weeks.length),
   };
 }
 

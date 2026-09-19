@@ -278,27 +278,47 @@ describe('recomposition bodyweight: hold by default, slow loss when declared (VW
     expect(band.notes.join(' ')).toContain('rp-s12-maintenance-buffer-2pct');
   });
 
-  it('runs one slow-loss line when the lifter declared it', () => {
+  it('commits to holding weight and stretches to -0.5%/wk when the lifter declared slow loss (VW-468)', () => {
     const band = bodyweight(true);
     expect(band.direction).toBe('down');
-    expect(band.bandLowPctPerWeek).toBe(-0.5);
+    expect(band.bandLowPctPerWeek).toBe(0);
     expect(band.bandHighPctPerWeek).toBe(-0.5);
     expect(band.corridorPct).toBeNull();
     expect(band.expected).toEqual([
       { weekIndex: 1, low: 200, high: 200 },
-      { weekIndex: 2, low: 199, high: 199 },
-      { weekIndex: 3, low: 198, high: 198 },
-      { weekIndex: 4, low: 197, high: 197 },
+      { weekIndex: 2, low: 200, high: 199 },
+      { weekIndex: 3, low: 200, high: 198 },
+      { weekIndex: 4, low: 200, high: 197 },
     ]);
-    expect(band.committedValue).toBe(197);
+    expect(band.committedValue).toBe(200);
     expect(band.stretchValue).toBe(197);
     expect(band.notes.join(' ')).toContain('rp-s11-fat-loss-rate-heuristic');
+    expect(band.notes.join(' ')).toContain('VW-468');
   });
 
-  it('takes the slow edge from the cited fat-loss range rather than a constant of its own', () => {
-    expect(bodyweight(true).bandLowPctPerWeek).toBe(
+  it('stretches to the slow edge of the cited fat-loss range', () => {
+    expect(bodyweight(true).bandHighPctPerWeek).toBe(
       GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek.low,
     );
+  });
+
+  it.each([
+    [150, 144.75],
+    [190, 183.35],
+    [230, 221.95],
+  ])('pins a %i lb lifter over 8 weeks: hold the start, stretch to %f', (start, stretch) => {
+    const band = deriveGoalBand(
+      rowInput({
+        metric: 'bodyweight',
+        startValue: start,
+        horizonWeeks: 8,
+        weeks: weeksOf(8),
+        dietState: { phase: 'recomposition', weeksInPhase: 4, slowLoss: true },
+      }),
+    );
+    expect(band.committedValue).toBe(start);
+    expect(band.stretchValue).toBeCloseTo(stretch, 6);
+    expect(band.expected.every((week) => week.low === start)).toBe(true);
   });
 });
 

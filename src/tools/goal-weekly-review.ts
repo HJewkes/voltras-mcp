@@ -244,7 +244,10 @@ async function findBodyweightTarget(
  * value and its COMMITTED edge, converted from percent per week to lb per
  * week. The committed edge is the band's low edge (plan v2 §1.7), and reading
  * the stored row rather than re-deriving it is what keeps this advisory
- * measured against the line on the chart.
+ * measured against the line on the chart. For a slow-loss recomposition the
+ * committed edge is 0 %/wk (VW-468), so the line is flat at the start weight and
+ * the advisory takes the goal's direction from the band. Never the stretch edge:
+ * against it a flat week, which keeps the commitment, would read behind.
  */
 function targetLineFor(target: StoredGoalTarget): BodyweightTargetLine {
   return {
