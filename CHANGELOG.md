@@ -115,12 +115,12 @@ entry is written from the user's point of view is a review question, not a check
   sessions goal carries the count due by now, the days trained in the window, and how many of
   them leave the window in the next week. Week 1 of a cut or gain band now runs from the start
   weight to the end of the first week's stretch step, so a first weigh-in at the start weight
-  reads inside it (VW-459, #PR).
+  reads inside it (VW-459, #456).
 - An accepted bodyweight goal with no recent weigh-in stays on the goals page instead of
-  disappearing, and a goal the page cannot draw is logged as a warning (VW-459, #PR).
+  disappearing, and a goal the page cannot draw is logged as a warning (VW-459, #456).
 - `goal.declare_priorities` refuses a second whole-body priority for the same ref (for example
   `bodyweight` and `Bodyweight`) with `GOAL_WHOLE_BODY_PRIORITY_EXISTS`, instead of storing two
-  goals that track one number (VW-459, #PR).
+  goals that track one number (VW-459, #456).
 - A sessions-per-28-days goal now counts training days, not recorded sessions: a day with
   several exercises logged as separate sessions counts once. The count is taken from the
   lifter's local calendar day. Any accepted session-count goal made under the old count is
