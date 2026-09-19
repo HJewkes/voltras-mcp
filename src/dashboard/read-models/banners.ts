@@ -124,9 +124,9 @@ async function readUnrecordedWeekBanner(
   today: string,
   nowIso: string,
 ): Promise<BannerRecord | null> {
-  const { calendar } = await resolveCurrentBlock(store, today);
-  // Only 'current' and 'gap' carry a calendar; 'upcoming' and 'undated_only' have no dated weeks.
-  if (calendar === null || calendar.startsOn === null) return null;
+  const { state, calendar } = await resolveCurrentBlock(store, today);
+  // 'current' only (VW-504): a 'gap' block has ended and neither clearing route reaches it.
+  if (state !== 'current' || calendar === null || calendar.startsOn === null) return null;
   const trainingDays = await readTrainingDaysMatching(store, {
     // Sessions are filtered on their START instant while a training day is the local date of the
     // END instant, so the window opens a day early rather than dropping one that ran past midnight.

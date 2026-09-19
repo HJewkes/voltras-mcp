@@ -164,12 +164,10 @@ describe('readTopBanner', () => {
     expect(await readTopBanner(store, TODAY, NOW)).toBeNull();
   });
 
-  it('counts the weeks of the block that ended, and no training day after it', async () => {
+  it('raises nothing for a gap, even when the ended block left an empty passed week', async () => {
     await dateBlock(store, 'b1', '2026-08-10', 3);
 
-    expect(await readTopBanner(store, TODAY, NOW)).toMatchObject({
-      subtitle: '3 planned weeks had no training day, the most recent the week of Mon 24 Aug.',
-    });
+    expect(await readTopBanner(store, TODAY, NOW)).toBeNull();
   });
 
   it('ignores the passed weeks of older blocks once a newer block is current', async () => {
