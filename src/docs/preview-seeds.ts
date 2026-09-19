@@ -36,6 +36,7 @@ import {
   type GoalInfoLevel,
 } from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
+import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
 import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
 import {
@@ -169,7 +170,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_offered',
     expectedStatus: 'on_track',
     summary:
-      'A starting ramp accepted cold (committed 117.5, where the ramp ends), and five weeks of ' +
+      'A starting ramp accepted cold (committed 121, where the ramp ends), and five weeks of ' +
       'history since, inside the band: calibrated, so a target based on the lifts is on offer.',
     weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
@@ -195,7 +196,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'fast_climb',
     expectedStatus: 'beyond_goal',
     summary:
-      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 108.75 goal by ' +
+      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 110.5 goal by ' +
       'week 4, and a met goal outranks pace, so it reads beyond_goal rather than ahead.',
     weeklyLoadsLbs: [100, 104, 108, 113, 118],
     targetStartWeeksAgo: 4,
@@ -228,7 +229,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 102, 104, 106, 108.75],
+    weeklyLoadsLbs: [100, 102, 104, 106, 110.5],
     targetStartWeeksAgo: 4,
   },
   {
@@ -534,6 +535,7 @@ export function acceptedBandOf(
     horizonWeeks: context.horizonWeeks,
     weeks: context.weeks,
     tier: context.tier,
+    rampClass: rampClassForExerciseId(GOAL_PREVIEW_EXERCISE.id),
     infoLevel,
     dietState: context.dietState,
     layoff: context.layoff,

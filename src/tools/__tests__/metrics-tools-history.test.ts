@@ -510,6 +510,12 @@ describe('metrics.compute — history.trend flatline (VW-452)', () => {
     expect(plateau.flatline).toMatchObject({ days: 21, points: 4, slopeLbsPerWeek: 0 });
   });
 
+  it('judges a half-pound weekly climb flat against the plateau step, not the goal ramp (VW-482)', async () => {
+    const plateau = await plateauFor([100, 100.5, 101, 101.5, 102]);
+
+    expect(plateau.verdict).toBe('plateau');
+  });
+
   it('keeps the detector verdict for volume, which has no load step to judge by', async () => {
     const plateau = await plateauFor([100, 102.5, 105, 107.5, 110], 'volume');
 

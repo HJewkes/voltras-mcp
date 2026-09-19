@@ -36,6 +36,7 @@ import {
 import { readDietPhaseState } from './diet-phase-state.js';
 import { computeHistoryTrend } from './metrics-tools.js';
 import { getTierSignal, type Tier } from './tier-signal.js';
+import { rampClassForExerciseId } from '../exercises/ramp-class.js';
 
 /**
  * The store slice this module reads. Declared narrow (rather than
@@ -503,6 +504,7 @@ function bandFor(
     horizonWeeks: context.horizonWeeks,
     weeks: context.weeks,
     tier: context.tier,
+    rampClass: rampClassForExerciseId(selection.exerciseId),
     infoLevel: 'own',
     dietState: context.dietState,
     layoff: context.layoff,

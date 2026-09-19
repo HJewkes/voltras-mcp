@@ -22,6 +22,7 @@ import {
   type GoalBandExpectation,
   type GoalBandWeek,
 } from '../../analytics/goal-band.js';
+import { DEVICE_LOAD_STEP_LBS } from '../../analytics/percent-increment.js';
 import type { StoredGoalMetric, StoredGoalTarget } from '../../store/types.js';
 
 /** Where the block's committed number stands. There is no "due" state: it is judged at block end. */
@@ -97,6 +98,14 @@ export interface MesoMilestoneInput {
 
 /** Metrics counted in whole units; every other metric compares at a tenth. */
 const WHOLE_UNIT_METRICS: readonly StoredGoalMetric[] = ['reps_at_load', 'sessions_28d'];
+
+/**
+ * A top load is a weight the lifter sets, so the card prints and scores it at
+ * the device's step. The band itself stays exact (VW-482).
+ */
+function atDeviceStep(loadLbs: number): number {
+  return Math.round(loadLbs / DEVICE_LOAD_STEP_LBS) * DEVICE_LOAD_STEP_LBS;
+}
 
 const VALUE_UNIT: Record<StoredGoalMetric, string> = {
   top_load_at_reps: 'lb',
@@ -210,6 +219,7 @@ function reachAt(
 
 function atPrecision(metric: StoredGoalMetric, value: number): number {
   if (WHOLE_UNIT_METRICS.includes(metric)) return Math.round(value);
+  if (metric === 'top_load_at_reps') return atDeviceStep(value);
   return Math.round(value * 10) / 10;
 }
 
@@ -285,7 +295,8 @@ function insideCorridor(expected: GoalBandExpectation, value: number): boolean {
 function mesoTargetOf(target: StoredGoalTarget): GoalMesoTarget {
   const committed = target.committedValue;
   if (target.metric === 'top_load_at_reps' && target.anchorReps !== undefined) {
-    return { metric: target.metric, reps: target.anchorReps, load: committed, unit: 'lb' };
+    const load = atDeviceStep(committed);
+    return { metric: target.metric, reps: target.anchorReps, load, unit: 'lb' };
   }
   if (target.metric === 'reps_at_load' && target.anchorLoad !== undefined) {
     return { metric: target.metric, reps: committed, load: target.anchorLoad, unit: 'lb' };

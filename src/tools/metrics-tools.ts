@@ -130,8 +130,7 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
-import { flatline, type Flatline } from '../analytics/flatline.js';
-import { programmedRampStepLbs } from '../analytics/goal-band.js';
+import { flatline, plateauReferenceStepLbs, type Flatline } from '../analytics/flatline.js';
 import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
@@ -730,7 +729,7 @@ interface StallRun {
 
 /**
  * VW-452: a load run is a stall only when it is a flatline, judged against the
- * programmed weekly step at the newest load. `volume` keeps WA's own finding.
+ * plateau's reference weekly step at the newest load. `volume` keeps WA's own finding.
  */
 function stallRun(
   series: TimeSeries,
@@ -742,7 +741,7 @@ function stallRun(
     return { isStall: plateau.isPlateau, days: plateau.plateauDays, flatline: null };
   }
   const found = flatline(series, {
-    expectedStepLbsPerWeek: programmedRampStepLbs(latestPoint(series).value),
+    expectedStepLbsPerWeek: plateauReferenceStepLbs(latestPoint(series).value),
     thresholdPct: input.thresholdPct,
     minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
   });

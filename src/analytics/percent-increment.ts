@@ -1,7 +1,7 @@
 // B23 (VMCP-06.09): percent-of-load load increment arithmetic, hoisted out of
-// `src/tools/plan-tools.ts` (VW-362) so `goal-band.ts` doesn't drag the MCP
-// SDK and the store into an analytics module. PURE — same inputs, same
-// output, no store, no clock.
+// `src/tools/plan-tools.ts` (VW-362) so an analytics caller doesn't drag the
+// MCP SDK and the store in. PURE — same inputs, same output, no store, no
+// clock.
 //
 // `sources/mined/rp-university-idea-backlog.md` "### 14. B23" is the only
 // note that proposes this rule, and it states no percent — it explicitly
@@ -11,7 +11,7 @@
 // its own tests with illustrative percents.
 
 /** Smallest weekly load step the device can apply; mirrors `DEVICE_LOAD_STEP_LBS` in `src/tools/warmup-ramp-tools.ts`. */
-const DEVICE_LOAD_STEP_LBS = 1;
+export const DEVICE_LOAD_STEP_LBS = 1;
 
 /** Fixed load-increment floor `computePercentIncrement` falls back to by default. */
 const DEFAULT_INCREMENT_FLOOR_LBS = 5;

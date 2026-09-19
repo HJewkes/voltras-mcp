@@ -28,7 +28,6 @@
 import { dietPhaseTolerance, type DietPhaseState } from './diet-phase-tolerance.js';
 import type { DietPhase } from '../store/diet-phase.js';
 import type { BaselineState } from '../store/types.js';
-import { computePercentIncrement } from './percent-increment.js';
 import type { Tier } from '../tools/tier-signal.js';
 
 /**
@@ -37,22 +36,36 @@ import type { Tier } from '../tools/tier-signal.js';
  * a reader can tell a mined finding from a call someone made.
  */
 export const GOAL_BAND_CONSTANTS = {
-  /** Smallest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type */
-  rampIncrementFloorLbs: 2.5,
-  /** Largest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type */
+  /**
+   * Largest weekly load step in the programmed ramp. rp:rp-s5-load-increment-by-exercise-type
+   * ("2 1/2 lb to 10 lbish"); LITERATURE: Helms' novice program adds 10 lb a week on heavy
+   * lower-body compounds. It binds only on a heavy lift at a high percent.
+   */
   rampIncrementCapLbs: 10,
   /**
-   * Percent of working load the weekly step is taken from, before the cited
-   * floor and cap clamp it.
+   * Percent of the start load the weekly step is, by tier and exercise class (VW-482). No pound
+   * floor: RP's 2.5 lb was the gym's equipment step (rp:rp-s5-load-increment-by-exercise-type),
+   * and this device steps in 1 lb, which only a prescribed load rounds to.
    *
-   * ENGINEERING DEFAULT. The corpus states the 2.5-10 lb bracket and says the
-   * step is proportional to the exercise's load, but never the proportion;
-   * `plan-tools.ts` leaves its own `PROGRESSION_INCREMENT_PERCENT` null for
-   * exactly that reason. 2.5% is the percent at which the cited floor binds
-   * below a 100 lb working load and the cited cap binds above 400 lb, so the
-   * whole normal working range sits inside the bracket the corpus does state.
+   * HUMAN DECISION 2026-09-19 for the intermediate row (VW-482, "Per-class percent, no pound
+   * floor"). LITERATURE for the direction: ACSM 2009 gives the smaller percent to small muscle
+   * mass, and Brigatto 2020, Garthe 2011 and Helms' novice program put lower-body compounds
+   * above upper-body ones. ENGINEERING DEFAULT for the beginner (x1.5) and advanced (x0.5)
+   * rows: Stronger By Science finds untrained lifters gain far faster than trained ones, which
+   * sources the direction and not the multiplier.
    */
-  rampIncrementPercentOfLoad: 2.5,
+  rampIncrementPctByTier: {
+    beginner: { isolation: 2.25, upper_compound: 3, lower_compound: 4.5 },
+    intermediate: { isolation: 1.5, upper_compound: 2, lower_compound: 3 },
+    advanced: { isolation: 0.75, upper_compound: 1, lower_compound: 1.5 },
+  },
+  /**
+   * The class an exercise the catalog cannot place ramps at.
+   *
+   * ENGINEERING DEFAULT (VW-482): the middle row, so an unplaced lift is neither promised a
+   * leg-day ramp nor held to an isolation one.
+   */
+  rampClassWhenUnknown: 'upper_compound',
   /** Weekly rep step at fixed load, low edge. rp:rp-s5-rep-progression-alternative */
   rampRepFloorPerWeek: 1,
   /** Weekly rep step at fixed load, high edge. rp:rp-s5-rep-progression-alternative */
@@ -144,6 +157,9 @@ export const GOAL_BAND_CONSTANTS = {
   e1rmSeePct: 9.8,
 } as const;
 
+/** What sets the programmed ramp's weekly percent: isolation, or a compound by body half (VW-482). */
+export type RampClass = 'isolation' | 'upper_compound' | 'lower_compound';
+
 export type GoalMetric =
   | 'top_load_at_reps'
   | 'reps_at_load'
@@ -200,6 +216,8 @@ export interface GoalBandInput {
   weeks: readonly GoalBandWeek[];
   /** The DECLARED tier, which is what sets magnitude (plan §4 Q4). */
   tier: Tier;
+  /** The lift's ramp class; absent reads as `rampClassWhenUnknown`. Ignored by non-lift metrics. */
+  rampClass?: RampClass;
   /** The level the caller is asking for; the result reports what it earned. */
   infoLevel: GoalInfoLevel;
   dietState: GoalDietState;
@@ -450,18 +468,18 @@ function rampEdges(input: GoalBandInput): { low: number; high: number } {
   if (input.metric === 'reps_at_load') {
     return { low: C.rampRepFloorPerWeek * perStep, high: C.rampRepCapPerWeek * perStep };
   }
-  const high = programmedRampStepLbs(input.startValue) * perStep;
+  const rampClass = input.rampClass ?? C.rampClassWhenUnknown;
+  const high = programmedRampStepLbs(input.startValue, rampClass, input.tier) * perStep;
   return { low: high * C.heldWeekFraction, high };
 }
 
-/** The programmed weekly load step at `loadLbs`: a percent of load, inside the cited floor and cap. */
-export function programmedRampStepLbs(loadLbs: number): number {
-  return computePercentIncrement(
-    loadLbs,
-    C.rampIncrementPercentOfLoad,
-    C.rampIncrementFloorLbs,
-    C.rampIncrementCapLbs,
-  );
+/**
+ * The programmed weekly load step at `loadLbs`: the tier and class percent, capped, and exact.
+ * A goal line is not a prescription, so nothing here rounds to the device's step.
+ */
+export function programmedRampStepLbs(loadLbs: number, rampClass: RampClass, tier: Tier): number {
+  const pct = C.rampIncrementPctByTier[tier][rampClass];
+  return Math.min((loadLbs * pct) / 100, C.rampIncrementCapLbs);
 }
 
 function shapeOf(

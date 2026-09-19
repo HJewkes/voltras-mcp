@@ -4,13 +4,15 @@
 //
 // Seeded and deterministic. Draws lifters (full, half and quarter ramp, flat,
 // falling, and a flatline after a six-week climb) at start loads 40/135/315 lb
-// with the real `programmedRampStepLbs`, noise ±1.5/3/5 lb (uniform and
+// with the real `plateauReferenceStepLbs` (or, with `--ramp-class`, the goal
+// ramp's `programmedRampStepLbs` for that class), noise ±1.5/3/5 lb (uniform and
 // gaussian) and 1/2/3 sessions a week, then reads every candidate once a week
 // the way `history.trend` would: weekly top-load points, 12-week lookback.
 //
 // Usage:
 //   npm run build && node scripts/flatline-sim.mjs            # markdown to stdout
 //   node scripts/flatline-sim.mjs --draws 4000 --json out.json
+//   node scripts/flatline-sim.mjs --ramp-class isolation   # or upper_compound, lower_compound
 //
 // Every row is a candidate defined in scripts/lib/flatline-sim-core.mjs. The
 // real `flatline()` from dist/ is checked read for read against the row named
@@ -26,7 +28,9 @@ import { detectPlateau } from '@voltras/workout-analytics';
 import * as core from './lib/flatline-sim-core.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { flatline } = await import(path.resolve(here, '../dist/analytics/flatline.js'));
+const { flatline, plateauReferenceStepLbs } = await import(
+  path.resolve(here, '../dist/analytics/flatline.js')
+);
 const { programmedRampStepLbs } = await import(
   path.resolve(here, '../dist/analytics/goal-band.js')
 );
@@ -47,9 +51,16 @@ function argument(name, fallback) {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
+/** VW-482: `--ramp-class` swaps the stall rule's reference step for the goal ramp's intermediate step. */
+const RAMP_CLASS = argument('ramp-class', null);
+const stepAt =
+  RAMP_CLASS === null
+    ? plateauReferenceStepLbs
+    : (loadLbs) => programmedRampStepLbs(loadLbs, RAMP_CLASS, 'intermediate');
+
 function shippedVerdict(points, smoothing) {
   const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
-  const expectedStepLbsPerWeek = programmedRampStepLbs(points[points.length - 1].v);
+  const expectedStepLbsPerWeek = stepAt(points[points.length - 1].v);
   const options = { expectedStepLbsPerWeek, minDays: core.MIN_DAYS, smoothing };
   return flatline(series, options) !== null;
 }
@@ -57,7 +68,7 @@ function shippedVerdict(points, smoothing) {
 const CANDIDATES = Object.fromEntries(
   Object.entries(core.STRATEGIES).map(([name, strategy]) => [
     name,
-    (points, gates) => core.verdict(points, programmedRampStepLbs, strategy, gates),
+    (points, gates) => core.verdict(points, stepAt, strategy, gates),
   ]),
 );
 const DEEPEST_CONFIRM = Math.max(...Object.values(core.STRATEGIES).map((s) => s.confirm ?? 1));
@@ -100,7 +111,7 @@ function drawPoints(cell, random) {
   const fractions = late
     ? core.lateFlatlineFractions(CLIMB_WEEKS, weeks)
     : core.LIFTERS[cell.lifter](weeks);
-  const loads = core.trueLoads(cell.startLbs, fractions, programmedRampStepLbs);
+  const loads = core.trueLoads(cell.startLbs, fractions, stepAt);
   const noise = core.noiseSampler(cell.noiseKind, cell.noiseLbs, random);
   return core.weeklyTopLoads(loads, cell.sessionsPerWeek, noise);
 }
@@ -258,11 +269,7 @@ function assertGateMatchesWa() {
   const random = core.seededRandom(1);
   for (let draw = 0; draw < 2000; draw++) {
     const noise = core.noiseSampler('uniform', 5, random);
-    const loads = core.trueLoads(
-      100,
-      core.LIFTERS.half_ramp(3 + (draw % 8)),
-      programmedRampStepLbs,
-    );
+    const loads = core.trueLoads(100, core.LIFTERS.half_ramp(3 + (draw % 8)), stepAt);
     const points = core.weeklyTopLoads(loads, 1, noise);
     const series = points.map((p) => ({ ts: new Date(p.t).toISOString(), value: p.v }));
     const wa = detectPlateau(series, core.WA_THRESHOLD_PCT, 0);
@@ -275,7 +282,7 @@ function assertGateMatchesWa() {
 
 function report(results, draws) {
   const sections = [
-    `Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
+    `Step: ${RAMP_CLASS ?? 'plateau reference'}. Draws per cell: ${draws}. Cells: ${results.length}. Reads are weekly, 12-week lookback. ` +
       `The real flatline() matched '${SHIPPED_AS}' (its default) and '${RAW_AS}' (smoothing: null) on all ${parity.reads} sampled reads.`,
     baselineSection(),
     quietSection(),

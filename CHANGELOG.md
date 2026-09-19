@@ -135,6 +135,13 @@ entry is written from the user's point of view is a review question, not a check
   nothing is created until they answer. `goal.declare_priorities` now stamps the upcoming
   dated block, else the current one, when no block is named. The session summary's plan
   lookup follows the same current-block rule as everything else (VW-476, #469).
+- A new lift goal now ramps at a weekly percent that depends on the kind of exercise and your
+  declared tier, with no 2.5 lb minimum step. For an intermediate lifter that is 1.5% a week
+  for isolation work, 2% for upper-body compounds and 3% for squats and hinges, capped at
+  10 lb a week. A 40 lb cable overhead tricep extension used to get a block goal of 57.5 lb
+  over 8 weeks (+44%). It now gets about 44 lb. The goal card shows and scores a lift's
+  target at the 1 lb step the device can set. Targets you already accepted keep their numbers
+  (VW-482).
 - The coach, `plan.next_workout`, the weekly report's progression lines and the dashboard's
   plan page now agree on one current plan. The block whose dates contain today wins. When no
   block is dated, the newest program that still has workouts left wins, so a finished test

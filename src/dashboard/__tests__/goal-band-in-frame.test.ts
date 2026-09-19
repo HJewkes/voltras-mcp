@@ -243,12 +243,12 @@ describe('when the info level changes after acceptance (VW-449)', () => {
 
     expect([target.infoLevel, target.committedValue, target.stretchValue]).toEqual([
       'cold',
-      117.5,
-      117.5,
+      121,
+      121,
     ]);
     expect(live.basis).toBe('rp_ramp');
     expect(live.expected[0]).toEqual({ weekIndex: 1, low: 100, high: 100 });
-    expect(lastWeek(live.expected)).toEqual([108.75, 117.5]);
+    expect(lastWeek(live.expected)).toEqual([110.5, 121]);
   });
 
   it('accepted on the ramp, now on an own slope: the band climbs past the goal line', async () => {
@@ -256,8 +256,8 @@ describe('when the info level changes after acceptance (VW-449)', () => {
 
     expect([target.infoLevel, target.committedValue, target.stretchValue]).toEqual([
       'ramp',
-      108.75,
-      117.5,
+      110.5,
+      121,
     ]);
     expect(live.basis).toBe('own_slope');
     expect(live.expected[0]).toEqual({ weekIndex: 1, low: 100, high: 100 });

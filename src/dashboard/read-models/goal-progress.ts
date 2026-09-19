@@ -117,10 +117,8 @@ export const GOAL_PROGRESS_CONSTANTS = {
   /**
    * Percent per matched reading below which a trend is called flat.
    *
-   * ENGINEERING DEFAULT. It is what the ramp's own smallest step
-   * (`rampIncrementFloorLbs`, 2.5 lb) is worth on a 250 lb working load — the
-   * smallest move the programmed progression can even produce, so anything
-   * under it is rounding rather than trend.
+   * ENGINEERING DEFAULT. It is what a 2.5 lb plate step is worth on a 250 lb
+   * working load: a move that small is rounding rather than trend.
    */
   flatSlopePctPerStep: 1,
   /**
