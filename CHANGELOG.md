@@ -52,17 +52,17 @@ entry is written from the user's point of view is a review question, not a check
   plugin, so the instructions the coach follows can no longer be older than the tools it
   is calling. Its tool inventory is generated from the registry by `npm run docs:reference`
   and CI fails when the committed page and a fresh render disagree, so a tool added without
-  a note in the skill turns the build red rather than going unmentioned (VW-503).
+  a note in the skill turns the build red rather than going unmentioned (VW-503, #482).
 
 ### Fixed
 
 - `metrics.compute` no longer under-counts its own pipelines: the description said it took
   one of seventeen literals while the dispatcher accepted eighteen, and `strength.e1rm` was
-  the one it left out (VW-513).
+  the one it left out (VW-513, #482).
 - The published push-events table no longer lists `set_ended_by_device`, an event nothing
   has emitted since device stops were unified into `set_ended`. A coach waiting for it
   waited forever. The generator now refuses to publish a row for an event no publish site
-  emits (VW-513).
+  emits (VW-513, #482).
 - The dashboard's six plan-write routes are no longer open to any page in the browser.
   Until now the sidecar's only protection was its loopback bind, which stops another
   device on the network and stops nothing running in a browser on this machine: any
