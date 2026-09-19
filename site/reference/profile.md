@@ -38,7 +38,7 @@ Returns `profile: null` if nothing has been captured yet.
 
 Read a crude experience-tier signal (VW-92 MVP) derived from the stored training profile — a coarse ceiling, not a validated tier classification.
 
-Read-only; computes nothing new and writes nothing. Do not treat this as authoritative for tier-gated decisions without checking its `confidence`/`source` fields. The evidence field `trainingDaysLogged` counts distinct days trained, all time: one visit logged as a session per exercise is one day.
+Read-only; computes nothing new and writes nothing. Do not treat this as authoritative for tier-gated decisions without checking its `confidence`/`source` fields.
 
 **Parameters:** none.
 

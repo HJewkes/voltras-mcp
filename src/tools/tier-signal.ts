@@ -24,7 +24,6 @@
 // `LOCAL_USER_ID` for the profile row. Revisit this the day `sessions` gets a
 // real per-session `user_id` writer.
 
-import { readTrainingDaysMatching } from '../analytics/training-days.js';
 import { LOCAL_USER_ID, type SessionStore } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
@@ -40,12 +39,11 @@ export type TierSource = 'default' | 'declared' | 'derived';
  * tool path's `ServerState` still satisfies it structurally.
  */
 export interface TierSignalState {
-  store: Pick<SessionStore, 'getTrainingProfile' | 'listSessionEndTimes' | 'getSessionDateSpan'>;
+  store: Pick<SessionStore, 'getTrainingProfile' | 'countSessions' | 'getSessionDateSpan'>;
 }
 
 export interface TierSignalEvidence {
-  /** Distinct local days with an ended session, all time (VW-462); one visit is one day however many rows it holds. */
-  trainingDaysLogged: number;
+  sessionsLogged: number;
   firstSessionAt: string | null;
   weeksSpanned: number;
   plateauDetected: boolean;
@@ -77,13 +75,6 @@ function minTier(a: Tier, b: Tier): Tier {
 
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * The design note's "24 sessions and 12 weeks spanned" gate. Its sessions are workouts, so the
- * unit is training days: per-exercise rows inflated the old count (VW-462).
- */
-const MIN_TRAINING_DAYS = 24;
-const MIN_WEEKS_SPANNED = 12;
-
 function weeksBetween(first: string | null, last: string | null): number {
   if (first === null || last === null) return 0;
   const spanMs = new Date(last).getTime() - new Date(first).getTime();
@@ -96,7 +87,7 @@ function weeksBetween(first: string | null, last: string | null): number {
  *
  * ```
  * ceiling = 'beginner'
- * if ever_plateaued and trainingDaysLogged >= 24 and weeksSpanned >= 12:
+ * if ever_plateaued and sessionsLogged >= 24 and weeksSpanned >= 12:
  *     ceiling = 'intermediate'
  *     confidence = 'confident'
  * else:
@@ -116,18 +107,14 @@ export async function getTierSignal(
   userId: string = LOCAL_USER_ID,
 ): Promise<TierSignal> {
   const profile = await state.store.getTrainingProfile(userId);
-  const trainingDaysLogged = (await readTrainingDaysMatching(state.store, {})).length;
+  const sessionsLogged = await state.store.countSessions({ endedOnly: true });
   const span = await state.store.getSessionDateSpan({ endedOnly: true });
   const weeksSpanned = weeksBetween(span.first, span.last);
   const everPlateaued = profile?.everPlateaued ?? false;
 
   let derivedCeiling: Tier = 'beginner';
   let confidence: TierConfidence = 'provisional';
-  if (
-    everPlateaued &&
-    trainingDaysLogged >= MIN_TRAINING_DAYS &&
-    weeksSpanned >= MIN_WEEKS_SPANNED
-  ) {
+  if (everPlateaued && sessionsLogged >= 24 && weeksSpanned >= 12) {
     derivedCeiling = 'intermediate';
     confidence = 'confident';
   }
@@ -144,7 +131,7 @@ export async function getTierSignal(
     derivedCeiling,
     declared,
     evidence: {
-      trainingDaysLogged,
+      sessionsLogged,
       firstSessionAt: span.first,
       weeksSpanned,
       plateauDetected: everPlateaued,

@@ -2,7 +2,7 @@
 //
 // Coverage shape (see the task scope in tier-signal.ts's header comment):
 //   * No profile row yet -> default beginner, provisional, source 'default'.
-//   * Ceiling crossing, positive: plateaued + >=24 training days spanning
+//   * Ceiling crossing, positive: plateaued + >=24 ended sessions spanning
 //     >=12 weeks -> ceiling/tier 'intermediate', confidence 'confident'.
 //   * Ceiling crossing, negative: missing any one of the three conditions
 //     keeps the ceiling (and tier) at 'beginner', confidence 'provisional'.
@@ -54,7 +54,7 @@ describe('getTierSignal', () => {
       derivedCeiling: 'beginner',
       declared: null,
       evidence: {
-        trainingDaysLogged: 0,
+        sessionsLogged: 0,
         firstSessionAt: null,
         weeksSpanned: 0,
         plateauDetected: false,
@@ -82,7 +82,7 @@ describe('getTierSignal', () => {
     expect(signal.confidence).toBe('confident');
     expect(signal.tier).toBe('beginner'); // no declared tier -> stays at the safe default
     expect(signal.source).toBe('default');
-    expect(signal.evidence.trainingDaysLogged).toBe(24);
+    expect(signal.evidence.sessionsLogged).toBe(24);
     expect(signal.evidence.weeksSpanned).toBeGreaterThanOrEqual(12);
     expect(signal.evidence.plateauDetected).toBe(true);
     await store.close();
@@ -102,31 +102,6 @@ describe('getTierSignal', () => {
     expect(signal.derivedCeiling).toBe('beginner');
     expect(signal.confidence).toBe('provisional');
     expect(signal.tier).toBe('beginner');
-    await store.close();
-  });
-
-  it('counts twelve sessions on one day as one training day toward the 24 (VW-462)', async () => {
-    const store = SqliteSessionStore.open(':memory:');
-    await seedSessions(store, 23, 90);
-    for (let i = 0; i < 12; i++) {
-      const extra = endedSession(`extra${i}`, 0);
-      const shift = (i + 1) * 30_000;
-      await store.putSession({
-        id: extra.id,
-        startedAt: new Date(Date.parse(extra.startedAt) + shift).toISOString(),
-        endedAt: new Date(Date.parse(extra.endedAt!) + shift).toISOString(),
-      });
-    }
-    await store.putTrainingProfile({
-      userId: LOCAL_USER_ID,
-      everPlateaued: true,
-      updatedAt: new Date().toISOString(),
-    });
-
-    const signal = await getTierSignal(makeState(store), LOCAL_USER_ID);
-
-    expect(signal.evidence.trainingDaysLogged).toBe(23);
-    expect(signal.derivedCeiling).toBe('beginner');
     await store.close();
   });
 

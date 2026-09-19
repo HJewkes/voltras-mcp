@@ -117,8 +117,6 @@ entry is written from the user's point of view is a review question, not a check
     `accountability.preview` renames `inputsUsed.rolling28DayCompletedSessions` to
     `inputsUsed.rolling28DayTrainingDays`, and a preview with `at` now counts as of `at`
     instead of the current time.
-  - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
-    `evidence.trainingDaysLogged`. The ceiling still needs 24, now 24 training days.
   - `session.checkin` withholds soreness, joint and motivation until the lifter has
     trained on an earlier day, so every session of a first training day withholds them.
     Before, the second exercise of that first day already asked.

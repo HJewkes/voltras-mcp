@@ -46,6 +46,7 @@ export interface GoalDerivationState {
   store: Pick<
     SessionStore,
     | 'getTrainingProfile'
+    | 'countSessions'
     | 'listSessionEndTimes'
     | 'getSessionDateSpan'
     | 'getTrainingWeeksForBlock'

@@ -151,7 +151,7 @@ function makeStore(): SessionStore & {
     // volume ceilings. Stubbed so the lint pass genuinely runs here rather than
     // falling into its own "warnings are never worth a failed write" catch.
     getTrainingProfile: vi.fn(async () => undefined),
-    listSessionEndTimes: vi.fn(async () => []),
+    countSessions: vi.fn(async () => 0),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     close: vi.fn(async () => {}),
   };
