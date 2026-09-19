@@ -251,7 +251,7 @@ entry is written from the user's point of view is a review question, not a check
 
 - A lifter back from a 3+ month break is recognised however long their history is. The
   goal derivation's layoff read looked only at the oldest 500 sessions, so past that it
-  never saw the newest break (VW-472).
+  never saw the newest break (VW-472, #464).
 - `goal.weekly_review` for a past week, and the goals page's bodyweight rate, judged the
   scale on every stored weigh-in, including ones logged after the week under review, so a
   back-dated review saw the future. They now use only readings taken by the instant being
