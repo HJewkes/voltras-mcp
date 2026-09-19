@@ -107,7 +107,7 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
-- The experience tier counts training days and has a path for a returning lifter (VW-462).
+- The experience tier counts training days and has a path for a returning lifter (VW-462, #460).
   - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
     `evidence.trainingDaysLogged`: a visit logged as one session per exercise is one day.
   - `confidence` is `confident` once 24 training days span 12 weeks, whatever the tier.
