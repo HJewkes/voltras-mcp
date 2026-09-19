@@ -59,8 +59,9 @@ planned rest target — or, when no target is set, an honest count-up instead.
 
 [`session.end`](/reference/session) closes the session — force-ending any set still
 open — and writes its final row. The summary page it produces reads back the totals,
-speaks the same fatigue-verdict language the live page used mid-set, and adds RIR and a
-load recommendation that only appear here.
+speaks the same fatigue-verdict language the live page used mid-set, and adds a load
+recommendation that only appears here. It states no RPE or RIR: those wait for a fitted
+effort profile the lifter can trust.
 
 ![The session-completion screen for the session that just ended.](/captures/session-summary.png)
 
