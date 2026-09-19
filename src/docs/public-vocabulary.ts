@@ -534,6 +534,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'planning.prompt',
   // VW-477: the goal targets whose block dates a schedule write moved.
   'targetsAffected',
+  // VW-478: report.weekly's adherence over the dated weeks, and what changed
+  // about a block's dates inside the range.
+  'adherence.weeks',
+  'touched_weeks',
+  'scheduleChanges',
 ];
 
 /**

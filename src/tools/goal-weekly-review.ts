@@ -22,6 +22,8 @@
 // re-proposal is a NEW proposal beside it, never an edit of it (methodology
 // §4; plan v2 §1.7, B55).
 
+import { todayLocal } from '../analytics/training-days.js';
+import { resolveCurrentBlock, type PlanningRead } from '../plan/current-block.js';
 import type { z } from 'zod';
 
 import {
@@ -106,6 +108,8 @@ export interface WeeklyReviewResult {
   proposal: WeeklyReviewProposal | null;
   suppressedByDecline: boolean;
   response: WeeklyReviewResponse | null;
+  /** Whether the next block is due to be planned (VW-478); `prompt` says what to do. */
+  planning: PlanningRead;
   notes: string[];
 }
 
@@ -148,9 +152,12 @@ export async function runWeeklyReview(
     input.response === undefined
       ? null
       : await recordResponse(state, weekOf, input.response, reviewedAt);
+  const planning = (await resolveCurrentBlock(state.store, todayLocal())).planning;
   const context = await readContext(state, weekOf, reviewedAt);
-  if ('gap' in context) return { ...emptyResult(weekOf, reviewedAt, response), ...context.gap };
-  return review(state, context, response);
+  if ('gap' in context) {
+    return { ...emptyResult(weekOf, reviewedAt, response), ...context.gap, planning };
+  }
+  return { ...(await review(state, context, response)), planning };
 }
 
 /**
@@ -282,7 +289,7 @@ async function review(
   state: ServerState,
   context: ReviewContext,
   response: WeeklyReviewResponse | null,
-): Promise<WeeklyReviewResult> {
+): Promise<Omit<WeeklyReviewResult, 'planning'>> {
   const advisory = await runAdvisory(state, context);
   const emitted = await emit(state, context, advisory);
   return {
@@ -464,7 +471,7 @@ function emptyResult(
   weekOf: string,
   reviewedAt: string,
   response: WeeklyReviewResponse | null,
-): WeeklyReviewResult {
+): Omit<WeeklyReviewResult, 'planning'> {
   return {
     weekOf,
     reviewedAt,
