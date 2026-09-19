@@ -191,6 +191,20 @@ export const SessionMarkKindInput = z
      * different code path.
      */
     dryRun: z.boolean().default(false).optional(),
+    /**
+     * Let a `day` or `from`/`to` call also FLIP sessions already marked the other
+     * kind. Off by default: a bulk gesture should classify what nobody has
+     * judged, not silently overturn a judgement already made. Naming a
+     * `sessionId` is itself the deliberate act and never needs this.
+     */
+    reclassify: z.boolean().default(false).optional(),
+    /**
+     * REQUIRED on a real `from`/`to` call: the number of sessions the range
+     * matches, as the dry run reported it. A range is the one selector whose
+     * blast radius cannot be seen before it runs, and a mistyped year would mark
+     * a whole history in one call.
+     */
+    expectSessions: z.number().int().min(0).optional(),
   })
   .refine(
     (v) =>

@@ -1100,8 +1100,14 @@ export interface SessionReviewRow {
   workingSetCount: number;
   /** Heaviest working set, absent when no working set recorded a load. */
   topLoadLbs?: number;
-  /** End of the last set of any purpose; the fallback instant for an unended session. */
+  /** End of the last set of any purpose. Used for the day's span, never for its date. */
   lastSetEndedAt?: string;
+  /**
+   * End of the last WORKING set. This is the instant the training-day rule dates an
+   * unended session by, so the review list buckets by it too — a day the owner marks
+   * has to be the day the report files it under (VW-489).
+   */
+  lastWorkingSetEndedAt?: string;
   /** Whether a planned exercise or workout template was attached to this session. */
   planned: boolean;
 }

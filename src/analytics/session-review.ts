@@ -7,11 +7,28 @@
 // is expressed in. `session.mark_kind { day }` takes the same date this
 // produces, which is what makes a day one call.
 //
+// THE DAY OF A SESSION IS `reviewDayOf`, and it is the SAME rule the
+// training-day count uses (`training-days.ts`): the local date of the session's
+// end, or of its last working set's end when it was never ended. Bucketing the
+// review list by the START instant instead would put an evening session that
+// ran past local midnight on one row in the list and a different row in the
+// report — the owner would mark day D and watch it land on D+1.
+//
 // Pure. The store read is `listSessionReviewRows`; nothing here touches SQL.
 
-import type { SessionReviewRow } from '../store/types.js';
+import type { SessionReviewRow, SessionStore } from '../store/types.js';
 import type { SessionKind } from '../store/session-kind.js';
 import { localDate } from './training-days.js';
+
+/**
+ * The local day a session belongs to. One rule, shared with the training-day
+ * count: the end instant, the last working set's end when the session was never
+ * ended, and only then the start — a session with neither is a row that recorded
+ * no work, and its start is the only instant it has.
+ */
+export function reviewDayOf(row: SessionReviewRow): string {
+  return localDate(row.endedAt ?? row.lastWorkingSetEndedAt ?? row.startedAt);
+}
 
 /** One exercise within a reviewed day. */
 export interface ReviewDayExercise {
@@ -51,7 +68,29 @@ const UNLABELLED = 'unlabelled';
  * non-zero one means it is being withheld pending review.
  */
 export function unreviewedDayCount(rows: readonly SessionReviewRow[]): number {
-  return reviewDays(rows).filter((day) => day.kind === 'unreviewed' || day.kind === 'mixed').length;
+  return unreviewedDaysOf(rows).length;
+}
+
+/** The unreviewed local days themselves, newest first. */
+export function unreviewedDaysOf(rows: readonly SessionReviewRow[]): string[] {
+  return reviewDays(rows)
+    .filter((day) => day.kind === 'unreviewed' || day.kind === 'mixed')
+    .map((day) => day.day);
+}
+
+/** The store slice the unreviewed read needs. */
+export type UnreviewedStore = Pick<SessionStore, 'listSessionReviewRows'>;
+
+/**
+ * What every surface that shows a training-derived number needs beside it
+ * (VW-489). ONE read, so no two surfaces can report a different number of days
+ * waiting, and `days` so a caller can name them rather than just count them.
+ */
+export async function readUnreviewed(
+  store: UnreviewedStore,
+): Promise<{ unreviewedDays: number; unreviewedDayList: string[] }> {
+  const days = unreviewedDaysOf(await store.listSessionReviewRows({ kind: 'unreviewed' }));
+  return { unreviewedDays: days.length, unreviewedDayList: days };
 }
 
 /**
@@ -63,7 +102,7 @@ export function unreviewedDayCount(rows: readonly SessionReviewRow[]): number {
 export function reviewDays(rows: readonly SessionReviewRow[]): ReviewDay[] {
   const byDay = new Map<string, SessionReviewRow[]>();
   for (const row of rows) {
-    const day = localDate(row.startedAt);
+    const day = reviewDayOf(row);
     byDay.set(day, [...(byDay.get(day) ?? []), row]);
   }
   return [...byDay.entries()]

@@ -63,7 +63,7 @@ describe('session.mark_kind', () => {
       day: '2026-09-07',
     });
 
-    expect(result.sessionsChanged).toBe(2);
+    expect(result.newlyClassified).toEqual(['day1-b', 'day1-a']);
     expect(result.setsChanged).toBe(2);
     expect(result.days).toEqual(['2026-09-07']);
     expect(await readTrainingDays(store, NOW)).toEqual(['2026-09-07']);
@@ -76,8 +76,9 @@ describe('session.mark_kind', () => {
     await markSessionKind(makeState(store), { kind: 'training', day: '2026-09-07' });
     const again = await markSessionKind(makeState(store), { kind: 'training', day: '2026-09-07' });
 
-    expect(again.sessionsChanged).toBe(0);
-    expect(again.sessionsAlready).toBe(2);
+    expect(again.newlyClassified).toEqual([]);
+    expect(again.reclassified).toEqual([]);
+    expect(again.alreadyThisKind).toEqual(['day1-b', 'day1-a']);
     await store.close();
   });
 
@@ -85,7 +86,11 @@ describe('session.mark_kind', () => {
     const store = await openSeeded();
 
     await markSessionKind(makeState(store), { kind: 'training', day: '2026-09-07' });
-    await markSessionKind(makeState(store), { kind: 'test', day: '2026-09-07' });
+    await markSessionKind(makeState(store), {
+      kind: 'test',
+      day: '2026-09-07',
+      reclassify: true,
+    });
 
     expect(await readTrainingDays(store, NOW)).toEqual([]);
     await store.close();
@@ -115,9 +120,10 @@ describe('session.mark_kind', () => {
       kind: 'training',
       from: '2026-09-07',
       to: '2026-09-10',
+      expectSessions: 3,
     });
 
-    expect(result.sessionsChanged).toBe(3);
+    expect(result.newlyClassified).toHaveLength(3);
     expect(await readTrainingDays(store, NOW)).toEqual(['2026-09-07', '2026-09-10']);
     await store.close();
   });
@@ -140,9 +146,97 @@ describe('session.mark_kind', () => {
       kind: 'training',
       from: '2026-09-07',
       to: '2026-09-10',
+      expectSessions: 3,
     });
 
     expect(result.rederived).toEqual(['bench-press', 'row']);
+    await store.close();
+  });
+
+  // The reviewer's finding: a day or range call used to re-flip an already-marked
+  // session with no distinct signal, which is how a deliberate 'test' call gets
+  // silently overturned by a bulk gesture.
+  it('leaves an already-marked session alone on a day call, and says it did', async () => {
+    const store = await openSeeded();
+    await markSessionKind(makeState(store), { kind: 'test', sessionId: 'day1-a' });
+
+    const result = await markSessionKind(makeState(store), {
+      kind: 'training',
+      day: '2026-09-07',
+    });
+
+    expect(result.newlyClassified).toEqual(['day1-b']);
+    expect(result.skippedAlreadyMarked).toEqual(['day1-a']);
+    expect(result.reclassified).toEqual([]);
+    const rows = await store.listSessionReviewRows({ kind: 'any' });
+    expect(rows.find((row) => row.sessionId === 'day1-a')?.kind).toBe('test');
+    await store.close();
+  });
+
+  it('flips an already-marked session on a day call only when asked, and reports it', async () => {
+    const store = await openSeeded();
+    await markSessionKind(makeState(store), { kind: 'test', sessionId: 'day1-a' });
+
+    const result = await markSessionKind(makeState(store), {
+      kind: 'training',
+      day: '2026-09-07',
+      reclassify: true,
+    });
+
+    expect(result.newlyClassified).toEqual(['day1-b']);
+    expect(result.reclassified).toEqual(['day1-a']);
+    expect(result.skippedAlreadyMarked).toEqual([]);
+    await store.close();
+  });
+
+  it('lets a named session be reclassified without any flag', async () => {
+    const store = await openSeeded();
+    await markSessionKind(makeState(store), { kind: 'test', sessionId: 'day1-a' });
+
+    const result = await markSessionKind(makeState(store), {
+      kind: 'training',
+      sessionId: 'day1-a',
+    });
+
+    expect(result.reclassified).toEqual(['day1-a']);
+    await store.close();
+  });
+
+  // A range is the one selector whose blast radius the caller cannot see first.
+  it('refuses a real range that does not say how many sessions it expects', async () => {
+    const store = await openSeeded();
+
+    await expect(
+      markSessionKind(makeState(store), { kind: 'test', from: '2020-01-01', to: '2030-01-01' }),
+    ).rejects.toMatchObject({ code: 'EXPECTED_SESSIONS_MISMATCH' });
+    await store.close();
+  });
+
+  it('refuses a real range whose expected count is wrong, and names the real one', async () => {
+    const store = await openSeeded();
+
+    await expect(
+      markSessionKind(makeState(store), {
+        kind: 'test',
+        from: '2026-09-07',
+        to: '2026-09-10',
+        expectSessions: 2,
+      }),
+    ).rejects.toMatchObject({ code: 'EXPECTED_SESSIONS_MISMATCH', message: /matches 3 session/ });
+    await store.close();
+  });
+
+  it('lets a dry run of a range report the count without expecting it', async () => {
+    const store = await openSeeded();
+
+    const rehearsal = await markSessionKind(makeState(store), {
+      kind: 'test',
+      from: '2026-09-07',
+      to: '2026-09-10',
+      dryRun: true,
+    });
+
+    expect(rehearsal.newlyClassified).toHaveLength(3);
     await store.close();
   });
 
@@ -151,6 +245,76 @@ describe('session.mark_kind', () => {
 
     await expect(
       markSessionKind(makeState(store), { kind: 'training', day: '2026-01-01' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await store.close();
+  });
+});
+
+// The reviewer's second finding. Grouping the review list by the session's START
+// while the reports date it by its END put an evening session on one row in the
+// list and a different row in the report: the owner marks day D and watches it
+// land on D+1. One rule now, `reviewDayOf`.
+describe('the day an evening session belongs to', () => {
+  const LATE = '2026-09-14T23:30:00.000Z';
+  const AFTER_MIDNIGHT = '2026-09-15T00:20:00.000Z';
+
+  async function openLateSession(ended: boolean): Promise<SqliteSessionStore> {
+    const store = SqliteSessionStore.open(':memory:');
+    await store.putSession({
+      id: 'late',
+      startedAt: LATE,
+      ...(ended ? { endedAt: AFTER_MIDNIGHT } : {}),
+      exerciseId: 'row',
+    });
+    await store.putSet({
+      id: 'late-set',
+      sessionId: 'late',
+      userId: LOCAL_USER_ID,
+      startedAt: LATE,
+      endedAt: AFTER_MIDNIGHT,
+      partial: false,
+      weightLbs: 120,
+      exerciseId: 'row',
+      reps: [],
+    });
+    return store;
+  }
+
+  it('is listed, marked and counted under the day it ENDED, not the day it started', async () => {
+    const store = await openLateSession(true);
+
+    const list = await listSessionReview(makeState(store), {});
+    const marked = await markSessionKind(makeState(store), {
+      kind: 'training',
+      day: '2026-09-15',
+    });
+
+    expect(list.days[0]?.day).toBe('2026-09-15');
+    expect(marked.newlyClassified).toEqual(['late']);
+    expect(await readTrainingDays(store, NOW)).toEqual(['2026-09-15']);
+    await store.close();
+  });
+
+  it('uses its last working set when it was never ended, and all three agree', async () => {
+    const store = await openLateSession(false);
+
+    const list = await listSessionReview(makeState(store), {});
+    const marked = await markSessionKind(makeState(store), {
+      kind: 'training',
+      day: '2026-09-15',
+    });
+
+    expect(list.days[0]?.day).toBe('2026-09-15');
+    expect(marked.newlyClassified).toEqual(['late']);
+    expect(await readTrainingDays(store, NOW)).toEqual(['2026-09-15']);
+    await store.close();
+  });
+
+  it('is not reachable under its start day, so one date means one thing', async () => {
+    const store = await openLateSession(true);
+
+    await expect(
+      markSessionKind(makeState(store), { kind: 'training', day: '2026-09-14' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await store.close();
   });

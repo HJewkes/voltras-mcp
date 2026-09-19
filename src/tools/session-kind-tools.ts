@@ -11,8 +11,7 @@
 
 import type { z } from 'zod';
 
-import { localDate } from '../analytics/training-days.js';
-import { reviewDays, type ReviewDay } from '../analytics/session-review.js';
+import { reviewDayOf, reviewDays, type ReviewDay } from '../analytics/session-review.js';
 import { log } from '../logger.js';
 import type { SessionMarkKindInput, SessionReviewListInput } from '../schemas/session.js';
 import type { ServerState } from '../state/server-state.js';
@@ -32,10 +31,20 @@ class ToolError extends Error {
 export interface MarkKindResult {
   kind: SessionKind;
   dryRun: boolean;
-  /** Sessions the selector matched that do not already carry `kind`. */
-  sessionsChanged: number;
-  /** Sessions the selector matched that already carried it — idempotence, reported. */
-  sessionsAlready: number;
+  /** Sessions that carried no kind at all and now do. The ordinary case. */
+  newlyClassified: string[];
+  /**
+   * Sessions that already carried the OTHER kind and were flipped. Reported
+   * separately because this is the destructive half: promoting a bench test to
+   * training injects it into every calibration, and demoting a real workout
+   * deletes a day from the lifter's own record. A day or range call leaves
+   * these alone unless `reclassify` says otherwise.
+   */
+  reclassified: string[];
+  /** Sessions already carrying the OTHER kind that were LEFT ALONE. */
+  skippedAlreadyMarked: string[];
+  /** Sessions that already carried the requested kind — idempotence, reported. */
+  alreadyThisKind: string[];
   setsChanged: number;
   days: string[];
   /** Exercises whose baseline and RIR fit were re-derived, or would be on a real run. */
@@ -64,25 +73,59 @@ export async function markSessionKind(
   if (selected.length === 0) {
     throw new ToolError('NOT_FOUND', 'No sessions match that selector.');
   }
-  const pending = selected.filter((row) => row.kind !== input.kind);
+  // Naming one session IS the deliberate act, so it may always reclassify. A
+  // day or a range is a bulk gesture over rows the caller has not looked at one
+  // by one, so it only classifies the unreviewed unless asked for more.
+  const mayReclassify = input.sessionId !== undefined || input.reclassify === true;
+  const unreviewed = selected.filter((row) => row.kind === undefined);
+  const otherKind = selected.filter((row) => row.kind !== undefined && row.kind !== input.kind);
+  const pending = mayReclassify ? [...unreviewed, ...otherKind] : unreviewed;
+
   const dryRun = input.dryRun === true;
   const result: MarkKindResult = {
     kind: input.kind,
     dryRun,
-    sessionsChanged: pending.length,
-    sessionsAlready: selected.length - pending.length,
+    newlyClassified: idsOf(unreviewed),
+    reclassified: mayReclassify ? idsOf(otherKind) : [],
+    skippedAlreadyMarked: mayReclassify ? [] : idsOf(otherKind),
+    alreadyThisKind: idsOf(selected.filter((row) => row.kind === input.kind)),
     setsChanged: pending.reduce((total, row) => total + row.setCount, 0),
-    days: [...new Set(selected.map((row) => localDate(row.startedAt)))].sort(),
+    days: [...new Set(selected.map((row) => reviewDayOf(row)))].sort(),
     rederived: exercisesOf(pending),
   };
+  assertExpectedSessions(input, selected.length, dryRun);
   if (dryRun || pending.length === 0) return result;
 
-  await state.store.setSessionKind(
-    pending.map((row) => row.sessionId),
-    input.kind,
-  );
+  await state.store.setSessionKind(idsOf(pending), input.kind);
   await rederive(state, result.rederived);
   return result;
+}
+
+/**
+ * A real multi-day range must say how many sessions it expects, and be right.
+ *
+ * A range is the one selector whose blast radius the caller cannot see before
+ * running it, and a mistyped year marks a whole history in one call. The dry run
+ * returns the number; passing it back is the caller confirming it read it. Only
+ * the WRITE is gated — a dry run is how you learn the number.
+ */
+function assertExpectedSessions(
+  input: z.infer<typeof SessionMarkKindInput>,
+  matched: number,
+  dryRun: boolean,
+): void {
+  if (dryRun || input.from === undefined) return;
+  if (input.expectSessions === matched) return;
+  throw new ToolError(
+    'EXPECTED_SESSIONS_MISMATCH',
+    `That range matches ${String(matched)} session(s). Re-run with ` +
+      `expectSessions: ${String(matched)}, or run it with dryRun: true first.`,
+  );
+}
+
+/** Session ids in the review list's own order: newest first, so a reader can scan them. */
+function idsOf(rows: readonly SessionReviewRow[]): string[] {
+  return rows.map((row) => row.sessionId);
 }
 
 /** The past local days and what each holds, newest first. */
@@ -99,9 +142,9 @@ export async function listSessionReview(
 }
 
 /**
- * The rows one selector names. Days are LOCAL days of the session's START, the
- * same grouping the review list shows, so the date the owner reads off a row is
- * the date he can mark.
+ * The rows one selector names. Days are `reviewDayOf` — the same rule the review
+ * list groups by and the training-day count dates by — so the date the owner
+ * reads off a row is the date he marks and the date the report files it under.
  */
 function selectRows(
   rows: readonly SessionReviewRow[],
@@ -111,12 +154,12 @@ function selectRows(
     return rows.filter((row) => row.sessionId === input.sessionId);
   }
   if (input.day !== undefined) {
-    return rows.filter((row) => localDate(row.startedAt) === input.day);
+    return rows.filter((row) => reviewDayOf(row) === input.day);
   }
   const from = input.from ?? '';
   const to = input.to ?? '';
   return rows.filter((row) => {
-    const day = localDate(row.startedAt);
+    const day = reviewDayOf(row);
     return day >= from && day <= to;
   });
 }
