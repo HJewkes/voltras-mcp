@@ -299,6 +299,14 @@ entry is written from the user's point of view is a review question, not a check
 - `accountability.state` with an `at` on a Thursday read the adherence trend over the seven
   days before the real clock, not before `at`, so sessions logged after `at` counted. It
   now reads the week ending at `at`, as `accountability.preview` already did (VW-472, #461).
+- A maintenance bodyweight goal now reads `behind` when the weight leaves its ±2% corridor,
+  on either side. Before, it read `on_track` however far outside the weight drifted.
+  `/api/goal-progress` says which side in a new `corridorSide` field (`above` or `below`),
+  and the status basis names the corridor. A weight already heading back toward the middle
+  still reads on track. The corridor edge is exact, with no extra noise allowance. The
+  advice for any bodyweight goal behind its line now names intake and activity, not load
+  and reps. A maintenance block is met when the latest weigh-in of its final week sits
+  inside the corridor. It is never `beyond_goal` (VW-457, #463).
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
   backwards. It now shows and judges the newest reading (VW-451).

@@ -192,7 +192,8 @@ const MAINTENANCE_AFTER = {
   week1: [176.4, 183.6],
   current: [176.4, 183.6],
   last: [176.4, 183.6],
-  status: 'on_track',
+  // The drift to 185 leaves the corridor, which reads behind (VW-457).
+  status: 'behind',
 };
 const MAINTENANCE_BEFORE = {
   week1: [179.34, 186.66],

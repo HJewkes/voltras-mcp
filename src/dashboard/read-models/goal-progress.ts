@@ -80,8 +80,10 @@ import type { RecompMode } from '../../store/diet-phase.js';
 import {
   aheadOfEdge,
   behindEdge,
+  corridorSideOf,
   blockReadingsOf,
   expectationAt,
+  isCorridor,
   goalReachOf,
   mesoMilestoneOf,
   weekOutcomesOf,
@@ -368,6 +370,8 @@ export interface GoalProgressView {
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
   statusBasis: string;
+  /** Which side of a maintenance corridor a `behind` reading left by; absent for every other read (VW-457). */
+  corridorSide?: 'above' | 'below';
   /** Present only while `status` is `calibrating` for a lift; absent for every other status. */
   calibration?: GoalCalibrationView;
   /** Present only for an accepted starting ramp whose lift has calibrated since. */
@@ -389,6 +393,9 @@ export interface GoalProgressView {
 
 const C = GOAL_PROGRESS_CONSTANTS;
 
+/** What a reading outside a two-sided corridor reads as; the side is in `statusBasis`. */
+const CORRIDOR_EXIT_STATUS: GoalProgressStatus = 'behind';
+
 /** Everything the status chain and the advisory rules read, computed once. */
 interface Reading {
   input: GoalProgressInput;
@@ -403,6 +410,8 @@ interface Reading {
   effect: 'softened' | 'hardened' | 'none';
   belowCommitted: boolean;
   beyondStretch: boolean;
+  /** Which side of a two-sided corridor the latest matched reading sits on; `null` inside or for any other band. */
+  corridorSide: 'above' | 'below' | null;
   /** Matched readings inside the block, each with its week. */
   inBlock: BlockReading[];
   reach: GoalReachRead | null;
@@ -435,6 +444,7 @@ export function buildGoalProgressView(given: GoalProgressInput): GoalProgressVie
     ...wholeBodyViewOf(reading),
     status,
     statusBasis,
+    ...corridorSideView(status, reading),
     ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
     ...(recalibration === undefined ? {} : { recalibration }),
     ...(input.priority.kind === 'muscle' ? { corroborated: null } : {}),
@@ -474,6 +484,15 @@ function withWeekOneOpened(input: GoalProgressInput): GoalProgressInput {
   const opened = { ...first, high: next?.high ?? first.high };
   const expected = next === undefined ? [opened] : [opened, next, ...rest];
   return { ...input, band: { ...band, expected } };
+}
+
+/** The side only rides along when the corridor rule is what decided the status. */
+function corridorSideView(
+  status: GoalProgressStatus,
+  reading: Reading,
+): Pick<GoalProgressView, 'corridorSide'> {
+  const side = reading.corridorSide;
+  return side !== null && status === CORRIDOR_EXIT_STATUS ? { corridorSide: side } : {};
 }
 
 /** The metric-specific block a whole-body target carries, and nothing for any other metric. */
@@ -526,6 +545,10 @@ function read(input: GoalProgressInput): Reading {
     effect: toleranceEffect(verdict),
     belowCommitted: latest !== undefined && behindEdge(expected.low, latest.value, input.band),
     beyondStretch: latest !== undefined && aheadOfEdge(expected.high, latest.value, input.band),
+    corridorSide:
+      latest !== undefined && isCorridor(input.band)
+        ? corridorSideOf(expected, latest.value)
+        : null,
     inBlock,
     reach: goalReachOf(input.target, input.band, inBlock, input.weeks.length),
   };
@@ -596,7 +619,7 @@ function slopeOf(
   const last = matched[matched.length - 1];
   const [from, to] =
     direction === 'hold'
-      ? [Math.abs(first.value - mid), -Math.abs(last.value - mid)]
+      ? [-Math.abs(first.value - mid), -Math.abs(last.value - mid)]
       : [first.value * signOf(direction), last.value * signOf(direction)];
   const scale = Math.abs(first.value);
   if (scale === 0) return 'flat';
@@ -619,6 +642,7 @@ function resolveStatus(reading: Reading): StatusRead {
     deloadRead(reading) ??
     sessionCountRead(reading) ??
     calibratingRead(reading) ??
+    corridorRead(reading) ??
     aheadRead(reading) ??
     toleratedRead(reading) ??
     stalledRead(reading) ??
@@ -639,6 +663,12 @@ function reachRead(reading: Reading): StatusRead | undefined {
   const rule =
     'It holds for the rest of the block, and what the block does next is decided at its ' +
     'boundary (rp:rp-s10-underpromise-overdeliver-goal-setting).';
+  if (isCorridor(reading.input.band)) {
+    return {
+      status: 'goal_met',
+      statusBasis: `Goal met: the final week's reading, ${reach.best}, held inside the corridor. ${rule}`,
+    };
+  }
   if (reach.reach === 'beyond') {
     return {
       status: 'beyond_goal',
@@ -742,6 +772,23 @@ function calibrationViewOf(gap: CalibrationGap, input: GoalProgressInput): GoalC
     baselineState: input.calibrationEvidence.baselineState,
     targetBasis: input.target.basis,
     targetInfoLevel: input.target.infoLevel,
+  };
+}
+
+/**
+ * Outside a two-sided corridor, on either side, judged slope-first like every
+ * other pace rule: a reading already converging back needs no response (VW-457).
+ */
+function corridorRead(reading: Reading): StatusRead | undefined {
+  const side = reading.corridorSide;
+  if (side === null || reading.verdict.magnitude === 'none') return undefined;
+  const { low, high } = reading.expected;
+  return {
+    status: CORRIDOR_EXIT_STATUS,
+    statusBasis:
+      `${side === 'above' ? 'Above' : 'Below'} the maintenance corridor: ${reading.latest?.value} ` +
+      `against ${low} to ${high}. ${reading.verdict.rationale}, judged slope-first ` +
+      '(rp:rp-s12-maintenance-buffer-2pct, rp:rp-s12-trend-slope-overrides-raw-deviation).',
   };
 }
 
@@ -856,6 +903,16 @@ function programmingAdvisory(reading: Reading): GoalAdvisory {
       source: 'commitment',
     };
   }
+  if (reading.input.target.metric === 'bodyweight') {
+    return {
+      kind: 'programming',
+      prompt:
+        'Off the committed line. The two levers are intake and activity. Which one to move is ' +
+        'yours to pick, and this server does not size either ' +
+        '(rp:rp-s12-activity-vs-food-adjustment-choice). The target itself does not move.',
+      source: 'bodyweight',
+    };
+  }
   const verdict = reading.input.mrvVerdict;
   if (verdict?.mrvFlagged === true) {
     return {
@@ -918,6 +975,9 @@ function mesoPraiseText(reading: Reading): string {
   const achieved = reading.latest?.value;
   const { startValue, committedValue } = reading.input.target;
   const span = committedValue - startValue;
+  if (isCorridor(reading.input.band)) {
+    return 'Mesocycle done, and it finished inside the corridor you committed to hold.';
+  }
   if (achieved === undefined || span === 0) {
     return 'Mesocycle done, and it landed on the target you committed to.';
   }
