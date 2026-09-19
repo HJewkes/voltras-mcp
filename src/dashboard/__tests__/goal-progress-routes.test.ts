@@ -26,6 +26,7 @@ import type {
   StoredRep,
   StoredSession,
   StoredSet,
+  SessionReviewRow,
   StoredTrainingProfile,
 } from '../../store/types.js';
 
@@ -158,7 +159,9 @@ class FakeStore {
 
   getTrainingProfile = async (): Promise<StoredTrainingProfile | undefined> => undefined;
   countSessions = async (): Promise<number> => new Set(this.sets.map((s) => s.sessionId)).size;
-  listSessionEndTimes = async (): Promise<string[]> => this.sets.map((s) => s.endedAt);
+  listTrainingDayInstants = async (): Promise<string[]> => this.sets.map((s) => s.endedAt);
+  // VW-489: this fake's rows stand for reviewed history, so nothing is pending.
+  listSessionReviewRows = async (): Promise<SessionReviewRow[]> => [];
   getSessionDateSpan = async (): Promise<{ first: string | null; last: string | null }> => ({
     first: daysAgo(28),
     last: daysAgo(0),

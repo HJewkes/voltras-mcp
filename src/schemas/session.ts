@@ -20,6 +20,16 @@ import { IdSchema, SlotIdSchema } from './common.js';
 export const LifterLabel = z.string().min(1).max(40);
 
 /**
+ * Test or training (VW-489). The owner's history is mostly bench testing, so
+ * every read that speaks for his training filters on this. A session carries no
+ * kind until someone says which it is, and no kind means it is left out.
+ */
+export const SessionKindValue = z.enum(['training', 'test']);
+
+/** A local calendar date, the unit history is reviewed in. */
+export const LocalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.');
+
+/**
  * Optional self-reported pre-session carbohydrate context (VW-307). RP-style
  * coarse 3-point scale, same rationale as `CheckinScaleValue`: a finer
  * gradation would manufacture precision a subjective self-rating doesn't
@@ -118,6 +128,13 @@ export const SessionStartInput = z
      * downstream consumes it yet, see `StoredSession.preSessionCarbs`.
      */
     preSessionCarbs: PreSessionCarbsInput.optional(),
+    /**
+     * VW-489. Test or training. Omitted means `'training'` — a session someone
+     * deliberately started is real work until stated otherwise — except under
+     * `VOLTRA_ADAPTER=mock`, where the handler forces `'test'` because a
+     * synthetic device produced every rep.
+     */
+    kind: SessionKindValue.optional(),
   })
   .refine((v) => v.exerciseId !== undefined || v.exerciseName !== undefined, {
     message: 'Either exerciseId or exerciseName is required.',
@@ -148,6 +165,54 @@ export const SessionListInput = z.object({
   limit: z.number().int().min(1).max(200).default(50).optional(),
   offset: z.number().int().min(0).default(0).optional(),
   detail: z.enum(['summary', 'full']).default('summary').optional(),
+  /**
+   * VW-489. Which kind to list. Unlike every analytic read, this one defaults to
+   * `'any'`: `session.list` is how the history under review is looked at, and a
+   * list that hid the unreviewed rows would hide the thing being reviewed.
+   */
+  kind: z.enum(['training', 'test', 'any']).default('any').optional(),
+});
+
+/**
+ * Input for `session.mark_kind` (VW-489) — say whether recorded work was real
+ * training or a bench test. EXACTLY ONE selector: a single session, one local
+ * day, or an inclusive local-date range. Idempotent and reversible.
+ */
+export const SessionMarkKindInput = z
+  .object({
+    kind: SessionKindValue,
+    sessionId: IdSchema.optional(),
+    day: LocalDate.optional(),
+    from: LocalDate.optional(),
+    to: LocalDate.optional(),
+    /**
+     * Report what would change and write nothing. The report is byte-identical
+     * to the one a real run returns, so a dry run is a rehearsal rather than a
+     * different code path.
+     */
+    dryRun: z.boolean().default(false).optional(),
+  })
+  .refine(
+    (v) =>
+      [
+        v.sessionId !== undefined,
+        v.day !== undefined,
+        v.from !== undefined || v.to !== undefined,
+      ].filter(Boolean).length === 1,
+    { message: 'Pass exactly one of sessionId, day, or from/to.' },
+  )
+  .refine((v) => (v.from === undefined) === (v.to === undefined), {
+    message: 'A range needs both from and to.',
+  });
+
+/**
+ * Input for `session.review_list` (VW-489) — the past local days, newest first,
+ * with enough of each day on one row to say training or test without opening it.
+ */
+export const SessionReviewListInput = z.object({
+  /** Which days to show. Omitted means the unreviewed ones, which is the job. */
+  kind: z.enum(['training', 'test', 'any', 'unreviewed']).default('unreviewed').optional(),
+  limit: z.number().int().min(1).max(200).default(60).optional(),
 });
 
 /** Input for `session.get` — fetches a single stored session by id. */

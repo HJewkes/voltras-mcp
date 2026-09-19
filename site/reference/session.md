@@ -2,7 +2,7 @@
 
 # `session.*`
 
-7 tools in the `session` namespace.
+9 tools in the `session` namespace.
 
 ## `session.start`
 
@@ -18,6 +18,7 @@ Start a workout session, optionally pinned to an exercise (`exerciseId` or `exer
 - `verboseIdleReps` — `boolean`, optional.
 - `lifter` — `string`, optional.
 - `preSessionCarbs` — `object`, optional.
+- `kind` — `training` | `test`, optional.
 
 ## `session.end`
 
@@ -83,6 +84,7 @@ List past sessions, optionally filtered by date range (`from`/`to`) and/or `exer
 - `limit` — `integer` (1–200), optional.
 - `offset` — `integer` (min 0), optional.
 - `detail` — `summary` | `full`, optional.
+- `kind` — `training` | `test` | `any`, optional.
 
 ## `session.get`
 
@@ -93,3 +95,29 @@ Can be large for a long session — prefer `session.list` for browsing/filtering
 **Parameters**
 
 - `id` — `string`, **required**.
+
+## `session.mark_kind`
+
+Say whether recorded work was real training or a bench test, for one session (`sessionId`), one local day (`day`) or an inclusive range of days (`from`/`to`) — exactly one selector.
+
+Every history read (training days, tier evidence, attendance goals, reports, trends, baselines, the RIR-velocity fit) counts ONLY sessions marked `training`, so a session nobody has marked is left out of all of them. Pass `dryRun: true` first: it returns the identical report and writes nothing. Idempotent and reversible — marking back re-derives again. NEVER GUESS A KIND: ask the lifter, because a light day of real training and a bench test look the same in the data.
+
+**Parameters**
+
+- `kind` — `training` | `test`, **required**.
+- `sessionId` — `string`, optional.
+- `day` — `string`, optional.
+- `from` — `string`, optional.
+- `to` — `string`, optional.
+- `dryRun` — `boolean`, optional.
+
+## `session.review_list`
+
+The past local days of recorded work, newest first, with what each holds: the exercises, set and working-set counts, top load per exercise, the span in minutes, whether every session was ended, whether a plan was attached, and the current kind.
+
+Defaults to the days nobody has classified — those are the ones being left out of every history read. Feed a row's `day` straight to `session.mark_kind` to mark the whole day in one call.
+
+**Parameters**
+
+- `kind` — `training` | `test` | `any` | `unreviewed`, optional.
+- `limit` — `integer` (1–200), optional.

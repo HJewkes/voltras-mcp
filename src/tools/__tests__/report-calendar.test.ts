@@ -78,6 +78,7 @@ describe('adherence over the dated weeks', () => {
   it('counts a session against the dated week it trained', async () => {
     await dateBlockTwo();
     await store.putSession({
+      kind: 'training',
       id: 'trained',
       startedAt: '2026-09-15T16:00:00.000Z',
       endedAt: '2026-09-15T17:00:00.000Z',
@@ -96,6 +97,7 @@ describe('adherence over the dated weeks', () => {
 
   it('keeps the touched-weeks rule when no block is dated', async () => {
     await store.putSession({
+      kind: 'training',
       id: 'trained',
       startedAt: '2026-09-15T16:00:00.000Z',
       endedAt: '2026-09-15T17:00:00.000Z',

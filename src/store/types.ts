@@ -28,6 +28,7 @@ import type { TrainingIntent } from '../schemas/set.js';
 import type { AsymmetryEquation } from '../state/isometric-protocol.js';
 import type { AnchorSelectionReport } from './exercise-baselines.js';
 import type { FailureVerdict } from './failure-harvest.js';
+import type { SessionKind, SessionKindFilter } from './session-kind.js';
 
 /** String form of the SDK's `TrainingMode` enum (e.g. `"WeightTraining"`). */
 export type TrainingModeName = string;
@@ -195,6 +196,12 @@ export interface StoredSet {
    * back-filled: a row written before v14 was the owner's.
    */
   lifter?: string;
+  /**
+   * Denormalised from the session (VW-489), read-only from a caller's point of
+   * view: `putSet` stamps whatever the session row says, so the two cannot
+   * disagree. Absent means never reviewed. See {@link StoredSession.kind}.
+   */
+  kind?: SessionKind;
   /**
    * GROUND TRUTH for per-unit identity. BLE device id of the unit that
    * performed the set, captured from the slot's connected client. The device
@@ -670,6 +677,15 @@ export interface StoredSession {
    * every historical per-muscle rollup for this session.
    */
   catalogVersion?: string;
+  /**
+   * Test or training (VW-489). ABSENT MEANS NEVER REVIEWED, and unreviewed is
+   * excluded from every lifter-facing read — training days, tier, goals,
+   * reports, trends, baselines and the RIR fit. Nothing is back-filled: the
+   * owner's account of his own history is that most of it is bench testing, so
+   * a stamped `'training'` would assert what he denied. See
+   * `store/session-kind.ts`.
+   */
+  kind?: SessionKind;
 }
 
 /** A session's self-reported pre-session carb context (VW-307). */
@@ -1035,6 +1051,13 @@ export interface SessionListFilter {
    * owner's history unless it is asked for by label.
    */
   lifter?: string;
+  /**
+   * Which kind of recorded work to read (VW-489). ABSENT MEANS `'training'`, so
+   * a caller that says nothing gets the lifter's real history and unreviewed
+   * rows stay out of it. `'any'` is the explicit opt-out, for the reads the
+   * review itself runs on.
+   */
+  kind?: SessionKindFilter;
 }
 
 /**
@@ -1053,6 +1076,35 @@ export type SessionCountFilter = SessionListFilter & {
    */
   endedOnly?: boolean;
 };
+
+/**
+ * What `session.review_list` may ask for. `'unreviewed'` is the default and the
+ * reason the read exists; no analytic reader ever asks for it.
+ */
+export type SessionReviewKindFilter = SessionKindFilter | 'unreviewed';
+
+/**
+ * One session on the review list (VW-489) — enough to say training or test
+ * without opening it. Sessions are stored one row per exercise, so a row is a
+ * movement and the caller groups rows into local days.
+ */
+export interface SessionReviewRow {
+  sessionId: string;
+  startedAt: string;
+  endedAt?: string;
+  exerciseId?: string;
+  exerciseName?: string;
+  /** Absent means never reviewed, which is what the list is for. */
+  kind?: SessionKind;
+  setCount: number;
+  workingSetCount: number;
+  /** Heaviest working set, absent when no working set recorded a load. */
+  topLoadLbs?: number;
+  /** End of the last set of any purpose; the fallback instant for an unended session. */
+  lastSetEndedAt?: string;
+  /** Whether a planned exercise or workout template was attached to this session. */
+  planned: boolean;
+}
 
 /**
  * The earliest and latest `started_at` among sessions matching `filter`
@@ -1115,6 +1167,13 @@ export interface ExerciseSetsFilter {
    * without every caller having to remember to exclude it.
    */
   lifter?: string;
+  /**
+   * Which kind of recorded work to read (VW-489). ABSENT MEANS `'training'`, so
+   * a caller that says nothing gets the lifter's real history and unreviewed
+   * rows stay out of it. `'any'` is the explicit opt-out, for the reads the
+   * review itself runs on.
+   */
+  kind?: SessionKindFilter;
   /** Inclusive lower bound on `startedAt`. */
   from?: string;
   /** Inclusive upper bound on `startedAt`. */
@@ -1650,11 +1709,35 @@ export interface SessionStore extends ExerciseSetupStore {
   getSessionDateSpan(filter?: SessionCountFilter): Promise<SessionDateSpan>;
 
   /**
-   * `ended_at` of every ENDED session matching `filter` (same predicates as
-   * `countSessions`, `endedOnly` forced on), oldest start first. Added for the
-   * training-day count (VW-460), which buckets sessions by the local day they ended.
+   * One instant per session that is a TRAINING DAY, oldest start first — the only
+   * store read behind a training-day count (VW-460, VW-489).
+   *
+   * A session qualifies when `filter` matches it AND it holds at least one working
+   * set. Its instant is `ended_at`, or the end of its LAST WORKING SET when the
+   * session was never ended: the owner's store holds 24 such rows, and a real
+   * workout that nobody closed is still a day he trained. A session with no working
+   * set is never a training day, ended or not — an empty row is a bench test that
+   * opened and closed, not a visit to the gym.
+   *
+   * `endedOnly` is NOT forced on here and callers do not set it: the rule above is
+   * what replaced it.
    */
-  listSessionEndTimes(filter?: SessionCountFilter): Promise<string[]>;
+  listTrainingDayInstants(filter?: SessionCountFilter): Promise<string[]>;
+
+  /**
+   * The owner's sessions as review rows (VW-489), newest start first. Not an
+   * analytic read: it deliberately shows the rows every analytic read hides, so
+   * there is something to review.
+   */
+  listSessionReviewRows(filter?: { kind?: SessionReviewKindFilter }): Promise<SessionReviewRow[]>;
+
+  /**
+   * Mark sessions test or training and cascade to their sets (VW-489). Returns
+   * the number of SESSION rows written. Idempotent; re-marking is how a mistake
+   * is undone. Callers re-derive baselines and the RIR fit afterwards — this
+   * writes the flag and nothing else.
+   */
+  setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number>;
 
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
@@ -1695,6 +1778,8 @@ export interface SessionStore extends ExerciseSetupStore {
   getMostRecentSessionIdForExercise(filter: {
     userId: string;
     exerciseId: string;
+    lifter?: string;
+    kind?: SessionKindFilter;
   }): Promise<string | null>;
 
   // --- Self-reports (VMCP-06.12 / B41) ---

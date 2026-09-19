@@ -147,7 +147,13 @@ async function seedLiftHistory(
   for (let index = 0; index < options.sessionCount; index += 1) {
     const at = daysAgo((options.sessionCount - index) * 7);
     const sessionId = `${exerciseId}-sess-${String(index)}`;
-    await store.putSession({ id: sessionId, startedAt: at, endedAt: at, exerciseId });
+    await store.putSession({
+      kind: 'training',
+      id: sessionId,
+      startedAt: at,
+      endedAt: at,
+      exerciseId,
+    });
     for (const suffix of ['a', 'b']) {
       lastSetId = `${exerciseId}-set-${String(index)}${suffix}`;
       const set: StoredSet = {

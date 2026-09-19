@@ -69,13 +69,15 @@ describe('SqliteSessionStore.countSessions', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 's1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({ kind: 'training', id: 's1', startedAt: '2025-01-01T00:00:00.000Z' });
     await store.putSession({
+      kind: 'training',
       id: 's2',
       startedAt: '2025-02-01T00:00:00.000Z',
       exerciseId: 'bench-press',
     });
     await store.putSession({
+      kind: 'training',
       id: 's3',
       startedAt: '2025-03-01T00:00:00.000Z',
       exerciseId: 'bench-press',
@@ -220,7 +222,11 @@ describe('SqliteSessionStore.countSets', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
   });
 
   afterEach(async () => {
@@ -260,7 +266,11 @@ describe('SqliteSessionStore.countSets', () => {
   });
 
   it('filters by session and user, and composes with collapsing', async () => {
-    await store.putSession({ id: 'sess-2', startedAt: '2025-01-02T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-2',
+      startedAt: '2025-01-02T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'set-1', bilateralGroupId: 'g1' }));
     await store.putSet(makeSet({ id: 'set-2', bilateralGroupId: 'g1' }));
     await store.putSet(makeSet({ id: 'set-3', sessionId: 'sess-2' }));
@@ -283,8 +293,16 @@ describe('SqliteSessionStore.getSetsForExercise', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
-    await store.putSession({ id: 'sess-2', startedAt: '2025-02-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-2',
+      startedAt: '2025-02-01T00:00:00.000Z',
+    });
 
     // Two setups for the same exercise, seeded raw: setup inference has no
     // writer yet, and `sets.setup_id` is an FK into this table.
@@ -432,8 +450,16 @@ describe('SqliteSessionStore.getMostRecentSessionIdForExercise (VMCP-01.72b S5)'
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
-    await store.putSession({ id: 'sess-2', startedAt: '2025-02-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-2',
+      startedAt: '2025-02-01T00:00:00.000Z',
+    });
     await store.putSet(
       makeSet({ id: 'bench-1', sessionId: 'sess-1', startedAt: '2025-01-01T00:10:00.000Z' }),
     );

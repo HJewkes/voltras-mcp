@@ -294,7 +294,7 @@ describe('SqliteSessionStore baseline read/write', () => {
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
-      await store.putSession({ id: s, startedAt: daysAgo(3) });
+      await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
     await store.putSet(makeSet({ id: 'set-1', sessionId: 'sess-1' }));
     await store.putSet(makeSet({ id: 'set-2', sessionId: 'sess-2' }));

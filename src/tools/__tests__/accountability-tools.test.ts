@@ -14,6 +14,7 @@ import {
   describeAccountabilityPreview,
   describeAccountabilityState,
 } from '../accountability-tools.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 /** Local-time noon on days that are unambiguously that weekday in any timezone. */
 const SUNDAY_NOON = '2026-09-13T12:00:00';
@@ -113,7 +114,8 @@ describe('accountability.state', () => {
     vi.setSystemTime(new Date('2026-09-19T12:00:00'));
     await store.putAccountabilityState(storedState());
     await seedOneTemplatePlan();
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'after-at',
       startedAt: '2026-09-18T12:00:00',
       endedAt: '2026-09-18T12:30:00',
@@ -146,7 +148,8 @@ describe('accountability.state', () => {
 async function rowsOnOneDay(day: Date, count: number, prefix: string): Promise<void> {
   for (let i = 0; i < count; i++) {
     const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, i * 4);
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: `${prefix}-${i}`,
       startedAt: start.toISOString(),
       endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),

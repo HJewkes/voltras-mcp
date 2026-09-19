@@ -362,6 +362,9 @@ async function seedSessions(
       endedAt: at,
       exerciseId: GOAL_PREVIEW_EXERCISE.id,
       exerciseName: GOAL_PREVIEW_EXERCISE.name,
+      // VW-489: these stand in for the lifter's own training, so the wall shows
+      // them. An unmarked seed would render an empty page.
+      kind: 'training',
     });
     const newest = index === weeks - 1;
     const planned = sessionSets(state, load, newest);

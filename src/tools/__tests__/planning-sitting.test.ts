@@ -8,6 +8,7 @@ import { PLANNING_PROMPT } from '../../plan/current-block.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -105,7 +106,8 @@ describe('plan.block.planning_brief', () => {
 
   it('suggests today on a Monday, even with a session already logged today', async () => {
     at('2026-09-21T18:00:00.000Z');
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'monday',
       startedAt: '2026-09-21T15:00:00.000Z',
       endedAt: '2026-09-21T16:00:00.000Z',

@@ -48,6 +48,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- Recorded work can now be marked **test or training**, and only training counts. Mark one
+  session, a whole local day or a range of days with `session.mark_kind`; `dryRun: true`
+  rehearses it and writes nothing. `session.review_list` shows the past days nobody has
+  classified, newest first, with the exercises, set and working-set counts, top load per
+  exercise, the span, whether every session was ended, whether a plan was attached, and the
+  current kind — feed a row's date straight back to `session.mark_kind`. Marking is
+  idempotent and reversible, and re-derives the affected exercises' baselines and
+  RIR-velocity fits (VW-489, #TBD).
+- `report.weekly`'s header and the tier signal's evidence now report how many past days are
+  unreviewed, so a training-day count of zero is never read as "no training" when it means
+  "history withheld pending review" (VW-489, #TBD).
+
 - The goals page's data now says which mesocycle it is in: the program and block, what the block
   is for, its dates, which week of it this is and whether that week is a deload, every week of the
   block with the ones held or added marked, and the next block when one is dated. It is empty
@@ -132,6 +144,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- **Training days, tier evidence, attendance goals, reports, trends, baselines and the
+  RIR-velocity fit now count only sessions marked `training`.** Nothing is back-filled: every
+  session recorded before this change is unreviewed and is left out until it is marked, which
+  is what the owner asked for — most of that history is bench testing, not workouts. Expect
+  those numbers to read zero until the review list is worked through. New sessions are
+  training by default (`session.start` takes `kind`), and sessions started under
+  `VOLTRA_ADAPTER=mock` are always test (VW-489, #TBD).
+- A session that was never ended now counts as a training day, dated by the end of its last
+  working set, once it is marked training. A session holding no working set never counts,
+  ended or not (VW-489, #TBD).
 - The weekly report counts adherence over the weeks the block calendar says were planned, so a
   week nobody trained now reads "planned 4 / done 0" instead of disappearing from the count, and
   a week the lifter held or extended is marked as such. Its header names the block and which

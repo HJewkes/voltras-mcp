@@ -69,7 +69,8 @@ function makeState(fixture: Fixture = {}): ServerState {
           declaredTier: fixture.declaredTier ?? 'intermediate',
           everPlateaued: true,
         }),
-      listSessionEndTimes: () =>
+      listSessionReviewRows: () => Promise.resolve([]),
+      listTrainingDayInstants: () =>
         Promise.resolve(
           Array.from({ length: 30 }, (_, i) =>
             new Date(Date.UTC(2026, 0, 1 + i * 7, 12)).toISOString(),

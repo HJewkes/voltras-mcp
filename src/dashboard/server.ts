@@ -893,7 +893,7 @@ function hasGoalStore(
     typeof store.listPriorities === 'function' &&
     typeof store.listGoalTargets === 'function' &&
     typeof store.getTrainingProfile === 'function' &&
-    typeof store.listSessionEndTimes === 'function' &&
+    typeof store.listTrainingDayInstants === 'function' &&
     typeof store.getSessionDateSpan === 'function' &&
     typeof store.getTrainingWeeksForBlock === 'function' &&
     typeof store.getDietPhaseCovering === 'function' &&

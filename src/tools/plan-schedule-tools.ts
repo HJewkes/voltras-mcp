@@ -695,7 +695,7 @@ export async function trainingDaysBetween(
 ): Promise<string[]> {
   if (startsOn === null || endsOn === null) return [];
   // A session is filed by the local date it ENDED on; widen the start-time window by a day each side.
-  const ends = await state.store.listSessionEndTimes({
+  const ends = await state.store.listTrainingDayInstants({
     from: new Date(Date.parse(startsOn) - DAY_MS).toISOString(),
     to: new Date(Date.parse(endsOn) + 2 * DAY_MS).toISOString(),
   });

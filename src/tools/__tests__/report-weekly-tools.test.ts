@@ -14,6 +14,7 @@ import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import { buildWeeklyReport, renderWeeklyMarkdown } from '../report-tools.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 const EXERCISE_ID = 'seated-row';
 
@@ -203,7 +204,8 @@ describe('report.weekly', () => {
       orderIndex: 2,
     });
 
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's1',
       startedAt: '2026-09-08T00:00:00.000Z',
       endedAt: '2026-09-08T00:30:00.000Z',
@@ -214,7 +216,8 @@ describe('report.weekly', () => {
       workoutTemplateId: 'tpl-1',
       assignedAt: '2026-09-08T00:00:00.000Z',
     });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's2',
       startedAt: '2026-09-09T00:00:00.000Z',
       endedAt: '2026-09-09T00:30:00.000Z',
@@ -226,7 +229,8 @@ describe('report.weekly', () => {
       assignedAt: '2026-09-09T00:00:00.000Z',
     });
     // An unattached, unplanned session in the same range.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 's3',
       startedAt: '2026-09-10T00:00:00.000Z',
       endedAt: '2026-09-10T00:30:00.000Z',
@@ -250,10 +254,39 @@ describe('report.weekly', () => {
     expect(report.header.trainingDaysCompleted).toBe(3);
   });
 
+  // VW-489. An empty week and a withheld week read the same in the counts, so the
+  // header has to say which one it is or the coach reads "no training".
+  it('leaves an unreviewed day out of both counts and says how many are waiting', async () => {
+    const at = new Date(2026, 8, 8, 9);
+    await store.putSession({
+      id: 'unreviewed',
+      startedAt: at.toISOString(),
+      endedAt: new Date(at.getTime() + 60_000).toISOString(),
+    });
+    await store.putSet({
+      id: 'unreviewed-set',
+      sessionId: 'unreviewed',
+      startedAt: at.toISOString(),
+      endedAt: new Date(at.getTime() + 30_000).toISOString(),
+      partial: false,
+      reps: [],
+    });
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: new Date(2026, 8, 7).toISOString(),
+      to: new Date(2026, 8, 11).toISOString(),
+    });
+
+    expect(report.header.trainingDaysCompleted).toBe(0);
+    expect(report.header.rolling28DayTrainingDays).toBe(0);
+    expect(report.header.unreviewedDays).toBe(1);
+  });
+
   it('counts twelve sessions on one local day as one training day in both header counts (VW-462)', async () => {
     for (let i = 0; i < 12; i++) {
       const start = new Date(2026, 8, 8, 9, i * 4);
-      await store.putSession({
+      await seedTrainingDay(store, {
+        kind: 'training',
         id: `row-${i}`,
         startedAt: start.toISOString(),
         endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),
@@ -271,7 +304,8 @@ describe('report.weekly', () => {
   });
 
   it("omits a guest lifter's sets from a session's rendered exercises", async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -294,7 +328,8 @@ describe('report.weekly', () => {
     // whose final rep drops far enough below the first to cross VL30. The
     // flag is a ratio of same-set values, so it must read correctly whether
     // or not the absolute numbers have been through `normaliseVelocityToMps`.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -321,7 +356,8 @@ describe('report.weekly', () => {
   });
 
   it('omits the RIR line when the rir-estimate gate is withheld (no baseline)', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -338,7 +374,8 @@ describe('report.weekly', () => {
 
   it('includes the RIR line only once the rir-estimate gate is CALIBRATED, general-model labelled (VW-310)', async () => {
     calibrateRirBaseline(store);
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -361,7 +398,8 @@ describe('report.weekly', () => {
   it('labels the RIR line "fitted" once the lifter has a fitted RIR-velocity curve (VW-310)', async () => {
     calibrateRirBaseline(store);
     fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -380,7 +418,8 @@ describe('report.weekly', () => {
   it('reads the fitted curve with the final rep mean velocity, not its peak (VW-483)', async () => {
     calibrateRirBaseline(store);
     fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -456,13 +495,15 @@ describe('report.weekly', () => {
   });
 
   it('lists preSessionCarbs on the session entry, and omits it when absent (VW-307)', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-carbs',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
       preSessionCarbs: { level: 'low', hoursSinceLastMeal: 4 },
     });
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-no-carbs',
       startedAt: '2026-09-09T12:00:00.000Z',
       endedAt: '2026-09-09T12:30:00.000Z',
@@ -483,7 +524,8 @@ describe('report.weekly', () => {
   });
 
   it('renders markdown that is paste-safe: no HTML tags, no emoji, no wide tables', async () => {
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -542,7 +584,8 @@ describe('report.weekly', () => {
       orderIndex: 1,
     });
 
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-1',
       startedAt: '2026-09-08T12:00:00.000Z',
       endedAt: '2026-09-08T12:30:00.000Z',
@@ -580,7 +623,8 @@ describe('report.weekly', () => {
     );
 
     // A second, unattached session, so adherence sees planned 2 / done 1.
-    await store.putSession({
+    await seedTrainingDay(store, {
+      kind: 'training',
       id: 'sess-2',
       startedAt: '2026-09-09T12:00:00.000Z',
       endedAt: '2026-09-09T12:30:00.000Z',

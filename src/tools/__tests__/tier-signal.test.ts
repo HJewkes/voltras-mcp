@@ -26,7 +26,24 @@ function endedSession(id: string, daysOffset: number): StoredSession {
   const endedAt = new Date(
     anchor + daysOffset * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
   ).toISOString();
-  return { id, startedAt, endedAt };
+  return { id, startedAt, endedAt, kind: 'training' };
+}
+
+/**
+ * Persist a session AND one working set on it. VW-489: a session with no
+ * working set is never a training day, so a fixture that means "he trained"
+ * has to record work.
+ */
+async function seedTrainingDay(store: SqliteSessionStore, session: StoredSession): Promise<void> {
+  await store.putSession(session);
+  await store.putSet({
+    id: `set-${session.id}`,
+    sessionId: session.id,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt ?? session.startedAt,
+    partial: false,
+    reps: [],
+  });
 }
 
 async function seedSessions(
@@ -38,7 +55,7 @@ async function seedSessions(
     // Spread sessions evenly across the requested span so weeksSpanned is
     // driven by the first/last offsets, not by count.
     const offset = count <= 1 ? 0 : Math.round((i * spanDays) / (count - 1));
-    await store.putSession(endedSession(`s${i}`, offset));
+    await seedTrainingDay(store, endedSession(`s${i}`, offset));
   }
 }
 
@@ -56,6 +73,7 @@ describe('getTierSignal', () => {
       declared: null,
       evidence: {
         trainingDaysLogged: 0,
+        unreviewedDays: 0,
         firstSessionAt: null,
         weeksSpanned: 0,
         loggedHistoryMet: false,
@@ -114,7 +132,8 @@ describe('getTierSignal', () => {
     for (let i = 0; i < 12; i++) {
       const extra = endedSession(`extra${i}`, 0);
       const shift = (i + 1) * 30_000;
-      await store.putSession({
+      await seedTrainingDay(store, {
+        kind: 'training',
         id: extra.id,
         startedAt: new Date(Date.parse(extra.startedAt) + shift).toISOString(),
         endedAt: new Date(Date.parse(extra.endedAt!) + shift).toISOString(),
@@ -281,7 +300,7 @@ describe('the returner path (VW-462)', () => {
 
   it('closes the path when a logged gap is a year or more, whatever the answer said', async () => {
     const store = await ownerShaped(...EIGHTEEN_DAYS_OVER_EIGHTEEN_WEEKS, { lastBreakMonths: 4 });
-    await store.putSession(endedSession('after-13-months', 126 + 396));
+    await seedTrainingDay(store, endedSession('after-13-months', 126 + 396));
 
     const signal = await signalOf(store);
 
