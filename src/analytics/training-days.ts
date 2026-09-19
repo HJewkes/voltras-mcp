@@ -48,6 +48,26 @@ export function trainingDaysOf(endTimes: readonly string[]): string[] {
   return [...new Set(endTimes.map(localDate))].sort();
 }
 
+/** A run of days with no training, and the training day that ended it. */
+export interface TrainingGap {
+  /** Whole calendar days between the two training days either side of the gap. */
+  days: number;
+  /** The first training day after the gap. */
+  endsOn: string;
+}
+
+/**
+ * The gaps between consecutive training days, oldest first. Local dates parse as UTC midnight,
+ * so the difference is whole days with no daylight-saving drift. The one gap walk behind both
+ * the tier signal's longest logged gap and the layoff read.
+ */
+export function trainingGaps(days: readonly string[]): TrainingGap[] {
+  return days.slice(1).map((day, index) => ({
+    days: (Date.parse(day) - Date.parse(days[index])) / DAY_MS,
+    endsOn: day,
+  }));
+}
+
 /** The store slice a training-day read needs. */
 export type TrainingDayStore = Pick<SessionStore, 'listSessionEndTimes'>;
 

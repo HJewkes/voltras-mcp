@@ -165,6 +165,15 @@ describe('the layoff read (VW-462)', () => {
 
     expect(await layoffAfterGap()).toBe(false);
   });
+
+  it('sees the newest gap behind more than 500 earlier sessions (VW-472)', async () => {
+    for (let i = 0; i < 520; i++) await ended(new Date(NOW.getTime() - (800 - i) * DAY_MS));
+    for (let i = 0; i < 3; i++) await ended(new Date(NOW.getTime() - (10 - i) * DAY_MS));
+
+    const context = await readDerivationContext({ store }, await sessionsPriority());
+
+    expect(context.layoff).toBe(true);
+  });
 });
 
 describe('a guest’s training days', () => {
