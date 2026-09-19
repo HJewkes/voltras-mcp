@@ -167,11 +167,13 @@ import { isWarmupSet, selectWorkingSets } from '../store/working-sets.js';
 import {
   RIR_MODEL_CALIBRATION_CONFIDENCE,
   RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE,
+  RIR_VELOCITY_MODEL_UNTRUSTED_CALIBRATION_CONFIDENCE,
   rirInputDomainConfidence,
   type ConfidenceIndicator,
 } from '../store/confidence-indicator.js';
 import {
   GENERAL_MODEL_CAVEAT,
+  isTrustedRirModel,
   rirModelVelocity,
   type RirVelocityModel,
 } from '../analytics/rir-velocity.js';
@@ -2161,8 +2163,10 @@ interface RepRIREstimate {
   rir: number;
   /** 95% CI band from the profile's stderr, half-rep resolution. */
   range: { low: number; high: number };
-  /** Analytics' own grade of how far the inputs sit from the fitted range. */
+  /** How far to trust this reading, capped by the model's own calibration (VW-485). */
   confidence: 'low' | 'medium' | 'high';
+  /** How far this rep's inputs sit from the range the model was fitted over, graded alone. */
+  inputDomain: 'low' | 'medium' | 'high';
   /** 1-indexed rep number within the set. */
   repIndex: number;
   /** This rep's peak concentric velocity, m/s. */
@@ -2180,8 +2184,9 @@ interface RepRIREstimate {
  * questions and are never merged into a single score:
  *   - `modelCalibration` — is the MODEL trustworthy? `low` on the `basis:
  *     'profile-estimate'` fallback (the shipped coefficients are
- *     placeholders); `high` on `basis: 'fitted'` (VW-298's own fit,
- *     individually validated per Jukic et al. 2024). Identical for every rep
+ *     placeholders); on `basis: 'fitted'` (VW-298's own fit), `high` only when
+ *     the curve's own error passes `isTrustedRirModel`, else `medium`
+ *     (VW-485). Identical for every rep
  *     within one set, since both bases are set-level, not per-rep.
  *   - `inputDomain` — is THIS REP inside the model's fitted range? Varies per
  *     rep; taken from whichever basis produced the estimate.
@@ -2287,11 +2292,12 @@ async function rirForSet(
       repIndex: i + 1,
       repsInSet,
     };
-    const { rir, range, confidence } = estimateRepRir(model, estimateInput);
+    const { rir, range, confidence, inputDomain } = estimateRepRir(model, estimateInput);
     return {
       rir,
       range,
       confidence,
+      inputDomain,
       repIndex: i + 1,
       peakVelocity: peak,
       meanVelocity,
@@ -2311,19 +2317,24 @@ async function rirForSet(
     basis,
     caveat: basis === 'profile-estimate' ? GENERAL_MODEL_CAVEAT : null,
     confidence: {
-      modelCalibration:
-        basis === 'fitted'
-          ? RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE
-          : RIR_MODEL_CALIBRATION_CONFIDENCE,
+      modelCalibration: modelCalibrationFor(model),
       // The headline number is the final rep's, so the input-domain axis grades
       // that same rep — a per-rep axis on a per-rep value.
-      inputDomain: rirInputDomainConfidence(final.confidence),
+      inputDomain: rirInputDomainConfidence(final.inputDomain),
       baselineMaturity: await rirGate(state, set),
     },
   };
 }
 
 /** The lifter's own fitted RIR-velocity curve for `exerciseId`, if one exists (VW-298/VW-310). */
+/** The model-calibration axis: the placeholder profile, or a fitted curve graded by its own error. */
+function modelCalibrationFor(model: RirVelocityModel | undefined): ConfidenceIndicator {
+  if (model === undefined) return RIR_MODEL_CALIBRATION_CONFIDENCE;
+  return isTrustedRirModel(model)
+    ? RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE
+    : RIR_VELOCITY_MODEL_UNTRUSTED_CALIBRATION_CONFIDENCE;
+}
+
 async function fittedRirModel(
   state: ServerState,
   exerciseId: string | undefined,

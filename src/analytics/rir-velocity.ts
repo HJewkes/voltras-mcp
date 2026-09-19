@@ -54,6 +54,20 @@ export function rirModelVelocity(rep: Rep): RirModelVelocityMps {
   return getRepMeanVelocity(rep) as RirModelVelocityMps;
 }
 
+/**
+ * The fit error, in reps in reserve, below which a curve is trusted to state effort:
+ * Jukic 2024's individual models predicted a later session within under 2 reps.
+ */
+export const TRUSTED_RIR_ERROR_REPS = 2;
+
+/**
+ * Whether a stored curve is trusted to state reps in reserve or RPE (VW-485). The one
+ * trust gate: the effort resolver (VW-448) replaces this function, not its callers.
+ */
+export function isTrustedRirModel(model: RirVelocityModel | undefined): model is RirVelocityModel {
+  return model !== undefined && model.rirErrorReps < TRUSTED_RIR_ERROR_REPS;
+}
+
 /** The source of a set's reps-in-reserve anchor. */
 export type RirAnchorSource = 'failure' | 'self_report';
 
