@@ -27,12 +27,13 @@
 //
 // PURE. Every input is an already-fetched row.
 
-import { estimateE1RMFromReps, getPhaseMeanVelocity, type Rep } from '@voltras/workout-analytics';
+import { estimateE1RMFromReps, type Rep } from '@voltras/workout-analytics';
 
-import type {
-  RirAnchorSource,
-  RirVelocityObservation,
-  RirVelocityPoint,
+import {
+  rirModelVelocity,
+  type RirAnchorSource,
+  type RirVelocityObservation,
+  type RirVelocityPoint,
 } from '../analytics/rir-velocity.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import type { FailureVerdict } from './failure-harvest.js';
@@ -121,7 +122,7 @@ function pointsFor(set: StoredSet, terminal: number): RirVelocityPoint[] {
     .map((rep, index) => ({
       rep,
       rir: terminal + (reps.length - 1 - index),
-      velocityMps: getPhaseMeanVelocity(rep.concentric),
+      velocityMps: rirModelVelocity(rep),
     }))
     .filter((p) => eligible.has(p.rep) && p.velocityMps > 0)
     .map(({ rir, velocityMps }) => ({ rir, velocityMps }));

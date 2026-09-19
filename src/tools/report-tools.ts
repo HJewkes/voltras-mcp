@@ -17,7 +17,7 @@ import { getRepPeakVelocity, getSetVelocitySummary } from '@voltras/workout-anal
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
-import type { RirVelocityModel } from '../analytics/rir-velocity.js';
+import { rirModelVelocity, type RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
 import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
@@ -543,11 +543,13 @@ async function rirLineForExercise(state: ServerState, sets: StoredSet[]): Promis
   const eligible = selectEligibleReps(reps);
   const baselineMax = Math.max(...eligible.map((rep) => getRepPeakVelocity(rep)));
   if (!(baselineMax > 0)) return null;
-  const finalPeak = getRepPeakVelocity(reps[reps.length - 1]!);
+  const finalRep = reps[reps.length - 1]!;
+  const finalPeak = getRepPeakVelocity(finalRep);
   const velLossPct = Math.max(0, ((baselineMax - finalPeak) / baselineMax) * 100);
   const stored = await state.store.getRirVelocityModel(LOCAL_USER_ID, set.exerciseId);
   const model = stored === undefined ? undefined : (stored.model as unknown as RirVelocityModel);
   const estimateInput = {
+    meanVelocity: rirModelVelocity(finalRep),
     peakVelocity: finalPeak,
     baselineMaxVelocity: baselineMax,
     velLossPct,

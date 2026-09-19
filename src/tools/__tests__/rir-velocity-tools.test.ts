@@ -6,17 +6,24 @@
 // reps-in-reserve, and a lifter with no curve gets the stated caveat instead of
 // a number.
 
+import type { Rep } from '@voltras/workout-analytics';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   fitRirVelocityModel,
   GENERAL_MODEL_CAVEAT,
+  rirForVelocity,
+  rirModelVelocity,
   type RirVelocityModel,
   type RirVelocityObservation,
 } from '../../analytics/rir-velocity.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { SessionStore, StoredRirVelocityModel } from '../../store/types.js';
-import { registerRirVelocityTools, resolveRirVelocityTarget } from '../rir-velocity-tools.js';
+import {
+  estimateRepRir,
+  registerRirVelocityTools,
+  resolveRirVelocityTarget,
+} from '../rir-velocity-tools.js';
 
 interface FakeRegisteredTool {
   callback?: (args: unknown, extra?: unknown) => Promise<unknown>;
@@ -245,5 +252,53 @@ describe('resolveRirVelocityTarget', () => {
     // Assert
     expect(viaTool.velocityTargetMps).toBe(direct.velocityTargetMps);
     expect(viaTool.citation).toBe(direct.citation);
+  });
+});
+
+describe('estimateRepRir on a fitted curve (VW-483)', () => {
+  const model = curve(0.3, 0.05);
+
+  /** A rep whose concentric phase has the given mean and peak velocity, m/s. */
+  function repWith(meanMps: number, peakMps: number): Rep {
+    return {
+      concentric: { peakVelocity: peakMps, _totalVelocity: meanMps * 10, _movementSampleCount: 10 },
+    } as unknown as Rep;
+  }
+
+  function readFitted(rep: Rep): ReturnType<typeof estimateRepRir> {
+    return estimateRepRir(model, {
+      meanVelocity: rirModelVelocity(rep),
+      peakVelocity: rep.concentric.peakVelocity,
+      baselineMaxVelocity: 0.9,
+      velLossPct: 25,
+      repIndex: 6,
+      repsInSet: 8,
+    });
+  }
+
+  it('reads the same RIR for a set whose peaks sit further above the same means', () => {
+    const tight = readFitted(repWith(0.45, 0.5));
+    const wide = readFitted(repWith(0.45, 0.7));
+
+    expect(wide).toEqual(tight);
+  });
+
+  it('reads the mean, where the peak would have over-stated reps in reserve', () => {
+    const reading = readFitted(repWith(0.45, 0.6));
+
+    // The peak would read (0.6 - 0.3) / 0.05 = 6; the mean reads 3.
+    expect(reading.basis).toBe('fitted');
+    expect(reading.rir).toBeCloseTo(3, 2);
+  });
+
+  it('reads RIR 0 for a rep whose mean sits on the intercept', () => {
+    expect(readFitted(repWith(0.3, 0.42)).rir).toBeCloseTo(0, 2);
+  });
+
+  it('refuses a raw number where the curve expects its own velocity measure', () => {
+    // @ts-expect-error a peak, or any plain number, is not a model velocity
+    const reading = rirForVelocity(model, 0.6);
+
+    expect(reading.rir).toBeCloseTo(6, 2);
   });
 });
