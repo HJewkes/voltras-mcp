@@ -29,6 +29,7 @@ import {
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
 import { markPersonalRecords } from '../analytics/goal-history.js';
+import { listOfferDecisions, offerInputsOf } from '../tools/goal-recalibration.js';
 import { computeHistoryTrend } from '../tools/metrics-tools.js';
 import { log } from '../logger.js';
 import {
@@ -52,7 +53,29 @@ import {
 export type GoalProgressStore = GoalDerivationState['store'] & {
   listPriorities: SessionStore['listPriorities'];
   listGoalTargets: SessionStore['listGoalTargets'];
+  /** Optional: a store without the advisory log simply has no recalibration answers to show. */
+  listAdvisoryDecisions?: SessionStore['listAdvisoryDecisions'];
 };
+
+/** The recalibration answers the page reads (VW-444 part 2). */
+interface OfferAnswers {
+  /** Proposal rows of unanswered offers: shown as a line on the ramp's own card, never as a card. */
+  openOfferRows: ReadonlySet<string>;
+  /** Accepted starting ramps whose offer the lifter declined. */
+  declinedTargets: ReadonlySet<string>;
+}
+
+async function readOfferAnswers(store: GoalProgressStore): Promise<OfferAnswers> {
+  const list = store.listAdvisoryDecisions;
+  if (list === undefined) return { openOfferRows: new Set(), declinedTargets: new Set() };
+  const decisions = await listOfferDecisions({ listAdvisoryDecisions: list.bind(store) });
+  const open = decisions.filter((decision) => decision.userResponse === undefined);
+  const declined = decisions.filter((decision) => decision.userResponse === 'declined');
+  return {
+    openOfferRows: new Set(open.map((decision) => offerInputsOf(decision).offerTargetId)),
+    declinedTargets: new Set(declined.map((decision) => offerInputsOf(decision).targetId)),
+  };
+}
 
 /** Every non-retired target under one priority, each with its progress view. */
 export async function fetchGoalProgressViews(
@@ -60,37 +83,54 @@ export async function fetchGoalProgressViews(
   priority: StoredPriority,
   now: Date,
 ): Promise<GoalProgressView[]> {
-  const targets = await store.listGoalTargets({ priorityId: priority.id });
+  const answers = await readOfferAnswers(store);
+  const targets = (await store.listGoalTargets({ priorityId: priority.id })).filter(
+    (target) => !answers.openOfferRows.has(target.id),
+  );
   if (targets.length === 0) return [];
   const context = await readDerivationContext({ store }, priority);
   const views: GoalProgressView[] = [];
   for (const target of targets) {
-    const derived = await deriveTargetInFrame({ store }, context, target);
-    if (!('band' in derived)) {
-      log.debug(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
-      continue;
-    }
-    const { actuals, plateauVerdict } = await readActuals(store, target);
-    const fatigue = await readFatigue(store, target);
-    views.push(
-      buildGoalProgressView({
-        priority,
-        target,
-        band: derived.band,
-        calibrationEvidence: {
-          matchedSessionCount: derived.matchedSessionCount,
-          baselineState: derived.baselineState,
-        },
-        actuals,
-        weeks: context.weeks,
-        now: now.toISOString(),
-        dietState: context.dietState,
-        ...(fatigue === undefined ? {} : { fatigue }),
-        ...(plateauVerdict === undefined ? {} : { plateauVerdict }),
-      }),
-    );
+    const view = await viewFor(store, { priority, target, context, answers, now });
+    if (view !== undefined) views.push(view);
   }
   return views;
+}
+
+async function viewFor(
+  store: GoalProgressStore,
+  read: {
+    priority: StoredPriority;
+    target: StoredGoalTarget;
+    context: Awaited<ReturnType<typeof readDerivationContext>>;
+    answers: OfferAnswers;
+    now: Date;
+  },
+): Promise<GoalProgressView | undefined> {
+  const { priority, target, context } = read;
+  const derived = await deriveTargetInFrame({ store }, context, target);
+  if (!('band' in derived)) {
+    log.debug(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
+    return undefined;
+  }
+  const { actuals, plateauVerdict } = await readActuals(store, target);
+  const fatigue = await readFatigue(store, target);
+  return buildGoalProgressView({
+    priority,
+    target,
+    band: derived.band,
+    calibrationEvidence: {
+      matchedSessionCount: derived.matchedSessionCount,
+      baselineState: derived.baselineState,
+    },
+    recalibrationDeclined: read.answers.declinedTargets.has(target.id),
+    actuals,
+    weeks: context.weeks,
+    now: read.now.toISOString(),
+    dietState: context.dietState,
+    ...(fatigue === undefined ? {} : { fatigue }),
+    ...(plateauVerdict === undefined ? {} : { plateauVerdict }),
+  });
 }
 
 /** `history.trend`'s metric name for a target's own metric, or `null` for a non-lift metric. */

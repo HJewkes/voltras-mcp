@@ -45,7 +45,13 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'own fitted slope. A cold lift target also carries `startingRamp` (`sessionsNeeded`, ' +
   '`blockedBy`, `baselineState`, `reProposeAfterCalibration`, `note`): its number is the generic ' +
   'starting ramp, so tell the lifter so, and re-propose a data-based target once calibration ' +
-  'ends. A metric whose proposal was declined is never re-offered.';
+  'ends. A metric whose proposal was declined is never re-offered. ' +
+  'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
+  'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
+  '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
+  'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
+  'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
+  'calibrated is withdrawn.';
 
 export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'Fix one proposed target’s numbers. Omit `committedValue` and `stretchValue` to take the ' +
@@ -62,7 +68,10 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'rest, and any other metric refuses it (`GOAL_ANCHOR_LOAD_NOT_APPLICABLE`). Returns `target`, `acceptedBy`, ' +
   '`acknowledgedStretch`, `bandUnchanged`, `rpIds` and `note`, plus `startingRamp` when the ' +
   'target is a cold lift target: accepted as the generic starting ramp, to be re-proposed as a ' +
-  'new chapter once calibrated, never edited in place.';
+  'new chapter once calibrated, never edited in place. Accepting a recalibration offer ' +
+  '(`offerTargetId`) retires the starting ramp it replaces and returns `recalibration` ' +
+  '(`decisionId`, `supersededTargetId`); an offer whose lift is no longer calibrated is refused ' +
+  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays.';
 
 export const GOAL_LIST_DESCRIPTION =
   'READ-ONLY. Every declared priority with the targets derived under it, newest declaration ' +
@@ -78,8 +87,11 @@ export const GOAL_RETIRE_DESCRIPTION =
   'band the lifter worked toward is a fact about what was attempted. A cascade defaults its ' +
   'targets to `abandoned` — the honest outcome for a target whose priority went away — and an ' +
   'explicit `met` or `missed` restamps them. This is also the decline path for a proposal: ' +
-  'retiring an unaccepted target as `abandoned` means it is never re-proposed. Returns ' +
-  '`priority`, `targets` and `cascaded`.';
+  'retiring an unaccepted target as `abandoned` means it is never re-proposed. Retiring a ' +
+  'recalibration offer’s row (`offerTargetId`) records the lifter declining it and returns ' +
+  '`declinedOffer: true`; the starting ramp stays accepted. Retiring the starting ramp itself ' +
+  'withdraws its open offer. Returns `priority`, `targets` and ' +
+  '`cascaded`.';
 
 export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'The Sunday sitting’s bodyweight-rate review: what the scale did this week against the ' +
@@ -104,7 +116,13 @@ export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'beside the committed line, not an edit of it (B55). ' +
   'Answer the proposal by calling again with `response`: `accepted`, `declined` or `ignored`. ' +
   'A DECLINED PROPOSAL IS NEVER RAISED AGAIN for the same observation, defined as the same week ' +
-  'anchor at the same urgency; it can return next week, or sooner if the signal widens.';
+  'anchor at the same urgency; it can return next week, or sooner if the signal widens. ' +
+  'RECALIBRATION OFFERS (VW-444): `recalibrationOffers` lists every accepted starting ramp whose ' +
+  'lift has since calibrated, each with a data-based target derived inside the ramp’s own block ' +
+  '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
+  'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
+  'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
+  'calibrated is withdrawn.';
 
 export const GOAL_NEW_CHAPTER_DESCRIPTION =
   'Stamp `newChapterAt` on a target whose movement itself changed — a technique reform (squat ' +

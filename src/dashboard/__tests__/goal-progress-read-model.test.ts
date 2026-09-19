@@ -534,6 +534,68 @@ describe('buildGoalProgressView calibration facts (VW-444)', () => {
   });
 });
 
+describe('buildGoalProgressView recalibration (VW-444 part 2)', () => {
+  const RAMP: StoredGoalTarget = {
+    ...TARGET,
+    committedValue: 185,
+    stretchValue: 185,
+    basis: 'execution_ramp',
+    infoLevel: 'cold',
+  };
+  const CALIBRATED = { matchedSessionCount: 3, baselineState: 'PROVISIONAL' as const };
+
+  it('offers a data-based target on an accepted starting ramp whose lift has calibrated', () => {
+    const view = buildGoalProgressView(
+      input({ target: RAMP, calibrationEvidence: CALIBRATED, actuals: CONVERGING }),
+    );
+
+    expect(view.recalibration).toEqual({ state: 'offered' });
+  });
+
+  it('says the ramp was kept once the lifter declined', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: RAMP,
+        calibrationEvidence: CALIBRATED,
+        recalibrationDeclined: true,
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view.recalibration).toEqual({ state: 'kept_starting_ramp' });
+  });
+
+  it('withdraws the offer when the evidence goes backwards', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: RAMP,
+        calibrationEvidence: { matchedSessionCount: 1, baselineState: 'PROVISIONAL' },
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view).not.toHaveProperty('recalibration');
+  });
+
+  it('has nothing to offer on a target that was accepted from data', () => {
+    const view = buildGoalProgressView(input({ actuals: CONVERGING }));
+
+    expect(view).not.toHaveProperty('recalibration');
+  });
+
+  it('has nothing to offer on an unanswered proposal', () => {
+    const view = buildGoalProgressView(
+      input({
+        target: { ...RAMP, acceptedBy: undefined },
+        calibrationEvidence: CALIBRATED,
+        actuals: CONVERGING,
+      }),
+    );
+
+    expect(view).not.toHaveProperty('recalibration');
+  });
+});
+
 describe('buildGoalProgressView purity', () => {
   it('never reads the clock and returns the same view for the same inputs', () => {
     const args = input({ actuals: CONVERGING });

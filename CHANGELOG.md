@@ -54,6 +54,15 @@ entry is written from the user's point of view is a review question, not a check
   to the live page. It appears only for a planned exercise. Its rest counts down the same length
   as the live page (the plan's, else the goal default), and it turns red at the same stop
   (VW-429, #448; VW-440, VW-441).
+- Once a goal accepted as the starting ramp has calibrated, the coach offers a target based on
+  the lifter's own lifts, once. `goal.propose_targets` and `goal.weekly_review` return it in
+  `recalibrationOffers`. It keeps the ramp's block (same start, end and weeks), and only the
+  numbers change. Accepting it (`goal.accept_target` on the offer) retires the ramp and never
+  edits it. Declining it (`goal.retire` on the offer) keeps the ramp and is not asked again
+  that block. An offer whose lift stops being calibrated, or whose ramp is retired, is
+  withdrawn. Under the card, the goals page reads "Calibrated. Your goal is still the starting
+  ramp; a target based on your lifts is ready." while the offer stands, and nothing after a
+  decline (VW-444).
 - A goal accepted before its lift is calibrated now says so. Under a calibrating goal card
   the goals page reads "Starting ramp, not yet based on your lifts." followed by what
   calibration still waits on: "1 more comparable session to calibrate.", or a set taken near

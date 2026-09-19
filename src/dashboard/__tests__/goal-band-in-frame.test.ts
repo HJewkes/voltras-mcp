@@ -28,6 +28,9 @@ import {
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
 
+/** Each case seeds a real sqlite store; a loaded CI runner needs more than 5 s. */
+const SEED_TIMEOUT_MS = 20_000;
+
 const scratchDirs: string[] = [];
 afterEach(() => {
   while (scratchDirs.length > 0) {
@@ -176,34 +179,38 @@ function lastWeek(expected: readonly { low: number; high: number }[]): [number, 
 
 describe('every preview seed stores an honest goal (VW-449)', () => {
   for (const state of GOAL_PREVIEW_STATES) {
-    it(`--state ${state.name}: committed and stretch are the last week of its band at acceptance`, async () => {
-      const store = openStore();
-      const now = new Date();
-      await seedGoalPreview(store, state, now);
-      const [priority] = await store.listPriorities(LOCAL_USER_ID);
-      const [target] = await store.listGoalTargets({ priorityId: priority!.id });
-      const context = await readDerivationContext({ store }, priority!);
-      const cold = target!.infoLevel === 'cold';
+    it(
+      `--state ${state.name}: committed and stretch are the last week of its band at acceptance`,
+      async () => {
+        const store = openStore();
+        const now = new Date();
+        await seedGoalPreview(store, state, now);
+        const [priority] = await store.listPriorities(LOCAL_USER_ID);
+        const [target] = await store.listGoalTargets({ priorityId: priority!.id });
+        const context = await readDerivationContext({ store }, priority!);
+        const cold = target!.infoLevel === 'cold';
 
-      const accepted = deriveGoalBand({
-        metric: target!.metric,
-        startValue: target!.startValue,
-        horizonWeeks: context.horizonWeeks,
-        weeks: context.weeks,
-        tier: context.tier,
-        infoLevel: target!.infoLevel,
-        dietState: context.dietState,
-        layoff: context.layoff,
-        matchedSessionCount: cold ? 0 : GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp,
-        baselineState: cold ? 'COLD' : 'CALIBRATED',
-        completedMesoCount: context.completedMesoCount,
-      });
+        const accepted = deriveGoalBand({
+          metric: target!.metric,
+          startValue: target!.startValue,
+          horizonWeeks: context.horizonWeeks,
+          weeks: context.weeks,
+          tier: context.tier,
+          infoLevel: target!.infoLevel,
+          dietState: context.dietState,
+          layoff: context.layoff,
+          matchedSessionCount: cold ? 0 : GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp,
+          baselineState: cold ? 'COLD' : 'CALIBRATED',
+          completedMesoCount: context.completedMesoCount,
+        });
 
-      expect(accepted.expected[0]!.low).toBe(target!.startValue);
-      expect(lastWeek(accepted.expected)[0]).toBeCloseTo(target!.committedValue, 6);
-      expect(lastWeek(accepted.expected)[1]).toBeCloseTo(target!.stretchValue, 6);
-      store.close();
-    });
+        expect(accepted.expected[0]!.low).toBe(target!.startValue);
+        expect(lastWeek(accepted.expected)[0]).toBeCloseTo(target!.committedValue, 6);
+        expect(lastWeek(accepted.expected)[1]).toBeCloseTo(target!.stretchValue, 6);
+        store.close();
+      },
+      SEED_TIMEOUT_MS,
+    );
   }
 });
 
