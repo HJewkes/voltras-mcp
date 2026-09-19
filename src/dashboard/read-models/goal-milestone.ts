@@ -16,7 +16,12 @@
 // Confidentiality: fitness units and plan metadata only, no protocol data (NF-07).
 
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
-import type { GoalBand, GoalBandExpectation, GoalBandWeek } from '../../analytics/goal-band.js';
+import {
+  GOAL_BAND_CONSTANTS,
+  type GoalBand,
+  type GoalBandExpectation,
+  type GoalBandWeek,
+} from '../../analytics/goal-band.js';
 import type { StoredGoalMetric, StoredGoalTarget } from '../../store/types.js';
 
 /** Where the block's committed number stands. There is no "due" state: it is judged at block end. */
@@ -77,7 +82,7 @@ export interface BlockReading {
 
 export interface GoalReachRead {
   reach: GoalReach;
-  /** The best matched reading of the block, in the goal's direction. */
+  /** The best matched reading of the block, in the goal’s direction; a hold commitment’s latest. */
   best: number;
 }
 
@@ -113,11 +118,26 @@ export function expectationAt(
   return byIndex ?? band.expected[position] ?? band.expected[band.expected.length - 1];
 }
 
+/**
+ * A band that commits to no change but runs a direction: only a slow-loss
+ * recomposition's bodyweight band has this shape (VW-468), since a zero edge
+ * reads as `hold` everywhere else.
+ */
+export function commitsToHold(band: GoalBand): boolean {
+  return band.direction !== 'hold' && band.bandLowPctPerWeek === 0;
+}
+
+/** How far past a hold commitment still reads as holding: one week's noise floor. */
+function holdToleranceOf(band: GoalBand): number {
+  return commitsToHold(band) ? GOAL_BAND_CONSTANTS.bodyweightNoiseFloorLbsPerWeek : 0;
+}
+
 /** Below the conservative edge, whichever numeric side of it that is (VW-348). */
 export function behindEdge(committedEdge: number, value: number, band: GoalBand): boolean {
-  if (band.direction === 'down') return value > committedEdge;
+  const tolerance = holdToleranceOf(band);
+  if (band.direction === 'down') return value > committedEdge + tolerance;
   if (band.direction === 'hold') return false;
-  return value < committedEdge;
+  return value < committedEdge - tolerance;
 }
 
 /** Past the stretch edge. A `hold` goal has no stretch to pass. */
@@ -145,19 +165,47 @@ export function blockReadingsOf(
  */
 export function goalReachOf(
   target: StoredGoalTarget,
-  direction: GoalBand['direction'],
+  band: GoalBand,
   readings: readonly BlockReading[],
+  weekCount: number,
 ): GoalReachRead | null {
+  const direction = band.direction;
   if (direction === 'hold' || readings.length === 0) {
     return direction === 'hold' ? null : { reach: 'short', best: target.startValue };
   }
+  if (commitsToHold(band)) return holdReachOf(target, band, readings, weekCount);
   const values = readings.map((reading) => reading.value);
   const best = direction === 'down' ? Math.min(...values) : Math.max(...values);
+  return reachAt(target, direction, best, 0);
+}
+
+/**
+ * A hold commitment is kept to the end, not reached once: the committed number is the
+ * start value, so the first flat reading would otherwise meet it for the whole block.
+ * It is read in the block's final week, off the latest reading (VW-468).
+ */
+function holdReachOf(
+  target: StoredGoalTarget,
+  band: GoalBand,
+  readings: readonly BlockReading[],
+  weekCount: number,
+): GoalReachRead {
+  const latest = readings[readings.length - 1];
+  if (latest.position < weekCount - 1) return { reach: 'short', best: latest.value };
+  return reachAt(target, band.direction, latest.value, holdToleranceOf(band));
+}
+
+function reachAt(
+  target: StoredGoalTarget,
+  direction: GoalBand['direction'],
+  value: number,
+  tolerance: number,
+): GoalReachRead {
   const sign = direction === 'down' ? -1 : 1;
   const past =
-    (atPrecision(target.metric, best) - atPrecision(target.metric, target.committedValue)) * sign;
-  if (past < 0) return { reach: 'short', best };
-  return { reach: past === 0 ? 'met' : 'beyond', best };
+    (atPrecision(target.metric, value) - atPrecision(target.metric, target.committedValue)) * sign;
+  if (past < -tolerance) return { reach: 'short', best: value };
+  return { reach: past <= tolerance ? 'met' : 'beyond', best: value };
 }
 
 function atPrecision(metric: StoredGoalMetric, value: number): number {

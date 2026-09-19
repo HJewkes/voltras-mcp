@@ -10,6 +10,7 @@
 // an observed phase, and the lifter is the only one who may call it. Accepting
 // a proposal here records that they said yes, nothing more.
 
+import { GOAL_BAND_CONSTANTS } from '../analytics/goal-band.js';
 import {
   computeCumulativeLossFacts,
   type CumulativeLossFacts,
@@ -35,11 +36,10 @@ import {
 } from '../store/types.js';
 
 /**
- * Weekly rate a declared `slow-loss` target runs at, as a fraction of the
- * starting weight: the slow edge of the cited fat-loss range
- * (rp:rp-s11-fat-loss-rate-heuristic), the same edge `goal-band.ts` reads.
+ * Weekly rate a declared `slow-loss` target stretches to, as a fraction of the
+ * starting weight: the stretch edge of the band `goal-band.ts` derives (VW-468).
  */
-const SLOW_LOSS_FRACTION_PER_WEEK = 0.005;
+const SLOW_LOSS_FRACTION_PER_WEEK = -GOAL_BAND_CONSTANTS.recompositionSlowLossPctPerWeek.high / 100;
 
 /** The instant a block finished: its last template's earliest assignment. */
 async function blockFinishedAt(state: ServerState, blockId: string): Promise<string | null> {

@@ -543,13 +543,14 @@ describe('recomposition mode reaches the bodyweight band (VW-378)', () => {
     return (proposed.targets as ProposedBodyweightShape[])[0];
   }
 
-  it('puts a declared slow-loss recomposition on the -0.5%/wk line', async () => {
+  it('puts a declared slow-loss recomposition on the 0 to -0.5%/wk band', async () => {
     await declareRecomposition('slow-loss');
     const target = await proposeBodyweightBand();
     expect(target.metric).toBe('bodyweight');
-    expect(target.bandLowPctPerWeek).toBe(-0.5);
+    expect(target.bandLowPctPerWeek).toBe(0);
     expect(target.bandHighPctPerWeek).toBe(-0.5);
-    expect(target.committedValue).toBeLessThan(330);
+    expect(target.committedValue).toBe(330);
+    expect(target.stretchValue).toBeLessThan(330);
     expect(target.rpIds).toContain('rp:rp-s11-fat-loss-rate-heuristic');
   });
 

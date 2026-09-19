@@ -122,13 +122,14 @@ describe('direction comes from the band', () => {
     expect(cardChart(view).direction).toBeUndefined();
   });
 
-  it('reads slow-loss recomposition as down, though committed equals stretch', async () => {
+  it('reads slow-loss recomposition as down, though its committed edge is a hold', async () => {
     await declarePhase('recomposition', 14, 'slow-loss');
     await weighIn(180, 1);
 
     const view = await acceptedView('bodyweight');
 
-    expect(view.committed).toBe(view.stretch);
+    expect(view.committed).toBe(180);
+    expect(view.stretch).toBeLessThan(180);
     expect(view.direction).toBe('down');
     expect(cardChart(view).direction).toBe('down');
   });
@@ -317,3 +318,57 @@ function localDay(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+describe('a slow-loss recomposition on the page (VW-468)', () => {
+  const WEEK_MS = 7 * DAY_MS;
+
+  /** Accept a 190 lb slow-loss goal at `NOW`, weigh in `lbs` in block week `week`, and read that week. */
+  async function viewWith(lbs: number, week: number): Promise<GoalProgressView> {
+    await declarePhase('recomposition', 60, 'slow-loss');
+    await weighIn(190, 0);
+    const priority = await declare('bodyweight');
+    const proposed = await invoke('goal.propose_targets', { priorityId: priority.id });
+    const [leg] = proposed.targets as { targetId: string }[];
+    await invoke('goal.accept_target', { targetId: leg!.targetId });
+    const at = new Date(NOW.getTime() + (week - 1) * WEEK_MS + DAY_MS);
+    vi.setSystemTime(at);
+    await store.putBodyMetric({
+      userId: LOCAL_USER_ID,
+      measuredAt: at.toISOString(),
+      bodyweightLbs: lbs,
+    });
+    const [view] = await fetchGoalProgressViews(store, priority, at);
+    return view!;
+  }
+
+  const outcomeOfWeek = (view: GoalProgressView, week: number) =>
+    view.weekOutcomes.find((entry) => entry.weekIndex === week)?.outcome;
+
+  it('reads a flat week a few tenths over the start as holding', async () => {
+    expect(outcomeOfWeek(await viewWith(190.3, 3), 3)).toBe('on_track');
+  });
+
+  it('reads a week a pound over the start as missed', async () => {
+    expect(outcomeOfWeek(await viewWith(191.2, 3), 3)).toBe('missed');
+  });
+
+  it('does not call the hold met on an early reading', async () => {
+    const view = await viewWith(189.8, 3);
+    expect(view.status).not.toBe('goal_met');
+    expect(view.status).not.toBe('beyond_goal');
+  });
+
+  it('calls the hold met on the final week’s reading', async () => {
+    expect((await viewWith(189.9, 8)).status).toBe('goal_met');
+  });
+
+  it('calls a final week past the noise floor under the start beyond the goal', async () => {
+    expect((await viewWith(188.5, 8)).status).toBe('beyond_goal');
+  });
+
+  it('does not call the hold met when the final week ends heavy', async () => {
+    const view = await viewWith(191.4, 8);
+    expect(view.status).not.toBe('goal_met');
+    expect(view.status).not.toBe('beyond_goal');
+  });
+});

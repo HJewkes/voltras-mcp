@@ -356,10 +356,8 @@ describe('methodology §4: a hold band has no rate to autoregulate', () => {
     expect(rateBandForPhase('recomposition', 'hold')).toBeNull();
   });
 
-  it('runs a slow-loss recomposition against the cited fat-loss band', () => {
-    expect(rateBandForPhase('recomposition', 'slow-loss')).toEqual(
-      GOAL_BAND_CONSTANTS.bodyweightFatLossPctPerWeek,
-    );
+  it('runs a slow-loss recomposition against the same band the goal derives (VW-468)', () => {
+    expect(rateBandForPhase('recomposition', 'slow-loss')).toEqual({ low: 0, high: -0.5 });
     expect(rateBandForPhase('gain')).toEqual(GOAL_BAND_CONSTANTS.bodyweightGainPctPerWeek);
   });
 });
@@ -476,5 +474,61 @@ describe('the module prescribes nothing: no kcal figure, no macro, no sized adju
       expect(result.urgencyRank).toBeGreaterThanOrEqual(0);
       expect(result.urgencyRank).toBeLessThanOrEqual(3);
     }
+  });
+});
+
+describe('a slow-loss recomposition commits to holding weight (VW-468)', () => {
+  const HOLD_LINE = { startWeightLbs: 190, weeklyRateLbs: 0 };
+
+  /** A daily series whose trailing 7-day mean at `NOW` is `meanLbs`, moving at `lbsPerWeek`. */
+  function seriesEndingAt(meanLbs: number, lbsPerWeek: number): BodyweightReading[] {
+    const slopePerDay = lbsPerWeek / 7;
+    return Array.from({ length: SERIES_DAYS }, (_, i) => {
+      const dayOffset = -(SERIES_DAYS - 1 - i);
+      return {
+        measuredAt: shift(NOW, dayOffset),
+        bodyweightLbs: meanLbs + 3 * slopePerDay + slopePerDay * dayOffset,
+      };
+    });
+  }
+
+  function slowLoss(meanLbs: number, lbsPerWeek: number): BodyweightRateAdvisory {
+    return computeBodyweightRateAdvisory({
+      trend: {
+        readings: seriesEndingAt(meanLbs, lbsPerWeek),
+        now: NOW,
+        phaseStartedAt: PHASE_STARTED_AT,
+        targetLine: HOLD_LINE,
+      },
+      phase: 'recomposition',
+      recompMode: 'slow-loss',
+      lastProposalAt: shift(NOW, -8),
+    });
+  }
+
+  it('reads a flat week as on track, not as noise to veto', () => {
+    const result = slowLoss(190, 0);
+    expect(result.vetoes).toEqual([]);
+    expect(result.outcome).toBe('within_band');
+  });
+
+  it('reads a sub-noise drift up as flat, so still on track', () => {
+    expect(slowLoss(190.2, 0.3).outcome).toBe('within_band');
+  });
+
+  it('reads a gaining lifter as behind the hold line, not ahead of it', () => {
+    const result = slowLoss(193, 0.8);
+    expect(result.observation.deviationDirection).toBe('behind');
+    expect(result.outcome).toBe('advisory');
+  });
+
+  it('does not correct a loss inside the band: that is the stretch being earned', () => {
+    const result = slowLoss(182, -0.8);
+    expect(result.observation.deviationDirection).toBe('ahead');
+    expect(result.outcome).toBe('within_band');
+  });
+
+  it('runs the ladder again once the loss is faster than the stretch edge', () => {
+    expect(slowLoss(175, -2.5).outcome).toBe('advisory');
   });
 });

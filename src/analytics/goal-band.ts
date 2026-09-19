@@ -86,6 +86,14 @@ export const GOAL_BAND_CONSTANTS = {
   recompositionSpecializationCap: 1,
   /** Weekly bodyweight loss in a deficit, committed then stretch. rp:rp-s11-fat-loss-rate-heuristic */
   bodyweightFatLossPctPerWeek: { low: -0.5, high: -1 },
+  /**
+   * Weekly bodyweight change for a declared slow-loss recomposition, committed then stretch.
+   *
+   * HUMAN DECISION 2026-09-19 (VW-468): an owner-chosen engineering default, "0 to -0.5 %/wk".
+   * The corpus is silent on a recomposition rate. Holding weight is the commitment, and the
+   * stretch is the slow edge of the cited fat-loss range (rp:rp-s11-fat-loss-rate-heuristic).
+   */
+  recompositionSlowLossPctPerWeek: { low: 0, high: -0.5 },
   /** Weekly bodyweight gain in a surplus, committed then stretch. rp:rp-s11-muscle-gain-rate-heuristic */
   bodyweightGainPctPerWeek: { low: 0.25, high: 0.5 },
   /** The corridor a maintenance bodyweight goal lives in. rp:rp-s12-maintenance-buffer-2pct */
@@ -508,9 +516,10 @@ function bodyweightShape(
 
 /**
  * A recomposition holds the maintenance corridor unless the lifter declared the
- * slow-loss target instead. The slow variant is one line rather than a band:
- * both edges sit on the SLOW edge of the cited fat-loss range, because anything
- * faster is a fat-loss phase wearing a recomposition label.
+ * slow-loss target instead. The slow variant commits to holding weight and
+ * stretches to the slow edge of the cited fat-loss range, because anything
+ * faster is a fat-loss phase wearing a recomposition label. Its direction is
+ * `down` even though the committed edge is flat: the goal is a loss.
  */
 function recompositionBodyweightShape(input: GoalBandInput, notes: string[]): BandShape {
   if (input.dietState.slowLoss !== true) {
@@ -521,14 +530,14 @@ function recompositionBodyweightShape(input: GoalBandInput, notes: string[]): Ba
     );
     return maintenanceCorridorShape(notes);
   }
-  const rate = C.bodyweightFatLossPctPerWeek.low;
+  const { low, high } = C.recompositionSlowLossPctPerWeek;
   notes.push(
-    `Recomposition declared as slow loss: both edges sit at ${rate}%/wk, the slow edge of the cited ` +
-      'fat-loss range (rp:rp-s11-fat-loss-rate-heuristic). There is no faster stretch to offer — a ' +
-      'faster loss is a fat-loss phase, not this one.',
+    `Recomposition declared as slow loss: holding the start weight is the committed edge and ` +
+      `${high}%/wk is the stretch, the slow edge of the cited fat-loss range ` +
+      '(rp:rp-s11-fat-loss-rate-heuristic). The corpus states no recomposition rate, so the band ' +
+      'is an owner-chosen default (VW-468). A faster loss is a fat-loss phase, not this one.',
   );
-  notes.push(bodyweightNote('loss', input.startValue, rate));
-  return shapeOf('rp_ramp', 'ramp', rate, rate);
+  return { ...shapeOf('rp_ramp', 'ramp', low, high), direction: 'down' };
 }
 
 /** Maintenance names a corridor to stay inside, so there is no weekly rate. */
