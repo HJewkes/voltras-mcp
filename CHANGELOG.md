@@ -107,6 +107,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
+  colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
+  thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and
+  10 / 20 / 30% for hypertrophy or no goal. The hero's amber and red lines move with them, so
+  bars, lines and the red background agree. During a rest the strip keeps the finished set's
+  own bands (VW-448).
 - The dashboard picks up `@titan-design/react-ui` 0.20.0, which changes three things you can
   see. A goal still calibrating draws its readings as plain dots, the next target as a hollow
   dot, the starting ramp as a dashed line, and the weeks ahead hatched. A goal card on a

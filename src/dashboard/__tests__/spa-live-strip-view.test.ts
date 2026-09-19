@@ -1,11 +1,10 @@
 // Unit tests for the pinned live strip mapper (VW-429): which routes and phases show the
-// strip, what it counts, and that zone and fatigue come from the same sources the live page
+// strip, what it counts, and that bar bands and fatigue come from the same sources the live page
 // reads. Real WA reps, so velocities take the same path `/api/snapshot` reps take.
 
 import { describe, expect, it } from 'vitest';
 import {
   addSampleToSet,
-  categorizeVelocity,
   createSet,
   MovementPhase,
   type Rep,
@@ -241,18 +240,30 @@ describe('mapStoreToLiveStrip: when it renders nothing', () => {
 });
 
 describe('mapStoreToLiveStrip: analytics pass-through', () => {
-  it("gives each rep workout-analytics' zone for its mean velocity", () => {
-    const velocities = [0.3, 0.4, 0.6, 0.9, 1.2];
-    const strip = mapStoreToLiveStrip(setSources(velocities), GOALS);
+  it("passes the set's stop bands, so its bars colour like the live hero's", () => {
+    const strength = {
+      ...setSources([0.6, 0.55]),
+      snapshot: { ...snapshot(reps([0.6, 0.55])), fatigueStop: exerciseFatigueStop('strength') },
+    };
 
-    expect(strip?.reps.map((r) => r.zone)).toEqual([
-      'grinding',
-      'maximalStrength',
-      'strengthSpeed',
-      'power',
-      'speed',
-    ]);
-    expect(strip?.reps.map((r) => r.zone)).toEqual(velocities.map((v) => categorizeVelocity(v)));
+    expect(mapStoreToLiveStrip(strength, GOALS)?.lossThresholds).toEqual([6.7, 13.3, 20]);
+  });
+
+  it("colours a rest by the closed set's own stop, not the exercise's", () => {
+    const watched = {
+      ...closedSet([0.6, 0.5]),
+      watch: { notifyOn: [{ type: 'velocity_loss_exceeded', pct: 25 }] },
+    };
+    const sources = restSources([watched], 1000);
+    const strip = mapStoreToLiveStrip(
+      {
+        ...sources,
+        snapshot: { ...sources.snapshot!, fatigueStop: exerciseFatigueStop('strength') },
+      },
+      GOALS,
+    );
+
+    expect(strip?.lossThresholds).toEqual([8.3, 16.7, 25]);
   });
 
   it('is fatigued exactly when the live aura reads stop (30% loss or more)', () => {
@@ -355,7 +366,13 @@ describe('the strip and the live page agree (VW-440, VW-441)', () => {
         verdict: mapStoreToFatigueModel(sources)?.verdict ?? null,
       });
 
-      expect(mapStoreToLiveStrip(sources, GOALS)?.isFatigued, `${lossPct}%`).toBe(page === 'stop');
+      const strip = mapStoreToLiveStrip(sources, GOALS);
+      expect(strip?.isFatigued, `${lossPct}%`).toBe(page === 'stop');
+      // The hero and both dual wings read `live.fatigueStop.bands`; the strip must get the same.
+      expect(strip?.lossThresholds).toEqual(live.fatigueStop.bands);
+      expect(strip?.lossThresholds).toEqual(
+        c.watch ? [13.3, 26.7, 40] : exerciseFatigueStop(c.intent).bands,
+      );
     }
   });
 

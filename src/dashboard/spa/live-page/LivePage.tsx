@@ -163,6 +163,7 @@ function SingleFatigueStage({
           velocities: live.repVelocities,
           targetReps: session.targetReps ?? undefined,
           liveRepIndex: live.repVelocities.length - 1,
+          lossThresholds: live.fatigueStop.bands,
         }}
         bodyHeight={bodyHeight}
       />
