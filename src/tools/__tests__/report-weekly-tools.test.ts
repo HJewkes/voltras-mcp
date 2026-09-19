@@ -239,7 +239,14 @@ describe('report.weekly', () => {
     });
 
     // Assert
-    expect(report.header.adherence).toEqual({ planned: 3, done: 2, trend: 'no-prior-data' });
+    expect(report.header.adherence).toEqual({
+      planned: 3,
+      done: 2,
+      trend: 'no-prior-data',
+      // No block is dated in this fixture, so the older touched-weeks rule counts (VW-478).
+      basis: 'touched_weeks',
+      weeks: [],
+    });
     expect(report.header.trainingDaysCompleted).toBe(3);
   });
 

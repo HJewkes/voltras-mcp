@@ -132,6 +132,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The weekly report counts adherence over the weeks the block calendar says were planned, so a
+  week nobody trained now reads "planned 4 / done 0" instead of disappearing from the count, and
+  a week the lifter held or extended is marked as such. Its header names the block and which
+  week of it the range ended in, and any change to a block's dates made during the week gets its
+  own line. A store with no dated block keeps the old count, over the weeks a session touched.
+  The Sunday review now says when the next block is due to be planned; its rate advisory is
+  unchanged (VW-478, #476).
 - A goal is now kept on its block's calendar. A target accepted for a dated block takes that
   block's weeks, deload weeks and end date, so moving a block that has not started moves its
   goals with it and leaves the committed and stretch numbers alone. Until the block starts,
