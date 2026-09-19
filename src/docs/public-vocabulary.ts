@@ -508,6 +508,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-462: session counts read in training days, one per local day trained.
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
+  'trainingDaysLogged',
 ];
 
 /**

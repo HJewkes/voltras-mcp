@@ -1047,7 +1047,7 @@ export type SessionCountFilter = SessionListFilter & {
   userId?: string;
   /**
    * Restrict to sessions that have actually finished (`ended_at IS NOT
-   * NULL`). Added for the tier-signal MVP (VW-92), whose `sessionsLogged`
+   * NULL`). Added for the tier-signal MVP (VW-92), whose logged-workout
    * count is explicitly defined over completed sessions only — an
    * in-progress session should not count toward graduation evidence.
    */
