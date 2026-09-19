@@ -1047,7 +1047,7 @@ export type SessionCountFilter = SessionListFilter & {
   userId?: string;
   /**
    * Restrict to sessions that have actually finished (`ended_at IS NOT
-   * NULL`). Added for the tier-signal MVP (VW-92), whose `sessionsLogged`
+   * NULL`). Added for the tier-signal MVP (VW-92), whose logged-workout
    * count is explicitly defined over completed sessions only — an
    * in-progress session should not count toward graduation evidence.
    */
@@ -1336,6 +1336,11 @@ export interface StoredTrainingProfile {
   injuries?: StoredInjury[];
   /** The named program `reportedSetsPerMuscle` came from (VW-148 / B36). */
   namedProgramHistory?: string;
+  /**
+   * How many months the most recent break from consistent training lasted (v34). The LENGTH of
+   * the break, not the time since it ended, so the answer never goes stale. 0 = never stopped.
+   */
+  lastBreakMonths?: number;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */

@@ -84,7 +84,9 @@ const SET_TRAINING_BACKGROUND_DESCRIPTION =
   'effortTolerance (low/moderate/high — how hard they are willing to be pushed) and target ' +
   '(where they want to END UP, free text). Those last three stay DISTINCT from each other ' +
   'and from goal on purpose: collapsing them is how intake ends up reading a target as a ' +
-  'baseline. Also namedProgramHistory (WHICH named program reportedSetsPerMuscle came from — ' +
+  'baseline. Also lastBreakMonths (how many months the most recent break from consistent ' +
+  'training lasted, 0 if none: the length of the break, not the time since it ended) and ' +
+  'namedProgramHistory (WHICH named program reportedSetsPerMuscle came from — ' +
   '5/3/1 and German Volume Training imply very different starting volumes for the same set ' +
   'count, so a raw set report without it is uninterpretable) and injuries (self-reported ' +
   'limitations: area, kind, optional note, and cardioLimitation for a CARDIOVASCULAR one). ' +
@@ -102,10 +104,17 @@ const GET_TRAINING_BACKGROUND_DESCRIPTION =
   '`profile: null` if nothing has been captured yet.';
 
 const GET_TIER_SIGNAL_DESCRIPTION =
-  'Read a crude experience-tier signal (VW-92 MVP) derived from the stored training profile ' +
-  '— a coarse ceiling, not a validated tier classification. Read-only; computes nothing new ' +
-  'and writes nothing. Do not treat this as authoritative for tier-gated decisions without ' +
-  'checking its `confidence`/`source` fields.';
+  'Read a crude experience-tier signal derived from the stored training profile and the logged ' +
+  'history: a coarse ceiling on the declared tier, not a validated classification. Read-only. ' +
+  '`confidence` is `confident` only once 24 training days span 12 weeks; `trainingDaysLogged` ' +
+  'counts distinct days trained, so a visit logged as one session per exercise is one day. The ' +
+  'ceiling reaches intermediate on a reported plateau plus either that logged history ' +
+  '(`ceilingBasis: logged_history`) or the returner path (`ceilingBasis: returner`): at least ' +
+  'a year of declared training, a last break under 12 months (`lastBreakMonths`), and no logged ' +
+  'gap of a year or more. A returner keeps the declared tier while `confidence` stays ' +
+  '`provisional`; say so, and say which path applied. The ceiling only ever lowers the declared ' +
+  'tier and never derives `advanced`. Check `confidence` and `source` before a tier-gated ' +
+  'decision.';
 
 const GET_STARTING_PRESCRIPTION_DESCRIPTION =
   'Seed a conservative starting point for a new lifter or a new exercise instead of ' +
@@ -133,7 +142,9 @@ const GET_ONBOARDING_GAPS_DESCRIPTION =
   'Non-cardiovascular injuries are not a gate and never set that flag. `goalRealism` is the ' +
   "stored goal and target plus RP's rule for checking commitment against them; it is PROSE TO " +
   'APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no ' +
-  'goal or target has been captured yet.';
+  'goal or target has been captured yet. `lastBreakMonths` is listed only for a lifter who ' +
+  'declared above beginner while their logged history is still short; `lastBreakQuestion` is ' +
+  'then the question to ask, as written.';
 
 const SET_DIET_PHASE_DESCRIPTION =
   'Record the ACTUAL diet phase the lifter is in — fat-loss, gain, maintenance or ' +
@@ -353,6 +364,7 @@ const PLAIN_MERGE_FIELDS = [
   'effortTolerance',
   'target',
   'namedProgramHistory',
+  'lastBreakMonths',
   // `injuries` copies wholesale like the rest, but the value it copies is the
   // WHOLE list: a caller re-sends every injury still standing, so a resolved
   // one can actually disappear. `[]` is a real answer ("asked, none").
@@ -452,7 +464,8 @@ async function getStartingPrescription(
  */
 async function getOnboardingGaps(state: ServerState): Promise<{ gaps: OnboardingGaps }> {
   const profile = await state.store.getTrainingProfile(LOCAL_USER_ID);
-  return { gaps: onboardingGaps(profile) };
+  const signal = await getTierSignal(state, LOCAL_USER_ID);
+  return { gaps: onboardingGaps(profile, { loggedHistoryMet: signal.evidence.loggedHistoryMet }) };
 }
 
 /**
