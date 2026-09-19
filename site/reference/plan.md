@@ -2,7 +2,7 @@
 
 # `plan.*`
 
-18 tools in the `plan` namespace.
+24 tools in the `plan` namespace.
 
 ## `plan.program.create`
 
@@ -44,7 +44,7 @@ Archive a program (soft-retire it from active use without deleting its history).
 
 Create a training block (mesocycle) under a program — takes the parent programId.
 
-A block holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that raises `weeksCount` after weeks were already built under it, `warnings[]` carries a `meso_length_grew_mid_block` advisory (VMCP-06.03 / B32). Never blocks the write.
+A block holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that raises `weeksCount` after weeks were already built under it, `warnings[]` carries a `meso_length_grew_mid_block` advisory (VMCP-06.03 / B32); that advisory never blocks the write. DATES (VW-474): `startsOn`, a local calendar date on a Monday, dates the block: it runs whole weeks and ends on the Sunday of its last week. A start that would overlap another dated block, or put the program out of order (block 2 before block 1), is refused and the error names the other block. Plan blocks AHEAD of when they start. `scaffoldWeeks: true` builds one empty week row per week ("Week 1" onwards) for a block with none, and `deloadWeeks` (1-based week numbers) flags which of them are deloads. An existing dated block keeps its dates, length, program and order here: use plan.block.schedule and plan.block.update. Returns the block, its weeks, its calendar and the schedule row written (or null).
 
 **Parameters**
 
@@ -55,6 +55,10 @@ A block holds one or more weeks. Passing the `id` of an EXISTING block updates i
 - `focus` — `string`, optional.
 - `weeksCount` — `integer` (min 1), **required**.
 - `notes` — `string`, optional.
+- `startsOn` — `string`, optional.
+- `deloadWeeks` — `integer[]`, optional.
+- `scaffoldWeeks` — `boolean`, optional.
+- `reason` — `string`, optional.
 
 ## `plan.block.list_for_program`
 
@@ -63,6 +67,54 @@ List the blocks belonging to one program (takes programId).
 **Parameters**
 
 - `programId` — `string`, **required**.
+
+## `plan.block.update`
+
+Edit a block (mesocycle): name, focus, notes or length in weeks (weeksCount).
+
+On a DATED block a length change records a 'resized' schedule row and moves the block's end date; the start never moves here (that is plan.block.schedule). Refused on a block that has ended, when a current block would be shortened below the week it is in, and when the longer block would overlap another dated block (the error names it; move that block first). An undated block just takes the edit. `warnings[]` carries the `meso_length_grew_mid_block` advisory when a block grows after its weeks were built.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `name` — `string`, optional.
+- `focus` — `string`, optional.
+- `notes` — `string`, optional.
+- `weeksCount` — `integer` (min 1), optional.
+- `reason` — `string`, optional.
+
+## `plan.block.schedule`
+
+Date, move or un-date a block.
+
+`startsOn` is a local calendar date on a Monday; the block ends on the Sunday of its last week. The first date given records a planned row; a new date for a block that has not started records a 'moved' row; `startsOn: null` un-dates an upcoming block and keeps the dates it had in its history. A block that has started or ended can never move: offer plan.week.skip for a missed week, or plan.block.update to change its length. `cascade: 'later_blocks'` moves every later dated block of the same program by the same number of weeks, all in one write. Without it, a date that would overlap another dated block (in any active program) is refused and the error names that block. Dates must follow the program order: block 2 cannot start before block 1. Setting the date it already has writes nothing. Returns every row written with the dates it moved from and to. Goal targets set for a block follow its dates.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `startsOn` — `any`, **required**.
+- `reason` — `string`, optional.
+- `cascade` — `none` | `later_blocks`, optional.
+
+## `plan.block.schedule_history`
+
+Every schedule change a block has had, oldest first: each row's kind (planned, moved, resized, week_skipped, cleared), the start and end in force under it, its length, its skipped weeks, the reason given, who made it (`user`, `coach-default` or `import`) and when.
+
+Use it to say how a block has moved, for example "first planned for Mon 14 Sep, now Mon 28 Sep". An undated block has no rows.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+
+## `plan.block.calendar`
+
+A block's dated calendar: start, end, state (`undated`, `upcoming`, `current`, `ended`) and one entry per calendar week with its dates, the plan week run in it (null for an off week added by an extend), deload flag, name, whether it was skipped (`hold` or `extend`), the plan week row id, how many workout templates it holds, and the local dates the owner trained in it (`sessionDays`).
+
+A week with `templateCount: 0` has nothing planned; it is not a shorter block. An undated block returns no weeks.
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
 
 ## `plan.week.create`
 
@@ -89,6 +141,32 @@ Each week reports `phaseType`, `isDeload` and `weekIndex` alongside its `orderIn
 **Parameters**
 
 - `blockId` — `string`, **required**.
+
+## `plan.week.update`
+
+Edit one plan week: `isDeload`, `name` or `phaseType` (give at least one).
+
+The week keeps its place in the block; its dates come from the block schedule, never from the week.
+
+**Parameters**
+
+- `weekId` — `string`, **required**.
+- `isDeload` — `boolean`, optional.
+- `name` — `string`, optional.
+- `phaseType` — `string`, optional.
+
+## `plan.week.skip`
+
+Record a missed week in the CURRENT block.
+
+ASK THE LIFTER EACH TIME which they want, and never infer it from a quiet week: `hold` keeps the calendar (the week is marked held, its plan week is not re-run, and the block still ends on its planned date); `extend` inserts an off week there, so that plan week and every later one run a week later and the block ends a week later. Pass `mode` with their answer. Omit `mode` only when the lifter did not choose: the calendar holds, recorded as the coach's default rather than their choice. `week` is the calendar week number plan.block.calendar shows; the result echoes the Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the lifter. Refused for a block that is not current, for a week that has not started, for a week already skipped, and for an extend that would run into the next dated block (the error names it).
+
+**Parameters**
+
+- `blockId` — `string`, **required**.
+- `week` — `integer` (min 1), **required**.
+- `reason` — `string`, optional.
+- `mode` — `hold` | `extend`, optional.
 
 ## `plan.template.create`
 
