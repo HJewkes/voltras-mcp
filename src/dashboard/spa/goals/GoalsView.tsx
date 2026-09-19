@@ -32,6 +32,7 @@
 import React from 'react';
 import { Text } from 'react-native';
 import {
+  CardTitle,
   EmptyState,
   GoalCard,
   MetricTiles,
@@ -161,11 +162,26 @@ function cardGridStyle(narrow: boolean): React.CSSProperties {
   };
 }
 
+/**
+ * A group of goal cards titled on the page background (VW-435, VW-454): the cards
+ * are the first elevated surface, not cards inside a panel, so they get the panel's
+ * gutter back as width. The title is the panel title's own type (`CardTitle`), so
+ * a titled group reads the same whether or not it sits on a surface.
+ */
+function PageSection(props: { title: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: SPACE.sm }}>
+      <CardTitle>{props.title}</CardTitle>
+      {props.children}
+    </section>
+  );
+}
+
 /** One card per exercise-tracked target (`top_load_at_reps`). */
 function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
-    <PanelCard title="Per-lift">
+    <PageSection title="Per-lift">
       <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
           <WithCalibrationNote key={row.view.target.id} view={row.view}>
@@ -182,7 +198,7 @@ function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.J
           </WithCalibrationNote>
         ))}
       </div>
-    </PanelCard>
+    </PageSection>
   );
 }
 
@@ -193,7 +209,7 @@ function MuscleGrid(props: {
 }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
-    <PanelCard title="Muscle priorities">
+    <PageSection title="Muscle priorities">
       <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
           <GoalMuscleCard
@@ -209,7 +225,7 @@ function MuscleGrid(props: {
           />
         ))}
       </div>
-    </PanelCard>
+    </PageSection>
   );
 }
 
