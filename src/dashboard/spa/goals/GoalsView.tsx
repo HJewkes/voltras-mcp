@@ -95,7 +95,7 @@ export function GoalsView(props: { data: GoalsPageData }): React.JSX.Element {
 function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
   const { priority, view } = props.row;
   return (
-    <WithCalibrationNote view={view}>
+    <WithCalibrationNote view={view} chartShowsNote>
       <GoalCard
         size="full"
         title={priorityLabel(priority)}
@@ -111,17 +111,20 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
 }
 
 /**
- * A calibrating target's plain sentence under its card (VW-444), or the line
- * an accepted starting ramp carries once its lift has calibrated. The chart's
- * in-plot note carries the short form of the first; a card with nothing to say
- * renders alone, with no wrapper.
+ * The line under a card about calibration (VW-444): a calibrating target's plain
+ * sentence, or the line an accepted starting ramp carries once its lift has
+ * calibrated. A card whose chart states the wait in the plot (`chartShowsNote`,
+ * the full card) drops the sentence rather than say the count twice (human,
+ * review round); the compact card's chart has no note, so it keeps it.
  */
 function WithCalibrationNote(props: {
   view: GoalTargetRow['view'];
+  chartShowsNote?: boolean;
   children: React.JSX.Element;
 }): React.JSX.Element {
   const color = useOnSurfaceColor('secondary');
-  const line = calibrationLine(props.view);
+  const inPlot = props.chartShowsNote === true && props.view.calibration !== undefined;
+  const line = inPlot ? null : calibrationLine(props.view);
   if (line === null) return props.children;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SPACE.xs }}>

@@ -338,7 +338,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
   const SENTENCE =
     'Starting ramp, not yet based on your lifts. 1 more comparable session to calibrate.';
 
-  it('says under the card that the target is a starting ramp, with the sessions still needed', () => {
+  it('says it once, under the compact card; the full card states the wait in its chart', () => {
     const { data, benchPriority } = baseData();
     const benchTarget = data.priorities[0]!.targets[0]!;
     const cold = view(
@@ -351,7 +351,7 @@ describe('a goal accepted while calibrating (VW-444)', () => {
     const html = render(data);
 
     expect(cold.status).toBe('calibrating');
-    expect(html.split(SENTENCE)).toHaveLength(3);
+    expect(html.split(SENTENCE)).toHaveLength(2);
   });
 
   it('adds no calibration sentence once no target is calibrating', () => {
@@ -392,10 +392,11 @@ describe('a calibrated starting ramp (VW-444 part 2)', () => {
     return data;
   }
 
-  it('says a target based on the lifts is ready under the card', () => {
-    expect(render(rampData(false))).toContain(
-      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.',
-    );
+  it('says a target based on the lifts is ready under both cards', () => {
+    const line =
+      'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.';
+    // The full card keeps it: its chart has no in-plot note once the lift has calibrated.
+    expect(render(rampData(false)).split(line)).toHaveLength(3);
   });
 
   it('shows no line at all once the lifter declined', () => {
