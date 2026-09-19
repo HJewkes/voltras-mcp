@@ -55,9 +55,17 @@ import {
   type AnchorSelectionReport,
   type BaselineObservations,
 } from './exercise-baselines.js';
+import { scheduleProblem } from '../plan/block-calendar.js';
 import {
+  BLOCK_SCHEDULE_CHANGED_BY,
+  BLOCK_SCHEDULE_KINDS,
   LOCAL_USER_ID,
+  type AppendBlockScheduleInput,
   type BaselineState,
+  type BlockScheduleChangedBy,
+  type BlockScheduleKind,
+  type BlockScheduleSkip,
+  type StoredBlockSchedule,
   type DeclareDietPhaseInput,
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
@@ -123,7 +131,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 32;
+const SCHEMA_VERSION = 33;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -248,6 +256,8 @@ const GOAL_TARGETS_DDL = `
     anchor_reps INTEGER,
     -- v31 (VW-399): the fixed load a reps_at_load target is counted at; NULL elsewhere.
     anchor_load REAL,
+    -- v33 (VW-473): the block this target was set for; NULL on older and unbound targets.
+    block_id TEXT REFERENCES training_blocks(id) ON DELETE SET NULL,
     start_value REAL NOT NULL,
     start_measured_at TEXT NOT NULL,
     band_low_pct_per_week REAL NOT NULL,
@@ -307,6 +317,36 @@ const EXERCISE_CHAPTERS_DDL = `
     reason TEXT,
     retired_at TEXT
   );
+`;
+
+/**
+ * v33 (VW-473): `block_schedules`, the dated history of each block's calendar (VW-447 model C).
+ *
+ * APPEND-ONLY. Every row is a complete snapshot, never a delta; the live schedule is the
+ * block's highest `seq`. The trigger refuses any UPDATE, and the block FK is RESTRICT, so a
+ * block with schedule history cannot be deleted until a tool decides what that should mean.
+ * UNIQUE (block_id, seq) is both the race guard and the index the live-row read uses.
+ *
+ * Shared with `migrateV32ToV33` so the fresh-DB shape and the migrated shape cannot drift.
+ */
+const BLOCK_SCHEDULES_DDL = `
+  CREATE TABLE IF NOT EXISTS block_schedules (
+    id TEXT PRIMARY KEY,
+    block_id TEXT NOT NULL REFERENCES training_blocks(id) ON DELETE RESTRICT,
+    seq INTEGER NOT NULL CHECK (seq >= 1),
+    starts_on TEXT CHECK (starts_on IS NULL OR starts_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    weeks_count INTEGER NOT NULL CHECK (weeks_count >= 1),
+    skips_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(skips_json)),
+    kind TEXT NOT NULL CHECK (kind IN (${sqlList(BLOCK_SCHEDULE_KINDS)})),
+    reason TEXT,
+    changed_by TEXT NOT NULL CHECK (changed_by IN (${sqlList(BLOCK_SCHEDULE_CHANGED_BY)})),
+    declared_at TEXT NOT NULL,
+    CHECK ((kind = 'cleared') = (starts_on IS NULL)),
+    UNIQUE (block_id, seq)
+  );
+  CREATE TRIGGER IF NOT EXISTS block_schedules_append_only
+    BEFORE UPDATE ON block_schedules
+    BEGIN SELECT RAISE(ABORT, 'block_schedules is append-only: write a new row'); END;
 `;
 
 const SCHEMA_SQL = `
@@ -1008,7 +1048,8 @@ ${ACCOUNTABILITY_STATE_DDL}
 ${RIR_VELOCITY_MODELS_DDL}
 ${PRIORITIES_DDL}
 ${GOAL_TARGETS_DDL}
-${EXERCISE_CHAPTERS_DDL}`;
+${EXERCISE_CHAPTERS_DDL}
+${BLOCK_SCHEDULES_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1714,6 +1755,30 @@ function migrateV31ToV32(db: DatabaseSync): void {
 }
 
 /**
+ * v32 -> v33: dated blocks (VW-473). PURELY ADDITIVE and back-fills NOTHING: the
+ * `block_schedules` table and its append-only trigger, and `goal_targets.block_id`. Every
+ * existing block stays undated (zero schedule rows) and every existing target stays unbound
+ * (NULL `block_id`): a date given to a block after the fact would be a guess. One transaction,
+ * so a failure leaves the v32 shape; idempotent, so a re-open changes nothing.
+ */
+function migrateV32ToV33(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    db.exec(BLOCK_SCHEDULES_DDL);
+    addColumnIfMissing(
+      db,
+      'goal_targets',
+      'block_id',
+      'TEXT REFERENCES training_blocks(id) ON DELETE SET NULL',
+    );
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -2015,6 +2080,62 @@ interface PriorityRow {
   mesos_held: number;
 }
 
+interface BlockScheduleRow {
+  id: string;
+  block_id: string;
+  seq: number;
+  starts_on: string | null;
+  weeks_count: number;
+  skips_json: string;
+  kind: string;
+  reason: string | null;
+  changed_by: string;
+  declared_at: string;
+}
+
+const INSERT_BLOCK_SCHEDULE_SQL = `
+  INSERT INTO block_schedules
+    (id, block_id, seq, starts_on, weeks_count, skips_json, kind, reason, changed_by, declared_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+function blockScheduleBindings(row: StoredBlockSchedule): (string | number | null)[] {
+  return [
+    row.id,
+    row.blockId,
+    row.seq,
+    row.startsOn ?? null,
+    row.weeksCount,
+    JSON.stringify(row.skips),
+    row.kind,
+    row.reason ?? null,
+    row.changedBy,
+    row.declaredAt,
+  ];
+}
+
+function rowToBlockSchedule(row: BlockScheduleRow): StoredBlockSchedule {
+  const out: StoredBlockSchedule = {
+    id: row.id,
+    blockId: row.block_id,
+    seq: row.seq,
+    weeksCount: row.weeks_count,
+    skips: JSON.parse(row.skips_json) as BlockScheduleSkip[],
+    kind: row.kind as BlockScheduleKind,
+    changedBy: row.changed_by as BlockScheduleChangedBy,
+    declaredAt: row.declared_at,
+  };
+  if (row.starts_on !== null) out.startsOn = row.starts_on;
+  if (row.reason !== null) out.reason = row.reason;
+  return out;
+}
+
+function blockScheduleInvalid(blockId: string, problem: string): Error {
+  const err = new Error(`block ${blockId}: ${problem}.`);
+  (err as Error & { code: string }).code = 'BLOCK_SCHEDULE_INVALID';
+  return err;
+}
+
 interface GoalTargetRow {
   id: string;
   priority_id: string;
@@ -2022,6 +2143,7 @@ interface GoalTargetRow {
   exercise_id: string | null;
   anchor_reps: number | null;
   anchor_load: number | null;
+  block_id: string | null;
   start_value: number;
   start_measured_at: string;
   band_low_pct_per_week: number;
@@ -3573,6 +3695,53 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(declared);
   }
 
+  async appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule> {
+    const problem = scheduleProblem(input);
+    if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const last = this.db
+        .prepare(`SELECT MAX(seq) AS seq FROM block_schedules WHERE block_id = ?`)
+        .get(input.blockId) as { seq: number | null } | undefined;
+      const row: StoredBlockSchedule = {
+        ...input,
+        id: randomUUID(),
+        seq: (last?.seq ?? 0) + 1,
+      };
+      this.db.prepare(INSERT_BLOCK_SCHEDULE_SQL).run(...blockScheduleBindings(row));
+      this.db.exec('COMMIT');
+      return Promise.resolve(row);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined> {
+    const row = this.db
+      .prepare(`SELECT * FROM block_schedules WHERE block_id = ? ORDER BY seq DESC LIMIT 1`)
+      .get(blockId) as BlockScheduleRow | undefined;
+    return Promise.resolve(row === undefined ? undefined : rowToBlockSchedule(row));
+  }
+
+  async listLiveBlockSchedules(): Promise<StoredBlockSchedule[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT s.* FROM block_schedules s
+           WHERE s.seq = (SELECT MAX(seq) FROM block_schedules WHERE block_id = s.block_id)
+           ORDER BY s.starts_on ASC, s.block_id ASC`,
+      )
+      .all() as unknown as BlockScheduleRow[];
+    return Promise.resolve(rows.map(rowToBlockSchedule));
+  }
+
+  async listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM block_schedules WHERE block_id = ? ORDER BY seq ASC`)
+      .all(blockId) as unknown as BlockScheduleRow[];
+    return Promise.resolve(rows.map(rowToBlockSchedule));
+  }
+
   async listDietPhases(userId: string): Promise<StoredDietPhase[]> {
     const rows = this.db
       .prepare(`SELECT * FROM diet_phases WHERE user_id = ? ORDER BY started_at ASC`)
@@ -4690,6 +4859,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 31) {
     migrateV31ToV32(db);
   }
+  if (current <= 32) {
+    migrateV32ToV33(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4875,6 +5047,7 @@ function rowToGoalTarget(row: GoalTargetRow): StoredGoalTarget {
   if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
   if (row.anchor_reps !== null) out.anchorReps = row.anchor_reps;
   if (row.anchor_load !== null) out.anchorLoad = row.anchor_load;
+  if (row.block_id !== null) out.blockId = row.block_id;
   if (row.accepted_by !== null) out.acceptedBy = row.accepted_by as StoredGoalTargetAcceptedBy;
   if (row.retired_at !== null) out.retiredAt = row.retired_at;
   if (row.outcome !== null) out.outcome = row.outcome as StoredGoalTargetOutcome;
@@ -4970,8 +5143,9 @@ const PUT_GOAL_TARGET_SQL = `
     (id, priority_id, metric, exercise_id, anchor_reps, anchor_load, start_value,
      start_measured_at, band_low_pct_per_week, band_high_pct_per_week, committed_value,
      stretch_value, basis, info_level, tier_used, tier_provisional, diet_phase_at_derivation,
-     accepted_by, acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     accepted_by, acknowledged_stretch, derived_at, ends_at, retired_at, outcome, new_chapter_at,
+     block_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     metric = excluded.metric,
     exercise_id = excluded.exercise_id,
@@ -4994,7 +5168,8 @@ const PUT_GOAL_TARGET_SQL = `
     ends_at = excluded.ends_at,
     retired_at = excluded.retired_at,
     outcome = excluded.outcome,
-    new_chapter_at = excluded.new_chapter_at
+    new_chapter_at = excluded.new_chapter_at,
+    block_id = excluded.block_id
 `;
 
 function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
@@ -5023,6 +5198,7 @@ function goalTargetBindings(t: StoredGoalTarget): (string | number | null)[] {
     t.retiredAt ?? null,
     t.outcome ?? null,
     t.newChapterAt ?? null,
+    t.blockId ?? null,
   ];
 }
 
