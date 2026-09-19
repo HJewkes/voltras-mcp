@@ -114,7 +114,7 @@ entry is written from the user's point of view is a review question, not a check
   out, a gaining week reads behind, and a loss inside the band draws no correction. The
   hold is judged in the block's last week, so an early flat weigh-in no longer marks the
   goal met for the whole block. Accepted targets keep the numbers they were derived with
-  until the next block re-derives them.
+  until the next block re-derives them (#458).
 - Every other session count now counts training days too, by the same rule as the
   sessions goal: a day with a dozen exercises logged as separate sessions counts once
   (VW-462, #457).
