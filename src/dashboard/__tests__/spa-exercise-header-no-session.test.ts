@@ -9,7 +9,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { ExerciseHeader } from '../spa/live-page/LiveView.js';
+import { ExerciseHeader } from '../spa/live-page/ExerciseHeader.js';
 import type { DashboardModel, SessionModel } from '../spa/live-page/model.js';
 
 function sessionModel(over: Partial<SessionModel> = {}): SessionModel {

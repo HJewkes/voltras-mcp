@@ -10,7 +10,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { ExerciseHeader } from '../spa/live-page/LiveView.js';
+import { ExerciseHeader } from '../spa/live-page/ExerciseHeader.js';
 import { RestView } from '../spa/live-page/RestView.js';
 import type {
   CompletedSet,

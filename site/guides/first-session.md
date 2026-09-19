@@ -55,7 +55,7 @@ long as they're set as the lifter — the header is yours by default, so a name 
 appears while someone else is actually on the cable, and it goes back to showing nothing
 extra the moment you clear it.
 
-<!-- src/dashboard/spa/live-page/LiveView.tsx:360-374 -->
+<!-- src/dashboard/spa/live-page/ExerciseHeader.tsx:222-236 -->
 
 Afterwards: [`session.list`](/reference/session) / `session.get` for history, `set.get`
 for one set's full rep detail, [`metrics.compute`](/reference/metrics) for the analytics
