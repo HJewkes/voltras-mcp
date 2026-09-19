@@ -1,5 +1,5 @@
 {
-  "definitionHash": "1fe737f799892e6b0620ffe0d51c2216b228701f21f461adfddf169fe49ea017",
+  "definitionHash": "3bd87f2446b1cd92cd7313fc58e90590656cbbe8010dd5325bdfe581f0274b37",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -152,7 +152,7 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT", "Whole body"],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Whole body"],
       "assertedValues": [
         "Goal 8 x 127.5 lb",
         "Best 8 x 110 lb",
@@ -161,8 +161,8 @@
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 92883,
-      "sha256": "c1d2569586faad8e4831e712a4619d09b020c7eab213fb0718d8beeb3e969209"
+      "bytes": 74317,
+      "sha256": "30a635a3d534802546ac8f31e03ec3a9eb4027fa3e6b55725080bf4d73d7317c"
     },
     {
       "name": "goals-phone",
@@ -174,7 +174,7 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "PER-LIFT", "Whole body"],
+      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Whole body"],
       "assertedValues": [
         "Goal 8 x 127.5 lb",
         "Best 8 x 110 lb",
@@ -183,8 +183,8 @@
       ],
       "width": 390,
       "height": 844,
-      "bytes": 50330,
-      "sha256": "18422dd37a3037e41fbf6ed389828c2b9be56ab418a8251be0b55f3bfe94c41d"
+      "bytes": 42896,
+      "sha256": "1131d22e2e11a5be23f7433b84611fbfaaf5a8750c167e0d0a71af9b852ee008"
     },
     {
       "name": "body-week",
