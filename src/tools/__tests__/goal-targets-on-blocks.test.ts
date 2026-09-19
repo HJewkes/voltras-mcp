@@ -116,7 +116,13 @@ function reps(setId: string): StoredRep[] {
 }
 
 async function benchSession(id: string, at: string, weightLbs = 135): Promise<void> {
-  await store.putSession({ id, startedAt: at, endedAt: at, exerciseId: 'bench-press' });
+  await store.putSession({
+    kind: 'training',
+    id,
+    startedAt: at,
+    endedAt: at,
+    exerciseId: 'bench-press',
+  });
   for (const suffix of ['a', 'b']) {
     await store.putSet({
       id: `${id}-${suffix}`,

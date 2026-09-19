@@ -149,7 +149,8 @@ function makeStore(): SessionStore & {
     // profile row plus the session aggregates. Defaults model a fresh user
     // (no declared tier, no history) — i.e. tier 'beginner', source 'default'.
     getTrainingProfile: vi.fn(async () => undefined),
-    listSessionEndTimes: vi.fn(async () => []),
+    listTrainingDayInstants: vi.fn(async () => []),
+    listSessionReviewRows: vi.fn(async () => []),
     getSessionDateSpan: vi.fn(async () => ({ first: null, last: null })),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),

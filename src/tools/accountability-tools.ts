@@ -44,6 +44,7 @@ import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { nextWorkout as lookupNextWorkout } from './plan-tools.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { buildWeeklyReport } from './report-tools.js';
 
 const SUNDAY = 0;
@@ -118,6 +119,14 @@ export interface AccountabilityStateResult {
   tick: 'sunday_anchor' | 'thursday' | 'none';
   adherenceTrend: AdherenceTrend | null;
   decision: AccountabilityDecision;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are excluded
+   * from every count here, so a zero beside a non-zero `unreviewedDays` means the
+   * history is withheld pending review, not absent.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 export function registerAccountabilityTools(
@@ -206,6 +215,7 @@ export async function describeAccountabilityState(
     tick: evaluation.tick,
     adherenceTrend: evaluation.trend,
     decision: evaluation.decision,
+    ...(await readUnreviewed(state.store)),
   };
 }
 
@@ -223,6 +233,14 @@ export interface AccountabilityPreviewResult {
   text: string | null;
   inputsUsed: AccountabilityPreviewInputsUsed | null;
   evaluatedAt: string;
+  /**
+   * Past local days nobody has marked training or test (VW-489). They are excluded
+   * from every count here, so a zero beside a non-zero `unreviewedDays` means the
+   * history is withheld pending review, not absent.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 export async function describeAccountabilityPreview(
@@ -232,7 +250,14 @@ export async function describeAccountabilityPreview(
   const evaluation = await evaluateDryRun(state, input);
   const evaluatedAt = evaluation.now.toISOString();
   if (evaluation.decision.action !== 'send') {
-    return { decision: evaluation.decision, kind: null, text: null, inputsUsed: null, evaluatedAt };
+    return {
+      decision: evaluation.decision,
+      kind: null,
+      text: null,
+      inputsUsed: null,
+      evaluatedAt,
+      ...(await readUnreviewed(state.store)),
+    };
   }
   const rendered = await renderDecision(
     state,
@@ -246,6 +271,7 @@ export async function describeAccountabilityPreview(
     text: rendered.text,
     inputsUsed: rendered.inputsUsed,
     evaluatedAt,
+    ...(await readUnreviewed(state.store)),
   };
 }
 

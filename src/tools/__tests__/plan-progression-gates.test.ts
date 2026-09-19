@@ -603,6 +603,7 @@ describe('plan.suggest_progression — tier read', () => {
     await store.putWorkoutTemplate({ id: 'tmpl-1', weekId: 'week-1', orderIndex: 0, name: 'Full' });
     await store.putPlannedExercise(plannedBand(8, 12));
     await store.putSession({
+      kind: 'training',
       id: BASIS,
       startedAt: '2026-08-01T00:00:00.000Z',
       endedAt: '2026-08-01T01:00:00.000Z',

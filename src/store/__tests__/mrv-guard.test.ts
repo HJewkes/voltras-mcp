@@ -103,7 +103,7 @@ describe('checkMrvUnderperformance', () => {
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
     for (const s of ['sess-1', 'sess-2']) {
-      await store.putSession({ id: s, startedAt: daysAgo(3) });
+      await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
   });
 
@@ -292,7 +292,7 @@ describe('checkMrvGuard', () => {
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
     for (const s of ['sess-1', 'sess-2', 'sess-3']) {
-      await store.putSession({ id: s, startedAt: daysAgo(3) });
+      await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(3) });
     }
   });
 

@@ -18,6 +18,7 @@ import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { deriveTarget, readDerivationContext, selectionOf } from '../../tools/goal-derivation.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import { buildGoalProgressView, type GoalProgressView } from '../read-models/index.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HORIZON_WEEKS = 8;
@@ -260,7 +261,12 @@ describe('a session-count band is anchored in the target frame (VW-451)', () => 
       const now = new Date();
       for (let day = 1; day <= 5; day += 1) {
         const at = new Date(now.getTime() - day * 4 * DAY_MS).toISOString();
-        await store.putSession({ id: `s${day}`, startedAt: at, endedAt: at });
+        await seedTrainingDay(store, {
+          kind: 'training',
+          id: `s${day}`,
+          startedAt: at,
+          endedAt: at,
+        });
       }
       const priority = await store.putPriority({
         id: 'pri-sessions',

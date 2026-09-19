@@ -4,6 +4,7 @@
 // "newest program" picked the wrong one (VW-469). Ids are short stand-ins for the real UUIDs.
 
 import type { SqliteSessionStore } from '../../../store/sqlite-store.js';
+import { seedTrainingDay } from '../../../__tests__/fixtures/training-day.js';
 
 export const RETURN_PROGRAM = 'Voltra Return — 2026';
 export const TEST_PROGRAM = 'MCP-Driven Test — Upper Body A';
@@ -113,7 +114,7 @@ async function trained(
   startedAt: string,
 ): Promise<void> {
   const endedAt = new Date(Date.parse(startedAt) + 45 * 60_000).toISOString();
-  await store.putSession({ id: sessionId, startedAt, endedAt });
+  await seedTrainingDay(store, { kind: 'training', id: sessionId, startedAt, endedAt });
   await store.putProgramAssignment({
     id: `assign-${sessionId}`,
     sessionId,

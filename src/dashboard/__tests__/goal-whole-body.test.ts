@@ -13,6 +13,7 @@ import { registerGoalTools } from '../../tools/goal-tools.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
 import { cardChart } from '../spa/goals/goals-model.js';
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A Wednesday, so no case depends on the weekday the suite runs. */
@@ -224,13 +225,19 @@ describe('week 1 of a bodyweight rate band', () => {
 describe('the sessions view', () => {
   it('counts due-by-now, the training days and the days leaving the window, from the view’s now', async () => {
     for (const ago of [25, 22, 10, 2]) {
-      await store.putSession({
+      await seedTrainingDay(store, {
+        kind: 'training',
         id: `s-${ago}`,
         startedAt: daysAgo(ago),
         endedAt: daysAgo(ago - 0.01),
       });
     }
-    await store.putSession({ id: 's-10b', startedAt: daysAgo(9.99), endedAt: daysAgo(9.98) });
+    await seedTrainingDay(store, {
+      kind: 'training',
+      id: 's-10b',
+      startedAt: daysAgo(9.99),
+      endedAt: daysAgo(9.98),
+    });
     const accepted = await acceptedView('sessions');
     const viewNow = new Date(NOW.getTime() + 3.5 * DAY_MS);
 

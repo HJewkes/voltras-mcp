@@ -211,7 +211,7 @@ describe('v6 → v7 migration: identity, capture and state', { timeout: 20_000 }
       const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
         user_version?: number;
       };
-      expect(version.user_version).toBe(34);
+      expect(version.user_version).toBe(35);
       // The rebuild drops and recreates `sets`. `reps` has no REFERENCES
       // clause, so the drop must not have cascaded into it.
       const repIds = (raw.prepare('SELECT id FROM reps ORDER BY id').all() as { id: string }[]).map(
@@ -374,7 +374,11 @@ describe('putSet upsert vs the v7 FK children of `sets`', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
   });
 
   afterEach(async () => {
@@ -471,7 +475,11 @@ describe('v7 nullability and set_purpose round-trip', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
   });
 
   afterEach(async () => {
@@ -548,7 +556,11 @@ describe('v7 → v8: firmware duration column rename', () => {
   });
 
   it('round-trips the summary duration', async () => {
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'dur-1', firmwareSummaryDurationMs: 11_240 }));
     expect((await store.getSet('dur-1'))?.firmwareSummaryDurationMs).toBe(11_240);
   });
@@ -578,7 +590,7 @@ describe('v7 → v8: firmware duration column rename', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         // The row survived the v6→v7 rebuild AND the v7→v8 rename.
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v8']);
@@ -628,7 +640,11 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
   it('round-trips the lbs value rather than collapsing it to a flag', async () => {
     // Under the v7 boolean model both of these stored 1 and read back `true`,
     // making a 40 lb and a 5 lb inverse-chains set the same configuration.
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'ic-40', inverseChainsLbs: 40 }));
     await store.putSet(makeSet({ id: 'ic-5', inverseChainsLbs: 5 }));
     expect((await store.getSet('ic-40'))?.inverseChainsLbs).toBe(40);
@@ -638,7 +654,11 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
   it('distinguishes zero inverse chains from absent inverse chains', async () => {
     // Zero is an observation ("the user has none set"); absent is "nobody
     // looked". Defaulting one to the other would invent data.
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'ic-zero', inverseChainsLbs: 0 }));
     await store.putSet(makeSet({ id: 'ic-absent' }));
     expect((await store.getSet('ic-zero'))?.inverseChainsLbs).toBe(0);
@@ -648,7 +668,11 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
   it('updates the column on a re-put', async () => {
     // A column present in the INSERT list but missing from the ON CONFLICT DO
     // UPDATE never updates on the force-end/re-end retry, and nothing errors.
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'ic-re', inverseChainsLbs: 10 }));
     await store.putSet(makeSet({ id: 'ic-re', inverseChainsLbs: 25 }));
     expect((await store.getSet('ic-re'))?.inverseChainsLbs).toBe(25);
@@ -679,7 +703,7 @@ describe('v8 → v9: inverse chains is a weight, not a flag', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v9']);
       } finally {
@@ -739,7 +763,7 @@ describe('v9 → v10: idx_sets_exercise_session (VMCP-01.72b S4)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         const rows = raw.prepare(`SELECT id FROM sets`).all() as { id: string }[];
         expect(rows.map((r) => r.id)).toEqual(['pre-v10']);
       } finally {
@@ -825,7 +849,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
       } finally {
         void opened.close();
       }
@@ -863,7 +887,7 @@ describe('v10 → v11: sets.velocity_units (VW-160)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
       } finally {
         void opened.close();
       }
@@ -966,7 +990,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         // The pre-existing row survived the additive migration untouched.
         const sessions = raw.prepare(`SELECT id FROM sessions`).all() as { id: string }[];
         expect(sessions.map((s) => s.id)).toEqual(['s1']);
@@ -1006,7 +1030,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         // Nothing is backfilled: a pre-v13 row genuinely does not know which
         // path opened it, and it survives the additive migration untouched.
         const rows = raw.prepare(`SELECT id, auto_created_by, upgraded FROM sets`).all() as {
@@ -1026,7 +1050,11 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
   it('round-trips the auto-created and upgraded tags on a set', async () => {
     const store = SqliteSessionStore.open(':memory:');
     try {
-      await store.putSession({ id: 'sess-1', startedAt: '2026-09-08T00:00:00.000Z' });
+      await store.putSession({
+        kind: 'training',
+        id: 'sess-1',
+        startedAt: '2026-09-08T00:00:00.000Z',
+      });
       await store.putSet({
         id: 'set-armed',
         sessionId: 'sess-1',
@@ -1073,7 +1101,7 @@ describe('v11 → v12: failure-anchor identity + last_anchor_at (VW-174)', () =>
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
       } finally {
         void second.close();
       }
@@ -1122,7 +1150,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
         const version = (raw.prepare('PRAGMA user_version').get() ?? {}) as {
           user_version?: number;
         };
-        expect(version.user_version).toBe(34);
+        expect(version.user_version).toBe(35);
         expect(await opened.getSet('set-old')).not.toHaveProperty('lifter');
         expect(await opened.getSession('s1')).not.toHaveProperty('lifter');
       } finally {
@@ -1136,8 +1164,13 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
   it('round-trips a lifter label on a set and its session', async () => {
     const store = SqliteSessionStore.open(':memory:');
     try {
-      await store.putSession({ id: 'sess-g', startedAt: '2026-09-08T00:00:00.000Z' });
       await store.putSession({
+        kind: 'training',
+        id: 'sess-g',
+        startedAt: '2026-09-08T00:00:00.000Z',
+      });
+      await store.putSession({
+        kind: 'training',
         id: 'sess-j',
         startedAt: '2026-09-08T00:00:00.000Z',
         lifter: 'Jordan',
@@ -1168,7 +1201,12 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
     // until a relabel has to move a set back to the owner.
     const store = SqliteSessionStore.open(':memory:');
     try {
-      await store.putSession({ id: 's', startedAt: '2026-09-08T00:00:00.000Z', lifter: 'Jordan' });
+      await store.putSession({
+        kind: 'training',
+        id: 's',
+        startedAt: '2026-09-08T00:00:00.000Z',
+        lifter: 'Jordan',
+      });
       const set = {
         id: 'set-1',
         sessionId: 's',
@@ -1182,7 +1220,7 @@ describe('v14 → v15: lifter identity (VW-169)', () => {
 
       const { lifter: _dropped, ...ownerSet } = set;
       await store.putSet(ownerSet);
-      await store.putSession({ id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
+      await store.putSession({ kind: 'training', id: 's', startedAt: '2026-09-08T00:00:00.000Z' });
 
       expect(await store.getSet('set-1')).not.toHaveProperty('lifter');
       expect(await store.getSession('s')).not.toHaveProperty('lifter');
@@ -1204,7 +1242,11 @@ describe('firmware peak force / peak power columns (VMCP-02.87)', () => {
   });
 
   it('round-trips both peaks', async () => {
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(
       makeSet({ id: 'peak-1', firmwarePeakForceLbs: 88.6, firmwarePeakPower: 412 }),
     );
@@ -1217,7 +1259,11 @@ describe('firmware peak force / peak power columns (VMCP-02.87)', () => {
     // A force-end followed by an explicit re-end hits the conflict branch. A
     // column present in the INSERT but missing from the DO UPDATE would keep
     // the stale value here and nowhere else.
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'peak-2', firmwarePeakForceLbs: 10, firmwarePeakPower: 1 }));
     await store.putSet(
       makeSet({ id: 'peak-2', firmwarePeakForceLbs: 88.6, firmwarePeakPower: 412 }),
@@ -1228,7 +1274,11 @@ describe('firmware peak force / peak power columns (VMCP-02.87)', () => {
   });
 
   it('leaves both columns NULL when the set carried no firmware summary', async () => {
-    await store.putSession({ id: 'sess-1', startedAt: '2025-01-01T00:00:00.000Z' });
+    await store.putSession({
+      kind: 'training',
+      id: 'sess-1',
+      startedAt: '2025-01-01T00:00:00.000Z',
+    });
     await store.putSet(makeSet({ id: 'peak-3' }));
     const row = rawDb(store)
       .prepare(`SELECT firmware_peak_force_lbs, firmware_peak_power FROM sets WHERE id = ?`)

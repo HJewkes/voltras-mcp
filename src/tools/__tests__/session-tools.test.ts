@@ -198,6 +198,8 @@ const TOOL_NAMES = [
   'session.set_lifter',
   'session.list',
   'session.get',
+  'session.mark_kind',
+  'session.review_list',
 ];
 
 interface PublishedEvent {
@@ -321,6 +323,27 @@ describe('session.start', () => {
     expect(stored.exerciseId).toBe('bench-press');
     expect(stored.exerciseName).toBeUndefined();
     expect(stored.endedAt).toBeUndefined();
+  });
+
+  // VW-489. Marking is the exception, not the rule: a session someone started on
+  // purpose is training, so nobody has to answer a question to get counted.
+  it('stamps a new session training by default', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press' });
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.kind).toBe('training');
+  });
+
+  it('takes an explicit test kind from the caller', async () => {
+    await h.invoke('session.start', { exerciseId: 'bench-press', kind: 'test' });
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.kind).toBe('test');
+  });
+
+  it('forces test under the mock adapter, whatever the caller asked for', async () => {
+    (h.state as { config: unknown }).config = { adapter: 'mock' };
+    await h.invoke('session.start', { exerciseId: 'bench-press', kind: 'training' });
+    const stored = h.store.putSession.mock.calls[0][0] as StoredSession;
+    expect(stored.kind).toBe('test');
   });
 
   it('stamps the started session with MUSCLE_MAP_VERSION (VW-328)', async () => {

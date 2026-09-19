@@ -2,7 +2,7 @@
 
 # `session.*`
 
-7 tools in the `session` namespace.
+9 tools in the `session` namespace.
 
 ## `session.start`
 
@@ -18,6 +18,7 @@ Start a workout session, optionally pinned to an exercise (`exerciseId` or `exer
 - `verboseIdleReps` — `boolean`, optional.
 - `lifter` — `string`, optional.
 - `preSessionCarbs` — `object`, optional.
+- `kind` — `training` | `test`, optional.
 
 ## `session.end`
 
@@ -83,6 +84,7 @@ List past sessions, optionally filtered by date range (`from`/`to`) and/or `exer
 - `limit` — `integer` (1–200), optional.
 - `offset` — `integer` (min 0), optional.
 - `detail` — `summary` | `full`, optional.
+- `kind` — `training` | `test` | `any`, optional.
 
 ## `session.get`
 
@@ -93,3 +95,31 @@ Can be large for a long session — prefer `session.list` for browsing/filtering
 **Parameters**
 
 - `id` — `string`, **required**.
+
+## `session.mark_kind`
+
+Say whether recorded work was real training or a bench test, for one session (`sessionId`), one local day (`day`) or an inclusive range of days (`from`/`to`) — exactly one selector.
+
+Every history read (training days, tier evidence, attendance goals, reports, trends, baselines, the RIR-velocity fit) counts ONLY sessions marked `training`, so a session nobody has marked is left out of all of them. Days are the same local days `session.review_list` lists and the reports file work under. Pass `dryRun: true` first: it returns the identical report and writes nothing. A REAL `from`/`to` call must also pass `expectSessions` equal to the count the dry run reported, or it is refused with the real count — a mistyped year would otherwise mark a whole history in one call. A `day` or range call classifies only sessions nobody has marked; one already marked the other kind is reported under `skippedAlreadyMarked` and left alone unless you pass `reclassify: true`. Naming a `sessionId` may always reclassify. The result splits `newlyClassified`, `reclassified`, `skippedAlreadyMarked` and `alreadyThisKind` as session-id lists, and names under `rederiveFailed` any exercise whose baseline and RIR fit could not be re-derived — the mark still landed, so re-run `baselines.recalc` and `rir_velocity.fit` for those. Idempotent and reversible — marking back re-derives again. NEVER GUESS A KIND: ask the lifter, because a light day of real training and a bench test look the same in the data.
+
+**Parameters**
+
+- `kind` — `training` | `test`, **required**.
+- `sessionId` — `string`, optional.
+- `day` — `string`, optional.
+- `from` — `string`, optional.
+- `to` — `string`, optional.
+- `dryRun` — `boolean`, optional.
+- `reclassify` — `boolean`, optional.
+- `expectSessions` — `integer` (min 0), optional.
+
+## `session.review_list`
+
+The past local days of recorded work, newest first, with what each holds: the exercises, set and working-set counts, top load per exercise, the span in minutes, whether every session was ended, whether a plan was attached, and the current kind (`mixed` when one day's sessions disagree).
+
+A day is dated the way the reports date it: by when the work ended, or by the last working set when the session was never ended — so an evening session that ran past midnight is listed, marked and counted under one date. Defaults to the days nobody has classified — those are the ones being left out of every history read. Feed a row's `day` straight to `session.mark_kind` to mark the whole day in one call.
+
+**Parameters**
+
+- `kind` — `training` | `test` | `any` | `unreviewed`, optional.
+- `limit` — `integer` (1–200), optional.

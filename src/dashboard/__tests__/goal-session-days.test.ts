@@ -32,11 +32,23 @@ let seq = 0;
 async function ended(startedAt: Date, over: { lifter?: string; open?: boolean } = {}) {
   const start = startedAt.toISOString();
   await store.putSession({
+    kind: 'training',
     id: `s-${++seq}`,
     startedAt: start,
     ...(over.open === true
       ? {}
       : { endedAt: new Date(startedAt.getTime() + 60_000).toISOString() }),
+    ...(over.lifter === undefined ? {} : { lifter: over.lifter }),
+  });
+  // VW-489: a session with no working set is not a training day, so every
+  // fixture that means "he trained" has to hold one.
+  await store.putSet({
+    id: `set-${seq}`,
+    sessionId: `s-${seq}`,
+    startedAt: start,
+    endedAt: new Date(startedAt.getTime() + 30_000).toISOString(),
+    partial: false,
+    reps: [],
     ...(over.lifter === undefined ? {} : { lifter: over.lifter }),
   });
 }
@@ -109,9 +121,49 @@ describe('the training-day count', () => {
     expect(await readTrainingDays(store, NOW.toISOString())).toEqual([]);
   });
 
-  it('counts neither an open session nor a guest’s', async () => {
-    await ended(new Date(2026, 8, 10, 9), { open: true });
+  it('does not count a guest’s day', async () => {
     await ended(new Date(2026, 8, 11, 9), { lifter: 'guest' });
+
+    expect(await readTrainingDays(store, NOW.toISOString())).toEqual([]);
+  });
+
+  // VW-489. The owner's store holds 24 sessions nobody ever ended, between them
+  // 41 sets. A workout he actually did and forgot to close is still a day he
+  // trained, so it counts, on the local date its last set ended.
+  it('counts a session that was never ended, by its last set’s end', async () => {
+    await ended(new Date(2026, 8, 10, 9), { open: true });
+
+    expect(await readTrainingDays(store, NOW.toISOString())).toEqual(['2026-09-10']);
+  });
+
+  it('does not count a session with no working set, ended or not', async () => {
+    await store.putSession({
+      kind: 'training',
+      id: 'empty',
+      startedAt: new Date(2026, 8, 12, 9).toISOString(),
+      endedAt: new Date(2026, 8, 12, 9, 1).toISOString(),
+    });
+
+    expect(await readTrainingDays(store, NOW.toISOString())).toEqual([]);
+  });
+
+  // The rule the whole task turns on: unreviewed history is not evidence.
+  it('does not count a session nobody has marked, nor one marked test', async () => {
+    await store.putSession({
+      id: 'unreviewed',
+      startedAt: new Date(2026, 8, 13, 9).toISOString(),
+      endedAt: new Date(2026, 8, 13, 10).toISOString(),
+    });
+    await store.putSet({
+      id: 'unreviewed-set',
+      sessionId: 'unreviewed',
+      startedAt: new Date(2026, 8, 13, 9).toISOString(),
+      endedAt: new Date(2026, 8, 13, 9, 1).toISOString(),
+      partial: false,
+      reps: [],
+    });
+    await ended(new Date(2026, 8, 14, 9));
+    await store.setSessionKind([`s-${seq}`], 'test');
 
     expect(await readTrainingDays(store, NOW.toISOString())).toEqual([]);
   });

@@ -80,6 +80,7 @@ async function startSetOn(connection: ClientConnection): Promise<void> {
   const slot = state.slots.get('primary')!;
   fakeClientState(slot, { connected: true, guidedLoadPhase: 'idle' });
   await state.store.putSession({
+    kind: 'training',
     id: 'session-1',
     startedAt: new Date().toISOString(),
     exerciseId: 'bench-press',
@@ -308,6 +309,7 @@ describe('surrendering the device on transfer', () => {
     const slot = state.slots.get('primary')!;
     fakeClientState(slot, { connected: true, guidedLoadPhase: 'idle' });
     await state.store.putSession({
+      kind: 'training',
       id: 'session-1',
       startedAt: new Date().toISOString(),
       exerciseId: 'bench-press',

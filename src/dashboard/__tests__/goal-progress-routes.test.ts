@@ -26,6 +26,7 @@ import type {
   StoredRep,
   StoredSession,
   StoredSet,
+  SessionReviewRow,
   StoredTrainingProfile,
 } from '../../store/types.js';
 
@@ -158,7 +159,9 @@ class FakeStore {
 
   getTrainingProfile = async (): Promise<StoredTrainingProfile | undefined> => undefined;
   countSessions = async (): Promise<number> => new Set(this.sets.map((s) => s.sessionId)).size;
-  listSessionEndTimes = async (): Promise<string[]> => this.sets.map((s) => s.endedAt);
+  listTrainingDayInstants = async (): Promise<string[]> => this.sets.map((s) => s.endedAt);
+  // VW-489: this fake's rows stand for reviewed history, so nothing is pending.
+  listSessionReviewRows = async (): Promise<SessionReviewRow[]> => [];
   getSessionDateSpan = async (): Promise<{ first: string | null; last: string | null }> => ({
     first: daysAgo(28),
     last: daysAgo(0),
@@ -273,6 +276,7 @@ interface GoalsBody {
     rollup: { status: string } | null;
   }[];
   mesocycle: { programName: string; blockName: string; state: string } | null;
+  review: { unreviewedDays: number; unreviewedDayList: string[] };
 }
 
 /** The Monday of the current local week: a block dated from it is in progress today. */
@@ -450,6 +454,18 @@ describe('GET /api/goals', () => {
     expect(body.priorities[0]?.priority.id).toBe('pri-1');
     expect(body.priorities[0]?.targets.map((t) => t.id)).toEqual(['tgt-1']);
     expect(typeof body.priorities[0]?.rollup?.status).toBe('string');
+  });
+
+  // VW-489: every count on the page excludes unreviewed history, so the payload
+  // carries the number of days waiting. Server field only — the page reads it in
+  // its own change.
+  it('carries the unreviewed-day count for the page to explain a zero with', async () => {
+    const store = new FakeStore([priority({ id: 'pri-1' })], [], weeklyHistory('bench-press'));
+
+    const port = await start(makeState(store));
+    const body = (await call(port, '/api/goals')).body as GoalsBody;
+
+    expect(body.review).toEqual({ unreviewedDays: 0, unreviewedDayList: [] });
   });
 
   it('carries a null mesocycle while no block has dates (VW-480)', async () => {

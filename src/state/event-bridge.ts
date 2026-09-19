@@ -1693,6 +1693,9 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
         startedAt,
         exerciseName,
         ...(exerciseId !== undefined ? { exerciseId } : {}),
+        // VW-489: the lifter really pulled, so this is training, not a bench
+        // test — unless the device that produced the reps was synthetic.
+        kind: state.config?.adapter === 'mock' ? 'test' : 'training',
       })
       .catch((err) => {
         log.warn('event-bridge: guided-load auto session persist failed', err);

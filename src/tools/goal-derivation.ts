@@ -49,8 +49,9 @@ export interface GoalDerivationState {
   store: Pick<
     SessionStore,
     | 'getTrainingProfile'
-    | 'listSessionEndTimes'
+    | 'listTrainingDayInstants'
     | 'getSessionDateSpan'
+    | 'listSessionReviewRows'
     | 'getTrainingWeeksForBlock'
     | 'getDietPhaseCovering'
     | 'getTrainingBlock'

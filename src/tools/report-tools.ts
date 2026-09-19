@@ -22,6 +22,7 @@ import type { z } from 'zod';
 import { rirModelVelocity, type RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
 import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -361,6 +362,12 @@ export interface WeeklyReportHeader {
   trainingDaysCompleted: number;
   /** Training days in the 28 days ending at `to`, by the shared rule in `training-days.ts`. */
   rolling28DayTrainingDays: number;
+  /**
+   * Past local days holding a session nobody has marked training or test (VW-489).
+   * Those days are excluded from both counts above, so a low number with a
+   * non-zero `unreviewedDays` means history is withheld, not absent.
+   */
+  unreviewedDays: number;
   adherence: WeeklyAdherence | null;
   /** The dated block the range ends in, and which week of it that was (VW-478). */
   block: { name: string; week: number; weeks: number } | null;
@@ -482,6 +489,7 @@ export async function buildWeeklyReport(
           ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
         })
       ).length,
+      unreviewedDays: (await readUnreviewed(state.store)).unreviewedDays,
       adherence: await computeAdherenceWithTrend(state, input.lifter, from, to, sessions),
       block: await blockLine(state, to),
     },

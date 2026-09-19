@@ -173,6 +173,7 @@ import {
   fetchGoalProgressViews,
   type GoalProgressStore,
 } from './goal-progress-api.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { log } from '../logger.js';
 import type { LiveSignalHub } from '../state/live-signal.js';
 import type {
@@ -961,7 +962,7 @@ function hasGoalStore(
     typeof store.listPriorities === 'function' &&
     typeof store.listGoalTargets === 'function' &&
     typeof store.getTrainingProfile === 'function' &&
-    typeof store.listSessionEndTimes === 'function' &&
+    typeof store.listTrainingDayInstants === 'function' &&
     typeof store.getSessionDateSpan === 'function' &&
     typeof store.getTrainingWeeksForBlock === 'function' &&
     typeof store.getDietPhaseCovering === 'function' &&
@@ -1001,7 +1002,11 @@ async function serveGoals(res: ServerResponse, state: DashboardServerState): Pro
   const now = new Date();
   const rows = await fetchGoalPriorityRows(state.store, now);
   const mesocycle = await fetchMesocycle(state.store, localDate(now.toISOString()));
-  sendJson(res, 200, { priorities: rows, mesocycle });
+  // VW-489: every count on this page excludes unreviewed history, so the page has
+  // to be able to say so rather than render an unexplained zero. Server field
+  // only — the goals SPA reads it in its own change (PR #454 owns that tree).
+  const review = await readUnreviewed(state.store);
+  sendJson(res, 200, { priorities: rows, mesocycle, review });
 }
 
 /**

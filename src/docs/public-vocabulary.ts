@@ -101,6 +101,15 @@ function addToolVocabulary(tool: ToolLike, into: Set<string>): void {
  */
 export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'active_mode',
+  // VW-489: the lists `session.mark_kind` returns, and the count a real range must
+  // declare. Separating what was newly classified from what was FLIPPED is the whole
+  // safety of a bulk day or range mark.
+  'alreadyThisKind',
+  'newlyClassified',
+  'reclassified',
+  'skippedAlreadyMarked',
+  'rederiveFailed',
+  'expectSessions',
   'adoptedReps',
   'analytics_count',
   'anchorSelection',

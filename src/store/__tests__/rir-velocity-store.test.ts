@@ -83,7 +83,7 @@ function daysAgo(days: number): string {
 }
 
 function session(id: string): StoredSession {
-  return { id, startedAt: daysAgo(3) };
+  return { id, startedAt: daysAgo(3), kind: 'training' };
 }
 
 async function storeWith(sets: readonly StoredSet[]): Promise<SqliteSessionStore> {
@@ -108,6 +108,23 @@ function threeSessions(exerciseId: string, velocities: readonly number[]): Store
 }
 
 describe('SqliteSessionStore — RIR-velocity fit', () => {
+  // VW-489. The same corpus, one flag apart. A test pull is a true velocity at a
+  // true load, but it is not taken at training effort, so it does not calibrate
+  // anything. This is the mutant tripwire for the anchor join's kind filter.
+  it('does not fit a curve from a corpus marked test', async () => {
+    const store = await storeWith(threeSessions('row', DECAY));
+    try {
+      const trained = await store.refitRirVelocityModel(LOCAL_USER_ID, 'row');
+      await store.setSessionKind(['sess-1', 'sess-2', 'sess-3'], 'test');
+      const tested = await store.refitRirVelocityModel(LOCAL_USER_ID, 'row');
+
+      expect(trained.model).not.toBeNull();
+      expect(tested.model).toBeNull();
+    } finally {
+      await store.close();
+    }
+  });
+
   it('fits and stores a curve from failure-anchored sets in the band', async () => {
     // Arrange
     const store = await storeWith(threeSessions('row', DECAY));

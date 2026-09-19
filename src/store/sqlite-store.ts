@@ -44,6 +44,12 @@ import { isRecompMode, RECOMP_MODES } from './diet-phase.js';
 import { ASYMMETRY_EQUATION } from '../state/isometric-protocol.js';
 import { isSetPurpose, setPurposeOf } from './set-purpose.js';
 import {
+  isSessionKind,
+  sessionKindPredicate,
+  type SessionKind,
+  type SessionKindFilter,
+} from './session-kind.js';
+import {
   baselineRowId,
   deriveBaselineState,
   selectSetupAnchors,
@@ -80,6 +86,8 @@ import {
   type PutBodyMetricInput,
   type SessionCountFilter,
   type SessionDateSpan,
+  type SessionReviewKindFilter,
+  type SessionReviewRow,
   type SessionListFilter,
   type SessionStore,
   type SetCountFilter,
@@ -131,7 +139,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -389,7 +397,11 @@ const SCHEMA_SQL = `
     -- session.start or corrected via session.checkin. NULL = never reported,
     -- never defaulted. No index: nothing filters or sorts by it.
     pre_session_carbs_level TEXT,
-    pre_session_carbs_hours_since_meal REAL
+    pre_session_carbs_hours_since_meal REAL,
+    -- v35 (VW-489): test or training. NULL = never reviewed, and unreviewed is
+    -- excluded from every lifter-facing read. See store/session-kind.ts for why
+    -- there is no stored cut-over instant.
+    kind TEXT CHECK (kind IN ('training','test'))
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
   -- NOTE: indexes over v6-only columns are NOT declared here. SCHEMA_SQL runs
@@ -517,7 +529,12 @@ const SCHEMA_SQL = `
     -- VOLTRA_ADAPTER=mock writes into the same store as real hardware. Without
     -- this marker any corpus fit silently ingests synthetic rows.
     source TEXT NOT NULL DEFAULT 'local'
-      CHECK (source IN ('local','imported','mock'))
+      CHECK (source IN ('local','imported','mock')),
+
+    -- Denormalised from the session (v35 / VW-489), exactly as lifter is:
+    -- the set-level reads behind baselines and the RIR fit filter here rather
+    -- than joining back to the sessions table. NULL = never reviewed.
+    kind TEXT CHECK (kind IN ('training','test'))
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
   -- The four v7 sets indexes are created by the rebuild in migrateV6ToV7, for
@@ -1791,6 +1808,26 @@ function migrateV33ToV34(db: DatabaseSync): void {
 }
 
 /**
+ * v34 -> v35: `sessions.kind` and `sets.kind`, test or training (VW-489). PURELY ADDITIVE
+ * and back-fills NOTHING: every existing row stays NULL, which `session-kind.ts` reads as
+ * "never reviewed" and every lifter-facing read then excludes. Back-filling `'training'`
+ * would assert the opposite of what the owner said about this history, and back-filling
+ * `'test'` would decide for him. One transaction, so a failure leaves the v34 shape;
+ * idempotent, so a re-open changes nothing.
+ */
+function migrateV34ToV35(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'sessions', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
+    addColumnIfMissing(db, 'sets', 'kind', `TEXT CHECK (kind IN ('training','test'))`);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -1828,6 +1865,14 @@ function sessionCountPredicates(filter: SessionCountFilter): {
   } else {
     where.push('lifter = ?');
     params.push(filter.lifter);
+  }
+  // VW-489: training-only unless the caller opts out. Sited beside the lifter
+  // predicate deliberately — both answer "is this the OWNER'S REAL history",
+  // and two answers that can drift apart is the bug this avoids.
+  const kind = sessionKindPredicate(filter.kind);
+  if (kind !== undefined) {
+    where.push(kind.where);
+    params.push(...kind.params);
   }
   if (filter.endedOnly === true) {
     where.push('ended_at IS NOT NULL');
@@ -2028,6 +2073,7 @@ interface SessionRow {
   pre_session_carbs_level: string | null;
   pre_session_carbs_hours_since_meal: number | null;
   catalog_version: string | null;
+  kind: string | null;
 }
 
 interface DietPhaseRow {
@@ -2179,6 +2225,7 @@ interface GoalTargetRow {
 interface SetRow {
   id: string;
   session_id: string;
+  kind: string | null;
   started_at: string;
   ended_at: string;
   partial: number;
@@ -2553,15 +2600,22 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putSession(s: StoredSession): Promise<void> {
-    // catalog_version is deliberately outside the ON CONFLICT UPDATE SET below:
-    // it is stamped once at session.start, and session.end's re-put never
-    // carries it, so updating it here would null out the stamp on every close.
+    // catalog_version and kind are deliberately outside the ON CONFLICT UPDATE
+    // SET below: both are stamped once at session.start, and every re-put path
+    // (session.end, the guided-load reap) rebuilds the row from LIVE state,
+    // which carries neither — so updating them here would null out the stamp on
+    // every close. For `kind` that is not a lost annotation but a lost session:
+    // a NULL kind reads as unreviewed, and unreviewed is excluded from every
+    // lifter-facing read, so the workout that just finished would vanish from
+    // training days, tier, goals, reports and calibration the moment it ended
+    // (VW-489). `setSessionKind` is the one path that changes an existing row's
+    // kind, which is what makes marking auditable.
     this.db
       .prepare(
         `INSERT INTO sessions
            (id, started_at, ended_at, exercise_id, exercise_name, notes, lifter, diet_phase,
-            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            pre_session_carbs_level, pre_session_carbs_hours_since_meal, catalog_version, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
@@ -2588,6 +2642,7 @@ export class SqliteSessionStore implements SessionStore {
         s.preSessionCarbs?.level ?? null,
         s.preSessionCarbs?.hoursSinceLastMeal ?? null,
         s.catalogVersion ?? null,
+        s.kind ?? null,
       );
     return Promise.resolve();
   }
@@ -2600,6 +2655,18 @@ export class SqliteSessionStore implements SessionStore {
   private stampableDietPhase(s: StoredSession): string | null {
     if (s.lifter !== undefined) return null;
     return this.findDietPhaseCovering(LOCAL_USER_ID, s.startedAt, s.startedAt)?.phase ?? null;
+  }
+
+  /**
+   * The kind to stamp on a set (VW-489): whatever its session says, or NULL when
+   * the session row is not there yet. NULL is the fail-closed answer — an
+   * unreviewed set is excluded, never counted as training on a guess.
+   */
+  private sessionKindOf(sessionId: string): string | null {
+    const row = this.db.prepare(`SELECT kind FROM sessions WHERE id = ?`).get(sessionId) as
+      | { kind: string | null }
+      | undefined;
+    return row?.kind ?? null;
   }
 
   async putSet(s: StoredSet): Promise<void> {
@@ -2617,7 +2684,7 @@ export class SqliteSessionStore implements SessionStore {
          (id, session_id, user_id, started_at, ended_at, partial, partial_reason,
           training_mode, weight_lbs, set_purpose, slot, device_id, side,
           exercise_id, set_index_in_session, rest_before_sec, battery_pct,
-          source, position_units, velocity_units, auto_created_by, upgraded, lifter,
+          source, position_units, velocity_units, auto_created_by, upgraded, lifter, kind,
           sample_rate_hz,
           firmware_rep_count, firmware_summary_duration_ms,
           firmware_peak_force_lbs, firmware_peak_power, firmware_reps_json,
@@ -2625,7 +2692,7 @@ export class SqliteSessionStore implements SessionStore {
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
           settings_json, settings_hash)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -2649,6 +2716,7 @@ export class SqliteSessionStore implements SessionStore {
          auto_created_by = excluded.auto_created_by,
          upgraded = excluded.upgraded,
          lifter = excluded.lifter,
+         kind = excluded.kind,
          sample_rate_hz = excluded.sample_rate_hz,
          firmware_rep_count = excluded.firmware_rep_count,
          firmware_summary_duration_ms = excluded.firmware_summary_duration_ms,
@@ -2700,6 +2768,9 @@ export class SqliteSessionStore implements SessionStore {
         s.autoCreatedBy ?? null,
         s.upgraded === true ? 1 : null,
         s.lifter ?? null,
+        // Derived from the session, never taken from the caller — the same
+        // reason `stampableDietPhase` is: two writers for one fact drift.
+        this.sessionKindOf(s.sessionId),
         s.sampleRateHz ?? null,
         s.firmwareRepCount ?? null,
         s.firmwareSummaryDurationMs ?? null,
@@ -2782,6 +2853,12 @@ export class SqliteSessionStore implements SessionStore {
       where.push('lifter = ?');
       params.push(filter.lifter);
     }
+    // VW-489: training-only unless the caller opts out (`session-kind.ts`).
+    const kind = sessionKindPredicate(filter.kind);
+    if (kind !== undefined) {
+      where.push(kind.where);
+      params.push(...kind.params);
+    }
     const direction = filter.sort === 'startedAt:asc' ? 'ASC' : 'DESC';
     const limit = filter.limit ?? 50;
     const offset = filter.offset ?? 0;
@@ -2814,12 +2891,81 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve({ first: row?.first ?? null, last: row?.last ?? null });
   }
 
-  async listSessionEndTimes(filter: SessionCountFilter = {}): Promise<string[]> {
-    const { where, params } = sessionCountPredicates({ ...filter, endedOnly: true });
+  async listTrainingDayInstants(filter: SessionCountFilter = {}): Promise<string[]> {
+    const { where, params } = sessionCountPredicates(filter);
+    // Correlated subqueries rather than a JOIN so the shared predicates above
+    // stay unqualified: `sessions` and `sets` both carry started_at, ended_at,
+    // lifter and kind, and a join would make every one of them ambiguous.
+    const working = `SELECT 1 FROM sets WHERE session_id = sessions.id AND set_purpose = 'working'`;
+    const lastWorkingEnd =
+      `SELECT MAX(ended_at) FROM sets ` +
+      `WHERE session_id = sessions.id AND set_purpose = 'working'`;
     const sql =
-      `SELECT ended_at FROM sessions WHERE ${where.join(' AND ')}` + ` ORDER BY started_at ASC`;
-    const rows = this.db.prepare(sql).all(...params) as { ended_at: string }[];
-    return Promise.resolve(rows.map((row) => row.ended_at));
+      `SELECT COALESCE(ended_at, (${lastWorkingEnd})) AS instant FROM sessions ` +
+      `WHERE ${where.join(' AND ')} AND EXISTS (${working}) ORDER BY started_at ASC`;
+    const rows = this.db.prepare(sql).all(...params) as { instant: string | null }[];
+    return Promise.resolve(
+      rows.map((row) => row.instant).filter((instant): instant is string => instant !== null),
+    );
+  }
+
+  async listSessionReviewRows(
+    filter: { kind?: SessionReviewKindFilter } = {},
+  ): Promise<SessionReviewRow[]> {
+    // Owner-only, like every other history read: a guest's session is not the
+    // owner's to classify. `kind` here admits 'unreviewed', which no analytic
+    // read ever asks for and which is the whole point of this one.
+    const where = ['lifter IS NULL'];
+    const params: string[] = [];
+    if (filter.kind === 'unreviewed') {
+      where.push('kind IS NULL');
+    } else {
+      const kind = sessionKindPredicate(filter.kind ?? 'any');
+      if (kind !== undefined) {
+        where.push(kind.where);
+        params.push(...kind.params);
+      }
+    }
+    const perSession = (columns: string) =>
+      `(SELECT ${columns} FROM sets WHERE session_id = sessions.id)`;
+    const rows = this.db
+      .prepare(
+        `SELECT id, started_at, ended_at, exercise_id, exercise_name, kind,
+                ${perSession('COUNT(*)')} AS set_count,
+                ${perSession(`COUNT(*) FILTER (WHERE set_purpose = 'working')`)} AS working_count,
+                ${perSession(`MAX(weight_lbs) FILTER (WHERE set_purpose = 'working')`)} AS top_load,
+                ${perSession('MAX(ended_at)')} AS last_set_ended_at,
+                ${perSession(`MAX(ended_at) FILTER (WHERE set_purpose = 'working')`)}
+                  AS last_working_set_ended_at,
+                EXISTS (SELECT 1 FROM program_assignments WHERE session_id = sessions.id) AS planned
+           FROM sessions
+          WHERE ${where.join(' AND ')}
+          ORDER BY started_at DESC`,
+      )
+      .all(...params) as unknown as SessionReviewSqlRow[];
+    return Promise.resolve(rows.map(rowToSessionReviewRow));
+  }
+
+  async setSessionKind(sessionIds: readonly string[], kind: SessionKind): Promise<number> {
+    if (sessionIds.length === 0) return Promise.resolve(0);
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    this.db.exec('BEGIN');
+    try {
+      // One transaction over both tables. `sets.kind` is denormalised from the
+      // session, so a partial write would leave the set-level readers and the
+      // session-level ones disagreeing about the same bout.
+      const sessions = this.db
+        .prepare(`UPDATE sessions SET kind = ? WHERE id IN (${placeholders})`)
+        .run(kind, ...sessionIds);
+      this.db
+        .prepare(`UPDATE sets SET kind = ? WHERE session_id IN (${placeholders})`)
+        .run(kind, ...sessionIds);
+      this.db.exec('COMMIT');
+      return Promise.resolve(Number(sessions.changes));
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   async getSetsForSession(sessionId: string): Promise<StoredSet[]> {
@@ -2887,6 +3033,12 @@ export class SqliteSessionStore implements SessionStore {
       where.push('lifter = ?');
       params.push(filter.lifter);
     }
+    // VW-489: training-only unless the caller opts out (`session-kind.ts`).
+    const kind = sessionKindPredicate(filter.kind);
+    if (kind !== undefined) {
+      where.push(kind.where);
+      params.push(...kind.params);
+    }
     if (filter.purpose !== undefined) {
       where.push(`set_purpose IN (${filter.purpose.map(() => '?').join(', ')})`);
       params.push(...filter.purpose);
@@ -2915,6 +3067,7 @@ export class SqliteSessionStore implements SessionStore {
     userId: string;
     exerciseId: string;
     lifter?: string;
+    kind?: SessionKindFilter;
   }): Promise<string | null> {
     // `idx_sets_user_exercise(user_id, exercise_id, started_at)` covers this
     // exactly: seek to (userId, exerciseId), walk started_at DESC, stop at 1.
@@ -2924,13 +3077,20 @@ export class SqliteSessionStore implements SessionStore {
     // `getSetsForExercise`. Without it a guest's set — which is by definition
     // the most recent one on a shared rig — becomes the owner's progression
     // basis.
+    //
+    // VW-489: and training-only unless the caller opts out, for the same
+    // reason — a bench test is the most recent set far more often than a
+    // guest's is.
     const lifterClause = filter.lifter === undefined ? 'lifter IS NULL' : 'lifter = ?';
     const params = [filter.userId, filter.exerciseId];
     if (filter.lifter !== undefined) params.push(filter.lifter);
+    const kind = sessionKindPredicate(filter.kind);
+    const kindClause = kind === undefined ? '' : ` AND ${kind.where}`;
+    if (kind !== undefined) params.push(...kind.params);
     const row = this.db
       .prepare(
-        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause} ` +
-          `ORDER BY started_at DESC LIMIT 1`,
+        `SELECT session_id FROM sets WHERE user_id = ? AND exercise_id = ? AND ${lifterClause}` +
+          `${kindClause} ORDER BY started_at DESC LIMIT 1`,
       )
       .get(...params) as { session_id: string } | undefined;
     return Promise.resolve(row?.session_id ?? null);
@@ -4279,6 +4439,12 @@ export class SqliteSessionStore implements SessionStore {
    * reads (owner-only, accepted verdicts), narrowed to ids because the fit
    * needs the set's own load and velocity, which the anchor row does not carry
    * on the scale the rest of the fit uses.
+   *
+   * NO `kind` PREDICATE, deliberately (VW-489). This returns a lookup keyed by
+   * set id, and the caller intersects it with the sets `getSetsForExercise`
+   * returned — already training-only. A second copy of the filter here could
+   * never change an answer, and an unreachable predicate reads as a guarantee
+   * the next person will rely on somewhere it does not hold.
    */
   private failureSetIds(key: BaselineKey): ReadonlySet<string> {
     const where = ['user_id = ?', 'exercise_id = ?', 'lifter IS NULL', 'set_id IS NOT NULL'];
@@ -4352,7 +4518,16 @@ export class SqliteSessionStore implements SessionStore {
     // has been counting it — a silent CALIBRATED-to-SHAPE_ONLY demotion. The
     // pooled key therefore keeps counting the whole pool, and preference by
     // setup happens after the fetch.
-    const where = ['fa.user_id = ?', 'fa.exercise_id = ?', 'fa.lifter IS NULL'];
+    //
+    // VW-489: `s.kind = 'training'` also makes the LEFT JOIN below effectively
+    // inner. An anchor whose set row is gone can no longer be SHOWN to be
+    // training, and an unprovable anchor must not calibrate a baseline.
+    const where = [
+      'fa.user_id = ?',
+      'fa.exercise_id = ?',
+      'fa.lifter IS NULL',
+      "s.kind = 'training'",
+    ];
     const params: string[] = [key.userId, key.exerciseId];
     if (key.side !== undefined) {
       where.push('fa.side = ?');
@@ -4678,6 +4853,9 @@ export class SqliteSessionStore implements SessionStore {
    * CURRENT filter version is read: an older row was scored under thresholds
    * that no longer hold, and mixing the two would build one curve out of two
    * definitions of failure.
+   *
+   * No `kind` predicate here either, for the reason `failureSetIds` gives: the
+   * sets this map is looked up against are training-only already.
    */
   private rirAnchorRows(userId: string, exerciseId: string): Map<string, RirAnchorRow> {
     const rows = this.db
@@ -4912,6 +5090,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 33) {
     migrateV33ToV34(db);
   }
+  if (current <= 34) {
+    migrateV34ToV35(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -4975,6 +5156,41 @@ function createLockedError(path: string, cause: unknown): Error {
   return err;
 }
 
+interface SessionReviewSqlRow {
+  id: string;
+  started_at: string;
+  ended_at: string | null;
+  exercise_id: string | null;
+  exercise_name: string | null;
+  kind: string | null;
+  set_count: number;
+  working_count: number;
+  top_load: number | null;
+  last_set_ended_at: string | null;
+  last_working_set_ended_at: string | null;
+  planned: number;
+}
+
+function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
+  const out: SessionReviewRow = {
+    sessionId: row.id,
+    startedAt: row.started_at,
+    setCount: row.set_count,
+    workingSetCount: row.working_count,
+    planned: row.planned !== 0,
+  };
+  if (row.ended_at !== null) out.endedAt = row.ended_at;
+  if (row.exercise_id !== null) out.exerciseId = row.exercise_id;
+  if (row.exercise_name !== null) out.exerciseName = row.exercise_name;
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
+  if (row.top_load !== null) out.topLoadLbs = row.top_load;
+  if (row.last_set_ended_at !== null) out.lastSetEndedAt = row.last_set_ended_at;
+  if (row.last_working_set_ended_at !== null) {
+    out.lastWorkingSetEndedAt = row.last_working_set_ended_at;
+  }
+  return out;
+}
+
 function rowToSession(row: SessionRow): StoredSession {
   const out: StoredSession = { id: row.id, startedAt: row.started_at };
   if (row.ended_at !== null) out.endedAt = row.ended_at;
@@ -4995,6 +5211,8 @@ function rowToSession(row: SessionRow): StoredSession {
     };
   }
   if (row.catalog_version !== null) out.catalogVersion = row.catalog_version;
+  // VW-489: absent = never reviewed, which no lifter-facing read counts.
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
   return out;
 }
 
@@ -5305,6 +5523,8 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   // `set_purpose` is the stored value and `is_warmup` the column GENERATED
   // from it, so reading both cannot produce a disagreeing pair. A `'working'`
   // row contributes neither key, keeping the pre-enum shape (VMCP-02.84).
+  // VW-489: denormalised from the session; absent = never reviewed.
+  if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
   if (isSetPurpose(row.set_purpose) && row.set_purpose !== 'working') {
     out.setPurpose = row.set_purpose;
   }

@@ -87,6 +87,7 @@ import {
   GOAL_RETIRE_DESCRIPTION,
   GOAL_WEEKLY_REVIEW_DESCRIPTION,
 } from './goal-descriptions.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { runWeeklyReview } from './goal-weekly-review.js';
 import {
   checkOffer,
@@ -415,6 +416,15 @@ export interface ProposeTargetsResult {
   notes: string[];
   /** Calibrated starting ramps under this priority, each with its data-based offer (VW-444). */
   recalibrationOffers: RecalibrationOffer[];
+  /**
+   * Past local days nobody has marked training or test (VW-489). Every start value
+   * and every attendance band here is derived from training-marked history only, so
+   * a cold proposal or a skipped attendance leg beside a non-zero `unreviewedDays`
+   * means the evidence is withheld pending review, not missing.
+   */
+  unreviewedDays: number;
+  /** Those days themselves, newest first, so a coach can name them. */
+  unreviewedDayList: string[];
 }
 
 /** A primary leg that would be stored, with everything the writer needs. */
@@ -532,6 +542,7 @@ async function proposeTargets(
     horizonWeeks: preview.horizonWeeks,
     notes: preview.notes,
     recalibrationOffers: await reconcileRecalibrationOffers(state, [priority.id]),
+    ...(await readUnreviewed(state.store)),
   };
 }
 

@@ -46,6 +46,10 @@ export const CORE_TOOL_NAMES = [
   'session.set_lifter',
   'session.list',
   'session.get',
+  // Say whether recorded work was training or a bench test, and list the days
+  // nobody has said yet (VW-489). See src/tools/session-kind-tools.ts.
+  'session.mark_kind',
+  'session.review_list',
   'set.start',
   'set.end',
   'set.live_metrics',
@@ -294,6 +298,8 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'session.set_lifter': 'write',
   'session.list': 'read',
   'session.get': 'read',
+  'session.mark_kind': 'write',
+  'session.review_list': 'read',
 
   'set.start': 'write',
   'set.end': 'write',

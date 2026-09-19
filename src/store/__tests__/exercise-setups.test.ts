@@ -201,7 +201,8 @@ describe('inferExerciseSetups over the store', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    for (const s of ['sess-1', 'sess-2']) await store.putSession({ id: s, startedAt: daysAgo(10) });
+    for (const s of ['sess-1', 'sess-2'])
+      await store.putSession({ kind: 'training', id: s, startedAt: daysAgo(10) });
   });
 
   it('writes one setup per ROM group and stamps every set that backs it', async () => {
@@ -371,7 +372,7 @@ describe('setup-keyed baselines', () => {
 
   beforeEach(async () => {
     store = SqliteSessionStore.open(':memory:');
-    await store.putSession({ id: 'sess-1', startedAt: daysAgo(10) });
+    await store.putSession({ kind: 'training', id: 'sess-1', startedAt: daysAgo(10) });
   });
 
   it('rejects a key naming a setup that no clustering run produced', async () => {

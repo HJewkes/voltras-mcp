@@ -65,7 +65,7 @@ function decaySet(id: string, sessionId: string, terminal: number, startedAt: st
 }
 
 function session(id: string, startedAt: string): StoredSession {
-  return { id, startedAt, exerciseId: 'row', exerciseName: 'Cable Row' };
+  return { id, startedAt, exerciseId: 'row', exerciseName: 'Cable Row', kind: 'training' };
 }
 
 /** Days before now, ISO — anchors must be recent or the baseline reads STALE. */
