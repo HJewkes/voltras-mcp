@@ -29,6 +29,12 @@
 
 import { EMPTY_PHASE } from '@voltras/workout-analytics';
 
+import {
+  GOAL_BAND_CONSTANTS,
+  deriveGoalBand,
+  type GoalBand,
+  type GoalInfoLevel,
+} from '../analytics/goal-band.js';
 import { blockEndsAt } from '../analytics/goal-block-weeks.js';
 import type { GoalProgressStatus } from '../dashboard/read-models/index.js';
 import { startOfCalendarWeekIso } from '../dashboard/read-models/muscle-set-scope.js';
@@ -38,6 +44,11 @@ import {
   type StoredRep,
   type StoredSet,
 } from '../store/types.js';
+import {
+  readDerivationContext,
+  type GoalDerivationContext,
+  type GoalDerivationState,
+} from '../tools/goal-derivation.js';
 import type { CaptureScenarioName } from './capture-shots.js';
 
 /** The pages `npm run dashboard:preview -- <page>` can open. */
@@ -126,8 +137,6 @@ export interface GoalPreviewState {
    * The target's start value is that week's load: the band is anchored there (VW-449).
    */
   readonly targetStartWeeksAgo: number;
-  readonly committedLbs: number;
-  readonly stretchLbs: number;
   /**
    * Stored as `goal.propose_targets` stores a target derived before
    * calibration: the execution ramp at `cold`, committed equal to stretch.
@@ -142,8 +151,6 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     summary: 'One session on record: too little history for a gain band, so the ramp stands in.',
     weeklyLoadsLbs: [100],
     targetStartWeeksAgo: 4,
-    committedLbs: 110,
-    stretchLbs: 110,
     acceptedCold: true,
   },
   {
@@ -156,20 +163,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     // week 3 keeps the run wider than that without leaving the band.
     weeklyLoadsLbs: [100, 103, 97, 104, 108],
     targetStartWeeksAgo: 4,
-    committedLbs: 110,
-    stretchLbs: 120,
   },
   {
     name: 'fast_climb',
-    expectedStatus: 'ahead',
+    expectedStatus: 'beyond_goal',
     summary:
-      'Five weeks climbing 100 to 146, far faster than the programmed ramp: ahead of a band ' +
-      'anchored where the goal began (VW-449; this read on_track while the band restarted at ' +
-      'the latest lift).',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+      'Climbing about 4.5 lb a week from 100, faster than the ramp: past the 108.75 goal by ' +
+      'week 4, and a met goal outranks pace, so it reads beyond_goal rather than ahead.',
+    weeklyLoadsLbs: [100, 104, 108, 113, 118],
     targetStartWeeksAgo: 4,
-    committedLbs: 160,
-    stretchLbs: 175,
   },
   {
     name: 'behind',
@@ -177,36 +179,28 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     summary: 'The same five weeks run backwards: under the committed edge with a falling trend.',
     weeklyLoadsLbs: [146, 133, 121, 110, 100],
     targetStartWeeksAgo: 4,
-    committedLbs: 160,
-    stretchLbs: 175,
   },
   {
     name: 'ahead',
     expectedStatus: 'ahead',
-    summary: 'A heavy set in week 2 passes the stretch edge of the band, short of the goal.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
-    heavySingleLbs: 155,
+    summary:
+      'Week 2 of a block started at 100: 106 is past the week’s stretch edge, short of the goal.',
+    weeklyLoadsLbs: [94, 100, 106],
     targetStartWeeksAgo: 1,
-    committedLbs: 160,
-    stretchLbs: 175,
   },
   {
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    weeklyLoadsLbs: [100, 103, 97, 104, 108.75],
     targetStartWeeksAgo: 4,
-    committedLbs: 146,
-    stretchLbs: 160,
   },
   {
     name: 'beyond_goal',
     expectedStatus: 'beyond_goal',
     summary: 'The newest reading passes the committed target with weeks of the block left.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    weeklyLoadsLbs: [100, 103, 97, 104, 112],
     targetStartWeeksAgo: 4,
-    committedLbs: 130,
-    stretchLbs: 140,
   },
 ];
 
@@ -223,7 +217,8 @@ export function goalPreviewState(name: string): GoalPreviewState {
 export type GoalPreviewStore = Pick<
   SessionStore,
   'putSession' | 'putSet' | 'putPriority' | 'putGoalTarget' | 'reharvestExercise' | 'recalcBaseline'
->;
+> &
+  GoalDerivationState['store'];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -251,7 +246,8 @@ export async function seedGoalPreview(
   await store.reharvestExercise(key);
   const baseline = await store.recalcBaseline(key);
   const priority = await store.putPriority(priorityRow(now));
-  const target = await store.putGoalTarget(targetRow(state, now));
+  const context = await readDerivationContext({ store }, priority);
+  const target = await store.putGoalTarget(targetRow(state, now, context));
   return {
     priorityId: priority.id,
     targetId: target.id,
@@ -410,37 +406,72 @@ function priorityRow(now: Date): Parameters<GoalPreviewStore['putPriority']>[0] 
 
 /**
  * The accepted target. Its numbers are FIXED once accepted (`putGoalTarget`'s
- * `GOAL_TARGET_FIXED`), which is why the state's committed/stretch are written
- * here rather than re-derived: they are the fixed promise the page judges the
- * readings against, and only the weekly corridor is re-derived at read time.
+ * `GOAL_TARGET_FIXED`), and they are the numbers the real derivation gives
+ * this seed's own start: committed is the band's last low edge and stretch its
+ * last high edge, exactly as `goal.propose_targets` stores them. Nothing is
+ * hand-written, so the goal line and the band agree at acceptance.
  */
 function targetRow(
   state: GoalPreviewState,
   now: Date,
+  context: GoalDerivationContext,
 ): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
   const startMeasuredAt = seededAt(now, state.targetStartWeeksAgo);
-  const loads = state.weeklyLoadsLbs;
-  const startLoad = loads[Math.max(0, loads.length - 1 - state.targetStartWeeksAgo)] ?? 0;
+  const startValue = startLoadOf(state);
+  const band = acceptedBandOf(context, startValue, state.acceptedCold === true ? 'cold' : 'ramp');
   return {
     id: 'preview-goal-target',
     priorityId: 'preview-goal-priority',
     metric: 'top_load_at_reps',
     exerciseId: GOAL_PREVIEW_EXERCISE.id,
     anchorReps: GOAL_PREVIEW_ANCHOR_REPS,
-    startValue: startLoad,
+    startValue,
     startMeasuredAt,
-    bandLowPctPerWeek: 1,
-    bandHighPctPerWeek: 2,
-    committedValue: state.committedLbs,
-    stretchValue: state.stretchLbs,
-    basis: state.acceptedCold === true ? 'execution_ramp' : 'rp_ramp',
-    infoLevel: state.acceptedCold === true ? 'cold' : 'ramp',
-    tierUsed: 'intermediate',
-    tierProvisional: false,
-    dietPhaseAtDerivation: 'maintenance',
+    bandLowPctPerWeek: band.bandLowPctPerWeek,
+    bandHighPctPerWeek: band.bandHighPctPerWeek,
+    committedValue: band.committedValue,
+    stretchValue: band.stretchValue,
+    basis: band.basis,
+    infoLevel: band.infoLevel,
+    tierUsed: context.tier,
+    tierProvisional: context.tierProvisional,
+    dietPhaseAtDerivation: context.dietState.phase,
     acceptedBy: 'user',
     acknowledgedStretch: false,
     derivedAt: startMeasuredAt,
     endsAt: blockEndsAt(startMeasuredAt, GOAL_PREVIEW_HORIZON_WEEKS),
   };
+}
+
+/** The load of the target's own start week: where its band is anchored (VW-449). */
+export function startLoadOf(state: GoalPreviewState): number {
+  const loads = state.weeklyLoadsLbs;
+  return loads[Math.max(0, loads.length - 1 - state.targetStartWeeksAgo)] ?? 0;
+}
+
+/**
+ * The band the target was accepted with: `deriveGoalBand` over the seed's own
+ * start and block, at the level it was accepted at. A cold acceptance is one
+ * made before calibration, so the evidence handed in is a calibrating lift's;
+ * a ramp acceptance is one made with the gates open and no fitted slope.
+ */
+export function acceptedBandOf(
+  context: GoalDerivationContext,
+  startValue: number,
+  infoLevel: Exclude<GoalInfoLevel, 'own'>,
+): GoalBand {
+  const cold = infoLevel === 'cold';
+  return deriveGoalBand({
+    metric: 'top_load_at_reps',
+    startValue,
+    horizonWeeks: context.horizonWeeks,
+    weeks: context.weeks,
+    tier: context.tier,
+    infoLevel,
+    dietState: context.dietState,
+    layoff: context.layoff,
+    matchedSessionCount: cold ? 0 : GOAL_BAND_CONSTANTS.minMatchedSessionsForRamp,
+    baselineState: cold ? 'COLD' : 'CALIBRATED',
+    completedMesoCount: context.completedMesoCount,
+  });
 }

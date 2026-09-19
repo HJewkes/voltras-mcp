@@ -69,8 +69,8 @@ describe('dashboard:preview goal states', () => {
       const view = await viewFor(state);
 
       expect(view.status).toBe(state.expectedStatus);
-      expect(view.committed).toBe(state.committedLbs);
-      expect(view.stretch).toBe(state.stretchLbs);
+      expect(view.committed).toBe(view.target.committedValue);
+      expect(view.stretch).toBe(view.target.stretchValue);
     });
   }
 
