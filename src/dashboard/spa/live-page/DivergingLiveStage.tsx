@@ -211,6 +211,7 @@ export function DivergingLiveStage({
             right={toStream(hero.right)}
             targetReps={hero.targetReps ?? undefined}
             liveRepIndex={hero.liveRepIndex ?? undefined}
+            lossThresholds={live.fatigueStop.bands}
             height={heroH > 0 ? heroH : HERO_FALLBACK_H}
             // `scale="peak"` is the pair's shared max plus headroom — which is exactly
             // what the model's `scaleMaxMps` describes. There is no numeric `scale` prop

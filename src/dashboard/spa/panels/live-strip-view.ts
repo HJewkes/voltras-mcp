@@ -8,11 +8,9 @@
  * page cannot disagree about the same set. No new server state: every field here is
  * already on the snapshot, the prescription, or the client rest clock.
  *
- * Each provisional rule (zone source, no plan) lives in its own small function so a
- * ruling on it is a one-function change. Fatigue and rest are the live page's own rules.
+ * The no-plan rule lives in its own small function so a ruling on it is a one-function
+ * change. Fatigue, bar bands and rest are the live page's own rules.
  */
-import { categorizeVelocity, type VelocityZoneId } from '@voltras/workout-analytics';
-
 import { buildCurrentSet } from '../adapter';
 import { type Route } from '../routing';
 import {
@@ -24,15 +22,18 @@ import {
   type SessionModel,
 } from '../live-page/model';
 import { formatMass, type MassUnit } from '../live-page/mass';
-import { setFatigueState, type SetFatigueInput } from '../live-page/fatigue-state';
+import {
+  setFatigueState,
+  type FatigueStop,
+  type SetFatigueInput,
+} from '../live-page/fatigue-state';
 import { fatigueStopForSet } from '../../../state/velocity-loss-intent.js';
 import { mapStoreToFatigueModel } from './fatigue-view';
 import { exerciseStopOf, mapStoreToDashboardModel, type LiveViewSources } from './live-view';
 
-/** One performed rep on the strip: mean concentric velocity (m/s) and its analytics zone. */
+/** One performed rep on the strip: mean concentric velocity (m/s), coloured by loss. */
 export interface LiveStripRepModel {
   velocity: number;
-  zone: VelocityZoneId;
 }
 
 /** The strip's data props; `onPress` and layout are the component's concern. */
@@ -46,13 +47,10 @@ export interface LiveStripModel {
   reps: LiveStripRepModel[];
   targetReps: number;
   isFatigued: boolean;
+  /** The set's stop bands (VW-448): the bar colours match the live hero's for the same set. */
+  lossThresholds?: FatigueStop['bands'];
   restRemainingMs?: number;
   restDurationMs?: number;
-}
-
-/** A rep's zone: WA's classifier on its global-default bands. */
-export function repZone(meanVelocityMps: number): VelocityZoneId {
-  return categorizeVelocity(meanVelocityMps);
 }
 
 /** Red on the strip exactly when the live aura is red: the same rule on the same inputs. */
@@ -86,7 +84,7 @@ function restDurationMs(session: SessionModel): number | null {
 }
 
 function stripReps(velocities: readonly number[]): LiveStripRepModel[] {
-  return velocities.map((velocity) => ({ velocity, zone: repZone(velocity) }));
+  return velocities.map((velocity) => ({ velocity }));
 }
 
 function loadLabel(weightLbs: number | null, unit: MassUnit): string | undefined {
@@ -105,6 +103,7 @@ function setStrip(
   const setCount = plannedSetCount(session);
   if (setCount === null || sources.snapshot === null) return null;
   const current = buildCurrentSet(sources.snapshot, unit);
+  const fatigue = liveSetFatigue(sources, current.velocityLossPct);
   const setNumber = activeCompletedSets(session).length + 1;
   return {
     state: 'set',
@@ -114,7 +113,8 @@ function setStrip(
     loadLabel: loadLabel(session.weightLbs, unit),
     reps: stripReps(current.velocitiesMps),
     targetReps: plannedRepCount(session) ?? Math.max(current.reps, 1),
-    isFatigued: isFatiguedFromLoss(liveSetFatigue(sources, current.velocityLossPct)),
+    isFatigued: isFatiguedFromLoss(fatigue),
+    lossThresholds: fatigue.stop.bands,
   };
 }
 
@@ -138,6 +138,7 @@ function restStrip(model: DashboardModel, unit: MassUnit): LiveStripModel | null
     reps: stripReps(last?.reps ?? []),
     targetReps: plannedRepCount(session) ?? Math.max(last?.repCount ?? 0, 1),
     isFatigued: last !== undefined && isFatiguedFromLoss(closedSetFatigue(last)),
+    ...(last !== undefined ? { lossThresholds: last.fatigueStop.bands } : {}),
     restRemainingMs: remainingMs,
     restDurationMs: durationMs,
   };

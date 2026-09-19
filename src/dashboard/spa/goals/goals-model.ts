@@ -25,6 +25,7 @@ import type { GoalMesoTarget } from '../../read-models/goal-milestone.js';
 import type { GoalPriorityRow } from '../../goal-progress-api.js';
 import type { StoredPriority } from '../../../store/types.js';
 import { mapCatalogMuscle } from '../../../exercises/muscle-map.js';
+import { calibrationCopy } from './calibration-copy.js';
 
 /** The two fetched payloads this page renders from. */
 export interface GoalsPageData {
@@ -137,6 +138,10 @@ export function cardChart(view: GoalProgressView): GoalCardChart {
     weeks: chartWeeks(view),
     direction: directionOf(view),
     nextTarget: nextTarget(view),
+    // Only a calibrating lift carries `calibration`; the chart's note then says what it waits on.
+    ...(view.calibration === undefined
+      ? {}
+      : { calibratingNote: calibrationCopy(view.calibration).chartNote }),
   };
 }
 
