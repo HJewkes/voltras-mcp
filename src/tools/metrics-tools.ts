@@ -130,6 +130,8 @@ import {
   type FatigueAxes,
   type FatigueSetReading,
 } from '../analytics/fatigue-axes.js';
+import { flatline, type Flatline } from '../analytics/flatline.js';
+import { programmedRampStepLbs } from '../analytics/goal-band.js';
 import { evaluateE1RMPr, type E1RMPrVerdict } from '../analytics/e1rm-pr.js';
 import { chooseComparisonPartner, type ComparabilityReport } from '../analytics/comparability.js';
 import { resolveMvt, type MvtBasis, type MvtChoice } from '../analytics/optimal-mvt.js';
@@ -580,6 +582,13 @@ export interface HistoryTrendResult {
          */
         verdict: 'plateau' | 'tolerated' | 'none';
         dietPhaseContext: DietPhaseContext;
+        /**
+         * VW-452: the trailing run that is a flatline rather than a slowdown, or
+         * `null`. For a load metric `verdict` is only ever `'plateau'` or
+         * `'tolerated'` when this is set. `volume` keeps WA's verdict and this
+         * stays `null`: the programmed ramp is a load step with no volume-load analogue.
+         */
+        flatline: Flatline | null;
       })
     | null;
   /**
@@ -645,10 +654,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * The observed diet phase over the plateau window, or `'unknown'` (VW-150).
  *
- * The window is WA's own: `detectPlateau` walks back from the most recent
- * point, so the run it found is the `plateauDays` ending there. No plateau
- * means `plateauDays: 0`, which collapses the window to that last point — the
- * phase the series ends in. Nothing here invents a length.
+ * The window is the run the verdict judges, ending at the most recent point:
+ * the flatline for a load metric (VW-452), WA's own `plateauDays` for volume.
+ * No run means `runDays: 0`, which collapses the window to that last point —
+ * the phase the series ends in. Nothing here invents a length.
  *
  * A window straddling two declared phases has no single covering phase and
  * reports `'unknown'`: "half fat-loss" is not an answer a reader can use.
@@ -661,16 +670,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 async function plateauWindowDietState(
   state: HistoryTrendState,
   series: TimeSeries,
-  plateau: PlateauDetection,
+  runDays: number,
 ): Promise<DietPhaseState> {
-  // `TimeSeries` degrades to `any[]` through the package's .d.ts (the same
-  // NodeNext-resolution note `computeHistoryTrend` carries), so the accumulator
-  // is annotated rather than inferred.
-  const last = series.reduce(
-    (latest: { ts: string }, p: { ts: string }) => (p.ts > latest.ts ? p : latest),
-    series[0]!,
-  );
-  const from = new Date(new Date(last.ts).getTime() - plateau.plateauDays * DAY_MS).toISOString();
+  const last = latestPoint(series);
+  const from = new Date(new Date(last.ts).getTime() - runDays * DAY_MS).toISOString();
   return readDietPhaseState(state, from, last.ts);
 }
 
@@ -685,34 +688,71 @@ const WA_DEFAULT_PLATEAU_MIN_DAYS = 14;
  * VW-277 consumer 3 of 3: does the declared diet phase explain a plateau this
  * short?
  *
- * THE DEVIATION IS THE PLATEAU'S RUN LENGTH, mapped onto the table's percent
+ * THE DEVIATION IS THE STALL'S RUN LENGTH, mapped onto the table's percent
  * axis so `minDays` — the detector's own point of concern — lands exactly on
  * the small/moderate edge. A run at the floor therefore sits where a widened
  * band can cover it and an unwidened one cannot; a run twice the floor is past
  * every widening this table grants. The sign is negative because a plateau is a
  * lifter behind plan, not ahead of it.
  *
- * THE SLOPE AXIS IS `'flat'` BY CONSTRUCTION, and that is WA's determination,
- * not a label invented here: `detectPlateau` returning `isPlateau` IS the flat
- * finding. VW-230 withheld `analyzeTrend`'s own up/down/flat `direction` for
+ * THE SLOPE AXIS IS `'flat'` BY CONSTRUCTION: a stall run is a flatline
+ * (VW-452) or, for volume, WA's own `isPlateau`, and either IS the flat finding. VW-230 withheld `analyzeTrend`'s own up/down/flat `direction` for
  * want of a citable load threshold, and nothing here reinstates it.
  */
 function plateauVerdict(
-  plateau: PlateauDetection,
+  run: StallRun,
   dietState: DietPhaseState,
   minDays: number,
 ): { verdict: 'plateau' | 'tolerated' | 'none'; dietPhaseContext: DietPhaseContext } {
   const tolerance = dietPhaseTolerance(
     dietState,
-    -SMALL_DEVIATION_PCT * (plateau.plateauDays / minDays),
+    -SMALL_DEVIATION_PCT * (run.days / minDays),
     'flat',
   );
-  if (!plateau.isPlateau) return { verdict: 'none', dietPhaseContext: tolerance.context };
+  if (!run.isStall) return { verdict: 'none', dietPhaseContext: tolerance.context };
   const softened = toleranceEffect(tolerance) === 'softened' && tolerance.magnitude === 'none';
   return {
     verdict: softened ? 'tolerated' : 'plateau',
     dietPhaseContext: tolerance.context,
   };
+}
+
+/** The run the verdict judges: WA's own for `volume`, the flatline's for a load (VW-452). */
+interface StallRun {
+  isStall: boolean;
+  days: number;
+  flatline: Flatline | null;
+}
+
+/**
+ * VW-452: a load run is a stall only when it is a flatline, judged against the
+ * programmed weekly step at the newest load. `volume` keeps WA's own finding.
+ */
+function stallRun(
+  series: TimeSeries,
+  metric: NonNullable<HistoryTrendInput['metric']>,
+  plateau: PlateauDetection,
+  input: HistoryTrendOptions,
+): StallRun {
+  if (metric === 'volume') {
+    return { isStall: plateau.isPlateau, days: plateau.plateauDays, flatline: null };
+  }
+  const found = flatline(series, {
+    expectedStepLbsPerWeek: programmedRampStepLbs(latestPoint(series).value),
+    thresholdPct: input.thresholdPct,
+    minDays: input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS,
+  });
+  return { isStall: found !== null, days: found?.days ?? 0, flatline: found };
+}
+
+function latestPoint(series: TimeSeries): { ts: string; value: number } {
+  // `TimeSeries` degrades to `any[]` through the package's .d.ts, so the
+  // accumulator is annotated rather than inferred.
+  return series.reduce(
+    (latest: { ts: string; value: number }, p: { ts: string; value: number }) =>
+      p.ts > latest.ts ? p : latest,
+    series[0]!,
+  );
 }
 
 /**
@@ -839,10 +879,11 @@ export async function computeHistoryTrend(
   // Omitted thresholdPct/minDays pass through as `undefined`, which is WA's
   // own signal to use its defaults (5, 14) — never redeclared here.
   const plateau = detectPlateau(series, input.thresholdPct, input.minDays);
+  const run = stallRun(series, input.metric ?? 'topLoad', plateau, input);
   // VW-150: the phase the window fell in, so a reader can tell a fat-loss
   // stretch from a true plateau (B34). VW-277: the same read now also carries
   // weeks-in-phase and drives `verdict`.
-  const dietState = await plateauWindowDietState(state, series, plateau);
+  const dietState = await plateauWindowDietState(state, series, run.days);
   return {
     series,
     trend,
@@ -850,7 +891,8 @@ export async function computeHistoryTrend(
     plateau: {
       ...plateau,
       phase: dietState.phase,
-      ...plateauVerdict(plateau, dietState, input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS),
+      ...plateauVerdict(run, dietState, input.minDays ?? WA_DEFAULT_PLATEAU_MIN_DAYS),
+      flatline: run.flatline,
     },
     chapterStartedAt,
     newChapter: chapterStartedAt === null ? null : newChapterState(chapterStartedAt, series.length),
@@ -2501,8 +2543,14 @@ const METRICS_COMPUTE_DESCRIPTION =
   'plateau. `plateau.isPlateau` is left exactly as the detector reported it, so the two are ' +
   'always comparable, and the tolerance only ever SOFTENS: a gain phase never manufactures a ' +
   'plateau the detector did not find. `plateau.dietPhaseContext` carries the phase, the ' +
-  'weeks elapsed in it and whether the tolerance actually moved a threshold. A window with no ' +
-  'working sets is NOT_FOUND. ' +
+  'weeks elapsed in it and whether the tolerance actually moved a threshold. ' +
+  'VW-452: for `topLoad`/`e1rm` the verdict is `plateau` only for a FLATLINE, not a slowdown ' +
+  '— a trailing run the detector calls a plateau whose own fitted slope is also under a ' +
+  'quarter of the programmed weekly load step at the newest load ' +
+  '(rp:rp-s7-plateau-flatline-vs-slowdown-distinction), so a lifter climbing on the ramp is ' +
+  'never a plateau. `plateau.flatline` carries that run (days, points, slopeLbsPerWeek, ' +
+  "flatBelowLbsPerWeek, reasoning) or null. `volume` keeps the detector's own verdict and a " +
+  'null flatline. A window with no working sets is NOT_FOUND. ' +
   "VW-361: `chapterStartedAt` is where this exercise's comparable series restarts, or null " +
   'when no chapter is declared, and the window is CLAMPED to it — the lookback asked for is a ' +
   'floor, never a way back past the boundary, so the top-load PR a caller reads off `series` ' +

@@ -125,10 +125,9 @@ export interface GoalPreviewState {
   readonly summary: string;
   /**
    * One session per ISO week, oldest first, each `SETS_PER_SESSION` working
-   * sets at that load for {@link GOAL_PREVIEW_ANCHOR_REPS} reps. Weekly steps
-   * are wide on purpose: `history.trend`'s plateau detector calls a run inside
-   * 5% of its median a flatline, and a flatline reads `stalled` before any of
-   * these rules get a say.
+   * sets at that load for {@link GOAL_PREVIEW_ANCHOR_REPS} reps. A flat run
+   * reads `stalled` before `behind` or `on_track` get a say, but a climb at a
+   * quarter of the programmed step or more is never flat (VW-452).
    */
   readonly weeklyLoadsLbs: readonly number[];
   /**
@@ -187,12 +186,8 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'on_track',
     expectedStatus: 'on_track',
-    summary: 'Top loads rising from 100 through a lighter week 3, inside the band anchored at 100.',
-    // Inside a band anchored at its start (VW-449) the programmed ramp adds
-    // about 2.5% a week, and three weekly readings that close together are
-    // what `history.trend`'s plateau detector calls a flatline. The lighter
-    // week 3 keeps the run wider than that without leaving the band.
-    weeklyLoadsLbs: [100, 103, 97, 104, 108],
+    summary: 'Top loads climbing 2 lb a week from 100, inside the band anchored at 100.',
+    weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
   },
   {

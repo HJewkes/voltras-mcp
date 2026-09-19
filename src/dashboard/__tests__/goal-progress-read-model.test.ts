@@ -216,6 +216,18 @@ describe('buildGoalProgressView stalled source', () => {
     expect(view.statusBasis).toContain('Variance under 5%.');
   });
 
+  it('keeps a calibrating target calibrating when the detector finds a flatline (VW-452)', () => {
+    const view = buildGoalProgressView(
+      input({
+        band: { ...BAND, infoLevel: 'cold' },
+        actuals: FLAT_RUN,
+        plateauVerdict: { verdict: 'plateau', plateauDays: 14 },
+      }),
+    );
+
+    expect(view.status).toBe('calibrating');
+  });
+
   it('does not stall on a tolerated plateau, because the phase already explains it', () => {
     const view = buildGoalProgressView(
       input({ actuals: FLAT_RUN, plateauVerdict: { verdict: 'tolerated' } }),
