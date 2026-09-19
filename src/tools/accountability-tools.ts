@@ -90,10 +90,11 @@ export const ACCOUNTABILITY_STATE_DESCRIPTION =
 export const ACCOUNTABILITY_PREVIEW_DESCRIPTION =
   'READ-ONLY. Run the same dry evaluation as `accountability.state` and, when the decision is ' +
   '`send`, also render the coach message that decision would carry — from live reads (`report.weekly` ' +
-  'adherence, `plan.next_workout`, the rolling 28-day count), never from stored copy. Sends nothing ' +
+  'adherence, `plan.next_workout`, the rolling 28-day training-day count), never from stored copy. Sends nothing ' +
   "and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, " +
   'or null when the decision is silent), `text` (the rendered message, or null when silent or when ' +
-  'the plan has nothing queued to render from), `inputsUsed` (the adherence, rolling-count and ' +
+  'the plan has nothing queued to render from), `inputsUsed` (the adherence, ' +
+  '`rolling28DayTrainingDays` and ' +
   'next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass ' +
   '`at` to evaluate as of another instant.';
 
@@ -207,7 +208,7 @@ export async function describeAccountabilityState(
 
 export interface AccountabilityPreviewInputsUsed {
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   nextWorkout: NextWorkoutRead | null;
 }
 
@@ -254,12 +255,12 @@ async function renderDecision(
   now: Date,
 ): Promise<{ text: string; inputsUsed: AccountabilityPreviewInputsUsed }> {
   const [report, nextWorkoutRead] = await Promise.all([
-    buildWeeklyReport(state, { format: 'json' }),
+    buildWeeklyReport(state, { format: 'json', to: now.toISOString() }),
     readNextWorkout(state),
   ]);
   const inputsUsed: AccountabilityPreviewInputsUsed = {
     adherence: report.header.adherence,
-    rolling28DayCompletedSessions: report.header.rolling28DayCompletedSessions,
+    rolling28DayTrainingDays: report.header.rolling28DayTrainingDays,
     nextWorkout: nextWorkoutRead,
   };
   const text = composeForKind(kind, current, inputsUsed, now);
@@ -277,7 +278,7 @@ function composeForKind(
       return composeSundayAnchor({
         lifterName: LIFTER_NAME_PLACEHOLDER,
         adherence: inputs.adherence,
-        rolling28DayCompletedSessions: inputs.rolling28DayCompletedSessions,
+        rolling28DayTrainingDays: inputs.rolling28DayTrainingDays,
         nextWorkout: inputs.nextWorkout,
         // No slot/fallback-day configuration is persisted anywhere yet
         // (VW-236 lands the Sunday goal-setting sitting that will produce
@@ -308,7 +309,7 @@ function composeForKind(
       return composeRealignOpener({
         lifterName: LIFTER_NAME_PLACEHOLDER,
         adherence: inputs.adherence,
-        rolling28DayCompletedSessions: inputs.rolling28DayCompletedSessions,
+        rolling28DayTrainingDays: inputs.rolling28DayTrainingDays,
         slots: [],
       }).text;
   }

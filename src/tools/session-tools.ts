@@ -63,6 +63,7 @@ import {
   type SessionListEntrySummary,
   type SessionListEntryFull,
 } from '../state/session-list-aggregator.js';
+import { localDate, readTrainingDaysMatching } from '../analytics/training-days.js';
 import { finalizeSet } from './set-tools.js';
 import { wrapHandler } from './helpers.js';
 import { buildSessionExerciseChangedPayload } from '../state/channel-payloads.js';
@@ -130,8 +131,9 @@ const SESSION_CHECKIN_DESCRIPTION =
   '`high`, never 5- or 10-point). Completion (loads, reps, sets) is already telemetry-derivable ' +
   '— show the lifter their own numbers back rather than asking `went` as a prompt; it exists ' +
   'only to store whatever they volunteer, and like every other code it is optional, never ' +
-  "required. `soreness`, `joint` and `motivation` are withheld before the lifter's first " +
-  'completed training week (answers are uniformly positive and low-signal that early, and ' +
+  'required. `soreness`, `joint` and `motivation` are withheld until the lifter has a training ' +
+  'day before today: every session on their first training day withholds them (answers are ' +
+  'uniformly positive and low-signal that early, and ' +
   'asking can seed unwarranted concern) — a withheld code you supplied anyway comes back in ' +
   "the response's `withheld` array. RP's cadence: after the very first session, then at the " +
   'end of every completed training week — never mandatory, never a gate on anything. ' +
@@ -591,7 +593,8 @@ async function endSession(
   const finalizedSession = slot.live.endSession();
   // `endSession` returns undefined only when there was no active session; we
   // checked that above, so `finalizedSession` is non-undefined here.
-  const endedAt = new Date().toISOString();
+  const now = new Date();
+  const endedAt = now.toISOString();
   const stored: StoredSession = {
     id: active.sessionId,
     startedAt: active.startedAt,
@@ -602,8 +605,8 @@ async function endSession(
     ...(active.preSessionCarbs !== undefined ? { preSessionCarbs: active.preSessionCarbs } : {}),
   };
   // VMCP-06.12 / B41: write the check-in BEFORE putSession marks this session
-  // ended, so the week-1 gate's session count (below, in writeCheckin) never
-  // counts the very session it is gating.
+  // ended, the order the gate was built around; the day rule in writeCheckin
+  // would exclude it anyway, since it ends today.
   let checkinResult: CheckinWriteResult | undefined;
   if (checkin !== undefined) {
     checkinResult = await writeCheckin(
@@ -614,6 +617,7 @@ async function endSession(
       },
       checkin.answers,
       checkin.notes,
+      now,
     );
   }
   await state.store.putSession(stored);
@@ -645,26 +649,25 @@ const CHECKIN_GATED_CODE_SET: ReadonlySet<string> = new Set(CHECKIN_GATED_CODES)
  * Guest sessions write NOTHING (VW-169): rows are keyed by the owner only, so
  * a second person's subjective ratings never land in the owner's history.
  *
- * Week-1 gating consults the owner's completed-session count: fewer than one
- * finished session means no training week has completed yet, so the
+ * Week-1 gating consults the owner's training days (VW-462): with none on a
+ * local date before today's, no training week has completed yet, so the
  * fatigue/joint/motivation codes are withheld (backlog idea 15 — answers are
  * uniformly positive and low-signal that early, and asking can seed
- * unwarranted concern). Called before the target session's own `endedAt`
- * lands in the store (see `endSession`), so the count never includes the
- * session being gated.
+ * unwarranted concern). Today is excluded so a first visit that logs one
+ * session per exercise stays gated for every one of them.
  */
 async function writeCheckin(
   state: ServerState,
   target: CheckinTarget,
   answers: z.infer<typeof CheckinAnswerInput>[],
   notes: string | undefined,
+  now: Date,
 ): Promise<CheckinWriteResult> {
   if (target.lifter !== undefined) {
     return { sessionId: target.sessionId, written: 0, withheld: [] };
   }
 
-  const priorCompletedSessions = await state.store.countSessions({ endedOnly: true });
-  const weekOne = priorCompletedSessions < 1;
+  const weekOne = !(await hasTrainedBefore(state, now));
 
   const withheld: string[] = [];
   const toWrite = answers.filter((answer) => {
@@ -675,7 +678,7 @@ async function writeCheckin(
     return true;
   });
 
-  const recordedAt = new Date().toISOString();
+  const recordedAt = now.toISOString();
   for (const answer of toWrite) {
     await state.store.putSelfReport({
       id: randomUUID(),
@@ -737,6 +740,13 @@ async function resolveCheckinTarget(
   };
 }
 
+/** Whether the owner has a training day on a local date before `now`'s. */
+async function hasTrainedBefore(state: ServerState, now: Date): Promise<boolean> {
+  const nowIso = now.toISOString();
+  const days = await readTrainingDaysMatching(state.store, { to: nowIso });
+  return days.some((day) => day < localDate(nowIso));
+}
+
 async function checkinSession(
   state: ServerState,
   input: z.infer<typeof SessionCheckinInput>,
@@ -745,7 +755,7 @@ async function checkinSession(
   if (input.preSessionCarbs !== undefined) {
     await updatePreSessionCarbs(state, target.sessionId, input.preSessionCarbs);
   }
-  return writeCheckin(state, target, input.answers, input.notes);
+  return writeCheckin(state, target, input.answers, input.notes, new Date());
 }
 
 /**

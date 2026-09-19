@@ -26,10 +26,9 @@
 import {
   deriveTargetInFrame,
   readDerivationContext,
-  readTrainingDays,
   type GoalDerivationState,
 } from '../tools/goal-derivation.js';
-import { sessionWindowFrom } from '../analytics/training-days.js';
+import { readTrainingDays, sessionWindowFrom } from '../analytics/training-days.js';
 import { readDietPhaseState } from '../tools/diet-phase-state.js';
 import {
   readBodyweightRateAdvisory,
@@ -197,7 +196,7 @@ async function readSessionWindow(
   const nowIso = now.toISOString();
   const days = await readTrainingDays(store, nowIso);
   const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const staying = await readTrainingDays(store, nowIso, sessionWindowFrom(weekAhead));
+  const staying = await readTrainingDays(store, nowIso, { from: sessionWindowFrom(weekAhead) });
   return { days, agingOutNext7d: days.length - staying.length };
 }
 

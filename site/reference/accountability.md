@@ -18,7 +18,7 @@ Report the coach accountability protocol state for the owner and the decision th
 
 READ-ONLY.
 
-Run the same dry evaluation as `accountability.state` and, when the decision is `send`, also render the coach message that decision would carry — from live reads (`report.weekly` adherence, `plan.next_workout`, the rolling 28-day count), never from stored copy. Sends nothing and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, or null when the decision is silent), `text` (the rendered message, or null when silent or when the plan has nothing queued to render from), `inputsUsed` (the adherence, rolling-count and next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass `at` to evaluate as of another instant.
+Run the same dry evaluation as `accountability.state` and, when the decision is `send`, also render the coach message that decision would carry — from live reads (`report.weekly` adherence, `plan.next_workout`, the rolling 28-day training-day count), never from stored copy. Sends nothing and writes nothing. Returns `decision` (as `accountability.state`), `kind` (the decision's `kind`, or null when the decision is silent), `text` (the rendered message, or null when silent or when the plan has nothing queued to render from), `inputsUsed` (the adherence, `rolling28DayTrainingDays` and next-workout values the render read, or null when nothing was rendered), and `evaluatedAt`. Pass `at` to evaluate as of another instant.
 
 **Parameters**
 

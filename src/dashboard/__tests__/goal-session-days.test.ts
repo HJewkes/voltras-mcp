@@ -1,20 +1,16 @@
 // `sessions_28d` counts training days, not stored session rows (VW-460). The
 // owner's ruling: "One per training day". These cases run derivation and the
 // goals route over a real sqlite store, so the store read, the window and the
-// day rule are all exercised together.
+// day rule are all exercised together. VW-462 adds the layoff read, which counts
+// training days since a gap through the same rule.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { blockEndsAt } from '../../analytics/goal-block-weeks.js';
-import { localDate } from '../../analytics/training-days.js';
+import { localDate, readTrainingDays } from '../../analytics/training-days.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredGoalTarget, StoredPriority } from '../../store/types.js';
-import {
-  deriveTarget,
-  readDerivationContext,
-  readTrainingDays,
-  selectionOf,
-} from '../../tools/goal-derivation.js';
+import { deriveTarget, readDerivationContext, selectionOf } from '../../tools/goal-derivation.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -148,5 +144,36 @@ describe('sessions_28d on the goals route', () => {
     expect(view?.actuals).toEqual([
       { ts: viewNow.toISOString(), value: 2, matched: true, isPR: false },
     ]);
+  });
+});
+
+describe('the layoff read (VW-462)', () => {
+  async function layoffAfterGap(): Promise<boolean> {
+    await ended(new Date(NOW.getTime() - 200 * DAY_MS));
+    const context = await readDerivationContext({ store }, await sessionsPriority());
+    return context.layoff;
+  }
+
+  it('keeps a lifter in the return meso after one day of twelve sessions', async () => {
+    await twelveRowsOn(new Date(NOW.getTime() - 10 * DAY_MS));
+
+    expect(await layoffAfterGap()).toBe(true);
+  });
+
+  it('ends the return meso after twelve distinct training days', async () => {
+    for (let i = 0; i < 12; i++) await ended(new Date(NOW.getTime() - (30 - 2 * i) * DAY_MS));
+
+    expect(await layoffAfterGap()).toBe(false);
+  });
+});
+
+describe('a guest’s training days', () => {
+  it('reads the named lifter’s days instead of the owner’s', async () => {
+    await ended(new Date(2026, 8, 10, 9));
+    await ended(new Date(2026, 8, 11, 9), { lifter: 'guest' });
+
+    const days = await readTrainingDays(store, NOW.toISOString(), { lifter: 'guest' });
+
+    expect(days).toEqual(['2026-09-11']);
   });
 });

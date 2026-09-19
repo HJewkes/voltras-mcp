@@ -69,7 +69,7 @@ export interface SundayAnchorInput {
   lifterName: string;
   /** `null` when no template was assigned in the range, which is not a shortfall. */
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   nextWorkout: NextWorkoutRead | null;
   slots: PlannedSlot[];
   /** Last week's if-then in the lifter's words, shown back before this week's is asked for. */
@@ -98,7 +98,7 @@ export interface GhostNudgeInput {
 export interface RealignOpenerInput {
   lifterName: string;
   adherence: AdherenceRead | null;
-  rolling28DayCompletedSessions: number;
+  rolling28DayTrainingDays: number;
   slots: PlannedSlot[];
 }
 
@@ -145,8 +145,8 @@ function adherenceLine(adherence: AdherenceRead | null): string {
 }
 
 /** Copy rule 7: a rolling window has no zero state, which is the point of it. */
-function rollingLine(sessions: number): string {
-  return `Rolling 28-day session count: ${sessions}.`;
+function rollingLine(trainingDays: number): string {
+  return `Rolling 28-day training days: ${trainingDays}.`;
 }
 
 function nextUpLine(nextWorkout: NextWorkoutRead | null): string {
@@ -253,7 +253,7 @@ export function composeSundayAnchor(input: SundayAnchorInput): ComposedMessage {
     text: render(SUNDAY_ANCHOR, {
       lifterName: input.lifterName,
       adherenceLine: adherenceLine(input.adherence),
-      rollingLine: rollingLine(input.rolling28DayCompletedSessions),
+      rollingLine: rollingLine(input.rolling28DayTrainingDays),
       nextUpLine: nextUpLine(input.nextWorkout),
       slotsLine: slotsLine(input.slots),
       ifThenLine: ifThenLine(input.ifThenPlan),
@@ -329,7 +329,7 @@ export function composeRealignOpener(input: RealignOpenerInput): ComposedMessage
       nonJudgmentLine: NON_JUDGMENT_LINE,
       operationalHonestyLine: OPERATIONAL_HONESTY_LINE,
       adherenceLine: adherenceLine(input.adherence),
-      rollingLine: rollingLine(input.rolling28DayCompletedSessions),
+      rollingLine: rollingLine(input.rolling28DayTrainingDays),
       reArchitectLine: reArchitectLine(input.slots),
       askLine: askLine(input.slots),
     }),

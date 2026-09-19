@@ -505,6 +505,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // null whenever `silentReason` says why nothing was offered.
   'recompReAsk',
   'silentReason',
+  // VW-462: session counts read in training days, one per local day trained.
+  'rolling28DayTrainingDays',
+  'trainingDaysCompleted',
 ];
 
 /**

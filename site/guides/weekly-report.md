@@ -22,18 +22,21 @@ Every example below is real output from the test suite's fixture
 # Weekly Report
 Range: 2026-09-07T00:00:00.000Z to 2026-09-11T00:00:00.000Z
 
-Sessions completed: 2
-Last 28 days: 2 sessions completed
+Training days: 2
+Last 28 days: 2 training days
 Adherence: planned 2 / done 1 (trend: no-prior-data)
 ```
 
 - **Lifter** appears in the title (`# Weekly Report - <name>`) when the report was scoped
   to one; a report with no `lifter` input covers the local owner and the line is omitted.
 - **Range** is the `from`/`to` window the report was asked for.
-- **Sessions completed** counts ended sessions inside that range.
-- **Last 28 days** is a separate, always-rolling count of ended sessions in the 28 days
-  before the range's end — deliberately **not a streak**. It doesn't care whether those
-  sessions were on consecutive days or bunched at the end of the window; it exists so a
+- **Training days** counts the distinct days you trained inside that range (JSON:
+  `trainingDaysCompleted`). A day counts once however many sessions it holds, so a visit
+  logged as one session per exercise is one training day, not twelve.
+- **Last 28 days** is a separate, always-rolling count of training days in the 28 days
+  before the range's end (JSON: `rolling28DayTrainingDays`), by the same one-per-day rule
+  the attendance goal uses — deliberately **not a streak**. It doesn't care whether those
+  days were consecutive or bunched at the end of the window; it exists so a
   coach can tell "did they train enough this month" apart from "did they train this week"
   without the two questions bleeding into each other.
 - **Adherence** only appears when at least one session in range was attached to a planned

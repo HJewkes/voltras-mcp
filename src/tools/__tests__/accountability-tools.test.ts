@@ -10,7 +10,10 @@ import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import type { AccountabilityState } from '../../accountability/types.js';
-import { describeAccountabilityState } from '../accountability-tools.js';
+import {
+  describeAccountabilityPreview,
+  describeAccountabilityState,
+} from '../accountability-tools.js';
 
 /** Local-time noon on days that are unambiguously that weekday in any timezone. */
 const SUNDAY_NOON = '2026-09-13T12:00:00';
@@ -112,5 +115,49 @@ describe('accountability.state', () => {
     const result = await describeAccountabilityState(makeState(), { at: THURSDAY_NOON });
     expect(result.decision).toMatchObject({ action: 'send', kind: 'miss_recovery' });
     expect(result.decision.reason).toContain('early_week_miss');
+  });
+});
+
+/** `count` ended sessions minutes apart on one local day: one visit logged per exercise. */
+async function rowsOnOneDay(day: Date, count: number, prefix: string): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, i * 4);
+    await store.putSession({
+      id: `${prefix}-${i}`,
+      startedAt: start.toISOString(),
+      endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),
+    });
+  }
+}
+
+/** The smallest plan tree `plan.next_workout` resolves, so the preview has something to render. */
+async function seedOneTemplatePlan(): Promise<void> {
+  await store.putTrainingProgram({
+    id: 'prog',
+    name: 'Base',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  await store.putTrainingBlock({
+    id: 'blk',
+    programId: 'prog',
+    orderIndex: 0,
+    name: 'B1',
+    weeksCount: 1,
+  });
+  await store.putTrainingWeek({ id: 'wk', blockId: 'blk', orderIndex: 0 });
+  await store.putWorkoutTemplate({ id: 'tpl', weekId: 'wk', name: 'Full A', orderIndex: 0 });
+}
+
+describe('accountability.preview', () => {
+  it('reads the rolling line in training days, as of `at` (VW-462)', async () => {
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+    await rowsOnOneDay(new Date(2026, 8, 7), 12, 'visit');
+    await rowsOnOneDay(new Date(2026, 8, 15), 1, 'after-at');
+
+    const result = await describeAccountabilityPreview(makeState(), { at: SUNDAY_NOON });
+
+    expect(result.inputsUsed?.rolling28DayTrainingDays).toBe(1);
+    expect(result.text).toContain('Rolling 28-day training days: 1.');
   });
 });

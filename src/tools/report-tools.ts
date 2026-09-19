@@ -19,7 +19,7 @@ import type { z } from 'zod';
 
 import type { RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
-import { localDate } from '../analytics/training-days.js';
+import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -296,8 +296,9 @@ function pluralSets(count: number): string {
 export const REPORT_WEEKLY_DESCRIPTION =
   'Coach-readable weekly summary over a date range (default: the last 7 days), in markdown ' +
   '(default) or JSON — both render from the same data tree, so the numbers always agree. ' +
-  'Sections, each omitted when empty: a header (lifter, range, sessions completed, a rolling ' +
-  '28-day completed-session count — never a streak — and adherence `planned N / done M` against ' +
+  'Sections, each omitted when empty: a header (lifter, range, `trainingDaysCompleted` in the ' +
+  'range and `rolling28DayTrainingDays` — both count training days, the distinct local dates ' +
+  'trained however many sessions one day holds, never a streak — and adherence `planned N / done M` against ' +
   "the active program's touched week(s), plus a coarse trend vs the previous equal-length range); " +
   'one block per session (date, template name, the self-reported `preSessionCarbs` line when the ' +
   'session has one, then the same `report.session_results` strings verbatim, ' +
@@ -314,7 +315,6 @@ export const REPORT_WEEKLY_DESCRIPTION =
   'Read-only and local: no network call, and it writes nothing.';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const ROLLING_WINDOW_DAYS = 28;
 const DEFAULT_RANGE_DAYS = 7;
 /** Generous ceiling for one report's worth of sessions; `listSessions` defaults to 50. */
 const MAX_SESSIONS_IN_RANGE = 500;
@@ -333,8 +333,10 @@ export interface WeeklyReportHeader {
   lifter: string | null;
   from: string;
   to: string;
-  sessionsCompleted: number;
-  rolling28DayCompletedSessions: number;
+  /** Distinct training days among the ended sessions started in the range (VW-462). */
+  trainingDaysCompleted: number;
+  /** Training days in the 28 days ending at `to`, by the shared rule in `training-days.ts`. */
+  rolling28DayTrainingDays: number;
   adherence: WeeklyAdherence | null;
 }
 
@@ -446,8 +448,12 @@ export async function buildWeeklyReport(
       lifter: input.lifter ?? null,
       from,
       to,
-      sessionsCompleted: endedSessions.length,
-      rolling28DayCompletedSessions: await countCompletedSessionsInWindow(state, input.lifter, to),
+      trainingDaysCompleted: trainingDaysOf(endedSessions.map((s) => s.endedAt)).length,
+      rolling28DayTrainingDays: (
+        await readTrainingDays(state.store, to, {
+          ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
+        })
+      ).length,
       adherence: await computeAdherenceWithTrend(state, input.lifter, from, to, sessions),
     },
     sessions: sessionEntries,
@@ -741,20 +747,6 @@ function repeatedOffCodeMuscleGroups(rows: StoredSelfReport[]): string[] {
   return [...counts.entries()].filter(([, count]) => count > 1).map(([group]) => group);
 }
 
-async function countCompletedSessionsInWindow(
-  state: ServerState,
-  lifter: string | undefined,
-  to: string,
-): Promise<number> {
-  const from = new Date(new Date(to).getTime() - ROLLING_WINDOW_DAYS * DAY_MS).toISOString();
-  return state.store.countSessions({
-    from,
-    to,
-    endedOnly: true,
-    ...(lifter !== undefined ? { lifter } : {}),
-  });
-}
-
 interface AdherenceCount {
   planned: number;
   done: number;
@@ -855,8 +847,8 @@ export function renderWeeklyMarkdown(report: WeeklyReport): string {
   lines.push(`# Weekly Report${report.header.lifter !== null ? ` - ${report.header.lifter}` : ''}`);
   lines.push(`Range: ${report.header.from} to ${report.header.to}`);
   lines.push('');
-  lines.push(`Sessions completed: ${report.header.sessionsCompleted}`);
-  lines.push(`Last 28 days: ${report.header.rolling28DayCompletedSessions} sessions completed`);
+  lines.push(`Training days: ${report.header.trainingDaysCompleted}`);
+  lines.push(`Last 28 days: ${report.header.rolling28DayTrainingDays} training days`);
   if (report.header.adherence !== null) {
     const a = report.header.adherence;
     lines.push(`Adherence: planned ${a.planned} / done ${a.done} (trend: ${a.trend})`);

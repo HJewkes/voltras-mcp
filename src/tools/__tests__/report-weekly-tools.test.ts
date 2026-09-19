@@ -240,7 +240,27 @@ describe('report.weekly', () => {
 
     // Assert
     expect(report.header.adherence).toEqual({ planned: 3, done: 2, trend: 'no-prior-data' });
-    expect(report.header.sessionsCompleted).toBe(3);
+    expect(report.header.trainingDaysCompleted).toBe(3);
+  });
+
+  it('counts twelve sessions on one local day as one training day in both header counts (VW-462)', async () => {
+    for (let i = 0; i < 12; i++) {
+      const start = new Date(2026, 8, 8, 9, i * 4);
+      await store.putSession({
+        id: `row-${i}`,
+        startedAt: start.toISOString(),
+        endedAt: new Date(start.getTime() + 3 * 60_000).toISOString(),
+      });
+    }
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: new Date(2026, 8, 7).toISOString(),
+      to: new Date(2026, 8, 11).toISOString(),
+    });
+
+    expect(report.sessions).toHaveLength(12);
+    expect(report.header.trainingDaysCompleted).toBe(1);
+    expect(report.header.rolling28DayTrainingDays).toBe(1);
   });
 
   it("omits a guest lifter's sets from a session's rendered exercises", async () => {
@@ -564,9 +584,9 @@ describe('report.weekly', () => {
     expect(report.flags.velocityLossHold).toHaveLength(1);
     expect(report.checkIn?.themes).toHaveLength(1);
 
-    expect(markdown).toContain(`Sessions completed: ${report.header.sessionsCompleted}`);
+    expect(markdown).toContain(`Training days: ${report.header.trainingDaysCompleted}`);
     expect(markdown).toContain(
-      `Last 28 days: ${report.header.rolling28DayCompletedSessions} sessions completed`,
+      `Last 28 days: ${report.header.rolling28DayTrainingDays} training days`,
     );
     const adherence = report.header.adherence!;
     expect(markdown).toContain(

@@ -98,7 +98,7 @@ tree — is a different, already-read-only tool: see
 ## Weekly
 
 [`report.weekly`](/reference/report) rolls per-session results like the ones above up over
-a date range — sessions completed, a rolling 28-day count, adherence and its trend,
+a date range — training days, a rolling 28-day count of training days, adherence and its trend,
 progression suggestions, flags, and a check-in section. See the
 [weekly report guide](/guides/weekly-report) for what each part means and how to call it.
 

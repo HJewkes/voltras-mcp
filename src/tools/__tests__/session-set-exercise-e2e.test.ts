@@ -121,7 +121,7 @@ function makeStore(): SessionStore & {
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),
     getSetsForExercise: vi.fn(async () => []),
-    countSessions: vi.fn(async () => 0),
+    listSessionEndTimes: vi.fn(async () => []),
     countSets: vi.fn(async () => 0),
     putTrainingProgram: vi.fn(async () => {}),
     getTrainingProgram: vi.fn(async () => undefined),
