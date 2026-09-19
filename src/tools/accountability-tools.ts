@@ -353,7 +353,8 @@ function weekdayName(date: Date): string {
 
 async function readNextWorkout(state: ServerState): Promise<NextWorkoutRead | null> {
   const result = await lookupNextWorkout(state, {});
-  if ('completed' in result) return null;
+  // Nothing planned today (a gap, or before the first dated block) reads as nothing queued.
+  if (!('template' in result)) return null;
   return {
     templateName: result.template.name,
     exercises: result.plannedExercises.map((plannedExercise) => ({

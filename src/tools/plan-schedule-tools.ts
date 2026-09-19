@@ -15,7 +15,7 @@
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
-import { localDate } from '../analytics/training-days.js';
+import { localDate, todayLocal } from '../analytics/training-days.js';
 import {
   addDays,
   blockCalendar,
@@ -177,11 +177,6 @@ function install<T>(
 }
 
 // --- shared reads and checks ---
-
-/** Today's local calendar date: the one clock every schedule rule reads. */
-export function todayLocal(): string {
-  return localDate(new Date().toISOString());
-}
 
 async function requireBlock(state: ServerState, blockId: string): Promise<StoredTrainingBlock> {
   const block = await state.store.getTrainingBlock(blockId);

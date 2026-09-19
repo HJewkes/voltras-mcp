@@ -30,6 +30,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { todayLocal } from '../analytics/training-days.js';
+import { resolveCurrentBlock } from '../plan/current-block.js';
+
 import {
   buildPlanTreeView,
   nextOrderIndex,
@@ -39,6 +42,7 @@ import {
 } from './read-models/index.js';
 import { validateTargets, type TargetField, type TargetValues } from './plan-targets.js';
 import type {
+  StoredBlockSchedule,
   StoredPlannedExercise,
   StoredProgramAssignment,
   StoredTrainingBlock,
@@ -71,6 +75,7 @@ export interface DashboardPlanStore {
   deletePlannedExercise(id: string): Promise<boolean>;
   getAssignmentsForTemplate(templateId: string): Promise<StoredProgramAssignment[]>;
   getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
+  getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined>;
 }
 
 /** Thrown by the mutation helpers; `server.ts` maps `code` onto an HTTP status. */
@@ -90,9 +95,9 @@ export interface ActivePlanContext {
 }
 
 /**
- * Read the whole tree for one program. `programId` absent ⇒ the most recent
- * non-archived program, matching `plan-tools.ts`'s `resolveDefaultProgram` so
- * the dashboard and the MCP tools agree on "the current program".
+ * Read the whole tree for one program. `programId` absent means the program the
+ * current-block rule picks (VW-475), the same rule `plan-tools.ts` uses, so the
+ * dashboard and the MCP tools agree on "the current program".
  */
 export async function fetchPlanTree(
   store: DashboardPlanStore,
@@ -103,7 +108,7 @@ export async function fetchPlanTree(
   const program =
     opts.programId !== undefined
       ? programs.find((p) => p.id === opts.programId)
-      : programs.find((p) => p.archivedAt === undefined);
+      : ((await resolveCurrentBlock(store, todayLocal())).program ?? undefined);
 
   const rows: PlanTreeRows = {
     programs,

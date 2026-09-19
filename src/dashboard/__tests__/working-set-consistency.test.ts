@@ -141,6 +141,7 @@ describe('working-set count parity across the wall, the summary page and progres
       getPlannedExercise: async () => undefined,
       getAssignmentsForTemplate: async () => [],
       getAssignmentsForSession: async () => [],
+      getLiveBlockSchedule: async () => undefined,
       putTrainingProgram: async () => undefined,
       putTrainingBlock: async () => undefined,
       putTrainingWeek: async () => undefined,

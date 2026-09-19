@@ -193,6 +193,7 @@ function makeStore(
     getPlannedExercise: async (id) => plannedRows.find((p) => p.id === id),
     getAssignmentsForTemplate: async () => [],
     getAssignmentsForSession: async () => [],
+    getLiveBlockSchedule: async () => undefined,
     putTrainingProgram: noop,
     putTrainingBlock: noop,
     putTrainingWeek: noop,
