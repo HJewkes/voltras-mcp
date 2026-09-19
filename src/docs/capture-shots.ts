@@ -393,7 +393,8 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // before `goal.declare_priorities` ever ran — the shot opened on an empty
     // "No priorities declared" page every time (VW-389).
     waitFor: { kind: 'sessions-ended', minSessions: 2 },
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
+    // No Per-lift section: the seed's one lift is the lead, which Per-lift omits (VW-467).
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Whole body'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
@@ -407,7 +408,7 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // and content rather than re-deriving one.
     waitFor: { kind: 'sessions-ended', minSessions: 2 },
     viewport: PHONE_VIEWPORT,
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Whole body'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
