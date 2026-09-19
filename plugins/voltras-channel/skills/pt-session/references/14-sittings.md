@@ -53,7 +53,18 @@ If any read surprises you (a dated block already exists, priorities already exis
 
 If `medicalClearanceRequired` is true, read `medicalClearanceNote` as written and go no further into programming.
 
-**Ask before you treat past days as training.** The owner said on 2026-09-19 that most stored sessions were bench tests, not training. No tool can mark a session as a test yet (VW-489; design in `sources/design/2026-09-19-in-app-coach-chat-design.md`, section 7). So every count of "logged training days" is overstated, and any start value may rest on a test pull. Do not call the 18 to 21 logged days a training history. Ask: **"Was 7 September a real workout, or a test?"** It is the only day in the last 28, and the attendance goal starts from it.
+**Session kinds first, if the server has them (VW-489, #479, store schema 35).** Call `session.review_list`. If the tool exists, the owner has already ruled for this sitting, on 2026-09-19, verbatim: "mark everything test for now". So:
+
+1. Read the list back as a count only: "N days are unreviewed. You told me to mark them all as tests for now." Take `from` and `to` from the oldest and newest day on the list. On 2026-09-19 a rehearsal on a copy of the store gave 21 days, 2026-05-04 to 2026-09-07, 85 sessions; trust the live reads over these numbers.
+2. Dry run: `session.mark_kind { "kind": "test", "from": "<oldest>", "to": "<newest>", "dryRun": true }`. Read back `newlyClassified`, `reclassified`, `skippedAlreadyMarked` and the day count. Expect `reclassified: 0`.
+3. On the owner's "yes", the real call: the same input without `dryRun`, plus `"expectSessions": <the newlyClassified count the dry run gave>`. Without it the tool refuses and names the count; that is one retry, not a fault. Then `session.review_list` should return no unreviewed day. Read `rederiveFailed` in the result: expect it empty. If it names an exercise, the mark is still saved; run `baselines.recalc` and `rir_velocity.fit` for each named exercise and say so.
+4. Say once: "Any of those you later tell me was a real workout, I re-mark as training. I never guess." Re-marking one of these days later needs `reclassify: true`, because it is no longer unreviewed.
+
+This ruling is for this sitting's backlog only. At every later sitting, ask about each unreviewed day.
+
+What changes after the marking, so re-read everything below from the tools and trust the tool over this script: training days read 0; the 28-day count is 0, so the attendance target comes back `skipped` and no attendance goal can be set today (say so plainly and move on; it is re-proposed once real training days exist); lift proposals have no training history behind them, so expect cold starting values or skips, and read out exactly what `goal.propose_targets` returns; the tier signal's evidence shows 0 logged days and stays beginner, provisional. Do not re-mark a day to make a goal possible.
+
+**If `session.review_list` does not exist**, the server predates session kinds. Then ask before you treat past days as training. The owner said on 2026-09-19 that most stored sessions were bench tests, not training. Every count of "logged training days" is overstated, and any start value may rest on a test pull. Do not call the 18 to 21 logged days a training history. Ask: **"Was 7 September a real workout, or a test?"** It is the only day in the last 28, and the attendance goal starts from it.
 
 ### Step 2. Bodyweight
 

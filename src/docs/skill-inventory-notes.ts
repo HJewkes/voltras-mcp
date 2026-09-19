@@ -92,7 +92,7 @@ export const SKILL_IGNORED_TOOLS: readonly string[] = [
 
 /** What the hand-written half of the skill was last read against. */
 export const SKILL_VERIFIED_LINE =
-  'Verified 2026-09-19 against voltras-mcp main (#473, store schema 34)';
+  'Verified 2026-09-19 against voltras-mcp main (#479, store schema 35)';
 
 export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
   'device.scan': {
@@ -331,6 +331,16 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
     job: 'record',
     when: 'One session in full',
     rule: 'Carries `sessionPace` when a plan is attached: an estimate, never a measurement',
+  },
+  'session.review_list': {
+    job: 'record',
+    when: 'Before any read of history: goals, the tier signal, attendance, the weekly review, block planning',
+    rule: 'Defaults to the days nobody has classified, and an unclassified day is left out of every history read — so an empty history may mean "not yet reviewed" rather than "not yet trained". Feed a row\'s `day` straight to `session.mark_kind`',
+  },
+  'session.mark_kind': {
+    job: 'record',
+    when: 'The lifter has told you what a day was',
+    rule: '**Never guess a kind. Ask.** `dryRun: true` first; a real `from`/`to` call then needs `expectSessions` equal to the count the dry run reported. A day or range call leaves a session already marked the other kind alone unless `reclassify: true`; naming a `sessionId` may always reclassify. Read `rederiveFailed` out and re-run `baselines.recalc` and `rir_velocity.fit` for those exercises',
   },
 
   'timer.start': {
