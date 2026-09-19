@@ -8,7 +8,7 @@
 
 Record the user's self-reported onboarding/training-background answers: declaredTier, yearsTraining, historyConsistent, everPlateaued (a real plateau event — the honest signal for graduating beginner->intermediate, more reliable than years trained or a physique read), reportedSetsPerMuscle, goal, daysAvailable (days per week they WANT), daysReliable (days per week they can DEFINITELY make — the number to actually program against, distinct from daysAvailable), currentBaseline (where they are NOW, free text), effortTolerance (low/moderate/high — how hard they are willing to be pushed) and target (where they want to END UP, free text).
 
-Those last three stay DISTINCT from each other and from goal on purpose: collapsing them is how intake ends up reading a target as a baseline. Also namedProgramHistory (WHICH named program reportedSetsPerMuscle came from — 5/3/1 and German Volume Training imply very different starting volumes for the same set count, so a raw set report without it is uninterpretable) and injuries (self-reported limitations: area, kind, optional note, and cardioLimitation for a CARDIOVASCULAR one). Set cardioLimitation only when the lifter reports a cardiovascular limitation; it is a hard gate to a doctor, not a severity marker for an ache. Call is a merge onto the existing row, not an overwrite — pass only the fields you have an answer for; earlier answers are preserved across multiple onboarding turns. injuries is the one exception: it REPLACES the stored list, so send every injury still standing, and send [] for "asked, none" (which is a different answer from never having asked). This tool only stores verbatim self-report; it never infers or computes an experience tier (see profile.get_tier_signal for that), and it never interprets an injury clinically.
+Those last three stay DISTINCT from each other and from goal on purpose: collapsing them is how intake ends up reading a target as a baseline. Also lastBreakMonths (how many months the most recent break from consistent training lasted, 0 if none: the length of the break, not the time since it ended) and namedProgramHistory (WHICH named program reportedSetsPerMuscle came from — 5/3/1 and German Volume Training imply very different starting volumes for the same set count, so a raw set report without it is uninterpretable) and injuries (self-reported limitations: area, kind, optional note, and cardioLimitation for a CARDIOVASCULAR one). Set cardioLimitation only when the lifter reports a cardiovascular limitation; it is a hard gate to a doctor, not a severity marker for an ache. Call is a merge onto the existing row, not an overwrite — pass only the fields you have an answer for; earlier answers are preserved across multiple onboarding turns. injuries is the one exception: it REPLACES the stored list, so send every injury still standing, and send [] for "asked, none" (which is a different answer from never having asked). This tool only stores verbatim self-report; it never infers or computes an experience tier (see profile.get_tier_signal for that), and it never interprets an injury clinically.
 
 **Parameters**
 
@@ -25,6 +25,7 @@ Those last three stay DISTINCT from each other and from goal on purpose: collaps
 - `target` — `string`, optional.
 - `injuries` — `object[]`, optional.
 - `namedProgramHistory` — `string`, optional.
+- `lastBreakMonths` — `number` (min 0), optional.
 
 ## `profile.get_training_background`
 
@@ -36,9 +37,9 @@ Returns `profile: null` if nothing has been captured yet.
 
 ## `profile.get_tier_signal`
 
-Read a crude experience-tier signal (VW-92 MVP) derived from the stored training profile — a coarse ceiling, not a validated tier classification.
+Read a crude experience-tier signal derived from the stored training profile and the logged history: a coarse ceiling on the declared tier, not a validated classification.
 
-Read-only; computes nothing new and writes nothing. Do not treat this as authoritative for tier-gated decisions without checking its `confidence`/`source` fields. The evidence field `trainingDaysLogged` counts distinct days trained, all time: one visit logged as a session per exercise is one day.
+Read-only. `confidence` is `confident` only once 24 training days span 12 weeks; `trainingDaysLogged` counts distinct days trained, so a visit logged as one session per exercise is one day. The ceiling reaches intermediate on a reported plateau plus either that logged history (`ceilingBasis: logged_history`) or the returner path (`ceilingBasis: returner`): at least a year of declared training, a last break under 12 months (`lastBreakMonths`), and no logged gap of a year or more. A returner keeps the declared tier while `confidence` stays `provisional`; say so, and say which path applied. The ceiling only ever lowers the declared tier and never derives `advanced`. Check `confidence` and `source` before a tier-gated decision.
 
 **Parameters:** none.
 
@@ -54,7 +55,7 @@ Read-only — it writes nothing and applies nothing. Every seed is a SUGGESTION:
 
 List which session-0 onboarding answers are still missing, in the order RP asks them, so the next question is the right one instead of a re-ask.
 
-Read-only; it stores nothing and invents no questions — `missing[]` is exactly the unanswered `profile.set_training_background` fields. `medicalClearanceRequired: true` means the lifter reported a CARDIOVASCULAR limitation: read `medicalClearanceNote` out as written and route them to a doctor. Do not interpret, grade or program around a cardiovascular flag — that is a liability boundary, and nothing in this server reasons about it further. Non-cardiovascular injuries are not a gate and never set that flag. `goalRealism` is the stored goal and target plus RP's rule for checking commitment against them; it is PROSE TO APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no goal or target has been captured yet.
+Read-only; it stores nothing and invents no questions — `missing[]` is exactly the unanswered `profile.set_training_background` fields. `medicalClearanceRequired: true` means the lifter reported a CARDIOVASCULAR limitation: read `medicalClearanceNote` out as written and route them to a doctor. Do not interpret, grade or program around a cardiovascular flag — that is a liability boundary, and nothing in this server reasons about it further. Non-cardiovascular injuries are not a gate and never set that flag. `goalRealism` is the stored goal and target plus RP's rule for checking commitment against them; it is PROSE TO APPLY WITH THE LIFTER, never a verdict this tool computed. `goalRealism: null` means no goal or target has been captured yet. `lastBreakMonths` is listed only for a lifter who declared above beginner while their logged history is still short; `lastBreakQuestion` is then the question to ask, as written.
 
 **Parameters:** none.
 

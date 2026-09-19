@@ -427,6 +427,38 @@ describe('profile.get_onboarding_gaps', () => {
     ]);
   });
 
+  it('asks the last-break question of a declared intermediate with no logged history yet (VW-462)', async () => {
+    await h.invoke('profile.set_training_background', { declaredTier: 'intermediate' });
+
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+    const body = parseResult(r) as {
+      gaps: { missing: string[]; lastBreakQuestion: string | null };
+    };
+
+    expect(body.gaps.missing.slice(0, 3)).toEqual(['goal', 'daysAvailable', 'daysReliable']);
+    expect(body.gaps.missing).toContain('lastBreakMonths');
+    expect(body.gaps.missing.indexOf('lastBreakMonths')).toBe(
+      body.gaps.missing.indexOf('yearsTraining') + 1,
+    );
+    expect(body.gaps.lastBreakQuestion).toMatch(/how many months/);
+  });
+
+  it('stores the last-break answer with user provenance and stops asking (VW-462)', async () => {
+    await h.invoke('profile.set_training_background', {
+      declaredTier: 'intermediate',
+      lastBreakMonths: 4,
+    });
+
+    const background = parseResult(await h.invoke('profile.get_training_background', {})) as {
+      profile: { lastBreakMonths?: number; provenance?: Record<string, string> };
+    };
+    const r = await h.invoke('profile.get_onboarding_gaps', {});
+
+    expect(background.profile.lastBreakMonths).toBe(4);
+    expect(background.profile.provenance?.lastBreakMonths).toBe('user');
+    expect(gaps(r).missing).not.toContain('lastBreakMonths');
+  });
+
   it('treats an empty injury list as answered, not as a gap', async () => {
     await h.invoke('profile.set_training_background', { injuries: [] });
 

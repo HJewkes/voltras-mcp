@@ -131,7 +131,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -734,6 +734,9 @@ const SCHEMA_SQL = `
     -- replaced on write, because a merge cannot express a removal.
     injuries_json TEXT,
     named_program_history TEXT,
+    -- v34: how many months the lifter's most recent break from consistent
+    -- training lasted, self-reported; NULL means never asked.
+    last_break_months REAL,
     -- Per-field {field: 'user'|'llm'|'default'}: which answers the user
     -- actually gave and which we assumed on their behalf.
     provenance_json TEXT,
@@ -1779,6 +1782,15 @@ function migrateV32ToV33(db: DatabaseSync): void {
 }
 
 /**
+ * v33 -> v34: `training_profile.last_break_months`, the length of the lifter's most recent break
+ * from consistent training. PURELY ADDITIVE and back-fills nothing: an absent answer means the
+ * question was never asked, and the tier signal's returner path then does not apply.
+ */
+function migrateV33ToV34(db: DatabaseSync): void {
+  addColumnIfMissing(db, 'training_profile', 'last_break_months', 'REAL');
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -2309,6 +2321,7 @@ interface TrainingProfileRow {
   target: string | null;
   injuries_json: string | null;
   named_program_history: string | null;
+  last_break_months: number | null;
   provenance_json: string | null;
   updated_at: string;
 }
@@ -3553,8 +3566,8 @@ export class SqliteSessionStore implements SessionStore {
             ever_plateaued, reported_sets_per_muscle, goal, goal_set_at,
             days_available, days_reliable, onboarded_at, current_baseline,
             effort_tolerance, target, injuries_json, named_program_history,
-            provenance_json, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_break_months, provenance_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            declared_tier = excluded.declared_tier,
            declared_at = excluded.declared_at,
@@ -3572,6 +3585,7 @@ export class SqliteSessionStore implements SessionStore {
            target = excluded.target,
            injuries_json = excluded.injuries_json,
            named_program_history = excluded.named_program_history,
+           last_break_months = excluded.last_break_months,
            provenance_json = excluded.provenance_json,
            updated_at = excluded.updated_at`,
       )
@@ -3593,6 +3607,7 @@ export class SqliteSessionStore implements SessionStore {
         p.target ?? null,
         p.injuries === undefined ? null : JSON.stringify(p.injuries),
         p.namedProgramHistory ?? null,
+        p.lastBreakMonths ?? null,
         p.provenance === undefined ? null : JSON.stringify(p.provenance),
         p.updatedAt,
       );
@@ -4862,6 +4877,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 32) {
     migrateV32ToV33(db);
   }
+  if (current <= 33) {
+    migrateV33ToV34(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -5506,6 +5524,7 @@ function rowToTrainingProfile(row: TrainingProfileRow): StoredTrainingProfile {
   if (row.target !== null) out.target = row.target;
   if (row.injuries_json !== null) out.injuries = JSON.parse(row.injuries_json) as StoredInjury[];
   if (row.named_program_history !== null) out.namedProgramHistory = row.named_program_history;
+  if (row.last_break_months !== null) out.lastBreakMonths = row.last_break_months;
   if (row.provenance_json !== null) {
     out.provenance = JSON.parse(row.provenance_json) as Record<string, 'user' | 'llm' | 'default'>;
   }

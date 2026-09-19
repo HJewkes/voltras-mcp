@@ -509,6 +509,13 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'rolling28DayTrainingDays',
   'trainingDaysCompleted',
   'trainingDaysLogged',
+  // VW-462 returner path: which gate raised the tier ceiling, and the evidence behind it.
+  'ceilingBasis',
+  'logged_history',
+  'returner',
+  'loggedHistoryMet',
+  'longestLoggedGapDays',
+  'lastBreakQuestion',
 ];
 
 /**

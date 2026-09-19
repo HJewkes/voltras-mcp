@@ -57,6 +57,9 @@ export const ProfileSetTrainingBackgroundInput = z
     // 5/3/1 and German Volume Training imply very different starting volumes
     // for the same reported set count.
     namedProgramHistory: z.string().min(1).optional(),
+    // How long the most recent break from consistent training lasted, in months; 0 = never
+    // stopped. The tier signal's returner path reads it.
+    lastBreakMonths: z.number().min(0).optional(),
   })
   .strict();
 

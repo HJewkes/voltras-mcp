@@ -107,6 +107,19 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The experience tier counts training days and has a path for a returning lifter (VW-462).
+  - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
+    `evidence.trainingDaysLogged`: a visit logged as one session per exercise is one day.
+  - `confidence` is `confident` once 24 training days span 12 weeks, whatever the tier.
+  - The derived ceiling reaches intermediate on a reported plateau plus either that logged
+    history or the returner path: at least a year of declared training, a last break under
+    12 months, and no logged gap of a year or more. A returner keeps the declared tier with
+    `confidence: provisional`. The new `ceilingBasis` says which path applied
+    (`logged_history`, `returner` or null).
+  - `profile.set_training_background` takes `lastBreakMonths`, the length of the most recent
+    break from consistent training. `profile.get_onboarding_gaps` asks for it, with
+    `lastBreakQuestion`, when a lifter declared above beginner and their logged history is
+    still short.
 - A slow-loss recomposition's bodyweight goal is now a band instead of one line: holding
   the start weight is the committed edge and -0.5 %/wk is the stretch (VW-468). The Sunday
   `goal.weekly_review` judges against the same band the goals page draws; before, it used
@@ -125,8 +138,6 @@ entry is written from the user's point of view is a review question, not a check
     `accountability.preview` renames `inputsUsed.rolling28DayCompletedSessions` to
     `inputsUsed.rolling28DayTrainingDays`, and a preview with `at` now counts as of `at`
     instead of the current time.
-  - `profile.get_tier_signal` renames `evidence.sessionsLogged` to
-    `evidence.trainingDaysLogged`. The ceiling still needs 24, now 24 training days.
   - `session.checkin` withholds soreness, joint and motivation until the lifter has
     trained on an earlier day, so every session of a first training day withholds them.
     Before, the second exercise of that first day already asked.

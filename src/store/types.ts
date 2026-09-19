@@ -1336,6 +1336,11 @@ export interface StoredTrainingProfile {
   injuries?: StoredInjury[];
   /** The named program `reportedSetsPerMuscle` came from (VW-148 / B36). */
   namedProgramHistory?: string;
+  /**
+   * How many months the most recent break from consistent training lasted (v34). The LENGTH of
+   * the break, not the time since it ended, so the answer never goes stale. 0 = never stopped.
+   */
+  lastBreakMonths?: number;
   onboardedAt?: string;
   /** Per-field `{field: 'user'|'llm'|'default'}` — which answers the user
    * actually gave and which were assumed on their behalf. */
