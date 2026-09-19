@@ -139,6 +139,11 @@ entry is written from the user's point of view is a review question, not a check
   own line. A store with no dated block keeps the old count, over the weeks a session touched.
   The Sunday review now says when the next block is due to be planned; its rate advisory is
   unchanged (VW-478, #476).
+- A TrueCoach import now dates the block it writes into: it starts on the earliest imported
+  Monday and runs to the latest week, and an ISO week the coach assigned nothing in gets an
+  empty week row, so week 3 of the block is the third calendar week. Re-importing the same
+  range changes no dates. An import that reaches back before a block that has already started,
+  or that would land on another dated block, is refused and says which (VW-479, #477).
 - A goal is now kept on its block's calendar. A target accepted for a dated block takes that
   block's weeks, deload weeks and end date, so moving a block that has not started moves its
   goals with it and leaves the committed and stretch numbers alone. Until the block starts,

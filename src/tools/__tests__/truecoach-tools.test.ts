@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type Config } from '../../config.js';
 import { ExerciseService } from '../../exercises/exercise-service.js';
 import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
@@ -274,3 +274,112 @@ async function rowCounts(): Promise<{ templates: number; exercises: number }> {
   }
   return { templates, exercises };
 }
+
+describe('truecoach.import_week dates its block (VW-479)', () => {
+  const W36: RawWorkoutsPage = {
+    workouts: [{ id: 11, title: 'Upper A', due: '2026-08-31' }],
+    workout_items: [{ id: 21, workout_id: 11, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W38: RawWorkoutsPage = {
+    workouts: [{ id: 12, title: 'Upper B', due: '2026-09-14' }],
+    workout_items: [{ id: 22, workout_id: 12, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+  const W39: RawWorkoutsPage = {
+    workouts: [{ id: 13, title: 'Upper C', due: '2026-09-21' }],
+    workout_items: [{ id: 23, workout_id: 13, name: 'Cable Row', info: '3 x 10', position: 1 }],
+  };
+
+  const WIDE = { from: '2026-08-31', to: '2026-09-27' };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-19T18:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function importBlock() {
+    const [block] = await store.getTrainingBlocksForProgram('prog-1');
+    return block!;
+  }
+
+  it('plans the block at the earliest imported Monday, with an empty row for the missing week', async () => {
+    const result = (await importWeek(state, WIDE, { fetchPages: pages(W36, W38) })) as {
+      schedule: { seq: number; kind: string };
+    };
+
+    const block = await importBlock();
+    expect(result.schedule).toEqual({ seq: 1, kind: 'planned' });
+    expect(await store.getLiveBlockSchedule(block.id)).toMatchObject({
+      startsOn: '2026-08-31',
+      weeksCount: 3,
+      changedBy: 'import',
+    });
+    const weeks = await store.getTrainingWeeksForBlock(block.id);
+    expect(weeks.map((week) => week.name)).toEqual(['2026-W36', '2026-W37', '2026-W38']);
+    expect(await store.getWorkoutTemplatesForWeek(weeks[1]!.id)).toEqual([]);
+    expect((await store.getWorkoutTemplatesForWeek(weeks[2]!.id)).map((t) => t.name)).toEqual([
+      'Upper B',
+    ]);
+  });
+
+  it('writes no schedule row when the same range is imported again', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W36, W38) });
+
+    const again = (await importWeek(state, WIDE, { fetchPages: pages(W36, W38) })) as {
+      schedule: null;
+    };
+
+    expect(again.schedule).toBeNull();
+    expect(await store.listBlockScheduleHistory((await importBlock()).id)).toHaveLength(1);
+  });
+
+  it('resizes the block when a later week is imported', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W36, W38) });
+
+    const grown = (await importWeek(state, WIDE, { fetchPages: pages(W39) })) as {
+      schedule: { seq: number; kind: string };
+    };
+
+    const block = await importBlock();
+    expect(grown.schedule).toEqual({ seq: 2, kind: 'resized' });
+    expect(await store.getLiveBlockSchedule(block.id)).toMatchObject({ weeksCount: 4 });
+    expect(block.weeksCount).toBe(4);
+  });
+
+  it('refuses to re-date a block that has already started', async () => {
+    await importWeek(state, WIDE, { fetchPages: pages(W38) });
+
+    await expect(importWeek(state, WIDE, { fetchPages: pages(W36) })).rejects.toMatchObject({
+      code: 'BLOCK_STARTED',
+    });
+    expect(await store.listBlockScheduleHistory((await importBlock()).id)).toHaveLength(1);
+  });
+
+  it('refuses an import that would overlap another dated block, and names it', async () => {
+    await store.putTrainingBlock({
+      id: 'other',
+      programId: 'prog-1',
+      orderIndex: 5,
+      name: 'Block 2 — Orientation',
+      weeksCount: 2,
+    });
+    await store.appendBlockSchedule({
+      blockId: 'other',
+      startsOn: '2026-09-07',
+      weeksCount: 2,
+      skips: [],
+      kind: 'planned',
+      changedBy: 'user',
+      declaredAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    await expect(importWeek(state, WIDE, { fetchPages: pages(W36, W38) })).rejects.toMatchObject({
+      code: 'SCHEDULE_OVERLAP',
+      message: expect.stringContaining('Block 2 — Orientation') as unknown as string,
+    });
+    expect(await store.getTrainingWeeksForBlock((await importBlock()).id)).toEqual([]);
+  });
+});

@@ -539,6 +539,9 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'adherence.weeks',
   'touched_weeks',
   'scheduleChanges',
+  // VW-479: the two refusals a dated TrueCoach import can return.
+  'BLOCK_STARTED',
+  'SCHEDULE_OVERLAP',
 ];
 
 /**
