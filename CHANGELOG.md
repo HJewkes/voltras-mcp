@@ -298,7 +298,7 @@ entry is written from the user's point of view is a review question, not a check
   last step, not two). A lift that stops dead, repeating one load, is still called at two
   weeks. `history.trend` reports the same fields; `plateau.flatline.slopeLbsPerWeek` is now
   the slope of the two-week top load. `isPlateau` and the `volume` metric are unchanged.
-  `scripts/flatline-sim.mjs` reproduces every number (VW-458).
+  `scripts/flatline-sim.mjs` reproduces every number (VW-458, #466).
 - A lift goal's band now starts where the goal did. The goals page drew each band from the
   lifter's latest top load, so the line restarted wherever they were now and moved with them
   on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged

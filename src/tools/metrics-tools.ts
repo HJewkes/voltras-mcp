@@ -2548,7 +2548,12 @@ const METRICS_COMPUTE_DESCRIPTION =
   '— a trailing run the detector calls a plateau whose own fitted slope is also under a ' +
   'quarter of the programmed weekly load step at the newest load ' +
   '(rp:rp-s7-plateau-flatline-vs-slowdown-distinction), so a lifter climbing on the ramp is ' +
-  'never a plateau. `plateau.flatline` carries that run (days, points, slopeLbsPerWeek, ' +
+  'never a plateau. VW-458: that slope reads each weekly point as the top load of the ' +
+  'trailing 14 days, and a run that is still wobbling must span 21 days before it can read ' +
+  'flat; a settled run (its whole range within one week of flatline-rate movement, such as ' +
+  'one load repeated) is still read at the 14-day floor. So a wobbling lift that genuinely ' +
+  'stops reads `plateau` about a week later than one that stops dead. `isPlateau` is still ' +
+  "the detector's raw answer. `plateau.flatline` carries that run (days, points, slopeLbsPerWeek, " +
   "flatBelowLbsPerWeek, reasoning) or null. `volume` keeps the detector's own verdict and a " +
   'null flatline. A window with no working sets is NOT_FOUND. ' +
   "VW-361: `chapterStartedAt` is where this exercise's comparable series restarts, or null " +
