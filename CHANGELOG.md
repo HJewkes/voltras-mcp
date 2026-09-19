@@ -56,7 +56,8 @@ entry is written from the user's point of view is a review question, not a check
   calendar holds unless the lifter chooses to push the block a week later, and the coach asks
   each time. `plan.block.calendar` shows each dated week with its planned workouts and the days
   trained, and `plan.block.schedule_history` lists every change with who made it and why.
-  Blocks never overlap, run in program order, and cannot move once they have started (VW-474).
+  Blocks never overlap, run in program order, and cannot move once they have started (VW-474,
+  #465).
 - A set in progress or a rest countdown now stays in view on every dashboard page, not just
   the live one. A one-row strip above the page shows the exercise, set n of m, the rep count,
   the last rep's velocity with one bar per rep, and the rest seconds left; pressing it returns
