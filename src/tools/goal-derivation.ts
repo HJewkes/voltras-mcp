@@ -22,6 +22,7 @@ import {
   SESSION_WINDOW_DAYS,
   readTrainingDays,
   readTrainingDaysMatching,
+  trainingGaps,
 } from '../analytics/training-days.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import {
@@ -50,7 +51,6 @@ export interface GoalDerivationState {
     | 'getSessionDateSpan'
     | 'getTrainingWeeksForBlock'
     | 'getDietPhaseCovering'
-    | 'listSessions'
     | 'getTrainingBlock'
     | 'getTrainingBlocksForProgram'
     | 'listBodyMetrics'
@@ -76,8 +76,6 @@ const TRAINING_DAYS_PER_MESO = 12;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Everything a band needs that is the same for every metric of one priority. */
 export interface GoalDerivationContext {
@@ -174,23 +172,17 @@ async function readHorizonWeeks(
 /**
  * Whether the lifter is inside the first mesocycle back after a 3+ month gap.
  *
- * Read off the session timeline rather than a self-report: a fitted slope over
- * a regain phase over-projects, and the timeline is what shows the gap
- * (plan §1.10).
+ * Read off the training-day timeline rather than a self-report: a fitted slope
+ * over a regain phase over-projects, and the timeline is what shows the gap
+ * (plan §1.10). The whole timeline, uncapped, so the newest gap is always seen.
  */
 async function hasRecentLayoff(state: GoalDerivationState, nowIso: string): Promise<boolean> {
-  const sessions = await state.store.listSessions({ sort: 'startedAt:asc', limit: 500 });
-  const starts = sessions.map((session) => Date.parse(session.startedAt));
-  let lastGapEndedAt: number | null = null;
-  for (const [index, start] of starts.entries()) {
-    const previous = starts[index - 1];
-    if (previous !== undefined && start - previous >= LAYOFF_GAP_DAYS * DAY_MS) {
-      lastGapEndedAt = start;
-    }
-  }
-  if (lastGapEndedAt === null) return false;
-  const since = { from: new Date(lastGapEndedAt).toISOString(), to: nowIso };
-  return (await readTrainingDaysMatching(state.store, since)).length < TRAINING_DAYS_PER_MESO;
+  const days = await readTrainingDaysMatching(state.store, { to: nowIso });
+  const lastGap = trainingGaps(days)
+    .filter((gap) => gap.days >= LAYOFF_GAP_DAYS)
+    .at(-1);
+  if (lastGap === undefined) return false;
+  return days.filter((day) => day >= lastGap.endsOn).length < TRAINING_DAYS_PER_MESO;
 }
 
 /**

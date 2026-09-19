@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { localDate, sessionWindowFrom, trainingDaysOf } from '../training-days.js';
+import { localDate, sessionWindowFrom, trainingDaysOf, trainingGaps } from '../training-days.js';
 
 const iso = (...parts: [number, number, number, number?, number?]): string =>
   new Date(parts[0], parts[1], parts[2], parts[3] ?? 12, parts[4] ?? 0).toISOString();
@@ -34,5 +34,23 @@ describe('sessionWindowFrom', () => {
     const now = '2026-09-19T10:00:00.000Z';
 
     expect(sessionWindowFrom(now)).toBe('2026-08-22T10:00:00.000Z');
+  });
+});
+
+describe('trainingGaps', () => {
+  it('measures each gap in whole days and names the day that ended it', () => {
+    expect(trainingGaps(['2026-03-01', '2026-03-03', '2026-06-15'])).toEqual([
+      { days: 2, endsOn: '2026-03-03' },
+      { days: 104, endsOn: '2026-06-15' },
+    ]);
+  });
+
+  it('counts whole days across a daylight-saving change', () => {
+    expect(trainingGaps(['2026-03-07', '2026-03-09'])).toEqual([{ days: 2, endsOn: '2026-03-09' }]);
+  });
+
+  it('has no gap with fewer than two days', () => {
+    expect(trainingGaps(['2026-03-01'])).toEqual([]);
+    expect(trainingGaps([])).toEqual([]);
   });
 });

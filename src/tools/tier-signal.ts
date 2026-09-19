@@ -22,7 +22,7 @@
 // session rather than filtering by user id, the same single-user posture `profile-tools.ts`
 // takes by keying off `LOCAL_USER_ID`.
 
-import { readTrainingDaysMatching } from '../analytics/training-days.js';
+import { readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
@@ -120,14 +120,10 @@ function weeksBetween(first: string | null, last: string | null): number {
   return Math.floor(spanMs / MS_PER_WEEK);
 }
 
-/** The longest run of days between consecutive training days, which arrive sorted. */
+/** The longest run of days between consecutive training days; `null` with fewer than two. */
 function longestGapDays(days: readonly string[]): number | null {
-  let longest: number | null = null;
-  for (let i = 1; i < days.length; i++) {
-    const gap = (Date.parse(days[i]) - Date.parse(days[i - 1])) / DAY_MS;
-    longest = longest === null ? gap : Math.max(longest, gap);
-  }
-  return longest;
+  const gaps = trainingGaps(days).map((gap) => gap.days);
+  return gaps.length === 0 ? null : Math.max(...gaps);
 }
 
 /**
