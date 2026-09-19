@@ -5,7 +5,7 @@
 // them. `at` pins the dry-run instant, which is the only way to exercise the
 // Sunday and Thursday branches without waiting for a Sunday.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
@@ -50,6 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
+  vi.useRealTimers();
 });
 
 describe('accountability.state', () => {
@@ -105,6 +106,29 @@ describe('accountability.state', () => {
     // adherence at all — which is not a direction and must fire nothing.
     expect(result.adherenceTrend).toBeNull();
     expect(result.decision.action).toBe('silent');
+  });
+
+  it('reads the Thursday trend as of `at`, not the wall clock (VW-472)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-19T12:00:00'));
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+    await store.putSession({
+      id: 'after-at',
+      startedAt: '2026-09-18T12:00:00',
+      endedAt: '2026-09-18T12:30:00',
+    });
+    await store.putProgramAssignment({
+      id: 'after-at-assignment',
+      sessionId: 'after-at',
+      workoutTemplateId: 'tpl',
+      assignedAt: '2026-09-18T12:00:00',
+    });
+
+    const result = await describeAccountabilityState(makeState(), { at: THURSDAY_NOON });
+
+    expect(result.tick).toBe('thursday');
+    expect(result.adherenceTrend).toBeNull();
   });
 
   it('reads a miss entered on a Monday as the early-week trigger', async () => {

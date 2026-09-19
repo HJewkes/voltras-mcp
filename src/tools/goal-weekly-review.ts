@@ -30,7 +30,11 @@ import {
   type BodyweightRateOutcome,
   type WeeklySelfReport,
 } from '../analytics/bodyweight-rate-advisory.js';
-import type { BodyweightReading, BodyweightTargetLine } from '../analytics/bodyweight-trend.js';
+import {
+  readingsAsOf,
+  type BodyweightReading,
+  type BodyweightTargetLine,
+} from '../analytics/bodyweight-trend.js';
 import type { GoalWeeklyReviewInput } from '../schemas/goal.js';
 import type { ServerState } from '../state/server-state.js';
 import type { DietPhase, RecompMode } from '../store/diet-phase.js';
@@ -191,7 +195,7 @@ async function readContext(
     phase: diet.phase,
     recompMode: diet.recompMode ?? null,
     phaseStartedAt: diet.startedAt,
-    readings: metrics.map((row) => ({
+    readings: readingsAsOf(metrics, reviewedAt).map((row) => ({
       measuredAt: row.measuredAt,
       bodyweightLbs: row.bodyweightLbs,
     })),

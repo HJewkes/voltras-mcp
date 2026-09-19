@@ -148,6 +148,15 @@ function sortedReadings(readings: readonly BodyweightReading[]): BodyweightReadi
   return [...readings].sort((a, b) => a.measuredAt.localeCompare(b.measuredAt));
 }
 
+/** The readings taken at or before `nowIso`: a trend as of an instant cannot see past it. */
+export function readingsAsOf<T extends BodyweightReading>(
+  readings: readonly T[],
+  nowIso: string,
+): T[] {
+  const cutoff = Date.parse(nowIso);
+  return readings.filter((r) => Date.parse(r.measuredAt) <= cutoff);
+}
+
 function daysBetween(fromIso: string, toIso: string): number {
   const ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
   return ms / (24 * 60 * 60 * 1000);
@@ -296,7 +305,7 @@ function cumulativePctChange(
  * no `Date.now()` — `input.now` is the only clock.
  */
 export function computeBodyweightTrend(input: BodyweightTrendInput): BodyweightTrendResult {
-  const ascending = sortedReadings(input.readings);
+  const ascending = sortedReadings(readingsAsOf(input.readings, input.now));
   const { flagged, adjustments } = detectSpikes(ascending);
   const meanSeries = buildMeanSeries(ascending, flagged);
   const current = meanSeries.length > 0 ? meanSeries[meanSeries.length - 1] : null;
