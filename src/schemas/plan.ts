@@ -236,6 +236,13 @@ export const PlanExerciseListForTemplateInput = z
  */
 export const PlanCurrentBlockInput = z.object({}).strict();
 
+export const PlanBlockPlanningBriefInput = z
+  .object({
+    // The block the sitting plans; defaults to the next one after the plan in force.
+    forBlockId: IdSchema.optional(),
+  })
+  .strict();
+
 export const PlanNextWorkoutInput = z
   .object({
     programId: IdSchema.optional(),

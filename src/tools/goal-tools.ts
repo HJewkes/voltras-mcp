@@ -23,6 +23,8 @@
 // its optimistic one, and accepting a value outside the band never moves the
 // band to match.
 
+import { todayLocal } from '../analytics/training-days.js';
+import { resolveCurrentBlock } from '../plan/current-block.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -199,12 +201,16 @@ export interface DeclarePrioritiesResult {
   dietPhase: string;
   tierUsed: string;
   thresholds: typeof GOAL_GUARDRAIL_THRESHOLDS;
+  /** The block the declaration was stamped with, and whether it was the dated default (VW-476). */
+  block: { id: string; defaulted: boolean } | null;
 }
 
 async function declarePriorities(
   state: ServerState,
-  input: z.infer<typeof GoalDeclarePrioritiesInput>,
+  given: z.infer<typeof GoalDeclarePrioritiesInput>,
 ): Promise<DeclarePrioritiesResult> {
+  const blockId = given.blockId ?? (await defaultPriorityBlockId(state));
+  const input = blockId === undefined ? given : { ...given, blockId };
   const declaredAt = new Date().toISOString();
   const signal = await getTierSignal(state, LOCAL_USER_ID);
   const tier = signal.declared ?? signal.tier;
@@ -227,7 +233,15 @@ async function declarePriorities(
     dietPhase: dietState.phase,
     tierUsed: tier,
     thresholds: GOAL_GUARDRAIL_THRESHOLDS,
+    block: blockId === undefined ? null : { id: blockId, defaulted: given.blockId === undefined },
   };
+}
+
+/** The upcoming dated block, else the current one: the block a sitting declares for (VW-476). */
+async function defaultPriorityBlockId(state: ServerState): Promise<string | undefined> {
+  const read = await resolveCurrentBlock(state.store, todayLocal());
+  if (read.nextBlock !== null) return read.nextBlock.id;
+  return read.state === 'current' ? read.block?.id : undefined;
 }
 
 type DeclaredItem = { kind: StoredPriority['kind']; ref: string };

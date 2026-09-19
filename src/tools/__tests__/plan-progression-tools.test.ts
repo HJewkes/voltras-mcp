@@ -72,6 +72,7 @@ const TOOL_NAMES = [
   'plan.exercise.create',
   'plan.exercise.list_for_template',
   'plan.current_block',
+  'plan.block.planning_brief',
   'plan.next_workout',
   'plan.complete_workout',
   'plan.attach_to_session',
@@ -313,7 +314,7 @@ describe('plan.next_workout', () => {
     ]);
     const r = await h.invoke('plan.next_workout', { programId: 'prog-a' });
     expect(r.isError).toBeUndefined();
-    expect(parseResult(r)).toEqual({ ok: true, completed: true });
+    expect(parseResult(r)).toMatchObject({ ok: true, completed: true });
   });
 
   it('returns the first uncompleted template with its block, week, and planned exercises', async () => {
@@ -355,7 +356,7 @@ describe('plan.next_workout', () => {
     h.store.getTrainingBlocksForProgram.mockResolvedValueOnce([]);
     const r = await h.invoke('plan.next_workout', {});
     expect(r.isError).toBeUndefined();
-    expect(parseResult(r)).toEqual({ ok: true, completed: true });
+    expect(parseResult(r)).toMatchObject({ ok: true, completed: true });
     // Confirm we read from the latest program, not the older one.
     expect(h.store.listTrainingPrograms).toHaveBeenCalledWith({ includeArchived: false });
     expect(h.store.getTrainingBlocksForProgram).toHaveBeenCalledWith('prog-b');

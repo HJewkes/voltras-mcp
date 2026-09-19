@@ -51,6 +51,7 @@ export const SUNDAY_ANCHOR = [
   '{{adherenceLine}}',
   '{{rollingLine}}',
   '{{nextUpLine}}',
+  '{{planningLine}}',
   '{{slotsLine}}',
   '{{ifThenLine}}',
   '{{commitmentLine}}',

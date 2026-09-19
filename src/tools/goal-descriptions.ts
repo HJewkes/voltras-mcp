@@ -9,12 +9,15 @@
 export const GOAL_DECLARE_PRIORITIES_DESCRIPTION =
   'Record what the lifter wants to emphasise this block: `items` of ' +
   '`{kind: muscle|lift, ref, level: specialize|maintain|deprioritize}`, plus an optional ' +
-  '`horizonWeeks` and `blockId`. NO TARGET VALUE IS TAKEN HERE — the human states priorities and ' +
+  '`horizonWeeks` and `blockId`. `blockId` defaults to the upcoming dated block, else the ' +
+  'current one (plan.current_block), so a planning sitting declares for the block it just ' +
+  'planned; `block` in the result names the block used and whether it was that default. ' +
+  'NO TARGET VALUE IS TAKEN HERE — the human states priorities and ' +
   'the coach derives the numbers (`goal.propose_targets`). `ref` is a catalog muscle string or a ' +
   'spoken synonym ("arms", "legs") for a muscle, and an exerciseId for a lift; anything not listed ' +
   'stays `maintain` by default. Re-declaring a priority keeps its row, so `mesosHeld` keeps ' +
   'counting across blocks. Returns `priorities` (the stored rows), `warnings`, `proposals`, ' +
-  '`dietPhase`, `tierUsed` and `thresholds`. EVERY GUARDRAIL IS ADVISORY AND NOTHING IS BLOCKED: ' +
+  '`dietPhase`, `tierUsed`, `thresholds` and `block`. EVERY GUARDRAIL IS ADVISORY AND NOTHING IS BLOCKED: ' +
   'the declaration is stored exactly as made. `warnings` may carry `specialize_cap_exceeded` (more ' +
   'than 2 specialized items — a reading of the corpus, not a stated rule), ' +
   '`priority_changed_mid_block` (rp:rp-s6-priority-muscle-held-constant-per-block), ' +

@@ -527,6 +527,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'windowOpensOn',
   'nextBlock',
   'endedBlock',
+  // VW-476: the planning sitting. The brief's suggested range end, and the
+  // planning read's due flag and prompt as the descriptions cite them.
+  'endsOn',
+  'planning.due',
+  'planning.prompt',
 ];
 
 /**

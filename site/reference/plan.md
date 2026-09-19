@@ -2,7 +2,7 @@
 
 # `plan.*`
 
-25 tools in the `plan` namespace.
+26 tools in the `plan` namespace.
 
 ## `plan.program.create`
 
@@ -110,7 +110,7 @@ Use it to say how a block has moved, for example "first planned for Mon 14 Sep, 
 
 A block's dated calendar: start, end, state (`undated`, `upcoming`, `current`, `ended`) and one entry per calendar week with its dates, the plan week run in it (null for an off week added by an extend), deload flag, name, whether it was skipped (`hold` or `extend`), the plan week row id, how many workout templates it holds, and the local dates the owner trained in it (`sessionDays`).
 
-A week with `templateCount: 0` has nothing planned; it is not a shorter block. An undated block returns no weeks.
+A week with `templateCount: 0` has nothing planned; it is not a shorter block. An undated block returns no weeks. `history` counts the moves, resizes and missed weeks in its schedule and says them in one sentence (`fact`), for example "This block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep (travel)."
 
 **Parameters**
 
@@ -237,11 +237,21 @@ Which block and program are in force today, by their dates (VW-475).
 
 **Parameters:** none.
 
+## `plan.block.planning_brief`
+
+The read for a planning sitting (VW-476): what the coach brings when the next block is due (`planning.due` on plan.current_block, plan.next_workout and plan.complete_workout).
+
+READS ONLY and never plans anything by itself: run the sitting only after asking the lifter, and create nothing until they answer. Returns `finishing` (the current block, or the one that ended: its calendar, `trained` with templates planned and done and the local days trained, and its `history`), `next` (the block to plan: `forBlockId`, else the block after the finishing one, else the upcoming dated block, else the first never-trained block of the program in force), `suggested` (`startsOn`, `endsOn`, `weeksCount` from the next block, else the finishing one, `deloadWeek` from its week rows, and `basis`), `conflicts` (dated blocks the suggested range would overlap), `realignment` (the priorities re-ask, as on a block boundary) and `dietPhase` (null when none is declared; raise it for the next block). The suggested start is the Monday after the current block ends, else today when today is a Monday, even if a session was already logged today, else the next Monday. Each `history` says how that block’s dates changed, in one sentence (`fact`). Then date the block with plan.block.schedule or plan.block.create, and declare priorities for it.
+
+**Parameters**
+
+- `forBlockId` — `string`, optional.
+
 ## `plan.next_workout`
 
 Get the next un-completed workout template.
 
-With `programId`, that program is walked in order. Without it, the plan in force today decides (plan.current_block): in a CURRENT dated block only that block is walked; when no block is dated, the newest program with workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE the first dated block starts, there is no planned workout today and the result is `{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter training continues unplanned today, and, when `nextBlock` is null, offer to plan the next block now; never present a workout from the ended block. `{ ok: true, completed: true }` means every workout in scope is done. Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms.
+With `programId`, that program is walked in order. Without it, the plan in force today decides (plan.current_block): in a CURRENT dated block only that block is walked; when no block is dated, the newest program with workouts left is walked. In a GAP (a dated block ended and none is current) or BEFORE the first dated block starts, there is no planned workout today and the result is `{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter training continues unplanned today, and, when `nextBlock` is null, offer to plan the next block now; never present a workout from the ended block. `{ ok: true, completed: true }` means every workout in scope is done. Every result also carries `planning`, the same read plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter about planning the next block. Use this to answer "what should the user do today per their plan?" Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 / B48), in which case it carries the finished block, the new block, the current goal on file, and an advisory prompt to keep or restate that goal — never auto-applied, and the goal itself is never written by this tool. When priorities have been declared (goal.declare_priorities) it also carries `realignment`: the same re-ask `plan.complete_workout` describes, and `recompReAsk` on the same terms.
 
 **Parameters**
 

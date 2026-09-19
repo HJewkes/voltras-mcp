@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
 import { fetchPlanTree } from '../../dashboard/plan-api.js';
+import { buildSessionSummary } from '../../dashboard/read-models/session-summary.js';
 import {
   RETURN_ONLY_EXERCISE,
   RETURN_PROGRAM,
@@ -136,6 +137,16 @@ describe('/api/plan-tree', () => {
     const tree = await fetchPlanTree(store, () => undefined);
 
     expect(tree.program?.name).toBe(RETURN_PROGRAM);
+  });
+});
+
+describe('session summary', () => {
+  it("scores progression against the current-block rule's program", async () => {
+    await store.putSet(rowSet());
+
+    const summary = await buildSessionSummary({ store, nameOf: () => undefined }, 'sess-day-b');
+
+    expect(summary?.exercises[0]?.progression).not.toBeNull();
   });
 });
 

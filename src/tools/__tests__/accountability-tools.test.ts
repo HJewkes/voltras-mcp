@@ -184,4 +184,16 @@ describe('accountability.preview', () => {
     expect(result.inputsUsed?.rolling28DayTrainingDays).toBe(1);
     expect(result.text).toContain('Rolling 28-day training days: 1.');
   });
+
+  it('offers the planning sitting when no block is dated (VW-476)', async () => {
+    await store.putAccountabilityState(storedState());
+    await seedOneTemplatePlan();
+
+    const result = await describeAccountabilityPreview(makeState(), { at: SUNDAY_NOON });
+
+    expect(result.inputsUsed?.planning).toEqual({ reason: 'No block has dates yet.' });
+    expect(result.text).toContain(
+      'The next block is due to be planned: No block has dates yet. Pick a time this week',
+    );
+  });
 });

@@ -6,8 +6,8 @@ Everything on this page is generated from a running server: the generator boots
 voltras-mcp against the mock adapter and reads `tools/list`, so a description here
 is the description a client actually sees.
 
-**124 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
-**126** in mock mode — the `mock.*` namespace is registered only when
+**125 tools** are registered with the real adapter (`VOLTRA_ADAPTER=node`) and
+**127** in mock mode — the `mock.*` namespace is registered only when
 `VOLTRA_ADAPTER=mock` and is stripped from `tools/list` otherwise.
 
 | Namespace                              | Tools | Availability      |
@@ -25,7 +25,7 @@ is the description a client actually sees.
 | [`system.*`](./system)                 | 7     | always registered |
 | [`progression.*`](./progression)       | 1     | always registered |
 | [`isometric.*`](./isometric)           | 3     | always registered |
-| [`plan.*`](./plan)                     | 25    | always registered |
+| [`plan.*`](./plan)                     | 26    | always registered |
 | [`profile.*`](./profile)               | 11    | always registered |
 | [`baselines.*`](./baselines)           | 2     | always registered |
 | [`driftguard.*`](./driftguard)         | 1     | always registered |

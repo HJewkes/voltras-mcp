@@ -27,6 +27,7 @@ import {
   type CalendarWeek,
 } from '../plan/block-calendar.js';
 import { mondaysAround, placementConflict, type PlacedBlock } from '../plan/block-placement.js';
+import { scheduleHistory as historyOf, type ScheduleHistory } from '../plan/schedule-history.js';
 import { lintMesoLengthGrewMidBlock, type PlanWarning } from '../plan/lint-plan.js';
 import {
   PlanBlockCalendarInput,
@@ -96,7 +97,10 @@ const PLAN_BLOCK_CALENDAR_DESCRIPTION =
   'off week added by an extend), deload flag, name, whether it was skipped (`hold` or ' +
   '`extend`), the plan week row id, how many workout templates it holds, and the local ' +
   'dates the owner trained in it (`sessionDays`). A week with `templateCount: 0` has nothing ' +
-  'planned; it is not a shorter block. An undated block returns no weeks.';
+  'planned; it is not a shorter block. An undated block returns no weeks. `history` counts ' +
+  'the moves, resizes and missed weeks in its schedule and says them in one sentence (`fact`), ' +
+  'for example "This block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep ' +
+  '(travel)."';
 
 const PLAN_WEEK_UPDATE_DESCRIPTION =
   'Edit one plan week: `isDeload`, `name` or `phaseType` (give at least one). The week keeps ' +
@@ -252,7 +256,7 @@ function placed(block: StoredTrainingBlock, row: DatedRow): PlacedBlock {
 }
 
 /** Every dated block in a non-archived program, as its live row places it. */
-async function placedBlocks(state: ServerState): Promise<PlacedBlock[]> {
+export async function placedBlocks(state: ServerState): Promise<PlacedBlock[]> {
   const archived = new Map<string, boolean>();
   const out: PlacedBlock[] = [];
   for (const row of await state.store.listLiveBlockSchedules()) {
@@ -616,6 +620,7 @@ async function readCalendar(
 ): Promise<{
   block: StoredTrainingBlock;
   calendar: Omit<BlockCalendar, 'weeks'> & { weeks: CalendarWeekView[] };
+  history: ScheduleHistory;
 }> {
   const block = await requireBlock(state, input.blockId);
   const live = await state.store.getLiveBlockSchedule(block.id);
@@ -634,11 +639,12 @@ async function readCalendar(
       sessionDays: days.filter((day) => week.startsOn <= day && day <= week.endsOn),
     });
   }
-  return { block, calendar: { ...calendar, weeks } };
+  const history = historyOf(await state.store.listBlockScheduleHistory(block.id));
+  return { block, calendar: { ...calendar, weeks }, history };
 }
 
 /** The owner's local training days between two local dates, inclusive. */
-async function trainingDaysBetween(
+export async function trainingDaysBetween(
   state: ServerState,
   startsOn: string | null,
   endsOn: string | null,
