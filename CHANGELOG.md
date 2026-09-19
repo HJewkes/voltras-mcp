@@ -54,7 +54,7 @@ entry is written from the user's point of view is a review question, not a check
   and any dated block the suggested dates would run into. The suggested start is the Monday
   after the current block ends, else today when it is a Monday, else the next Monday. It
   plans nothing by itself. Each block's history reads as one sentence, for example "This
-  block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep (travel)." (VW-476).
+  block has moved twice: first planned for Mon 14 Sep, now Mon 28 Sep (travel)." (VW-476, #469).
 - `plan.current_block` says which block and program are in force today: a dated block that
   has started, the first dated block still to come, a gap after a block ended, or no dated
   block at all. It also says whether the next block is due to be planned, from the Monday of
@@ -134,7 +134,7 @@ entry is written from the user's point of view is a review question, not a check
   check-in message. The Sunday message offers the sitting and asks the lifter to pick a time;
   nothing is created until they answer. `goal.declare_priorities` now stamps the upcoming
   dated block, else the current one, when no block is named. The session summary's plan
-  lookup follows the same current-block rule as everything else (VW-476).
+  lookup follows the same current-block rule as everything else (VW-476, #469).
 - The coach, `plan.next_workout`, the weekly report's progression lines and the dashboard's
   plan page now agree on one current plan. The block whose dates contain today wins. When no
   block is dated, the newest program that still has workouts left wins, so a finished test
