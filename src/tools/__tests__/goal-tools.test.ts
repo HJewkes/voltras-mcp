@@ -15,11 +15,15 @@
 //     2 earns the ramp);
 //   * an accepted target does not move, in either direction, ever.
 
+import * as analytics from '@voltras/workout-analytics';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { programmedRampStepLbs } from '../../analytics/goal-band.js';
+import { SEED_CABLE_EXERCISES } from '../../exercises/seed-catalog.js';
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
+import type { Tier } from '../tier-signal.js';
 import { deriveTargetInFrame, readDerivationContext } from '../goal-derivation.js';
 import { registerGoalTools } from '../goal-tools.js';
 
@@ -393,6 +397,24 @@ describe('goal.propose_targets', () => {
     expect(target.stretchValue).toBeGreaterThan(target.committedValue);
     expect(target.committedValue).toBeGreaterThan(135);
     expect(target.rpIds).toContain('rp:rp-s10-underpromise-overdeliver-goal-setting');
+  });
+
+  it('ramps a lift at its own catalog class, so a light isolation lift gets the isolation step (VW-482)', async () => {
+    (analytics as unknown as { setCatalog: (e: unknown[]) => void }).setCatalog(
+      SEED_CABLE_EXERCISES,
+    );
+    const exerciseId = 'cable-overhead-tricep-extension';
+    await seedLiftHistory(harness.store, { exerciseId, sessionCount: 1, weightLbs: 40, reps: 12 });
+    const proposed = await harness.invoke('goal.propose_targets', {
+      priorityId: await declareLift(harness, exerciseId),
+    });
+    const target = (proposed.targets as (ProposedTargetShape & { tierUsed: Tier })[])[0];
+    const tier = target.tierUsed;
+    // Six weeks, cold: five full steps on both edges.
+    expect(target.committedValue).toBeCloseTo(
+      40 + 5 * programmedRampStepLbs(40, 'isolation', tier),
+      6,
+    );
   });
 
   it('bands a lift with one matched session as cold, with no gain claim', async () => {

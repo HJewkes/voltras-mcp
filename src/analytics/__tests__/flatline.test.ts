@@ -8,8 +8,12 @@
 import { detectPlateau } from '@voltras/workout-analytics';
 import { describe, expect, it } from 'vitest';
 
-import { FLATLINE_FRACTION_OF_STEP, FLATLINE_SMOOTHING, flatline } from '../flatline.js';
-import { programmedRampStepLbs } from '../goal-band.js';
+import {
+  FLATLINE_FRACTION_OF_STEP,
+  FLATLINE_SMOOTHING,
+  flatline,
+  plateauReferenceStepLbs,
+} from '../flatline.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -21,7 +25,7 @@ function weekly(values: readonly number[]): { ts: string; value: number }[] {
   }));
 }
 
-const RAMP_AT_100 = { expectedStepLbsPerWeek: programmedRampStepLbs(100), minDays: 14 };
+const RAMP_AT_100 = { expectedStepLbsPerWeek: plateauReferenceStepLbs(100), minDays: 14 };
 const RAW_AT_100 = { ...RAMP_AT_100, smoothing: null };
 
 describe('flatline', () => {
@@ -141,7 +145,7 @@ describe('flatline input smoothing', () => {
   });
 
   it('scales the settled range with the step, so a heavy lift may move a pound and stay settled', () => {
-    const rampAt315 = { expectedStepLbsPerWeek: programmedRampStepLbs(315), minDays: 14 };
+    const rampAt315 = { expectedStepLbsPerWeek: plateauReferenceStepLbs(315), minDays: 14 };
 
     expect(flatline(weekly([315, 316, 315]), rampAt315)).toMatchObject({ days: 14 });
   });

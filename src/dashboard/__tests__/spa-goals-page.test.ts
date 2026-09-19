@@ -326,7 +326,7 @@ describe('the two block verdicts on the goals page (VW-400)', () => {
     expect(milestone.target).toEqual({
       metric: 'top_load_at_reps',
       reps: 8,
-      load: 182.5,
+      load: 183, // the stored 182.5 at the device's 1 lb step (VW-482)
       unit: 'lb',
     });
     expect(milestone.state).toBe(benchView.mesoMilestone.state);

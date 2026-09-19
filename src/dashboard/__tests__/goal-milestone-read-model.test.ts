@@ -102,7 +102,7 @@ describe('mesoMilestone', () => {
     const view = buildGoalProgressView(input({ actuals: [actual(1, 170), actual(3, 176)] }));
 
     expect(view.mesoMilestone).toEqual({
-      target: { metric: 'top_load_at_reps', reps: 8, load: 182.5, unit: 'lb' },
+      target: { metric: 'top_load_at_reps', reps: 8, load: 183, unit: 'lb' },
       goalWeek: 6,
       currentWeek: 3,
       weekCount: 6,
@@ -178,22 +178,30 @@ describe('goal_met and beyond_goal', () => {
     expect(view.mesoMilestone.state).toBe('hit');
   });
 
-  it('compares at the metric precision, so a reading that rounds onto the number meets it', () => {
-    const view = buildGoalProgressView(input({ actuals: [actual(3, 182.46)] }));
+  it('compares a load at the device step, so a reading that rounds onto the number meets it', () => {
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 182.6)] }));
 
     expect(view.status).toBe('goal_met');
   });
 
+  it('prints and scores an exact class-ramp commitment at the load the lifter can set (VW-482)', () => {
+    const target = { ...TARGET, committedValue: 182.2 };
+    const view = buildGoalProgressView(input({ target, actuals: [actual(3, 182)] }));
+
+    expect(view.mesoMilestone.target).toMatchObject({ reps: 8, load: 182 });
+    expect(view.status).toBe('goal_met');
+  });
+
   it('reads beyond_goal when the best matched reading is strictly past it', () => {
-    const view = buildGoalProgressView(input({ actuals: [actual(3, 183)] }));
+    const view = buildGoalProgressView(input({ actuals: [actual(3, 184)] }));
 
     expect(view.status).toBe('beyond_goal');
-    expect(view.statusBasis).toContain('183');
+    expect(view.statusBasis).toContain('184');
   });
 
   it('never regresses to a pace status after a later dip', () => {
     const view = buildGoalProgressView(
-      input({ actuals: [actual(2, 183), actual(3, 171)], now: tsInWeek(4) }),
+      input({ actuals: [actual(2, 184), actual(3, 171)], now: tsInWeek(4) }),
     );
 
     expect(view.status).toBe('beyond_goal');
@@ -387,7 +395,7 @@ describe('the calibrating capture', () => {
 
     expect(view.status).toBe('calibrating');
     expect(view.mesoMilestone).toMatchObject({
-      target: { reps: 8, load: 127.5 },
+      target: { reps: 8, load: 128 },
       goalWeek: 12,
       currentWeek: 1,
       latest: { reps: 8, load: 110 },

@@ -19,6 +19,8 @@
 
 import { detectPlateau } from '@voltras/workout-analytics';
 
+import { computePercentIncrement } from './percent-increment.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
@@ -33,6 +35,23 @@ const WEEK_MS = 7 * DAY_MS;
  * twice the threshold away from reading flat.
  */
 export const FLATLINE_FRACTION_OF_STEP = 0.25;
+
+/**
+ * The weekly step a stall is judged against, which is not the goal ramp's (VW-482).
+ *
+ * The floor and cap cite rp:rp-s5-load-increment-by-exercise-type. The 2.5% is an
+ * ENGINEERING DEFAULT. This is the step VW-452 and VW-458 calibrated the stall rule
+ * against. The goal ramp's smaller per-class steps sit inside the weekly noise at
+ * light loads, and there `scripts/flatline-sim.mjs --ramp-class` calls a lifter who
+ * is on pace stalled far more often.
+ */
+export const PLATEAU_REFERENCE_STEP = { percentOfLoad: 2.5, floorLbs: 2.5, capLbs: 10 } as const;
+
+/** {@link PLATEAU_REFERENCE_STEP} at `loadLbs`, floored to the device's 1 lb step before the clamp. */
+export function plateauReferenceStepLbs(loadLbs: number): number {
+  const { percentOfLoad, floorLbs, capLbs } = PLATEAU_REFERENCE_STEP;
+  return computePercentIncrement(loadLbs, percentOfLoad, floorLbs, capLbs);
+}
 
 /** How the input is steadied before a run is judged (VW-458). */
 export interface FlatlineSmoothing {
