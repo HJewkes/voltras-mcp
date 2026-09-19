@@ -44,6 +44,13 @@ describe('checkWriteRequest', () => {
     expect(checkWriteRequest(request, TOKEN)).toBeNull();
   });
 
+  it('admits an uppercase Host against a lower-case Origin', () => {
+    // A host name is case-insensitive, and every other rule normalises. The
+    // origin comparison must too, or it refuses on case alone.
+    const request = goodRequest({ host: 'LOCALHOST:7723', origin: 'http://localhost:7723' });
+    expect(checkWriteRequest(request, TOKEN)).toBeNull();
+  });
+
   it('refuses a foreign Origin', () => {
     const rejection = checkWriteRequest(goodRequest({ origin: 'https://evil.example' }), TOKEN);
     expect(rejection).toMatchObject({ status: 403, error: 'foreign_origin' });

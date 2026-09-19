@@ -114,8 +114,11 @@ function checkOrigin(
       message: `a write must carry an Origin header naming the dashboard's own origin`,
     };
   }
+  // Both sides lower-cased: a host name is case-insensitive, `parseOriginHost`
+  // already normalises, and `isLoopbackHost` does too — comparing a raw `Host`
+  // here would refuse an uppercase one that every other rule accepts.
   const originHost = parseOriginHost(origin);
-  if (originHost !== null && originHost === host) return null;
+  if (originHost !== null && originHost === host?.toLowerCase()) return null;
   return {
     status: 403,
     error: 'foreign_origin',

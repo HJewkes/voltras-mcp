@@ -89,7 +89,10 @@ other client.
 **The boundary is the browser, not the OS account.** A hostile web page in a
 local browser is in scope. Another process running as this user is not: it can
 read the token from `/api/bootstrap`, or read the sqlite store directly, and no
-header check changes that.
+header check changes that. A browser extension holding host permissions for this
+origin sits on the same side of that line as a local process — its content
+script can read the token straight out of the `<meta>` tag — and is a documented
+non-goal rather than an oversight.
 
 ## Why a React Native component library on the web
 
