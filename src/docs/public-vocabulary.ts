@@ -551,14 +551,21 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // VW-479: the two refusals a dated TrueCoach import can return.
   'BLOCK_STARTED',
   'SCHEDULE_OVERLAP',
+  // VW-503: result fields the coach skill's generated inventory cites. The
+  // dotted three are members whose owner is already listed, and a dotted name
+  // is not derivable from its owner — normalization collapses the whole token.
+  'dbPath',
+  'blockBoundary.realignment',
+  'history.fact',
+  'recompReAsk.proposal',
 ];
 
 /**
  * The `pipeline` selector on `metrics.compute`. Its schema declares a bare
- * string — the seventeen accepted literals exist only in the description — so
+ * string — the eighteen accepted literals exist only in the description — so
  * these cannot be harvested and are listed instead.
  *
- * All seventeen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
+ * All eighteen, pinned against the dispatch in `src/tools/metrics-tools.ts` by
  * `src/__tests__/docs/check-docs.test.ts`. Nine were missing, which mattered
  * once `scripts/check-docs.mjs` started reading this list: seven of the
  * sixteen open with a tool namespace (`session.`), so a partial list makes a
@@ -579,6 +586,7 @@ export const ANALYTICS_PIPELINE_IDS: readonly string[] = [
   'session.readiness',
   'session.strength',
   'session.volume',
+  'strength.e1rm',
   'vbt.profile',
   'vbt.rir',
   'vbt.set',
