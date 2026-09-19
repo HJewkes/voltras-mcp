@@ -302,13 +302,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     waitFor: { kind: 'rest' },
     expectText: ['TONNAGE', 'Cable Chest Press', 'Push A · Hypertrophy'],
     expectValues: [
-      'VOLUME 5 TONNAGE 0 lbs',
+      // The mock now reports the load the driver configured it with (140 lb), so
+      // tonnage is the 5 pinned reps at that weight. It read 0 until the SDK 0.15
+      // adoption (#441) taught the mock to report a weight at all.
+      'VOLUME 5 TONNAGE 700 lbs',
       '1/8 sets',
-      // Tonnage is 0 and load is `—` because the mock emits no settings
-      // cascade, so the dashboard never learns a weight. That degradation is
-      // real and pinned here on purpose — see dashboard-plan-drive's header.
-      'SET REPS LBS RPE 1 5 0 —',
-      'SET VERDICT 5 Reps 0 lbs 12%',
+      'SET REPS LBS RPE 1 5 140 —',
+      'SET VERDICT 5 Reps 140 lbs 12%',
       'Next · Cable Chest Press · set 2 of 3',
     ],
     holdsPageOpen: true,
