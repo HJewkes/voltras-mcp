@@ -2409,7 +2409,7 @@ const notFound = (msg: string): CodedError => new CodedError('NOT_FOUND', msg);
  */
 const METRICS_COMPUTE_DESCRIPTION =
   'Compute a VBT/analytics result for a set or session. Dispatches on the required `pipeline` ' +
-  'field (one of 17 literals) to a single analytics function; each pipeline takes different ' +
+  'field (one of 18 literals) to a single analytics function; each pipeline takes different ' +
   'input fields, all optional at the schema level but required per-pipeline: ' +
   '`vbt.set` (setId) — single-set velocity summary (first/last/best/mean/peak/lossPct/repCount). ' +
   '`vbt.profile` (setIds[], optional targetVelocity) — fits a load-velocity profile across sets ' +

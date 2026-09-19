@@ -28,6 +28,7 @@ rest of the MCP keeps working over polling. Budget for that when debugging.
 | `.claude-plugin/marketplace.json`                    | Marketplace `voltras-local`, repo root       |
 | `plugins/voltras-channel/.claude-plugin/plugin.json` | Plugin `voltras-channel`                     |
 | `plugins/voltras-channel/bin/voltras-mcp-launch.sh`  | Shim that locates and execs the built server |
+| `plugins/voltras-channel/skills/pt-session/`         | The coach skill, discovered by convention    |
 
 Names, which have to agree in three places:
 
@@ -46,6 +47,18 @@ The plugin declares the channel by binding it to that server key:
 The `server` value must match a key in the plugin's `mcpServers`. No extra capability
 declaration is needed on the plugin side — `src/server.ts` already advertises
 `experimental: { 'claude/channel': {} }`, which is what actually makes it a channel.
+
+## Why the coach skill IS bundled into the plugin
+
+The same cache copy that rules the server out rules the skill in. `skills/<name>/SKILL.md`
+under the plugin directory is discovered by convention, needs no manifest key, and is small
+enough to copy on every version bump. Shipping it here is what stops it going stale: the
+skill and the tool registry move in one commit, and `npm run docs:reference` regenerates
+`references/15-tool-inventory.md` from that registry (VW-503). A symlink would not survive
+the copy, so the files live physically inside the plugin.
+
+After installing a new version, remove any hand-installed `~/.claude/skills/pt-session` —
+two skills of one name collide.
 
 ## Why the server is not bundled into the plugin
 

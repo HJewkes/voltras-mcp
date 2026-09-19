@@ -159,6 +159,26 @@ export function checkToolNames(text, registry, known = new Set()) {
   return findings;
 }
 
+/**
+ * The inverse of check 3, for the coach skill (VW-503): a registered tool the
+ * skill never names is a tool the coach cannot reach. `ignored` carries the
+ * reviewed exclusions — a name in it is a decision, not a threshold.
+ *
+ * The parser is the one check 3 uses, so the two halves agree about what
+ * counts as naming a tool.
+ */
+export function checkToolCoverage(texts, registry, ignored) {
+  const named = new Set();
+  for (const text of texts) {
+    for (const line of documentLines(text)) {
+      for (const match of line.matchAll(TOOL_SHAPE)) named.add(match[0]);
+    }
+  }
+  return [...registry]
+    .filter((name) => !named.has(name) && !ignored.has(name))
+    .map((name) => ({ check: 'coverage', message: `no page of the skill names ${name}` }));
+}
+
 /** The offset of `index` within `text`, as a 1-based line number. */
 function lineOf(text, index) {
   let line = 1;
