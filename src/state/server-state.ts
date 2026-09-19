@@ -43,6 +43,7 @@ import { WriteLease } from './write-lease.js';
 import { deriveLoadState } from './load-state.js';
 
 import type { Config } from '../config.js';
+import type { CapturedTools } from '../actions/capture-handlers.js';
 import { configureLogger, log } from '../logger.js';
 import { LiveState, type DeviceSnapshot } from './live-state.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
@@ -406,6 +407,14 @@ export interface ServerState {
    * transient port conflict doesn't read the same as an intentional opt-out.
    */
   dashboard?: { available: boolean; url: string | null; disabledReason: 'disabled' | null };
+  /**
+   * Tool schemas and handlers the dashboard action layer runs (VW-502), taken
+   * once at boot by `captureActionHandlers`. Set by `runServer`, so a bootstrap
+   * used by a test fixture leaves it absent and the action route answers 501.
+   * Deliberately NOT the per-connection registrations: those are lease-wrapped
+   * under a connection's client id, and the wall runs with no client attached.
+   */
+  actionTools?: CapturedTools;
 }
 
 /**

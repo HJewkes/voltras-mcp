@@ -263,7 +263,7 @@ describe('file-backed database', () => {
 
     const after = readUserVersion(path);
     expect(after).toBe(before);
-    expect(after).toBe(35);
+    expect(after).toBe(36);
   });
 
   it('falls back to the stamp when no range covers the session any more', async () => {

@@ -53,6 +53,15 @@ entry is written from the user's point of view is a review question, not a check
   is calling. Its tool inventory is generated from the registry by `npm run docs:reference`
   and CI fails when the committed page and a fresh render disagree, so a tool added without
   a note in the skill turns the build red rather than going unmentioned (VW-503, #482).
+- Every write the dashboard makes is now recorded, and a retry can no longer write
+  twice. Each edit carries an id; if the same edit arrives again — a flaky connection,
+  a page that reconnected mid-save — the server returns what it did the first time
+  instead of doing it again, and refuses outright if the id comes back attached to
+  different content. The record says what was done, from which screen, and what came
+  back. If the server dies in the middle of an edit, the next attempt says the outcome
+  is unknown and asks you to check rather than guessing, and that unresolved edit stays
+  visible instead of being quietly marked failed. The plan builder behaves exactly as
+  before (VW-502).
 
 ### Fixed
 

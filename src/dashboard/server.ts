@@ -120,6 +120,7 @@
 //   GET /<anything else> — 404 JSON `{ error: 'not_found' }`.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,6 +169,17 @@ import {
   mintWriteToken,
   WRITE_TOKEN_HEADER,
 } from './write-guard.js';
+import type { CapturedTools } from '../actions/capture-handlers.js';
+import {
+  executeAction,
+  executeAudited,
+  hashInput,
+  type ActionOutcome,
+  type ActionRequest,
+  type ActionStore,
+  type HandlerOutcome,
+} from '../actions/execute.js';
+import { UI_ACTION_ACTORS, UI_ACTION_SURFACES } from '../store/types.js';
 import {
   fetchGoalPriorityRows,
   fetchGoalProgressViews,
@@ -293,6 +305,9 @@ export interface DashboardServerState {
     ): Promise<StoredDietPhase | undefined>;
     /** Self-reported training background, read for the early-phase flag (VW-330). */
     getTrainingProfile?(userId: string): Promise<StoredTrainingProfile | undefined>;
+    /** The action audit trail (VW-502). Optional for the same reason the rest are. */
+    claimUiAction?: ActionStore['claimUiAction'];
+    completeUiAction?: ActionStore['completeUiAction'];
   } & Partial<DashboardPlanStore> &
     Partial<DashboardSessionStore> &
     Partial<GoalProgressStore>;
@@ -331,6 +346,12 @@ export interface DashboardServerState {
    * serves a valid, heartbeat-only `text/event-stream` in that case.
    */
   liveSignals?: LiveSignalHub;
+  /**
+   * Tool schemas and handlers for `POST /api/actions/:name` (VW-502), captured
+   * once at boot. Optional so every existing test fake and the preview harness
+   * keep working — the action route answers 501 without it, rather than 500.
+   */
+  actionTools?: CapturedTools;
 }
 
 /** Default `?limit=` for `/api/exercises`; the seed catalog is ~30 entries. */
@@ -533,6 +554,11 @@ async function handleRequest(
     );
     if (rejection !== null) {
       sendJson(res, rejection.status, { error: rejection.error, message: rejection.message });
+      return;
+    }
+    const actionMatch = /^\/api\/actions\/([^/]+)$/.exec(pathname);
+    if (actionMatch !== null) {
+      await handleAction(req, res, state, method, decodeURIComponent(actionMatch[1]));
       return;
     }
     await handlePlanMutation(req, res, state, method, pathname);
@@ -1098,6 +1124,98 @@ async function serveMuscleStrength(
 const MAX_BODY_BYTES = 64 * 1024;
 
 /**
+ * `POST /api/actions/:name` — the action layer (VW-502).
+ *
+ * The body is `{ actionId, input, actor?, surface?, flowId?, flowStep? }`. The
+ * name is looked up in the allowlist, its tool's own schema validates `input`,
+ * and its own handler runs it. An unknown or non-allowlisted name answers 403,
+ * never 404: probing the layer reveals nothing about what exists.
+ *
+ * Only POST. A PATCH or DELETE to this path is a client that has misunderstood
+ * the layer, not an action, and it answers 405 rather than being coerced.
+ */
+async function handleAction(
+  req: IncomingMessage,
+  res: ServerResponse,
+  state: DashboardServerState,
+  method: PlanMutationMethod,
+  name: string,
+): Promise<void> {
+  if (method !== 'POST') {
+    sendJson(res, 405, { error: 'method_not_allowed', message: 'actions are POSTed' });
+    return;
+  }
+  if (state.actionTools === undefined || !hasActionStore(state.store)) {
+    sendJson(res, 501, { error: 'actions_unavailable' });
+    return;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    sendJson(res, 400, { error: 'invalid_input', message: (err as Error).message });
+    return;
+  }
+  const request = readActionRequest(name, body);
+  if ('error' in request) {
+    sendJson(res, 400, { error: 'invalid_input', message: request.error });
+    return;
+  }
+  const outcome = await executeAction(request, {
+    store: state.store,
+    tools: state.actionTools,
+    now: () => new Date(),
+  });
+  sendActionOutcome(res, outcome);
+}
+
+function sendActionOutcome(res: ServerResponse, outcome: ActionOutcome): void {
+  sendJson(res, outcome.status, outcome.body);
+}
+
+/**
+ * Read the envelope around an action's input. `actionId` is required and has
+ * no server-side default: a client that cannot produce one cannot have retry
+ * safety, and silently minting one here would hand it a guarantee it does not
+ * have.
+ */
+function readActionRequest(
+  name: string,
+  body: Record<string, unknown>,
+): ActionRequest | { error: string } {
+  const actionId = body.actionId;
+  if (typeof actionId !== 'string' || actionId.trim() === '') {
+    return { error: 'actionId is required, and must be a non-empty string' };
+  }
+  const actor = body.actor ?? 'user';
+  const surface = body.surface ?? 'wall';
+  if (!isOneOf(actor, UI_ACTION_ACTORS)) return { error: `unknown actor: ${String(actor)}` };
+  if (!isOneOf(surface, UI_ACTION_SURFACES)) {
+    return { error: `unknown surface: ${String(surface)}` };
+  }
+  return {
+    name,
+    actionId,
+    actor,
+    surface,
+    ...(typeof body.flowId === 'string' ? { flowId: body.flowId } : {}),
+    ...(typeof body.flowStep === 'string' ? { flowStep: body.flowStep } : {}),
+    input: body.input ?? {},
+  };
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
+/** @see hasPlanStore — same narrowing, for the action audit methods. */
+function hasActionStore(
+  store: DashboardServerState['store'],
+): store is DashboardServerState['store'] & ActionStore {
+  return typeof store.claimUiAction === 'function' && typeof store.completeUiAction === 'function';
+}
+
+/**
  * Route the plan-builder writes. Every branch resolves to a `plan-api.ts` call;
  * `PlanApiError.code` maps onto the HTTP status (`invalid_input` → 400,
  * `not_found` → 404) so the handlers never hand-roll a response shape.
@@ -1126,37 +1244,88 @@ async function handlePlanMutation(
     return;
   }
   const { store } = state;
+  // `actionId` is the audit envelope's, never the plan payload's. Stripped so
+  // `plan-api.ts` sees exactly the body it saw before this route was audited.
+  const { actionId: submittedId, ...payload } = body;
+  const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
+  if (!hasActionStore(store)) {
+    // No audit table (a test fake, an older store): the write still happens.
+    // Degrading to an unaudited write is better than refusing the plan builder,
+    // and every real store has the methods.
+    sendPlanOutcome(res, await run());
+    return;
+  }
+  const outcome = await executeAudited(
+    {
+      actionName: PLAN_ROUTE_ACTION_NAMES[route.kind],
+      // A client that sends no id gets a minted one, which records the write
+      // but buys NO retry safety: a retry mints another id and runs again.
+      // The SPA sends its own; see `spa/api-client.ts`.
+      actionId: typeof submittedId === 'string' ? submittedId : randomUUID(),
+      actor: 'user',
+      surface: 'wall',
+      inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
+      run,
+    },
+    { store, tools: state.actionTools ?? new Map(), now: () => new Date() },
+  );
+  // The plan routes keep their ORIGINAL response shape — the plan-api payload,
+  // not the action envelope — because the SPA reads it directly and this PR
+  // does not change what any route returns.
+  sendJson(res, outcome.status, outcome.body.result);
+}
+
+/** Audit names for the six plan routes. Not tools, so not in the allowlist. */
+const PLAN_ROUTE_ACTION_NAMES: Record<PlanRoute['kind'], string> = {
+  createProgram: 'plan.program.create',
+  createWorkout: 'plan.workout.create',
+  createExercise: 'plan.exercise.create',
+  reorderExercises: 'plan.exercise.reorder',
+  updateExercise: 'plan.exercise.update',
+  deleteExercise: 'plan.exercise.delete',
+};
+
+/** Run one plan route, mapping `PlanApiError` onto the status it always had. */
+async function runPlanRoute(
+  store: DashboardServerState['store'] & DashboardPlanStore,
+  route: PlanRoute,
+  body: Record<string, unknown>,
+): Promise<HandlerOutcome> {
   try {
     switch (route.kind) {
       case 'createProgram':
-        sendJson(res, 201, await createProgramWithScaffold(store, body));
-        return;
+        return created(await createProgramWithScaffold(store, body));
       case 'createWorkout':
-        sendJson(res, 201, await createWorkout(store, route.id, body));
-        return;
+        return created(await createWorkout(store, route.id, body));
       case 'createExercise':
-        sendJson(res, 201, await createPlannedExercise(store, route.id, body));
-        return;
+        return created(await createPlannedExercise(store, route.id, body));
       case 'reorderExercises':
-        sendJson(res, 200, await reorderPlannedExercises(store, route.id, body));
-        return;
+        return { ok: true, result: await reorderPlannedExercises(store, route.id, body) };
       case 'updateExercise':
-        sendJson(res, 200, await updatePlannedExercise(store, route.id, body));
-        return;
+        return { ok: true, result: await updatePlannedExercise(store, route.id, body) };
       case 'deleteExercise':
-        sendJson(res, 200, await deletePlannedExercise(store, route.id));
-        return;
+        return { ok: true, result: await deletePlannedExercise(store, route.id) };
     }
   } catch (err) {
     if (err instanceof PlanApiError) {
-      sendJson(res, err.code === 'not_found' ? 404 : 400, {
-        error: err.code,
-        message: err.message,
-      });
-      return;
+      return {
+        ok: false,
+        code: err.code,
+        result: { error: err.code, message: err.message },
+        errorStatus: err.code === 'not_found' ? 404 : 400,
+      };
     }
     throw err;
   }
+}
+
+function created(result: unknown): HandlerOutcome {
+  return { ok: true, result, okStatus: 201 };
+}
+
+function sendPlanOutcome(res: ServerResponse, outcome: HandlerOutcome): void {
+  const status = outcome.ok ? (outcome.okStatus ?? 200) : (outcome.errorStatus ?? 400);
+  sendJson(res, status, outcome.result);
 }
 
 /** The HTTP verbs the plan-write surface answers. */

@@ -73,11 +73,34 @@ export async function readJson<T>(url: string): Promise<T> {
 }
 
 /**
+ * Thrown when the server cannot say whether a write took effect (VW-502). The
+ * caller must re-read state and show the human what is actually stored. It must
+ * NOT resubmit under a fresh id: the first attempt may well have landed.
+ */
+export class IndeterminateWriteError extends Error {
+  readonly actionId: string;
+  constructor(message: string, actionId: string) {
+    super(message);
+    this.name = 'IndeterminateWriteError';
+    this.actionId = actionId;
+  }
+}
+
+/**
  * Send a guarded write. Retries once on `stale_token`, which is what a tab
  * open across a server restart hits.
+ *
+ * ── Why the action id is minted here, once per call ──────────────────────
+ *
+ * The id identifies one SUBMIT, not one request. Both attempts below carry the
+ * SAME id, so the stale-token retry cannot write twice: the server claims the
+ * id on the first attempt and replays the stored result on the second. Minting
+ * per request instead would turn every retry into a second write, which is the
+ * exact bug the id exists to prevent.
  */
 export async function writeJson<T>(method: string, url: string, body?: unknown): Promise<T> {
-  let res = await sendWrite(method, url, body);
+  const payload = withActionId(body);
+  let res = await sendWrite(method, url, payload);
   if (res.status === 403) {
     const failure = await res
       .clone()
@@ -85,14 +108,39 @@ export async function writeJson<T>(method: string, url: string, body?: unknown):
       .catch(() => null);
     if ((failure as { error?: string } | null)?.error === 'stale_token') {
       forgetWriteToken();
-      res = await sendWrite(method, url, body);
+      res = await sendWrite(method, url, payload);
     }
   }
-  if (!res.ok) throw new Error((await failureOf(res)).message);
+  if (!res.ok) {
+    const failure = await failureOf(res);
+    if (failure.error === 'indeterminate') {
+      throw new IndeterminateWriteError(failure.message, actionIdOf(payload));
+    }
+    throw new Error(failure.message);
+  }
   return (await res.json()) as T;
 }
 
-async function sendWrite(method: string, url: string, body?: unknown): Promise<Response> {
+/** One id per submit. A bodyless write still needs one, so it gets an envelope. */
+function withActionId(body: unknown): Record<string, unknown> {
+  const base =
+    body !== null && typeof body === 'object' && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  return { ...base, actionId: newActionId() };
+}
+
+function actionIdOf(payload: Record<string, unknown>): string {
+  return typeof payload.actionId === 'string' ? payload.actionId : '';
+}
+
+function newActionId(): string {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function sendWrite(method: string, url: string, body: unknown): Promise<Response> {
   const token = await currentToken();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token !== null) headers[TOKEN_HEADER] = token;
@@ -100,6 +148,19 @@ async function sendWrite(method: string, url: string, body?: unknown): Promise<R
     method,
     cache: 'no-store',
     headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    body: JSON.stringify(body),
+  });
+}
+
+/** Post one allowlisted action (VW-502). Same id discipline as {@link writeJson}. */
+export function postAction<T>(
+  name: string,
+  input: unknown,
+  meta?: { flowId?: string; flowStep?: string },
+): Promise<T> {
+  return writeJson<T>('POST', `/api/actions/${encodeURIComponent(name)}`, {
+    input,
+    ...(meta?.flowId === undefined ? {} : { flowId: meta.flowId }),
+    ...(meta?.flowStep === undefined ? {} : { flowStep: meta.flowStep }),
   });
 }
