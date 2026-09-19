@@ -4,8 +4,14 @@
 // method gate, the body parser, the route table, and the `PlanApiError` → status
 // mapping are all exercised end to end. The pure shaping is covered separately
 // in `plan-tree-read-model.test.ts`.
+//
+// Every write below goes through the VW-500 guard, and `call` gets its token the
+// way the SPA does — from `GET /api/bootstrap`. So the whole builder flow in
+// this file doubles as the proof that the legitimate flow still works guarded.
+// The guard's own rule table is unit-tested in `write-guard.test.ts`; the
+// per-route refusals live at the bottom of this file.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 
 import {
@@ -14,6 +20,7 @@ import {
   type DashboardServerHandle,
   type DashboardServerState,
 } from '../server.js';
+import { WRITE_TOKEN_HEADER } from '../write-guard.js';
 import type {
   StoredPlannedExercise,
   StoredProgramAssignment,
@@ -180,13 +187,48 @@ interface Result {
   body: unknown;
 }
 
+/**
+ * Call a route the way the SPA does. A write picks its token up from
+ * `/api/bootstrap` first, exactly as a wall tab whose page predates a restart
+ * does, and carries the same-origin `Origin` a browser would set.
+ */
 async function call(
   port: number,
   method: string,
   path: string,
   payload?: unknown,
 ): Promise<Result> {
+  if (method === 'GET') return callRaw(port, method, path, payload);
+  // A write carries all three guard facts, a bodyless DELETE included: the
+  // content type is what a cross-site form post can never set.
+  return callRaw(port, method, path, payload, {
+    origin: `http://${DEFAULT_DASHBOARD_HOST}:${port}`,
+    'content-type': 'application/json',
+    [WRITE_TOKEN_HEADER]: await bootstrapToken(port),
+  });
+}
+
+/** The token the SPA would read from `/api/bootstrap`. */
+async function bootstrapToken(port: number): Promise<string> {
+  const res = await callRaw(port, 'GET', '/api/bootstrap');
+  return (res.body as { token: string }).token;
+}
+
+/** Send exactly the headers given — nothing is added. Used by the guard tests. */
+async function callRaw(
+  port: number,
+  method: string,
+  path: string,
+  payload?: unknown,
+  headers: Record<string, string> = {},
+): Promise<Result> {
   const raw = payload === undefined ? undefined : JSON.stringify(payload);
+  const sent = {
+    ...headers,
+    ...(raw === undefined || 'content-type' in headers
+      ? {}
+      : { 'content-type': 'application/json' }),
+  };
   return new Promise<Result>((resolve, reject) => {
     const req = httpRequest(
       {
@@ -194,7 +236,7 @@ async function call(
         port,
         path,
         method,
-        ...(raw === undefined ? {} : { headers: { 'content-type': 'application/json' } }),
+        headers: sent,
       },
       (res: IncomingMessage) => {
         const chunks: Buffer[] = [];
@@ -487,9 +529,11 @@ describe('plan write routes', () => {
   it('rejects a malformed JSON body before touching the store', async () => {
     const store = new FakePlanStore();
     const port = await start(makeState(store));
+    // Guard headers and all: the body parser is only reachable past the guard.
+    const headers = await guardHeaders(port);
     const res = await new Promise<Result>((resolve, reject) => {
       const req = httpRequest(
-        { host: DEFAULT_DASHBOARD_HOST, port, path: '/api/plan/programs', method: 'POST' },
+        { host: DEFAULT_DASHBOARD_HOST, port, path: '/api/plan/programs', method: 'POST', headers },
         (r) => {
           const chunks: Buffer[] = [];
           r.on('data', (c: Buffer) => chunks.push(c));
@@ -588,5 +632,204 @@ describe('GET /api/session-summary/:sessionId', () => {
   it('501s without a planning store', async () => {
     const port = await start({ slots: new Map(), store: { listSessions: async () => [] } });
     expect((await call(port, 'GET', '/api/session-summary/latest')).status).toBe(501);
+  });
+});
+
+// ── The write guard (VW-500) ──────────────────────────────────────────────
+//
+// Until this landed the loopback bind was the sidecar's only protection, so any
+// page open in any browser on this machine could drive the plan writes. Each
+// case below breaks ONE guard fact on EVERY one of the six routes, and asserts
+// the request never reached a handler.
+
+/** The six write routes, each with a body its handler would accept. */
+const WRITE_ROUTES: { name: string; method: string; path: string; payload?: unknown }[] = [
+  { name: 'create program', method: 'POST', path: '/api/plan/programs', payload: { name: 'P' } },
+  {
+    name: 'create workout',
+    method: 'POST',
+    path: '/api/plan/programs/prog-1/workouts',
+    payload: { name: 'W' },
+  },
+  {
+    name: 'create planned exercise',
+    method: 'POST',
+    path: '/api/plan/templates/tmpl-1/exercises',
+    payload: { exerciseId: 'cable-row' },
+  },
+  {
+    name: 'reorder planned exercises',
+    method: 'POST',
+    path: '/api/plan/templates/tmpl-1/reorder',
+    payload: { plannedExerciseIds: [] },
+  },
+  {
+    name: 'update planned exercise',
+    method: 'PATCH',
+    path: '/api/plan/exercises/pe-1',
+    payload: { targetSets: 4 },
+  },
+  { name: 'delete planned exercise', method: 'DELETE', path: '/api/plan/exercises/pe-1' },
+];
+
+/** Headers a legitimate SPA write carries, for a test to break one of. */
+async function guardHeaders(port: number): Promise<Record<string, string>> {
+  return {
+    origin: `http://${DEFAULT_DASHBOARD_HOST}:${port}`,
+    'content-type': 'application/json',
+    [WRITE_TOKEN_HEADER]: await bootstrapToken(port),
+  };
+}
+
+describe('write guard', () => {
+  for (const route of WRITE_ROUTES) {
+    describe(route.name, () => {
+      it('403s a post from a foreign origin', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'foreign_origin' });
+      });
+
+      it('403s a post with no token', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const { [WRITE_TOKEN_HEADER]: _token, ...headers } = await guardHeaders(port);
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'token_required' });
+      });
+
+      it('403s a post carrying another boot’s token', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = { ...(await guardHeaders(port)), [WRITE_TOKEN_HEADER]: 'f'.repeat(64) };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'stale_token' });
+      });
+
+      it('403s a post with no Origin header at all', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const { origin: _origin, ...headers } = await guardHeaders(port);
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error: 'origin_required' });
+      });
+
+      it('415s the content type a cross-site form post would send', async () => {
+        const port = await start(makeState(new FakePlanStore()));
+        const headers = {
+          ...(await guardHeaders(port)),
+          'content-type': 'application/x-www-form-urlencoded',
+        };
+        const res = await callRaw(port, route.method, route.path, route.payload, headers);
+        expect(res.status).toBe(415);
+        expect(res.body).toMatchObject({ error: 'unsupported_media_type' });
+      });
+    });
+  }
+
+  it('403s a request whose Host is a rebound domain, not a loopback name', async () => {
+    // Origin and Host AGREE here — that is what DNS rebinding buys an attacker.
+    // Only the loopback-literal rule refuses it.
+    const port = await start(makeState(new FakePlanStore()));
+    const headers = {
+      ...(await guardHeaders(port)),
+      host: 'rebound.example',
+      origin: 'http://rebound.example',
+    };
+    const res = await callRaw(port, 'POST', '/api/plan/programs', { name: 'P' }, headers);
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: 'foreign_host' });
+  });
+
+  it('refuses a foreign-origin write before it can reach the store', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+    await callRaw(port, 'POST', '/api/plan/programs', { name: 'Stolen' }, headers);
+    expect(store.programs.size).toBe(0);
+  });
+
+  it('runs the whole plan-builder flow under the guard', async () => {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const created = await call(port, 'POST', '/api/plan/programs', { name: 'Guarded' });
+    expect(created.status).toBe(201);
+    const tree = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    const template = firstTemplate(tree);
+    expect(
+      (
+        await call(port, 'POST', `/api/plan/templates/${template.id}/exercises`, {
+          exerciseId: 'cable-row',
+        })
+      ).status,
+    ).toBe(201);
+    const withExercise = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    const plannedId = firstTemplate(withExercise).exercises[0].id;
+    expect(
+      (await call(port, 'PATCH', `/api/plan/exercises/${plannedId}`, { targetSets: 4 })).status,
+    ).toBe(200);
+    expect((await call(port, 'DELETE', `/api/plan/exercises/${plannedId}`)).status).toBe(200);
+    expect(store.plannedExercises.size).toBe(0);
+  });
+});
+
+describe('GET /api/bootstrap', () => {
+  it('hands the SPA the same token the writes require', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const res = await callRaw(port, 'GET', '/api/bootstrap');
+    expect(res.status).toBe(200);
+    const token = (res.body as { token: string }).token;
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    const headers = { ...(await guardHeaders(port)), [WRITE_TOKEN_HEADER]: token };
+    const write = await callRaw(port, 'POST', '/api/plan/programs', { name: 'P' }, headers);
+    expect(write.status).toBe(201);
+  });
+
+  it('403s when the browser says the fetch is cross-site', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const res = await callRaw(port, 'GET', '/api/bootstrap', undefined, {
+      'sec-fetch-site': 'cross-site',
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('never leaks the token into another GET payload', async () => {
+    const port = await start(makeState(new FakePlanStore()));
+    const token = await bootstrapToken(port);
+    for (const path of [
+      '/api/health',
+      '/api/snapshot',
+      '/api/history',
+      '/api/session-plan',
+      '/api/exercises',
+      '/api/plan-tree',
+    ]) {
+      const res = await callRaw(port, 'GET', path);
+      expect(JSON.stringify(res.body)).not.toContain(token);
+    }
+  });
+
+  it('never writes the token to the log', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const port = await start(makeState(new FakePlanStore()));
+      const token = await bootstrapToken(port);
+      await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+      await callRaw(
+        port,
+        'POST',
+        '/api/plan/programs',
+        { name: 'P' },
+        { origin: 'https://evil.example' },
+      );
+      const logged = [...warn.mock.calls, ...error.mock.calls].flat().join(' ');
+      expect(logged).not.toContain(token);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
   });
 });

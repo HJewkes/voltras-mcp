@@ -46,6 +46,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Fixed
+
+- The dashboard's six plan-write routes are no longer open to any page in the browser.
+  Until now the sidecar's only protection was its loopback bind, which stops another
+  device on the network and stops nothing running in a browser on this machine: any
+  page could create a program, add or reorder exercises, or unplan one, without ever
+  being able to read the reply. A write now has to come from the dashboard's own page,
+  send a JSON body, and carry a token minted fresh each time the server starts. Reads
+  are unchanged, so the wall's 2 s refresh is untouched, and a wall tab left open
+  across a restart picks the new token up by itself on its next edit rather than
+  needing a reload. The plan builder behaves exactly as before (VW-500).
+
 ### Added
 
 - The goals page's data now says which mesocycle it is in: the program and block, what the block
