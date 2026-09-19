@@ -316,7 +316,10 @@ entry is written from the user's point of view is a review question, not a check
   inside the corridor. It is never `beyond_goal` (VW-457, #463).
 - On a phone the per-lift goal cards on `#/goals` fit the screen again. They were about 80 px
   wider than the page, so the right edge was cut off: a long lift name, the status mark and the
-  goal figure ran out of view. A long name now wraps inside the card (VW-454).
+  goal figure ran out of view. A long name now wraps inside the card. The "Per-lift" and
+  "Muscle priorities" titles now sit on the page background with their cards as the first
+  raised surface, instead of a panel around the cards, so each card is 40 px wider on a phone
+  and 10 px wider on the wall (VW-454, VW-435).
 
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read

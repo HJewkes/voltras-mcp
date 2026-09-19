@@ -306,6 +306,14 @@ describe('GoalsView phone layout (VW-356)', () => {
     }
   });
 
+  it('titles the per-lift cards on the page background, not inside a panel (VW-435)', () => {
+    const html = render(baseData().data);
+    const section = /<section[^>]*>(.*?)<\/section>/s.exec(html)?.[1] ?? '';
+
+    expect(section).toContain('Per-lift');
+    expect(section).toContain('display:grid');
+  });
+
   it('lays the wall grids out as auto-fill columns', () => {
     const html = render(baseData().data);
     expect(html.match(/repeat\(auto-fill, minmax\(420px, 1fr\)\)/g)?.length).toBe(2);
