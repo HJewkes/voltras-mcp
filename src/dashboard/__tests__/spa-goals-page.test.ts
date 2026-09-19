@@ -312,6 +312,8 @@ describe('GoalsView phone layout (VW-356)', () => {
 
     expect(section).toContain('Per-lift');
     expect(section).toContain('display:grid');
+    // All caps by style, like the full card's heading, never by rewriting the string.
+    expect(section).toMatch(/text-transform:uppercase[^>]*>Per-lift</);
   });
 
   it('lays the wall grids out as auto-fill columns', () => {
