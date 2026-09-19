@@ -133,11 +133,11 @@ entry is written from the user's point of view is a review question, not a check
   goals with it and leaves the committed and stretch numbers alone. Until the block starts,
   the goals page reads "Starts Mon 21 Sep. No verdict before the block begins." A week the
   lifter added by extending a missed week reads as an off week: flat band, no verdict. The
-  schedule tools list the goals a date change moved (VW-477).
+  schedule tools list the goals a date change moved (VW-477, #473).
 - Goal weeks are local calendar weeks, Monday to Sunday, for every goal. `history.trend` also
   groups lifts into local weeks now. A Sunday-evening session six hours west of UTC used to
   count in the following week; it now counts in the week it was trained. Nothing moves for a
-  server running in UTC (VW-477).
+  server running in UTC (VW-477, #473).
 - When the next block is due to be planned, the coach is told to ask about it. The prompt
   appears from the Monday of the current block's final week, in a gap, and while nothing is
   dated, on `plan.next_workout`, `plan.complete_workout`, `plan.current_block` and the Sunday
