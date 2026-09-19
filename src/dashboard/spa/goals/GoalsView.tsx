@@ -112,9 +112,9 @@ function PrimaryGoalCard(props: { row: GoalTargetRow }): React.JSX.Element {
 
 /**
  * A calibrating target's plain sentence under its card (VW-444), or the line
- * an accepted starting ramp carries once its lift has calibrated. The first
- * stands in until titan's chart takes the same copy as `calibratingNote`
- * (titan #262); a card with nothing to say renders alone, with no wrapper.
+ * an accepted starting ramp carries once its lift has calibrated. The chart's
+ * in-plot note carries the short form of the first; a card with nothing to say
+ * renders alone, with no wrapper.
  */
 function WithCalibrationNote(props: {
   view: GoalTargetRow['view'];

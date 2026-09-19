@@ -107,6 +107,9 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
+  session", or the set it needs), from the same copy as the sentence under the card, instead of
+  titan's generic "No band yet" (VW-444).
 - The per-rep velocity bars on the live page, the two-Voltra stage and the pinned strip now
   colour by the set's own stop instead of a fixed 10/20/30%. The bands sit at one third, two
   thirds and all of the stop: 6.7 / 13.3 / 20% for strength, 3.3 / 6.7 / 10% for power, and

@@ -19,7 +19,7 @@ vi.mock('../spa/use-viewport.js', () => ({ useIsNarrowViewport: vi.fn(() => fals
 
 import { useIsNarrowViewport } from '../spa/use-viewport.js';
 import { GoalsView } from '../spa/goals/GoalsView.js';
-import { cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
+import { cardChart, cardMilestone, type GoalsPageData } from '../spa/goals/goals-model.js';
 import {
   buildGoalProgressView,
   buildPriorityRollup,
@@ -356,6 +356,20 @@ describe('a goal accepted while calibrating (VW-444)', () => {
 
   it('adds no calibration sentence once no target is calibrating', () => {
     expect(render(baseData().data)).not.toContain('to calibrate');
+  });
+
+  it('gives the chart its calibrating note from the same copy, and none once calibrated', () => {
+    const { data, benchPriority } = baseData();
+    const benchTarget = data.priorities[0]!.targets[0]!;
+    const cold = view(
+      benchPriority,
+      { ...benchTarget, basis: 'execution_ramp', infoLevel: 'cold' },
+      [actual(3, 174)],
+    );
+    const calibrated = data.progress[benchPriority.id]![0]!;
+
+    expect(cardChart(cold).calibratingNote).toBe('1 more comparable session');
+    expect(cardChart(calibrated)).not.toHaveProperty('calibratingNote');
   });
 });
 
