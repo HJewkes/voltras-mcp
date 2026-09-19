@@ -195,7 +195,7 @@ entry is written from the user's point of view is a review question, not a check
   run behind the call as `plateau.flatline`, and its `plateau.verdict` moves from `plateau`
   to `none` for a climbing lift. Its `isPlateau` still reports the detector's own answer
   unchanged. The `volume` metric is NOT covered: it keeps the old rule, because the
-  programmed step is a load and has no volume equivalent (VW-452).
+  programmed step is a load and has no volume equivalent (VW-452, #452).
 - A lift goal's band now starts where the goal did. The goals page drew each band from the
   lifter's latest top load, so the line restarted wherever they were now and moved with them
   on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged
