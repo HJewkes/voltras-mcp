@@ -14,7 +14,8 @@
  * The dual (bilateral) stage is store-fed per slot (VW-71), but NOT through this model:
  * it sources from `panels/fatigue-view.ts`'s `mapStoreToDivergingHeroModel`. The full
  * per-slot `DashboardModel` projection that preceded it is gone, along with the stacked
- * two-`LiveView` stage it fed and the fixture-fabricating `deriveDualModel` before that.
+ * two-voltra stage it fed (each in its own full live view) and the fixture-fabricating
+ * `deriveDualModel` before that.
  */
 import type { MetricTileData, SessionRailExercise } from '@titan-design/react-ui';
 import type { FatigueVerdict } from '@voltras/workout-analytics';

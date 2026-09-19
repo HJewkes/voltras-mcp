@@ -10,7 +10,7 @@ import {
   getSemanticColors,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
-import { ExerciseHeader } from './LiveView';
+import { ExerciseHeader } from './ExerciseHeader';
 import { DivergingLiveStage } from './DivergingLiveStage';
 import { hasBoundSide } from './diverging-stage-model';
 import { RestView } from './RestView';
@@ -210,8 +210,8 @@ export interface LivePageProps {
  *     otherwise it falls back to the honest count-up, never the lab's hardcoded 120s.
  *   - `live-dual` renders the DIVERGING hero ({@link DivergingLiveStage}, VMCP-04.05) off
  *     real per-slot telemetry (VW-71). An unbound slot shows an honest awaiting wing, never
- *     a fabricated or mirrored limb. It replaced a stacked two-`LiveView` stage that
- *     duplicated every shared read-out and scrolled on a short wall.
+ *     a fabricated or mirrored limb. It replaced a stacked two-voltra stage (each in its
+ *     own full live view) that duplicated every shared read-out and scrolled on a short wall.
  *
  * The rail footer pace read-out IS now wired (VW-290): the snapshot carries a
  * plan-derived `sessionPace`, so the rail shows sets left, a projected finish, and

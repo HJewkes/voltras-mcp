@@ -1,7 +1,7 @@
 /**
  * The diverging dual-Voltra live stage (VMCP-04.05).
  *
- * Replaces the stacked stage that preceded it — two full `LiveView`s in a
+ * Replaces the stacked stage that preceded it — two full per-voltra live views in a
  * `ScrollView`, one per slot. That was never the design: it duplicated every
  * shared read-out, and on a height-restricted wall it scrolled, which is the one
  * thing a wall dashboard must not do. The designed stage is a diverging hero, and
@@ -15,9 +15,9 @@
  * verdict describes the
  * ATHLETE — `LiveFatigueModel` says so outright ("there is exactly ONE of these
  * cards even when two devices are live; the only per-limb thing on it is
- * asymmetry"). So the controls row is shared with the single view rather than
- * repeated per side, and sets/reps/load stays on the page-level `ExerciseHeader`
- * where it already sits for both variants.
+ * asymmetry"). So the controls row ({@link LiveControlsRow}) renders once, shared,
+ * rather than repeated per side, and sets/reps/load stays on the page-level
+ * `ExerciseHeader` where it already sits.
  *
  * A `null` side is an UNBOUND SLOT, and it renders as an explicit awaiting wing —
  * never a mirrored or fabricated limb. That rule comes from VW-71 and it is the
@@ -31,7 +31,7 @@ import {
   LiveAuraFrame,
   useOnSurfaceColor,
 } from '@titan-design/react-ui';
-import { LiveControlsRow } from './LiveView';
+import { LiveControlsRow } from './LiveControlsRow';
 import { exertionMessage } from './live-copy';
 import { type LiveDashboardModel } from './model';
 import { setFatigueState } from './fatigue-state';

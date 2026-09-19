@@ -50,7 +50,7 @@ spa/
 ├── adapter.ts               # snapshot JSON -> shared view-model helpers (pure functions)
 ├── store.ts                   # zustand store: snapshot/historical/live/planner slices
 ├── live-stream.ts               # /api/stream SSE subscription
-├── live-page/                     # the live page itself (LivePage, LiveView, RestView, ...)
+├── live-page/                     # the live page itself (LivePage, ExerciseHeader, RestView, ...)
 ├── panels/                          # LivePagePanel + its view-model mappers (fatigue-view.ts, live-view.ts)
 ├── planner/                           # plan builder + session-completion pages, their client and mappers
 ├── vite.config.ts                       # build config (react-native-web alias + Tailwind wiring)
