@@ -32,6 +32,7 @@ import type {
   NextWorkoutExercise,
   NextWorkoutRead,
   PlannedSlot,
+  PlanningDueRead,
 } from './types.js';
 
 export type {
@@ -41,6 +42,7 @@ export type {
   NextWorkoutExercise,
   NextWorkoutRead,
   PlannedSlot,
+  PlanningDueRead,
 } from './types.js';
 
 /**
@@ -77,6 +79,8 @@ export interface SundayAnchorInput {
   commitmentLanguage?: string;
   /** Once a month, at a temporal landmark (LIT §1.2, §1.5). */
   monthlyCommitmentReoffer: boolean;
+  /** Present when the next block is due to be planned (VW-476); the sitting is only offered. */
+  planning?: PlanningDueRead | null;
 }
 
 export interface MissRecoveryInput {
@@ -154,6 +158,15 @@ function nextUpLine(nextWorkout: NextWorkoutRead | null): string {
     return 'Nothing is queued on the plan right now, which is ten minutes of programming whenever you want it.';
   }
   return `Next on the plan: ${nextWorkout.templateName}, with ${joinNames(nextWorkout.exercises.map((exercise) => exercise.name))}.`;
+}
+
+/** Offers the planning sitting, never starts it: the lifter picks when (VW-476). */
+function planningLine(planning: PlanningDueRead | null): string {
+  if (planning === null) return '';
+  return (
+    `The next block is due to be planned: ${planning.reason} Pick a time this week to plan it ` +
+    'with me, because a block dated before it starts is one the week can be built around.'
+  );
 }
 
 function slotsLine(slots: readonly PlannedSlot[]): string {
@@ -255,6 +268,7 @@ export function composeSundayAnchor(input: SundayAnchorInput): ComposedMessage {
       adherenceLine: adherenceLine(input.adherence),
       rollingLine: rollingLine(input.rolling28DayTrainingDays),
       nextUpLine: nextUpLine(input.nextWorkout),
+      planningLine: planningLine(input.planning ?? null),
       slotsLine: slotsLine(input.slots),
       ifThenLine: ifThenLine(input.ifThenPlan),
       commitmentLine: commitmentLine(input),

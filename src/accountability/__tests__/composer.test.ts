@@ -74,6 +74,13 @@ function everyMessage(): { label: string; text: string }[] {
       label: 'sunday anchor with the monthly commitment re-offer',
       text: composeSundayAnchor({ ...SUNDAY_INPUT, monthlyCommitmentReoffer: true }).text,
     },
+    {
+      label: 'sunday anchor offering the planning sitting',
+      text: composeSundayAnchor({
+        ...SUNDAY_INPUT,
+        planning: { reason: 'Block 1 ends on 2026-10-04 and nothing is planned after it.' },
+      }).text,
+    },
     { label: 'miss recovery', text: composeMissRecovery(MISS_INPUT).text },
     {
       label: 'holding acknowledgement',
@@ -142,6 +149,17 @@ describe('the §2 copy rules, over every template', () => {
 });
 
 describe('composeSundayAnchor', () => {
+  it('offers the planning sitting only when planning is due (VW-476)', () => {
+    const due = composeSundayAnchor({
+      ...SUNDAY_INPUT,
+      planning: { reason: 'No block has dates yet.' },
+    });
+    const notDue = composeSundayAnchor({ ...SUNDAY_INPUT, planning: null });
+
+    expect(due.text).toContain('The next block is due to be planned: No block has dates yet.');
+    expect(notDue.text).not.toContain('due to be planned');
+  });
+
   it("shows last week's numbers back instead of asking how it went", () => {
     const { text } = composeSundayAnchor(SUNDAY_INPUT);
     expect(text).toContain('Planned 4, recorded 3');

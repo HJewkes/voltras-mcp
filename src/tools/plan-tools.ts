@@ -22,6 +22,7 @@ import {
   PlanBlockListForProgramInput,
   PlanCompleteWorkoutInput,
   PlanCurrentBlockInput,
+  PlanBlockPlanningBriefInput,
   PlanExerciseCreateInput,
   PlanExerciseListForTemplateInput,
   PlanNextWorkoutInput,
@@ -81,7 +82,12 @@ import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
 import { todayLocal } from '../analytics/training-days.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
-import { resolveCurrentBlock, type CurrentBlockRead } from '../plan/current-block.js';
+import {
+  resolveCurrentBlock,
+  type CurrentBlockRead,
+  type PlanningRead,
+} from '../plan/current-block.js';
+import { buildPlanningBrief } from './plan-planning-brief.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
 class ToolError extends Error {
@@ -179,6 +185,23 @@ const PLAN_CURRENT_BLOCK_DESCRIPTION =
   'and `reason`. It is due in the final week of a current block with nothing dated after it, ' +
   'in a gap with nothing planned, and while no block has dates. Reads only.';
 
+const PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION =
+  'The read for a planning sitting (VW-476): what the coach brings when the next block is due ' +
+  '(`planning.due` on plan.current_block, plan.next_workout and plan.complete_workout). ' +
+  'READS ONLY and never plans anything by itself: run the sitting only after asking the lifter, ' +
+  'and create nothing until they answer. Returns `finishing` (the current block, or the one ' +
+  'that ended: its calendar, `trained` with templates planned and done and the local days ' +
+  'trained, and its `history`), `next` (the block to plan: `forBlockId`, else the block after ' +
+  'the finishing one, else the upcoming dated block, else the first never-trained block of the ' +
+  'program in force), `suggested` (`startsOn`, `endsOn`, `weeksCount` from the next block, else ' +
+  'the finishing one, `deloadWeek` from its week rows, and `basis`), `conflicts` (dated blocks ' +
+  'the suggested range would overlap), `realignment` (the priorities re-ask, as on a block ' +
+  'boundary) and `dietPhase` (null when none is declared; raise it for the next block). The ' +
+  'suggested start is the Monday after the current block ends, else today when today is a ' +
+  'Monday, even if a session was already logged today, else the next Monday. Each `history` ' +
+  'says how that block\u2019s dates changed, in one sentence (`fact`). Then date the block with ' +
+  'plan.block.schedule or plan.block.create, and declare priorities for it.';
+
 const PLAN_NEXT_WORKOUT_DESCRIPTION =
   'Get the next un-completed workout template. With `programId`, that program is walked in ' +
   'order. Without it, the plan in force today decides (plan.current_block): in a CURRENT ' +
@@ -188,7 +211,9 @@ const PLAN_NEXT_WORKOUT_DESCRIPTION =
   '`{ ok: true, unplanned: true, state, reason, endedBlock, nextBlock }`. Then tell the lifter ' +
   'training continues unplanned today, and, when `nextBlock` is null, offer to plan the next ' +
   'block now; never present a workout from the ended block. `{ ok: true, completed: true }` ' +
-  'means every workout in scope is done. ' +
+  'means every workout in scope is done. Every result also carries `planning`, the same read ' +
+  'plan.current_block gives: when `planning.due`, follow `planning.prompt` and ask the lifter ' +
+  'about planning the next block. ' +
   'Use this to answer "what should the user do today per their plan?" ' +
   'Returns `blockBoundary: null` unless the returned template is the first of a new block (VMCP-06.06 ' +
   '/ B48), in which case it carries the finished block, the new block, the current goal on file, and ' +
@@ -386,6 +411,15 @@ export function registerPlanTools(
     PlanCurrentBlockInput,
     wrapHandler(PlanCurrentBlockInput, () => resolveCurrentBlock(state.store, todayLocal())),
     PLAN_CURRENT_BLOCK_DESCRIPTION,
+  );
+  install(
+    placeholders,
+    'plan.block.planning_brief',
+    PlanBlockPlanningBriefInput,
+    wrapHandler(PlanBlockPlanningBriefInput, (input) =>
+      buildPlanningBrief(state, input.forBlockId),
+    ),
+    PLAN_BLOCK_PLANNING_BRIEF_DESCRIPTION,
   );
   install(
     placeholders,
@@ -1211,12 +1245,20 @@ type NextWorkoutResult =
 export async function nextWorkout(
   state: ServerState,
   input: z.infer<typeof PlanNextWorkoutInput>,
+): Promise<NextWorkoutResult & { planning: PlanningRead }> {
+  const read = await resolveCurrentBlock(state.store, todayLocal());
+  return { ...(await nextWorkoutFor(state, read, input.programId)), planning: read.planning };
+}
+
+async function nextWorkoutFor(
+  state: ServerState,
+  read: CurrentBlockRead,
+  programId: string | undefined,
 ): Promise<NextWorkoutResult> {
-  if (input.programId !== undefined) {
-    const program = await resolveDefaultProgram(state, input.programId);
+  if (programId !== undefined) {
+    const program = await resolveDefaultProgram(state, programId);
     return walkForNextWorkout(state, await state.store.getTrainingBlocksForProgram(program.id));
   }
-  const read = await resolveCurrentBlock(state.store, todayLocal());
   if (read.state === 'gap' || read.state === 'upcoming') return unplannedResult(read, read.state);
   const blocks = await state.store.getTrainingBlocksForProgram(requireProgram(read).id);
   return walkForNextWorkout(state, blocks, read.state === 'current' ? read.block : null);

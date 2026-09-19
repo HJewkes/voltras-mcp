@@ -41,6 +41,21 @@ export interface PlanningRead {
   due: boolean;
   windowOpensOn: string | null;
   reason: string;
+  /** What the coach does when planning is due; null otherwise. The one wording every site uses. */
+  prompt: string | null;
+}
+
+/**
+ * The planning-sitting prompt (VW-476). The sitting is prompted and never automatic: nothing
+ * is created until the lifter answers.
+ */
+export const PLANNING_PROMPT =
+  'The next block is due to be planned. Ask the lifter whether to plan it now; if yes, read ' +
+  'plan.block.planning_brief for how the finishing block went, a suggested start and length, ' +
+  'and the priorities re-ask. Create nothing until they answer.';
+
+function planning(due: boolean, windowOpensOn: string | null, reason: string): PlanningRead {
+  return { due, windowOpensOn, reason, prompt: due ? PLANNING_PROMPT : null };
 }
 
 export interface CurrentBlockRead {
@@ -142,20 +157,20 @@ function currentPlanning(
   const windowOpensOn = planningWindowOpensOn(current.calendar);
   const name = current.block.name;
   if (next !== null) {
-    return { due: false, windowOpensOn, reason: `${next.block.name} is already planned.` };
+    return planning(false, windowOpensOn, `${next.block.name} is already planned.`);
   }
   if (windowOpensOn === null || today < windowOpensOn) {
-    return {
-      due: false,
+    return planning(
+      false,
       windowOpensOn,
-      reason: `The planning window for the block after ${name} opens on ${windowOpensOn}.`,
-    };
+      `The planning window for the block after ${name} opens on ${windowOpensOn}.`,
+    );
   }
-  return {
-    due: true,
+  return planning(
+    true,
     windowOpensOn,
-    reason: `${name} ends on ${current.calendar.endsOn} and nothing is planned after it.`,
-  };
+    `${name} ends on ${current.calendar.endsOn} and nothing is planned after it.`,
+  );
 }
 
 function upcomingRead(next: DatedBlock): CurrentBlockRead {
@@ -166,11 +181,11 @@ function upcomingRead(next: DatedBlock): CurrentBlockRead {
     calendar: null,
     week: null,
     nextBlock: nextRef(next),
-    planning: {
-      due: false,
-      windowOpensOn: null,
-      reason: `${next.block.name} is planned to start on ${next.calendar.startsOn}.`,
-    },
+    planning: planning(
+      false,
+      null,
+      `${next.block.name} is planned to start on ${next.calendar.startsOn}.`,
+    ),
   };
 }
 
@@ -185,12 +200,12 @@ function gapRead(ended: DatedBlock, next: DatedBlock | null): CurrentBlockRead {
     nextBlock: nextRef(next),
     planning:
       next === null
-        ? { due: true, windowOpensOn: null, reason: `${endedOn} and no block is planned.` }
-        : {
-            due: false,
-            windowOpensOn: null,
-            reason: `${endedOn}; ${next.block.name} starts on ${next.calendar.startsOn}.`,
-          },
+        ? planning(true, null, `${endedOn} and no block is planned.`)
+        : planning(
+            false,
+            null,
+            `${endedOn}; ${next.block.name} starts on ${next.calendar.startsOn}.`,
+          ),
   };
 }
 
@@ -212,7 +227,7 @@ async function undatedOnly(
     calendar: null,
     week: null,
     nextBlock: null,
-    planning: { due: true, windowOpensOn: null, reason: 'No block has dates yet.' },
+    planning: planning(true, null, 'No block has dates yet.'),
   };
 }
 

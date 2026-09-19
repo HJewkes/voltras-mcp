@@ -70,6 +70,7 @@ const TOOL_NAMES = [
   'plan.exercise.create',
   'plan.exercise.list_for_template',
   'plan.current_block',
+  'plan.block.planning_brief',
   'plan.next_workout',
   'plan.complete_workout',
   'plan.attach_to_session',

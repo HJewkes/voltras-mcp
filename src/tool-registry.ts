@@ -113,6 +113,8 @@ export const CORE_TOOL_NAMES = [
   'plan.exercise.list_for_template',
   // The one current-block rule (VW-475): which block and program are in force today.
   'plan.current_block',
+  // The planning sitting's read (VW-476): writes nothing.
+  'plan.block.planning_brief',
   // Progression / session-link tools (compose the CRUD layer above).
   'plan.next_workout',
   'plan.complete_workout',
@@ -388,6 +390,7 @@ export const TOOL_ACCESS: Record<ToolName, ToolAccess> = {
   'plan.exercise.create': 'write',
   'plan.exercise.list_for_template': 'read',
   'plan.current_block': 'read',
+  'plan.block.planning_brief': 'read',
   'plan.next_workout': 'read',
   'plan.complete_workout': 'write',
   'plan.attach_to_session': 'write',

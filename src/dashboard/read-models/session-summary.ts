@@ -25,6 +25,8 @@
 //
 // Confidentiality: fitness units and plan metadata only — no protocol data (NF-07).
 
+import { todayLocal } from '../../analytics/training-days.js';
+import { resolveCurrentBlock } from '../../plan/current-block.js';
 import {
   getSetFatigueSummary,
   getSetFatigueVerdict,
@@ -154,7 +156,7 @@ export async function buildSessionSummary(
   if (session === undefined) return undefined;
 
   const allSets = await store.getSetsForSession(sessionId);
-  const program = (await store.listTrainingPrograms({ includeArchived: false }))[0];
+  const { program } = await resolveCurrentBlock(store, todayLocal());
 
   const exercises: SessionSummaryExercise[] = [];
   for (const exerciseId of groupExerciseIds(allSets, session.exerciseId)) {

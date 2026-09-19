@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
-import { resolveCurrentBlock } from '../current-block.js';
+import { PLANNING_PROMPT, resolveCurrentBlock } from '../current-block.js';
 import {
   RETURN_PROGRAM,
   TEST_PROGRAM,
@@ -35,6 +35,7 @@ describe('undated_only', () => {
       due: true,
       windowOpensOn: null,
       reason: 'No block has dates yet.',
+      prompt: PLANNING_PROMPT,
     });
   });
 
@@ -112,8 +113,19 @@ describe('current', () => {
     const inWeek4 = await resolveCurrentBlock(store, '2026-09-28');
 
     expect(inWeek2.week?.isDeload).toBe(true);
-    expect(inWeek2.planning).toMatchObject({ due: false, windowOpensOn: '2026-09-28' });
-    expect(inWeek4.planning).toMatchObject({ due: true, windowOpensOn: '2026-09-28' });
+    const lastSunday = await resolveCurrentBlock(store, '2026-09-27');
+
+    expect(inWeek2.planning).toMatchObject({
+      due: false,
+      windowOpensOn: '2026-09-28',
+      prompt: null,
+    });
+    expect(lastSunday.planning.due).toBe(false);
+    expect(inWeek4.planning).toMatchObject({
+      due: true,
+      windowOpensOn: '2026-09-28',
+      prompt: PLANNING_PROMPT,
+    });
   });
 
   it('is not due once the next block is dated', async () => {
@@ -141,7 +153,11 @@ describe('gap and upcoming', () => {
     expect(read.program?.name).toBe(RETURN_PROGRAM);
     expect(read.block?.id).toBe('b1');
     expect(read.week).toBeNull();
-    expect(read.planning).toMatchObject({ due: true, windowOpensOn: null });
+    expect(read.planning).toMatchObject({
+      due: true,
+      windowOpensOn: null,
+      prompt: PLANNING_PROMPT,
+    });
     expect(read.planning.reason).toContain('ended on 2026-09-06');
   });
 

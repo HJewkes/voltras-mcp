@@ -33,9 +33,12 @@ import {
   type AdherenceRead,
   type AdherenceTrend,
   type NextWorkoutRead,
+  type PlanningDueRead,
   type ProactiveKind,
   type ProtocolState,
 } from '../accountability/types.js';
+import { localDate } from '../analytics/training-days.js';
+import { resolveCurrentBlock } from '../plan/current-block.js';
 import { AccountabilityPreviewInput, AccountabilityStateInput } from '../schemas/accountability.js';
 import type { ServerState } from '../state/server-state.js';
 import { LOCAL_USER_ID } from '../store/types.js';
@@ -210,6 +213,8 @@ export interface AccountabilityPreviewInputsUsed {
   adherence: AdherenceRead | null;
   rolling28DayTrainingDays: number;
   nextWorkout: NextWorkoutRead | null;
+  /** Set when the next block is due to be planned; the Sunday anchor offers the sitting. */
+  planning: PlanningDueRead | null;
 }
 
 export interface AccountabilityPreviewResult {
@@ -254,14 +259,16 @@ async function renderDecision(
   kind: ProactiveKind,
   now: Date,
 ): Promise<{ text: string; inputsUsed: AccountabilityPreviewInputsUsed }> {
-  const [report, nextWorkoutRead] = await Promise.all([
+  const [report, nextWorkoutRead, block] = await Promise.all([
     buildWeeklyReport(state, { format: 'json', to: now.toISOString() }),
     readNextWorkout(state),
+    resolveCurrentBlock(state.store, localDate(now.toISOString())),
   ]);
   const inputsUsed: AccountabilityPreviewInputsUsed = {
     adherence: report.header.adherence,
     rolling28DayTrainingDays: report.header.rolling28DayTrainingDays,
     nextWorkout: nextWorkoutRead,
+    planning: block.planning.due ? { reason: block.planning.reason } : null,
   };
   const text = composeForKind(kind, current, inputsUsed, now);
   return { text, inputsUsed };
@@ -280,6 +287,7 @@ function composeForKind(
         adherence: inputs.adherence,
         rolling28DayTrainingDays: inputs.rolling28DayTrainingDays,
         nextWorkout: inputs.nextWorkout,
+        planning: inputs.planning,
         // No slot/fallback-day configuration is persisted anywhere yet
         // (VW-236 lands the Sunday goal-setting sitting that will produce
         // one); rendering with none named is the honest state until then.
