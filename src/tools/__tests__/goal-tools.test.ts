@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ServerState } from '../../state/server-state.js';
 import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
+import { deriveTargetInFrame, readDerivationContext } from '../goal-derivation.js';
 import { registerGoalTools } from '../goal-tools.js';
 
 const TOOL_NAMES = [
@@ -880,5 +881,59 @@ describe('goal.list, goal.retire and goal.new_chapter', () => {
     expect((await harness.expectError('goal.propose_targets', { priorityId: 'nope' })).code).toBe(
       'NOT_FOUND',
     );
+  });
+});
+
+describe('the in-frame band against numbers accepted through the tools (VW-449)', () => {
+  async function acceptedAndLive(harness: Harness) {
+    const [priority] = await harness.store.listPriorities(LOCAL_USER_ID);
+    const [target] = await harness.store.listGoalTargets({ priorityId: priority!.id });
+    const context = await readDerivationContext({ store: harness.store }, priority!);
+    const live = await deriveTargetInFrame({ store: harness.store }, context, target!);
+    if (!('band' in live)) throw new Error('expected a band');
+    return { target: target!, band: live.band };
+  }
+
+  it('ends at the accepted committed and stretch while the info level is unchanged', async () => {
+    const harness = setup();
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+    const proposed = await proposeFirstTarget(harness, await declareLift(harness));
+    await harness.invoke('goal.accept_target', { targetId: proposed.targetId });
+
+    const { target, band } = await acceptedAndLive(harness);
+
+    expect(band.basis).toBe(target.basis);
+    expect(band.expected[0]!.low).toBe(target.startValue);
+    expect(band.expected.at(-1)).toMatchObject({
+      low: target.committedValue,
+      high: target.stretchValue,
+    });
+  });
+
+  it('accepted cold then calibrated: the goal sits on the band’s top edge, over its low edge', async () => {
+    const harness = setup();
+    await seedLiftHistory(harness.store, { sessionCount: 1, weightLbs: 135, reps: 8 });
+    const proposed = await proposeFirstTarget(harness, await declareLift(harness));
+    await harness.invoke('goal.accept_target', { targetId: proposed.targetId });
+    await seedLiftHistory(harness.store, {
+      sessionCount: 2,
+      weightLbs: 135,
+      reps: 8,
+      withBaseline: true,
+    });
+
+    const { target, band } = await acceptedAndLive(harness);
+    const last = band.expected.at(-1)!;
+
+    expect(target.infoLevel).toBe('cold');
+    expect(target.committedValue).toBe(target.stretchValue);
+    expect(band.basis).toBe('rp_ramp');
+    expect(last.high).toBe(target.committedValue);
+    expect(last.low).toBeLessThan(target.committedValue);
   });
 });
