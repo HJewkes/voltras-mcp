@@ -114,6 +114,7 @@ export type GoalPreviewStateName =
   | 'on_track'
   | 'fast_climb'
   | 'behind'
+  | 'stalled'
   | 'ahead'
   | 'hit_exact'
   | 'beyond_goal';
@@ -125,10 +126,9 @@ export interface GoalPreviewState {
   readonly summary: string;
   /**
    * One session per ISO week, oldest first, each `SETS_PER_SESSION` working
-   * sets at that load for {@link GOAL_PREVIEW_ANCHOR_REPS} reps. Weekly steps
-   * are wide on purpose: `history.trend`'s plateau detector calls a run inside
-   * 5% of its median a flatline, and a flatline reads `stalled` before any of
-   * these rules get a say.
+   * sets at that load for {@link GOAL_PREVIEW_ANCHOR_REPS} reps. A flat run
+   * reads `stalled` before `behind` or `on_track` get a say, but a climb at a
+   * quarter of the programmed step or more is never flat (VW-452).
    */
   readonly weeklyLoadsLbs: readonly number[];
   /**
@@ -171,7 +171,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     summary:
       'A starting ramp accepted cold (committed 117.5, where the ramp ends), and five weeks of ' +
       'history since, inside the band: calibrated, so a target based on the lifts is on offer.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 108],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
     acceptedCold: true,
   },
@@ -179,7 +179,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_declined',
     expectedStatus: 'on_track',
     summary: 'The same calibrated starting ramp, after the lifter declined the offer.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 108],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
     acceptedCold: true,
     recalibrationAnswer: 'declined',
@@ -187,12 +187,8 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
     name: 'on_track',
     expectedStatus: 'on_track',
-    summary: 'Top loads rising from 100 through a lighter week 3, inside the band anchored at 100.',
-    // Inside a band anchored at its start (VW-449) the programmed ramp adds
-    // about 2.5% a week, and three weekly readings that close together are
-    // what `history.trend`'s plateau detector calls a flatline. The lighter
-    // week 3 keeps the run wider than that without leaving the band.
-    weeklyLoadsLbs: [100, 103, 97, 104, 108],
+    summary: 'Top loads climbing 2 lb a week from 100, inside the band anchored at 100.',
+    weeklyLoadsLbs: [100, 102, 104, 106, 108],
     targetStartWeeksAgo: 4,
   },
   {
@@ -212,6 +208,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     targetStartWeeksAgo: 4,
   },
   {
+    name: 'stalled',
+    expectedStatus: 'stalled',
+    summary:
+      'The same top load of 100 for five weeks: a flatline, not a slowdown, so it reads ' +
+      'stalled ahead of behind.',
+    weeklyLoadsLbs: [100, 100, 100, 100, 100],
+    targetStartWeeksAgo: 4,
+  },
+  {
     name: 'ahead',
     expectedStatus: 'ahead',
     summary:
@@ -223,14 +228,14 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 108.75],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108.75],
     targetStartWeeksAgo: 4,
   },
   {
     name: 'beyond_goal',
     expectedStatus: 'beyond_goal',
     summary: 'The newest reading passes the committed target with weeks of the block left.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 112],
+    weeklyLoadsLbs: [100, 102, 104, 106, 112],
     targetStartWeeksAgo: 4,
   },
 ];

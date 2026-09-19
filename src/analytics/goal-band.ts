@@ -442,14 +442,18 @@ function rampEdges(input: GoalBandInput): { low: number; high: number } {
   if (input.metric === 'reps_at_load') {
     return { low: C.rampRepFloorPerWeek * perStep, high: C.rampRepCapPerWeek * perStep };
   }
-  const stepLbs = computePercentIncrement(
-    input.startValue,
+  const high = programmedRampStepLbs(input.startValue) * perStep;
+  return { low: high * C.heldWeekFraction, high };
+}
+
+/** The programmed weekly load step at `loadLbs`: a percent of load, inside the cited floor and cap. */
+export function programmedRampStepLbs(loadLbs: number): number {
+  return computePercentIncrement(
+    loadLbs,
     C.rampIncrementPercentOfLoad,
     C.rampIncrementFloorLbs,
     C.rampIncrementCapLbs,
   );
-  const high = stepLbs * perStep;
-  return { low: high * C.heldWeekFraction, high };
 }
 
 function shapeOf(

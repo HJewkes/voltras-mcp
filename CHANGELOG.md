@@ -185,6 +185,17 @@ entry is written from the user's point of view is a review question, not a check
   maintenance corridor now stay where the goal set them. A 28-day session commitment's band
   holds flat at the count committed to, not today's count. The page draws no bodyweight
   chart yet, so this shows only in the goal-progress data and its status (VW-451).
+- A lifter climbing on the programmed ramp no longer reads `stalled`. The plateau check
+  called any two weeks within 5% of their middle value a plateau, and the ramp itself only
+  moves about 5% in two weeks, so the ideal lifter was told they had stalled. A lift now
+  counts as a plateau only when its recent climb is also under a quarter of the programmed
+  weekly step: a flatline, not a slowdown. On the goals page a climbing lifter now reads
+  `on_track`, or `behind` when they climb slower than the band. Three weeks at the same top
+  load, or a noisy run around one load, still read `stalled`. `history.trend` reports the
+  run behind the call as `plateau.flatline`, and its `plateau.verdict` moves from `plateau`
+  to `none` for a climbing lift. Its `isPlateau` still reports the detector's own answer
+  unchanged. The `volume` metric is NOT covered: it keeps the old rule, because the
+  programmed step is a load and has no volume equivalent (VW-452, #452).
 - A lift goal's band now starts where the goal did. The goals page drew each band from the
   lifter's latest top load, so the line restarted wherever they were now and moved with them
   on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged

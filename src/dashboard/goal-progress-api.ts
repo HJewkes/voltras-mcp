@@ -30,7 +30,7 @@ import {
 } from '../tools/goal-derivation.js';
 import { markPersonalRecords } from '../analytics/goal-history.js';
 import { listOfferDecisions, offerInputsOf } from '../tools/goal-recalibration.js';
-import { computeHistoryTrend } from '../tools/metrics-tools.js';
+import { computeHistoryTrend, type HistoryTrendResult } from '../tools/metrics-tools.js';
 import { log } from '../logger.js';
 import {
   buildFatigueAxesLookup,
@@ -141,6 +141,16 @@ function historyTrendMetricFor(metric: StoredGoalTarget['metric']): 'topLoad' | 
 }
 
 /**
+ * The verdict and the run that earned it. A lift's run is the flatline
+ * (VW-452), so the days and the reasoning are its own, not WA's wider window.
+ */
+function plateauVerdictOf(plateau: NonNullable<HistoryTrendResult['plateau']>): GoalPlateauVerdict {
+  const run = plateau.flatline;
+  if (run === null) return { verdict: plateau.verdict };
+  return { verdict: plateau.verdict, plateauDays: run.days, reasoning: `${run.reasoning}.` };
+}
+
+/**
  * The readings a target is tracked against, plus the plateau verdict when the
  * metric is a lift — both come from the SAME `computeHistoryTrend` call
  * `history.trend` itself runs, so this page can never show a series or a
@@ -198,11 +208,7 @@ async function readActuals(
     if (trend.plateau === null) return { actuals };
     return {
       actuals,
-      plateauVerdict: {
-        verdict: trend.plateau.verdict,
-        plateauDays: trend.plateau.plateauDays,
-        reasoning: trend.plateau.reasoning,
-      },
+      plateauVerdict: plateauVerdictOf(trend.plateau),
     };
   } catch (err) {
     // A lift with no working sets in the window throws NOT_FOUND; that is an

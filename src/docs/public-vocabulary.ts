@@ -222,6 +222,10 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   // is that the upstream field is left alone.
   'isPlateau',
   'plateau.isPlateau',
+  // VW-452: the flatline run behind a load metric's plateau verdict.
+  'plateau.flatline',
+  'slopeLbsPerWeek',
+  'flatBelowLbsPerWeek',
   'readiness.zone',
   // VW-286: `accountability.state`'s result — the persisted protocol row plus
   // the dry-run decision. `action` is `send` or `silent`; `kind` names an
