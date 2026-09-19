@@ -39,6 +39,7 @@ import {
 } from '../schemas/plan.js';
 import type { ServerState } from '../state/server-state.js';
 import {
+  LOCAL_USER_ID,
   type AppendBlockScheduleInput,
   type BlockScheduleKind,
   type StoredBlockSchedule,
@@ -68,7 +69,8 @@ const PLAN_BLOCK_UPDATE_DESCRIPTION =
   'the start never moves here (that is plan.block.schedule). Refused on a block that has ' +
   'ended, when a current block would be shortened below the week it is in, and when the ' +
   'longer block would overlap another dated block (the error names it; move that block ' +
-  'first). An undated block just takes the edit. `warnings[]` carries the ' +
+  'first). An undated block just takes the edit. `targetsAffected` lists the goal targets whose ' +
+  'end moved with a resize. `warnings[]` carries the ' +
   '`meso_length_grew_mid_block` advisory when a block grows after its weeks were built.';
 
 const PLAN_BLOCK_SCHEDULE_DESCRIPTION =
@@ -82,7 +84,9 @@ const PLAN_BLOCK_SCHEDULE_DESCRIPTION =
   'overlap another dated block (in any active program) is refused and the error names that ' +
   'block. Dates must follow the program order: block 2 cannot start before block 1. ' +
   'Setting the date it already has writes nothing. Returns every row written with the dates ' +
-  'it moved from and to. Goal targets set for a block follow its dates.';
+  'it moved from and to. Goal targets set for a moved block follow its dates, and ' +
+  '`targetsAffected` lists them (`blockId`, `targetId`, `metric`, `exerciseId`); their committed ' +
+  'and stretch numbers do not change.';
 
 const PLAN_BLOCK_SCHEDULE_HISTORY_DESCRIPTION =
   "Every schedule change a block has had, oldest first: each row's kind (planned, moved, " +
@@ -117,7 +121,8 @@ const PLAN_WEEK_SKIP_DESCRIPTION =
   'Monday it resolved to (`weekOf`), which is what is recorded, so read it back to the ' +
   'lifter. Refused for a block that ' +
   'is not current, for a week that has not started, for a week already skipped, and for an ' +
-  'extend that would run into the next dated block (the error names it).';
+  'extend that would run into the next dated block (the error names it). After an extend, ' +
+  '`targetsAffected` lists the goal targets whose end moved; a hold moves none.';
 
 export function registerPlanScheduleTools(
   _server: McpServer,
@@ -333,6 +338,34 @@ function rowView(row: StoredBlockSchedule): { seq: number; kind: string; changed
   return { seq: row.seq, kind: row.kind, changedBy: row.changedBy };
 }
 
+/** A live goal target set for a block whose dates a write just changed (VW-477). */
+interface AffectedTarget {
+  blockId: string;
+  targetId: string;
+  metric: string;
+  exerciseId: string | null;
+}
+
+/**
+ * The live targets set for these blocks. Their weeks, deloads and end follow the block's live
+ * schedule, so they moved with it; their committed and stretch numbers did not.
+ */
+async function targetsAffected(
+  state: ServerState,
+  blockIds: readonly string[],
+): Promise<AffectedTarget[]> {
+  if (blockIds.length === 0) return [];
+  const moved = new Set(blockIds);
+  return (await state.store.listGoalTargets({ userId: LOCAL_USER_ID }))
+    .filter((target) => target.blockId !== undefined && moved.has(target.blockId))
+    .map((target) => ({
+      blockId: target.blockId as string,
+      targetId: target.id,
+      metric: target.metric,
+      exerciseId: target.exerciseId ?? null,
+    }));
+}
+
 // --- dating a block (plan.block.create and plan.block.schedule) ---
 
 /**
@@ -407,6 +440,7 @@ async function updateBlock(
   warnings: PlanWarning[];
   calendar: BlockCalendar;
   scheduleRow: ReturnType<typeof rowView> | null;
+  targetsAffected: AffectedTarget[];
 }> {
   const previous = await requireBlock(state, input.blockId);
   const block: StoredTrainingBlock = {
@@ -431,6 +465,7 @@ async function updateBlock(
     }),
     calendar: await calendarOf(state, block.id, today),
     scheduleRow: written === null ? null : rowView(written),
+    targetsAffected: await targetsAffected(state, written === null ? [] : [block.id]),
   };
 }
 
@@ -487,6 +522,7 @@ async function scheduleBlock(
   block: StoredTrainingBlock;
   calendar: BlockCalendar;
   rows: { blockId: string; seq: number; kind: string; from: DateRange; to: DateRange }[];
+  targetsAffected: AffectedTarget[];
 }> {
   const block = await requireBlock(state, input.blockId);
   const today = todayLocal();
@@ -500,7 +536,15 @@ async function scheduleBlock(
     from: rangeOf(changes[index].previous),
     to: rangeOf(row),
   }));
-  return { block, calendar: await calendarOf(state, block.id, today), rows };
+  return {
+    block,
+    calendar: await calendarOf(state, block.id, today),
+    rows,
+    targetsAffected: await targetsAffected(
+      state,
+      written.map((row) => row.blockId),
+    ),
+  };
 }
 
 function rangeOf(row: StoredBlockSchedule | undefined): DateRange {
@@ -690,6 +734,7 @@ async function skipWeek(
 ): Promise<{
   weekOf: string;
   calendar: BlockCalendar;
+  targetsAffected: AffectedTarget[];
   scheduleRow: ReturnType<typeof rowView>;
 }> {
   const block = await requireBlock(state, input.blockId);
@@ -717,6 +762,8 @@ async function skipWeek(
     weekOf: week.startsOn,
     calendar: await calendarOf(state, block.id, today),
     scheduleRow: rowView(written),
+    // A hold keeps every week where it was; an extend moves the block's end.
+    targetsAffected: await targetsAffected(state, input.mode === 'extend' ? [block.id] : []),
   };
 }
 

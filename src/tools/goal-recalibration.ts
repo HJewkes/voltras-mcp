@@ -24,6 +24,8 @@
 //
 // Confidentiality: fitness metadata and coaching prose only, no protocol data.
 
+import { todayLocal } from '../analytics/training-days.js';
+import { contextInFrame, goalBlockFrame } from './goal-block-frame.js';
 import { randomUUID } from 'node:crypto';
 
 import { GOAL_BAND_CONSTANTS, calibrationGapOf, isStartingRamp } from '../analytics/goal-band.js';
@@ -143,12 +145,15 @@ async function reconcileOne(
   const mine = decisions.filter((decision) => offerInputsOf(decision).targetId === target.id);
   if (mine.some((decision) => decision.userResponse === 'declined')) return undefined;
   const open = mine.find((decision) => decision.userResponse === undefined);
-  const framed = await deriveTargetInFrame(state, context, target);
+  // A block-bound ramp is re-derived on its block's weeks, so the offer keeps the block's dates (VW-477).
+  const frame = await goalBlockFrame(state.store, target.blockId, todayLocal());
+  const inFrame = contextInFrame(context, frame);
+  const framed = await deriveTargetInFrame(state, inFrame, target);
   if (!('band' in framed) || gapOf(framed) !== null) {
     if (open !== undefined) await withdrawOffer(state, open, now);
     return undefined;
   }
-  return writeOffer(state, context, target, framed, open, now);
+  return writeOffer(state, inFrame, target, framed, open, now);
 }
 
 function gapOf(evidence: CalibrationEvidence): ReturnType<typeof calibrationGapOf> {
@@ -227,6 +232,7 @@ function framedRow(
     acknowledgedStretch: false,
     derivedAt: context.derivedAt,
     endsAt: frame.endsAt,
+    ...(frame.blockId === undefined ? {} : { blockId: frame.blockId }),
     ...(frame.newChapterAt === undefined ? {} : { newChapterAt: frame.newChapterAt }),
   };
 }

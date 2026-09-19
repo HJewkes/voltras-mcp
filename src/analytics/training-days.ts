@@ -38,6 +38,32 @@ export function localDate(iso: string): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
+/**
+ * The instant's LOCAL wall-clock time written as if it were UTC (VW-477). A UTC-only grouper
+ * (workout-analytics' ISO-week buckets) then groups by local calendar days. Each instant uses
+ * its own offset, so DST is handled per instant. Under UTC it returns the instant unchanged.
+ */
+export function localWallClockIso(iso: string): string {
+  const d = new Date(iso);
+  return new Date(
+    Date.UTC(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      d.getHours(),
+      d.getMinutes(),
+      d.getSeconds(),
+      d.getMilliseconds(),
+    ),
+  ).toISOString();
+}
+
+/** The instant a local calendar date ('YYYY-MM-DD') starts at, in the process timezone. */
+export function localMidnightIso(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day).toISOString();
+}
+
 /** Today's local calendar date: the one clock every dated-block rule reads (VW-474). */
 export function todayLocal(): string {
   return localDate(new Date().toISOString());

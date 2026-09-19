@@ -13,6 +13,7 @@
 // which already carries its own target, so banding the rollup would commit the
 // lifter twice to the same work.
 
+import { bucketStartIso } from '../analytics/goal-block-weeks.js';
 import { deriveGoalBand, type GoalBand, type GoalBandInput } from '../analytics/goal-band.js';
 import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-band.js';
 import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
@@ -354,7 +355,7 @@ async function deriveE1rmContext(
   const baseline = await state.store.getBaseline({ userId: LOCAL_USER_ID, exerciseId });
   return bandFor(context, selection, {
     startValue: latest.value,
-    startMeasuredAt: latest.ts,
+    startMeasuredAt: bucketStartIso(latest.ts),
     matchedSessionCount: trend?.series.length ?? 0,
     baselineState: baseline?.state ?? 'COLD',
   });

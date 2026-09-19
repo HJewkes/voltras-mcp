@@ -23,6 +23,9 @@
 // Confidentiality: fitness units, plan metadata and coaching prose only — no
 // protocol data (NF-07).
 
+import { localDate } from '../analytics/training-days.js';
+import { bucketStartIso } from '../analytics/goal-block-weeks.js';
+import { contextInFrame, goalBlockFrame } from '../tools/goal-block-frame.js';
 import {
   deriveTargetInFrame,
   readDerivationContext,
@@ -66,6 +69,8 @@ export type GoalProgressStore = GoalDerivationState['store'] & {
   listAdvisoryDecisions?: SessionStore['listAdvisoryDecisions'];
   /** Optional: without the weekly check-in read there is no rate to show beside the band. */
   getSelfReportsForUser?: SessionStore['getSelfReportsForUser'];
+  /** A block-bound target's frame is its block's live schedule (VW-477). */
+  getLiveBlockSchedule: SessionStore['getLiveBlockSchedule'];
 };
 
 /** The recalibration answers the page reads (VW-444 part 2). */
@@ -118,7 +123,9 @@ async function viewFor(
     now: Date;
   },
 ): Promise<GoalProgressView | undefined> {
-  const { priority, target, context } = read;
+  const { priority, target } = read;
+  const frame = await goalBlockFrame(store, target.blockId, localDate(read.now.toISOString()));
+  const context = contextInFrame(read.context, frame);
   const derived = await deriveTargetInFrame({ store }, context, target);
   if (!('band' in derived)) {
     log.warn(`goal-progress: '${target.id}' band could not be re-derived: ${derived.reason}`);
@@ -140,6 +147,8 @@ async function viewFor(
     weeks: context.weeks,
     now: read.now.toISOString(),
     dietState: context.dietState,
+    ...(frame === null ? {} : { weekOneAt: frame.weekOneAt }),
+    ...(frame?.startsOn === undefined ? {} : { startsOn: frame.startsOn }),
     ...wholeBody,
     ...(fatigue === undefined ? {} : { fatigue }),
     ...(plateauVerdict === undefined ? {} : { plateauVerdict }),
@@ -268,7 +277,7 @@ async function readActuals(
     // stored: `markPersonalRecords` compares each reading against the earlier
     // readings of the same window this page is already showing.
     const actuals = markPersonalRecords(
-      trend.series.map((point: Point) => ({ ts: point.ts, value: point.value })),
+      trend.series.map((point: Point) => ({ ts: bucketStartIso(point.ts), value: point.value })),
     ).map((reading) => ({ ...reading, matched: true }));
     // `plateau` is `null` in the VW-361 new-chapter state, where there is
     // nothing since the boundary to fit — that is an absent read, not a
