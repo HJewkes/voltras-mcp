@@ -236,6 +236,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- `goal.weekly_review` for a past week, and the goals page's bodyweight rate, judged the
+  scale on every stored weigh-in, including ones logged after the week under review, so a
+  back-dated review saw the future. They now use only readings taken by the instant being
+  judged (VW-463).
+- `accountability.state` with an `at` on a Thursday read the adherence trend over the seven
+  days before the real clock, not before `at`, so sessions logged after `at` counted. It
+  now reads the week ending at `at`, as `accountability.preview` already did (VW-472).
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
   backwards. It now shows and judges the newest reading (VW-451).

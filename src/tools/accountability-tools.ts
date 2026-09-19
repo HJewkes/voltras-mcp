@@ -174,7 +174,7 @@ async function evaluateDryRun(
   const stored = await state.store.getAccountabilityState(LOCAL_USER_ID);
   const current = stored ?? initialAccountabilityState(LOCAL_USER_ID, now);
   const tick = tickForDay(now);
-  const trend = tick === 'thursday' ? await readAdherenceTrend(state) : null;
+  const trend = tick === 'thursday' ? await readAdherenceTrend(state, now) : null;
   return {
     current,
     persisted: stored !== undefined,
@@ -408,8 +408,8 @@ function enteredMissedOnMonOrTue(current: AccountabilityState): boolean {
   return day === MONDAY || day === TUESDAY;
 }
 
-async function readAdherenceTrend(state: ServerState): Promise<AdherenceTrend | null> {
-  const report = await buildWeeklyReport(state, { format: 'json' });
+async function readAdherenceTrend(state: ServerState, now: Date): Promise<AdherenceTrend | null> {
+  const report = await buildWeeklyReport(state, { format: 'json', to: now.toISOString() });
   return report.header.adherence?.trend ?? null;
 }
 
