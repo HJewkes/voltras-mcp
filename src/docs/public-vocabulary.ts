@@ -532,6 +532,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'endsOn',
   'planning.due',
   'planning.prompt',
+  // VW-477: the goal targets whose block dates a schedule write moved.
+  'targetsAffected',
 ];
 
 /**

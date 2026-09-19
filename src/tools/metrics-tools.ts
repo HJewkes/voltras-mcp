@@ -119,6 +119,8 @@ import {
 } from '@voltras/workout-analytics';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+
+import { localWallClockIso } from '../analytics/training-days.js';
 import {
   detectBounce,
   detectHesitation,
@@ -782,9 +784,10 @@ async function historyTrendSessions(
     ...(side !== undefined ? { side } : {}),
   });
   const bySession = groupBySessionId(sets);
+  // Local wall clock, so workout-analytics' UTC ISO-week buckets are local weeks (VW-477).
   const sources: ProcessedSessionSource[] = [...bySession.entries()].map(([id, group]) => ({
     id,
-    startedAt: earliestStartedAt(group),
+    startedAt: localWallClockIso(earliestStartedAt(group)),
     exerciseId,
   }));
   return toProcessedSessions(sources, bySession);
@@ -871,7 +874,7 @@ export async function computeHistoryTrend(
     metric,
     exerciseId: input.exerciseId,
     bucketBy: 'week',
-    fromTs: fromIso,
+    fromTs: localWallClockIso(fromIso),
   });
   // `points` degrades to `any[]` through the package's .d.ts here (same
   // NodeNext-resolution note as `rirForSet`'s), so the element type is
@@ -1471,7 +1474,7 @@ async function priorBestE1RM(state: ServerState, exerciseId: string): Promise<nu
     metric: 'estimated_1rm',
     exerciseId,
     bucketBy: 'week',
-    fromTs: fromIso,
+    fromTs: localWallClockIso(fromIso),
   });
   if (built.points.length === 0) return null;
   // `points` degrades to `any[]` through the package's .d.ts here (same

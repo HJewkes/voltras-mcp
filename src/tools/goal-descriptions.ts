@@ -58,7 +58,12 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
   'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
   'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
-  'calibrated is withdrawn.';
+  'calibrated is withdrawn. DATED BLOCKS (VW-477): each target is set for a block, `blockId` on ' +
+  'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
+  'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
+  'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
+  'stretch numbers never move. Until the block starts the goals page reads "Starts <date>" with ' +
+  'no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'Fix one proposed target’s numbers. Omit `committedValue` and `stretchValue` to take the ' +
@@ -78,7 +83,8 @@ export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'new chapter once calibrated, never edited in place. Accepting a recalibration offer ' +
   '(`offerTargetId`) retires the starting ramp it replaces and returns `recalibration` ' +
   '(`decisionId`, `supersededTargetId`); an offer whose lift is no longer calibrated is refused ' +
-  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays.';
+  'with `GOAL_RECALIBRATION_WITHDRAWN` and the ramp stays. A proposal written before targets ' +
+  'carried a block is set for one here, the way a new proposal would be (VW-477).';
 
 export const GOAL_LIST_DESCRIPTION =
   'READ-ONLY. Every declared priority with the targets derived under it, newest declaration ' +
@@ -129,7 +135,12 @@ export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   '(same start, end and weeks; only the numbers change) as the proposal row `offerTargetId`. ' +
   'Raise it once. Accept with `goal.accept_target` on `offerTargetId`; decline with `goal.retire` ' +
   'on it. A decline is not offered again in that block, and an offer whose lift is no longer ' +
-  'calibrated is withdrawn.';
+  'calibrated is withdrawn. DATED BLOCKS (VW-477): each target is set for a block, `blockId` on ' +
+  'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
+  'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
+  'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
+  'stretch numbers never move. Until the block starts the goals page reads "Starts <date>" with ' +
+  'no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_NEW_CHAPTER_DESCRIPTION =
   'Stamp `newChapterAt` on a target whose movement itself changed — a technique reform (squat ' +

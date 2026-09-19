@@ -64,6 +64,7 @@ import {
   type TrendSlope,
 } from '../../analytics/diet-phase-tolerance.js';
 import { blockWeekAt } from '../../analytics/goal-block-weeks.js';
+import { shortDate } from '../../plan/schedule-history.js';
 import {
   GOAL_BAND_CONSTANTS,
   calibrationGapOf,
@@ -307,6 +308,13 @@ export interface GoalProgressInput {
   bodyweight?: GoalBodyweightView;
   /** Read only for a `sessions_28d` target. */
   sessionWindow?: GoalSessionWindowInput;
+  /**
+   * Where week 1 starts (VW-477): a block-bound target's block start, as the local midnight of
+   * its Monday. Absent, the grid starts at the target's own `startMeasuredAt`.
+   */
+  weekOneAt?: string;
+  /** The block's local start date while it has not started: no verdict until then. */
+  startsOn?: string;
 }
 
 export interface GoalMesoWeek {
@@ -368,6 +376,8 @@ export interface GoalProgressView {
   status: GoalProgressStatus;
   /** One clause: which rule fired, and its citation. */
   statusBasis: string;
+  /** The target's block start while that block has not started; `null` otherwise (VW-477). */
+  startsOn: string | null;
   /** Which side of a maintenance corridor a `behind` reading left by; absent for every other read (VW-457). */
   corridorSide?: 'above' | 'below';
   /** Present only while `status` is `calibrating` for a lift; absent for every other status. */
@@ -442,6 +452,7 @@ export function buildGoalProgressView(given: GoalProgressInput): GoalProgressVie
     ...wholeBodyViewOf(reading),
     status,
     statusBasis,
+    startsOn: input.startsOn ?? null,
     ...corridorSideView(status, reading),
     ...(gap === undefined ? {} : { calibration: calibrationViewOf(gap, input) }),
     ...(recalibration === undefined ? {} : { recalibration }),
@@ -449,6 +460,7 @@ export function buildGoalProgressView(given: GoalProgressInput): GoalProgressVie
     nextMilestone: nextMilestoneOf(reading),
     mesoMilestone: mesoMilestoneOf({
       target: input.target,
+      weekOneAt: weekOneOf(input),
       band: input.band,
       weeks: input.weeks,
       readings: reading.inBlock,
@@ -521,7 +533,7 @@ function assertUsableInput(input: GoalProgressInput): void {
 }
 
 function read(input: GoalProgressInput): Reading {
-  const weekPosition = positionAt(input.target.startMeasuredAt, input.now, input.weeks.length);
+  const weekPosition = positionAt(weekOneOf(input), input.now, input.weeks.length);
   const expected = expectationAt(input.band, input.weeks, weekPosition);
   const matched = input.actuals.filter((actual) => actual.matched);
   const latest = matched[matched.length - 1];
@@ -529,7 +541,7 @@ function read(input: GoalProgressInput): Reading {
   const slope = slopeOf(matched, input.band.direction, mid);
   const deviationPct = latest === undefined ? 0 : deviationOf(expected, latest.value, input.band);
   const verdict = dietPhaseTolerance(dietPhaseStateOf(input.dietState), deviationPct, slope);
-  const inBlock = blockReadingsOf(input.target, input.weeks, matched);
+  const inBlock = blockReadingsOf(weekOneOf(input), input.weeks, matched);
   return {
     input,
     weekPosition,
@@ -552,6 +564,24 @@ function read(input: GoalProgressInput): Reading {
   };
 }
 
+/** The instant week 1 of this target's grid starts from (VW-477). */
+function weekOneOf(input: GoalProgressInput): string {
+  return input.weekOneAt ?? input.target.startMeasuredAt;
+}
+
+/**
+ * A target whose block has not started has no verdict yet (VW-477). `calibrating` is the
+ * status the goal card already draws without a verdict; `startsOn` carries the date.
+ */
+function notStartedRead(reading: Reading): StatusRead | undefined {
+  const startsOn = reading.input.startsOn;
+  if (startsOn === undefined) return undefined;
+  return {
+    status: 'calibrating',
+    statusBasis: `Starts ${shortDate(startsOn)}. No verdict before the block begins.`,
+  };
+}
+
 /** Which week of the horizon `atIso` falls in, 0-based and clamped to the horizon's ends. */
 function positionAt(fromIso: string, atIso: string, weekCount: number): number {
   const week = blockWeekAt(fromIso, atIso);
@@ -565,7 +595,7 @@ function positionAt(fromIso: string, atIso: string, weekCount: number): number {
  * into week 1 would draw it on a week it was not measured in.
  */
 function placeOnWeekAxis(entry: GoalActual, input: GoalProgressInput): GoalActualView {
-  const week = input.weeks[blockWeekAt(input.target.startMeasuredAt, entry.ts) - 1];
+  const week = input.weeks[blockWeekAt(weekOneOf(input), entry.ts) - 1];
   return week === undefined ? { ...entry } : { ...entry, weekIndex: week.index };
 }
 
@@ -636,6 +666,7 @@ function mesoWeekOf(weeks: readonly GoalBandWeek[], position: number): GoalMesoW
 /** First rule that fires wins; the chain is the precedence, top to bottom. */
 function resolveStatus(reading: Reading): StatusRead {
   return (
+    notStartedRead(reading) ??
     reachRead(reading) ??
     deloadRead(reading) ??
     sessionCountRead(reading) ??
@@ -851,11 +882,7 @@ function detectedStall(detected: GoalPlateauVerdict): StatusRead | undefined {
 }
 
 function belowEdgeAt(actual: GoalActual, reading: Reading): boolean {
-  const position = positionAt(
-    reading.input.target.startMeasuredAt,
-    actual.ts,
-    reading.input.weeks.length,
-  );
+  const position = positionAt(weekOneOf(reading.input), actual.ts, reading.input.weeks.length);
   const expected = expectationAt(reading.input.band, reading.input.weeks, position);
   return behindEdge(expected.low, actual.value, reading.input.band);
 }

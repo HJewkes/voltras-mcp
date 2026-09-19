@@ -24,7 +24,13 @@
 // band to match.
 
 import { todayLocal } from '../analytics/training-days.js';
-import { resolveCurrentBlock } from '../plan/current-block.js';
+import {
+  contextInFrame,
+  defaultDatedBlockId,
+  goalBlockFrame,
+  targetBlockId,
+  type GoalBlockFrame,
+} from './goal-block-frame.js';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
@@ -209,7 +215,7 @@ async function declarePriorities(
   state: ServerState,
   given: z.infer<typeof GoalDeclarePrioritiesInput>,
 ): Promise<DeclarePrioritiesResult> {
-  const blockId = given.blockId ?? (await defaultPriorityBlockId(state));
+  const blockId = given.blockId ?? (await defaultDatedBlockId(state.store, todayLocal()));
   const input = blockId === undefined ? given : { ...given, blockId };
   const declaredAt = new Date().toISOString();
   const signal = await getTierSignal(state, LOCAL_USER_ID);
@@ -235,13 +241,6 @@ async function declarePriorities(
     thresholds: GOAL_GUARDRAIL_THRESHOLDS,
     block: blockId === undefined ? null : { id: blockId, defaulted: given.blockId === undefined },
   };
-}
-
-/** The upcoming dated block, else the current one: the block a sitting declares for (VW-476). */
-async function defaultPriorityBlockId(state: ServerState): Promise<string | undefined> {
-  const read = await resolveCurrentBlock(state.store, todayLocal());
-  if (read.nextBlock !== null) return read.nextBlock.id;
-  return read.state === 'current' ? read.block?.id : undefined;
 }
 
 type DeclaredItem = { kind: StoredPriority['kind']; ref: string };
@@ -434,6 +433,8 @@ export interface GoalTargetPreview {
   horizonWeeks: number;
   notes: string[];
   derivation: GoalDerivationContext;
+  /** The dated block the targets are set for, when there is one (VW-477). */
+  frame: GoalBlockFrame | null;
   /** Rows this preview was blocked against; a writer reuses their ids. */
   stored: readonly StoredGoalTarget[];
   /** Proposal rows written by a recalibration offer: answers, never a declined leg. */
@@ -451,7 +452,13 @@ export async function previewTargets(
   state: ServerState,
   priority: StoredPriority,
 ): Promise<GoalTargetPreview> {
-  const derivation = await readDerivationContext(state, priority);
+  const today = todayLocal();
+  const frame = await goalBlockFrame(
+    state.store,
+    await targetBlockId(state.store, priority, today),
+    today,
+  );
+  const derivation = contextInFrame(await readDerivationContext(state, priority), frame);
   const preview: GoalTargetPreview = {
     priorityId: priority.id,
     legs: [],
@@ -461,6 +468,7 @@ export async function previewTargets(
     horizonWeeks: derivation.horizonWeeks,
     notes: derivation.notes,
     derivation,
+    frame,
     stored: await state.store.listGoalTargets(
       { priorityId: priority.id },
       { includeRetired: true },
@@ -508,7 +516,7 @@ async function proposeTargets(
     const row = await state.store.putGoalTarget(
       toStoredTarget(
         leg.derived,
-        preview.derivation,
+        preview,
         reusableId(preview.stored, leg.selection),
         await chapterStamp(state, leg.derived),
       ),
@@ -626,10 +634,12 @@ function citedRpIds(band: GoalBand): string[] {
 
 function toStoredTarget(
   derived: DerivedTarget,
-  context: GoalDerivationContext,
+  preview: Pick<GoalTargetPreview, 'derivation' | 'frame'>,
   id: string | undefined,
   newChapterAt: string | null,
 ): StoredGoalTarget {
+  const context = preview.derivation;
+  const frame = preview.frame;
   return {
     id: id ?? randomUUID(),
     priorityId: context.priorityId,
@@ -649,7 +659,8 @@ function toStoredTarget(
     dietPhaseAtDerivation: context.dietState.phase,
     acknowledgedStretch: false,
     derivedAt: context.derivedAt,
-    endsAt: blockEndsAt(derived.startMeasuredAt, context.horizonWeeks),
+    endsAt: frame?.endsAt ?? blockEndsAt(derived.startMeasuredAt, context.horizonWeeks),
+    ...(frame === null ? {} : { blockId: frame.blockId }),
     ...(newChapterAt !== null ? { newChapterAt } : {}),
   };
 }
@@ -683,6 +694,7 @@ async function acceptTarget(
   const outside = assertInsideBand(target, committed, stretch, input.acknowledgeStretch === true);
   const saved = await state.store.putGoalTarget({
     ...target,
+    ...(await blockStampFor(state, target)),
     committedValue: committed,
     stretchValue: stretch,
     ...(input.anchorLoad === undefined ? {} : { anchorLoad: input.anchorLoad }),
@@ -692,6 +704,28 @@ async function acceptTarget(
   if (offer === undefined) return acceptedResult(saved);
   const supersededTargetId = await completeOffer(state, offer, saved.id);
   return { ...acceptedResult(saved), recalibration: { decisionId: offer.id, supersededTargetId } };
+}
+
+/**
+ * A proposal written before targets carried a block gets one at acceptance (VW-477): the same
+ * block a new proposal would be set for, and that block's end. A target that has one keeps it.
+ */
+async function blockStampFor(
+  state: ServerState,
+  target: StoredGoalTarget,
+): Promise<Pick<StoredGoalTarget, 'blockId' | 'endsAt'> | Record<string, never>> {
+  if (target.blockId !== undefined) return {};
+  const priority = (await state.store.listPriorities(LOCAL_USER_ID)).find(
+    (row) => row.id === target.priorityId,
+  );
+  if (priority === undefined) return {};
+  const today = todayLocal();
+  const frame = await goalBlockFrame(
+    state.store,
+    await targetBlockId(state.store, priority, today),
+    today,
+  );
+  return frame === null ? {} : { blockId: frame.blockId, endsAt: frame.endsAt };
 }
 
 function acceptedResult(saved: StoredGoalTarget): AcceptTargetResult {
