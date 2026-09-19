@@ -55,10 +55,10 @@ entry is written from the user's point of view is a review question, not a check
   exercise, the span, whether every session was ended, whether a plan was attached, and the
   current kind — feed a row's date straight back to `session.mark_kind`. Marking is
   idempotent and reversible, and re-derives the affected exercises' baselines and
-  RIR-velocity fits (VW-489, #TBD).
+  RIR-velocity fits (VW-489, #479).
 - `report.weekly`'s header and the tier signal's evidence now report how many past days are
   unreviewed, so a training-day count of zero is never read as "no training" when it means
-  "history withheld pending review" (VW-489, #TBD).
+  "history withheld pending review" (VW-489, #479).
 
 - The goals page's data now says which mesocycle it is in: the program and block, what the block
   is for, its dates, which week of it this is and whether that week is a deload, every week of the
@@ -150,10 +150,10 @@ entry is written from the user's point of view is a review question, not a check
   is what the owner asked for — most of that history is bench testing, not workouts. Expect
   those numbers to read zero until the review list is worked through. New sessions are
   training by default (`session.start` takes `kind`), and sessions started under
-  `VOLTRA_ADAPTER=mock` are always test (VW-489, #TBD).
+  `VOLTRA_ADAPTER=mock` are always test (VW-489, #479).
 - A session that was never ended now counts as a training day, dated by the end of its last
   working set, once it is marked training. A session holding no working set never counts,
-  ended or not (VW-489, #TBD).
+  ended or not (VW-489, #479).
 - The weekly report counts adherence over the weeks the block calendar says were planned, so a
   week nobody trained now reads "planned 4 / done 0" instead of disappearing from the count, and
   a week the lifter held or extended is marked as such. Its header names the block and which
