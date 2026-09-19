@@ -189,7 +189,9 @@ const SESSION_MARK_KIND_DESCRIPTION =
   'call classifies only sessions nobody has marked; one already marked the other kind is ' +
   'reported under `skippedAlreadyMarked` and left alone unless you pass `reclassify: true`. ' +
   'Naming a `sessionId` may always reclassify. The result splits `newlyClassified`, ' +
-  '`reclassified`, `skippedAlreadyMarked` and `alreadyThisKind` as session-id lists. Idempotent ' +
+  '`reclassified`, `skippedAlreadyMarked` and `alreadyThisKind` as session-id lists, and names ' +
+  'under `rederiveFailed` any exercise whose baseline and RIR fit could not be re-derived — the ' +
+  'mark still landed, so re-run `baselines.recalc` and `rir_velocity.fit` for those. Idempotent ' +
   'and reversible — marking back re-derives again. NEVER GUESS A KIND: ask the lifter, because ' +
   'a light day of real training and a bench test look the same in the data.';
 

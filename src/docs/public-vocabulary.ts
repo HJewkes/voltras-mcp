@@ -108,6 +108,7 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'newlyClassified',
   'reclassified',
   'skippedAlreadyMarked',
+  'rederiveFailed',
   'expectSessions',
   'adoptedReps',
   'analytics_count',

@@ -47,8 +47,20 @@ export interface MarkKindResult {
   alreadyThisKind: string[];
   setsChanged: number;
   days: string[];
-  /** Exercises whose baseline and RIR fit were re-derived, or would be on a real run. */
+  /**
+   * Exercises whose baseline and RIR fit were re-derived. On a dry run, the ones
+   * that WOULD be. Never an exercise whose re-derivation threw — see
+   * `rederiveFailed`, so the list cannot claim work it did not do.
+   */
   rederived: string[];
+  /**
+   * Exercises whose re-derivation threw and whose baseline and RIR fit are now
+   * STALE against the flag just written. The flag itself is durable and the fix
+   * is `baselines.recalc` plus `rir_velocity.fit` per exercise; this is reported
+   * rather than thrown because the marking succeeded and re-running it would
+   * change nothing.
+   */
+  rederiveFailed: string[];
 }
 
 export interface ReviewListResult {
@@ -92,13 +104,14 @@ export async function markSessionKind(
     setsChanged: pending.reduce((total, row) => total + row.setCount, 0),
     days: [...new Set(selected.map((row) => reviewDayOf(row)))].sort(),
     rederived: exercisesOf(pending),
+    rederiveFailed: [],
   };
   assertExpectedSessions(input, selected.length, dryRun);
   if (dryRun || pending.length === 0) return result;
 
   await state.store.setSessionKind(idsOf(pending), input.kind);
-  await rederive(state, result.rederived);
-  return result;
+  const outcome = await rederive(state, result.rederived);
+  return { ...result, ...outcome };
 }
 
 /**
@@ -171,19 +184,31 @@ function exercisesOf(rows: readonly SessionReviewRow[]): string[] {
 }
 
 /**
- * Re-derive each affected exercise's baseline and RIR-velocity fit.
+ * Re-derive each affected exercise's baseline and RIR-velocity fit, and say which
+ * ones did not make it.
  *
- * Best effort, for the reason `set.update {lifter}`'s resync is: the durable
- * record is the flag on the row, and every derived value here is re-derivable
- * from it with `baselines.recalc` and `rir_velocity.fit`.
+ * Best effort on the WRITE, for the reason `set.update {lifter}`'s resync is: the
+ * durable record is the flag on the row, and every derived value here is
+ * re-derivable from it with `baselines.recalc` and `rir_velocity.fit`. Not best
+ * effort on the REPORT — a failure used to leave the exercise sitting in
+ * `rederived` as though it had succeeded, with only a stderr line to catch it.
+ * A bulk mark over a whole history is exactly where nobody is reading stderr.
  */
-async function rederive(state: ServerState, exerciseIds: readonly string[]): Promise<void> {
+async function rederive(
+  state: ServerState,
+  exerciseIds: readonly string[],
+): Promise<{ rederived: string[]; rederiveFailed: string[] }> {
+  const rederived: string[] = [];
+  const rederiveFailed: string[] = [];
   for (const exerciseId of exerciseIds) {
     try {
       await state.store.recalcBaseline({ userId: LOCAL_USER_ID, exerciseId });
       await state.store.refitRirVelocityModel(LOCAL_USER_ID, exerciseId);
+      rederived.push(exerciseId);
     } catch (err) {
       log.warn(`re-derivation failed for ${exerciseId} after marking session kind`, err);
+      rederiveFailed.push(exerciseId);
     }
   }
+  return { rederived, rederiveFailed };
 }

@@ -240,6 +240,43 @@ describe('session.mark_kind', () => {
     await store.close();
   });
 
+  // The re-review's finding. A bulk mark over a whole history is exactly where
+  // nobody is reading stderr, so a failed re-derivation has to be in the result.
+  it('names an exercise whose re-derivation failed instead of claiming it succeeded', async () => {
+    const store = await openSeeded();
+    const failing = {
+      ...store,
+      listSessionReviewRows: store.listSessionReviewRows.bind(store),
+      setSessionKind: store.setSessionKind.bind(store),
+      recalcBaseline: () => Promise.reject(new Error('baseline recalc blew up')),
+      refitRirVelocityModel: store.refitRirVelocityModel.bind(store),
+    } as unknown as SqliteSessionStore;
+
+    const result = await markSessionKind(makeState(failing), {
+      kind: 'training',
+      day: '2026-09-07',
+    });
+
+    expect(result.rederived).toEqual([]);
+    expect(result.rederiveFailed).toEqual(['bench-press', 'row']);
+    // The flag itself still landed: marking is durable, derivation is re-runnable.
+    expect(await readTrainingDays(store, NOW)).toEqual(['2026-09-07']);
+    await store.close();
+  });
+
+  it('reports no failures on the ordinary path', async () => {
+    const store = await openSeeded();
+
+    const result = await markSessionKind(makeState(store), {
+      kind: 'training',
+      day: '2026-09-07',
+    });
+
+    expect(result.rederived).toEqual(['bench-press', 'row']);
+    expect(result.rederiveFailed).toEqual([]);
+    await store.close();
+  });
+
   it('refuses a selector that matches nothing rather than reporting a no-op', async () => {
     const store = await openSeeded();
 

@@ -58,7 +58,9 @@ entry is written from the user's point of view is a review question, not a check
   RIR-velocity fits. A day or range call classifies only the sessions nobody has marked; one
   already marked the other kind is reported and left alone unless you pass `reclassify: true`.
   A real date-range call must also pass `expectSessions` matching the count its dry run
-  reported, so a mistyped year cannot mark a whole history in one call (VW-489, #479).
+  reported, so a mistyped year cannot mark a whole history in one call. An exercise whose
+  baseline or RIR fit could not be re-derived is named under `rederiveFailed` rather than
+  reported as re-derived (VW-489, #479).
 - Every surface that shows a training-derived number now reports how many past days are
   unreviewed, so a count of zero is never read as "no training" when it means "history
   withheld pending review": `report.weekly`'s header, the tier signal's evidence,
