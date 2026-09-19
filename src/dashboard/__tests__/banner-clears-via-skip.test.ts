@@ -3,13 +3,26 @@
 // works for a week already in the past: `plan.week.skip` on a block that is still running.
 //
 // The clock is pinned to Saturday 2026-09-19 because `plan.week.skip` reads the real one.
+//
+// Pinned six hours west of UTC (America/Denver) so a week's "already passed" judgment is
+// caught reading the wrong calendar day: run under UTC, `todayLocal()` and the literal UTC
+// date agree by coincidence, and a bug that read the UTC date instead of the local one would
+// pass unnoticed (see block-calendar-local-time.test.ts for the same reasoning).
+const ORIGINAL_TZ = process.env.TZ;
+process.env.TZ = 'America/Denver';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { localDate } from '../../analytics/training-days.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { ServerState } from '../../state/server-state.js';
 import { readTopBanner } from '../read-models/banners.js';
+
+afterAll(() => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+});
 
 vi.mock('@voltras/node-sdk', () => {
   class FakeVoltraSDKError extends Error {
@@ -91,5 +104,29 @@ describe('plan.week.skip on a week that has already passed', () => {
     await skipWeekOne('extend');
 
     expect(await readTopBanner(store, TODAY, NOW)).toBeNull();
+  });
+});
+
+describe('a week is judged passed by the local calendar, not the UTC one', () => {
+  /** b1's week 3 (14-20 Sep) and week 4 (21-27 Sep) share a Sunday/Monday boundary. */
+  const SUNDAY_NIGHT_DENVER = '2026-09-21T03:00:00.000Z'; // Sun 20 Sep, 9pm in Denver
+  const MONDAY_JUST_AFTER_MIDNIGHT_DENVER = '2026-09-21T06:01:00.000Z'; // Mon 21 Sep, 12:01am
+
+  it('does not yet call week 3 passed while Denver still reads Sunday night', async () => {
+    const today = localDate(SUNDAY_NIGHT_DENVER);
+    expect(today).toBe('2026-09-20');
+
+    expect(await readTopBanner(store, today, SUNDAY_NIGHT_DENVER)).toMatchObject({
+      subtitle: 'The week of Mon 31 Aug had no training day.',
+    });
+  });
+
+  it('calls week 3 passed once Denver reads Monday, even by one minute', async () => {
+    const today = localDate(MONDAY_JUST_AFTER_MIDNIGHT_DENVER);
+    expect(today).toBe('2026-09-21');
+
+    expect(await readTopBanner(store, today, MONDAY_JUST_AFTER_MIDNIGHT_DENVER)).toMatchObject({
+      subtitle: '2 planned weeks had no training day, the most recent the week of Mon 14 Sep.',
+    });
   });
 });

@@ -8,11 +8,13 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
+import type { BlockCalendar } from '../../plan/block-calendar.js';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import {
   BANNER_PRIORITY,
   readTopBanner,
   sortByPriority,
+  unrecordedWeeks,
   type BannerRecord,
 } from '../read-models/banners.js';
 
@@ -51,6 +53,11 @@ async function trainingDayOn(date: string): Promise<void> {
   });
 }
 
+/** A session on the given local date that never closed: not a training day (ended-only read). */
+async function unendedSessionOn(date: string): Promise<void> {
+  await store.putSession({ id: `open-${date}`, startedAt: `${date}T15:00:00.000Z` });
+}
+
 describe('BANNER_PRIORITY', () => {
   it('names every banner kind exactly once', () => {
     expect(new Set(BANNER_PRIORITY).size).toBe(BANNER_PRIORITY.length);
@@ -70,6 +77,33 @@ describe('sortByPriority', () => {
     const sorted = sortByPriority([banner('history_review'), banner('device_fault')]);
 
     expect(sorted.map((record) => record.kind)).toEqual(['device_fault', 'history_review']);
+  });
+});
+
+describe('unrecordedWeeks', () => {
+  // An extend's off week is excluded through block-calendar.ts's own skipped='extend' marking
+  // too, so a fixture routed through the real store can never isolate planWeek===null as the
+  // guard: skipped alone would still block it even if planWeek stopped going null. This builds
+  // the CalendarWeek directly, with skipped left null, so planWeek===null is the only thing
+  // stopping the banner.
+  it('excludes a week with no plan content even when nothing marks it skipped', () => {
+    const calendar: BlockCalendar = {
+      startsOn: '2026-08-31',
+      endsOn: '2026-09-27',
+      state: 'current',
+      weeks: [
+        {
+          calendarWeek: 1,
+          planWeek: null,
+          startsOn: '2026-08-31',
+          endsOn: '2026-09-06',
+          isDeload: false,
+          skipped: null,
+        },
+      ],
+    };
+
+    expect(unrecordedWeeks(calendar, [], '2026-09-19')).toEqual([]);
   });
 });
 
@@ -187,5 +221,13 @@ describe('readTopBanner', () => {
     await trainingDayOn('2026-09-02');
 
     expect(await readTopBanner(store, TODAY, NOW)).toBeNull();
+  });
+
+  it('still banners when the week only holds a session that never ended', async () => {
+    await dateBlock(store, 'b1', '2026-08-31', 4);
+
+    await unendedSessionOn('2026-09-02');
+
+    expect(await readTopBanner(store, TODAY, NOW)).not.toBeNull();
   });
 });
