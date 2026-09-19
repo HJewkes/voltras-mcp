@@ -169,9 +169,9 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_offered',
     expectedStatus: 'on_track',
     summary:
-      'A starting ramp accepted cold, and five weeks of history since: calibrated, so a target ' +
-      'based on the lifts is on offer.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+      'A starting ramp accepted cold (committed 117.5, where the ramp ends), and five weeks of ' +
+      'history since, inside the band: calibrated, so a target based on the lifts is on offer.',
+    weeklyLoadsLbs: [100, 103, 97, 104, 108],
     targetStartWeeksAgo: 4,
     acceptedCold: true,
   },
@@ -179,7 +179,7 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'recalibration_declined',
     expectedStatus: 'on_track',
     summary: 'The same calibrated starting ramp, after the lifter declined the offer.',
-    weeklyLoadsLbs: [100, 110, 121, 133, 146],
+    weeklyLoadsLbs: [100, 103, 97, 104, 108],
     targetStartWeeksAgo: 4,
     acceptedCold: true,
     recalibrationAnswer: 'declined',
