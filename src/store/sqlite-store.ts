@@ -2600,9 +2600,16 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putSession(s: StoredSession): Promise<void> {
-    // catalog_version is deliberately outside the ON CONFLICT UPDATE SET below:
-    // it is stamped once at session.start, and session.end's re-put never
-    // carries it, so updating it here would null out the stamp on every close.
+    // catalog_version and kind are deliberately outside the ON CONFLICT UPDATE
+    // SET below: both are stamped once at session.start, and every re-put path
+    // (session.end, the guided-load reap) rebuilds the row from LIVE state,
+    // which carries neither — so updating them here would null out the stamp on
+    // every close. For `kind` that is not a lost annotation but a lost session:
+    // a NULL kind reads as unreviewed, and unreviewed is excluded from every
+    // lifter-facing read, so the workout that just finished would vanish from
+    // training days, tier, goals, reports and calibration the moment it ended
+    // (VW-489). `setSessionKind` is the one path that changes an existing row's
+    // kind, which is what makes marking auditable.
     this.db
       .prepare(
         `INSERT INTO sessions
@@ -2618,8 +2625,7 @@ export class SqliteSessionStore implements SessionStore {
            lifter = excluded.lifter,
            diet_phase = excluded.diet_phase,
            pre_session_carbs_level = excluded.pre_session_carbs_level,
-           pre_session_carbs_hours_since_meal = excluded.pre_session_carbs_hours_since_meal,
-           kind = excluded.kind`,
+           pre_session_carbs_hours_since_meal = excluded.pre_session_carbs_hours_since_meal`,
       )
       .run(
         s.id,
@@ -2929,6 +2935,8 @@ export class SqliteSessionStore implements SessionStore {
                 ${perSession(`COUNT(*) FILTER (WHERE set_purpose = 'working')`)} AS working_count,
                 ${perSession(`MAX(weight_lbs) FILTER (WHERE set_purpose = 'working')`)} AS top_load,
                 ${perSession('MAX(ended_at)')} AS last_set_ended_at,
+                ${perSession(`MAX(ended_at) FILTER (WHERE set_purpose = 'working')`)}
+                  AS last_working_set_ended_at,
                 EXISTS (SELECT 1 FROM program_assignments WHERE session_id = sessions.id) AS planned
            FROM sessions
           WHERE ${where.join(' AND ')}
@@ -5159,6 +5167,7 @@ interface SessionReviewSqlRow {
   working_count: number;
   top_load: number | null;
   last_set_ended_at: string | null;
+  last_working_set_ended_at: string | null;
   planned: number;
 }
 
@@ -5176,6 +5185,9 @@ function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
   if (row.kind !== null && isSessionKind(row.kind)) out.kind = row.kind;
   if (row.top_load !== null) out.topLoadLbs = row.top_load;
   if (row.last_set_ended_at !== null) out.lastSetEndedAt = row.last_set_ended_at;
+  if (row.last_working_set_ended_at !== null) {
+    out.lastWorkingSetEndedAt = row.last_working_set_ended_at;
+  }
   return out;
 }
 
