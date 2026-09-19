@@ -288,6 +288,17 @@ entry is written from the user's point of view is a review question, not a check
   to `none` for a climbing lift. Its `isPlateau` still reports the detector's own answer
   unchanged. The `volume` metric is NOT covered: it keeps the old rule, because the
   programmed step is a load and has no volume equivalent (VW-452, #452).
+- A slow climber whose top load wobbles from week to week reads `stalled` far less often.
+  Three or four noisy weekly points cannot tell a small climb from none, so a lifter on the
+  committed half-ramp pace with ±3 lb of wobble read `stalled` on about one weekly read in
+  four; it is now about one in ten, and a lifter on the full ramp drops from 3% to 0.3%. The
+  plateau check now reads each week as the top load of the last two weeks, and a run that is
+  still wobbling must last 21 days, not 14, before it can read flat. THE COST: a wobbling
+  lift that genuinely stops is called `stalled` about one week later (three weeks after the
+  last step, not two). A lift that stops dead, repeating one load, is still called at two
+  weeks. `history.trend` reports the same fields; `plateau.flatline.slopeLbsPerWeek` is now
+  the slope of the two-week top load. `isPlateau` and the `volume` metric are unchanged.
+  `scripts/flatline-sim.mjs` reproduces every number (VW-458, #466).
 - A lift goal's band now starts where the goal did. The goals page drew each band from the
   lifter's latest top load, so the line restarted wherever they were now and moved with them
   on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged
