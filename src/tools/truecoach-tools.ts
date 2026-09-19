@@ -10,7 +10,7 @@
 //
 // The plan tree it writes into: the caller's program (or the most recent
 // non-archived one) gets a single block named "TrueCoach import", and that
-// block gets one week per ISO week the imported workouts fall in. Both are
+// block gets one week per ISO week in the imported span, empty weeks included. Both are
 // created only when missing, so repeated imports accumulate weeks in one place
 // instead of forking the tree.
 
@@ -30,11 +30,16 @@ import type { ServerState } from '../state/server-state.js';
 import type {
   PlanImportExercise,
   PlanImportTemplate,
+  StoredBlockSchedule,
   StoredTrainingBlock,
   StoredTrainingWeek,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { resolveDefaultProgram } from './plan-tools.js';
+import { placedBlocks } from './plan-schedule-tools.js';
+import { addDays } from '../plan/block-calendar.js';
+import { todayLocal } from '../analytics/training-days.js';
+import { isoWeekLabelsBetween, isoWeekMonday } from '../integrations/truecoach/map.js';
 
 /** The single block every TrueCoach import lands in, per program. */
 const IMPORT_BLOCK_NAME = 'TrueCoach import';
@@ -43,7 +48,14 @@ const MS_PER_DAY = 86_400_000;
 export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
   'Pull the coach-assigned workouts for a date range out of TrueCoach and upsert them into the ' +
   'local plan.* tree (program -> "TrueCoach import" block -> one week per ISO week -> workout ' +
-  'template -> planned exercises). READ-ONLY against TrueCoach: this tool never writes, ' +
+  'template -> planned exercises). THE IMPORT BLOCK CARRIES DATES (VW-479): it starts on the ' +
+  'earliest imported ISO Monday and runs to the latest, so an ISO week the coach assigned ' +
+  'nothing in still gets an empty week row and week 3 is the third CALENDAR week. `schedule` ' +
+  'reports the row written: `planned` on the first dating, `resized` when an import adds weeks, ' +
+  'and null when the range is already covered. An import whose earliest week is before a block ' +
+  'that has already started is refused (`BLOCK_STARTED`), because a started block keeps its ' +
+  'dates; so is one whose weeks would overlap another dated block (`SCHEDULE_OVERLAP`, which ' +
+  'names it). READ-ONLY against TrueCoach: this tool never writes, ' +
   'comments, or logs results there, and it runs only when you call it — there is no background ' +
   'sync. Credentials come from VMCP_TRUECOACH_USERNAME plus VMCP_TRUECOACH_PASSWORD or ' +
   'VMCP_TRUECOACH_PASSWORD_CMD; with none set it returns NOT_CONFIGURED and makes no network ' +
@@ -109,9 +121,15 @@ export async function importWeek(
   if (input.dryRun === true) {
     return { dryRun: true, range, cacheHit: fetched.cacheHit, ...describe(plan) };
   }
-  const week = await resolveWeeks(state, input.programId, plan);
-  const result = await state.store.importPlanTree(toImportBatch(plan, week));
-  return { ...result, unmapped: plan.unmapped, cacheHit: fetched.cacheHit, range };
+  const resolved = await resolveWeeks(state, input.programId, plan);
+  const result = await state.store.importPlanTree(toImportBatch(plan, resolved.weekIds));
+  return {
+    ...result,
+    unmapped: plan.unmapped,
+    cacheHit: fetched.cacheHit,
+    range,
+    schedule: resolved.schedule,
+  };
 }
 
 async function fetchPages(
@@ -155,31 +173,126 @@ function describe(plan: MappedPlan): Record<string, unknown> {
   };
 }
 
-/** ISO week label -> the training week row it maps to, creating rows only when missing. */
+/**
+ * ISO week label -> the training week row it maps to, and the schedule row the import wrote.
+ *
+ * Every ISO week between the earliest and the latest gets a row, including the weeks the coach
+ * assigned nothing in (VW-479): week 3 of the block must be the third calendar week, not the
+ * third week that happened to have a workout. Rows are kept in date order, so a later import of
+ * an earlier range does not leave the block's weeks shuffled.
+ */
 async function resolveWeeks(
   state: ServerState,
   programId: string | undefined,
   plan: MappedPlan,
-): Promise<Map<string, string>> {
+): Promise<{ weekIds: Map<string, string>; schedule: { seq: number; kind: string } | null }> {
   const program = await resolveDefaultProgram(state, programId);
   const block = await ensureImportBlock(state, program.id, plan.weeks.length);
   const existing = await state.store.getTrainingWeeksForBlock(block.id);
-  const byName = new Map(existing.map((w) => [w.name ?? '', w.id]));
-  let nextIndex = existing.length;
-  for (const label of plan.weeks) {
-    if (byName.has(label)) continue;
-    const week: StoredTrainingWeek = {
-      id: randomUUID(),
+  const labels = spannedLabels([...existing.map((week) => week.name ?? ''), ...plan.weeks]);
+  const schedule = await scheduleImportBlock(state, block, labels);
+  const byName = new Map(existing.map((w) => [w.name ?? '', w]));
+  const weekIds = new Map<string, string>();
+  for (const [index, label] of labels.entries()) {
+    const row: StoredTrainingWeek = {
+      id: byName.get(label)?.id ?? randomUUID(),
       blockId: block.id,
-      orderIndex: nextIndex,
+      orderIndex: index,
       name: label,
-      isDeload: false,
+      isDeload: byName.get(label)?.isDeload ?? false,
     };
-    await state.store.putTrainingWeek(week);
-    byName.set(label, week.id);
-    nextIndex += 1;
+    await state.store.putTrainingWeek(row);
+    weekIds.set(label, row.id);
   }
-  return byName;
+  if (labels.length > block.weeksCount) {
+    await state.store.putTrainingBlock({ ...block, weeksCount: labels.length });
+  }
+  return { weekIds, schedule };
+}
+
+/** Every ISO week from the earliest label to the latest, gaps included, in date order. */
+function spannedLabels(labels: readonly string[]): string[] {
+  const named = labels.filter((label) => label !== '').sort();
+  const first = named[0];
+  const last = named[named.length - 1];
+  return first === undefined || last === undefined ? [] : isoWeekLabelsBetween(first, last);
+}
+
+/**
+ * Date the import block from the weeks it holds (VW-479): the first import plans it at the
+ * earliest imported Monday, a later import that adds weeks resizes it, and a re-import of the
+ * same range writes nothing. The start never moves once the block has started (I3), and an
+ * import that would overlap another dated block is refused with that block named.
+ */
+async function scheduleImportBlock(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  labels: readonly string[],
+): Promise<{ seq: number; kind: string } | null> {
+  const first = labels[0];
+  if (first === undefined) return null;
+  const startsOn = isoWeekMonday(first);
+  const live = await state.store.getLiveBlockSchedule(block.id);
+  const kind = importRowKind(live, startsOn, labels.length);
+  if (kind === null) return null;
+  const today = todayLocal();
+  // I3: a block that has started keeps its start, so an older week cannot re-date it.
+  if (kind === 'moved' && live?.startsOn !== undefined && live.startsOn <= today) {
+    throw startedBlockError(block, live.startsOn, startsOn);
+  }
+  const row = {
+    blockId: block.id,
+    startsOn,
+    weeksCount: labels.length,
+    skips: live?.skips ?? [],
+    kind,
+    changedBy: 'import' as const,
+    declaredAt: new Date().toISOString(),
+  };
+  await assertNoOverlap(state, block, row);
+  const written = await state.store.appendBlockSchedule(row);
+  return { seq: written.seq, kind: written.kind };
+}
+
+function importRowKind(
+  live: StoredBlockSchedule | undefined,
+  startsOn: string,
+  weeksCount: number,
+): 'planned' | 'moved' | 'resized' | null {
+  if (live?.startsOn === undefined) return 'planned';
+  if (live.startsOn !== startsOn) return 'moved';
+  return live.weeksCount === weeksCount ? null : 'resized';
+}
+
+function startedBlockError(
+  block: StoredTrainingBlock,
+  startedOn: string,
+  wanted: string,
+): ToolError {
+  return new ToolError(
+    'BLOCK_STARTED',
+    `"${block.name}" started on ${startedOn}, so it cannot be re-dated to ${wanted}. Import a ` +
+      'range inside the block, or import the older weeks into another program.',
+  );
+}
+
+/** I2 over the import's own range: the coach's weeks may not land on another dated block. */
+async function assertNoOverlap(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  row: { startsOn: string; weeksCount: number },
+): Promise<void> {
+  const endsOn = addDays(row.startsOn, 7 * row.weeksCount - 1);
+  const clash = (await placedBlocks(state)).find(
+    (other) =>
+      other.blockId !== block.id && other.startsOn <= endsOn && row.startsOn <= other.endsOn,
+  );
+  if (clash === undefined) return;
+  throw new ToolError(
+    'SCHEDULE_OVERLAP',
+    `The imported weeks (${row.startsOn} to ${endsOn}) would overlap "${clash.name}" ` +
+      `(${clash.startsOn} to ${clash.endsOn}).`,
+  );
 }
 
 /**
