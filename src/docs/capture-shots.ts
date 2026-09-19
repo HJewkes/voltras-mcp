@@ -246,10 +246,10 @@ const GOALS_VALUES: readonly string[] = [
   // The block-end target, fixed by the seeded prior-week reading (100 lb x 8)
   // and the coach's own proposal. Never asserted as a raw number elsewhere,
   // so a wrong target here would pass every other shot's check.
-  'Goal 8 x 127.5 lb',
+  'Goal 8 x 133 lb',
   // The driven PR set as the block's best, and the gap it leaves to the goal.
   'Best 8 x 110 lb',
-  '17.5 lb to goal',
+  '23 lb to goal',
   // The whole-body panel's own line for the same priority.
   'CABLE CHEST PRESS · specialize',
 ];

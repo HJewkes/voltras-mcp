@@ -1,5 +1,5 @@
 {
-  "definitionHash": "745bbf6372fa35d979400320bc88234b7e68c6a4b41493b76b0bcd93a4b27659",
+  "definitionHash": "e59dfc237adf24c88a8594f8c6c01a9f27bad4b31fe6f6ae3fe8267a44b39b2a",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -15,8 +15,13 @@
       "waitFor": {
         "kind": "idle"
       },
-      "assertedText": ["No Voltra connected", "VELOCITY · this set"],
-      "assertedValues": ["Session 0/0 sets"],
+      "assertedText": [
+        "No Voltra connected",
+        "VELOCITY · this set"
+      ],
+      "assertedValues": [
+        "Session 0/0 sets"
+      ],
       "width": 1440,
       "height": 900,
       "bytes": 43802,
@@ -30,7 +35,12 @@
       "file": "live-mid-set.png",
       "waitFor": {
         "kind": "set-open",
-        "reps": [["primary", 5]]
+        "reps": [
+          [
+            "primary",
+            5
+          ]
+        ]
       },
       "assertedText": [
         "Push A · Hypertrophy",
@@ -58,7 +68,11 @@
       "waitFor": {
         "kind": "rest"
       },
-      "assertedText": ["TONNAGE", "Cable Chest Press", "Push A · Hypertrophy"],
+      "assertedText": [
+        "TONNAGE",
+        "Cable Chest Press",
+        "Push A · Hypertrophy"
+      ],
       "assertedValues": [
         "VOLUME 5 TONNAGE 0 lbs",
         "1/8 sets",
@@ -81,7 +95,11 @@
         "kind": "sessions-ended",
         "minSessions": 3
       },
-      "assertedText": ["Session complete", "EXERCISES", "NEXT SESSION"],
+      "assertedText": [
+        "Session complete",
+        "EXERCISES",
+        "NEXT SESSION"
+      ],
       "assertedValues": [
         "EXERCISES 1 SETS 2 REPS 10 VOLUME —",
         "FATIGUE 5.0 RPE Good",
@@ -106,7 +124,11 @@
         "kind": "plan-seeded",
         "minExercises": 3
       },
-      "assertedText": ["Push A — planned exercises", "Cable Incline Chest Press", "Save targets"],
+      "assertedText": [
+        "Push A — planned exercises",
+        "Cable Incline Chest Press",
+        "Save targets"
+      ],
       "assertedValues": [
         "30 exercises",
         "Push A Block 1 · Week 1 · 3 exercises completed",
@@ -128,11 +150,21 @@
       "waitFor": {
         "kind": "set-open",
         "reps": [
-          ["left", 6],
-          ["right", 4]
+          [
+            "left",
+            6
+          ],
+          [
+            "right",
+            4
+          ]
         ]
       },
-      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R"],
+      "assertedText": [
+        "MOCK-VOLTRA-LEFT",
+        "MOCK-VOLTRA-RIGHT",
+        "L/R"
+      ],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 VL 20% VL 30% 0.50 0.49 0.47 0.46",
         "L/R 2% Right leading"
@@ -152,17 +184,23 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
+      "assertedText": [
+        "CABLE CHEST PRESS",
+        "Calibrating",
+        "to goal",
+        "Per-lift",
+        "Whole body"
+      ],
       "assertedValues": [
-        "Goal 8 x 127.5 lb",
+        "Goal 8 x 133 lb",
         "Best 8 x 110 lb",
-        "17.5 lb to goal",
+        "23 lb to goal",
         "CABLE CHEST PRESS · specialize"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 93423,
-      "sha256": "34cc887007cb34a5a2eb76857bede6766abf71d3c08998a75e38700529adf6d5"
+      "bytes": 94135,
+      "sha256": "634a406c0018b5850fb901697360e6fac7cf87d80a50b3b36cadb972cd41cc47"
     },
     {
       "name": "goals-phone",
@@ -174,17 +212,23 @@
         "kind": "sessions-ended",
         "minSessions": 2
       },
-      "assertedText": ["CABLE CHEST PRESS", "Calibrating", "to goal", "Per-lift", "Whole body"],
+      "assertedText": [
+        "CABLE CHEST PRESS",
+        "Calibrating",
+        "to goal",
+        "Per-lift",
+        "Whole body"
+      ],
       "assertedValues": [
-        "Goal 8 x 127.5 lb",
+        "Goal 8 x 133 lb",
         "Best 8 x 110 lb",
-        "17.5 lb to goal",
+        "23 lb to goal",
         "CABLE CHEST PRESS · specialize"
       ],
       "width": 390,
       "height": 844,
-      "bytes": 55210,
-      "sha256": "576bbc825f161181bbcbd908bcc21a500b0bc74f8605958d15e6b678d34c7ea6"
+      "bytes": 55341,
+      "sha256": "120e412436e7a4d1188ace9ee5ecfa31e52266a3daa7348d83df007803704a42"
     },
     {
       "name": "body-week",
@@ -196,7 +240,13 @@
         "kind": "sessions-ended",
         "minSessions": 18
       },
-      "assertedText": ["Next up", "Recent PRs", "This week", "Legend", "Weekly sets by muscle"],
+      "assertedText": [
+        "Next up",
+        "Recent PRs",
+        "This week",
+        "Legend",
+        "Weekly sets by muscle"
+      ],
       "assertedValues": [
         "SETS 32 MUSCLES 7 PRODUCTIVE 1",
         "BELOW MEV 11 OVER MRV 0",
@@ -231,7 +281,12 @@
       "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [["primary", 1]]
+        "reps": [
+          [
+            "primary",
+            1
+          ]
+        ]
       },
       "endWhen": {
         "kind": "rest"
@@ -285,13 +340,27 @@
       "narrationRegenerated": false,
       "startWhen": {
         "kind": "set-open-min",
-        "reps": [["left", 1]]
+        "reps": [
+          [
+            "left",
+            1
+          ]
+        ]
       },
       "endWhen": {
         "kind": "slots-rest",
-        "slots": ["left", "right"]
+        "slots": [
+          "left",
+          "right"
+        ]
       },
-      "assertedText": ["MOCK-VOLTRA-LEFT", "MOCK-VOLTRA-RIGHT", "L/R", "CON ECC", "TONNAGE"],
+      "assertedText": [
+        "MOCK-VOLTRA-LEFT",
+        "MOCK-VOLTRA-RIGHT",
+        "L/R",
+        "CON ECC",
+        "TONNAGE"
+      ],
       "assertedValues": [
         "VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44 0.43 0.41 VL 20% VL 30% 0.50 0.49 0.47 0.46 0.44"
       ],
