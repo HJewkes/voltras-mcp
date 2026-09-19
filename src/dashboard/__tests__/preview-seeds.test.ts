@@ -32,6 +32,9 @@ import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import { fetchGoalProgressViews } from '../goal-progress-api.js';
 import type { GoalProgressView } from '../read-models/index.js';
 
+/** Seeding every state writes one sqlite store each; a loaded CI runner needs more than 5 s. */
+const SEED_ALL_STATES_TIMEOUT_MS = 30_000;
+
 const scratchDirs: string[] = [];
 afterEach(() => {
   while (scratchDirs.length > 0) {
@@ -147,23 +150,27 @@ describe('dashboard:preview goal states', () => {
   }
 
   // The newest session has to share `now`'s calendar week, even seconds after it turned.
-  it('keeps every state on its status and its current-week reading just past Monday midnight UTC', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
-    try {
-      for (const state of GOAL_PREVIEW_STATES) {
-        const view = await viewFor(state);
+  it(
+    'keeps every state on its status and its current-week reading just past Monday midnight UTC',
+    async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-09-14T00:00:30.000Z'));
+      try {
+        for (const state of GOAL_PREVIEW_STATES) {
+          const view = await viewFor(state);
 
-        const matched = view.actuals.filter((actual) => actual.matched);
-        expect(view.status, state.name).toBe(state.expectedStatus);
-        expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
-          view.mesoMilestone.currentWeek,
-        );
+          const matched = view.actuals.filter((actual) => actual.matched);
+          expect(view.status, state.name).toBe(state.expectedStatus);
+          expect(matched[matched.length - 1]?.weekIndex, state.name).toBe(
+            view.mesoMilestone.currentWeek,
+          );
+        }
+      } finally {
+        vi.useRealTimers();
       }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+    },
+    SEED_ALL_STATES_TIMEOUT_MS,
+  );
 
   it('rejects a state nobody defined, naming the ones that exist', () => {
     expect(() => goalPreviewState('nearly')).toThrow(/unknown --state nearly; known: calibrating/);
