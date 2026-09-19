@@ -93,6 +93,20 @@
 //   DELETE /api/plan/exercises/:id               — unplan one exercise and close
 //                          the gap it leaves in the template's order (VW-121).
 //
+//                          All six carry the SAME guards — a loopback `Host`,
+//                          a matching `Origin`, a JSON content type and the
+//                          per-boot write token (VW-500, `write-guard.ts`).
+//                          The guard runs before route matching, so a seventh
+//                          write route cannot be added unguarded. None of the
+//                          six needs the single-writer device lease: every one
+//                          is a sqlite plan write through `plan-api.ts` with
+//                          no device I/O. See `README.md` for the table.
+//
+//   GET /api/bootstrap    — `{ token, version }`. The SPA's recovery path for
+//                          the write token when its page predates a restart.
+//                          Same-origin only, and unreadable cross-origin
+//                          because the sidecar sends no CORS headers.
+//
 //   ── Session completion (VW-120) ─────────────────────────────────────────
 //   GET /api/session-summary/:sessionId — per-exercise VBT rollup + progression
 //                          recommendation for a finished session. `:sessionId`
@@ -147,6 +161,13 @@ import {
   type DashboardPlanStore,
 } from './plan-api.js';
 import { fetchMuscleStrength, type MuscleStrengthStore } from './muscle-strength-api.js';
+import {
+  bootstrapFetchSiteAllowed,
+  checkWriteRequest,
+  injectWriteToken,
+  mintWriteToken,
+  WRITE_TOKEN_HEADER,
+} from './write-guard.js';
 import {
   fetchGoalPriorityRows,
   fetchGoalProgressViews,
@@ -317,6 +338,13 @@ export const CATALOG_DEFAULT_LIMIT = 200;
 export interface DashboardServerHandle {
   /** The port the server actually bound to (resolved from `port: 0`). */
   readonly port: number;
+  /**
+   * The per-boot token every non-GET route requires (VW-500). Minted once per
+   * `startDashboardServer` call, so the EADDRINUSE ephemeral-port retry keeps
+   * the same one. The SPA reads it from the served `index.html` or from
+   * `GET /api/bootstrap`; tests and non-browser callers read it here.
+   */
+  readonly writeToken: string;
   /** Stop accepting connections and free the port. Idempotent. */
   close(): Promise<void>;
 }
@@ -333,16 +361,28 @@ export async function startDashboardServer(
 ): Promise<DashboardServerHandle> {
   const port = opts.port ?? DEFAULT_DASHBOARD_PORT;
   const host = opts.host ?? DEFAULT_DASHBOARD_HOST;
+  // Minted before the bind so the ephemeral-port retry below reuses it: a
+  // browser tab that survives the fallback must not need a new token.
+  const runtime: DashboardRuntime = { startedAt: Date.now(), writeToken: mintWriteToken() };
   try {
-    return await listenOnPort(port, host, opts.state);
+    return await listenOnPort(port, host, opts.state, runtime);
   } catch (err) {
     const retryable =
       opts.fallbackToEphemeralPort === true && isAddressInUse(err) && port !== EPHEMERAL_PORT;
     if (!retryable) throw err;
-    const handle = await listenOnPort(EPHEMERAL_PORT, host, opts.state);
+    const handle = await listenOnPort(EPHEMERAL_PORT, host, opts.state, runtime);
     log.warn(dashboardPortFallbackMessage(port, handle.port, host));
     return handle;
   }
+}
+
+/**
+ * Per-boot facts the request handler needs beyond the live state: the uptime
+ * clock and the write token. One object so the handler's arity stops growing.
+ */
+interface DashboardRuntime {
+  readonly startedAt: number;
+  readonly writeToken: string;
 }
 
 /** One bind attempt: a fresh `http.Server` listening on exactly `port`. */
@@ -350,11 +390,10 @@ function listenOnPort(
   port: number,
   host: string,
   state: DashboardServerState,
+  runtime: DashboardRuntime,
 ): Promise<DashboardServerHandle> {
-  const startedAt = Date.now();
-
   const server = createServer((req, res) => {
-    handleRequest(req, res, state, startedAt).catch((err) => {
+    handleRequest(req, res, state, runtime).catch((err) => {
       log.warn('dashboard: handler threw', err);
       if (!res.headersSent) {
         sendJson(res, 500, { error: 'internal_error' });
@@ -373,7 +412,7 @@ function listenOnPort(
       server.removeListener('error', onListenError);
       const address = server.address();
       const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-      resolve(makeHandle(server, boundPort));
+      resolve(makeHandle(server, boundPort, runtime.writeToken));
     };
     server.once('error', onListenError);
     server.once('listening', onListening);
@@ -435,10 +474,11 @@ export function dashboardPortInUseMessage(port: number, host: string): string {
   );
 }
 
-function makeHandle(server: Server, port: number): DashboardServerHandle {
+function makeHandle(server: Server, port: number, writeToken: string): DashboardServerHandle {
   let closed = false;
   return {
     port,
+    writeToken,
     close(): Promise<void> {
       if (closed) {
         return Promise.resolve();
@@ -462,7 +502,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   state: DashboardServerState,
-  startedAt: number,
+  runtime: DashboardRuntime,
 ): Promise<void> {
   const method = req.method ?? 'GET';
   if (method !== 'GET' && method !== 'POST' && method !== 'PATCH' && method !== 'DELETE') {
@@ -479,6 +519,21 @@ async function handleRequest(
   // Mutating plan routes are handled first: they are the only non-GET surface,
   // so everything below can assume a read.
   if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
+    // Every write passes the same guard before any route matching, so a new
+    // write route cannot be added unguarded (VW-500).
+    const rejection = checkWriteRequest(
+      {
+        host: req.headers.host,
+        origin: headerValue(req.headers.origin),
+        contentType: req.headers['content-type'],
+        token: headerValue(req.headers[WRITE_TOKEN_HEADER]),
+      },
+      runtime.writeToken,
+    );
+    if (rejection !== null) {
+      sendJson(res, rejection.status, { error: rejection.error, message: rejection.message });
+      return;
+    }
     await handlePlanMutation(req, res, state, method, pathname);
     return;
   }
@@ -495,7 +550,7 @@ async function handleRequest(
   // React SPA (VMCP-01.44), served read-only under `/app` from the vite-built
   // bundle in `dist/spa` — the sole dashboard surface.
   if (pathname === DASHBOARD_SPA_PATH || pathname === `${DASHBOARD_SPA_PATH}/`) {
-    serveSpaIndex(res);
+    serveSpaIndex(res, runtime.writeToken);
     return;
   }
   if (pathname.startsWith(`${DASHBOARD_SPA_PATH}/`)) {
@@ -506,8 +561,21 @@ async function handleRequest(
     sendJson(res, 200, {
       ok: true,
       version: VMCP_VERSION,
-      uptimeMs: Date.now() - startedAt,
+      uptimeMs: Date.now() - runtime.startedAt,
     });
+    return;
+  }
+  // The SPA's recovery path for its write token (VW-500): a tab left open
+  // across a server restart re-reads it here rather than making the human
+  // reload. A cross-origin page can SEND this request but cannot read the
+  // reply — the sidecar answers with no CORS headers — and `Sec-Fetch-Site`
+  // lets us refuse it outright when the browser says it is cross-site.
+  if (pathname === '/api/bootstrap') {
+    if (!bootstrapFetchSiteAllowed(headerValue(req.headers['sec-fetch-site']))) {
+      sendJson(res, 403, { error: 'foreign_origin', message: 'bootstrap is same-origin only' });
+      return;
+    }
+    sendJson(res, 200, { token: runtime.writeToken, version: VMCP_VERSION });
     return;
   }
   if (pathname === '/api/snapshot') {
@@ -1574,12 +1642,20 @@ const SPA_NOT_BUILT_HTML =
   '<h1>Dashboard SPA not built</h1>' +
   '<p>Run <code>npm run build:dashboard</code> to generate <code>dist/spa</code>, then reload.</p>';
 
-function serveSpaIndex(res: ServerResponse): void {
+function serveSpaIndex(res: ServerResponse, writeToken: string): void {
   try {
-    sendHtml(res, 200, readFileSync(join(SPA_DIR, 'index.html'), 'utf8'));
+    const html = readFileSync(join(SPA_DIR, 'index.html'), 'utf8');
+    // `sendHtml` already sets `cache-control: no-store`, which is what keeps
+    // the token out of a shared cache or a saved page.
+    sendHtml(res, 200, injectWriteToken(html, writeToken));
   } catch {
     sendHtml(res, 503, SPA_NOT_BUILT_HTML);
   }
+}
+
+/** `node:http` types a repeated header as `string[]`; a repeat is never valid here. */
+function headerValue(raw: string | string[] | undefined): string | undefined {
+  return Array.isArray(raw) ? undefined : raw;
 }
 
 function serveSpaAsset(res: ServerResponse, pathname: string): void {

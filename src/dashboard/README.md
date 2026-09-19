@@ -32,6 +32,68 @@ imported directly (`computeProgressionDelta` from `tools/plan-tools.ts`), so the
 dashboard and `plan.suggest_progression` can never disagree. There is
 deliberately no delete route: `SessionStore` has no planning delete.
 
+## The write guard (VW-500)
+
+The loopback bind stops a device on the LAN. It stops nothing in the browser:
+until this guard landed, any page open in any browser on this machine could
+POST to the write routes below, because a cross-origin write does not need to
+read a response to have happened. Every non-GET request now passes the same
+guard (`write-guard.ts`) BEFORE route matching, so a seventh write route cannot
+be added unguarded.
+
+| # | Route | Guards | Lease |
+| --- | --- | --- | --- |
+| 1 | `POST /api/plan/programs` | loopback Host, same `Origin`, JSON body, boot token | not needed — sqlite plan write, no device I/O |
+| 2 | `POST /api/plan/programs/:id/workouts` | same | same |
+| 3 | `POST /api/plan/templates/:id/exercises` | same | same |
+| 4 | `POST /api/plan/templates/:id/reorder` | same | same |
+| 5 | `PATCH /api/plan/exercises/:id` | same | same |
+| 6 | `DELETE /api/plan/exercises/:id` | same | same |
+
+None of the six touches the device, so none takes the single-writer lease. A
+route that ever does must take it under the dashboard's own client id.
+
+The four checks, in the order a refusal names them:
+
+| Check | Refusal | Why |
+| --- | --- | --- |
+| `Host` is `127.0.0.1`, `localhost` or `[::1]`, port optional | 403 `foreign_host` | Origin-vs-Host alone is defeated by DNS rebinding: a hostile domain resolving to 127.0.0.1 makes the two agree |
+| `Origin` present and equal to the request's own `Host` | 403 `origin_required` / `foreign_origin` | A page cannot forge `Origin`. Comparing against `Host` survives the ephemeral-port fallback and the `127.0.0.1`/`localhost` alias |
+| `content-type` is `application/json` | 415 `unsupported_media_type` | A cross-site `<form>` post can only send the three CORS-simple types, so it can never reach a handler |
+| `x-vmcp-dashboard-token` equals this boot's token | 403 `token_required` / `stale_token` | A custom header also forces a CORS preflight the sidecar never answers, so a cross-origin fetch dies before the request is sent |
+
+**A missing `Origin` is refused.** Per the Fetch spec a browser always sends it
+on a non-GET request, same-origin included, so requiring it costs the SPA
+nothing and cleanly separates a browser from a non-browser caller. A script or
+a non-browser client sets the header itself.
+
+**How the SPA gets the token.** It is minted once per `startDashboardServer`
+call (before the EADDRINUSE retry, so the fallback port keeps the same one) and
+delivered two ways: substituted into the `vmcp-write-token` `<meta>` tag of the
+served `index.html`, and readable at `GET /api/bootstrap`. Both responses are
+`cache-control: no-store`. A cross-origin page can SEND that GET but cannot
+read the reply — the sidecar sends no CORS headers — and the route also refuses
+a request the browser labels cross-site via `Sec-Fetch-Site`.
+
+**How it survives the wall.** Reads are not guarded, so the 2 s poll and the
+auto-refresh are untouched. A tab left open across a server restart holds a dead
+token; the shared `spa/api-client.ts` helper catches the `stale_token` refusal,
+re-reads `/api/bootstrap` and retries once, so a stale wall tab heals on its
+next write instead of needing a human to reload it.
+
+**The capture and preview scripts need no token.** They are GET-only
+(`scripts/lib/dashboard-launch.mjs`), and `npm run docs:captures` drives the
+real page in a browser, which picks the token up from `index.html` like any
+other client.
+
+**The boundary is the browser, not the OS account.** A hostile web page in a
+local browser is in scope. Another process running as this user is not: it can
+read the token from `/api/bootstrap`, or read the sqlite store directly, and no
+header check changes that. A browser extension holding host permissions for this
+origin sits on the same side of that line as a local process — its content
+script can read the token straight out of the `<meta>` tag — and is a documented
+non-goal rather than an oversight.
+
 ## Why a React Native component library on the web
 
 The dashboard consumes `@titan-design/react-ui`, Voltra's shared component
