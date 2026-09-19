@@ -194,7 +194,6 @@ function summaryExercise(overrides: Partial<SessionSummaryExercise> = {}): Sessi
     bestRepVelocity: 0.82,
     maxVelocityLossPct: 18.4,
     verdict: null,
-    fatigue: null,
     verdictSetIndex: null,
     sets: [],
     progression: progression(),

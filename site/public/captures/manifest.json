@@ -1,5 +1,5 @@
 {
-  "definitionHash": "e59dfc237adf24c88a8594f8c6c01a9f27bad4b31fe6f6ae3fe8267a44b39b2a",
+  "definitionHash": "172b68dc12acc2e88b207fc700f44bc35ff119905a115dfa2af3ea22f84a8d73",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -52,12 +52,12 @@
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0/8 sets",
         "VL 20% VL 30% 0.50 0.49 0.47 0.46",
-        "FATIGUE 5.0 RPE Good"
+        "FATIGUE — RPE Good"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 732548,
-      "sha256": "bea2051395765e5c9cbb36d8963864aec1c263f75fd37e33512c706375912d72"
+      "bytes": 729736,
+      "sha256": "afd7416c2b8fd5d42e42c1fb7a36513b46ae85fad705b4330babff10ed154634"
     },
     {
       "name": "live-rest",
@@ -101,18 +101,17 @@
         "NEXT SESSION"
       ],
       "assertedValues": [
-        "EXERCISES 1 SETS 2 REPS 10 VOLUME —",
-        "FATIGUE 5.0 RPE Good",
-        "RIR 4.8",
+        "EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb",
+        "FATIGUE — RPE Good",
         "BEST VELOCITY 0.5",
         "12% peak-to-last within a set — set #2, the set the verdict above reads.",
-        "RECOMMENDATION -5 lb TARGET LOAD 40 lb",
-        "#1 5 × — loss 12% best 0.5 #2 5 × — loss 12% best 0.5"
+        "RECOMMENDATION -5 lb TARGET LOAD 135 lb",
+        "#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 72554,
-      "sha256": "4862d5fc891a05084bf097f5ea0c37b79d2849944ae2169894e6089821be6d72"
+      "bytes": 65499,
+      "sha256": "12dd529189b75dd5d4211ac182069fa07f1da70b36f15b4fa56958522a87439f"
     },
     {
       "name": "plan-builder",
@@ -367,26 +366,26 @@
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 37,
-      "bytes": 522272,
+      "seconds": 36.32,
+      "bytes": 575446,
       "frames": [
         {
-          "atSeconds": 5.55,
-          "bytes": 184571,
-          "sha256": "9d3f3c29bee99bf933a4e373788e7ec5f20399a0b3af77e02ab557385e113703"
+          "atSeconds": 5.45,
+          "bytes": 195160,
+          "sha256": "0a6d11b1f6b7d69266a85dd22a1d6e9d17221cfde92d2cb82b5f639659deab10"
         },
         {
-          "atSeconds": 18.5,
-          "bytes": 199595,
-          "sha256": "1f0dd8a670ee894908f3eac69a671528bf357a9c318dfb8cd2c441d292434120"
+          "atSeconds": 18.16,
+          "bytes": 215696,
+          "sha256": "a977ff8fa3d6c06760eaad6be65eff83553c04bc39c6105f7ac6fc4df296aabb"
         },
         {
-          "atSeconds": 31.45,
-          "bytes": 110488,
-          "sha256": "0a0bb599d5c47332900d2a4d89107d5c7848238d929d8d3259818f0cbe3f1d65"
+          "atSeconds": 30.87,
+          "bytes": 141638,
+          "sha256": "9e95deafb484bf1f7b6fbf285bd3137e9ef79350dac278af842e8c114f53a6fc"
         }
       ],
-      "sha256": "590d256e41aba48f36446991ea8524ec507da257455b1ccefac9faee63acf8d0"
+      "sha256": "1634074ffb4ac66739e5fc967bd875d3e99ea764ef3ea4e93f1c726875048fd3"
     }
   ]
 }

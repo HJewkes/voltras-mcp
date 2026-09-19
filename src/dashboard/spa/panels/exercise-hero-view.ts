@@ -13,7 +13,6 @@
  */
 import {
   bestE1RMAcrossSets,
-  estimateSetRpe,
   getSetRepPeakVelocities,
   getSetTempoSeconds,
 } from '@voltras/workout-analytics/view';
@@ -53,11 +52,11 @@ export type HeroSetRowProps = HeroDoneRow | HeroLiveRow;
 /**
  * Map a canonical set view onto titan `SetRow` props (titan 0.7.0 unified table:
  * a `state` discriminated union, no PREV column). `completed` → `done` (logged
- * reps/weight/rpe); `active` → `live`, which always displays a `target` — so an
+ * reps/weight); `active` → `live`, which always displays a `target` — so an
  * unplanned live set falls back its target to the reps done so far and the
- * current working weight. Passes EXACT WA values — RPE (SetRow rounds to 0.5 +
- * bands), per-rep velocity in m/s (SetRow's VelocityStrip formats), raw weights
- * (SetRow rounds). Velocities need no conversion: the server's bridge converts
+ * current working weight. No RPE: it is withheld until a trusted fitted profile
+ * reaches the wall (VW-485). Passes EXACT WA values — per-rep velocity in m/s
+ * (SetRow's VelocityStrip formats), raw weights (SetRow rounds). Velocities need no conversion: the server's bridge converts
  * them once when it builds each `WorkoutSample` (VW-160).
  *
  * `unit` (VW-196) rescales the weight fields via `convertMass` — the EXACT
@@ -73,7 +72,6 @@ export function toSetRowProps(view: HeroSetView, unit: MassUnit = 'lbs'): HeroSe
   const velocities = getSetRepPeakVelocities({ reps: view.reps }).filter(
     (mps): mps is number => mps != null,
   );
-  const rpe = estimateSetRpe({ reps: view.reps });
   const repsDone = view.reps.length;
   const weight = view.weightLbs == null ? undefined : convertMass(view.weightLbs, unit);
   const loadLabel = view.weightLbs == null ? (view.loadLabel ?? '—') : undefined;
@@ -89,7 +87,6 @@ export function toSetRowProps(view: HeroSetView, unit: MassUnit = 'lbs'): HeroSe
       reps: repsDone,
       weight,
       loadLabel,
-      rpe,
       velocities,
     };
   }
@@ -100,7 +97,6 @@ export function toSetRowProps(view: HeroSetView, unit: MassUnit = 'lbs'): HeroSe
     reps: repsDone,
     weight,
     loadLabel,
-    rpe,
     velocities,
   };
 }

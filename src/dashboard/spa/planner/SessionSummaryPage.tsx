@@ -198,11 +198,9 @@ function ExerciseCard(props: {
         {/* Verdict first — the same hero word + three dimension lights the live
             page shows mid-set, so the completion screen closes that loop. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: SPACE.lg, flexWrap: 'wrap' }}>
-          <VerdictHero rpe={exercise.fatigue?.rpe ?? null} verdict={exercise.verdict} />
+          {/* No RPE or RIR until a trusted fitted profile reaches the wall (VW-485). */}
+          <VerdictHero rpe={null} verdict={exercise.verdict} />
           <FatigueLights dimensions={exercise.verdict?.dimensions ?? null} />
-          {exercise.fatigue !== null && (
-            <Caption color="tertiary">RIR {formatNumber(exercise.fatigue.rir)}</Caption>
-          )}
         </div>
         {/* Say WHICH set the headline read. The verdict and the gauge below now
             share one basis (VW-121 / F4) — naming it is what lets a reader check

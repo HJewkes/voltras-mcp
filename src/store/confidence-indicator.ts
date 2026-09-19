@@ -16,6 +16,8 @@
 // (VW-124's output-shape standard) — never a second tool call to learn whether
 // to trust the number you already have.
 
+import { TRUSTED_RIR_ERROR_REPS } from '../analytics/rir-velocity.js';
+
 /** How much to trust an accompanying value. Drives a subtle label/colour in UI. */
 export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
@@ -94,6 +96,26 @@ export const RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
   improvementPath:
     'Re-run `rir_velocity.fit` as you log more qualifying sets — the curve’s own residual ' +
     'error (`rirErrorReps`) narrows with more and more varied data.',
+};
+
+/**
+ * The model-calibration axis for a fitted curve whose own error is too wide to trust
+ * (VW-485): `rirErrorReps` at or above `TRUSTED_RIR_ERROR_REPS`.
+ */
+export const RIR_VELOCITY_MODEL_UNTRUSTED_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
+  axis: 'model-calibration',
+  level: 'medium',
+  reasoning:
+    "reading comes from the lifter's own fitted RIR-velocity curve (VW-298), but the curve's " +
+    `residual error is ${String(TRUSTED_RIR_ERROR_REPS)} reps in reserve or more, wider than ` +
+    'the error the individual-model evidence reports',
+  userMessage:
+    'This RIR estimate comes from a curve fitted to your own sets, but that curve still ' +
+    `scatters by ${String(TRUSTED_RIR_ERROR_REPS)} or more reps, so read it as a range ` +
+    'rather than a count.',
+  improvementPath:
+    'Re-run `rir_velocity.fit` as you log more qualifying sets; the curve is trusted once ' +
+    `its error (\`rirErrorReps\`) drops under ${String(TRUSTED_RIR_ERROR_REPS)} reps.`,
 };
 
 /**

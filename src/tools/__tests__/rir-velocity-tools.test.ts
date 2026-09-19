@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   fitRirVelocityModel,
   GENERAL_MODEL_CAVEAT,
+  isTrustedRirModel,
   rirForVelocity,
   rirModelVelocity,
   type RirVelocityModel,
@@ -300,5 +301,47 @@ describe('estimateRepRir on a fitted curve (VW-483)', () => {
     const reading = rirForVelocity(model, 0.6);
 
     expect(reading.rir).toBeCloseTo(6, 2);
+  });
+});
+
+describe('trusting a fitted curve (VW-485)', () => {
+  const inputs = {
+    peakVelocity: 0.6,
+    baselineMaxVelocity: 0.8,
+    velLossPct: 25,
+    repIndex: 6,
+    repsInSet: 8,
+  };
+  const withError = (rirErrorReps: number): RirVelocityModel => ({
+    ...curve(0.3, 0.05),
+    rirErrorReps,
+  });
+  const meanOf = (mps: number) =>
+    rirModelVelocity({
+      concentric: { peakVelocity: mps, _totalVelocity: mps, _movementSampleCount: 1 },
+    } as unknown as Rep);
+
+  it('trusts a stored curve only when its error sits under the evidence bound', () => {
+    expect(isTrustedRirModel(undefined)).toBe(false);
+    expect(isTrustedRirModel(withError(1.99))).toBe(true);
+    expect(isTrustedRirModel(withError(2))).toBe(false);
+  });
+
+  it('reads high only off a trusted curve, and medium off an untrusted one in range', () => {
+    const reading = (model: RirVelocityModel) =>
+      estimateRepRir(model, { ...inputs, meanVelocity: meanOf(0.45) });
+
+    expect(reading(withError(0.5)).confidence).toBe('high');
+    expect(reading(withError(2.5)).confidence).toBe('medium');
+    expect(reading(withError(2.5)).inputDomain).toBe('high');
+  });
+
+  it('never reads high off the placeholder regression, whatever the inputs', () => {
+    const confidences = [0, 10, 20, 30, 40, 50].map(
+      (velLossPct) =>
+        estimateRepRir(undefined, { ...inputs, velLossPct, meanVelocity: meanOf(0.45) }).confidence,
+    );
+
+    expect(new Set(confidences)).toEqual(new Set(['low']));
   });
 });

@@ -288,8 +288,9 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
       // reason the burst has to be pinned: these moved every run before it.
       'VL 20% VL 30% 0.50 0.49 0.47 0.46',
       // The readout that caught this: two runs of the OLD harness disagreed
-      // here (5.5 "Good" against 6.0 "Slowing") and both were green.
-      'FATIGUE 5.0 RPE Good',
+      // here (5.5 "Good" against 6.0 "Slowing") and both were green. The RPE is
+      // a dash: withheld until a trusted fitted profile exists (VW-485).
+      'FATIGUE — RPE Good',
     ],
     holdsPageOpen: true,
   },
@@ -322,13 +323,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     expectValues: [
       // `DURATION` sits between `VOLUME` and its value and is deliberately not
       // asserted: it is wall-clock, unlike everything before it.
-      'EXERCISES 1 SETS 2 REPS 10 VOLUME —',
-      'FATIGUE 5.0 RPE Good',
-      'RIR 4.8',
+      'EXERCISES 1 SETS 2 REPS 10 VOLUME 1400 lb',
+      // No RPE and no RIR line: withheld until a trusted fitted profile exists (VW-485).
+      'FATIGUE — RPE Good',
       'BEST VELOCITY 0.5',
       '12% peak-to-last within a set — set #2, the set the verdict above reads.',
-      'RECOMMENDATION -5 lb TARGET LOAD 40 lb',
-      '#1 5 × — loss 12% best 0.5 #2 5 × — loss 12% best 0.5',
+      'RECOMMENDATION -5 lb TARGET LOAD 135 lb',
+      '#1 5 × 140 lb loss 12% best 0.5 #2 5 × 140 lb loss 12% best 0.5',
     ],
     holdsPageOpen: false,
   },

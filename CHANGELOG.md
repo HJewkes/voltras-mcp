@@ -142,6 +142,16 @@ entry is written from the user's point of view is a review question, not a check
   over 8 weeks (+44%). It now gets about 44 lb. The goal card shows and scores a lift's
   target at the 1 lb step the device can set. Targets you already accepted keep their numbers
   (VW-482).
+- The wall no longer states an RPE or reps in reserve it cannot back. The live fatigue card,
+  the hero set rows and the session summary used to read effort off velocity loss through a
+  fixed table, which the evidence does not support. They now show a dash, and the summary
+  drops its RIR line. The live alert reads `VL18% · stop at VL30%` instead of claiming "1–2
+  productive reps left". A stated effort returns once a lifter has a fitted RIR-velocity
+  curve that is trusted: one whose error is under 2 reps in reserve (VW-485, #471).
+- `metrics.compute`'s `vbt.rir` no longer reports `high` confidence it has not earned. The
+  general-model fallback always reads `low`; a fitted curve reads `high` only when its own
+  error is under 2 reps in reserve, and `medium` otherwise. Each rep also reports
+  `inputDomain`, whether it sits inside the range the model was fitted over (VW-485, #471).
 - The coach, `plan.next_workout`, the weekly report's progression lines and the dashboard's
   plan page now agree on one current plan. The block whose dates contain today wins. When no
   block is dated, the newest program that still has workouts left wins, so a finished test

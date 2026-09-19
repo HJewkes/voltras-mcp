@@ -18,6 +18,7 @@ import {
   GENERAL_MODEL_CAVEAT,
   JUKIC_2024_CITATION,
   JUKIC_2024_FINDING,
+  isTrustedRirModel,
   rirForVelocity,
   velocityForRir,
   type RirModelVelocityMps,
@@ -187,11 +188,16 @@ export interface RepRirEstimateInput {
   repsInSet: number;
 }
 
+type ConfidenceLevel = 'low' | 'medium' | 'high';
+
 /** One rep's RIR reading, tagged with which curve produced it. */
 export interface RepRirEstimateResult {
   rir: number;
   range: { low: number; high: number };
-  confidence: 'low' | 'medium' | 'high';
+  /** How far to trust this reading: never above what the curve's own error allows (VW-485). */
+  confidence: ConfidenceLevel;
+  /** Whether this rep sits inside the range the curve was fitted over, graded alone. */
+  inputDomain: ConfidenceLevel;
   basis: RirEstimateBasis;
 }
 
@@ -212,10 +218,12 @@ export function estimateRepRir(
 ): RepRirEstimateResult {
   if (model !== undefined) {
     const fitted = rirForVelocity(model, input.meanVelocity);
+    const inputDomain: ConfidenceLevel = fitted.withinFittedRange ? 'high' : 'low';
     return {
       rir: fitted.rir,
       range: fitted.range,
-      confidence: fitted.withinFittedRange ? 'high' : 'low',
+      confidence: isTrustedRirModel(model) ? inputDomain : capAtMedium(inputDomain),
+      inputDomain,
       basis: 'fitted',
     };
   }
@@ -223,7 +231,13 @@ export function estimateRepRir(
   return {
     rir: estimate.rir,
     range: estimate.range,
-    confidence: estimate.confidence,
+    // Placeholder coefficients: no reading off them is ever more than a rough direction.
+    confidence: 'low',
+    inputDomain: estimate.confidence,
     basis: 'profile-estimate',
   };
+}
+
+function capAtMedium(level: ConfidenceLevel): ConfidenceLevel {
+  return level === 'high' ? 'medium' : level;
 }

@@ -182,16 +182,23 @@ describe('exertionMessage — the alert text shared by both stages', () => {
     // REGRESSION: the inline template interpolated the raw ratio, so a real set put
     // `VL23.958333333333336` on the wall.
     const { exertionMessage } = await import('../spa/live-page/live-copy');
-    expect(exertionMessage(23.958333333333336)).toContain('VL24%');
-    expect(exertionMessage(23.958333333333336)).not.toContain('.9583');
+    expect(exertionMessage(23.958333333333336, 30)).toContain('VL24%');
+    expect(exertionMessage(23.958333333333336, 30)).not.toContain('.9583');
   });
 
   it('says WARMING UP rather than "VLnull" before a loss can be measured', async () => {
     // REGRESSION: velocityLossPct is null until rep 2, and the template stringified
     // that to the literal `VLnull`.
     const { exertionMessage } = await import('../spa/live-page/live-copy');
-    const msg = exertionMessage(null);
+    const msg = exertionMessage(null, 30);
     expect(msg).not.toContain('null');
     expect(msg).toMatch(/warming up/i);
+  });
+
+  it('states the loss and the stop, never reps left (VW-485)', async () => {
+    const { exertionMessage } = await import('../spa/live-page/live-copy');
+    const msg = exertionMessage(18.4, 30);
+    expect(msg).toBe('VL18% · stop at VL30%');
+    expect(msg).not.toMatch(/reps? left|RIR|RPE/i);
   });
 });
