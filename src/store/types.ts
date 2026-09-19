@@ -1595,6 +1595,13 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   getSessionDateSpan(filter?: SessionCountFilter): Promise<SessionDateSpan>;
 
+  /**
+   * `ended_at` of every ENDED session matching `filter` (same predicates as
+   * `countSessions`, `endedOnly` forced on), oldest start first. Added for the
+   * training-day count (VW-460), which buckets sessions by the local day they ended.
+   */
+  listSessionEndTimes(filter?: SessionCountFilter): Promise<string[]>;
+
   /** Return every set persisted for the given session, oldest-first. */
   getSetsForSession(sessionId: string): Promise<StoredSet[]>;
 

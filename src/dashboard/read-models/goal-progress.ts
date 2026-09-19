@@ -580,7 +580,7 @@ function sessionCountRead(reading: Reading): StatusRead | undefined {
     'A 28-day session count is a commitment, not a progression (goal / plan / commitment, ' +
     'rp:rp-s10-three-month-planning-horizon): the count holds and the rolling window moves.';
   if (counted === undefined) {
-    return { status: 'calibrating', statusBasis: `No sessions counted yet. ${commitment}` };
+    return { status: 'calibrating', statusBasis: `No training days counted yet. ${commitment}` };
   }
   const pace = `${counted} of the ${round(dueByNow)} due by now against a committed ${committed}`;
   if (counted >= dueByNow) {
@@ -864,7 +864,7 @@ function milestoneLabel(target: StoredGoalTarget, rounded: number, dueWeek: numb
     case 'bodyweight':
       return `bodyweight ${rounded} ${week}`;
     case 'sessions_28d':
-      return `${rounded} sessions in the rolling 28-day window`;
+      return `${rounded} training days in the rolling 28-day window`;
     case 'e1rm_trend':
       return `e1RM ${rounded} ${week}`;
     case 'composite_strength':

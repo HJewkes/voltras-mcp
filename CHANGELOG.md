@@ -107,6 +107,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- A sessions-per-28-days goal now counts training days, not recorded sessions: a day with
+  several exercises logged as separate sessions counts once. The count is taken from the
+  lifter's local calendar day. Any accepted session-count goal made under the old count is
+  retired on upgrade, and unaccepted ones are removed, so `goal.propose_targets` offers a new
+  one in days (VW-460, #PR).
 - A calibrating goal's chart now says in the plot what it is waiting on ("1 more comparable
   session", or the set it needs) instead of titan's generic "No band yet", so the full goal card
   no longer repeats it in a sentence underneath. The compact per-lift card, whose chart has no

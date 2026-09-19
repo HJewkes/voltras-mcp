@@ -18,6 +18,11 @@ import type { GoalBandWeek, GoalDietState, GoalMetric } from '../analytics/goal-
 import { slopeStandardError, topLoadAtReps } from '../analytics/goal-history.js';
 import { modalRepCount, type RepCountedSet } from '../analytics/goal-history.js';
 import type { GoalGainMetric } from '../analytics/goal-metrics.js';
+import {
+  SESSION_WINDOW_DAYS,
+  sessionWindowFrom,
+  trainingDaysOf,
+} from '../analytics/training-days.js';
 import { setPurposeOf } from '../store/set-purpose.js';
 import {
   LOCAL_USER_ID,
@@ -42,6 +47,7 @@ export interface GoalDerivationState {
     SessionStore,
     | 'getTrainingProfile'
     | 'countSessions'
+    | 'listSessionEndTimes'
     | 'getSessionDateSpan'
     | 'getTrainingWeeksForBlock'
     | 'getDietPhaseCovering'
@@ -67,9 +73,6 @@ const LAYOFF_GAP_DAYS = 90;
  * weeks at three sessions, the shortest ordinary mesocycle.
  */
 const SESSIONS_PER_MESO = 12;
-
-/** The rolling window a `sessions_28d` commitment is counted over. */
-const SESSION_COUNT_WINDOW_DAYS = 28;
 
 /** Weeks a horizon falls back to when no block names one. rp:rp-s10-three-month-planning-horizon */
 const DEFAULT_HORIZON_WEEKS = 12;
@@ -261,14 +264,13 @@ async function deriveSessionCount(
   context: GoalDerivationContext,
   selection: GoalGainMetric,
 ): Promise<DerivedTarget | SkippedMetric> {
-  const from = new Date(Date.now() - SESSION_COUNT_WINDOW_DAYS * DAY_MS).toISOString();
-  const count = await state.store.countSessions({ from, endedOnly: true });
+  const count = (await readTrainingDays(state.store, context.derivedAt)).length;
   if (count === 0) {
     return {
       metric: selection.metric,
       exerciseId: null,
       reason:
-        `No completed sessions in the last ${SESSION_COUNT_WINDOW_DAYS} days, so there is no ` +
+        `No training days in the last ${SESSION_WINDOW_DAYS} days, so there is no ` +
         'current rate to hold. Train a week and ask again.',
     };
   }
@@ -278,6 +280,18 @@ async function deriveSessionCount(
     matchedSessionCount: count,
     baselineState: 'CALIBRATED',
   });
+}
+
+/**
+ * The training days in the rolling window that ends at `nowIso`, oldest first.
+ * The one store read behind every `sessions_28d` number (rule: `training-days.ts`).
+ */
+export async function readTrainingDays(
+  store: Pick<SessionStore, 'listSessionEndTimes'>,
+  nowIso: string,
+): Promise<string[]> {
+  const endTimes = await store.listSessionEndTimes({ from: sessionWindowFrom(nowIso), to: nowIso });
+  return trainingDaysOf(endTimes);
 }
 
 /** The measured start of a lift leg, plus the evidence that gates its band. */
