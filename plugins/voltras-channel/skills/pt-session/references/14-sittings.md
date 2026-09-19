@@ -259,13 +259,15 @@ A value under the proposal is refused (`GOAL_TARGET_BELOW_BAND`). A value above 
 
 A declined proposal: `goal.retire {targetId, outcome: "abandoned"}`. It is never re-offered. `GOAL_TARGET_FIXED` on a second accept means it is already fixed; say so.
 
-### Step 9. The week ahead (VW-236; no tool stores this)
+### Step 9. The week ahead (VW-236, VW-505)
 
-Three short asks. No tool writes commitments, so these go in the sitting note.
+Three short asks, then one tool call.
 
 1. **"Which four days this week, and one named fallback day for each?"** A fallback day is never scored as a failure.
 2. **"One if-then plan for the most likely thing that gets in the way this week."** In their words: "If <barrier>, then I will <action>."
 3. Say once: **"Silence from me through the week means the plan is on track."**
+
+Then `accountability.declare_commitment {days, ifThen, wording}` stores it: their days with a fallback each, the if-then sentence, and the commitment in their own words. Pass their words through unchanged. The tool stores and the Sunday message renders them verbatim, and a commitment in your words carries none of the weight. `weekOf` defaults to the week being committed to, so a Sunday sitting files against tomorrow. Declaring again for the same week is a correction; an identical retry changes nothing. It sets no session count: that stays the attendance goal target from Step 8.
 
 Write these, the chosen attendance number and the first-goals decision into `sources/notes/2026-09-20-sunday-sitting.md`. Keep bodyweight and diet detail out of that note; it belongs in the health system's own record. If you cannot write files, read them back in one block for the owner to paste.
 

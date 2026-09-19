@@ -1105,6 +1105,57 @@ export interface StoredBlockSchedule {
 /** What a caller supplies to append a schedule row; the store assigns `id` and `seq`. */
 export type AppendBlockScheduleInput = Omit<StoredBlockSchedule, 'id' | 'seq'>;
 
+/**
+ * One committed training day and the day it falls back to when that one breaks. Shaped like
+ * the composer's `PlannedSlot` (`src/accountability/types.ts`), which is what renders it.
+ */
+export interface CommitmentDay {
+  day: string;
+  fallbackDay: string;
+}
+
+/**
+ * One revision of one week's commitment (VW-505, v37). `ifThen` and `wording` are the LIFTER's
+ * own sentences, stored and rendered verbatim — no trim, no normalisation, no rewrite.
+ *
+ * `effectiveFrom` is the local Monday the week opens on and `effectiveTo` the next committed
+ * week's Monday (`null` while this is the latest week), so a commitment stands until the next
+ * one supersedes it rather than expiring on Sunday night. `sessionsPerWeek` is `days.length`
+ * and states no target of its own: how many sessions is the `sessions_28d` goal target's claim.
+ */
+export interface StoredCommitment {
+  id: string;
+  userId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  sessionsPerWeek: number;
+  days: CommitmentDay[];
+  ifThen: string;
+  wording: string;
+  revision: number;
+  declaredAt: string;
+}
+
+/** What a caller declares; the store assigns `id`, `revision`, `effectiveTo` and the count. */
+export interface DeclareCommitmentInput {
+  userId: string;
+  effectiveFrom: string;
+  days: CommitmentDay[];
+  ifThen: string;
+  wording: string;
+  declaredAt: string;
+}
+
+/**
+ * The stored revision, and whether this declaration wrote one. `unchanged` is true when the
+ * content matched the week's latest revision byte for byte: a retry is a no-op that returns
+ * the existing row rather than a correction that bumps `revision`.
+ */
+export interface DeclaredCommitment {
+  commitment: StoredCommitment;
+  unchanged: boolean;
+}
+
 /** Options for {@link SessionStore.listPriorities}. Retired rows are excluded by default. */
 export interface ListPrioritiesOptions {
   includeRetired?: boolean;
@@ -2133,6 +2184,21 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** Every schedule row of one block, oldest `seq` first. */
   listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]>;
+
+  /**
+   * Record one week's commitment (VW-505). Append-only per revision: a week already committed
+   * to gains a row at the next `revision` and keeps the superseded one, and a declaration
+   * identical to that week's latest revision writes nothing at all. Every revision row of a
+   * week carries the same re-derived `effectiveTo`, so a correction filed for an earlier week
+   * leaves the timeline sound.
+   */
+  declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment>;
+
+  /**
+   * The commitment standing over `weekOf`: the latest revision of the greatest committed week
+   * at or before it, or `undefined` when nothing has been committed to by then.
+   */
+  getCommitmentForWeek(userId: string, weekOf: string): Promise<StoredCommitment | undefined>;
 
   /** Every declared range for a user, oldest-first. */
   listDietPhases(userId: string): Promise<StoredDietPhase[]>;

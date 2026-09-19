@@ -80,6 +80,9 @@ import {
   type BlockScheduleKind,
   type BlockScheduleSkip,
   type StoredBlockSchedule,
+  type CommitmentDay,
+  type DeclareCommitmentInput,
+  type DeclaredCommitment,
   type DeclareDietPhaseInput,
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
@@ -116,6 +119,7 @@ import {
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
   type StoredBodyMetric,
+  type StoredCommitment,
   type StoredDietPhase,
   type StoredExerciseBaseline,
   type StoredExerciseChapter,
@@ -147,7 +151,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 36;
+const SCHEMA_VERSION = 37;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -415,6 +419,55 @@ const UI_ACTIONS_DDL = `
   CREATE TRIGGER IF NOT EXISTS ui_actions_no_delete
     BEFORE DELETE ON ui_actions
     BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never deleted'); END;
+`;
+
+/** One row per revision of one week, so a correction can never overwrite what it corrects. */
+const COMMITMENT_REVISION_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_user_week_revision
+    ON commitments(user_id, effective_from, revision);`;
+
+/**
+ * `effective_to` is the one derived column and the one exception: it is re-derived from the
+ * user's other rows, so an UPDATE of it carries no lifter-authored content.
+ */
+const COMMITMENTS_APPEND_ONLY_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS commitments_append_only
+    BEFORE UPDATE OF id, user_id, effective_from, sessions_per_week, days_json,
+                     declared_at, lifter_if_then, lifter_wording, revision
+    ON commitments
+    BEGIN SELECT RAISE(ABORT, 'commitments is append-only: write the next revision'); END;`;
+
+/**
+ * v37 (VW-505): the lifter's own weekly commitment — which days, the named fallback for each,
+ * the if-then sentence and the commitment in the lifter's own words.
+ *
+ * APPEND-ONLY PER REVISION, the same way `block_schedules` keeps complete snapshots: a
+ * correction for a week already committed to inserts a new row at `revision` + 1 and the
+ * superseded wording stays readable. Reads take the greatest revision of the week. The trigger
+ * refuses every UPDATE except `effective_to`, which is re-derived across the user's rows after
+ * each insert so the timeline holds whatever order weeks arrive in.
+ *
+ * `sessions_per_week` is `days.length`, a denormalisation of the day list and NOT a second
+ * target: how many sessions a week is the attendance goal target's to state (VW-498).
+ *
+ * The index and the trigger name `revision` and so cannot run here, where a pre-migration
+ * table still lacks it: `migrateV36ToV37` installs both, on a fresh DB too.
+ */
+const COMMITMENTS_DDL = `
+  -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
+  -- observed-regularity proxy that is wrong in both directions.
+  CREATE TABLE IF NOT EXISTS commitments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+    sessions_per_week INTEGER NOT NULL,
+    days_json TEXT,
+    declared_at TEXT NOT NULL,
+    lifter_if_then TEXT,
+    lifter_wording TEXT,
+    revision INTEGER NOT NULL DEFAULT 1
+  );
 `;
 
 const SCHEMA_SQL = `
@@ -1039,17 +1092,7 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_diet_phases_user ON diet_phases(user_id, started_at);
 
-  -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
-  -- observed-regularity proxy that is wrong in both directions.
-  CREATE TABLE IF NOT EXISTS commitments (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    effective_from TEXT NOT NULL,
-    effective_to TEXT,
-    sessions_per_week INTEGER NOT NULL,
-    days_json TEXT,
-    declared_at TEXT NOT NULL
-  );
+${COMMITMENTS_DDL}
 
   -- v28 (VW-364) adds the four leanness columns below bodyweight. Each is
   -- SELF-REPORTED and independently optional: a row may carry a weigh-in and
@@ -1907,6 +1950,27 @@ function migrateV35ToV36(_db: DatabaseSync): void {
 }
 
 /**
+ * v36 -> v37: the lifter's own words on `commitments` (VW-505). PURELY ADDITIVE and back-fills
+ * nothing: two nullable text columns, `revision` defaulting to 1 so every pre-v37 row reads as
+ * the first revision of its week, the per-revision unique index and the append-only trigger.
+ * One transaction, so a failure leaves the v36 shape; idempotent, so a re-open changes nothing.
+ */
+function migrateV36ToV37(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'commitments', 'lifter_if_then', 'TEXT');
+    addColumnIfMissing(db, 'commitments', 'lifter_wording', 'TEXT');
+    addColumnIfMissing(db, 'commitments', 'revision', 'INTEGER NOT NULL DEFAULT 1');
+    db.exec(COMMITMENT_REVISION_INDEX_SQL);
+    db.exec(COMMITMENTS_APPEND_ONLY_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -2297,6 +2361,50 @@ function rowToBlockSchedule(row: BlockScheduleRow): StoredBlockSchedule {
   if (row.starts_on !== null) out.startsOn = row.starts_on;
   if (row.reason !== null) out.reason = row.reason;
   return out;
+}
+
+interface CommitmentRow {
+  id: string;
+  user_id: string;
+  effective_from: string;
+  effective_to: string | null;
+  sessions_per_week: number;
+  days_json: string | null;
+  declared_at: string;
+  lifter_if_then: string | null;
+  lifter_wording: string | null;
+  revision: number;
+}
+
+function rowToCommitment(row: CommitmentRow): StoredCommitment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    effectiveFrom: row.effective_from,
+    effectiveTo: row.effective_to,
+    sessionsPerWeek: row.sessions_per_week,
+    days: row.days_json === null ? [] : (JSON.parse(row.days_json) as CommitmentDay[]),
+    ifThen: row.lifter_if_then ?? '',
+    wording: row.lifter_wording ?? '',
+    revision: row.revision,
+    declaredAt: row.declared_at,
+  };
+}
+
+/**
+ * Whether a declaration says exactly what the week's latest revision already says. Byte for
+ * byte, order included: a retry must not bump `revision`, and a reordered day list is a
+ * different week to run.
+ */
+function sameCommitmentContent(latest: StoredCommitment, input: DeclareCommitmentInput): boolean {
+  return (
+    latest.ifThen === input.ifThen &&
+    latest.wording === input.wording &&
+    latest.days.length === input.days.length &&
+    latest.days.every(
+      (day, i) => day.day === input.days[i]?.day && day.fallbackDay === input.days[i]?.fallbackDay,
+    )
+  );
 }
 
 function blockScheduleInvalid(blockId: string, problem: string): Error {
@@ -4060,6 +4168,110 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rows.map(rowToBlockSchedule));
   }
 
+  async declareCommitment(input: DeclareCommitmentInput): Promise<DeclaredCommitment> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const latest = this.latestCommitmentRevision(input.userId, input.effectiveFrom);
+      const declared =
+        latest !== undefined && sameCommitmentContent(latest, input)
+          ? { commitment: latest, unchanged: true }
+          : { commitment: this.insertCommitmentRevision(input, latest), unchanged: false };
+      this.db.exec('COMMIT');
+      return Promise.resolve(declared);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private latestCommitmentRevision(userId: string, weekOf: string): StoredCommitment | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM commitments WHERE user_id = ? AND effective_from = ?
+           ORDER BY revision DESC LIMIT 1`,
+      )
+      .get(userId, weekOf) as CommitmentRow | undefined;
+    return row === undefined ? undefined : rowToCommitment(row);
+  }
+
+  private insertCommitmentRevision(
+    input: DeclareCommitmentInput,
+    latest: StoredCommitment | undefined,
+  ): StoredCommitment {
+    const row: StoredCommitment = {
+      id: randomUUID(),
+      userId: input.userId,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: null,
+      sessionsPerWeek: input.days.length,
+      days: input.days,
+      ifThen: input.ifThen,
+      wording: input.wording,
+      revision: (latest?.revision ?? 0) + 1,
+      declaredAt: input.declaredAt,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO commitments
+           (id, user_id, effective_from, effective_to, sessions_per_week, days_json,
+            declared_at, lifter_if_then, lifter_wording, revision)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.userId,
+        row.effectiveFrom,
+        row.sessionsPerWeek,
+        JSON.stringify(row.days),
+        row.declaredAt,
+        row.ifThen,
+        row.wording,
+        row.revision,
+      );
+    this.rederiveCommitmentRanges(input.userId);
+    return { ...row, effectiveTo: this.commitmentWeekAfter(input.userId, input.effectiveFrom) };
+  }
+
+  /**
+   * Each row's `effective_to` is the next committed week's Monday, so every revision of a week
+   * carries the same value and a correction filed for an older week still closes at the right
+   * date. The append-only trigger allows this column and only this column.
+   */
+  private rederiveCommitmentRanges(userId: string): void {
+    this.db
+      .prepare(
+        `UPDATE commitments SET effective_to = (
+           SELECT MIN(later.effective_from) FROM commitments later
+             WHERE later.user_id = commitments.user_id
+               AND later.effective_from > commitments.effective_from)
+         WHERE user_id = ?`,
+      )
+      .run(userId);
+  }
+
+  private commitmentWeekAfter(userId: string, weekOf: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(effective_from) AS next FROM commitments
+           WHERE user_id = ? AND effective_from > ?`,
+      )
+      .get(userId, weekOf) as { next: string | null } | undefined;
+    return row?.next ?? null;
+  }
+
+  async getCommitmentForWeek(
+    userId: string,
+    weekOf: string,
+  ): Promise<StoredCommitment | undefined> {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM commitments WHERE user_id = ? AND effective_from <= ?
+           ORDER BY effective_from DESC, revision DESC LIMIT 1`,
+      )
+      .get(userId, weekOf) as CommitmentRow | undefined;
+    return Promise.resolve(row === undefined ? undefined : rowToCommitment(row));
+  }
+
   async listDietPhases(userId: string): Promise<StoredDietPhase[]> {
     const rows = this.db
       .prepare(`SELECT * FROM diet_phases WHERE user_id = ? ORDER BY started_at ASC`)
@@ -5304,6 +5516,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 35) {
     migrateV35ToV36(db);
+  }
+  if (current <= 36) {
+    migrateV36ToV37(db);
   }
 }
 
