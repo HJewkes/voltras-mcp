@@ -234,7 +234,7 @@ describe('when the info level changes after acceptance (VW-449)', () => {
         name: 'on_track',
         expectedStatus: 'on_track',
         summary: 'Accepted cold, calibrated since.',
-        weeklyLoadsLbs: [100, 103, 97, 104, 108],
+        weeklyLoadsLbs: [100, 102, 104, 106, 108],
         targetStartWeeksAgo: 4,
         acceptedCold: true,
       },

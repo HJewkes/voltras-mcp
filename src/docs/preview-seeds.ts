@@ -228,14 +228,14 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     name: 'hit_exact',
     expectedStatus: 'goal_met',
     summary: 'The newest reading lands exactly on the committed target.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 108.75],
+    weeklyLoadsLbs: [100, 102, 104, 106, 108.75],
     targetStartWeeksAgo: 4,
   },
   {
     name: 'beyond_goal',
     expectedStatus: 'beyond_goal',
     summary: 'The newest reading passes the committed target with weeks of the block left.',
-    weeklyLoadsLbs: [100, 103, 97, 104, 112],
+    weeklyLoadsLbs: [100, 102, 104, 106, 112],
     targetStartWeeksAgo: 4,
   },
 ];
