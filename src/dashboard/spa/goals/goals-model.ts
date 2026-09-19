@@ -56,13 +56,22 @@ function allViews(data: GoalsPageData): GoalTargetRow[] {
  * target tracks, not which kind of priority asked for it.
  */
 export function primaryTarget(data: GoalsPageData): GoalTargetRow | null {
-  const rows = liftRows(data);
+  const rows = trackedLiftRows(data);
   const specialized = rows.find((row) => row.priority.level === 'specialize');
   return specialized ?? rows[0] ?? null;
 }
 
-/** One row per exercise-tracked target (`top_load_at_reps`) with a set to print, for the per-lift grid. */
+/**
+ * The per-lift grid's rows: every tracked lift except the lead, which already has the
+ * large card at the top of the page (owner ruling, VW-467: "Drop it from per-lift everywhere").
+ */
 export function liftRows(data: GoalsPageData): GoalTargetRow[] {
+  const leadId = primaryTarget(data)?.view.target.id;
+  return trackedLiftRows(data).filter((row) => row.view.target.id !== leadId);
+}
+
+/** One row per exercise-tracked target (`top_load_at_reps`) with a set to print. */
+function trackedLiftRows(data: GoalsPageData): GoalTargetRow[] {
   return allViews(data).filter(
     (row) =>
       row.view.target.metric === 'top_load_at_reps' && 'reps' in row.view.mesoMilestone.target,

@@ -236,6 +236,18 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- On a phone the per-lift goal cards on `#/goals` fit the screen again. They were about 80 px
+  wider than the page, so the right edge was cut off: a long lift name, the status mark and the
+  goal figure ran out of view. A long name now wraps inside the card. The "Per-lift" and
+  "Muscle priorities" titles now sit on the page background with their cards as the first
+  raised surface, instead of a panel around the cards, so each card is 40 px wider on a phone
+  and 10 px wider on the wall (VW-454, VW-435).
+- The lead lift on `#/goals`, which already has the large card at the top, is no longer
+  repeated in the Per-lift list. A page with only one lift shows the large card and no
+  Per-lift section (VW-467). `npm run dashboard:preview -- goals` now seeds two more accepted lifts
+  beside the lead (Cable Row and Cable Overhead Tricep Extension), so the previewed page has a
+  Per-lift section in every `--state`; the lead's state is unchanged.
+
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
   backwards. It now shows and judges the newest reading (VW-451).

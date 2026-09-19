@@ -37,6 +37,7 @@ import {
   MetricTiles,
   Pill,
   Surface,
+  Typography,
   useOnSurfaceColor,
   type MetricTileData,
 } from '@titan-design/react-ui';
@@ -142,21 +143,47 @@ function WithCalibrationNote(props: {
  */
 const CARD_MIN_WIDTH = 420;
 
+/**
+ * The phone column. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the track at the
+ * card's min-content, and a compact card's charts start at titan's default width before
+ * the card measures itself, so the column locked wider than the page (VW-454).
+ */
+const NARROW_COLUMN = 'minmax(0, 1fr)';
+
 /** Narrow (VW-356): one full-width column; the wall's minimum is wider than a phone's content box. */
 function cardGridStyle(narrow: boolean): React.CSSProperties {
   return {
     display: 'grid',
-    gridTemplateColumns: narrow ? '1fr' : `repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`,
+    gridTemplateColumns: narrow
+      ? NARROW_COLUMN
+      : `repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`,
     gap: SPACE.md,
     alignItems: 'stretch',
   };
+}
+
+/**
+ * A group of goal cards titled on the page background (VW-435, VW-454): the cards
+ * are the first elevated surface, not cards inside a panel, so they get the panel's
+ * gutter back as width. The title is the full goal card's heading type (a heading
+ * variant, all caps) at section size, cased by style so the string stays as written.
+ */
+function PageSection(props: { title: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: SPACE.sm }}>
+      <Typography variant="h6" style={{ textTransform: 'uppercase' }}>
+        {props.title}
+      </Typography>
+      {props.children}
+    </section>
+  );
 }
 
 /** One card per exercise-tracked target (`top_load_at_reps`). */
 function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
-    <PanelCard title="Per-lift">
+    <PageSection title="Per-lift">
       <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
           <WithCalibrationNote key={row.view.target.id} view={row.view}>
@@ -173,7 +200,7 @@ function PerLiftGrid(props: { rows: GoalTargetRow[]; narrow: boolean }): React.J
           </WithCalibrationNote>
         ))}
       </div>
-    </PanelCard>
+    </PageSection>
   );
 }
 
@@ -184,7 +211,7 @@ function MuscleGrid(props: {
 }): React.JSX.Element | null {
   if (props.rows.length === 0) return null;
   return (
-    <PanelCard title="Muscle priorities">
+    <PageSection title="Muscle priorities">
       <div style={cardGridStyle(props.narrow)}>
         {props.rows.map((row) => (
           <GoalMuscleCard
@@ -200,7 +227,7 @@ function MuscleGrid(props: {
           />
         ))}
       </div>
-    </PanelCard>
+    </PageSection>
   );
 }
 

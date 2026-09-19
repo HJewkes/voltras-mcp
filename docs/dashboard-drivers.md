@@ -46,6 +46,12 @@ buckets its series by ISO week and keeps each bucket's heaviest load: both sets 
 land on a single point, and a single point has nothing earlier to beat
 (`src/analytics/goal-history.ts`).
 
+`--goal-companions=<id:lbs,...>` declares more lifts at `maintain` beside the lead, each with
+its own seeded prior week at that load and an accepted target, so `#/goals` shows its Per-lift
+section: the lead has the large card and is never listed there. The capture scenario passes a
+cable row and a cable overhead tricep extension, the long name listed first so the phone shot
+shows it wrapping.
+
 **Cues have no dashboard surface at all, on any driver.** Coaching cues are spoken
 audio (`system.speak`), not a rendered value — there is no `VMCP_CUES` / cue read-out
 anywhere under `src/dashboard`. The dashboard's own "cue" language (the nav item's
