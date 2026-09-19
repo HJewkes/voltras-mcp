@@ -322,7 +322,9 @@ entry is written from the user's point of view is a review question, not a check
   and 10 px wider on the wall (VW-454, VW-435).
 - The lead lift on `#/goals`, which already has the large card at the top, is no longer
   repeated in the Per-lift list. A page with only one lift shows the large card and no
-  Per-lift section (VW-467).
+  Per-lift section (VW-467). `npm run dashboard:preview -- goals` now seeds two more accepted lifts
+  beside the lead (Cable Row and Cable Overhead Tricep Extension), so the previewed page has a
+  Per-lift section in every `--state`; the lead's state is unchanged.
 
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read

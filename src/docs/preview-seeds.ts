@@ -43,6 +43,7 @@ import {
   LOCAL_USER_ID,
   type SessionStore,
   type StoredGoalTarget,
+  type StoredPriorityLevel,
   type StoredRep,
   type StoredSet,
 } from '../store/types.js';
@@ -98,6 +99,36 @@ export const GOAL_PREVIEW_EXERCISE = {
   id: 'cable-chest-press',
   name: 'Cable Chest Press',
 } as const;
+
+/**
+ * One seeded lift: its exercise, the ids it writes under, and the history behind it.
+ * The lead writes under `goal` so its rows keep the ids the page and tests know.
+ */
+interface SeededLift {
+  readonly key: string;
+  readonly exercise: { readonly id: string; readonly name: string };
+  readonly level: StoredPriorityLevel;
+  /** Declared this many days ago. Companions predate the lead, which then lists first. */
+  readonly declaredDaysAgo: number;
+  readonly history: GoalPreviewHistory;
+}
+
+/**
+ * Two more accepted lifts beside the lead, so `#/goals` shows its Per-lift section
+ * (the lead is never listed there, VW-467). One has a long name, so a phone-width
+ * page shows the card title wrapping. Their history is the steady climb `on_track`
+ * uses, the same whichever state the lead is in.
+ */
+export const GOAL_PREVIEW_COMPANIONS: readonly {
+  readonly exercise: { readonly id: string; readonly name: string };
+  readonly weeklyLoadsLbs: readonly number[];
+}[] = [
+  { exercise: { id: 'cable-row', name: 'Cable Row' }, weeklyLoadsLbs: [100, 102, 104, 106, 108] },
+  {
+    exercise: { id: 'cable-overhead-tricep-extension', name: 'Cable Overhead Tricep Extension' },
+    weeklyLoadsLbs: [40, 41, 42, 43, 44],
+  },
+];
 
 /** The rep anchor the target is measured at — `top_load_at_reps`' own question. */
 export const GOAL_PREVIEW_ANCHOR_REPS = 8;
@@ -156,6 +187,12 @@ export interface GoalPreviewState {
    */
   readonly recalibrationAnswer?: 'declined';
 }
+
+/** The parts of a state that shape one lift's recorded history and its accepted target. */
+type GoalPreviewHistory = Pick<
+  GoalPreviewState,
+  'weeklyLoadsLbs' | 'heavySingleLbs' | 'targetStartWeeksAgo' | 'acceptedCold'
+>;
 
 export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
   {
@@ -277,27 +314,69 @@ export interface GoalPreviewSeedReport {
 
 /**
  * Write one previewable goal state into `store`, which must be the ONLY holder
- * of its file — the server opens it afterwards, never alongside.
+ * of its file — the server opens it afterwards, never alongside. With
+ * `companions`, the {@link GOAL_PREVIEW_COMPANIONS} are seeded beside the lead.
  */
 export async function seedGoalPreview(
   store: GoalPreviewStore,
   state: GoalPreviewState,
   now: Date,
+  options: { companions?: boolean } = {},
 ): Promise<GoalPreviewSeedReport> {
-  const written = await seedSessions(store, state, now);
-  const key = { userId: LOCAL_USER_ID, exerciseId: GOAL_PREVIEW_EXERCISE.id };
+  const lead: SeededLift = {
+    key: 'goal',
+    exercise: GOAL_PREVIEW_EXERCISE,
+    level: 'specialize',
+    declaredDaysAgo: 28,
+    history: state,
+  };
+  const seeded = await seedLift(store, lead, now);
+  if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, seeded.target, now);
+  if (options.companions === true) {
+    for (const [index, companion] of GOAL_PREVIEW_COMPANIONS.entries()) {
+      await seedLift(store, companionLift(companion, index), now);
+    }
+  }
+  return {
+    priorityId: seeded.priorityId,
+    targetId: seeded.target.id,
+    ...seeded.written,
+    baselineState: seeded.baselineState,
+  };
+}
+
+function companionLift(
+  companion: (typeof GOAL_PREVIEW_COMPANIONS)[number],
+  index: number,
+): SeededLift {
+  return {
+    key: `companion-${index + 1}`,
+    exercise: companion.exercise,
+    level: 'maintain',
+    declaredDaysAgo: 35,
+    history: { weeklyLoadsLbs: companion.weeklyLoadsLbs, targetStartWeeksAgo: 4 },
+  };
+}
+
+/** One lift's sessions, baseline, priority and accepted target, derived as the tools derive them. */
+async function seedLift(
+  store: GoalPreviewStore,
+  lift: SeededLift,
+  now: Date,
+): Promise<{
+  priorityId: string;
+  target: StoredGoalTarget;
+  written: { sessions: number; sets: number; latestLoadLbs: number };
+  baselineState: string;
+}> {
+  const written = await seedSessions(store, lift, now);
+  const key = { userId: LOCAL_USER_ID, exerciseId: lift.exercise.id };
   await store.reharvestExercise(key);
   const baseline = await store.recalcBaseline(key);
-  const priority = await store.putPriority(priorityRow(now));
+  const priority = await store.putPriority(priorityRow(now, lift));
   const context = await readDerivationContext({ store }, priority);
-  const target = await store.putGoalTarget(targetRow(state, now, context));
-  if (state.recalibrationAnswer === 'declined') await seedDeclinedOffer(store, target, now);
-  return {
-    priorityId: priority.id,
-    targetId: target.id,
-    ...written,
-    baselineState: baseline.state,
-  };
+  const target = await store.putGoalTarget(targetRow(lift, now, context));
+  return { priorityId: priority.id, target, written, baselineState: baseline.state };
 }
 
 /** The lifter's "no" to the recalibration offer, as `goal.retire` on the offer row records it. */
@@ -338,31 +417,32 @@ export function seededAt(now: Date, weeksBack: number): string {
 /** One session per weekly load, oldest first, seven days apart so each lands in its own week. */
 async function seedSessions(
   store: GoalPreviewStore,
-  state: GoalPreviewState,
+  lift: SeededLift,
   now: Date,
 ): Promise<{ sessions: number; sets: number; latestLoadLbs: number }> {
-  const weeks = state.weeklyLoadsLbs.length;
+  const { history } = lift;
+  const weeks = history.weeklyLoadsLbs.length;
   let sets = 0;
-  for (const [index, load] of state.weeklyLoadsLbs.entries()) {
+  for (const [index, load] of history.weeklyLoadsLbs.entries()) {
     const at = seededAt(now, weeks - 1 - index);
-    const sessionId = `preview-goal-session-${index + 1}`;
+    const sessionId = `preview-${lift.key}-session-${index + 1}`;
     await store.putSession({
       id: sessionId,
       startedAt: at,
       endedAt: at,
-      exerciseId: GOAL_PREVIEW_EXERCISE.id,
-      exerciseName: GOAL_PREVIEW_EXERCISE.name,
+      exerciseId: lift.exercise.id,
+      exerciseName: lift.exercise.name,
     });
     const newest = index === weeks - 1;
-    const planned = sessionSets(state, load, newest);
+    const planned = sessionSets(history, load, newest);
     const spacingMs = setSpacingMs(at, now, planned.length);
     for (const [order, set] of planned.entries()) {
       const setAt = new Date(Date.parse(at) + order * spacingMs).toISOString();
-      await store.putSet(workingSet(sessionId, setAt, sets++, set.weightLbs, set.reps));
+      await store.putSet(workingSet(lift, sessionId, setAt, sets++, set));
     }
   }
-  const latest = state.weeklyLoadsLbs[weeks - 1] ?? 0;
-  return { sessions: weeks, sets, latestLoadLbs: state.heavySingleLbs ?? latest };
+  const latest = history.weeklyLoadsLbs[weeks - 1] ?? 0;
+  return { sessions: weeks, sets, latestLoadLbs: history.heavySingleLbs ?? latest };
 }
 
 /** Five minutes between sets, squeezed when the session is so recent that five would run past `now`. */
@@ -372,7 +452,7 @@ function setSpacingMs(sessionAt: string, now: Date, setCount: number): number {
 
 /** One session's working sets: the week's load at the anchor, plus the newest week's heavy set. */
 function sessionSets(
-  state: GoalPreviewState,
+  state: GoalPreviewHistory,
   load: number,
   newest: boolean,
 ): { weightLbs: number; reps: number }[] {
@@ -395,13 +475,13 @@ function sessionSets(
  * gives.
  */
 function workingSet(
+  lift: SeededLift,
   sessionId: string,
   at: string,
   index: number,
-  weightLbs: number,
-  reps: number,
+  { weightLbs, reps }: { weightLbs: number; reps: number },
 ): StoredSet {
-  const id = `preview-goal-set-${index + 1}`;
+  const id = `preview-${lift.key}-set-${index + 1}`;
   return {
     id,
     sessionId,
@@ -409,7 +489,7 @@ function workingSet(
     startedAt: at,
     endedAt: at,
     partial: false,
-    exerciseId: GOAL_PREVIEW_EXERCISE.id,
+    exerciseId: lift.exercise.id,
     slot: 'primary',
     setPurpose: 'working',
     weightLbs,
@@ -459,15 +539,15 @@ function rep(setId: string, index: number, velocityMps: number): StoredRep {
   };
 }
 
-function priorityRow(now: Date): Parameters<GoalPreviewStore['putPriority']>[0] {
+function priorityRow(now: Date, lift: SeededLift): Parameters<GoalPreviewStore['putPriority']>[0] {
   return {
-    id: 'preview-goal-priority',
+    id: `preview-${lift.key}-priority`,
     userId: LOCAL_USER_ID,
     horizonWeeks: GOAL_PREVIEW_HORIZON_WEEKS,
     kind: 'lift',
-    ref: GOAL_PREVIEW_EXERCISE.id,
-    level: 'specialize',
-    declaredAt: new Date(now.getTime() - 28 * DAY_MS).toISOString(),
+    ref: lift.exercise.id,
+    level: lift.level,
+    declaredAt: new Date(now.getTime() - lift.declaredDaysAgo * DAY_MS).toISOString(),
     mesosHeld: 1,
   };
 }
@@ -480,18 +560,19 @@ function priorityRow(now: Date): Parameters<GoalPreviewStore['putPriority']>[0] 
  * hand-written, so the goal line and the band agree at acceptance.
  */
 function targetRow(
-  state: GoalPreviewState,
+  lift: SeededLift,
   now: Date,
   context: GoalDerivationContext,
 ): Parameters<GoalPreviewStore['putGoalTarget']>[0] {
-  const startMeasuredAt = seededAt(now, state.targetStartWeeksAgo);
-  const startValue = startLoadOf(state);
-  const band = acceptedBandOf(context, startValue, state.acceptedCold === true ? 'cold' : 'ramp');
+  const { history } = lift;
+  const startMeasuredAt = seededAt(now, history.targetStartWeeksAgo);
+  const startValue = startLoadOf(history);
+  const band = acceptedBandOf(context, startValue, history.acceptedCold === true ? 'cold' : 'ramp');
   return {
-    id: 'preview-goal-target',
-    priorityId: 'preview-goal-priority',
+    id: `preview-${lift.key}-target`,
+    priorityId: `preview-${lift.key}-priority`,
     metric: 'top_load_at_reps',
-    exerciseId: GOAL_PREVIEW_EXERCISE.id,
+    exerciseId: lift.exercise.id,
     anchorReps: GOAL_PREVIEW_ANCHOR_REPS,
     startValue,
     startMeasuredAt,
@@ -512,7 +593,7 @@ function targetRow(
 }
 
 /** The load of the target's own start week: where its band is anchored (VW-449). */
-export function startLoadOf(state: GoalPreviewState): number {
+export function startLoadOf(state: GoalPreviewHistory): number {
   const loads = state.weeklyLoadsLbs;
   return loads[Math.max(0, loads.length - 1 - state.targetStartWeeksAgo)] ?? 0;
 }

@@ -136,7 +136,15 @@ export const CAPTURE_SCENARIOS: readonly CaptureScenario[] = [
     // lift a priority, accepts the coach's proposed band, then drives a
     // working set and a heavier set that passes it — the reading the goals
     // page's PR badge and trajectory chart need (VW-389).
-    args: ['--goal=cable-chest-press', '--port={port}', '--control-port={controlPort}'],
+    // Two companion lifts at `maintain` give the page its Per-lift section, which
+    // never lists the lead (VW-467). The tricep extension lists first so its long
+    // name wraps inside the phone shot's viewport.
+    args: [
+      '--goal=cable-chest-press',
+      '--goal-companions=cable-overhead-tricep-extension:40,cable-row:100',
+      '--port={port}',
+      '--control-port={controlPort}',
+    ],
   },
   {
     name: 'body',
@@ -387,14 +395,13 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     route: '/app#/goals',
     caption:
       'The goal-coach wall page, with an accepted target and a personal record from the heavier set.',
-    // 2, not 1: the goal driver seeds one PREVIOUS-week session directly into
-    // the store before the server even opens (the reading the driven PR set
-    // has to pass), so `minSessions: 1` was satisfied at server startup,
-    // before `goal.declare_priorities` ever ran — the shot opened on an empty
-    // "No priorities declared" page every time (VW-389).
-    waitFor: { kind: 'sessions-ended', minSessions: 2 },
-    // No Per-lift section: the seed's one lift is the lead, which Per-lift omits (VW-467).
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Whole body'],
+    // 4: the goal driver seeds one PREVIOUS-week session per lift (the lead and
+    // its two companions) directly into the store before the server even opens,
+    // so any count up to 3 was satisfied at server startup, before
+    // `goal.declare_priorities` ever ran — the shot opened on an empty
+    // "No priorities declared" page (VW-389). The fourth is the driven session.
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
@@ -406,9 +413,9 @@ export const CAPTURE_SHOTS: readonly CaptureShot[] = [
     // Same state as `goals` — this shot proves the phone layout (VW-356), not
     // a different read of the pipeline, so it reuses that shot's predicate
     // and content rather than re-deriving one.
-    waitFor: { kind: 'sessions-ended', minSessions: 2 },
+    waitFor: { kind: 'sessions-ended', minSessions: 4 },
     viewport: PHONE_VIEWPORT,
-    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'Whole body'],
+    expectText: ['CABLE CHEST PRESS', 'Calibrating', 'to goal', 'PER-LIFT', 'Whole body'],
     expectValues: GOALS_VALUES,
     holdsPageOpen: false,
   },
