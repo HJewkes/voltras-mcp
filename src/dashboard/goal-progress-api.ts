@@ -124,8 +124,9 @@ async function readActuals(
   }
   if (target.metric === 'bodyweight') {
     const recent = await store.listBodyMetrics(LOCAL_USER_ID, { sinceDays: 30 });
+    // The store lists newest first; every reader of `actuals` takes the last entry as the newest.
     return {
-      actuals: recent.map((entry) => ({
+      actuals: [...recent].reverse().map((entry) => ({
         ts: entry.measuredAt,
         value: entry.bodyweightLbs,
         matched: true,
