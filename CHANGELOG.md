@@ -48,6 +48,15 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- Training blocks can carry real dates. `plan.block.create` takes a Monday `startsOn`, and can
+  build the block's empty weeks and flag its deloads in the same call. `plan.block.schedule`
+  dates, moves or un-dates a block that has not started, and with `cascade` moves the blocks
+  after it by the same number of weeks. `plan.block.update` renames or resizes a block,
+  `plan.week.update` flags a week as a deload, and `plan.week.skip` records a missed week: the
+  calendar holds unless the lifter chooses to push the block a week later, and the coach asks
+  each time. `plan.block.calendar` shows each dated week with its planned workouts and the days
+  trained, and `plan.block.schedule_history` lists every change with who made it and why.
+  Blocks never overlap, run in program order, and cannot move once they have started (VW-474).
 - A set in progress or a rest countdown now stays in view on every dashboard page, not just
   the live one. A one-row strip above the page shows the exercise, set n of m, the rep count,
   the last rep's velocity with one bar per rep, and the rest seconds left; pressing it returns

@@ -1823,6 +1823,14 @@ export interface SessionStore extends ExerciseSetupStore {
   /** Upsert a block (mesocycle) within a program. */
   putTrainingBlock(b: StoredTrainingBlock): Promise<void>;
   /**
+   * Upsert a block and append one schedule row for it in ONE transaction (VW-474): a dated
+   * block's length and its live row's length must never disagree (I6), even after a failure.
+   */
+  putTrainingBlockWithSchedule(
+    b: StoredTrainingBlock,
+    schedule: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule>;
+  /**
    * Look up a block by id. One of the three by-id getters that make the
    * planning tree walkable UPWARD (set → planned exercise → template → week →
    * block → program); without them the only way from a leaf back to its
@@ -1931,6 +1939,12 @@ export interface SessionStore extends ExerciseSetupStore {
    * a Monday. There is deliberately no update or delete: the table is append-only.
    */
   appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule>;
+
+  /**
+   * Append several schedule rows in ONE transaction: all land or none do. A cascaded move
+   * writes one row per block, and a half-applied cascade would leave blocks overlapping.
+   */
+  appendBlockSchedules(inputs: readonly AppendBlockScheduleInput[]): Promise<StoredBlockSchedule[]>;
 
   /** The block's live schedule row (highest `seq`), or `undefined` for an undated block. */
   getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined>;

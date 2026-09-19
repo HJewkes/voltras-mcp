@@ -66,6 +66,7 @@ import { movementClassForExerciseId, velocityLossIsValidFor } from '../exercises
 import { computePercentIncrement } from '../analytics/percent-increment.js';
 import {
   LOCAL_USER_ID,
+  type AppendBlockScheduleInput,
   type StoredPlannedExercise,
   type StoredProgramAssignment,
   type StoredSet,
@@ -76,6 +77,13 @@ import {
   type TrainingFocus,
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
+import {
+  assertCreateKeepsSchedule,
+  calendarOf,
+  datingRow,
+  todayLocal,
+} from './plan-schedule-tools.js';
+import type { BlockCalendar } from '../plan/block-calendar.js';
 import { getTierSignal, type Tier, type TierConfidence, type TierSource } from './tier-signal.js';
 
 class ToolError extends Error {
@@ -113,7 +121,16 @@ const PLAN_BLOCK_CREATE_DESCRIPTION =
   'Create a training block (mesocycle) under a program — takes the parent programId. A block ' +
   'holds one or more weeks. Passing the `id` of an EXISTING block updates it in place; if that ' +
   'raises `weeksCount` after weeks were already built under it, `warnings[]` carries a ' +
-  '`meso_length_grew_mid_block` advisory (VMCP-06.03 / B32). Never blocks the write.';
+  '`meso_length_grew_mid_block` advisory (VMCP-06.03 / B32); that advisory never blocks the ' +
+  'write. DATES (VW-474): `startsOn`, a local calendar date on a Monday, dates the block: it ' +
+  'runs whole weeks and ends on the Sunday of its last week. A start that would overlap another ' +
+  'dated block, or put the program out of order (block 2 before block 1), is refused and the ' +
+  'error names the other block. Plan blocks AHEAD of when they start. `scaffoldWeeks: true` ' +
+  'builds one empty week row per week ("Week 1" onwards) for a block with none, and ' +
+  '`deloadWeeks` (1-based week numbers) flags which of them are deloads. An existing dated ' +
+  'block keeps its dates, length, program and order here: use plan.block.schedule and ' +
+  'plan.block.update. Returns the block, its weeks, its calendar and the schedule row written ' +
+  '(or null).';
 const PLAN_BLOCK_LIST_DESCRIPTION = 'List the blocks belonging to one program (takes programId).';
 
 const PLAN_WEEK_CREATE_DESCRIPTION =
@@ -447,7 +464,13 @@ async function archiveProgram(
 async function createBlock(
   state: ServerState,
   input: z.infer<typeof PlanBlockCreateInput>,
-): Promise<{ block: StoredTrainingBlock; warnings: PlanWarning[] }> {
+): Promise<{
+  block: StoredTrainingBlock;
+  warnings: PlanWarning[];
+  weeks: StoredTrainingWeek[];
+  calendar: BlockCalendar;
+  scheduleRow: { seq: number; kind: string } | null;
+}> {
   const id = input.id ?? randomUUID();
   // `putTrainingBlock` upserts by id, so a caller passing a known id is
   // editing that block in place — this is the only seam that can tell
@@ -462,9 +485,75 @@ async function createBlock(
     ...(input.focus !== undefined ? { focus: input.focus } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
   };
-  await state.store.putTrainingBlock(block);
+  const today = todayLocal();
+  const dating = await checkBlockCreate(state, previous, block, input, today);
+  const written =
+    dating === null ? null : await state.store.putTrainingBlockWithSchedule(block, dating);
+  if (dating === null) await state.store.putTrainingBlock(block);
+  if (input.scaffoldWeeks === true) await scaffoldWeeks(state, block, input.deloadWeeks ?? []);
   const warnings = await lintMesoLength(state, previous, block);
-  return { block, warnings };
+  return {
+    block,
+    warnings,
+    weeks: await state.store.getTrainingWeeksForBlock(id),
+    calendar: await calendarOf(state, id, today),
+    scheduleRow: written === null ? null : { seq: written.seq, kind: written.kind },
+  };
+}
+
+/** Everything `plan.block.create` refuses, checked before any write; returns the dating row. */
+async function checkBlockCreate(
+  state: ServerState,
+  previous: StoredTrainingBlock | undefined,
+  block: StoredTrainingBlock,
+  input: z.infer<typeof PlanBlockCreateInput>,
+  today: string,
+): Promise<AppendBlockScheduleInput | null> {
+  const deloads = input.deloadWeeks ?? [];
+  if (deloads.length > 0 && input.scaffoldWeeks !== true) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      'deloadWeeks flags scaffolded weeks; pass scaffoldWeeks: true.',
+    );
+  }
+  const outside = deloads.find((week) => week > block.weeksCount);
+  if (outside !== undefined) {
+    throw new ToolError(
+      'INVALID_INPUT',
+      `deloadWeeks names week ${outside} of a ${block.weeksCount}-week block.`,
+    );
+  }
+  if (input.scaffoldWeeks === true && previous !== undefined) {
+    const existing = await state.store.getTrainingWeeksForBlock(block.id);
+    if (existing.length > 0) {
+      throw new ToolError(
+        'WEEKS_EXIST',
+        `"${previous.name}" already has week rows; scaffoldWeeks only builds an empty block.`,
+      );
+    }
+  }
+  if (previous !== undefined) {
+    await assertCreateKeepsSchedule(state, previous, block, input.startsOn);
+  }
+  if (input.startsOn === undefined) return null;
+  return datingRow(state, block, input.startsOn, today, input.reason);
+}
+
+/** One plan week row per week of the block, "Week 1" onwards, flagging the named deloads. */
+async function scaffoldWeeks(
+  state: ServerState,
+  block: StoredTrainingBlock,
+  deloadWeeks: readonly number[],
+): Promise<void> {
+  for (let n = 1; n <= block.weeksCount; n++) {
+    await state.store.putTrainingWeek({
+      id: randomUUID(),
+      blockId: block.id,
+      orderIndex: n - 1,
+      name: `Week ${n}`,
+      isDeload: deloadWeeks.includes(n),
+    });
+  }
 }
 
 /**

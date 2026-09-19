@@ -139,6 +139,8 @@ function makeStore(): SessionStore & {
     getTrainingBlocksForProgram: vi.fn(async () => []),
     putTrainingWeek: vi.fn(async () => {}),
     getTrainingWeeksForBlock: vi.fn(async () => []),
+    // Read by `plan.block.create` for the block's calendar (VW-474); every block here is undated.
+    getLiveBlockSchedule: vi.fn(async () => undefined),
     putWorkoutTemplate: vi.fn(async () => {}),
     getWorkoutTemplate: vi.fn(async () => undefined),
     getWorkoutTemplatesForWeek: vi.fn(async () => []),

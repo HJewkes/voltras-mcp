@@ -3261,6 +3261,29 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putTrainingBlock(b: StoredTrainingBlock): Promise<void> {
+    this.writeTrainingBlock(b);
+    return Promise.resolve();
+  }
+
+  async putTrainingBlockWithSchedule(
+    b: StoredTrainingBlock,
+    schedule: AppendBlockScheduleInput,
+  ): Promise<StoredBlockSchedule> {
+    const problem = scheduleProblem(schedule);
+    if (problem !== null) throw blockScheduleInvalid(schedule.blockId, problem);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.writeTrainingBlock(b);
+      const row = this.insertBlockSchedule(schedule);
+      this.db.exec('COMMIT');
+      return Promise.resolve(row);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private writeTrainingBlock(b: StoredTrainingBlock): void {
     this.db
       .prepare(
         `INSERT INTO training_blocks
@@ -3275,7 +3298,6 @@ export class SqliteSessionStore implements SessionStore {
            notes = excluded.notes`,
       )
       .run(b.id, b.programId, b.orderIndex, b.name, b.focus ?? null, b.weeksCount, b.notes ?? null);
-    return Promise.resolve();
   }
 
   async getTrainingBlock(id: string): Promise<StoredTrainingBlock | undefined> {
@@ -3711,25 +3733,35 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule> {
-    const problem = scheduleProblem(input);
-    if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+    const [row] = await this.appendBlockSchedules([input]);
+    return row;
+  }
+
+  async appendBlockSchedules(
+    inputs: readonly AppendBlockScheduleInput[],
+  ): Promise<StoredBlockSchedule[]> {
+    for (const input of inputs) {
+      const problem = scheduleProblem(input);
+      if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const last = this.db
-        .prepare(`SELECT MAX(seq) AS seq FROM block_schedules WHERE block_id = ?`)
-        .get(input.blockId) as { seq: number | null } | undefined;
-      const row: StoredBlockSchedule = {
-        ...input,
-        id: randomUUID(),
-        seq: (last?.seq ?? 0) + 1,
-      };
-      this.db.prepare(INSERT_BLOCK_SCHEDULE_SQL).run(...blockScheduleBindings(row));
+      const rows = inputs.map((input) => this.insertBlockSchedule(input));
       this.db.exec('COMMIT');
-      return Promise.resolve(row);
+      return Promise.resolve(rows);
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  private insertBlockSchedule(input: AppendBlockScheduleInput): StoredBlockSchedule {
+    const last = this.db
+      .prepare(`SELECT MAX(seq) AS seq FROM block_schedules WHERE block_id = ?`)
+      .get(input.blockId) as { seq: number | null } | undefined;
+    const row: StoredBlockSchedule = { ...input, id: randomUUID(), seq: (last?.seq ?? 0) + 1 };
+    this.db.prepare(INSERT_BLOCK_SCHEDULE_SQL).run(...blockScheduleBindings(row));
+    return row;
   }
 
   async getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined> {

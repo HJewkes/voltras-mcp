@@ -274,3 +274,41 @@ describe('goal_targets.block_id', () => {
     expect(target?.blockId).toBe('blk');
   });
 });
+
+describe('writes that must land together (VW-474)', () => {
+  it('rolls back the block update when its schedule row fails to insert (I6)', async () => {
+    await store.appendBlockSchedule(planned());
+    dbOf().exec(`CREATE TRIGGER fail_schedule_insert BEFORE INSERT ON block_schedules
+      BEGIN SELECT RAISE(ABORT, 'injected failure'); END;`);
+    const block = await store.getTrainingBlock('blk');
+
+    const write = store.putTrainingBlockWithSchedule(
+      { ...block!, weeksCount: 8 },
+      planned({ weeksCount: 8, kind: 'resized' }),
+    );
+
+    await expect(write).rejects.toThrow('injected failure');
+    expect((await store.getTrainingBlock('blk'))?.weeksCount).toBe(6);
+    expect(await store.listBlockScheduleHistory('blk')).toHaveLength(1);
+  });
+
+  it('appends a cascade all or nothing', async () => {
+    await store.putTrainingBlock({
+      id: 'blk2',
+      programId: 'prog',
+      orderIndex: 1,
+      name: 'Next',
+      weeksCount: 2,
+    });
+    dbOf().exec(`CREATE TRIGGER fail_second_block BEFORE INSERT ON block_schedules
+      WHEN NEW.block_id = 'blk2' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;`);
+
+    const write = store.appendBlockSchedules([
+      planned(),
+      planned({ blockId: 'blk2', weeksCount: 2 }),
+    ]);
+
+    await expect(write).rejects.toThrow('injected failure');
+    expect(await store.listBlockScheduleHistory('blk')).toEqual([]);
+  });
+});

@@ -16,6 +16,9 @@ import { IdSchema, SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
 import { TrainingIntent } from './set.js';
 
+/** A local calendar date, 'YYYY-MM-DD'. The Monday rule is checked by the handler, which can name the Monday meant. */
+const LocalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a date as YYYY-MM-DD');
+
 // --- programs ---
 
 export const PlanProgramCreateInput = z
@@ -55,6 +58,45 @@ export const PlanBlockCreateInput = z
     focus: z.string().optional(),
     weeksCount: z.number().int().min(1),
     notes: z.string().optional(),
+    // VW-474: dates the block from a local Monday, appending its first schedule row.
+    startsOn: LocalDate.optional(),
+    // 1-based plan weeks to flag as deload; only with `scaffoldWeeks`.
+    deloadWeeks: z.array(z.number().int().min(1)).optional(),
+    scaffoldWeeks: z.boolean().optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const PlanBlockUpdateInput = z
+  .object({
+    blockId: IdSchema,
+    name: z.string().min(1).optional(),
+    focus: z.string().optional(),
+    notes: z.string().optional(),
+    weeksCount: z.number().int().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const PlanBlockScheduleInput = z
+  .object({
+    blockId: IdSchema,
+    // `null` un-dates an upcoming block and keeps the dates it had in its history.
+    startsOn: LocalDate.nullable(),
+    reason: z.string().min(1).optional(),
+    cascade: z.enum(['none', 'later_blocks']).optional(),
+  })
+  .strict();
+
+export const PlanBlockScheduleHistoryInput = z
+  .object({
+    blockId: IdSchema,
+  })
+  .strict();
+
+export const PlanBlockCalendarInput = z
+  .object({
+    blockId: IdSchema,
   })
   .strict();
 
@@ -78,6 +120,26 @@ export const PlanWeekCreateInput = z
     isDeload: z.boolean().optional(),
     // Mesocycle week index, distinct from `orderIndex` (position within the block).
     weekIndex: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const PlanWeekUpdateInput = z
+  .object({
+    weekId: IdSchema,
+    isDeload: z.boolean().optional(),
+    name: z.string().min(1).optional(),
+    phaseType: z.string().optional(),
+  })
+  .strict();
+
+export const PlanWeekSkipInput = z
+  .object({
+    blockId: IdSchema,
+    // The calendar week as `plan.block.calendar` numbers it, counting from 1.
+    week: z.number().int().min(1),
+    reason: z.string().min(1).optional(),
+    // Omitted means the lifter did not choose: the calendar holds, recorded as the coach's default.
+    mode: z.enum(['hold', 'extend']).optional(),
   })
   .strict();
 

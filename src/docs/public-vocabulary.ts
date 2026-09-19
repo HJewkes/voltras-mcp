@@ -516,6 +516,11 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'loggedHistoryMet',
   'longestLoggedGapDays',
   'lastBreakQuestion',
+  // VW-474: dated blocks. `plan.block.calendar`'s per-week template count and
+  // local training days, and the schedule-row kind a missed week records.
+  'sessionDays',
+  'templateCount',
+  'week_skipped',
 ];
 
 /**
