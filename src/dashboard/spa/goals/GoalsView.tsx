@@ -142,11 +142,20 @@ function WithCalibrationNote(props: {
  */
 const CARD_MIN_WIDTH = 420;
 
+/**
+ * The phone column. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the track at the
+ * card's min-content, and a compact card's charts start at titan's default width before
+ * the card measures itself, so the column locked wider than the page (VW-454).
+ */
+const NARROW_COLUMN = 'minmax(0, 1fr)';
+
 /** Narrow (VW-356): one full-width column; the wall's minimum is wider than a phone's content box. */
 function cardGridStyle(narrow: boolean): React.CSSProperties {
   return {
     display: 'grid',
-    gridTemplateColumns: narrow ? '1fr' : `repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`,
+    gridTemplateColumns: narrow
+      ? NARROW_COLUMN
+      : `repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`,
     gap: SPACE.md,
     alignItems: 'stretch',
   };
