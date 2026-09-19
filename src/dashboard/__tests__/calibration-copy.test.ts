@@ -4,7 +4,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { RECALIBRATION_OFFERED_LINE, calibrationCopy } from '../spa/goals/calibration-copy.js';
+import {
+  CHART_NOTE_MAX_CHARS,
+  RECALIBRATION_OFFERED_LINE,
+  calibrationCopy,
+} from '../spa/goals/calibration-copy.js';
 import type { GoalCalibrationView } from '../read-models/index.js';
 
 function calibration(over: Partial<GoalCalibrationView>): GoalCalibrationView {
@@ -41,7 +45,7 @@ describe('calibrationCopy', () => {
     expect(copy).toEqual({
       sentence:
         'Starting ramp, not yet based on your lifts. Calibrates after a set taken near failure.',
-      chartNote: 'Needs a set taken near failure',
+      chartNote: 'Needs a set near failure',
     });
     expect(copy.sentence).not.toMatch(/\d/);
   });
@@ -65,7 +69,7 @@ describe('calibrationCopy', () => {
       sentence:
         'Starting ramp, not yet based on your lifts. Calibrates after 2 more comparable sessions ' +
         'and more working sets of this lift.',
-      chartNote: '2 more comparable sessions and more working sets of this lift',
+      chartNote: '2 sessions, more working sets',
     });
   });
 
@@ -81,5 +85,45 @@ describe('the recalibration line (VW-444 part 2)', () => {
     expect(RECALIBRATION_OFFERED_LINE).toBe(
       'Calibrated. Your goal is still the starting ramp; a target based on your lifts is ready.',
     );
+  });
+});
+
+describe('the in-plot chart note (fits one line at phone width)', () => {
+  it.each<[string, Partial<GoalCalibrationView>, string]>([
+    ['sessions', { sessionsNeeded: 1, blockedBy: 'sessions' }, '1 more comparable session'],
+    [
+      'a shape-only baseline',
+      { sessionsNeeded: 0, blockedBy: 'baseline', baselineState: 'SHAPE_ONLY' },
+      'Needs a set near failure',
+    ],
+    [
+      'a cold baseline',
+      { sessionsNeeded: 0, blockedBy: 'baseline', baselineState: 'COLD' },
+      'Needs more working sets',
+    ],
+    [
+      'both',
+      { sessionsNeeded: 1, blockedBy: 'both', baselineState: 'COLD' },
+      '1 session, more working sets',
+    ],
+  ])('names only the count or the blocker for %s', (_name, over, note) => {
+    expect(calibrationCopy(calibration(over)).chartNote).toBe(note);
+  });
+
+  // Measured at 360 wide: the note's line runs from x=34 to x=204 (170 px), and these notes
+  // average about 5.4 px a character, so 30 characters is about 162 px.
+  it(`never runs past ${CHART_NOTE_MAX_CHARS} characters for any single-digit count`, () => {
+    const blockers = ['sessions', 'baseline', 'both'] as const;
+    const baselines = ['COLD', 'SHAPE_ONLY'] as const;
+    for (let sessionsNeeded = 1; sessionsNeeded <= 9; sessionsNeeded++) {
+      for (const blockedBy of blockers) {
+        for (const baselineState of baselines) {
+          const { chartNote } = calibrationCopy(
+            calibration({ sessionsNeeded, blockedBy, baselineState }),
+          );
+          expect(chartNote.length, chartNote).toBeLessThanOrEqual(CHART_NOTE_MAX_CHARS);
+        }
+      }
+    }
   });
 });
