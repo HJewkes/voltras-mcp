@@ -418,8 +418,21 @@ interface FittedHistoryTrend {
   trend: NonNullable<Awaited<ReturnType<typeof computeHistoryTrend>>['trend']>;
 }
 
-/** The lift metrics whose band is anchored to a stored target's own frame. */
-const FRAMED_METRICS: readonly GoalMetric[] = ['top_load_at_reps', 'reps_at_load', 'e1rm_trend'];
+/**
+ * The metrics whose band is anchored to a stored target's own frame. Every
+ * metric that stores a start value is (VW-449 lifts, VW-451 bodyweight and the
+ * session count); `composite_strength` never stores a target.
+ */
+const FRAMED_METRICS: readonly GoalMetric[] = [
+  'top_load_at_reps',
+  'reps_at_load',
+  'e1rm_trend',
+  'bodyweight',
+  'sessions_28d',
+];
+
+/** The lift metrics a fitted slope can carry; `e1rm_trend` has never had one. */
+const SLOPED_METRICS: readonly GoalMetric[] = ['top_load_at_reps', 'reps_at_load'];
 
 /** The gain selection a stored target was derived from. */
 export function selectionOf(target: StoredGoalTarget): GoalGainMetric {
@@ -433,11 +446,11 @@ export function selectionOf(target: StoredGoalTarget): GoalGainMetric {
 }
 
 /**
- * A stored lift target's band, re-derived INSIDE its own frame (VW-449): the
- * target's start value on week 1 of its block, never today's latest lift.
- * Today's evidence still decides the info level and, where earned, supplies
- * the fitted slope, expressed against the frame's own start value. Other
- * metrics derive as `deriveTarget` does.
+ * A stored target's band, re-derived INSIDE its own frame: the target's start
+ * value on week 1 of its block, never today's latest lift (VW-449), today's
+ * 30-day mean weight or today's session count (VW-451). Today's evidence still
+ * decides the info level and, for a lift that earned one, supplies the fitted
+ * slope, expressed against the frame's own start value.
  */
 export async function deriveTargetInFrame(
   state: GoalDerivationState,
@@ -447,12 +460,12 @@ export async function deriveTargetInFrame(
   const selection = selectionOf(frame);
   const today = await deriveTarget(state, context, selection);
   if (!('band' in today) || !FRAMED_METRICS.includes(frame.metric)) return today;
-  if (frame.exerciseId === undefined || frame.startValue <= 0) return today;
+  if (frame.startValue <= 0) return today;
   const anchorReps = frame.anchorReps ?? today.anchorReps;
   const slope =
-    frame.metric === 'e1rm_trend'
-      ? {}
-      : await readOwnSlope(state, frame.exerciseId, frame.startValue);
+    frame.exerciseId !== undefined && SLOPED_METRICS.includes(frame.metric)
+      ? await readOwnSlope(state, frame.exerciseId, frame.startValue)
+      : {};
   return bandFor(context, selection, {
     startValue: frame.startValue,
     startMeasuredAt: frame.startMeasuredAt,

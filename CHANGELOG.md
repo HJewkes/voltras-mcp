@@ -168,6 +168,14 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
+  one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
+  backwards. It now shows and judges the newest reading (VW-451).
+- A bodyweight goal's band now starts at the goal's own start weight on week 1 of its block,
+  instead of re-centring on the last 30 days' mean on every read. A cut's loss line and a
+  maintenance corridor now stay where the goal set them. A 28-day session commitment's band
+  holds flat at the count committed to, not today's count. The page draws no bodyweight
+  chart yet, so this shows only in the goal-progress data and its status (VW-451).
 - A lift goal's band now starts where the goal did. The goals page drew each band from the
   lifter's latest top load, so the line restarted wherever they were now and moved with them
   on every read. A lifter who climbed 100 to 146 lb saw a band starting at 146 and was judged
