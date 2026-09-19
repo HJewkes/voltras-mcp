@@ -1,5 +1,5 @@
 {
-  "definitionHash": "172b68dc12acc2e88b207fc700f44bc35ff119905a115dfa2af3ea22f84a8d73",
+  "definitionHash": "3ef21a06132c456e2983c49eaff2d5ccb5c3ef3156f1a83b423a490e969a8a1a",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -74,16 +74,16 @@
         "Push A · Hypertrophy"
       ],
       "assertedValues": [
-        "VOLUME 5 TONNAGE 0 lbs",
+        "VOLUME 5 TONNAGE 700 lbs",
         "1/8 sets",
-        "SET REPS LBS RPE 1 5 0 —",
-        "SET VERDICT 5 Reps 0 lbs 12%",
+        "SET REPS LBS RPE 1 5 140 —",
+        "SET VERDICT 5 Reps 140 lbs 12%",
         "Next · Cable Chest Press · set 2 of 3"
       ],
       "width": 1440,
       "height": 900,
-      "bytes": 104539,
-      "sha256": "47b8cb0ebaa548eabb0d1c63c60148ed2928f269fe5db2505a1159b9bc17e267"
+      "bytes": 106126,
+      "sha256": "d938a03e5b06a120e56cf9db450d7bd8a2cdd76a46e4ac16d9e54f41a48fa55b"
     },
     {
       "name": "session-summary",
@@ -260,7 +260,7 @@
       "sha256": "3c621e2eee44951e7013a2079aa4e230a05f8da134ae4c262a2584a1f07ffe51"
     }
   ],
-  "clipDefinitionHash": "fae4c4b649547565168f3766bbf3a86d85c9776ee64d9c0b1303cd3421ba5403",
+  "clipDefinitionHash": "608e12dc1d0b4fb606157cab9b1068c2c5226620a20dd4c88134de40305a3365",
   "clipSize": {
     "width": 1280,
     "height": 800
@@ -300,31 +300,31 @@
       "assertedValues": [
         "Cable Chest Press 3 × 8–10 @ 140 lbs",
         "0.50 0.49 0.47 0.46 0.44 0.43 0.41 0.40",
-        "VOLUME 8 TONNAGE 0 lbs"
+        "VOLUME 8 TONNAGE 1.1k lbs"
       ],
       "width": 1280,
       "height": 800,
       "fps": 25,
-      "seconds": 33.36,
-      "bytes": 609738,
+      "seconds": 33.32,
+      "bytes": 598007,
       "frames": [
         {
           "atSeconds": 5,
-          "bytes": 239920,
-          "sha256": "16b7e3d6a7fdf0358dfa4cd35bcb863fd5861222505f79f718dd3261f3150389"
+          "bytes": 228333,
+          "sha256": "a0cf38b66b1c8cb46c898dc4418d8a2eee705e83aab7b3955a83e81993dadc22"
         },
         {
-          "atSeconds": 16.68,
-          "bytes": 196857,
-          "sha256": "ba968e8ae3d91f1f05887f40d1e77a56bd974435f15953762ec4593871d0c4b2"
+          "atSeconds": 16.66,
+          "bytes": 194637,
+          "sha256": "66750f7ae4c5e1bf395feeacff8118c718292b6a8826c6efbc2b8bb48f3a06aa"
         },
         {
-          "atSeconds": 28.36,
-          "bytes": 201241,
-          "sha256": "6b2ac2d2082642e3b879e6fdbd74732ad22344e334e15eb81ff8078648c645ba"
+          "atSeconds": 28.32,
+          "bytes": 200546,
+          "sha256": "e5d080028b916fac15416da480092b163fd81c9ba15ba80e5114004898b7063f"
         }
       ],
-      "sha256": "e011a88fe8c5362a2d7a7bb93f752db1c3f5af4d998740e3e6af0b19a1ceb1ad"
+      "sha256": "8300eae8f64f1dff0f78e05c8cb587a303df5255d5412fc72e7158c140a36fa1"
     },
     {
       "name": "dual-divergence",
