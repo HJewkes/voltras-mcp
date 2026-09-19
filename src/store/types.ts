@@ -932,6 +932,8 @@ export interface StoredGoalTarget {
   anchorReps?: number;
   /** The fixed load a `reps_at_load` target counts reps at (VW-399, v31). Absent on older rows. */
   anchorLoad?: number;
+  /** The block this target was set for (VW-473, v33). Absent on older rows and unbound targets. */
+  blockId?: string;
   startValue: number;
   startMeasuredAt: string;
   bandLowPctPerWeek: number;
@@ -951,6 +953,53 @@ export interface StoredGoalTarget {
   outcome?: StoredGoalTargetOutcome;
   newChapterAt?: string;
 }
+
+/** Why a `block_schedules` row was written (VW-473). */
+export const BLOCK_SCHEDULE_KINDS = [
+  'planned',
+  'moved',
+  'resized',
+  'week_skipped',
+  'cleared',
+] as const;
+export type BlockScheduleKind = (typeof BLOCK_SCHEDULE_KINDS)[number];
+
+/** Who wrote a `block_schedules` row: the lifter, the coach's approved default, or an import. */
+export const BLOCK_SCHEDULE_CHANGED_BY = ['user', 'coach-default', 'import'] as const;
+export type BlockScheduleChangedBy = (typeof BLOCK_SCHEDULE_CHANGED_BY)[number];
+
+/**
+ * A missed calendar week, keyed by the local Monday it starts on, so its identity does not
+ * depend on the order earlier skips were applied. `hold` keeps the block's end date and marks
+ * that week's plan week held; `extend` inserts an off week there and moves every later plan
+ * week one week on.
+ */
+export interface BlockScheduleSkip {
+  weekOf: string;
+  mode: 'hold' | 'extend';
+  reason?: string;
+}
+
+/**
+ * One row of `block_schedules` (VW-473, v33): a COMPLETE snapshot of one block's calendar,
+ * never a delta and never edited. The live schedule is the row with the highest `seq`.
+ * `startsOn` is a local ISO date on a Monday, absent only on a `cleared` row.
+ */
+export interface StoredBlockSchedule {
+  id: string;
+  blockId: string;
+  seq: number;
+  startsOn?: string;
+  weeksCount: number;
+  skips: BlockScheduleSkip[];
+  kind: BlockScheduleKind;
+  reason?: string;
+  changedBy: BlockScheduleChangedBy;
+  declaredAt: string;
+}
+
+/** What a caller supplies to append a schedule row; the store assigns `id` and `seq`. */
+export type AppendBlockScheduleInput = Omit<StoredBlockSchedule, 'id' | 'seq'>;
 
 /** Options for {@link SessionStore.listPriorities}. Retired rows are excluded by default. */
 export interface ListPrioritiesOptions {
@@ -1870,6 +1919,22 @@ export interface SessionStore extends ExerciseSetupStore {
    * phase and a different claim entirely.
    */
   declareDietPhase(input: DeclareDietPhaseInput): Promise<StoredDietPhase>;
+
+  /**
+   * Append one complete schedule snapshot for a block (VW-473). The store assigns `seq` as
+   * the block's next number, so the history is gap-free, and refuses a `startsOn` that is not
+   * a Monday. There is deliberately no update or delete: the table is append-only.
+   */
+  appendBlockSchedule(input: AppendBlockScheduleInput): Promise<StoredBlockSchedule>;
+
+  /** The block's live schedule row (highest `seq`), or `undefined` for an undated block. */
+  getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined>;
+
+  /** One live row per block that has any schedule, `cleared` rows included. */
+  listLiveBlockSchedules(): Promise<StoredBlockSchedule[]>;
+
+  /** Every schedule row of one block, oldest `seq` first. */
+  listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]>;
 
   /** Every declared range for a user, oldest-first. */
   listDietPhases(userId: string): Promise<StoredDietPhase[]>;
