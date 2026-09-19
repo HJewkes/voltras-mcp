@@ -107,6 +107,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- The dashboard picks up `@titan-design/react-ui` 0.20.0, which changes three things you can
+  see. A goal still calibrating draws its readings as plain dots, the next target as a hollow
+  dot, the starting ramp as a dashed line, and the weeks ahead hatched. A goal card on a
+  narrow screen moves its marks under the name and wraps a long name rather than cutting it
+  off. The pinned strip colours its bars by loss from the set's best rep, the same as the live
+  page, with taller bars and one label row (VW-432, VW-433, VW-429).
+
 - The live page's rest timer now counts down after every set, not only when the plan set a
   rest. Without a planned rest it counts down the training-goal default `timer.start` uses
   (150 s strength, 105 s hypertrophy, 120 s otherwise, and up to 60 s more when the last set
