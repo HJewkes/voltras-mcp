@@ -35,8 +35,24 @@
 // PURE. Every input is already-shaped observation data; nothing here touches
 // the store, the device, or the clock.
 
+import { getRepMeanVelocity, type Rep } from '@voltras/workout-analytics';
+
 /** Stamped onto every model this module fits. Bump on any change below. */
 export const RIR_VELOCITY_MODEL_VERSION = 'rir-velocity@1.0.0';
+
+declare const rirModelVelocityBrand: unique symbol;
+
+/**
+ * A velocity on the measure the curve is fitted on: a rep's MEAN concentric
+ * velocity, m/s. Only {@link rirModelVelocity} makes one, so a peak cannot be
+ * handed to {@link rirForVelocity} by mistake (VW-483).
+ */
+export type RirModelVelocityMps = number & { readonly [rirModelVelocityBrand]: true };
+
+/** The one velocity the curve is fitted on and read with (VW-483). */
+export function rirModelVelocity(rep: Rep): RirModelVelocityMps {
+  return getRepMeanVelocity(rep) as RirModelVelocityMps;
+}
 
 /** The source of a set's reps-in-reserve anchor. */
 export type RirAnchorSource = 'failure' | 'self_report';
@@ -45,7 +61,7 @@ export type RirAnchorSource = 'failure' | 'self_report';
 export interface RirVelocityPoint {
   /** Reps in reserve at this rep. 0 is the last rep of a set taken to failure. */
   rir: number;
-  /** Mean concentric velocity, m/s. */
+  /** Mean concentric velocity, m/s, from {@link rirModelVelocity}. */
   velocityMps: number;
 }
 
@@ -304,7 +320,10 @@ export interface RirVelocityReading {
  * read stays on that same footing: the caller hands a raw velocity, not a
  * loss figure.
  */
-export function rirForVelocity(model: RirVelocityModel, velocityMps: number): RirVelocityReading {
+export function rirForVelocity(
+  model: RirVelocityModel,
+  velocityMps: RirModelVelocityMps,
+): RirVelocityReading {
   const [low, high] = model.rirRange;
   const rawRir = (velocityMps - model.interceptMps) / model.slopeMpsPerRir;
   const halfWidth = roundToHalf(1.96 * model.rirErrorReps);

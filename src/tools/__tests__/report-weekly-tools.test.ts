@@ -45,11 +45,11 @@ const FORCE_CONSISTENT_PEAK_FORCE = DEFAULT_WEIGHT_LBS * 1.017;
 function makeRep(
   setId: string,
   index: number,
-  overrides: { peakVelocity?: number; peakForce?: number } = {},
+  overrides: { peakVelocity?: number; meanVelocity?: number; peakForce?: number } = {},
 ): StoredRep {
   // `getRepMeanVelocity` reads `_totalVelocity / _movementSampleCount`, not
   // `peakVelocity` — set both so a fixture's "velocity" reads the same way to
-  // every WA consumer (mean- and peak-based alike).
+  // every WA consumer (mean- and peak-based alike), unless a mean is supplied.
   const velocity = overrides.peakVelocity ?? 0.6;
   const rep: Rep = {
     repNumber: index + 1,
@@ -57,7 +57,7 @@ function makeRep(
       ...EMPTY_PHASE,
       peakVelocity: velocity,
       peakForce: overrides.peakForce ?? FORCE_CONSISTENT_PEAK_FORCE,
-      _totalVelocity: velocity,
+      _totalVelocity: overrides.meanVelocity ?? velocity,
       _movementSampleCount: 1,
     },
     eccentric: { ...EMPTY_PHASE, peakVelocity: 0.4, _totalVelocity: 0.4, _movementSampleCount: 1 },
@@ -368,6 +368,26 @@ describe('report.weekly', () => {
 
     // Final rep peaks at 0.6 m/s: (0.6 - 0.3) / 0.15 = 2.
     expect(report.sessions[0]?.exercises[0]?.rir).toBe('RIR (final rep, fitted): 2.0');
+  });
+
+  it('reads the fitted curve with the final rep mean velocity, not its peak (VW-483)', async () => {
+    calibrateRirBaseline(store);
+    fitRirVelocityRow(store, { interceptMps: 0.3, slopeMpsPerRir: 0.15 });
+    await store.putSession({
+      id: 'sess-1',
+      startedAt: '2026-09-08T12:00:00.000Z',
+      endedAt: '2026-09-08T12:30:00.000Z',
+    });
+    const reps = [0, 1].map((i) => makeRep('s1', i, { peakVelocity: 0.6, meanVelocity: 0.45 }));
+    await store.putSet(makeSet({ id: 's1', reps }));
+
+    const report = await buildWeeklyReport(makeState(store), {
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-15T00:00:00.000Z',
+    });
+
+    // The peak would read (0.6 - 0.3) / 0.15 = 2; the mean reads 1.
+    expect(report.sessions[0]?.exercises[0]?.rir).toBe('RIR (final rep, fitted): 1.0');
   });
 
   it('clusters repeated check-in text and surfaces repeated off-code muscle groups', async () => {

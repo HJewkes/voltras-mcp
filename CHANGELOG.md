@@ -259,6 +259,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Reps in reserve read off a lifter's own fitted RIR-velocity curve no longer read high. The
+  curve is fitted on each rep's mean concentric velocity, but `metrics.compute`'s `vbt.rir`
+  pipeline and the weekly report's RIR line read it with the rep's peak, which is always
+  faster, so they told a lifter they had more reps left than they did. Both now read the mean.
+  The general-model fallback is unchanged, and stored curves need no refit (VW-483).
 - A lifter back from a 3+ month break is recognised however long their history is. The
   goal derivation's layoff read looked only at the oldest 500 sessions, so past that it
   never saw the newest break (VW-472, #464).

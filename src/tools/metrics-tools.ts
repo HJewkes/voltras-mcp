@@ -171,7 +171,11 @@ import {
   rirInputDomainConfidence,
   type ConfidenceIndicator,
 } from '../store/confidence-indicator.js';
-import { GENERAL_MODEL_CAVEAT, type RirVelocityModel } from '../analytics/rir-velocity.js';
+import {
+  GENERAL_MODEL_CAVEAT,
+  rirModelVelocity,
+  type RirVelocityModel,
+} from '../analytics/rir-velocity.js';
 import { estimateRepRir, type RirEstimateBasis } from './rir-velocity-tools.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import {
@@ -2164,6 +2168,8 @@ interface RepRIREstimate {
   repIndex: number;
   /** This rep's peak concentric velocity, m/s. */
   peakVelocity: number;
+  /** This rep's mean concentric velocity, m/s: what a fitted curve reads (VW-483). */
+  meanVelocity: number;
   /** Loss from the set's fastest rep to this one (%), PEAK-based. See `rirForSet`. */
   velocityLossPct: number;
 }
@@ -2237,6 +2243,10 @@ interface SetRIRResult {
  * a regression whose `peakVelocity` / `baselineMaxVelocity` terms are both
  * peaks, so its loss term has to be on the same basis or the model is fed
  * mixed units. Two different numbers, both correct for their own question.
+ *
+ * A FITTED CURVE READS MEAN VELOCITY, NOT PEAK (VW-483). It was fitted on
+ * mean concentric velocity, and peak sits above mean, so feeding it a peak
+ * over-stated reps in reserve.
  */
 async function rirForSet(
   state: ServerState,
@@ -2262,13 +2272,16 @@ async function rirForSet(
   const model = await fittedRirModel(state, set.exerciseId);
   const basis: RirEstimateBasis = model === undefined ? 'profile-estimate' : 'fitted';
 
-  const perRep: RepRIREstimate[] = peaks.map((peak: number, i: number) => {
+  const perRep: RepRIREstimate[] = analyticsSet.reps.map((rep: AnalyticsRep, i: number) => {
+    const peak = peaks[i]!;
+    const meanVelocity = rirModelVelocity(rep);
     // Clamped at 0: a rep faster than the set's fastest is impossible by
     // construction here, but a 0 baseline (a set that never moved) would
     // otherwise produce a negative or non-finite loss.
     const velocityLossPct =
       baselineMax > 0 ? Math.max(0, ((baselineMax - peak) / baselineMax) * 100) : 0;
     const estimateInput = {
+      meanVelocity,
       peakVelocity: peak,
       baselineMaxVelocity: baselineMax,
       velLossPct: velocityLossPct,
@@ -2276,7 +2289,15 @@ async function rirForSet(
       repsInSet,
     };
     const { rir, range, confidence } = estimateRepRir(model, estimateInput);
-    return { rir, range, confidence, repIndex: i + 1, peakVelocity: peak, velocityLossPct };
+    return {
+      rir,
+      range,
+      confidence,
+      repIndex: i + 1,
+      peakVelocity: peak,
+      meanVelocity,
+      velocityLossPct,
+    };
   });
 
   const final = perRep[perRep.length - 1]!;

@@ -1256,6 +1256,7 @@ interface RirRep {
   range: { low: number; high: number };
   confidence: string;
   peakVelocity: number;
+  meanVelocity: number;
   velocityLossPct: number;
 }
 interface RirPayload {
@@ -1281,19 +1282,26 @@ describe('metrics.compute — vbt.rir', () => {
   }
 
   /** A set whose reps SLOW DOWN, so velocity loss is real rather than zero. */
-  function decayingSet(id: string, peaks: number[]): StoredSet {
+  function decayingSet(id: string, peaks: number[], means: number[] = []): StoredSet {
     const base = makeSet(id);
     return {
       ...base,
       exerciseId: 'bench-press',
       reps: peaks.map((peak, i) => ({
         ...makeRep(id, i),
-        concentric: { ...EMPTY_PHASE, peakVelocity: peak },
+        concentric: {
+          ...EMPTY_PHASE,
+          peakVelocity: peak,
+          _totalVelocity: means[i] ?? 0,
+          _movementSampleCount: means[i] === undefined ? 0 : 1,
+        },
       })),
     };
   }
 
   const PEAKS = [0.8, 0.7, 0.6, 0.45];
+  // Each mean sits below its peak, as on any real rep.
+  const MEANS = [0.65, 0.55, 0.45, 0.35];
 
   it('estimates every rep and reports the final rep as the headline', async () => {
     const set = decayingSet('set-rir', PEAKS);
@@ -1502,7 +1510,7 @@ describe('metrics.compute — vbt.rir', () => {
   }
 
   it('VW-310: routes through the fitted curve when one exists, and reports basis "fitted"', async () => {
-    const set = decayingSet('set-rir', PEAKS);
+    const set = decayingSet('set-rir', PEAKS, MEANS);
     const state = makeStateWithStore({
       getSet: vi.fn(async () => set),
       getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05)),
@@ -1515,12 +1523,30 @@ describe('metrics.compute — vbt.rir', () => {
 
     expect(body.basis).toBe('fitted');
     expect(body.caveat).toBeNull();
-    // Final rep peaks at 0.45 m/s: (0.45 - 0.3) / 0.05 = 3.
-    expect(body.final.rir).toBeCloseTo(3, 6);
+    // Final rep's mean is 0.35 m/s: (0.35 - 0.3) / 0.05 = 1.
+    expect(body.final.rir).toBeCloseTo(1, 6);
+    expect(body.final.meanVelocity).toBeCloseTo(0.35, 6);
+  });
+
+  it('VW-483: reads the fitted curve with mean velocity, where the peak over-stated RIR', async () => {
+    const set = decayingSet('set-rir', PEAKS, MEANS);
+    const state = makeStateWithStore({
+      getSet: vi.fn(async () => set),
+      getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05)),
+    });
+
+    const body = parsePayload(
+      await callTool(registerAndCapture(state), { pipeline: 'vbt.rir', setId: 'set-rir' }),
+    ) as RirPayload;
+
+    // The final rep's peak (0.45 m/s) would read (0.45 - 0.3) / 0.05 = 3 RIR.
+    const peakRead = (PEAKS[3]! - 0.3) / 0.05;
+    expect(body.perRep.map((r) => r.rir)).toEqual([7, 5, 3, 1]);
+    expect(body.final.rir).toBeLessThan(peakRead);
   });
 
   it('VW-310: two lifters with different fitted curves get different RIR for the same velocity', async () => {
-    const set = decayingSet('set-rir', PEAKS);
+    const set = decayingSet('set-rir', PEAKS, MEANS);
     const lifterA = makeStateWithStore({
       getSet: vi.fn(async () => set),
       getRirVelocityModel: vi.fn(async () => fittedRirRow(0.3, 0.05)),

@@ -20,6 +20,7 @@ import {
   JUKIC_2024_FINDING,
   rirForVelocity,
   velocityForRir,
+  type RirModelVelocityMps,
   type RirVelocityModel,
 } from '../analytics/rir-velocity.js';
 import { RirVelocityFitInput, RirVelocityTargetInput } from '../schemas/rir-velocity.js';
@@ -176,6 +177,9 @@ export type RirEstimateBasis = 'fitted' | 'profile-estimate';
 
 /** One rep's inputs to an RIR reading, whichever basis answers it (VW-310). */
 export interface RepRirEstimateInput {
+  /** What the fitted curve reads: the measure it was fitted on (VW-483). */
+  meanVelocity: RirModelVelocityMps;
+  /** The general regression's terms below are peak-based; only that branch reads them. */
   peakVelocity: number;
   baselineMaxVelocity: number;
   velLossPct: number;
@@ -207,7 +211,7 @@ export function estimateRepRir(
   input: RepRirEstimateInput,
 ): RepRirEstimateResult {
   if (model !== undefined) {
-    const fitted = rirForVelocity(model, input.peakVelocity);
+    const fitted = rirForVelocity(model, input.meanVelocity);
     return {
       rir: fitted.rir,
       range: fitted.range,
