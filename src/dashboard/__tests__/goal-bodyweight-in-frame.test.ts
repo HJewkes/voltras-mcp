@@ -169,21 +169,21 @@ function summary(view: GoalProgressView) {
 
 // Pinned from the route's own output on the fixed clock. `before` is the band the
 // old derivation re-centred on the 30-day mean; `after` starts at the target's own start.
-const CUT_AFTER = { week1: [200, 200], current: [195, 190], last: [193, 186], status: 'on_track' };
+const CUT_AFTER = { week1: [200, 198], current: [195, 190], last: [193, 186], status: 'on_track' };
 const CUT_BEFORE = {
-  week1: [196.7, 196.7],
+  week1: [196.7, 194.733],
   current: [191.7825, 186.865],
   last: [189.8155, 182.931],
   status: 'stalled',
 };
 const GAIN_AFTER = {
-  week1: [180, 180],
+  week1: [180, 180.9],
   current: [182.25, 184.5],
   last: [183.15, 186.3],
   status: 'on_track',
 };
 const GAIN_BEFORE = {
-  week1: [181.68, 181.68],
+  week1: [181.68, 182.5884],
   current: [183.951, 186.222],
   last: [184.8594, 188.0388],
   status: 'stalled',

@@ -36,6 +36,7 @@ import type { ServerState } from '../state/server-state.js';
 import type { DietPhase, RecompMode } from '../store/diet-phase.js';
 import {
   LOCAL_USER_ID,
+  type SessionStore,
   type StoredAdvisoryDecision,
   type StoredAdvisoryResponse,
   type StoredGoalTarget,
@@ -105,6 +106,18 @@ export interface WeeklyReviewResult {
 }
 
 /** The reads one review runs on, assembled once. */
+/** The reads the rate loop makes, and nothing it writes: what the goals page can also supply. */
+export interface WeeklyReviewReadState {
+  store: Pick<
+    SessionStore,
+    | 'getDietPhaseCovering'
+    | 'listGoalTargets'
+    | 'listBodyMetrics'
+    | 'getSelfReportsForUser'
+    | 'listAdvisoryDecisions'
+  >;
+}
+
 interface ReviewContext {
   weekOf: string;
   reviewedAt: string;
@@ -124,8 +137,9 @@ export async function runWeeklyReview(
   state: ServerState,
   input: z.infer<typeof GoalWeeklyReviewInput>,
 ): Promise<WeeklyReviewResult> {
-  const weekOf = input.weekOf ?? mostRecentSundayIso(new Date());
-  const reviewedAt = reviewInstant(weekOf);
+  const now = new Date();
+  const weekOf = input.weekOf ?? mostRecentSundayIso(now);
+  const reviewedAt = reviewInstant(weekOf, now);
   const response =
     input.response === undefined
       ? null
@@ -140,13 +154,27 @@ export async function runWeeklyReview(
  * past week is being reviewed. A back-dated review must not read a series the
  * week it is judging had not produced yet.
  */
-function reviewInstant(weekOf: string): string {
+function reviewInstant(weekOf: string, now: Date): string {
   const weekEnd = Date.parse(`${weekOf}T00:00:00.000Z`) + 7 * DAY_MS;
-  return new Date(Math.min(Date.now(), weekEnd)).toISOString();
+  return new Date(Math.min(now.getTime(), weekEnd)).toISOString();
+}
+
+/**
+ * The advisory `goal.weekly_review` computes for the week containing `now`,
+ * without recording anything. `null` when there is no declared phase or no
+ * accepted bodyweight target, the two gaps the tool reports instead.
+ */
+export async function readBodyweightRateAdvisory(
+  state: WeeklyReviewReadState,
+  now: Date,
+): Promise<BodyweightRateAdvisory | null> {
+  const weekOf = mostRecentSundayIso(now);
+  const context = await readContext(state, weekOf, reviewInstant(weekOf, now));
+  return 'gap' in context ? null : runAdvisory(state, context);
 }
 
 async function readContext(
-  state: ServerState,
+  state: WeeklyReviewReadState,
   weekOf: string,
   reviewedAt: string,
 ): Promise<ReviewContext | { gap: Partial<WeeklyReviewResult> }> {
@@ -199,7 +227,9 @@ function noAcceptedTarget(phase: string): Partial<WeeklyReviewResult> {
  * ACCEPTED one counts: the committed line this advisory is measured against
  * has to be one the lifter agreed to.
  */
-async function findBodyweightTarget(state: ServerState): Promise<StoredGoalTarget | null> {
+async function findBodyweightTarget(
+  state: WeeklyReviewReadState,
+): Promise<StoredGoalTarget | null> {
   const targets = await state.store.listGoalTargets({ userId: LOCAL_USER_ID });
   return (
     targets.find(
@@ -224,7 +254,7 @@ function targetLineFor(target: StoredGoalTarget): BodyweightTargetLine {
 }
 
 async function runAdvisory(
-  state: ServerState,
+  state: WeeklyReviewReadState,
   context: ReviewContext,
 ): Promise<BodyweightRateAdvisory> {
   return computeBodyweightRateAdvisory({
@@ -285,13 +315,16 @@ function toSelfReport(checkin: WeeklyCheckin): WeeklySelfReport {
  * half-week floor. Repeats inside one week are deduplicated by the
  * observation key instead (see {@link observationKey}).
  */
-async function lastProposalBefore(state: ServerState, weekOf: string): Promise<string | null> {
+async function lastProposalBefore(
+  state: WeeklyReviewReadState,
+  weekOf: string,
+): Promise<string | null> {
   const rows = await listDecisions(state);
   const anchor = `${weekOf}T00:00:00.000Z`;
   return rows.find((row) => row.issuedAt < anchor)?.issuedAt ?? null;
 }
 
-function listDecisions(state: ServerState): Promise<StoredAdvisoryDecision[]> {
+function listDecisions(state: WeeklyReviewReadState): Promise<StoredAdvisoryDecision[]> {
   return state.store.listAdvisoryDecisions(LOCAL_USER_ID, {
     code: BODYWEIGHT_RATE_ADVISORY_CODE,
   });

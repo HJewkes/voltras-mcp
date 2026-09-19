@@ -8,7 +8,6 @@ import type {
   GoalCardChart,
   GoalCardMilestone,
   GoalCardTrend,
-  GoalDirection,
   GoalLiftActual,
   GoalMilestoneTarget,
   GoalMuscleLift,
@@ -136,7 +135,8 @@ export function cardChart(view: GoalProgressView): GoalCardChart {
       matched: a.matched,
     })),
     weeks: chartWeeks(view),
-    direction: directionOf(view),
+    // titan has no hold direction yet, so a hold keeps the chart's default, as the milestone does.
+    ...(view.direction === 'hold' ? {} : { direction: view.direction }),
     nextTarget: nextTarget(view),
     // Only a calibrating lift carries `calibration`; the chart's note then says what it waits on.
     ...(view.calibration === undefined
@@ -276,16 +276,6 @@ export function sessionsTarget(data: GoalsPageData): GoalTargetRow | null {
 export function bodyweightTarget(data: GoalsPageData): GoalTargetRow | null {
   const row = allViews(data).find((r) => r.view.target.metric === 'bodyweight') ?? null;
   return row !== null && row.view.actuals.length > 0 ? row : null;
-}
-
-/**
- * Which way "better" points, from the target's own two fixed numbers. A loss
- * goal's committed edge is numerically ABOVE its stretch edge (the same
- * convention `GoalTrajectoryChart`'s geometry documents), so equality reads
- * as `up` — there is no loss goal with a zero-width band in practice.
- */
-export function directionOf(view: GoalProgressView): GoalDirection {
-  return view.committed <= view.stretch ? 'up' : 'down';
 }
 
 /**

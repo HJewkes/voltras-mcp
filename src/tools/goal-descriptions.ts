@@ -23,7 +23,11 @@ export const GOAL_DECLARE_PRIORITIES_DESCRIPTION =
   '`proposals` carries the fat-loss downgrade OFFER (`specialize` to `maintain`, ' +
   'rp:rp-s5-fatloss-priority-training-rule): relay it, never apply it. Accept it by declaring the ' +
   'item again at `maintain`; decline it by declaring again with `declineFatLossDowngrade: true`, ' +
-  'which is recorded and never re-offered for that ref.';
+  'which is recorded and never re-offered for that ref. ONE REFUSAL, WHICH IS NOT A GUARDRAIL: ' +
+  'a whole-body ref (`bodyweight`, `sessions`, `strength`) names one goal, so a second priority ' +
+  'for the same ref, or the same ref twice in one call, is refused with ' +
+  '`GOAL_WHOLE_BODY_PRIORITY_EXISTS` and nothing is written. Re-declare the same kind and ref to ' +
+  'change its level.';
 
 export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'Derive the coach’s expected band for every metric one priority is tracked by, and store ' +
