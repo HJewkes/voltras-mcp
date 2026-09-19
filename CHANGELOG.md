@@ -242,6 +242,9 @@ entry is written from the user's point of view is a review question, not a check
   "Muscle priorities" titles now sit on the page background with their cards as the first
   raised surface, instead of a panel around the cards, so each card is 40 px wider on a phone
   and 10 px wider on the wall (VW-454, VW-435).
+- The lead lift on `#/goals`, which already has the large card at the top, is no longer
+  repeated in the Per-lift list. A page with only one lift shows the large card and no
+  Per-lift section (VW-467).
 
 - The goals page's Bodyweight tile showed the oldest weight of the last 30 days as the latest
   one, and the bodyweight goal's status judged that oldest reading, so a cut's trend read
