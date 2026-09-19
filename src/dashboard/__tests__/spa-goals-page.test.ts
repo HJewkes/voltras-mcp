@@ -296,7 +296,11 @@ describe('GoalsView phone layout (VW-356)', () => {
     try {
       const html = render(baseData().data);
       expect(html).not.toContain('auto-fill');
-      expect(html.match(/grid-template-columns:1fr/g)?.length).toBe(2); // lift grid + muscle grid
+      // Lift grid + muscle grid. `minmax(0, 1fr)`, not `1fr`: a bare `1fr` floors the column
+      // at the card's min-content, which held it wider than a phone (VW-454). Only the
+      // captures prove the card then fits; this pins the rule that lets it.
+      expect(html.match(/grid-template-columns:minmax\(0, 1fr\)/g)?.length).toBe(2);
+      expect(html).not.toContain('grid-template-columns:1fr');
     } finally {
       vi.mocked(useIsNarrowViewport).mockReturnValue(false);
     }
