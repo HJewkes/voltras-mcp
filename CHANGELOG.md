@@ -48,6 +48,10 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- The goals page's data now says which mesocycle it is in: the program and block, what the block
+  is for, its dates, which week of it this is and whether that week is a deload, every week of the
+  block with the ones held or added marked, and the next block when one is dated. It is empty
+  while no block has dates. Nothing on the page draws it yet (VW-480).
 - The coach can run a planning sitting for the next block. `plan.block.planning_brief` shows
   how the finishing block went (workouts done, days trained), which block comes next, a
   suggested start and length, the priorities re-ask, the declared diet phase or its absence,

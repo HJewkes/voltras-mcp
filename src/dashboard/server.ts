@@ -77,7 +77,7 @@
 //                          comparable session. No recovery window is computed.
 //
 //   ── Goal coach (VW-352, G5 of the goal-coach plan) ──────────────────────
-//   GET  /api/goals       — `{ priorities: [{ priority, targets, rollup }] }`. Every
+//   GET  /api/goals       — `{ priorities: [{ priority, targets, rollup }], mesocycle }`. Every
 //                          declared priority (`goal.declare_priorities`), its ACCEPTED
 //                          targets, and the `buildPriorityRollup` verdict across them
 //                          (`null` when none are accepted yet).
@@ -181,8 +181,9 @@ import {
 import { getReferenceSetupCard } from '../analytics/setup-cards.js';
 import { exerciseFatigueStop, type FatigueStop } from '../state/velocity-loss-intent.js';
 import { findPlannedExerciseForSession } from '../store/planned-exercise-for-session.js';
-import { todayLocal } from '../analytics/training-days.js';
+import { localDate, todayLocal } from '../analytics/training-days.js';
 import { resolveCurrentBlock } from '../plan/current-block.js';
+import { fetchMesocycle, type MesocycleStore } from './read-models/mesocycle.js';
 
 /** Default loopback port. Configurable via `VMCP_DASHBOARD_PORT`. */
 export const DEFAULT_DASHBOARD_PORT = 7723;
@@ -887,7 +888,7 @@ async function serveMuscleRecovery(
 /** @see hasPlanStore — same narrowing, for the goal-coach routes (VW-352). */
 function hasGoalStore(
   store: DashboardServerState['store'],
-): store is DashboardServerState['store'] & GoalProgressStore {
+): store is DashboardServerState['store'] & GoalProgressStore & MesocycleStore {
   return (
     typeof store.listPriorities === 'function' &&
     typeof store.listGoalTargets === 'function' &&
@@ -901,7 +902,11 @@ function hasGoalStore(
     typeof store.listBodyMetrics === 'function' &&
     typeof store.getSetsForExercise === 'function' &&
     typeof store.getBaseline === 'function' &&
-    typeof store.chapterStartedAt === 'function'
+    typeof store.chapterStartedAt === 'function' &&
+    typeof store.getLiveBlockSchedule === 'function' &&
+    typeof store.listTrainingPrograms === 'function' &&
+    typeof store.getWorkoutTemplatesForWeek === 'function' &&
+    typeof store.getAssignmentsForTemplate === 'function'
   );
 }
 
@@ -917,15 +922,18 @@ async function findGoalPriority(
 /**
  * `GET /api/goals` (VW-352, G5 of the goal-coach plan): every declared
  * priority, its accepted targets, and the `buildPriorityRollup` verdict
- * across them.
+ * across them, plus `mesocycle`: the dated block the page is in (VW-480),
+ * `null` while no block has dates.
  */
 async function serveGoals(res: ServerResponse, state: DashboardServerState): Promise<void> {
   if (!hasGoalStore(state.store)) {
     sendJson(res, 501, { error: 'goal_store_unavailable' });
     return;
   }
-  const rows = await fetchGoalPriorityRows(state.store, new Date());
-  sendJson(res, 200, { priorities: rows });
+  const now = new Date();
+  const rows = await fetchGoalPriorityRows(state.store, now);
+  const mesocycle = await fetchMesocycle(state.store, localDate(now.toISOString()));
+  sendJson(res, 200, { priorities: rows, mesocycle });
 }
 
 /**
