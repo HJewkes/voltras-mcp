@@ -84,6 +84,26 @@ async function move(blockId: string, startsOn: string, reason?: string): Promise
 }
 
 describe('plan.block.planning_brief', () => {
+  // VW-489: the brief's "days trained" excludes unreviewed history, so the sitting
+  // has to be told what is being withheld before it plans against a zero.
+  it('says how many past days are waiting on a review', async () => {
+    const at = '2026-09-10T15:00:00.000Z';
+    await store.putSession({ id: 'unreviewed', startedAt: at, endedAt: at });
+    await store.putSet({
+      id: 'unreviewed-set',
+      sessionId: 'unreviewed',
+      startedAt: at,
+      endedAt: at,
+      partial: false,
+      reps: [],
+    });
+
+    const brief = await call('plan.block.planning_brief', {});
+
+    expect(brief.unreviewedDays).toBe(1);
+    expect(brief.unreviewedDayList).toEqual(['2026-09-10']);
+  });
+
   it("suggests a Monday start and the real program's next block for an undated store", async () => {
     const brief = await call('plan.block.planning_brief', {});
 

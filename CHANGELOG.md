@@ -55,10 +55,15 @@ entry is written from the user's point of view is a review question, not a check
   exercise, the span, whether every session was ended, whether a plan was attached, and the
   current kind — feed a row's date straight back to `session.mark_kind`. Marking is
   idempotent and reversible, and re-derives the affected exercises' baselines and
-  RIR-velocity fits (VW-489, #479).
-- `report.weekly`'s header and the tier signal's evidence now report how many past days are
-  unreviewed, so a training-day count of zero is never read as "no training" when it means
-  "history withheld pending review" (VW-489, #479).
+  RIR-velocity fits. A day or range call classifies only the sessions nobody has marked; one
+  already marked the other kind is reported and left alone unless you pass `reclassify: true`.
+  A real date-range call must also pass `expectSessions` matching the count its dry run
+  reported, so a mistyped year cannot mark a whole history in one call (VW-489, #479).
+- Every surface that shows a training-derived number now reports how many past days are
+  unreviewed, so a count of zero is never read as "no training" when it means "history
+  withheld pending review": `report.weekly`'s header, the tier signal's evidence,
+  `goal.propose_targets`, `plan.block.planning_brief`, `accountability.state`,
+  `accountability.preview` and the `/api/goals` payload (VW-489, #479).
 
 - The goals page's data now says which mesocycle it is in: the program and block, what the block
   is for, its dates, which week of it this is and whether that week is a deload, every week of the

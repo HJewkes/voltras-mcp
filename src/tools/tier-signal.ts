@@ -23,7 +23,7 @@
 // takes by keying off `LOCAL_USER_ID`.
 
 import { readTrainingDaysMatching, trainingGaps } from '../analytics/training-days.js';
-import { unreviewedDayCount } from '../analytics/session-review.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { LOCAL_USER_ID, type SessionStore, type StoredTrainingProfile } from '../store/types.js';
 
 export type Tier = 'beginner' | 'intermediate' | 'advanced';
@@ -197,6 +197,7 @@ export async function getTierSignal(
   );
   const derivedCeiling: Tier = ceilingBasis === null ? 'beginner' : 'intermediate';
 
+  const unreviewed = await readUnreviewed(state.store);
   const declared = isTier(profile?.declaredTier) ? profile.declaredTier : null;
   const tier = minTier(declared ?? 'beginner', derivedCeiling);
   const source: TierSource =
@@ -211,9 +212,7 @@ export async function getTierSignal(
     declared,
     evidence: {
       trainingDaysLogged: days.length,
-      unreviewedDays: unreviewedDayCount(
-        await state.store.listSessionReviewRows({ kind: 'unreviewed' }),
-      ),
+      unreviewedDays: unreviewed.unreviewedDays,
       firstSessionAt: span.first,
       weeksSpanned,
       loggedHistoryMet,

@@ -54,7 +54,32 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** One unreviewed local day: a session nobody has marked, holding a working set. */
+async function seedUnreviewedDay(): Promise<void> {
+  const at = '2026-09-10T15:00:00.000Z';
+  await store.putSession({ id: 'unreviewed', startedAt: at, endedAt: at });
+  await store.putSet({
+    id: 'unreviewed-set',
+    sessionId: 'unreviewed',
+    startedAt: at,
+    endedAt: at,
+    partial: false,
+    reps: [],
+  });
+}
+
 describe('accountability.state', () => {
+  // VW-489: the message's counts exclude unreviewed history, so the read has to
+  // say how much is being withheld or a zero reads as "he did not train".
+  it('says how many past days are waiting on a review', async () => {
+    await seedUnreviewedDay();
+
+    const result = await describeAccountabilityState(makeState(), { at: WEDNESDAY_NOON });
+
+    expect(result.unreviewedDays).toBe(1);
+    expect(result.unreviewedDayList).toEqual(['2026-09-10']);
+  });
+
   it('reports defaults and says they are not persisted when no row exists', async () => {
     const result = await describeAccountabilityState(makeState(), { at: WEDNESDAY_NOON });
     expect(result.persisted).toBe(false);
@@ -176,6 +201,15 @@ async function seedOneTemplatePlan(): Promise<void> {
 }
 
 describe('accountability.preview', () => {
+  it('carries the unreviewed-day count even when it decides to stay silent', async () => {
+    await seedUnreviewedDay();
+
+    const result = await describeAccountabilityPreview(makeState(), { at: WEDNESDAY_NOON });
+
+    expect(result.decision.action).not.toBe('send');
+    expect(result.unreviewedDays).toBe(1);
+  });
+
   it('reads the rolling line in training days, as of `at` (VW-462)', async () => {
     await store.putAccountabilityState(storedState());
     await seedOneTemplatePlan();

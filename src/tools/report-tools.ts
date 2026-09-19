@@ -22,7 +22,7 @@ import type { z } from 'zod';
 import { rirModelVelocity, type RirVelocityModel } from '../analytics/rir-velocity.js';
 import { countMissed } from '../analytics/target-verdict.js';
 import { localDate, readTrainingDays, trainingDaysOf } from '../analytics/training-days.js';
-import { unreviewedDayCount } from '../analytics/session-review.js';
+import { readUnreviewed } from '../analytics/session-review.js';
 import { ReportSessionResultsInput, ReportWeeklyInput } from '../schemas/report.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { describeLoad } from '../state/set-capture.js';
@@ -489,9 +489,7 @@ export async function buildWeeklyReport(
           ...(input.lifter !== undefined ? { lifter: input.lifter } : {}),
         })
       ).length,
-      unreviewedDays: unreviewedDayCount(
-        await state.store.listSessionReviewRows({ kind: 'unreviewed' }),
-      ),
+      unreviewedDays: (await readUnreviewed(state.store)).unreviewedDays,
       adherence: await computeAdherenceWithTrend(state, input.lifter, from, to, sessions),
       block: await blockLine(state, to),
     },
