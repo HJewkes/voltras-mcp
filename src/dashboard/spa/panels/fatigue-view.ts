@@ -45,7 +45,7 @@ import {
   MovementPhase,
   type Rep,
 } from '@voltras/workout-analytics';
-import { estimateSetRpe, getSetTempoSeconds } from '@voltras/workout-analytics/view';
+import { getSetTempoSeconds } from '@voltras/workout-analytics/view';
 import {
   compareSetupSignatures,
   medianRomMetres,
@@ -416,7 +416,6 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   const reps: readonly Rep[] = isDual
     ? foldLimitingReps(limbs)
     : (limbs[0]?.reps ?? active?.reps ?? []);
-  const rpe = estimateSetRpe({ reps: reps as Rep[] });
   const workingStandard = workingRomMetres(reps);
   // Prescribed concentric duration (seconds) — the [ecc, pauseBottom, con, pauseTop]
   // tuple's index 2 — is the reference the per-rep tempo-deviation tint compares to.
@@ -426,8 +425,10 @@ export function mapStoreToFatigueModel(sources: LiveViewSources): LiveFatigueMod
   const asymmetrySetup = buildAsymmetrySetup(limbs);
 
   return {
-    rpe,
-    repsInReserve: rpe == null ? null : Number((10 - rpe).toFixed(2)),
+    // Withheld until a trusted fitted profile reaches the wall: a stated effort read off
+    // velocity loss is the conversion VW-302 forbids (VW-485).
+    rpe: null,
+    repsInReserve: null,
     // The multi-dimension verdict from WA (velocity/ROM/tempo with strict precedence).
     // `null` for a cold-start set (< 2 reps) — mirrors `getSetFatigueVerdict`'s own gate
     // — which the card renders as a neutral "warming up".
