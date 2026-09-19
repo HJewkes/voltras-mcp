@@ -102,3 +102,42 @@ describe('flatline', () => {
     expect(flatline(wide, { ...RAMP_AT_100, expectedStepLbsPerWeek: 1000 })).toBeNull();
   });
 });
+
+// VW-452 review ask: how often does a lifter truly on the full ramp, with
+// ±3 lb of week-to-week noise, read flat? A REPORT, not a tuning target: the
+// rates are pinned so a change to the rule shows up as a changed number.
+describe('flatline false-stall rate for a noisy climber on the full ramp', () => {
+  function seeded(seed: number): () => number {
+    let state = seed;
+    return () => {
+      state = (state * 1103515245 + 12345) % 2147483648;
+      return state / 2147483648;
+    };
+  }
+
+  function falseStallRates(points: number, draws: number): { old: number; now: number } {
+    const random = seeded(452);
+    let old = 0;
+    let now = 0;
+    for (let draw = 0; draw < draws; draw++) {
+      const noisy = weekly(
+        Array.from({ length: points }, (_, week) => 100 + 2.5 * week + (random() * 6 - 3)),
+      );
+      if (detectPlateau(noisy).isPlateau) old++;
+      if (flatline(noisy, RAMP_AT_100) !== null) now++;
+    }
+    return { old: old / draws, now: now / draws };
+  }
+
+  it.each([
+    [3, 0.76, 0.07],
+    [4, 0.84, 0.07],
+    [5, 0.85, 0.07],
+  ])('over %i weekly points: was about %f, now about %f', (points, was, now) => {
+    const rates = falseStallRates(points, 4000);
+
+    expect(rates.old).toBeCloseTo(was, 1);
+    expect(rates.now).toBeCloseTo(now, 1);
+    expect(rates.now).toBeLessThan(rates.old / 5);
+  });
+});

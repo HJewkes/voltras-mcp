@@ -114,6 +114,7 @@ export type GoalPreviewStateName =
   | 'on_track'
   | 'fast_climb'
   | 'behind'
+  | 'stalled'
   | 'ahead'
   | 'hit_exact'
   | 'beyond_goal';
@@ -204,6 +205,15 @@ export const GOAL_PREVIEW_STATES: readonly GoalPreviewState[] = [
     expectedStatus: 'behind',
     summary: 'The same five weeks run backwards: under the committed edge with a falling trend.',
     weeklyLoadsLbs: [146, 133, 121, 110, 100],
+    targetStartWeeksAgo: 4,
+  },
+  {
+    name: 'stalled',
+    expectedStatus: 'stalled',
+    summary:
+      'The same top load of 100 for five weeks: a flatline, not a slowdown, so it reads ' +
+      'stalled ahead of behind.',
+    weeklyLoadsLbs: [100, 100, 100, 100, 100],
     targetStartWeeksAgo: 4,
   },
   {

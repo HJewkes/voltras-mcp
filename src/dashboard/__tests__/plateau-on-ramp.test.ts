@@ -77,6 +77,13 @@ describe('the plateau rule on the goal card (VW-452)', () => {
     expect(view.statusBasis).toContain('under the flatline threshold');
   });
 
+  it('names only the flat tail of a climb that stopped, not the detector’s wider window', async () => {
+    const view = await viewFor([90, 93, 96, 99, 100, 100, 100], { targetStartWeeksAgo: 3 });
+
+    expect(view.status).toBe('stalled');
+    expect(view.statusBasis).toContain('plateau over 21 days');
+  });
+
   it('still reads a noisy flat run stalled', async () => {
     const view = await viewFor([100, 103, 98, 102, 99]);
 
