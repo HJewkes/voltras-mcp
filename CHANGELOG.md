@@ -109,7 +109,7 @@ entry is written from the user's point of view is a review question, not a check
 
 - Every other session count now counts training days too, by the same rule as the
   sessions goal: a day with a dozen exercises logged as separate sessions counts once
-  (VW-462).
+  (VW-462, #457).
   - `report.weekly` reads "Training days: N" and "Last 28 days: N training days". JSON
     fields renamed: `header.sessionsCompleted` to `header.trainingDaysCompleted`, and
     `header.rolling28DayCompletedSessions` to `header.rolling28DayTrainingDays`.
