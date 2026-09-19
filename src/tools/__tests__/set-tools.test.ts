@@ -2025,8 +2025,8 @@ describe('set.end', () => {
       reps: Array<{ rep_number: number }>;
       vbt_summary: {
         first_rep_v: number | null;
-        peak_rep_v: number | null;
-        peak_rep_number: number | null;
+        baseline_rep_v: number | null;
+        baseline_rep_number: number | null;
         last_rep_v: number | null;
         velocity_loss_pct: number | null;
         mean_velocity: number | null;

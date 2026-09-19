@@ -155,7 +155,6 @@ import {
   buildSettingsUpdatePayload,
   buildVelocityLossExceededPayload,
   triggerDedupeKey,
-  velocityLossBaseline,
   type ActiveSetAtDisconnect,
   type CoachLinePayloadInput,
   type CoercionSetContext,
@@ -165,8 +164,8 @@ import {
 import type { CoercionWatch } from './coercion-watch.js';
 import {
   publishVelocityLossSuppression,
+  velocityLossReading,
   velocityLossWatchSuppressed,
-  velocityLossWindow,
 } from './velocity-loss-gate.js';
 import { movementClassForExerciseId } from '../exercises/movement-class.js';
 import type { ServerState, SlotState } from './server-state.js';
@@ -1502,8 +1501,10 @@ function evaluateRepTriggers(
     return;
   }
   const actualReps = finalizedIndex + 1;
-  // Baseline = highest peak concentric velocity across the ELIGIBLE finalized
-  // reps up to and INCLUDING the just-finalized rep. This intentionally folds
+  // Baseline = highest MEAN concentric velocity across the ELIGIBLE finalized
+  // reps up to and INCLUDING the just-finalized rep (VW-484: mean, because the
+  // thresholds come from mean-velocity studies and every other surface reads
+  // the mean). This intentionally folds
   // the new rep into the baseline candidate set: when it's the new max,
   // baseline equals current and loss = 0% so nothing fires. That's the
   // desired behavior — a stronger rep should not trigger a loss event for
@@ -1516,9 +1517,7 @@ function evaluateRepTriggers(
   // also drops the opening reps — they are slowed by the overloaded eccentric,
   // not by fatigue.
   const finalizedReps = set.reps.slice(0, finalizedIndex + 1);
-  const window = velocityLossWindow(finalizedReps, device);
-  const { velocity: baseline, repNumber: baselineRepNumber } = velocityLossBaseline(window.reps);
-  const current = finalizedRep.concentric.peakVelocity;
+  const reading = velocityLossReading(finalizedReps, finalizedRep, device);
 
   for (const spec of set.watch.notifyOn) {
     const key = triggerDedupeKey(spec);
@@ -1537,26 +1536,22 @@ function evaluateRepTriggers(
       // The set announced this once at set start; firing nothing here is the
       // whole behaviour change, and no threshold moved to get it.
       if (velocityLossWatchSuppressed(set)) continue;
-      // baseline must be a real positive velocity for loss% to be defined.
-      // VW-268: this is also what keeps a lead-in rep out of the COMPARISON —
-      // while the set is still inside the excluded reps its window is empty, so
-      // the baseline is zero and nothing can fire.
-      // current >= baseline ⇒ loss <= 0 ⇒ no fire (covers the just-set-a-
-      // new-max case explicitly).
-      if (baseline <= 0 || current >= baseline) continue;
-      const lossPct = (100 * (baseline - current)) / baseline;
-      if (lossPct < spec.pct) continue;
+      // A null loss is "nothing to compare": no baseline yet (VW-268's lead-in
+      // window is still empty), or a rep at or above the baseline, which is a
+      // new fastest rep rather than a loss.
+      const lossPct = reading.lossPct;
+      if (lossPct === null || lossPct < spec.pct) continue;
       if (!live.tryFireTrigger(key)) continue;
       const payload = buildVelocityLossExceededPayload(
         set,
         device,
         spec,
         lossPct,
-        baseline,
-        current,
-        baselineRepNumber,
+        reading.baseline,
+        reading.current,
+        reading.baselineRepNumber,
         actualReps,
-        window.exclusion,
+        reading.exclusion,
       );
       channels.publish(payload);
       continue;

@@ -27,7 +27,7 @@ import {
   buildSetTargetReachedPayload,
   buildVelocityLossExceededPayload,
   guidedLoadPhaseToOutcome,
-  meanConcentricPeakVelocity,
+  meanConcentricVelocityOfSet,
   summarizePreviousSet,
   summarizeSetForTrigger,
   triggerDedupeKey,
@@ -341,11 +341,11 @@ describe('buildRepFinalizedPayload', () => {
   });
 });
 
-describe('meanConcentricPeakVelocity', () => {
+describe('meanConcentricVelocityOfSet', () => {
   it('averages concentric peak velocity across reps with concentric samples', () => {
     // Native mm/s in, m/s out: mean of 600/700/800 mm/s = 700 mm/s = 0.7 m/s.
     const reps = [makeRep(1, 600, 400), makeRep(2, 700, 500), makeRep(3, 800, 600)];
-    expect(meanConcentricPeakVelocity(reps)).toBeCloseTo(0.7, 3);
+    expect(meanConcentricVelocityOfSet(reps)).toBeCloseTo(0.7, 3);
   });
 
   it('returns null when no rep has any concentric movement', () => {
@@ -354,11 +354,11 @@ describe('meanConcentricPeakVelocity', () => {
       concentric: makePhase({}),
       eccentric: makePhase({}),
     };
-    expect(meanConcentricPeakVelocity([phaseless])).toBeNull();
+    expect(meanConcentricVelocityOfSet([phaseless])).toBeNull();
   });
 
   it('returns null for empty rep array', () => {
-    expect(meanConcentricPeakVelocity([])).toBeNull();
+    expect(meanConcentricVelocityOfSet([])).toBeNull();
   });
 });
 
@@ -552,10 +552,11 @@ describe('buildSetEndedPayload', () => {
     expect(parsed.reps[0].impulse_lb_s).toBe(0);
     expect(parsed.reps[0].mean_power_lb_mps).toBe(0);
     expect(parsed.vbt_summary).toEqual({
+      velocity_measure: 'mean_concentric',
       first_rep_v: 0.85,
       // rep 1 (850) is the set's fastest, so it's the peak baseline
-      peak_rep_v: 0.85,
-      peak_rep_number: 1,
+      baseline_rep_v: 0.85,
+      baseline_rep_number: 1,
       last_rep_v: 0.5,
       // (peak 850 - last 500) / 850 * 100 = 41.176... => 41.2 (unit-invariant)
       velocity_loss_pct: 41.2,
@@ -569,8 +570,8 @@ describe('buildSetEndedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.vbt_summary.velocity_loss_pct).toBeNull();
     expect(parsed.vbt_summary.first_rep_v).toBe(0.6);
-    expect(parsed.vbt_summary.peak_rep_v).toBe(0.6);
-    expect(parsed.vbt_summary.peak_rep_number).toBe(1);
+    expect(parsed.vbt_summary.baseline_rep_v).toBe(0.6);
+    expect(parsed.vbt_summary.baseline_rep_number).toBe(1);
     expect(parsed.vbt_summary.last_rep_v).toBe(0.6);
   });
 
@@ -580,9 +581,10 @@ describe('buildSetEndedPayload', () => {
     const parsed = JSON.parse(content);
     expect(parsed.reps).toEqual([]);
     expect(parsed.vbt_summary).toEqual({
+      velocity_measure: 'mean_concentric',
       first_rep_v: null,
-      peak_rep_v: null,
-      peak_rep_number: null,
+      baseline_rep_v: null,
+      baseline_rep_number: null,
       last_rep_v: null,
       velocity_loss_pct: null,
       mean_velocity: null,
@@ -617,8 +619,8 @@ describe('buildSetEndedPayload', () => {
     // rep AND the peak baseline, so peak-to-last velocity loss is exactly 0.
     // The bogus rep-6 value would have raised the peak and pushed last_rep_v
     // below it, fabricating a loss that never happened.
-    expect(parsed.vbt_summary.peak_rep_number).toBe(5);
-    expect(parsed.vbt_summary.peak_rep_v).toBe(0.85);
+    expect(parsed.vbt_summary.baseline_rep_number).toBe(5);
+    expect(parsed.vbt_summary.baseline_rep_v).toBe(0.85);
     expect(parsed.vbt_summary.velocity_loss_pct).toBe(0);
   });
 
