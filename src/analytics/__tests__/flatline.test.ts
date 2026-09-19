@@ -8,7 +8,7 @@
 import { detectPlateau } from '@voltras/workout-analytics';
 import { describe, expect, it } from 'vitest';
 
-import { FLATLINE_FRACTION_OF_STEP, flatline } from '../flatline.js';
+import { FLATLINE_FRACTION_OF_STEP, FLATLINE_SMOOTHING, flatline } from '../flatline.js';
 import { programmedRampStepLbs } from '../goal-band.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -22,6 +22,7 @@ function weekly(values: readonly number[]): { ts: string; value: number }[] {
 }
 
 const RAMP_AT_100 = { expectedStepLbsPerWeek: programmedRampStepLbs(100), minDays: 14 };
+const RAW_AT_100 = { ...RAMP_AT_100, smoothing: null };
 
 describe('flatline', () => {
   it('uses the programmed step at 100 lb, so the threshold is a quarter of 2.5 lb', () => {
@@ -103,10 +104,80 @@ describe('flatline', () => {
   });
 });
 
-// VW-452 review ask: how often does a lifter truly on the full ramp, with
-// ±3 lb of week-to-week noise, read flat? A REPORT, not a tuning target: the
-// rates are pinned so a change to the rule shows up as a changed number.
-describe('flatline false-stall rate for a noisy climber on the full ramp', () => {
+// VW-458: three or four noisy weekly points cannot resolve a slope as small as
+// the threshold, so the input is steadied. One rule per test, and each one is
+// the case a mutant of that rule gets wrong.
+describe('flatline input smoothing', () => {
+  it('defaults to a 14-day rolling top, a 21-day floor for a wobbling run, and one week of settled range', () => {
+    expect(FLATLINE_SMOOTHING).toEqual({
+      rollingTopDays: 14,
+      unsettledMinDays: 21,
+      settledRangeWeeks: 1,
+    });
+  });
+
+  it('reads the slope off the rolling top, so one bad week at the end of a climb is not a flatline', () => {
+    const climbThenBadWeek = weekly([100, 101.5, 103, 104.5, 100]);
+
+    expect(flatline(climbThenBadWeek, RAW_AT_100)).not.toBeNull();
+    expect(flatline(climbThenBadWeek, RAMP_AT_100)).toBeNull();
+  });
+
+  it('keeps the rolling top to 14 days, so one good week three reads ago does not hide a flatline', () => {
+    expect(flatline(weekly([100, 100, 100, 103, 100, 100]), RAMP_AT_100)).toMatchObject({
+      days: 35,
+    });
+  });
+
+  it('makes a wobbling run wait for 21 days', () => {
+    expect(flatline(weekly([102, 99, 101]), RAW_AT_100)).toMatchObject({ days: 14 });
+    expect(flatline(weekly([102, 99, 101]), RAMP_AT_100)).toBeNull();
+    expect(flatline(weekly([102, 99, 101, 100]), RAMP_AT_100)).toMatchObject({ days: 21 });
+  });
+
+  it('reads a settled run at the 14-day floor: within one week of flatline-rate movement', () => {
+    expect(flatline(weekly([100, 100.5, 100]), RAMP_AT_100)).toMatchObject({ days: 14 });
+    expect(flatline(weekly([100, 101, 100]), RAMP_AT_100)).toBeNull();
+  });
+
+  it('scales the settled range with the step, so a heavy lift may move a pound and stay settled', () => {
+    const rampAt315 = { expectedStepLbsPerWeek: programmedRampStepLbs(315), minDays: 14 };
+
+    expect(flatline(weekly([315, 316, 315]), rampAt315)).toMatchObject({ days: 14 });
+  });
+
+  it('adds no delay to a climb that stops dead: flat two weeks after the last step', () => {
+    expect(flatline(weekly([95, 97.5, 100, 100]), RAMP_AT_100)).toBeNull();
+    expect(flatline(weekly([95, 97.5, 100, 100, 100]), RAMP_AT_100)).toMatchObject({ days: 14 });
+  });
+
+  it('takes the smoothing as an argument', () => {
+    const patient = { ...FLATLINE_SMOOTHING, unsettledMinDays: 28 };
+    const lenient = { ...FLATLINE_SMOOTHING, settledRangeWeeks: 2 };
+    const longMemory = { ...FLATLINE_SMOOTHING, rollingTopDays: 21 };
+    const oneGoodWeek = weekly([100, 100, 100, 103, 100, 100]);
+
+    const unsettled = weekly([102, 99, 101, 100]);
+    const nearlySettled = weekly([100, 101, 100]);
+
+    expect(flatline(unsettled, { ...RAMP_AT_100, smoothing: patient })).toBeNull();
+    expect(flatline(nearlySettled, { ...RAMP_AT_100, smoothing: lenient })).not.toBeNull();
+    expect(flatline(oneGoodWeek, { ...RAMP_AT_100, smoothing: longMemory })).toBeNull();
+  });
+
+  it('lets WA judge the raw run, so a rolling top cannot manufacture a plateau', () => {
+    const wide = weekly([100, 80, 120, 80, 120]);
+
+    expect(flatline(wide, { ...RAMP_AT_100, expectedStepLbsPerWeek: 1000 })).toBeNull();
+  });
+});
+
+// How often does a noisy climber read flat on ONE read of 3 to 5 weekly points
+// at 100 lb, ±3 lb uniform noise? A REPORT, not a tuning target: the rates are
+// pinned so a change to the rule shows up as a changed number. `wa` is WA's
+// detector alone, `raw` is VW-452's rule, `now` is VW-458's default. The
+// week-by-week study, with delay, is `scripts/flatline-sim.mjs`.
+describe('flatline false-stall rate for a noisy climber', () => {
   function seeded(seed: number): () => number {
     let state = seed;
     return () => {
@@ -115,29 +186,33 @@ describe('flatline false-stall rate for a noisy climber on the full ramp', () =>
     };
   }
 
-  function falseStallRates(points: number, draws: number): { old: number; now: number } {
+  function falseStallRates(points: number, stepLbs: number, draws: number) {
     const random = seeded(452);
-    let old = 0;
-    let now = 0;
+    const flat = { wa: 0, raw: 0, now: 0 };
     for (let draw = 0; draw < draws; draw++) {
       const noisy = weekly(
-        Array.from({ length: points }, (_, week) => 100 + 2.5 * week + (random() * 6 - 3)),
+        Array.from({ length: points }, (_, week) => 100 + stepLbs * week + (random() * 6 - 3)),
       );
-      if (detectPlateau(noisy).isPlateau) old++;
-      if (flatline(noisy, RAMP_AT_100) !== null) now++;
+      if (detectPlateau(noisy).isPlateau) flat.wa++;
+      if (flatline(noisy, RAW_AT_100) !== null) flat.raw++;
+      if (flatline(noisy, RAMP_AT_100) !== null) flat.now++;
     }
-    return { old: old / draws, now: now / draws };
+    return { wa: flat.wa / draws, raw: flat.raw / draws, now: flat.now / draws };
   }
 
   it.each([
-    [3, 0.76, 0.07],
-    [4, 0.84, 0.07],
-    [5, 0.85, 0.07],
-  ])('over %i weekly points: was about %f, now about %f', (points, was, now) => {
-    const rates = falseStallRates(points, 4000);
+    ['full ramp', 2.5, 3, 0.752, 0.068, 0.006],
+    ['full ramp', 2.5, 4, 0.826, 0.068, 0.009],
+    ['full ramp', 2.5, 5, 0.842, 0.076, 0.012],
+    ['half ramp', 1.25, 3, 0.936, 0.32, 0.019],
+    ['half ramp', 1.25, 4, 0.972, 0.384, 0.175],
+    ['half ramp', 1.25, 5, 0.976, 0.419, 0.234],
+  ])('%s (%f lb/wk) over %i weekly points', (_name, stepLbs, points, wa, raw, now) => {
+    const rates = falseStallRates(points, stepLbs, 4000);
 
-    expect(rates.old).toBeCloseTo(was, 1);
-    expect(rates.now).toBeCloseTo(now, 1);
-    expect(rates.now).toBeLessThan(rates.old / 5);
+    expect(rates.wa).toBeCloseTo(wa, 2);
+    expect(rates.raw).toBeCloseTo(raw, 2);
+    expect(rates.now).toBeCloseTo(now, 2);
+    expect(rates.now).toBeLessThan(rates.raw);
   });
 });
