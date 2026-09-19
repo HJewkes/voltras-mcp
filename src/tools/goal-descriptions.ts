@@ -62,8 +62,8 @@ export const GOAL_PROPOSE_TARGETS_DESCRIPTION =
   'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
   'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
   'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
-  'stretch numbers never move. Until the block starts the goals page reads "Starts <date>" with ' +
-  'no verdict. Weeks are local calendar weeks, Monday to Sunday.';
+  'stretch numbers never move. Until the block starts the goals page names that start date and ' +
+  'draws no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_ACCEPT_TARGET_DESCRIPTION =
   'Fix one proposed target’s numbers. Omit `committedValue` and `stretchValue` to take the ' +
@@ -139,8 +139,8 @@ export const GOAL_WEEKLY_REVIEW_DESCRIPTION =
   'the stored row: the priority\u2019s own block when it has dates, else the upcoming dated ' +
   'block, else the current one. A target set for a dated block takes that block\u2019s weeks, ' +
   'deloads and end, and moves with it if the block moves before it starts; its committed and ' +
-  'stretch numbers never move. Until the block starts the goals page reads "Starts <date>" with ' +
-  'no verdict. Weeks are local calendar weeks, Monday to Sunday.';
+  'stretch numbers never move. Until the block starts the goals page names that start date and ' +
+  'draws no verdict. Weeks are local calendar weeks, Monday to Sunday.';
 
 export const GOAL_NEW_CHAPTER_DESCRIPTION =
   'Stamp `newChapterAt` on a target whose movement itself changed — a technique reform (squat ' +
