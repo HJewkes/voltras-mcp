@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".sim-build",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*", "scripts/sim/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".sim-build",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "src/dashboard/spa"
+  ]
+}

@@ -48,6 +48,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- `npm run sim:rest` runs the adaptive-rest simulation: it fits a model of a lifter to three
+  published rest studies, then runs the real learning rules over simulated lifters and writes
+  a table of what they do — how many sessions until the rest settles, how far off it lands,
+  and whether it ever shortens a rest that was already too short. It is how a rest number gets
+  argued with before it reaches anyone's workout (VW-445, VW-516, #485).
 - Groundwork for a rest timer that learns your rest for each exercise instead of reading a
   population table: the rules that decide which two sets are comparable evidence, how
   recovered the second one was, and whether the rest should step 15 s shorter or longer.
