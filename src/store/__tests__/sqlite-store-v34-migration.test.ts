@@ -89,6 +89,6 @@ describe('v33 -> v34 migration', () => {
     db.close();
 
     expect(reread?.lastBreakMonths).toBe(4);
-    expect(version.user_version).toBe(35);
+    expect(version.user_version).toBe(36);
   });
 });

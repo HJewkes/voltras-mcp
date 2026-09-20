@@ -853,6 +853,94 @@ export interface ListAdvisoryDecisionsFilter {
   userResponse?: StoredAdvisoryResponse;
 }
 
+// --- UI action audit (VW-502, v36) ---
+//
+// One row per action submitted through the dashboard's action layer. The row
+// is CLAIMED before its handler runs and COMPLETED after, which is what makes
+// a repeated action id safe: the primary key refuses the second claim, so the
+// handler cannot run twice even when two submits race.
+//
+// The two steps are two statements, not one transaction. Several store methods
+// open their own transactions (`declareDietPhase` among them) and there is no
+// SAVEPOINT nesting, so an outer transaction around a handler is not available.
+// The cost is a crash window: a row left `pending` means the handler's write
+// may or may not have landed, and a replay says `indeterminate` rather than
+// guessing. Nothing sweeps those rows — a pending row is the truthful record of
+// a run that died, and rewriting it to `error` would assert something unknown.
+
+/**
+ * Who submitted an action. Extends the `block_schedules.changed_by` vocabulary
+ * rather than inventing a parallel one: a wall tap by the lifter is `user`, and
+ * `surface` says which screen it came from. `tick` is the agent-free scheduler.
+ *
+ * NOT the client's to assert. `POST /api/actions` pins it to `user`, because a
+ * request arriving there came from a browser on this machine and is a human
+ * tap; `coach` and `tick` belong to in-process callers of `executeAudited`,
+ * which stamp their own. Otherwise anyone holding the write token could file a
+ * human tap as an agent decision, and the column would prove nothing.
+ */
+export const UI_ACTION_ACTORS = ['user', 'coach', 'tick'] as const;
+export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];
+
+/** Where an action was submitted from. */
+export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram'] as const;
+export type UiActionSurface = (typeof UI_ACTION_SURFACES)[number];
+
+/**
+ * A claimed action's outcome. `pending` is only ever seen after a crash: it is
+ * written by the claim and replaced by the completion in the same call.
+ */
+export const UI_ACTION_STATUSES = ['pending', 'ok', 'error'] as const;
+export type UiActionStatus = (typeof UI_ACTION_STATUSES)[number];
+
+/** One row of the action audit trail. */
+export interface StoredUiAction {
+  /** Client-supplied UUID. The idempotency key, and the primary key. */
+  actionId: string;
+  actionName: string;
+  actor: UiActionActor;
+  surface: UiActionSurface;
+  flowId?: string;
+  flowStep?: string;
+  /** sha256 over the canonical JSON of the input, hashed AFTER the tool's parse. */
+  inputHash: string;
+  resultStatus: UiActionStatus;
+  /** The tool's own error code when it failed. Absent on success. */
+  resultCode?: string;
+  /** The stored result a replay returns. `null` until the action completes. */
+  result?: unknown;
+  createdAt: string;
+  completedAt?: string;
+}
+
+/** Arguments to {@link SessionStore.claimUiAction}. */
+export interface ClaimUiActionInput {
+  actionId: string;
+  actionName: string;
+  actor: UiActionActor;
+  surface: UiActionSurface;
+  flowId?: string;
+  flowStep?: string;
+  inputHash: string;
+  createdAt: string;
+}
+
+/** Arguments to {@link SessionStore.completeUiAction}. */
+export interface CompleteUiActionInput {
+  actionId: string;
+  resultStatus: 'ok' | 'error';
+  resultCode?: string;
+  result: unknown;
+  completedAt: string;
+}
+
+/** What a claim attempt produced. */
+export type ClaimUiActionOutcome =
+  /** The id is new. The caller owns it and must complete it. */
+  | { kind: 'claimed' }
+  /** The id exists. `existing` is the row, which the caller replays or refuses. */
+  | { kind: 'taken'; existing: StoredUiAction };
+
 // --- Priorities and goal targets (VW-349, v27) ---
 //
 // TWO TABLES, NOT ONE. A priority is a HUMAN DECLARATION ("get bench up"):
@@ -2133,6 +2221,39 @@ export interface SessionStore extends ExerciseSetupStore {
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
   ): Promise<StoredAdvisoryDecision[]>;
+
+  // --- UI action audit (VW-502) ---
+
+  /**
+   * Take ownership of one action id, or report who already holds it.
+   *
+   * This is the whole idempotency mechanism: the insert races on the primary
+   * key, so exactly one caller is told `claimed` and every other is told
+   * `taken` with the existing row. A `taken` caller never runs the handler.
+   */
+  claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome>;
+
+  /**
+   * Record what a claimed action produced. The only legal write to an existing
+   * row, and only from `pending`: a database trigger refuses every other
+   * update and every delete, so the audit trail cannot be edited after the
+   * fact.
+   */
+  completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction>;
+
+  /** One action by its id, or `undefined`. The replay read. */
+  getUiAction(actionId: string): Promise<StoredUiAction | undefined>;
+
+  /**
+   * Actions newest first. `flowId` narrows to one flow, which is what lets a
+   * flow's history be rebuilt from this table alone; `status` narrows to the
+   * `pending` rows a crashed run left behind.
+   */
+  listUiActions(filter?: {
+    flowId?: string;
+    status?: UiActionStatus;
+    limit?: number;
+  }): Promise<StoredUiAction[]>;
 
   // --- Priorities and goal targets (VW-349) ---
 

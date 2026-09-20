@@ -13,6 +13,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import { z } from 'zod';
 
 import {
   DEFAULT_DASHBOARD_HOST,
@@ -831,5 +832,322 @@ describe('GET /api/bootstrap', () => {
       warn.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+// ── The action layer (VW-502) ─────────────────────────────────────────────
+//
+// `POST /api/actions/:name` behind the same write guard as everything else,
+// plus the audit rows the six plan routes now leave behind. The layer's own
+// logic is unit-tested in `actions/__tests__/execute.test.ts`; these are the
+// wiring facts that only a real socket can prove.
+
+/** In-memory `ui_actions`, enough for the route tests. */
+class FakeActionRows {
+  readonly rows = new Map<string, Record<string, unknown>>();
+
+  claimUiAction = (input: Record<string, unknown>): Promise<unknown> => {
+    const id = input.actionId as string;
+    const existing = this.rows.get(id);
+    if (existing !== undefined) return Promise.resolve({ kind: 'taken', existing });
+    this.rows.set(id, { ...input, resultStatus: 'pending' });
+    return Promise.resolve({ kind: 'claimed' });
+  };
+
+  completeUiAction = (input: Record<string, unknown>): Promise<unknown> => {
+    const id = input.actionId as string;
+    const row = { ...this.rows.get(id), ...input };
+    this.rows.set(id, row);
+    return Promise.resolve(row);
+  };
+}
+
+/** A captured tool the action route can run, counting its calls. */
+function actionTools(counter: { runs: number }): Map<string, unknown> {
+  return new Map([
+    [
+      'profile.log_bodyweight',
+      {
+        paramsShape: { weightLbs: zNumber() },
+        handler: () => {
+          counter.runs += 1;
+          return { content: [{ type: 'text', text: JSON.stringify({ logged: true }) }] };
+        },
+      },
+    ],
+  ]);
+}
+
+function zNumber(): unknown {
+  return z.number();
+}
+
+/** A state whose store also carries the audit methods and the captured tools. */
+function actionState(
+  store: FakePlanStore,
+  audit: FakeActionRows,
+  tools?: Map<string, unknown>,
+): DashboardServerState {
+  const state = makeState(store);
+  const mutable = state as unknown as {
+    store: Record<string, unknown>;
+    actionTools?: unknown;
+  };
+  mutable.store.claimUiAction = audit.claimUiAction;
+  mutable.store.completeUiAction = audit.completeUiAction;
+  if (tools !== undefined) mutable.actionTools = tools;
+  return state;
+}
+
+describe('POST /api/actions/:name', () => {
+  it('runs an allowlisted action and records it', async () => {
+    const counter = { runs: 0 };
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools(counter)));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, tier: 'W1', replayed: false });
+    expect(counter.runs).toBe(1);
+    expect(audit.rows.get('act-1')).toMatchObject({ actor: 'user', surface: 'wall' });
+  });
+
+  it('is behind the same write guard as every other write', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    const headers = { ...(await guardHeaders(port)), origin: 'https://evil.example' };
+    const res = await callRaw(
+      port,
+      'POST',
+      '/api/actions/profile.log_bodyweight',
+      { actionId: 'act-1', input: { weightLbs: 180 } },
+      headers,
+    );
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ error: 'foreign_origin' });
+    expect(counter.runs).toBe(0);
+  });
+
+  it('403s a name that is not on the allowlist', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    for (const name of ['device.set_weight', 'goal.retire', 'nonsense']) {
+      const res = await call(port, 'POST', `/api/actions/${name}`, {
+        actionId: `act-${name}`,
+        input: {},
+      });
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ error: 'action_not_allowed' });
+    }
+    expect(counter.runs).toBe(0);
+  });
+
+  it('400s a submission with no action id', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: 'invalid_input' });
+  });
+
+  it('replays a repeated submit and runs the handler once', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    const body = { actionId: 'act-1', input: { weightLbs: 180 } };
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', body);
+    const second = await call(port, 'POST', '/api/actions/profile.log_bodyweight', body);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ replayed: true });
+    expect(counter.runs).toBe(1);
+  });
+
+  it('409s a reused id carrying a different body', async () => {
+    const counter = { runs: 0 };
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools(counter)),
+    );
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    const second = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 999 },
+    });
+    expect(second.status).toBe(409);
+    expect(second.body).toMatchObject({ error: 'action_id_reused' });
+    expect(counter.runs).toBe(1);
+  });
+
+  it('records a human tap as `user`, and refuses a body claiming otherwise', async () => {
+    // The audit trail's actor column has to mean something. A request here came
+    // from a browser on this machine, so it IS a human tap; the coach and the
+    // tick call the layer in-process and stamp their own actor there.
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const actor of ['coach', 'tick']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${actor}`,
+        actor,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: 'invalid_input' });
+    }
+    expect(audit.rows.size).toBe(0);
+  });
+
+  it('refuses a surface no browser can be', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    for (const surface of ['telegram', 'voice', 'nonsense']) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${surface}`,
+        surface,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('keeps the wall/phone distinction, which only the client knows', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-phone',
+      surface: 'phone',
+      input: { weightLbs: 180 },
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ surface: 'phone', actor: 'user' });
+  });
+
+  it('405s anything but a POST', async () => {
+    const port = await start(
+      actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
+    );
+    for (const method of ['PATCH', 'DELETE']) {
+      const res = await call(port, method, '/api/actions/profile.log_bodyweight', {
+        actionId: 'act-1',
+      });
+      expect(res.status).toBe(405);
+    }
+  });
+
+  it('501s when the server captured no handlers', async () => {
+    const port = await start(actionState(new FakePlanStore(), new FakeActionRows()));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(501);
+  });
+});
+
+describe('the plan routes through the action layer', () => {
+  it('leaves an audit row naming the actor and the surface', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const res = await call(port, 'POST', '/api/plan/programs', {
+      name: 'Audited',
+      actionId: 'act-plan-1',
+    });
+    expect(res.status).toBe(201);
+    expect(audit.rows.get('act-plan-1')).toMatchObject({
+      actionName: 'plan.program.create',
+      actor: 'user',
+      surface: 'wall',
+      resultStatus: 'ok',
+    });
+  });
+
+  it('keeps its original response shape, not the action envelope', async () => {
+    const port = await start(actionState(new FakePlanStore(), new FakeActionRows()));
+    const res = await call(port, 'POST', '/api/plan/programs', {
+      name: 'Shape',
+      actionId: 'act-plan-1',
+    });
+    // The SPA reads this body directly; an envelope here would break it.
+    expect(res.body).not.toHaveProperty('ok');
+    expect(res.body).not.toHaveProperty('replayed');
+    expect(res.body).toHaveProperty('program');
+  });
+
+  it('writes once when the same submit arrives twice', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    const body = { name: 'Once', actionId: 'act-plan-1' };
+    await call(port, 'POST', '/api/plan/programs', body);
+    await call(port, 'POST', '/api/plan/programs', body);
+    expect(store.programs.size).toBe(1);
+  });
+
+  it('records a refusal with the plan API’s own code', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const res = await call(port, 'POST', '/api/plan/programs', { actionId: 'act-bad' });
+    expect(res.status).toBe(400);
+    expect(audit.rows.get('act-bad')).toMatchObject({
+      resultStatus: 'error',
+      resultCode: 'invalid_input',
+    });
+  });
+
+  it('forces the actor and narrows the surface on the plan routes too', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit));
+    const refused = await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-bad-surface',
+      surface: 'telegram',
+    });
+    expect(refused.status).toBe(400);
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-phone',
+      surface: 'phone',
+    });
+    expect(audit.rows.get('act-phone')).toMatchObject({ actor: 'user', surface: 'phone' });
+  });
+
+  it('never lets the surface reach the plan payload', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'Clean',
+      actionId: 'act-1',
+      surface: 'phone',
+    });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('surface');
+  });
+
+  it('keeps the plan builder working on a store with no audit table', async () => {
+    // A test fake or an older store: degrading to an unaudited write beats
+    // refusing the builder outright.
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    const res = await call(port, 'POST', '/api/plan/programs', { name: 'Unaudited' });
+    expect(res.status).toBe(201);
+    expect(store.programs.size).toBe(1);
+  });
+
+  it('never leaks the action id into the plan payload', async () => {
+    const store = new FakePlanStore();
+    const port = await start(actionState(store, new FakeActionRows()));
+    await call(port, 'POST', '/api/plan/programs', { name: 'Clean', actionId: 'act-plan-1' });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('actionId');
   });
 });

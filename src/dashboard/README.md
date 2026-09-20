@@ -86,6 +86,85 @@ next write instead of needing a human to reload it.
 real page in a browser, which picks the token up from `index.html` like any
 other client.
 
+## The action layer (VW-502)
+
+`POST /api/actions/:name` runs an allowlisted tool's own zod schema and its own
+handler, so the dashboard and the MCP tools cannot disagree. The body is
+`{ actionId, input, actor?, surface?, flowId?, flowStep? }`.
+
+**An unknown or non-allowlisted name answers 403, never 404.** Probing the
+layer reveals nothing about what exists. Every W3 (device) and W4 (coach or
+voice only) tool is refused the same way.
+
+**The handler is not the one a connection installs.** `applyLeaseGuard` replaces
+every write tool's callback with one that acquires the DEVICE lease under the
+connection's client id, and tools register per connection. Running that from the
+wall would take the device lease for a bodyweight entry, under some terminal
+session's identity, and would not exist at all with no client attached. So
+`actions/capture-handlers.ts` captures the unguarded handlers once at boot,
+bound to the shared state. `capture-handlers.test.ts` pins it: the captured
+handler runs with another client holding the lease and does not answer
+`LEASE_HELD`, where the connection's callback does.
+
+### Who an action says it was
+
+`POST /api/actions` **pins the actor to `user`** and refuses a body claiming
+`coach` or `tick`. A request reaching that route came from a browser on this
+machine — that is what the write guard establishes — so it is a human tap. The
+coach and the agent-free tick do not arrive that way: they call `executeAudited`
+in-process and stamp their own actor there. Without the pin, anyone holding the
+write token could file a human tap as an agent decision and the column would
+prove nothing.
+
+The **surface** stays the client's to say, narrowed to `wall` or `phone`. Both
+are the owner's own browser and the server cannot tell them apart, so refusing
+the distinction would lose a fact and gain nothing.
+
+### Idempotency
+
+The client sends one `actionId` per SUBMIT, reused across retries.
+
+| Case | Answer | Did the handler run? |
+| --- | --- | --- |
+| New id | the result | once |
+| Same id, same input | the STORED result, `replayed: true` | no |
+| Same id, different input | 409 `action_id_reused` | no |
+| Same id, row still `pending` | 409 `indeterminate` | no |
+
+The input hash is sha256 over a key-sorted rendering taken AFTER the tool's own
+parse, so key order and absent-versus-undefined cannot split one submission
+into two.
+
+### Two steps, and the crash window
+
+The claim and the completion are two statements, not one transaction. They
+cannot be one: `declareDietPhase` and six other store methods open their own
+transactions and the store has no SAVEPOINT nesting, so an outer `BEGIN` around
+a handler fails outright.
+
+Claiming FIRST is what makes this safe. The primary key refuses the second claim
+before any handler runs, so two racing submits of one id cannot both execute.
+
+The cost is one window: a crash between the handler's write and the completion
+leaves the row `pending`, and whether the write landed is genuinely unknown. A
+replay then answers `indeterminate`, and the SPA surfaces that as "re-read
+state, do not resubmit". **Nothing sweeps pending rows at boot** — rewriting one
+to `error` would assert an outcome nobody knows. `listUiActions({ status:
+'pending' })` is the read for a later surface to show them.
+
+### The six plan routes
+
+They keep their URLs AND their response bodies — the plan payload, not the
+action envelope, because the SPA reads it directly. They gain the audit row and
+the actor stamp, under the names `plan.program.create`, `plan.workout.create`,
+`plan.exercise.create`, `plan.exercise.reorder`, `plan.exercise.update` and
+`plan.exercise.delete`. These are not tools, so they are not in the allowlist;
+they run `plan-api.ts` as before.
+
+A request with no `actionId` still works and is still audited, under a
+server-minted id — but it buys NO retry safety, because a retry mints another
+id and runs again. The SPA always sends its own.
+
 **The boundary is the browser, not the OS account.** A hostile web page in a
 local browser is in scope. Another process running as this user is not: it can
 read the token from `/api/bootstrap`, or read the sqlite store directly, and no

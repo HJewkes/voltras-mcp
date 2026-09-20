@@ -66,6 +66,14 @@ import {
   BLOCK_SCHEDULE_CHANGED_BY,
   BLOCK_SCHEDULE_KINDS,
   LOCAL_USER_ID,
+  UI_ACTION_ACTORS,
+  UI_ACTION_STATUSES,
+  UI_ACTION_SURFACES,
+  type ClaimUiActionInput,
+  type ClaimUiActionOutcome,
+  type CompleteUiActionInput,
+  type StoredUiAction,
+  type UiActionStatus,
   type AppendBlockScheduleInput,
   type BaselineState,
   type BlockScheduleChangedBy,
@@ -139,7 +147,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 35;
+const SCHEMA_VERSION = 36;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -355,6 +363,58 @@ const BLOCK_SCHEDULES_DDL = `
   CREATE TRIGGER IF NOT EXISTS block_schedules_append_only
     BEFORE UPDATE ON block_schedules
     BEGIN SELECT RAISE(ABORT, 'block_schedules is append-only: write a new row'); END;
+`;
+
+/**
+ * v36 (VW-502): one row per action submitted through the dashboard's action
+ * layer.
+ *
+ * `action_id` is the client's own UUID and the PRIMARY KEY, which is the whole
+ * idempotency mechanism: two racing submits of the same id collide on the
+ * insert, so exactly one of them runs the handler.
+ *
+ * A row is CLAIMED as `pending` and COMPLETED to `ok` or `error`. The trigger
+ * allows exactly that one transition and refuses every other update, and a
+ * second trigger refuses deletes: an audit trail that can be edited after the
+ * fact is not one. A row left `pending` is a run that died between its
+ * handler and its completion; nothing rewrites it, because `error` would
+ * assert an outcome nobody knows.
+ */
+const UI_ACTIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS ui_actions (
+    action_id TEXT PRIMARY KEY,
+    action_name TEXT NOT NULL,
+    actor TEXT NOT NULL CHECK (actor IN (${sqlList(UI_ACTION_ACTORS)})),
+    surface TEXT NOT NULL CHECK (surface IN (${sqlList(UI_ACTION_SURFACES)})),
+    flow_id TEXT,
+    flow_step TEXT,
+    input_hash TEXT NOT NULL,
+    result_status TEXT NOT NULL CHECK (result_status IN (${sqlList(UI_ACTION_STATUSES)})),
+    result_code TEXT,
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_created
+    ON ui_actions(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_flow
+    ON ui_actions(flow_id, created_at DESC);
+  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;
+  CREATE TRIGGER IF NOT EXISTS ui_actions_no_delete
+    BEFORE DELETE ON ui_actions
+    BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never deleted'); END;
 `;
 
 const SCHEMA_SQL = `
@@ -1069,7 +1129,8 @@ ${RIR_VELOCITY_MODELS_DDL}
 ${PRIORITIES_DDL}
 ${GOAL_TARGETS_DDL}
 ${EXERCISE_CHAPTERS_DDL}
-${BLOCK_SCHEDULES_DDL}`;
+${BLOCK_SCHEDULES_DDL}
+${UI_ACTIONS_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1828,6 +1889,24 @@ function migrateV34ToV35(db: DatabaseSync): void {
 }
 
 /**
+ * v35 -> v36: the `ui_actions` audit table (VW-502). Additive and never
+ * back-filled — there is no earlier record of a dashboard write to recover.
+ *
+ * The body is empty on purpose. Its DDL lives in `SCHEMA_SQL` behind
+ * `IF NOT EXISTS`, which `db.exec(SCHEMA_SQL)` runs before this on every open,
+ * so an existing DB picks the table up there. Same pattern as v2 -> v3; the
+ * function exists to make the version bump explicit and to hold this note.
+ *
+ * The rung below reads `current <= 35`, which is the ladder's rule (stated
+ * above `applyMigrations`) and not a claim about which versions exist: a store
+ * at 34 and a store at 35 both fall into it and both reach v36. That is what
+ * let the v34 -> v35 step above be inserted without touching this one.
+ */
+function migrateV35ToV36(_db: DatabaseSync): void {
+  // Intentionally empty. See the note above.
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -1883,6 +1962,38 @@ function sessionCountPredicates(filter: SessionCountFilter): {
 /** A const enum as a SQL `IN (...)` body. Values are code-owned, never input. */
 function sqlList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(',');
+}
+
+interface UiActionRow {
+  action_id: string;
+  action_name: string;
+  actor: string;
+  surface: string;
+  flow_id: string | null;
+  flow_step: string | null;
+  input_hash: string;
+  result_status: string;
+  result_code: string | null;
+  result_json: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+function rowToUiAction(row: UiActionRow): StoredUiAction {
+  return {
+    actionId: row.action_id,
+    actionName: row.action_name,
+    actor: row.actor as StoredUiAction['actor'],
+    surface: row.surface as StoredUiAction['surface'],
+    ...(row.flow_id === null ? {} : { flowId: row.flow_id }),
+    ...(row.flow_step === null ? {} : { flowStep: row.flow_step }),
+    inputHash: row.input_hash,
+    resultStatus: row.result_status as UiActionStatus,
+    ...(row.result_code === null ? {} : { resultCode: row.result_code }),
+    ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as unknown }),
+    createdAt: row.created_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+  };
 }
 
 /**
@@ -4125,6 +4236,99 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rowToAdvisoryDecision(row));
   }
 
+  /**
+   * Insert the row, or report the existing one. `INSERT ... ON CONFLICT DO
+   * NOTHING` then re-read: the primary key decides the race, not this process,
+   * so two servers over one file would arbitrate correctly too.
+   */
+  async claimUiAction(input: ClaimUiActionInput): Promise<ClaimUiActionOutcome> {
+    const inserted = this.db
+      .prepare(
+        `INSERT INTO ui_actions (
+           action_id, action_name, actor, surface, flow_id, flow_step,
+           input_hash, result_status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+         ON CONFLICT(action_id) DO NOTHING`,
+      )
+      .run(
+        input.actionId,
+        input.actionName,
+        input.actor,
+        input.surface,
+        input.flowId ?? null,
+        input.flowStep ?? null,
+        input.inputHash,
+        input.createdAt,
+      );
+    if (inserted.changes > 0) return Promise.resolve({ kind: 'claimed' });
+    const existing = this.readUiAction(input.actionId);
+    if (existing === undefined) {
+      // The row lost the insert race and then vanished. `ui_actions` refuses
+      // deletes, so this cannot happen against this schema; it is reported
+      // rather than silently retried because a retry could double-run.
+      throw new Error(`ui_actions: claim lost on ${input.actionId} but no row exists`);
+    }
+    return Promise.resolve({ kind: 'taken', existing });
+  }
+
+  async completeUiAction(input: CompleteUiActionInput): Promise<StoredUiAction> {
+    // The trigger enforces the pending -> ok|error transition; the WHERE only
+    // keeps a second completion from being a no-op that reads as success.
+    const updated = this.db
+      .prepare(
+        `UPDATE ui_actions
+            SET result_status = ?, result_code = ?, result_json = ?, completed_at = ?
+          WHERE action_id = ? AND result_status = 'pending'`,
+      )
+      .run(
+        input.resultStatus,
+        input.resultCode ?? null,
+        JSON.stringify(input.result ?? null),
+        input.completedAt,
+        input.actionId,
+      );
+    if (updated.changes === 0) {
+      throw new Error(`ui_actions: no pending action to complete for ${input.actionId}`);
+    }
+    const row = this.readUiAction(input.actionId);
+    if (row === undefined) throw new Error(`ui_actions: ${input.actionId} vanished`);
+    return Promise.resolve(row);
+  }
+
+  getUiAction(actionId: string): Promise<StoredUiAction | undefined> {
+    return Promise.resolve(this.readUiAction(actionId));
+  }
+
+  listUiActions(filter?: {
+    flowId?: string;
+    status?: UiActionStatus;
+    limit?: number;
+  }): Promise<StoredUiAction[]> {
+    const clauses: string[] = [];
+    const bindings: (string | number)[] = [];
+    if (filter?.flowId !== undefined) {
+      clauses.push('flow_id = ?');
+      bindings.push(filter.flowId);
+    }
+    if (filter?.status !== undefined) {
+      clauses.push('result_status = ?');
+      bindings.push(filter.status);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    bindings.push(filter?.limit ?? 100);
+    const rows = this.db
+      .prepare(`SELECT * FROM ui_actions ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...bindings) as unknown as UiActionRow[];
+    return Promise.resolve(rows.map(rowToUiAction));
+  }
+
+  private readUiAction(actionId: string): StoredUiAction | undefined {
+    const row = this.db.prepare(`SELECT * FROM ui_actions WHERE action_id = ?`).get(actionId) as
+      | UiActionRow
+      | undefined;
+    return row === undefined ? undefined : rowToUiAction(row);
+  }
+
   async listAdvisoryDecisions(
     userId: string,
     filter?: ListAdvisoryDecisionsFilter,
@@ -4989,6 +5193,11 @@ function checkSchemaVersion(db: DatabaseSync, path: string): void {
  * shape and skip every migration body.
  */
 function applyMigrations(db: DatabaseSync): void {
+  // THE RULE FOR EVERY RUNG BELOW: its condition is `current <= its
+  // from-version`, never `current === it`. Read the ladder as buckets, not as
+  // steps that must chain — a store several versions back has to fall into
+  // every rung above it. An equality test would silently skip such a store,
+  // and a rung inserted between two others would strand it.
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined;
   const current = row?.user_version ?? 0;
   if (current === 1) {
@@ -5092,6 +5301,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 34) {
     migrateV34ToV35(db);
+  }
+  if (current <= 35) {
+    migrateV35ToV36(db);
   }
 }
 
