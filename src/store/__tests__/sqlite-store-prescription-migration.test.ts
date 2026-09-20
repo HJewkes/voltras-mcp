@@ -2,7 +2,8 @@
 // `.target_velocity_loss_pct` and `.rest_learning`, plus the empty `learned_rest` table.
 //
 // Named for what it migrates rather than for a version number, so a re-number is
-// `CURRENT_VERSION` and `PRIOR_VERSION` alone.
+// `CURRENT_VERSION` and `PRIOR_VERSION` alone. They move independently: `CURRENT_VERSION`
+// is whatever the store now stamps, `PRIOR_VERSION` is what this step starts from.
 //
 // Three fixtures, because a migration that only ever runs on a fresh store proves nothing:
 // a genuinely v34-shaped planning tree holding the owner's row shapes (VW-288), the chain
@@ -21,8 +22,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isLearnedRestContext } from '../learned-rest-context.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 
-const CURRENT_VERSION = 38;
-const PRIOR_VERSION = CURRENT_VERSION - 1;
+const CURRENT_VERSION = 39;
+/** The version THIS step starts from, not whatever precedes the newest one: it was
+ *  `CURRENT_VERSION - 1` while this was the newest step, and VW-521 landed above it. */
+const PRIOR_VERSION = 37;
 
 /** The planning tree as it stood at v34: `planned_exercises` with none of the three. */
 const V34_SCHEMA_SQL = `

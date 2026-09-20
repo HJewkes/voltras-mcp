@@ -73,6 +73,41 @@ describe('claimUiAction', () => {
     expect(second.existing.inputHash).toBe('hash-A');
   });
 
+  it('tells two walls apart: one surface, two device ids, two rows', async () => {
+    // The whole point of the column (VW-521). `surface` says `wall` for both, so without
+    // a device id the trail cannot say which display the lifter was standing at.
+    for (const [id, deviceId] of [
+      ['act-garage', 'wall-garage'],
+      ['act-spare', 'wall-spare-room'],
+    ]) {
+      await store.claimUiAction({
+        actionId: id as string,
+        actionName: 'session.checkin',
+        actor: 'user',
+        surface: 'wall',
+        deviceId,
+        inputHash: `hash-${id}`,
+        createdAt: AT,
+      });
+    }
+
+    const garage = await store.listUiActions({ deviceId: 'wall-garage' });
+    const spare = await store.listUiActions({ deviceId: 'wall-spare-room' });
+
+    expect(garage.map((row) => row.actionId)).toEqual(['act-garage']);
+    expect(spare.map((row) => row.actionId)).toEqual(['act-spare']);
+    expect((await store.listUiActions()).every((row) => row.surface === 'wall')).toBe(true);
+  });
+
+  it('accepts an action that names no display, and reads it back as none', async () => {
+    await claim('act-1');
+
+    const row = await store.getUiAction('act-1');
+
+    expect(row?.deviceId).toBeUndefined();
+    expect(await store.listUiActions({ deviceId: 'wall-garage' })).toEqual([]);
+  });
+
   it('records the flow a row belongs to', async () => {
     await store.claimUiAction({
       actionId: 'act-flow',
@@ -183,6 +218,25 @@ describe('the audit triggers', () => {
       withRawDb((db) =>
         db
           .prepare(`UPDATE ui_actions SET result_json = '{"logged":false}' WHERE action_id = ?`)
+          .run('act-1'),
+      ),
+    ).toThrow(/complete once/);
+  });
+
+  it('refuses changing which display submitted an action', async () => {
+    await store.claimUiAction({
+      actionId: 'act-1',
+      actionName: 'session.checkin',
+      actor: 'user',
+      surface: 'wall',
+      deviceId: 'wall-garage',
+      inputHash: 'hash-1',
+      createdAt: AT,
+    });
+    expect(() =>
+      withRawDb((db) =>
+        db
+          .prepare(`UPDATE ui_actions SET device_id = 'wall-spare-room' WHERE action_id = ?`)
           .run('act-1'),
       ),
     ).toThrow(/complete once/);

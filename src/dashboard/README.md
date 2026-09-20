@@ -90,7 +90,7 @@ other client.
 
 `POST /api/actions/:name` runs an allowlisted tool's own zod schema and its own
 handler, so the dashboard and the MCP tools cannot disagree. The body is
-`{ actionId, input, actor?, surface?, flowId?, flowStep? }`.
+`{ actionId, input, actor?, surface?, deviceId?, flowId?, flowStep? }`.
 
 **An unknown or non-allowlisted name answers 403, never 404.** Probing the
 layer reveals nothing about what exists. Every W3 (device) and W4 (coach or
@@ -119,6 +119,25 @@ prove nothing.
 The **surface** stays the client's to say, narrowed to `wall` or `phone`. Both
 are the owner's own browser and the server cannot tell them apart, so refusing
 the distinction would lose a fact and gain nothing.
+
+### Which display sent it (VW-521)
+
+`surface` is a KIND of surface, never a particular one: two walls in one house
+both say `wall`. An optional **`deviceId`** names the display, so the trail can
+say which one the lifter was standing at. Absent is valid and is the common
+case; every row written before schema v39 reads none.
+
+It is a **LABEL, exactly as `surface` is**. The server cannot check the name and
+**nothing branches on it or on `surface` to decide what a request may do** —
+otherwise a client would choose its own permissions by relabelling itself.
+`actions/__tests__/execute.test.ts` pins that: a device tool is refused 403
+under every surface and device id, and an allowlisted tool runs at the same tier
+under every one of them.
+
+The only thing refused is a string the audit trail could not usefully store:
+letters, digits, `.`, `_`, `:` and `-`, starting with a letter or digit, up to
+64 characters (`store/ui-action-device-id.ts`). `listUiActions({ deviceId })` is
+the read that separates two walls.
 
 ### Idempotency
 

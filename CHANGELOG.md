@@ -55,6 +55,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- Groundwork for more than one wall display: an action submitted from the dashboard can now
+  name the display it came from, and the record of that action keeps the name, so two walls
+  in one house are tellable apart in the audit trail instead of both reading "wall".
+  **Nothing sends a name yet** — the field is optional, no page fills it in, and an action
+  without one behaves exactly as before (VW-521).
 - `npm run sim:rest` runs the adaptive-rest simulation: it fits a model of a lifter to three
   published rest studies, then runs the real learning rules over simulated lifters and writes
   a table of what they do — how many sessions until the rest settles, how far off it lands,

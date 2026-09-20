@@ -179,6 +179,10 @@ import {
 import type { CapturedTools } from '../actions/capture-handlers.js';
 import type { UiActionSurface } from '../store/types.js';
 import {
+  isUiActionDeviceId,
+  UI_ACTION_DEVICE_ID_MAX_LENGTH,
+} from '../store/ui-action-device-id.js';
+import {
   executeAction,
   executeAudited,
   hashInput,
@@ -1233,6 +1237,26 @@ function readBrowserSurface(claimed: unknown): UiActionSurface | null {
 }
 
 /**
+ * Which display sent this (VW-521). Absent is valid and is the common case: `surface` says
+ * `wall`, and more than one wall can stand in one house, so a client that wants its rows
+ * tellable apart names itself and one that does not is no worse off than before.
+ *
+ * A LABEL, exactly as `surface` is. The server cannot check the name and nothing branches
+ * on it; the only thing refused here is a string the audit trail could not usefully store.
+ */
+function readDeviceId(claimed: unknown): { deviceId?: string } | { error: string } {
+  if (claimed === undefined || claimed === null) return {};
+  if (!isUiActionDeviceId(claimed)) {
+    return {
+      error:
+        `deviceId is up to ${UI_ACTION_DEVICE_ID_MAX_LENGTH} characters of letters, digits, ` +
+        `'.', '_', ':' or '-', starting with a letter or digit`,
+    };
+  }
+  return { deviceId: claimed };
+}
+
+/**
  * Read the envelope around an action's input. `actionId` is required and has
  * no server-side default: a client that cannot produce one cannot have retry
  * safety, and silently minting one here would hand it a guarantee it does not
@@ -1274,11 +1298,14 @@ function readActionRequest(
   if (surface === null) {
     return { error: `a browser action is 'wall' or 'phone', not ${String(body.surface)}` };
   }
+  const device = readDeviceId(body.deviceId);
+  if ('error' in device) return device;
   return {
     name,
     actionId,
     actor: 'user',
     surface,
+    ...device,
     ...(typeof body.flowId === 'string' ? { flowId: body.flowId } : {}),
     ...(typeof body.flowStep === 'string' ? { flowStep: body.flowStep } : {}),
     input: body.input ?? {},
@@ -1327,13 +1354,23 @@ async function handlePlanMutation(
   const { store } = state;
   // `actionId` is the audit envelope's, never the plan payload's. Stripped so
   // `plan-api.ts` sees exactly the body it saw before this route was audited.
-  const { actionId: submittedId, surface: submittedSurface, ...payload } = body;
+  const {
+    actionId: submittedId,
+    surface: submittedSurface,
+    deviceId: submittedDeviceId,
+    ...payload
+  } = body;
   const surface = readBrowserSurface(submittedSurface);
   if (surface === null) {
     sendJson(res, 400, {
       error: 'invalid_input',
       message: `a browser action is 'wall' or 'phone', not ${String(submittedSurface)}`,
     });
+    return;
+  }
+  const device = readDeviceId(submittedDeviceId);
+  if ('error' in device) {
+    sendJson(res, 400, { error: 'invalid_input', message: device.error });
     return;
   }
   const run = (): Promise<HandlerOutcome> => runPlanRoute(store, route, payload);
@@ -1354,6 +1391,7 @@ async function handlePlanMutation(
       // Forced, never read from the body: see `readActionRequest`.
       actor: 'user',
       surface,
+      ...device,
       inputHash: hashInput({ route: route.kind, id: 'id' in route ? route.id : null, payload }),
       run,
     },

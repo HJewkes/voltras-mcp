@@ -67,6 +67,12 @@ export interface ActionRequest {
   actionId: string;
   actor: UiActionActor;
   surface: UiActionSurface;
+  /**
+   * Which display sent it (VW-521). Optional, and absent is the common case. A LABEL
+   * beside `surface`: nothing branches on it, and it is out of the input hash for the
+   * same reason `surface` is — it says who submitted, not what was submitted.
+   */
+  deviceId?: string | undefined;
   flowId?: string | undefined;
   flowStep?: string | undefined;
   input: unknown;
@@ -121,6 +127,7 @@ export async function executeAction(
       actionId: request.actionId,
       actor: request.actor,
       surface: request.surface,
+      ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
       ...(request.flowId === undefined ? {} : { flowId: request.flowId }),
       ...(request.flowStep === undefined ? {} : { flowStep: request.flowStep }),
       inputHash: hashInput(request.input),
@@ -137,6 +144,7 @@ export interface AuditedWrite {
   actionId: string;
   actor: UiActionActor;
   surface: UiActionSurface;
+  deviceId?: string | undefined;
   flowId?: string | undefined;
   flowStep?: string | undefined;
   inputHash: string;
@@ -160,6 +168,7 @@ export async function executeAudited(
     actionName: write.actionName,
     actor: write.actor,
     surface: write.surface,
+    ...(write.deviceId === undefined ? {} : { deviceId: write.deviceId }),
     ...(write.flowId === undefined ? {} : { flowId: write.flowId }),
     ...(write.flowStep === undefined ? {} : { flowStep: write.flowStep }),
     inputHash: write.inputHash,

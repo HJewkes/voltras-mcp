@@ -150,7 +150,7 @@ describe('v28 -> v29 migration', () => {
         const version = db.prepare('PRAGMA user_version').get() as unknown as {
           user_version: number;
         };
-        expect(version.user_version).toBe(38);
+        expect(version.user_version).toBe(39);
       } finally {
         db.close();
       }

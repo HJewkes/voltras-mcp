@@ -1033,6 +1033,53 @@ describe('POST /api/actions/:name', () => {
     expect(audit.rows.get('act-phone')).toMatchObject({ surface: 'phone', actor: 'user' });
   });
 
+  it('tells two walls apart on one surface (VW-521)', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const deviceId of ['wall-garage', 'wall-spare-room']) {
+      await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${deviceId}`,
+        surface: 'wall',
+        deviceId,
+        input: { weightLbs: 180 },
+      });
+    }
+    expect(audit.rows.get('act-wall-garage')).toMatchObject({
+      surface: 'wall',
+      deviceId: 'wall-garage',
+    });
+    expect(audit.rows.get('act-wall-spare-room')).toMatchObject({
+      surface: 'wall',
+      deviceId: 'wall-spare-room',
+    });
+  });
+
+  it('accepts an action that names no display, and records none', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+      actionId: 'act-1',
+      input: { weightLbs: 180 },
+    });
+    expect(res.status).toBe(200);
+    expect(audit.rows.get('act-1')).not.toHaveProperty('deviceId');
+  });
+
+  it('400s a device id the audit trail could not usefully store', async () => {
+    const audit = new FakeActionRows();
+    const port = await start(actionState(new FakePlanStore(), audit, actionTools({ runs: 0 })));
+    for (const deviceId of ['x'.repeat(65), 'wall garage', '-leading-dash', '', 7, {}]) {
+      const res = await call(port, 'POST', '/api/actions/profile.log_bodyweight', {
+        actionId: `act-${String(deviceId).slice(0, 8)}`,
+        deviceId,
+        input: { weightLbs: 180 },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: 'invalid_input' });
+    }
+    expect(audit.rows.size).toBe(0);
+  });
+
   it('405s anything but a POST', async () => {
     const port = await start(
       actionState(new FakePlanStore(), new FakeActionRows(), actionTools({ runs: 0 })),
@@ -1131,6 +1178,26 @@ describe('the plan routes through the action layer', () => {
     });
     const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
     expect(program).not.toHaveProperty('surface');
+  });
+
+  it('records the display on the plan routes too, and keeps it out of the payload', async () => {
+    const store = new FakePlanStore();
+    const audit = new FakeActionRows();
+    const port = await start(actionState(store, audit));
+    const refused = await call(port, 'POST', '/api/plan/programs', {
+      name: 'P',
+      actionId: 'act-bad-device',
+      deviceId: 'wall garage',
+    });
+    expect(refused.status).toBe(400);
+    await call(port, 'POST', '/api/plan/programs', {
+      name: 'Clean',
+      actionId: 'act-garage',
+      deviceId: 'wall-garage',
+    });
+    expect(audit.rows.get('act-garage')).toMatchObject({ deviceId: 'wall-garage' });
+    const program = [...store.programs.values()][0] as unknown as Record<string, unknown>;
+    expect(program).not.toHaveProperty('deviceId');
   });
 
   it('keeps the plan builder working on a store with no audit table', async () => {
