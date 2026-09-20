@@ -39,7 +39,11 @@ import { addDays } from '../plan/block-calendar.js';
 import { selectEligibleReps } from '../state/rep-eligibility.js';
 import { countsAsTraining, type SessionKind } from '../store/session-kind.js';
 import { setPurposeOf } from '../store/set-purpose.js';
-import type { SetPurpose } from '../store/types.js';
+import type {
+  LearnedRestBaseSourceValue,
+  LearnedRestStateValue,
+  SetPurpose,
+} from '../store/types.js';
 import { defaultRestSeconds } from './rest-defaults.js';
 import type { TrainingIntent } from '../schemas/set.js';
 
@@ -86,14 +90,18 @@ export type StepReason =
   | 'ceiling'
   | 'vetoed';
 
-/** How far a run has got. */
-export type LearnedRestState = 'calibrating' | 'learned';
+/**
+ * How far a run has got. A learned record returns to calibrating only through a restart.
+ * Aliased to the store's vocabulary rather than restated, so the words this module decides
+ * with and the words `learned_rest.state` admits cannot drift apart (VW-517).
+ */
+export type LearnedRestState = LearnedRestStateValue;
 
 /** The two ways the staircase can move. */
 export type StepDirection = 'down' | 'up';
 
-/** What a run started from. */
-export type RestBaseSource = 'plan' | 'lifter_factor' | 'intent_default';
+/** What a run started from. Same aliasing as the state above. */
+export type RestBaseSource = LearnedRestBaseSourceValue;
 
 /** Every number the staircase turns on, with its provenance. */
 export const ADAPTIVE_REST_POLICY = {

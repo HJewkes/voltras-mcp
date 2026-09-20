@@ -87,7 +87,7 @@ describe('v16 -> v17 migration', () => {
       expect(cols.has('injuries_json')).toBe(true);
       expect(cols.has('named_program_history')).toBe(true);
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(37);
+      expect(version.user_version).toBe(38);
     } finally {
       db.close();
       store.close();
@@ -163,7 +163,7 @@ describe('v16 -> v17 migration', () => {
     const db = new DatabaseSync(path);
     try {
       const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(version.user_version).toBe(37);
+      expect(version.user_version).toBe(38);
     } finally {
       db.close();
       store.close();
