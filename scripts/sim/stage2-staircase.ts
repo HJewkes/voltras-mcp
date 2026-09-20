@@ -15,14 +15,17 @@ import { EMPTY_PHASE, type Rep } from '@voltras/workout-analytics';
 
 import {
   ADAPTIVE_REST_POLICY,
+  arrivals,
   evaluateExerciseDay,
   intentDefaultSec,
   nextState,
   pairsForExerciseDay,
   recoveryRatio,
   seedRest,
+  settledValue,
   signalForIntent,
   sortPair,
+  stepDirections,
   targetFor,
   type EvidencePair,
   type IgnoredPairs,
@@ -30,7 +33,9 @@ import {
   type RestIntentKey,
   type RestSetInput,
   type RestSignal,
+  type RestStep,
   type StepDecision,
+  type StepDirection,
 } from '../../src/analytics/adaptive-rest.js';
 import {
   afterRest,
@@ -213,9 +218,10 @@ interface SimRecord {
   daysEvaluated: number;
   /** Informative pairs since the run started. A step empties the window, never this. */
   informativePairs: number;
-  pendingDown: boolean;
+  pendingDirection: StepDirection | null;
   evidence: EvidencePair[];
   lastStepDecision?: StepDecision;
+  history: RestStep[];
 }
 
 /** Sort one day's pairs and fold them into the record's evidence. */
@@ -234,8 +240,16 @@ function collectEvidence(
   for (const pair of valid) {
     const sort = sortPair(pair, record.valueSec, signal);
     if (isUnderRecovered(sort.r, signal)) underRecovered += 1;
+    if (sort.r !== null) {
+      record.evidence.push({
+        on,
+        r: sort.r,
+        weight: sort.weight,
+        verdict: sort.verdict,
+        inWindow: sort.inWindow,
+      });
+    }
     if (sort.informative) {
-      record.evidence.push({ on, r: sort.r as number, weight: sort.weight, verdict: sort.verdict });
       record.informativePairs += 1;
     } else if (sort.verdict === 'rushed') ignored.rushed += 1;
     else if (sort.verdict === 'long') ignored.long += 1;
@@ -253,29 +267,43 @@ function applyEvaluation(record: SimRecord, signal: RestSignal, on: string): Ste
     signal,
     runStartedOn: record.runStartedOn,
     ...(record.lastStepOn !== undefined ? { lastStepOn: record.lastStepOn } : {}),
-    pendingDown: record.pendingDown,
+    pendingDirection: record.pendingDirection,
     evidence: record.evidence,
     ignoredPairs: { rushed: 0, long: 0, invalid: 0 },
   });
   const { step } = evaluation;
+  record.history.push(step);
   record.daysEvaluated += 1;
-  record.pendingDown = evaluation.pendingDown;
+  record.pendingDirection = evaluation.pendingDirection;
   if (evaluation.clearsWindow) {
     record.evidence = [];
     record.lastStepOn = on;
     record.lastStepDecision = step.decision;
   }
   record.valueSec = step.toSec;
+  advanceState(record, on);
+  return step.decision;
+}
+
+/**
+ * Move the record's state, and do what each transition obliges the caller to
+ * do: settle on the bracketed value when a run becomes learned, and start a new
+ * run when a learned one goes back to calibrating.
+ */
+function advanceState(record: SimRecord, on: string): void {
+  const found = arrivals(record.history);
+  const wasLearned = record.state === 'learned';
   record.state = nextState({
     current: record.state,
     daysEvaluated: record.daysEvaluated,
     informativePairs: record.informativePairs,
-    newestDecision: step.decision,
-    ...(record.lastStepDecision !== undefined
-      ? { previousStepDecision: record.lastStepDecision }
-      : {}),
+    arrivals: found,
+    stepDirections: stepDirections(record.history),
   });
-  return step.decision;
+  if (!wasLearned && record.state === 'learned') {
+    record.valueSec = settledValue(found) ?? record.valueSec;
+  }
+  if (wasLearned && record.state === 'calibrating') restartRun(record, on);
 }
 
 /**
@@ -380,8 +408,9 @@ function newRecord(valueSec: number): SimRecord {
     runStartedOn: localDate(0),
     daysEvaluated: 0,
     informativePairs: 0,
-    pendingDown: false,
+    pendingDirection: null,
     evidence: [],
+    history: [],
   };
 }
 
@@ -437,12 +466,18 @@ function recordStep(
 function maybeRestart(config: Stage2Config, day: number, on: string, record: SimRecord): void {
   if (config.behaviour !== 'plan_restart' || day !== PLAN_RESTART_DAY) return;
   record.valueSec = PLAN_RESTART_SEC;
+  restartRun(record, on);
+}
+
+/** Start a new run at the current value: the arrival count restarts with it. */
+function restartRun(record: SimRecord, on: string): void {
   record.state = 'calibrating';
   record.runStartedOn = on;
   record.daysEvaluated = 0;
   record.informativePairs = 0;
-  record.pendingDown = false;
+  record.pendingDirection = null;
   record.evidence = [];
+  record.history = [];
   delete record.lastStepOn;
   delete record.lastStepDecision;
 }

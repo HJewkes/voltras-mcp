@@ -17,6 +17,7 @@ import { EMPTY_PHASE, type Rep } from '@voltras/workout-analytics';
 import { addDays } from '../../plan/block-calendar.js';
 import {
   ADAPTIVE_REST_POLICY,
+  arrivals,
   evaluateExerciseDay,
   intentDefaultSec,
   nextState,
@@ -24,13 +25,18 @@ import {
   recoveryRatio,
   restConflictFor,
   seedRest,
+  settledValue,
   signalForIntent,
   sortPair,
+  stepDirections,
+  type Arrival,
   type EvidencePair,
   type IgnoredPairs,
   type LearnedRecordSummary,
   type RestPair,
   type RestSetInput,
+  type RestStep,
+  type StepDirection,
 } from '../adaptive-rest.js';
 
 const DAY = '2026-09-19';
@@ -355,16 +361,30 @@ describe('sortPair: the 2x2 against the probed rest (design s.4.4)', () => {
     expect(sort.informative).toBe(true);
   });
 
-  it('counts a SHORT rest that recovered anyway: the monotone case that shortens T', () => {
+  /**
+   * Amendment s.2. These two used to be informative, and counting them was a
+   * one-way ratchet: a loiterer's only class is `missed`, so every step was
+   * `up` forever, and a rusher's only class is `recovered`, so every step was
+   * `down`. They are kept, marked out of window, and may only veto.
+   */
+  it('does not count a SHORT rest that recovered anyway; it is out of window', () => {
     const sort = sortPair(pairWithRatio(0.96, T - TOL - 30), T, 'opening_velocity');
     expect(sort.verdict).toBe('recovered');
-    expect(sort.informative).toBe(true);
+    expect(sort.inWindow).toBe(false);
+    expect(sort.informative).toBe(false);
   });
 
-  it('counts a LONG rest that missed anyway: the monotone case that lengthens T', () => {
+  it('does not count a LONG rest that missed anyway; it is out of window', () => {
     const sort = sortPair(pairWithRatio(0.9, T + TOL + 30), T, 'opening_velocity');
     expect(sort.verdict).toBe('missed');
-    expect(sort.informative).toBe(true);
+    expect(sort.inWindow).toBe(false);
+    expect(sort.informative).toBe(false);
+  });
+
+  it('marks a pair inside the window as in window', () => {
+    expect(sortPair(pairWithRatio(0.96, T), T, 'opening_velocity').inWindow).toBe(true);
+    expect(sortPair(pairWithRatio(0.96, T + TOL), T, 'opening_velocity').inWindow).toBe(true);
+    expect(sortPair(pairWithRatio(0.9, T - TOL), T, 'opening_velocity').inWindow).toBe(true);
   });
 
   it('ignores a short rest that missed: it says nothing about T', () => {
@@ -431,7 +451,18 @@ describe('sortPair: the 2x2 against the probed rest (design s.4.4)', () => {
 
 describe('evaluateExerciseDay: the step (design s.4.6)', () => {
   function evidenceOf(ratios: readonly number[], weight = 1): EvidencePair[] {
-    return ratios.map((r) => ({ on: DAY, r, weight, verdict: 'recovered' as const }));
+    return ratios.map((r) => ({
+      on: DAY,
+      r,
+      weight,
+      verdict: 'recovered' as const,
+      inWindow: true,
+    }));
+  }
+
+  /** A pair that sat outside the window, which can only veto. */
+  function outOfWindow(verdict: 'missed' | 'recovered'): EvidencePair {
+    return { on: DAY, r: verdict === 'missed' ? 0.5 : 1, weight: 1, verdict, inWindow: false };
   }
 
   function evaluate(over: Partial<Parameters<typeof evaluateExerciseDay>[0]> = {}) {
@@ -582,43 +613,207 @@ describe('evaluateExerciseDay: the step (design s.4.6)', () => {
     expect(evaluate(input).step.decision).toBe('down');
   });
 
-  describe('the two-day rule once learned', () => {
+  describe('the two-day rule once learned, in both directions', () => {
     it('holds the first qualifying day rather than shortening straight away', () => {
-      const { step, clearsWindow, pendingDown } = evaluate({ state: 'learned' });
+      const { step, clearsWindow, pendingDirection } = evaluate({ state: 'learned' });
       expect(step.decision).toBe('hold');
       expect(step.reason).toBe('recovered');
       expect(clearsWindow).toBe(false);
-      expect(pendingDown).toBe(true);
+      expect(pendingDirection).toBe('down');
     });
 
     it('shortens on the second consecutive qualifying day', () => {
-      const { step, pendingDown } = evaluate({ state: 'learned', pendingDown: true });
+      const input = { state: 'learned' as const, pendingDirection: 'down' as const };
+      const { step, pendingDirection } = evaluate(input);
       expect(step.decision).toBe('down');
       expect(step.toSec).toBe(120 - STEP);
-      expect(pendingDown).toBe(false);
+      expect(pendingDirection).toBeNull();
     });
 
-    it('lengthens on one day, learned or not', () => {
-      const { step } = evaluate({ state: 'learned', evidence: evidenceOf([0.8, 0.8]) });
+    it('holds the first qualifying day rather than lengthening straight away', () => {
+      const input = { state: 'learned' as const, evidence: evidenceOf([0.8, 0.8]) };
+      const { step, pendingDirection } = evaluate(input);
+      expect(step.decision).toBe('hold');
+      expect(step.reason).toBe('missed');
+      expect(pendingDirection).toBe('up');
+    });
+
+    it('lengthens on the second consecutive qualifying day', () => {
+      const { step } = evaluate({
+        state: 'learned',
+        evidence: evidenceOf([0.8, 0.8]),
+        pendingDirection: 'up',
+      });
       expect(step.decision).toBe('up');
+      expect(step.toSec).toBe(120 + STEP);
     });
 
-    it('does not hold a calibrating run: it shortens on the first qualifying day', () => {
+    it('does not carry a pending direction across a change of mind', () => {
+      const input = { state: 'learned' as const, pendingDirection: 'up' as const };
+      expect(evaluate(input).step.decision).toBe('hold');
+      expect(evaluate(input).pendingDirection).toBe('down');
+    });
+
+    it('does not hold a calibrating run: it steps on the first qualifying day', () => {
       expect(evaluate().step.decision).toBe('down');
+      expect(evaluate({ evidence: evidenceOf([0.8, 0.8]) }).step.decision).toBe('up');
+    });
+  });
+
+  describe('out-of-window pairs veto but never cause a step (amendment s.2)', () => {
+    it('a long rest that still missed vetoes a step down', () => {
+      const evidence = [...evidenceOf([0.99, 0.99]), outOfWindow('missed')];
+      const { step, clearsWindow } = evaluate({ evidence });
+      expect(step.decision).toBe('hold');
+      expect(step.reason).toBe('vetoed');
+      expect(step.toSec).toBe(step.fromSec);
+      expect(clearsWindow).toBe(false);
+    });
+
+    it('a short rest that recovered anyway vetoes a step up', () => {
+      const evidence = [...evidenceOf([0.8, 0.8]), outOfWindow('recovered')];
+      const { step } = evaluate({ evidence });
+      expect(step.decision).toBe('hold');
+      expect(step.reason).toBe('vetoed');
+    });
+
+    it('does not veto the step it agrees with', () => {
+      const down = [...evidenceOf([0.99, 0.99]), outOfWindow('recovered')];
+      expect(evaluate({ evidence: down }).step.decision).toBe('down');
+      const up = [...evidenceOf([0.8, 0.8]), outOfWindow('missed')];
+      expect(evaluate({ evidence: up }).step.decision).toBe('up');
+    });
+
+    it('never counts an out-of-window pair towards the evidence weight', () => {
+      const evidence = [...evidenceOf([0.99]), outOfWindow('recovered'), outOfWindow('recovered')];
+      const { step } = evaluate({ evidence });
+      expect(step.decision).toBe('no_evidence');
+      expect(step.informativePairs).toBe(1);
     });
   });
 });
 
-describe('nextState (design s.4.8)', () => {
+describe('arrivals (amendment s.3.1)', () => {
+  function step(over: Partial<RestStep>): RestStep {
+    return {
+      on: DAY,
+      fromSec: 120,
+      toSec: 105,
+      decision: 'down',
+      reason: 'recovered',
+      signal: 'opening_velocity',
+      rMedian: 0.99,
+      informativePairs: 2,
+      ignoredPairs: NO_IGNORED,
+      ...over,
+    };
+  }
+
+  const down = (on: string, fromSec: number) =>
+    step({ on, fromSec, toSec: fromSec - STEP, decision: 'down', reason: 'recovered' });
+  const up = (on: string, fromSec: number) =>
+    step({ on, fromSec, toSec: fromSec + STEP, decision: 'up', reason: 'missed' });
+  const holdFor = (on: string, at: number, reason: RestStep['reason']) =>
+    step({ on, fromSec: at, toSec: at, decision: 'hold', reason });
+
+  it('finds no arrival in a march that never turns', () => {
+    const march = [down('d1', 150), down('d2', 135), down('d3', 120), down('d4', 105)];
+    expect(arrivals(march)).toHaveLength(0);
+  });
+
+  it('reads a reversal as an arrival at the value the staircase turned at', () => {
+    const history = [down('d1', 150), down('d2', 135), up('d3', 120)];
+    expect(arrivals(history)).toEqual([{ on: 'd3', kind: 'reversal', valueSec: 120 }]);
+  });
+
+  it('reads a dead-band hold as an arrival at the held value', () => {
+    const history = [down('d1', 150), holdFor('d2', 135, 'dead_band')];
+    expect(arrivals(history)).toEqual([{ on: 'd2', kind: 'dead_band', valueSec: 135 }]);
+  });
+
+  it('does not read a no-evidence day, a vetoed hold or a two-day hold as an arrival', () => {
+    const history = [
+      down('d1', 150),
+      step({
+        on: 'd2',
+        fromSec: 135,
+        toSec: 135,
+        decision: 'no_evidence',
+        reason: 'too_few_pairs',
+      }),
+      holdFor('d3', 135, 'vetoed'),
+      holdFor('d4', 135, 'recovered'),
+      holdFor('d5', 135, 'missed'),
+    ];
+    expect(arrivals(history)).toHaveLength(0);
+  });
+
+  it('ignores holds between two steps when it looks for a reversal', () => {
+    const history = [
+      down('d1', 150),
+      holdFor('d2', 135, 'vetoed'),
+      step({
+        on: 'd3',
+        fromSec: 135,
+        toSec: 135,
+        decision: 'no_evidence',
+        reason: 'too_few_pairs',
+      }),
+      up('d4', 135),
+    ];
+    expect(arrivals(history)).toEqual([{ on: 'd4', kind: 'reversal', valueSec: 135 }]);
+  });
+
+  it('counts each turn of a bracketing sequence', () => {
+    const history = [down('d1', 120), up('d2', 105), down('d3', 120), up('d4', 105)];
+    expect(arrivals(history).map((a) => a.valueSec)).toEqual([105, 120, 105]);
+  });
+});
+
+describe('settledValue (amendment s.3.2)', () => {
+  const arrival = (valueSec: number): Arrival => ({ on: DAY, kind: 'reversal', valueSec });
+
+  it('takes the longer of the last two arrival values', () => {
+    expect(settledValue([arrival(150), arrival(105), arrival(120)])).toBe(120);
+    expect(settledValue([arrival(150), arrival(120), arrival(105)])).toBe(120);
+  });
+
+  it('ignores arrivals before the last two', () => {
+    expect(settledValue([arrival(300), arrival(105), arrival(90)])).toBe(105);
+  });
+
+  it('takes the only arrival when there is one, and null when there are none', () => {
+    expect(settledValue([arrival(135)])).toBe(135);
+    expect(settledValue([])).toBeNull();
+  });
+});
+
+describe('nextState (amendment s.3.2)', () => {
   const READY = {
     current: 'calibrating' as const,
     daysEvaluated: ADAPTIVE_REST_POLICY.learnedMinDaysEvaluated.value,
     informativePairs: ADAPTIVE_REST_POLICY.learnedMinInformativePairs.value,
-    newestDecision: 'hold' as const,
+    arrivals: threeArrivals(),
+    stepDirections: [] as StepDirection[],
   };
 
-  it('reads learned once enough days and pairs are in with no reversal', () => {
+  function threeArrivals(): Arrival[] {
+    return [120, 105, 120].map((valueSec) => ({ on: DAY, kind: 'reversal' as const, valueSec }));
+  }
+
+  it('reads learned at the third arrival, with the day and pair minimums met', () => {
     expect(nextState(READY)).toBe('learned');
+  });
+
+  it('keeps calibrating on two arrivals, however many days and pairs are in', () => {
+    const arrivals = threeArrivals().slice(0, 2);
+    expect(nextState({ ...READY, arrivals, daysEvaluated: 40, informativePairs: 99 })).toBe(
+      'calibrating',
+    );
+  });
+
+  it('keeps calibrating with no arrival at all', () => {
+    expect(nextState({ ...READY, arrivals: [] })).toBe('calibrating');
   });
 
   it('keeps calibrating on too few exercise-days', () => {
@@ -629,24 +824,28 @@ describe('nextState (design s.4.8)', () => {
     expect(nextState({ ...READY, informativePairs: 5 })).toBe('calibrating');
   });
 
-  it('keeps calibrating when the newest day reversed the previous step', () => {
-    expect(nextState({ ...READY, newestDecision: 'down', previousStepDecision: 'up' })).toBe(
-      'calibrating',
-    );
-    expect(nextState({ ...READY, newestDecision: 'up', previousStepDecision: 'down' })).toBe(
-      'calibrating',
-    );
+  it('no longer treats a reversal as a reason to wait: it is what grants the state', () => {
+    const marching: StepDirection[] = ['down', 'down'];
+    expect(nextState({ ...READY, stepDirections: marching })).toBe('learned');
   });
 
-  it('reads learned when the newest day continued in the same direction', () => {
-    expect(nextState({ ...READY, newestDecision: 'down', previousStepDecision: 'down' })).toBe(
-      'learned',
-    );
+  it('returns a learned run to calibrating after three steps one way', () => {
+    const learned = { ...READY, current: 'learned' as const };
+    expect(nextState({ ...learned, stepDirections: ['down', 'down', 'down'] })).toBe('calibrating');
+    expect(nextState({ ...learned, stepDirections: ['up', 'up', 'up'] })).toBe('calibrating');
   });
 
-  it('never demotes a learned record: only a restart does that', () => {
-    const reversing = { ...READY, current: 'learned' as const, newestDecision: 'down' as const };
-    expect(nextState({ ...reversing, previousStepDecision: 'up' })).toBe('learned');
+  it('keeps a learned run learned while its steps still turn', () => {
+    const learned = { ...READY, current: 'learned' as const };
+    expect(nextState({ ...learned, stepDirections: ['down', 'down', 'up'] })).toBe('learned');
+    expect(nextState({ ...learned, stepDirections: ['down', 'up', 'down'] })).toBe('learned');
+    expect(nextState({ ...learned, stepDirections: ['down', 'down'] })).toBe('learned');
+  });
+
+  it('reads only the newest steps, so an old march does not demote a settled run', () => {
+    const learned = { ...READY, current: 'learned' as const };
+    const directions: StepDirection[] = ['up', 'up', 'up', 'down'];
+    expect(nextState({ ...learned, stepDirections: directions })).toBe('learned');
   });
 });
 
@@ -917,5 +1116,186 @@ describe('ADAPTIVE_REST_POLICY', () => {
 
   it("marks the exercise-day unit as the designer's reading, not a ruling", () => {
     expect(ADAPTIVE_REST_POLICY.maxStepsPerExerciseDay.status).toBe('ENGINEERING DEFAULT');
+  });
+
+  it('marks the ceiling as an engineering default: the owner ruled the floor and not this', () => {
+    expect(ADAPTIVE_REST_POLICY.ceilingSec.status).toBe('ENGINEERING DEFAULT');
+  });
+
+  it('carries the amended version and every key the amendment adds', () => {
+    expect(ADAPTIVE_REST_POLICY.policyVersion).toBe('adaptive-rest@1.1.0');
+    expect(ADAPTIVE_REST_POLICY.learnedMinArrivals.value).toBe(3);
+    expect(ADAPTIVE_REST_POLICY.learnedValueRule.value).toBe('longer_of_last_two_arrivals');
+    expect(ADAPTIVE_REST_POLICY.relearnAfterSameDirectionSteps.value).toBe(3);
+    expect(ADAPTIVE_REST_POLICY.stepDaysRequiredWhenLearned.value).toBe(2);
+    expect(ADAPTIVE_REST_POLICY.outOfWindowPairs.value).toBe('veto_only');
+  });
+
+  it('no longer carries the down-only rule the amendment replaced', () => {
+    expect(ADAPTIVE_REST_POLICY).not.toHaveProperty('downDaysRequiredWhenLearned');
+  });
+});
+
+/**
+ * The amendment's acceptance tests, driven end to end: `sortPair` sorts the
+ * day's pairs, `evaluateExerciseDay` judges them, `arrivals` reads the history
+ * and `nextState` decides the state, exactly as the store task will compose
+ * them. Nothing here reimplements a rule.
+ */
+describe('the staircase over many exercise-days (amendment s.3)', () => {
+  interface Run {
+    valueSec: number;
+    state: LearnedRestState;
+    history: RestStep[];
+    evidence: EvidencePair[];
+    pendingDirection: StepDirection | null;
+    daysEvaluated: number;
+    informativePairs: number;
+  }
+
+  function newRun(valueSec: number): Run {
+    return {
+      valueSec,
+      state: 'calibrating',
+      history: [],
+      evidence: [],
+      pendingDirection: null,
+      daysEvaluated: 0,
+      informativePairs: 0,
+    };
+  }
+
+  /** A pair with a chosen ratio, rested `actualRestSec` after the previous set. */
+  function pairAt(ratio: number, actualRestSec: number): RestPair {
+    const earlier = makeSet({ id: 'a', startSec: 0, endSec: 40, velocities: [1.0, 1.0, 0.8] });
+    const later = makeSet({ id: 'b', startSec: 200, endSec: 240, velocities: [ratio, ratio, 0.5] });
+    return { earlier, later, reference: earlier, actualRestSec, laterSetIndex: 2, weight: 1 };
+  }
+
+  /** Run one exercise-day of `pairs` through the real rules and fold the result in. */
+  function runDay(run: Run, on: string, pairs: readonly RestPair[]): Run {
+    for (const pair of pairs) {
+      const sort = sortPair(pair, run.valueSec, 'opening_velocity');
+      if (sort.r === null) continue;
+      run.evidence.push({
+        on,
+        r: sort.r,
+        weight: sort.weight,
+        verdict: sort.verdict,
+        inWindow: sort.inWindow,
+      });
+      if (sort.informative) run.informativePairs += 1;
+    }
+    const evaluation = evaluateExerciseDay({
+      on,
+      valueSec: run.valueSec,
+      state: run.state,
+      signal: 'opening_velocity',
+      runStartedOn: RUN_START,
+      pendingDirection: run.pendingDirection,
+      evidence: run.evidence,
+      ignoredPairs: NO_IGNORED,
+    });
+    run.history.push(evaluation.step);
+    run.valueSec = evaluation.step.toSec;
+    run.pendingDirection = evaluation.pendingDirection;
+    run.daysEvaluated += 1;
+    if (evaluation.clearsWindow) run.evidence = [];
+    run.state = nextState({
+      current: run.state,
+      daysEvaluated: run.daysEvaluated,
+      informativePairs: run.informativePairs,
+      arrivals: arrivals(run.history),
+      stepDirections: stepDirections(run.history),
+    });
+    return run;
+  }
+
+  const RUN_START = '2026-09-01';
+  /** The nth exercise-day of the run, as a real local date. */
+  const dayOf = (n: number) => addDays(RUN_START, n);
+
+  /** Two in-window pairs that both say "recovered", which qualifies a step down. */
+  const recoveredDay = (at: number) => [pairAt(0.99, at), pairAt(0.99, at)];
+  /** Two in-window pairs that both say "missed", which qualifies a step up. */
+  const missedDay = (at: number) => [pairAt(0.8, at), pairAt(0.8, at)];
+
+  it('keeps calibrating through a seven-day march, whatever the day and pair counts', () => {
+    let run = newRun(180);
+    const seen: LearnedRestState[] = [];
+    for (let day = 1; day <= 7; day += 1) {
+      run = runDay(run, dayOf(day), recoveredDay(run.valueSec));
+      seen.push(run.state);
+    }
+    expect(seen).toEqual(Array<LearnedRestState>(7).fill('calibrating'));
+    expect(run.daysEvaluated).toBe(7);
+    expect(run.valueSec).toBe(180 - 7 * STEP);
+    expect(arrivals(run.history)).toHaveLength(0);
+  });
+
+  it('reads learned on the day of the third arrival, settling on the longer bracket value', () => {
+    let run = newRun(150);
+    run = runDay(run, dayOf(1), recoveredDay(run.valueSec));
+    run = runDay(run, dayOf(2), recoveredDay(run.valueSec));
+    expect(run.valueSec).toBe(120);
+    run = runDay(run, dayOf(3), missedDay(run.valueSec));
+    run = runDay(run, dayOf(4), recoveredDay(run.valueSec));
+    expect(run.state).toBe('calibrating');
+    run = runDay(run, dayOf(5), missedDay(run.valueSec));
+    expect(arrivals(run.history)).toHaveLength(3);
+    expect(run.state).toBe('learned');
+    expect(settledValue(arrivals(run.history))).toBe(135);
+  });
+
+  it('stays calibrating when one noisy day makes two reversals at the same spot', () => {
+    let run = newRun(180);
+    run = runDay(run, dayOf(1), recoveredDay(run.valueSec));
+    run = runDay(run, dayOf(2), missedDay(run.valueSec));
+    run = runDay(run, dayOf(3), recoveredDay(run.valueSec));
+    expect(arrivals(run.history)).toHaveLength(2);
+    expect(run.state).toBe('calibrating');
+  });
+
+  it('never moves a loiterer, whose every rest sits past the window', () => {
+    let run = newRun(120);
+    for (let day = 1; day <= 10; day += 1) {
+      const late = run.valueSec + ADAPTIVE_REST_POLICY.toleranceSec.value + 40;
+      run = runDay(run, dayOf(day), [pairAt(0.99, late), pairAt(0.8, late)]);
+    }
+    expect(run.valueSec).toBe(120);
+    expect(run.history.every((step) => step.toSec === step.fromSec)).toBe(true);
+  });
+
+  it('never moves a rusher, whose every rest starts before the window', () => {
+    let run = newRun(120);
+    for (let day = 1; day <= 10; day += 1) {
+      const early = run.valueSec - ADAPTIVE_REST_POLICY.toleranceSec.value - 40;
+      run = runDay(run, dayOf(day), [pairAt(0.99, early), pairAt(0.8, early)]);
+    }
+    expect(run.valueSec).toBe(120);
+    expect(run.history.every((step) => step.toSec === step.fromSec)).toBe(true);
+  });
+
+  it('returns a learned run to calibrating after three steps one way, restarting its arrivals', () => {
+    let run = newRun(150);
+    for (const [day, pairs] of [
+      [dayOf(1), recoveredDay(150)],
+      [dayOf(2), recoveredDay(135)],
+      [dayOf(3), missedDay(120)],
+      [dayOf(4), recoveredDay(135)],
+      [dayOf(5), missedDay(120)],
+    ] as const) {
+      run = runDay(run, day, pairs);
+    }
+    expect(run.state).toBe('learned');
+    const learnedAt = run.history.length;
+
+    // Once learned, each step needs two consecutive qualifying days.
+    for (let day = 6; day <= 11; day += 1) {
+      run = runDay(run, dayOf(day), recoveredDay(run.valueSec));
+    }
+    expect(stepDirections(run.history).slice(-3)).toEqual(['down', 'down', 'down']);
+    expect(run.state).toBe('calibrating');
+    expect(arrivals(run.history.slice(learnedAt))).toHaveLength(0);
   });
 });

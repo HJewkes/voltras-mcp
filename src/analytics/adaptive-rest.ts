@@ -4,12 +4,14 @@
 //
 // The owner's rulings, which nothing here may move:
 //
-//   * The staircase probes DOWNWARD to find the limit, held between a 45 s
-//     floor and a 300 s ceiling. The 15 s step and the exercise-day as the
-//     unit are NOT rulings: the owner fixed 15 s as a starting value and said
-//     "one step per session per exercise", so both sit in the policy object as
-//     engineering defaults. The step still needs the owner's sign-off to move,
-//     because it sets how much rest a lifter gets.
+//   * The staircase probes DOWNWARD to find the limit, and never below the
+//     45 s floor. Three things nearby are NOT rulings and sit in the policy
+//     object as engineering defaults: the 300 s ceiling (the owner ruled the
+//     floor and never this; it comes from Janicijevic 2023), the 15 s step
+//     (fixed by the owner as a STARTING value), and the exercise-day as the
+//     unit (the owner said "one step per session per exercise"). The step
+//     still needs the owner's sign-off to move, because it sets how much rest
+//     a lifter gets.
 //   * The signal is reps preserved for hypertrophy and opening velocity for
 //     strength. Power follows strength; an exercise with no stated intent
 //     follows hypertrophy.
@@ -73,7 +75,7 @@ export type PairVerdict = PairClass | 'invalid';
 /** What one exercise-day's evaluation did to the learned value. */
 export type StepDecision = 'down' | 'up' | 'hold' | 'no_evidence' | 'restart';
 
-/** The machine word for why (design s.3.2). */
+/** The machine word for why (design s.3.2, amendment s.2). */
 export type StepReason =
   | 'recovered'
   | 'missed'
@@ -81,17 +83,21 @@ export type StepReason =
   | 'too_few_pairs'
   | 'superseded_by_plan'
   | 'floor'
-  | 'ceiling';
+  | 'ceiling'
+  | 'vetoed';
 
-/** How far a run has got. A learned record returns to calibrating only through a restart. */
+/** How far a run has got. */
 export type LearnedRestState = 'calibrating' | 'learned';
+
+/** The two ways the staircase can move. */
+export type StepDirection = 'down' | 'up';
 
 /** What a run started from. */
 export type RestBaseSource = 'plan' | 'lifter_factor' | 'intent_default';
 
 /** Every number the staircase turns on, with its provenance. */
 export const ADAPTIVE_REST_POLICY = {
-  policyVersion: 'adaptive-rest@1.0.0',
+  policyVersion: 'adaptive-rest@1.1.0',
 
   /** Which signal each intent is judged on. */
   signalByIntent: {
@@ -191,8 +197,8 @@ export const ADAPTIVE_REST_POLICY = {
   },
   ceilingSec: {
     value: 300,
-    status: 'OWNER',
-    note: 'The owner set the ceiling; it matches Janicijevic 2023 (5 min when sets end near failure) and the passive rest registry cap.',
+    status: 'ENGINEERING DEFAULT',
+    note: 'The owner ruled the 45 s floor and never this. It comes from Janicijevic 2023 (5 min when sets end near failure) and happens to match the passive rest registry cap.',
   },
   minInformativeWeight: {
     value: 2,
@@ -209,10 +215,15 @@ export const ADAPTIVE_REST_POLICY = {
     status: 'ENGINEERING DEFAULT',
     note: 'A median this close to target holds. Narrower than the measurement noise would bounce the rest every visit.',
   },
-  downDaysRequiredWhenLearned: {
+  stepDaysRequiredWhenLearned: {
     value: 2,
     status: 'ENGINEERING DEFAULT',
-    note: 'Once learned, shortening needs two consecutive qualifying days. Lengthening protects the training; shortening only saves time.',
+    note: 'Once learned, a step in EITHER direction needs two consecutive qualifying days. The valve covers a single bad day, so one day of evidence should not move a rest the staircase has already found.',
+  },
+  outOfWindowPairs: {
+    value: 'veto_only' as const,
+    status: 'ENGINEERING DEFAULT',
+    note: 'A pair whose actual rest sits outside the tolerance window never enters the median and can never cause a step. It may only veto the opposite step. Counting such pairs selected evidence on its outcome, which ratcheted a loiterer up and a rusher down forever.',
   },
 
   // ── s.4.7 the seed ────────────────────────────────────────────────────
@@ -240,15 +251,30 @@ export const ADAPTIVE_REST_POLICY = {
 
   // ── s.4.8 the state, and s.5.3 the restart guard ──────────────────────
 
+  learnedMinArrivals: {
+    value: 3,
+    status: 'ENGINEERING DEFAULT',
+    note: 'Arrivals before a run may call itself learned. Two are too easy to fake: one noisy day in the middle of a march produces an up then a down, which is two reversals at one spot. A third needs a second noisy day at the same spot.',
+  },
+  learnedValueRule: {
+    value: 'longer_of_last_two_arrivals' as const,
+    status: 'ENGINEERING DEFAULT',
+    note: 'A 15 s staircase brackets the lifter’s rest between two neighbouring values. Settling on the longer one protects the training; the shorter one only saves time.',
+  },
   learnedMinDaysEvaluated: {
     value: 3,
     status: 'ENGINEERING DEFAULT',
-    note: 'Exercise-days judged before a run may call itself learned.',
+    note: 'Exercise-days judged before a run may call itself learned. NECESSARY ONLY since the arrival rule: on its own it granted learned after at most three steps, whatever the lifter.',
   },
   learnedMinInformativePairs: {
     value: 6,
     status: 'ENGINEERING DEFAULT',
-    note: 'Informative pairs in the run before it may call itself learned.',
+    note: 'Informative pairs in the run before it may call itself learned. Necessary only, for the same reason.',
+  },
+  relearnAfterSameDirectionSteps: {
+    value: 3,
+    status: 'ENGINEERING DEFAULT',
+    note: 'A learned run that marches this far in one direction goes back to calibrating: the lifter has changed, or the sets have.',
   },
   restartCooldownDays: {
     value: 7,
@@ -388,6 +414,8 @@ export function recoveryRatio(pair: RestPair, signal: RestSignal): number | null
 export interface PairSort {
   readonly verdict: PairVerdict;
   readonly r: number | null;
+  /** Actual rest sat within one tolerance of the probed rest. Only these can cause a step. */
+  readonly inWindow: boolean;
   readonly informative: boolean;
   readonly weight: number;
 }
@@ -395,32 +423,50 @@ export interface PairSort {
 /**
  * Sort one pair against `valueSec`, the rest being probed on that date.
  *
- * Only the two monotone cases outside the tolerance window count: a short rest
- * that recovered anyway, and a long rest that missed anyway. A short rest that
- * missed says nothing about the probed rest, and neither does a long one that
- * recovered. This is what makes the rule read ACTUAL rest and not the
- * prescription.
+ * ONLY PAIRS INSIDE THE WINDOW ARE INFORMATIVE (amendment s.2). Counting the
+ * two monotone cases outside it selected evidence on its outcome and was a
+ * one-way ratchet: a loiterer rests past the window, so their only class is
+ * `missed` and every step is `up` forever; a rusher's only class is `recovered`
+ * and every step is `down`. Neither ever catches up, because both rest relative
+ * to the value the staircase just moved.
+ *
+ * Those two classes are still recorded, and {@link evaluateExerciseDay} lets
+ * them VETO the opposite step. A long rest that still missed is a reason not to
+ * shorten. It is not a reason to lengthen.
  */
 export function sortPair(pair: RestPair, valueSec: number, signal: RestSignal): PairSort {
   const r = recoveryRatio(pair, signal);
-  if (r === null) return { verdict: 'invalid', r: null, informative: false, weight: 0 };
-  const tol = ADAPTIVE_REST_POLICY.toleranceSec.value;
-  const meets = r >= targetFor(signal);
-  if (meets) {
-    const verdict = pair.actualRestSec <= valueSec + tol ? 'recovered' : 'long';
-    return { verdict, r, informative: verdict === 'recovered', weight: pair.weight };
+  if (r === null) {
+    return { verdict: 'invalid', r: null, inWindow: false, informative: false, weight: 0 };
   }
-  const verdict = pair.actualRestSec >= valueSec - tol ? 'missed' : 'rushed';
-  return { verdict, r, informative: verdict === 'missed', weight: pair.weight };
+  const tol = ADAPTIVE_REST_POLICY.toleranceSec.value;
+  const inWindow = pair.actualRestSec >= valueSec - tol && pair.actualRestSec <= valueSec + tol;
+  const meets = r >= targetFor(signal);
+  const verdict = meets
+    ? pair.actualRestSec <= valueSec + tol
+      ? 'recovered'
+      : 'long'
+    : pair.actualRestSec >= valueSec - tol
+      ? 'missed'
+      : 'rushed';
+  const informative = inWindow && (verdict === 'recovered' || verdict === 'missed');
+  return { verdict, r, inWindow, informative, weight: pair.weight };
 }
 
-/** One informative pair as the evidence window holds it. */
+/**
+ * One pair as the evidence window holds it.
+ *
+ * Out-of-window pairs are kept here too: they never enter the median, and they
+ * are what the veto reads (amendment s.2).
+ */
 export interface EvidencePair {
   /** Local date of the exercise-day it came from. */
   readonly on: string;
   readonly r: number;
   readonly weight: number;
   readonly verdict: PairVerdict;
+  /** Actual rest sat within one tolerance of the value being probed that day. */
+  readonly inWindow: boolean;
 }
 
 /** Pairs a day saw and ignored, carried onto the history entry. */
@@ -452,9 +498,9 @@ export interface EvaluateExerciseDayInput {
   readonly signal: RestSignal;
   readonly runStartedOn: string;
   readonly lastStepOn?: string;
-  /** True when the previous evaluated day qualified for a step down and the two-day rule held it. */
-  readonly pendingDown?: boolean;
-  /** Every informative pair of the run, this day's included, newest last. */
+  /** The direction the previous evaluated day qualified for, when the two-day rule held it. */
+  readonly pendingDirection?: StepDirection | null;
+  /** Every pair of the run, this day's included, newest last. In and out of window alike. */
   readonly evidence: readonly EvidencePair[];
   readonly ignoredPairs: IgnoredPairs;
 }
@@ -463,60 +509,164 @@ export interface ExerciseDayEvaluation {
   readonly step: RestStep;
   /** The evidence was about the old value, so a caller that steps empties the window. */
   readonly clearsWindow: boolean;
-  /** Carried to the next evaluation for the two-day rule on a step down. */
-  readonly pendingDown: boolean;
+  /** Carried to the next evaluation for the two-day rule, in either direction. */
+  readonly pendingDirection: StepDirection | null;
 }
 
 /**
  * Judge one exercise-day and say what it does to the learned value. At most one
- * step per day (OWNER), and never a step the clamp would have to undo.
+ * step per day, and never a step the clamp would have to undo.
+ *
+ * Three things can stop a step the median asked for: the dead band, a veto from
+ * an out-of-window pair (amendment s.2), and, once the run is `learned`, the
+ * two-day rule. That rule now applies in BOTH directions: a rest the staircase
+ * has already found should not move on one day's evidence, whichever way it
+ * points, and the valve covers the single bad day.
  */
 export function evaluateExerciseDay(input: EvaluateExerciseDayInput): ExerciseDayEvaluation {
-  const window = evidenceWindow(input);
+  const dated = evidenceWindow(input);
+  const window = dated.filter((pair) => pair.inWindow && isInformativeVerdict(pair.verdict));
   const weight = window.reduce((sum, pair) => sum + pair.weight, 0);
   if (weight < ADAPTIVE_REST_POLICY.minInformativeWeight.value) {
-    return held(input, 'no_evidence', 'too_few_pairs', null, window.length, false);
+    return held(input, 'no_evidence', 'too_few_pairs', null, window.length, null);
   }
   const median = weightedMedian(window);
+  const band = ADAPTIVE_REST_POLICY.deadBand.value;
   const target = targetFor(input.signal);
-  if (median < target - ADAPTIVE_REST_POLICY.deadBand.value) {
-    return stepped(input, 'up', 'missed', median, window.length);
+  if (median >= target - band && median < target + band) {
+    return held(input, 'hold', 'dead_band', median, window.length, null);
   }
-  if (median < target + ADAPTIVE_REST_POLICY.deadBand.value) {
-    return held(input, 'hold', 'dead_band', median, window.length, false);
+  const direction: StepDirection = median < target - band ? 'up' : 'down';
+  if (isVetoed(direction, dated)) {
+    return held(input, 'hold', 'vetoed', median, window.length, null);
   }
-  if (input.state === 'learned' && input.pendingDown !== true) {
-    return held(input, 'hold', 'recovered', median, window.length, true);
+  if (input.state === 'learned' && input.pendingDirection !== direction) {
+    return held(input, 'hold', reasonFor(direction), median, window.length, direction);
   }
-  return stepped(input, 'down', 'recovered', median, window.length);
+  return stepped(input, direction, reasonFor(direction), median, window.length);
+}
+
+/** A step down is a claim the lifter recovered; a step up, that they did not. */
+function reasonFor(direction: StepDirection): StepReason {
+  return direction === 'down' ? 'recovered' : 'missed';
+}
+
+function isInformativeVerdict(verdict: PairVerdict): boolean {
+  return verdict === 'recovered' || verdict === 'missed';
+}
+
+/**
+ * Does an out-of-window pair forbid this step? A long rest that still missed
+ * forbids shortening; a short rest that recovered anyway forbids lengthening.
+ * Neither can cause a step of its own.
+ */
+function isVetoed(direction: StepDirection, dated: readonly EvidencePair[]): boolean {
+  const blocking = direction === 'down' ? 'missed' : 'recovered';
+  return dated.some((pair) => !pair.inWindow && pair.verdict === blocking);
+}
+
+/**
+ * An exercise-day on which the staircase showed it is AT the lifter's rest
+ * (amendment s.3.1).
+ *
+ * Two kinds, and they mean the same thing. A REVERSAL is the staircase turning
+ * round: it went one step too far and came back. A DEAD-BAND HOLD is it
+ * arriving and staying. A march in one direction is neither: it is the
+ * staircase still travelling, which is exactly what the old rule mistook for
+ * having learned.
+ */
+export interface Arrival {
+  readonly on: string;
+  readonly kind: 'reversal' | 'dead_band';
+  /** Where the staircase turned, or the value it held. */
+  readonly valueSec: number;
+}
+
+/**
+ * Every arrival in a run's history, oldest first.
+ *
+ * Holds between two steps are IGNORED when looking for a reversal: a day with
+ * no evidence, or a vetoed day, does not break the chain from one step to the
+ * next. Only a step that moved the value changes the direction under test.
+ */
+export function arrivals(history: readonly RestStep[]): Arrival[] {
+  const found: Arrival[] = [];
+  let lastDirection: StepDirection | null = null;
+  for (const step of history) {
+    if (step.decision === 'hold' && step.reason === 'dead_band') {
+      found.push({ on: step.on, kind: 'dead_band', valueSec: step.toSec });
+      continue;
+    }
+    if (step.decision !== 'down' && step.decision !== 'up') continue;
+    if (lastDirection !== null && lastDirection !== step.decision) {
+      found.push({ on: step.on, kind: 'reversal', valueSec: step.fromSec });
+    }
+    lastDirection = step.decision;
+  }
+  return found;
+}
+
+/**
+ * The value a run settles on when it becomes learned: the longer of its last
+ * two arrival values (amendment s.3.2). A 15 s staircase brackets the lifter's
+ * rest between two neighbouring values, and the longer one protects the
+ * training while the shorter one only saves time.
+ *
+ * `null` when there is no arrival to settle on.
+ */
+export function settledValue(found: readonly Arrival[]): number | null {
+  if (found.length === 0) return null;
+  const lastTwo = found.slice(-2);
+  return Math.max(...lastTwo.map((arrival) => arrival.valueSec));
+}
+
+/** The directions of the steps that actually moved the value, oldest first. */
+export function stepDirections(history: readonly RestStep[]): StepDirection[] {
+  return history
+    .filter((step) => step.decision === 'down' || step.decision === 'up')
+    .map((step) => step.decision as StepDirection);
 }
 
 export interface NextStateInput {
   readonly current: LearnedRestState;
   readonly daysEvaluated: number;
   readonly informativePairs: number;
-  /** The decision the newest evaluated day reached. */
-  readonly newestDecision: StepDecision;
-  /** The decision of the newest day BEFORE it that moved the value, if any. */
-  readonly previousStepDecision?: StepDecision;
+  /** Arrivals in this run, oldest first. The caller slices the history at the run's start. */
+  readonly arrivals: readonly Arrival[];
+  /** Directions of the steps that moved the value in this run, oldest first. */
+  readonly stepDirections: readonly StepDirection[];
 }
 
 /**
- * Whether a run may call itself learned. A reversal on the newest day — a step
- * down straight after a step up, or the other way round — says the staircase is
- * still hunting, so the run keeps calibrating. A learned record never returns
- * to calibrating here; only a restart does that.
+ * Whether a run may call itself learned (amendment s.3.2).
+ *
+ * The day and pair counts are NECESSARY and no longer sufficient. On their own
+ * they granted `learned` after at most three steps, which is 45 s of travel, so
+ * any lifter further than that from the population seed was a false `learned`
+ * by construction. What earns the word now is arriving three times.
+ *
+ * A learned run goes back to calibrating when it marches
+ * `relearnAfterSameDirectionSteps` in one direction: the lifter has changed, or
+ * the sets have. The caller then starts a new run, so the arrival count
+ * restarts with it.
  */
 export function nextState(input: NextStateInput): LearnedRestState {
-  if (input.current === 'learned') return 'learned';
-  const reversed =
-    (input.newestDecision === 'down' && input.previousStepDecision === 'up') ||
-    (input.newestDecision === 'up' && input.previousStepDecision === 'down');
-  if (reversed) return 'calibrating';
+  if (input.current === 'learned') {
+    return isMarching(input.stepDirections) ? 'calibrating' : 'learned';
+  }
   const enough =
+    input.arrivals.length >= ADAPTIVE_REST_POLICY.learnedMinArrivals.value &&
     input.daysEvaluated >= ADAPTIVE_REST_POLICY.learnedMinDaysEvaluated.value &&
     input.informativePairs >= ADAPTIVE_REST_POLICY.learnedMinInformativePairs.value;
   return enough ? 'learned' : 'calibrating';
+}
+
+/** Has the staircase taken its relearn quota of steps in one direction? */
+function isMarching(directions: readonly StepDirection[]): boolean {
+  const needed = ADAPTIVE_REST_POLICY.relearnAfterSameDirectionSteps.value;
+  if (directions.length < needed) return false;
+  const recent = directions.slice(-needed);
+  return recent.every((direction) => direction === recent[0]);
 }
 
 /** One of the lifter's other learned records, read for the lifter factor. */
@@ -830,9 +980,7 @@ function evidenceWindow(input: EvaluateExerciseDayInput): readonly EvidencePair[
     addDays(input.on, -ADAPTIVE_REST_POLICY.evidenceWindowDays.value),
   ];
   const start = cutoffs.reduce((newest, date) => (date > newest ? date : newest), '');
-  return input.evidence.filter(
-    (pair) => pair.on >= start && (pair.verdict === 'recovered' || pair.verdict === 'missed'),
-  );
+  return input.evidence.filter((pair) => pair.on >= start && isInformativeVerdict(pair.verdict));
 }
 
 /** The ratio at which half the window's weight sits below and half above. */
@@ -853,7 +1001,7 @@ function held(
   reason: StepReason,
   rMedian: number | null,
   informativePairs: number,
-  pendingDown: boolean,
+  pendingDirection: StepDirection | null,
 ): ExerciseDayEvaluation {
   return {
     step: {
@@ -868,13 +1016,13 @@ function held(
       ignoredPairs: input.ignoredPairs,
     },
     clearsWindow: false,
-    pendingDown,
+    pendingDirection,
   };
 }
 
 function stepped(
   input: EvaluateExerciseDayInput,
-  decision: 'down' | 'up',
+  decision: StepDirection,
   reason: StepReason,
   rMedian: number,
   informativePairs: number,
@@ -896,7 +1044,7 @@ function stepped(
       ignoredPairs: input.ignoredPairs,
     },
     clearsWindow: true,
-    pendingDown: false,
+    pendingDirection: null,
   };
 }
 
