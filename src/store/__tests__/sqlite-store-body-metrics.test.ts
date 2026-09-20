@@ -146,7 +146,7 @@ describe('migrateV25ToV26', () => {
     const db = new DatabaseSync(path);
     try {
       const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
-      expect(row.user_version).toBe(36);
+      expect(row.user_version).toBe(37);
       expect(() =>
         db
           .prepare(
