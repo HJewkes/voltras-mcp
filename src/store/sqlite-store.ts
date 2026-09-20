@@ -2127,10 +2127,18 @@ function migrateV37ToV38(db: DatabaseSync): void {
  * and inventing one would put a claim in an audit trail that nobody made. Existing rows
  * read NULL, which says exactly that.
  *
- * The index lives in `SCHEMA_SQL` behind `IF NOT EXISTS`, but is created here too: on an
- * existing DB `db.exec(SCHEMA_SQL)` runs before this step, when the column it names does
- * not yet exist. One transaction, so a failure leaves the v38 shape; `addColumnIfMissing`
- * and `IF NOT EXISTS` make a second run a no-op.
+ * THE STEP OWNS THE INDEX AND THE COMPLETION TRIGGER. Neither is in `SCHEMA_SQL`: both
+ * name `device_id`, and `db.exec(SCHEMA_SQL)` runs BEFORE the migrations on every open,
+ * when a pre-v39 file has no such column. A fresh store gets them here too, because every
+ * rung runs from 0.
+ *
+ * The trigger is DROPPED and recreated rather than left to `IF NOT EXISTS` — the step's
+ * riskiest line. A store migrated from v36 already carries the v36 trigger, which would
+ * otherwise survive and leave `device_id` the one column an out-of-band UPDATE could
+ * rewrite.
+ *
+ * One transaction, so a failure leaves the v38 shape; `addColumnIfMissing`, `IF NOT
+ * EXISTS` and the unconditional drop make a second run a no-op.
  */
 function migrateV38ToV39(db: DatabaseSync): void {
   db.exec('BEGIN');
