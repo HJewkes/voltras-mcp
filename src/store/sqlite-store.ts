@@ -63,11 +63,11 @@ import {
 } from './exercise-baselines.js';
 import { scheduleProblem } from '../plan/block-calendar.js';
 import { defaultGoalKind } from '../plan/goal-kind.js';
+import { DEFAULT_LEARNED_REST_CONTEXT } from './learned-rest-context.js';
 import {
   BLOCK_SCHEDULE_CHANGED_BY,
   BLOCK_SCHEDULE_KINDS,
   LEARNED_REST_BASE_SOURCES,
-  LEARNED_REST_CONTEXTS,
   LEARNED_REST_INTENTS,
   LEARNED_REST_STATES,
   LOCAL_USER_ID,
@@ -504,9 +504,11 @@ const PLANNED_GOAL_KIND_DDL = `TEXT CHECK (goal_kind IS NULL OR goal_kind IN (${
  * Slot is NOT part of the key — one lifter has one value per exercise whichever side
  * recorded the set.
  *
- * `context` is FREE TEXT beyond the two words this CHECK names on purpose: each resistance
- * family will later learn its own rest and the family goes in this column. Widening a CHECK
- * is a migration; widening a code-side validator is not.
+ * `context` carries NO enumerated CHECK on purpose (OWNER, VW-525): each resistance family
+ * will later learn its own rest and the family goes in this column. Widening a CHECK is a
+ * migration; widening a code-side validator is not. `learned-rest-context.ts` holds the
+ * vocabulary and the predicate every write path into this table must ask first — the schema
+ * cannot answer it, so nothing here may be read as though it did.
  *
  * `base_source`, `plan_base_sec`, `policy_version` and `history_json` together answer "why
  * is this number what it is" without reading a single set.
@@ -519,8 +521,7 @@ const LEARNED_REST_DDL = `
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     exercise_id TEXT NOT NULL,
     intent TEXT NOT NULL CHECK (intent IN (${sqlList(LEARNED_REST_INTENTS)})),
-    context TEXT NOT NULL DEFAULT 'straight'
-      CHECK (context IN (${sqlList(LEARNED_REST_CONTEXTS)})),
+    context TEXT NOT NULL DEFAULT '${DEFAULT_LEARNED_REST_CONTEXT}',
     value_sec INTEGER NOT NULL,
     state TEXT NOT NULL CHECK (state IN (${sqlList(LEARNED_REST_STATES)})),
     base_sec INTEGER NOT NULL,

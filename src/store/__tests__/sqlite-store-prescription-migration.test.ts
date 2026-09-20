@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { isLearnedRestContext } from '../learned-rest-context.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 
 const CURRENT_VERSION = 38;
@@ -232,6 +233,47 @@ describe('the prescription migration', () => {
         `SELECT name FROM pragma_table_info('learned_rest') WHERE pk > 0 ORDER BY pk`,
       ).map((column) => column.name),
     ).toEqual(['user_id', 'exercise_id', 'intent', 'context']);
+  });
+
+  // The owner's ruling (VW-525): `context` is free text validated in code, because each
+  // resistance family will later learn its own rest and the family goes in that column.
+  // The three columns whose vocabulary is closed keep their CHECKs; this one has none, so
+  // `isLearnedRestContext` is the ONLY thing standing between a typo and a stored row.
+  it('leaves context unenumerated while the closed columns keep their CHECKs', async () => {
+    seedV34();
+
+    await SqliteSessionStore.open(path).close();
+
+    const ddl = read<{ sql: string }>(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'learned_rest'`,
+    )[0]!.sql;
+    expect(ddl).toMatch(/context TEXT NOT NULL DEFAULT 'straight',/);
+    expect(ddl).not.toMatch(/CHECK \(context/);
+    for (const column of ['intent', 'state', 'base_source']) {
+      expect(ddl).toMatch(new RegExp(`CHECK \\(${column} IN`));
+    }
+  });
+
+  // And the schema really does accept a word this build does not know, which is the whole
+  // reason the predicate has to be asked rather than assumed.
+  it('accepts an unknown context at the schema level, so only code can refuse one', async () => {
+    seedV34();
+    await SqliteSessionStore.open(path).close();
+
+    const db = new DatabaseSync(path);
+    try {
+      expect(isLearnedRestContext('banded')).toBe(false);
+      expect(() =>
+        db.exec(
+          `INSERT INTO learned_rest (user_id, exercise_id, intent, context, value_sec, state,
+             base_sec, base_source, run_started_on, history_json, policy_version, updated_at)
+           VALUES ('local', 'bench-press', 'strength', 'banded', 120, 'calibrating', 120,
+             'plan', '2026-09-20', '[]', 'adaptive-rest@1.0.0', '${AT}')`,
+        ),
+      ).not.toThrow();
+    } finally {
+      db.close();
+    }
   });
 
   it('gives a fresh store the same shape as a migrated one', async () => {

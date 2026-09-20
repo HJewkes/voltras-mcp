@@ -1427,14 +1427,6 @@ export type PlanGoalKind = (typeof PLAN_GOAL_KINDS)[number];
 export const LEARNED_REST_INTENTS = ['strength', 'hypertrophy', 'power', 'none'] as const;
 export type LearnedRestIntent = (typeof LEARNED_REST_INTENTS)[number];
 
-/**
- * What the rest between the two sets of a pair contained. Version 1 writes `straight`
- * only; `interleaved` exists from the start so a later superset rule needs no migration
- * and cannot read straight-set values as its own (VW-445 s.3.1).
- */
-export const LEARNED_REST_CONTEXTS = ['straight', 'interleaved'] as const;
-export type LearnedRestContext = (typeof LEARNED_REST_CONTEXTS)[number];
-
 /** How far a run has got. `learned` is a claim about evidence, so it is stored, not derived. */
 export const LEARNED_REST_STATES = ['calibrating', 'learned'] as const;
 export type LearnedRestStateValue = (typeof LEARNED_REST_STATES)[number];
