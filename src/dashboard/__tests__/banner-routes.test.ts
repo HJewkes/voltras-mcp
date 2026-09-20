@@ -101,7 +101,7 @@ describe('GET /api/banners', () => {
       destination: '#/plan',
       dismissible: false,
     });
-    expect(banner.subtitle).toContain('3 planned weeks had no training day');
+    expect(banner.title).toContain('3 planned weeks: nothing recorded');
   });
 
   it('answers null rather than failing when the store has no planning reads', async () => {

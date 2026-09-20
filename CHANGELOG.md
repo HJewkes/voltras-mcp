@@ -46,6 +46,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Changed
+
+- The unrecorded-week banner now carries the owner's wording instead of its placeholder
+  copy. One missed week reads "Week of Mon 31 Aug: nothing recorded" with no subtitle;
+  several read "3 planned weeks: nothing recorded", with the most recent named in the
+  subtitle below (VW-527).
+
 ### Added
 
 - `npm run sim:rest` runs the adaptive-rest simulation: it fits a model of a lifter to three

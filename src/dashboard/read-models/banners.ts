@@ -47,9 +47,6 @@ export interface BannerRecord {
 
 const UNRECORDED_WEEK_SOURCE = 'plan.block-calendar';
 
-// Placeholder copy (VW-504): awaiting the owner's wording.
-const UNRECORDED_WEEK_TITLE = 'A planned week went unrecorded';
-
 /**
  * The calendar weeks that carried a plan week, have fully passed, were never recorded as
  * skipped, and hold no training day. A deload week with no training day counts: a deload is
@@ -76,7 +73,7 @@ export function unrecordedWeekBanner(weeks: readonly CalendarWeek[]): BannerReco
   return {
     kind: 'unrecorded_week',
     tone: 'attention',
-    title: UNRECORDED_WEEK_TITLE,
+    title: unrecordedWeekTitle(weeks.length, latest.startsOn),
     subtitle: unrecordedWeekSubtitle(weeks.length, latest.startsOn),
     destination: '#/plan',
     dismissible: false,
@@ -84,11 +81,16 @@ export function unrecordedWeekBanner(weeks: readonly CalendarWeek[]): BannerReco
   };
 }
 
-// Placeholder copy (VW-504): awaiting the owner's wording.
-function unrecordedWeekSubtitle(count: number, latestStartsOn: string): string {
-  const week = `the week of ${shortDate(latestStartsOn)}`;
-  if (count === 1) return `The week of ${shortDate(latestStartsOn)} had no training day.`;
-  return `${count} planned weeks had no training day, the most recent ${week}.`;
+// Owner's wording (VW-527).
+function unrecordedWeekTitle(count: number, latestStartsOn: string): string {
+  if (count === 1) return `Week of ${shortDate(latestStartsOn)}: nothing recorded`;
+  return `${count} planned weeks: nothing recorded`;
+}
+
+// Owner's wording (VW-527): a lone week names itself in the title, so the subtitle is empty.
+function unrecordedWeekSubtitle(count: number, latestStartsOn: string): string | null {
+  if (count === 1) return null;
+  return `Most recent: week of ${shortDate(latestStartsOn)}.`;
 }
 
 /** Candidates in {@link BANNER_PRIORITY} order, highest first. */

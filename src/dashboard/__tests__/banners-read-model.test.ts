@@ -150,8 +150,8 @@ describe('readTopBanner', () => {
     expect(await readTopBanner(store, TODAY, NOW)).toEqual({
       kind: 'unrecorded_week',
       tone: 'attention',
-      title: 'A planned week went unrecorded',
-      subtitle: 'The week of Mon 31 Aug had no training day.',
+      title: 'Week of Mon 31 Aug: nothing recorded',
+      subtitle: null,
       destination: '#/plan',
       dismissible: false,
       source: 'plan.block-calendar',
@@ -163,7 +163,8 @@ describe('readTopBanner', () => {
 
     expect(await readTopBanner(store, TODAY, NOW)).toMatchObject({
       kind: 'unrecorded_week',
-      subtitle: '2 planned weeks had no training day, the most recent the week of Mon 31 Aug.',
+      title: '2 planned weeks: nothing recorded',
+      subtitle: 'Most recent: week of Mon 31 Aug.',
     });
   });
 
@@ -177,7 +178,8 @@ describe('readTopBanner', () => {
     await dateBlock(store, 'b2', '2026-08-17', 5);
 
     expect(await readTopBanner(store, TODAY, NOW)).toMatchObject({
-      subtitle: '3 planned weeks had no training day, the most recent the week of Mon 31 Aug.',
+      title: '3 planned weeks: nothing recorded',
+      subtitle: 'Most recent: week of Mon 31 Aug.',
     });
   });
 
@@ -187,7 +189,8 @@ describe('readTopBanner', () => {
     await dateBlock(store, 'b1', '2026-08-31', 4);
 
     expect(await readTopBanner(store, TODAY, NOW)).toMatchObject({
-      subtitle: 'The week of Mon 31 Aug had no training day.',
+      title: 'Week of Mon 31 Aug: nothing recorded',
+      subtitle: null,
     });
   });
 
@@ -229,7 +232,8 @@ describe('readTopBanner', () => {
     await dateBlock(store, 'b2', '2026-08-31', 3);
 
     expect(await readTopBanner(store, TODAY, NOW)).toMatchObject({
-      subtitle: 'The week of Mon 31 Aug had no training day.',
+      title: 'Week of Mon 31 Aug: nothing recorded',
+      subtitle: null,
     });
   });
 
