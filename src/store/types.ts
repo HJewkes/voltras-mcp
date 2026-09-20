@@ -882,7 +882,10 @@ export interface ListAdvisoryDecisionsFilter {
 export const UI_ACTION_ACTORS = ['user', 'coach', 'tick'] as const;
 export type UiActionActor = (typeof UI_ACTION_ACTORS)[number];
 
-/** Where an action was submitted from. */
+/**
+ * Where an action was submitted from. A KIND of surface, never a particular one: two walls
+ * both say `wall`, and `deviceId` is what tells them apart (VW-521).
+ */
 export const UI_ACTION_SURFACES = ['wall', 'phone', 'voice', 'telegram'] as const;
 export type UiActionSurface = (typeof UI_ACTION_SURFACES)[number];
 
@@ -900,6 +903,12 @@ export interface StoredUiAction {
   actionName: string;
   actor: UiActionActor;
   surface: UiActionSurface;
+  /**
+   * Which display sent it, when the client named one (VW-521). Absent is valid and is the
+   * common case; every row written before v39 reads absent. A LABEL beside `surface`,
+   * never an authorization input — see `ui-action-device-id.ts`.
+   */
+  deviceId?: string;
   flowId?: string;
   flowStep?: string;
   /** sha256 over the canonical JSON of the input, hashed AFTER the tool's parse. */
@@ -919,6 +928,7 @@ export interface ClaimUiActionInput {
   actionName: string;
   actor: UiActionActor;
   surface: UiActionSurface;
+  deviceId?: string;
   flowId?: string;
   flowStep?: string;
   inputHash: string;
@@ -2351,10 +2361,12 @@ export interface SessionStore extends ExerciseSetupStore {
   /**
    * Actions newest first. `flowId` narrows to one flow, which is what lets a
    * flow's history be rebuilt from this table alone; `status` narrows to the
-   * `pending` rows a crashed run left behind.
+   * `pending` rows a crashed run left behind; `deviceId` narrows to one display,
+   * which is what makes two walls tellable apart (VW-521).
    */
   listUiActions(filter?: {
     flowId?: string;
+    deviceId?: string;
     status?: UiActionStatus;
     limit?: number;
   }): Promise<StoredUiAction[]>;

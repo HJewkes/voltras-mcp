@@ -37,6 +37,7 @@ class FakeActionStore {
       actionName: input.actionName,
       actor: input.actor,
       surface: input.surface,
+      ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
       ...(input.flowId === undefined ? {} : { flowId: input.flowId }),
       inputHash: input.inputHash,
       resultStatus: 'pending',
@@ -227,6 +228,65 @@ describe('executeAction', () => {
     const h = harness();
     await executeAction(request({ flowId: 'sunday-2026-09-20' }), h.deps);
     expect(h.store.rows.get('act-1')?.flowId).toBe('sunday-2026-09-20');
+  });
+
+  it('records which display sent it, and leaves the row without one when none is named', async () => {
+    const h = harness();
+    await executeAction(request({ deviceId: 'wall-garage' }), h.deps);
+    await executeAction(request({ actionId: 'act-2', input: { weightLbs: 181 } }), h.deps);
+    expect(h.store.rows.get('act-1')?.deviceId).toBe('wall-garage');
+    expect(h.store.rows.get('act-2')?.deviceId).toBeUndefined();
+  });
+
+  it('hashes the input only, so two displays replay each other rather than double-writing', async () => {
+    // The device id is envelope metadata, exactly as `surface` and `actor` are. Keeping it
+    // out of the hash means a reused action id is still caught as a reused action id.
+    const h = harness();
+    await executeAction(request({ deviceId: 'wall-garage' }), h.deps);
+    const second = await executeAction(request({ deviceId: 'wall-spare-room' }), h.deps);
+    expect(second.body.replayed).toBe(true);
+    expect(h.runs()).toBe(1);
+  });
+});
+
+// VW-521. Both `surface` and `deviceId` are the client's own unverifiable assertions, so
+// neither may buy a permission: if either changed what the layer allows, a client would be
+// choosing its own permissions by relabelling itself.
+describe('the permission path ignores the surface and the device id', () => {
+  const LABELS: Pick<ActionRequest, 'surface' | 'deviceId'>[] = [
+    { surface: 'wall' },
+    { surface: 'phone' },
+    { surface: 'voice' },
+    { surface: 'telegram' },
+    { surface: 'wall', deviceId: 'wall-garage' },
+    { surface: 'telegram', deviceId: 'wall-garage' },
+  ];
+
+  it('refuses a device tool under every label, with nothing claimed', async () => {
+    const h = harness();
+    for (const [index, labels] of LABELS.entries()) {
+      const outcome = await executeAction(
+        request({ name: 'device.set_weight', actionId: `act-${index}`, ...labels }),
+        h.deps,
+      );
+      expect(outcome.status).toBe(403);
+      expect(outcome.body.error).toBe('action_not_allowed');
+    }
+    expect(h.runs()).toBe(0);
+    expect(h.store.rows.size).toBe(0);
+  });
+
+  it('allows an allowlisted tool at the same tier under every label', async () => {
+    const h = harness();
+    for (const [index, labels] of LABELS.entries()) {
+      const outcome = await executeAction(
+        request({ actionId: `act-${index}`, input: { weightLbs: 180 + index }, ...labels }),
+        h.deps,
+      );
+      expect(outcome.status).toBe(200);
+      expect(outcome.body.tier).toBe('W1');
+    }
+    expect(h.runs()).toBe(LABELS.length);
   });
 });
 

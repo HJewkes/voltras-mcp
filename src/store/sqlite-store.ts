@@ -158,7 +158,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -390,13 +390,55 @@ const BLOCK_SCHEDULES_DDL = `
  * fact is not one. A row left `pending` is a run that died between its
  * handler and its completion; nothing rewrites it, because `error` would
  * assert an outcome nobody knows.
+ *
+ * v39 (VW-521) adds `device_id`: which display sent the row, when the client named one.
+ * Nullable with no back-fill, because no earlier row knows. Free text validated in code
+ * (`ui-action-device-id.ts`), a LABEL exactly as `surface` is, and pinned by the
+ * completion trigger so a device id cannot be rewritten after the fact.
  */
+/**
+ * Which display sent what, without scanning the trail (VW-521).
+ *
+ * NOT in `SCHEMA_SQL`, and neither is the trigger below: both name `device_id`, and
+ * `SCHEMA_SQL` runs BEFORE the migrations on every open, when a pre-v39 file has no such
+ * column. The v39 step owns them instead and runs on a fresh store too, which is where a
+ * fresh store gets them. Same placement as `COMMITMENT_REVISION_INDEX_SQL`.
+ */
+const UI_ACTION_DEVICE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_ui_actions_device
+    ON ui_actions(device_id, created_at DESC);`;
+
+/**
+ * The one legal update: `pending` -> `ok` or `error`, with every column that records WHO
+ * submitted and WHAT they submitted held fixed.
+ *
+ * The v39 step DROPS and recreates it rather than relying on `IF NOT EXISTS`: a store
+ * migrated from v36 already carries the v36 trigger, which would otherwise survive and
+ * leave `device_id` the one column an out-of-band UPDATE could rewrite.
+ */
+const UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
+    BEFORE UPDATE ON ui_actions
+    WHEN NOT (
+      OLD.result_status = 'pending'
+      AND NEW.result_status IN ('ok','error')
+      AND NEW.action_id = OLD.action_id
+      AND NEW.action_name = OLD.action_name
+      AND NEW.actor = OLD.actor
+      AND NEW.surface = OLD.surface
+      AND NEW.device_id IS OLD.device_id
+      AND NEW.input_hash = OLD.input_hash
+      AND NEW.created_at = OLD.created_at
+    )
+    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;`;
+
 const UI_ACTIONS_DDL = `
   CREATE TABLE IF NOT EXISTS ui_actions (
     action_id TEXT PRIMARY KEY,
     action_name TEXT NOT NULL,
     actor TEXT NOT NULL CHECK (actor IN (${sqlList(UI_ACTION_ACTORS)})),
     surface TEXT NOT NULL CHECK (surface IN (${sqlList(UI_ACTION_SURFACES)})),
+    device_id TEXT,
     flow_id TEXT,
     flow_step TEXT,
     input_hash TEXT NOT NULL,
@@ -410,19 +452,6 @@ const UI_ACTIONS_DDL = `
     ON ui_actions(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ui_actions_flow
     ON ui_actions(flow_id, created_at DESC);
-  CREATE TRIGGER IF NOT EXISTS ui_actions_complete_once
-    BEFORE UPDATE ON ui_actions
-    WHEN NOT (
-      OLD.result_status = 'pending'
-      AND NEW.result_status IN ('ok','error')
-      AND NEW.action_id = OLD.action_id
-      AND NEW.action_name = OLD.action_name
-      AND NEW.actor = OLD.actor
-      AND NEW.surface = OLD.surface
-      AND NEW.input_hash = OLD.input_hash
-      AND NEW.created_at = OLD.created_at
-    )
-    BEGIN SELECT RAISE(ABORT, 'ui_actions rows complete once: pending -> ok or error'); END;
   CREATE TRIGGER IF NOT EXISTS ui_actions_no_delete
     BEFORE DELETE ON ui_actions
     BEGIN SELECT RAISE(ABORT, 'ui_actions is an audit trail: rows are never deleted'); END;
@@ -2091,6 +2120,41 @@ function migrateV37ToV38(db: DatabaseSync): void {
 }
 
 /**
+ * v38 -> v39: which display sent an action (VW-521). One nullable column on `ui_actions`
+ * and one index.
+ *
+ * NO BACK-FILL, and none is possible: a row written before this step records no display,
+ * and inventing one would put a claim in an audit trail that nobody made. Existing rows
+ * read NULL, which says exactly that.
+ *
+ * THE STEP OWNS THE INDEX AND THE COMPLETION TRIGGER. Neither is in `SCHEMA_SQL`: both
+ * name `device_id`, and `db.exec(SCHEMA_SQL)` runs BEFORE the migrations on every open,
+ * when a pre-v39 file has no such column. A fresh store gets them here too, because every
+ * rung runs from 0.
+ *
+ * The trigger is DROPPED and recreated rather than left to `IF NOT EXISTS` — the step's
+ * riskiest line. A store migrated from v36 already carries the v36 trigger, which would
+ * otherwise survive and leave `device_id` the one column an out-of-band UPDATE could
+ * rewrite.
+ *
+ * One transaction, so a failure leaves the v38 shape; `addColumnIfMissing`, `IF NOT
+ * EXISTS` and the unconditional drop make a second run a no-op.
+ */
+function migrateV38ToV39(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'ui_actions', 'device_id', 'TEXT');
+    db.exec(UI_ACTION_DEVICE_INDEX_SQL);
+    db.exec('DROP TRIGGER IF EXISTS ui_actions_complete_once');
+    db.exec(UI_ACTIONS_COMPLETE_ONCE_TRIGGER_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * Row by row rather than as a SQL `CASE`, so the migration and every write path read the
  * same rule from `defaultGoalKind` and cannot drift. `planned_exercises` holds one row per
  * programmed lift, so the loop is over a table measured in hundreds.
@@ -2183,6 +2247,7 @@ interface UiActionRow {
   action_name: string;
   actor: string;
   surface: string;
+  device_id: string | null;
   flow_id: string | null;
   flow_step: string | null;
   input_hash: string;
@@ -2199,6 +2264,7 @@ function rowToUiAction(row: UiActionRow): StoredUiAction {
     actionName: row.action_name,
     actor: row.actor as StoredUiAction['actor'],
     surface: row.surface as StoredUiAction['surface'],
+    ...(row.device_id === null ? {} : { deviceId: row.device_id }),
     ...(row.flow_id === null ? {} : { flowId: row.flow_id }),
     ...(row.flow_step === null ? {} : { flowStep: row.flow_step }),
     inputHash: row.input_hash,
@@ -4621,9 +4687,9 @@ export class SqliteSessionStore implements SessionStore {
     const inserted = this.db
       .prepare(
         `INSERT INTO ui_actions (
-           action_id, action_name, actor, surface, flow_id, flow_step,
+           action_id, action_name, actor, surface, device_id, flow_id, flow_step,
            input_hash, result_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT(action_id) DO NOTHING`,
       )
       .run(
@@ -4631,6 +4697,7 @@ export class SqliteSessionStore implements SessionStore {
         input.actionName,
         input.actor,
         input.surface,
+        input.deviceId ?? null,
         input.flowId ?? null,
         input.flowStep ?? null,
         input.inputHash,
@@ -4677,6 +4744,7 @@ export class SqliteSessionStore implements SessionStore {
 
   listUiActions(filter?: {
     flowId?: string;
+    deviceId?: string;
     status?: UiActionStatus;
     limit?: number;
   }): Promise<StoredUiAction[]> {
@@ -4685,6 +4753,10 @@ export class SqliteSessionStore implements SessionStore {
     if (filter?.flowId !== undefined) {
       clauses.push('flow_id = ?');
       bindings.push(filter.flowId);
+    }
+    if (filter?.deviceId !== undefined) {
+      clauses.push('device_id = ?');
+      bindings.push(filter.deviceId);
     }
     if (filter?.status !== undefined) {
       clauses.push('result_status = ?');
@@ -5686,6 +5758,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 37) {
     migrateV37ToV38(db);
+  }
+  if (current <= 38) {
+    migrateV38ToV39(db);
   }
 }
 
