@@ -47,3 +47,6 @@ voice-listener/.venv/
 # Docs site build output (VitePress)
 site/.vitepress/dist/
 site/.vitepress/cache/
+
+# Scratch build for scripts/sim (npm run sim:rest)
+.sim-build/
