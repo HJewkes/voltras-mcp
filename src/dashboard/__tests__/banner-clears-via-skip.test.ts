@@ -118,7 +118,8 @@ describe('a week is judged passed by the local calendar, not the UTC one', () =>
     expect(today).toBe('2026-09-20');
 
     expect(await readTopBanner(store, today, SUNDAY_NIGHT_DENVER)).toMatchObject({
-      subtitle: 'The week of Mon 31 Aug had no training day.',
+      title: 'Week of Mon 31 Aug: nothing recorded',
+      subtitle: null,
     });
   });
 
@@ -127,7 +128,8 @@ describe('a week is judged passed by the local calendar, not the UTC one', () =>
     expect(today).toBe('2026-09-21');
 
     expect(await readTopBanner(store, today, MONDAY_JUST_AFTER_MIDNIGHT_DENVER)).toMatchObject({
-      subtitle: '2 planned weeks had no training day, the most recent the week of Mon 14 Sep.',
+      title: '2 planned weeks: nothing recorded',
+      subtitle: 'Most recent: week of Mon 14 Sep.',
     });
   });
 });
