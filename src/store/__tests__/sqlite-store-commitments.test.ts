@@ -102,6 +102,23 @@ describe('correcting a week', () => {
     expect(read?.ifThen).toBe('If Friday goes, then Sunday takes it.');
   });
 
+  it('treats a changed fallback day as a correction, not a repeat', async () => {
+    await store.declareCommitment(declaration());
+    const moved = await store.declareCommitment(
+      declaration({
+        days: [
+          { day: 'Monday', fallbackDay: 'Friday' },
+          { day: 'Wednesday', fallbackDay: 'Thursday' },
+          { day: 'Friday', fallbackDay: 'Saturday' },
+        ],
+      }),
+    );
+
+    expect(moved.unchanged).toBe(false);
+    expect(moved.commitment.revision).toBe(2);
+    expect(moved.commitment.days[0]).toEqual({ day: 'Monday', fallbackDay: 'Friday' });
+  });
+
   it('treats a reordered day list as a correction, not a repeat', async () => {
     await store.declareCommitment(declaration());
     const reordered = await store.declareCommitment(
@@ -176,6 +193,14 @@ describe('the append-only guarantee', () => {
     expect(() => rawDb().exec(`UPDATE commitments SET lifter_wording = 'not mine'`)).toThrow(
       /append-only/,
     );
+  });
+
+  it('refuses a DELETE, so a superseded revision cannot be dropped', async () => {
+    await store.declareCommitment(declaration());
+    await store.declareCommitment(declaration({ wording: 'Three a week, Fridays included.' }));
+
+    expect(() => rawDb().exec('DELETE FROM commitments')).toThrow(/never deleted/);
+    expect(allRows()).toHaveLength(2);
   });
 
   it('refuses a second row at the same revision of the same week', async () => {

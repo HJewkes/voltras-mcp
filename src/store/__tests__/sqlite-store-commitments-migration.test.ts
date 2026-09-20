@@ -87,21 +87,41 @@ describe('the commitments migration', () => {
     expect(declared.unchanged).toBe(false);
   });
 
-  it('stamps the version, is idempotent on re-open and installs the append-only trigger', async () => {
+  it('stamps the version, is idempotent on re-open and installs both guards', async () => {
     await SqliteSessionStore.open(path).close();
     await SqliteSessionStore.open(path).close();
 
     const db = new DatabaseSync(path);
     const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
     const triggers = db
-      .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'commitments_append_only'`)
-      .get() as { n: number };
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'commitments'
+           ORDER BY name`,
+      )
+      .all() as unknown as { name: string }[];
     const rows = db.prepare('SELECT COUNT(*) AS n FROM commitments').get() as { n: number };
     db.close();
 
     expect(version.user_version).toBe(TO_VERSION);
-    expect(triggers.n).toBe(1);
+    expect(triggers.map((trigger) => trigger.name)).toEqual([
+      'commitments_append_only',
+      'commitments_no_delete',
+    ]);
     expect(rows.n).toBe(1);
+  });
+
+  it('guards the pre-existing row against a DELETE once migrated', async () => {
+    await SqliteSessionStore.open(path).close();
+
+    const db = new DatabaseSync(path);
+    try {
+      expect(() => db.exec('DELETE FROM commitments')).toThrow(/never deleted/);
+      expect((db.prepare('SELECT COUNT(*) AS n FROM commitments').get() as { n: number }).n).toBe(
+        1,
+      );
+    } finally {
+      db.close();
+    }
   });
 
   it('gives a fresh store the same shape as the migrated one', async () => {

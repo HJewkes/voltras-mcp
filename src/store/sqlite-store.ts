@@ -450,8 +450,9 @@ const COMMITMENTS_APPEND_ONLY_TRIGGER_SQL = `
  * `sessions_per_week` is `days.length`, a denormalisation of the day list and NOT a second
  * target: how many sessions a week is the attendance goal target's to state (VW-498).
  *
- * The index and the trigger name `revision` and so cannot run here, where a pre-migration
- * table still lacks it: `migrateV36ToV37` installs both, on a fresh DB too.
+ * The delete guard rides here, so a fresh store and a migrated one get it from the same
+ * statement. The index and the update trigger name `revision` and cannot: a pre-migration
+ * table still lacks that column, and `migrateV36ToV37` installs those two instead.
  */
 const COMMITMENTS_DDL = `
   -- Adherence means adherence TO A COMMITMENT. Without one it degrades to an
@@ -468,6 +469,14 @@ const COMMITMENTS_DDL = `
     lifter_wording TEXT,
     revision INTEGER NOT NULL DEFAULT 1
   );
+  -- An append-only record a DELETE can empty is not one: without this, every superseded
+  -- revision the UPDATE trigger protects is one statement away from gone. Nothing in this
+  -- repo deletes a commitment or a user; the FK's ON DELETE CASCADE would abort here rather
+  -- than discard the lifter's own words, which is the outcome to want if a purge is ever
+  -- written. Same stance as ui_actions_no_delete (VW-502).
+  CREATE TRIGGER IF NOT EXISTS commitments_no_delete
+    BEFORE DELETE ON commitments
+    BEGIN SELECT RAISE(ABORT, 'commitments is append-only: rows are never deleted'); END;
 `;
 
 const SCHEMA_SQL = `

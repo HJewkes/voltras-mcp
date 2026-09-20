@@ -8,10 +8,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AccountabilityState } from '../../accountability/types.js';
+import { AccountabilityDeclareCommitmentInput } from '../../schemas/accountability.js';
 import type { ServerState } from '../../state/server-state.js';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
 import { LOCAL_USER_ID } from '../../store/types.js';
 import { declareCommitment } from '../accountability-commitment.js';
+import { wrapHandler } from '../helpers.js';
 import {
   describeAccountabilityPreview,
   describeAccountabilityState,
@@ -272,5 +274,59 @@ describe('accountability.state', () => {
     const result = await describeAccountabilityState(makeState(), { at: SUNDAY_NOON });
 
     expect(result.commitment).toBeNull();
+  });
+});
+
+/**
+ * The registered callback, schema and all: a bad day name or an unknown key is rejected by
+ * `.strict()` before the handler runs, and only this path proves it.
+ */
+describe('the registered handler', () => {
+  function call(args: unknown) {
+    return wrapHandler(AccountabilityDeclareCommitmentInput, (input) =>
+      declareCommitment(makeState(), input, new Date(SUNDAY_NOON)),
+    )(args);
+  }
+
+  const valid = { days: DAYS, ifThen: IF_THEN, wording: WORDING };
+
+  function payload(result: { content: Array<{ text: string }> }) {
+    return JSON.parse(result.content[0].text) as Record<string, unknown>;
+  }
+
+  it('stores a valid call and reports the week it filed against', async () => {
+    const result = await call(valid);
+
+    expect(result.isError).toBeUndefined();
+    expect(payload(result)).toMatchObject({ weekOf: COMING_WEEK, revision: 1, unchanged: false });
+  });
+
+  it('refuses a day name that is not a weekday', async () => {
+    const result = await call({ ...valid, days: [{ day: 'mondayish', fallbackDay: 'Tuesday' }] });
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).code).toBe('INVALID_INPUT');
+  });
+
+  it('refuses an unknown key rather than dropping it', async () => {
+    const result = await call({ ...valid, sessionsPerWeek: 3 });
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).code).toBe('INVALID_INPUT');
+  });
+
+  it('refuses wording past the length cap', async () => {
+    const result = await call({ ...valid, wording: 'a'.repeat(1001) });
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).code).toBe('INVALID_INPUT');
+  });
+
+  it('reports a handler refusal with its own code and message', async () => {
+    const result = await call({ ...valid, weekOf: '2026-10-07' });
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(payload(result).message).toContain('The Mondays either side are');
   });
 });
