@@ -1411,6 +1411,38 @@ export interface StoredTargetTempo {
   pauseTop: number;
 }
 
+/**
+ * What a planned row states as its goal (VW-448 amendment). One kind per row, and the
+ * other effort fields become its guards: a `rep_range` row's `targetRpe` is a cap, not a
+ * second goal. Absent means the row states no goal, which is a real answer and never an
+ * implied one — `defaultGoalKind` derives the kind from the fields a row already carries.
+ */
+export const PLAN_GOAL_KINDS = ['rep_range', 'target_rpe', 'velocity_loss'] as const;
+export type PlanGoalKind = (typeof PLAN_GOAL_KINDS)[number];
+
+/**
+ * The intent a rest was learned under (VW-445 s.3.1). `none` is a real key, not a gap:
+ * a value learned for a stated intent is not evidence for a row that states none.
+ */
+export const LEARNED_REST_INTENTS = ['strength', 'hypertrophy', 'power', 'none'] as const;
+export type LearnedRestIntent = (typeof LEARNED_REST_INTENTS)[number];
+
+/**
+ * What the rest between the two sets of a pair contained. Version 1 writes `straight`
+ * only; `interleaved` exists from the start so a later superset rule needs no migration
+ * and cannot read straight-set values as its own (VW-445 s.3.1).
+ */
+export const LEARNED_REST_CONTEXTS = ['straight', 'interleaved'] as const;
+export type LearnedRestContext = (typeof LEARNED_REST_CONTEXTS)[number];
+
+/** How far a run has got. `learned` is a claim about evidence, so it is stored, not derived. */
+export const LEARNED_REST_STATES = ['calibrating', 'learned'] as const;
+export type LearnedRestStateValue = (typeof LEARNED_REST_STATES)[number];
+
+/** Where the value a run started from came from, kept so a number can explain itself. */
+export const LEARNED_REST_BASE_SOURCES = ['plan', 'lifter_factor', 'intent_default'] as const;
+export type LearnedRestBaseSourceValue = (typeof LEARNED_REST_BASE_SOURCES)[number];
+
 /** A planned exercise within a workout template (sets/reps/weight prescription). */
 export interface StoredPlannedExercise {
   id: string;
@@ -1435,6 +1467,20 @@ export interface StoredPlannedExercise {
    * wrong rep.
    */
   trainingIntent?: TrainingIntent;
+  /**
+   * The goal this row states (VW-448 amendment). Absent means it states none; nothing
+   * infers one from `trainingIntent`, which keeps its own two jobs.
+   */
+  goalKind?: PlanGoalKind;
+  /** The velocity-loss goal, 1 to 95. Only meaningful under `goalKind: 'velocity_loss'`. */
+  targetVelocityLossPct?: number;
+  /**
+   * Whether the system probes and learns this row's rest (VW-445). Absent on a write means
+   * the default, on; a read always states it, because the column is NOT NULL. Off with a
+   * `restSec` is a fixed rest, exactly as today; off without one reads a frozen learned
+   * value if there is a trusted one.
+   */
+  restLearning?: boolean;
   /** Stable authoring key (`tc:item:<id>`), UNIQUE where present. See `StoredWorkoutTemplate`. */
   externalId?: string;
 }

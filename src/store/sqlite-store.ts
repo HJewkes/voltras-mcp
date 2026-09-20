@@ -62,10 +62,16 @@ import {
   type BaselineObservations,
 } from './exercise-baselines.js';
 import { scheduleProblem } from '../plan/block-calendar.js';
+import { defaultGoalKind } from '../plan/goal-kind.js';
 import {
   BLOCK_SCHEDULE_CHANGED_BY,
   BLOCK_SCHEDULE_KINDS,
+  LEARNED_REST_BASE_SOURCES,
+  LEARNED_REST_CONTEXTS,
+  LEARNED_REST_INTENTS,
+  LEARNED_REST_STATES,
   LOCAL_USER_ID,
+  PLAN_GOAL_KINDS,
   UI_ACTION_ACTORS,
   UI_ACTION_STATUSES,
   UI_ACTION_SURFACES,
@@ -114,6 +120,7 @@ import {
   type PlanImportExercise,
   type PlanImportResult,
   type PlanImportTemplate,
+  type PlanGoalKind,
   type StoredPlannedExercise,
   type StoredTargetTempo,
   type StoredAdvisoryDecision,
@@ -151,7 +158,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 38;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -479,6 +486,58 @@ const COMMITMENTS_DDL = `
     BEGIN SELECT RAISE(ABORT, 'commitments is append-only: rows are never deleted'); END;
 `;
 
+/**
+ * The goal-kind column's shape, shared by `SCHEMA_SQL` and the v38 step so a fresh store
+ * and a migrated one carry the same CHECK. NULL is a stated answer — the row names no goal.
+ */
+const PLANNED_GOAL_KIND_DDL = `TEXT CHECK (goal_kind IS NULL OR goal_kind IN (${sqlList(
+  PLAN_GOAL_KINDS,
+)}))`;
+
+/**
+ * v38 (VW-445 s.3.2): one learned rest per lifter, exercise, intent and superset context.
+ *
+ * The key is four parts because each one changes the quantity: the signal and the target
+ * differ by intent, and rest inside a superset is elapsed time containing another
+ * exercise's work. Version 1 writes `straight` only; the column carries `interleaved` from
+ * the start so a later rule needs no migration and cannot pollute straight-set values.
+ * Slot is NOT part of the key — one lifter has one value per exercise whichever side
+ * recorded the set.
+ *
+ * `context` is FREE TEXT beyond the two words this CHECK names on purpose: each resistance
+ * family will later learn its own rest and the family goes in this column. Widening a CHECK
+ * is a migration; widening a code-side validator is not.
+ *
+ * `base_source`, `plan_base_sec`, `policy_version` and `history_json` together answer "why
+ * is this number what it is" without reading a single set.
+ *
+ * Nothing reads or writes this table yet. It lands with the columns so the store step is
+ * one migration rather than two.
+ */
+const LEARNED_REST_DDL = `
+  CREATE TABLE IF NOT EXISTS learned_rest (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL,
+    intent TEXT NOT NULL CHECK (intent IN (${sqlList(LEARNED_REST_INTENTS)})),
+    context TEXT NOT NULL DEFAULT 'straight'
+      CHECK (context IN (${sqlList(LEARNED_REST_CONTEXTS)})),
+    value_sec INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (${sqlList(LEARNED_REST_STATES)})),
+    base_sec INTEGER NOT NULL,
+    base_source TEXT NOT NULL CHECK (base_source IN (${sqlList(LEARNED_REST_BASE_SOURCES)})),
+    plan_base_sec INTEGER,
+    run_started_on TEXT NOT NULL,
+    last_evaluated_on TEXT,
+    last_step_on TEXT,
+    days_evaluated INTEGER NOT NULL DEFAULT 0,
+    informative_pairs INTEGER NOT NULL DEFAULT 0,
+    history_json TEXT NOT NULL CHECK (json_valid(history_json)),
+    policy_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, exercise_id, intent, context)
+  );
+`;
+
 const SCHEMA_SQL = `
   -- ── Identity (v6) ────────────────────────────────────────────────────
   -- Declared before everything that references it. SQLite resolves foreign
@@ -754,6 +813,20 @@ const SCHEMA_SQL = `
     -- Feeds the velocity-loss stop threshold (VW-266). NULL where the coach
     -- did not say, which is a gap, never an implied 'strength'.
     training_intent TEXT,
+    -- v38 (VW-448 amendment). What the row states as its goal. NULL means it
+    -- states none, which is an answer: nothing infers a goal from an intent.
+    -- The other effort fields become the stated kind's guards.
+    goal_kind ${PLANNED_GOAL_KIND_DDL},
+    -- v38. The velocity-loss goal, 1 to 95. Only meaningful under
+    -- goal_kind = 'velocity_loss'; the validator that enforces that is the
+    -- plan tools' (VW-448 task B), never a CHECK here.
+    target_velocity_loss_pct REAL,
+    -- v38 (VW-445). Whether the system probes and learns this row's rest.
+    -- With rest_sec: that number is the base the staircase starts from.
+    -- Without it: the learned value replaces today's population default.
+    -- Off with no rest_sec falls back at READ time, by the owner's ruling —
+    -- there is deliberately no CHECK pairing the two columns.
+    rest_learning INTEGER NOT NULL DEFAULT 1,
     -- v14. tc:item:<id> for a TrueCoach import; see workout_templates above.
     external_id TEXT
   );
@@ -1182,7 +1255,8 @@ ${PRIORITIES_DDL}
 ${GOAL_TARGETS_DDL}
 ${EXERCISE_CHAPTERS_DDL}
 ${BLOCK_SCHEDULES_DDL}
-${UI_ACTIONS_DDL}`;
+${UI_ACTIONS_DDL}
+${LEARNED_REST_DDL}`;
 
 /**
  * Drops the obsolete `chains_lbs` and `eccentric_percent` columns from the
@@ -1980,6 +2054,72 @@ function migrateV36ToV37(db: DatabaseSync): void {
 }
 
 /**
+ * v37 -> v38: one prescription shape (VW-517). The goal of VW-448 and the rest flag of
+ * VW-445 land in a single additive step, because both are columns on `planned_exercises`
+ * and a row is only readable once it carries all three.
+ *
+ * `learned_rest` is NOT created here. Its DDL lives in `SCHEMA_SQL` behind `IF NOT EXISTS`,
+ * which `db.exec(SCHEMA_SQL)` runs before this on every open, so an existing DB picks the
+ * table up there. Same pattern as v35 -> v36.
+ *
+ * TWO BACKFILLS, BOTH RUN ONCE, both guarded by the version stamp and not by their own
+ * WHERE clauses:
+ *
+ *   * `rest_learning`. A rest someone wrote stays fixed and is never extended (OWNER), so
+ *     rows that carry one read 0. Rows without one read the ADD COLUMN default of 1: those
+ *     get the population default today, and learning is what replaces it. This must not
+ *     re-run — a planner who later sets a rest with learning ON would be silently reset.
+ *   * `goal_kind`, through `defaultGoalKind`, the same function the write paths call. Every
+ *     row with a rep range becomes `rep_range` and an RPE on it becomes that range's cap.
+ *
+ * One transaction, so a failure leaves the v37 shape.
+ */
+function migrateV37ToV38(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'planned_exercises', 'goal_kind', PLANNED_GOAL_KIND_DDL);
+    addColumnIfMissing(db, 'planned_exercises', 'target_velocity_loss_pct', 'REAL');
+    addColumnIfMissing(db, 'planned_exercises', 'rest_learning', 'INTEGER NOT NULL DEFAULT 1');
+    db.exec('UPDATE planned_exercises SET rest_learning = 0 WHERE rest_sec IS NOT NULL');
+    backfillGoalKind(db);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Row by row rather than as a SQL `CASE`, so the migration and every write path read the
+ * same rule from `defaultGoalKind` and cannot drift. `planned_exercises` holds one row per
+ * programmed lift, so the loop is over a table measured in hundreds.
+ */
+function backfillGoalKind(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT id, target_reps_low, target_rpe, target_velocity_loss_pct
+         FROM planned_exercises WHERE goal_kind IS NULL`,
+    )
+    .all() as unknown as GoalKindBackfillRow[];
+  const update = db.prepare('UPDATE planned_exercises SET goal_kind = ? WHERE id = ?');
+  for (const row of rows) {
+    const kind = defaultGoalKind({
+      targetVelocityLossPct: row.target_velocity_loss_pct ?? undefined,
+      targetRepsLow: row.target_reps_low ?? undefined,
+      targetRpe: row.target_rpe ?? undefined,
+    });
+    if (kind !== null) update.run(kind, row.id);
+  }
+}
+
+interface GoalKindBackfillRow {
+  id: string;
+  target_reps_low: number | null;
+  target_rpe: number | null;
+  target_velocity_loss_pct: number | null;
+}
+
+/**
  * The WHERE half every session count shares: the same predicates as
  * `listSessions` plus `userId` and `endedOnly`, never a page.
  */
@@ -2719,8 +2859,9 @@ const WORKOUT_TEMPLATE_UPSERT_SQL = `INSERT INTO workout_templates
 const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    (id, workout_template_id, exercise_id, order_index, target_sets,
     target_reps_low, target_reps_high, target_weight_lbs, target_rpe,
-    rest_sec, notes, target_tempo_json, training_intent, external_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    rest_sec, notes, target_tempo_json, training_intent, goal_kind,
+    target_velocity_loss_pct, rest_learning, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON CONFLICT(id) DO UPDATE SET
    workout_template_id = excluded.workout_template_id,
    exercise_id = excluded.exercise_id,
@@ -2734,6 +2875,9 @@ const PLANNED_EXERCISE_UPSERT_SQL = `INSERT INTO planned_exercises
    notes = excluded.notes,
    target_tempo_json = excluded.target_tempo_json,
    training_intent = excluded.training_intent,
+   goal_kind = excluded.goal_kind,
+   target_velocity_loss_pct = excluded.target_velocity_loss_pct,
+   rest_learning = excluded.rest_learning,
    external_id = excluded.external_id`;
 
 interface WorkoutTemplateRow {
@@ -2760,6 +2904,9 @@ interface PlannedExerciseRow {
   notes: string | null;
   target_tempo_json: string | null;
   training_intent: string | null;
+  goal_kind: string | null;
+  target_velocity_loss_pct: number | null;
+  rest_learning: number;
   external_id: string | null;
 }
 
@@ -3772,24 +3919,26 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putPlannedExercise(e: StoredPlannedExercise): Promise<void> {
-    this.db
-      .prepare(PLANNED_EXERCISE_UPSERT_SQL)
-      .run(
-        e.id,
-        e.workoutTemplateId,
-        e.exerciseId,
-        e.orderIndex,
-        e.targetSets,
-        e.targetRepsLow ?? null,
-        e.targetRepsHigh ?? null,
-        e.targetWeightLbs ?? null,
-        e.targetRpe ?? null,
-        e.restSec ?? null,
-        e.notes ?? null,
-        e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
-        e.trainingIntent ?? null,
-        e.externalId ?? null,
-      );
+    this.db.prepare(PLANNED_EXERCISE_UPSERT_SQL).run(
+      e.id,
+      e.workoutTemplateId,
+      e.exerciseId,
+      e.orderIndex,
+      e.targetSets,
+      e.targetRepsLow ?? null,
+      e.targetRepsHigh ?? null,
+      e.targetWeightLbs ?? null,
+      e.targetRpe ?? null,
+      e.restSec ?? null,
+      e.notes ?? null,
+      e.targetTempo !== undefined ? tempoToJson(e.targetTempo) : null,
+      e.trainingIntent ?? null,
+      e.goalKind ?? null,
+      e.targetVelocityLossPct ?? null,
+      // Absent means the default, on. The column is NOT NULL, so a write states it.
+      e.restLearning === false ? 0 : 1,
+      e.externalId ?? null,
+    );
     return Promise.resolve();
   }
 
@@ -3905,6 +4054,11 @@ export class SqliteSessionStore implements SessionStore {
       // Same reasoning as tempo: the importer is not a source of training
       // intent, so an existing local value survives a re-import.
       existing?.training_intent ?? null,
+      // TrueCoach carries no goal or rest flag either. Writing the import rule for a NEW
+      // row is VW-445 task 6; until then a local edit survives a re-import, as above.
+      existing?.goal_kind ?? null,
+      existing?.target_velocity_loss_pct ?? null,
+      existing?.rest_learning ?? 1,
       next.externalId ?? null,
     );
   }
@@ -5529,6 +5683,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 36) {
     migrateV36ToV37(db);
   }
+  if (current <= 37) {
+    migrateV37ToV38(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -6463,8 +6620,18 @@ function rowToPlannedExercise(row: PlannedExerciseRow): StoredPlannedExercise {
   if (row.notes !== null) out.notes = row.notes;
   if (row.target_tempo_json !== null) out.targetTempo = tempoFromJson(row.target_tempo_json);
   if (isTrainingIntent(row.training_intent)) out.trainingIntent = row.training_intent;
+  if (isPlanGoalKind(row.goal_kind)) out.goalKind = row.goal_kind;
+  if (row.target_velocity_loss_pct !== null) {
+    out.targetVelocityLossPct = row.target_velocity_loss_pct;
+  }
+  out.restLearning = row.rest_learning !== 0;
   if (row.external_id !== null) out.externalId = row.external_id;
   return out;
+}
+
+/** Same stance as `isTrainingIntent`: a stored word the schema does not name is no goal. */
+function isPlanGoalKind(value: string | null): value is PlanGoalKind {
+  return PLAN_GOAL_KINDS.includes(value as PlanGoalKind);
 }
 
 /**

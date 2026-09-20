@@ -2,7 +2,7 @@
 // per-revision unique index and the append-only trigger, exercised against a genuinely
 // pre-migration `commitments` table holding a row (VW-288). Additive and back-fills nothing.
 //
-// Named for what it migrates rather than for a version number, so a re-number is `TO_VERSION`
+// Named for what it migrates rather than for a version number, so a re-number is `FROM_VERSION`
 // alone: this took v35 against main, then v37 once VW-489 and VW-502 landed ahead of it.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -14,8 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID } from '../types.js';
 
-const TO_VERSION = 37;
-const FROM_VERSION = TO_VERSION - 1;
+const FROM_VERSION = 36;
+/** What the store stamps, which is the CURRENT version and not this step's target: a
+ *  pre-migration file runs every rung above it in one open. */
+const CURRENT_VERSION = 38;
 
 /** `users` and `commitments` as they stood before the change: no words, no revision. */
 const PRIOR_SCHEMA_SQL = `
@@ -102,7 +104,7 @@ describe('the commitments migration', () => {
     const rows = db.prepare('SELECT COUNT(*) AS n FROM commitments').get() as { n: number };
     db.close();
 
-    expect(version.user_version).toBe(TO_VERSION);
+    expect(version.user_version).toBe(CURRENT_VERSION);
     expect(triggers.map((trigger) => trigger.name)).toEqual([
       'commitments_append_only',
       'commitments_no_delete',
