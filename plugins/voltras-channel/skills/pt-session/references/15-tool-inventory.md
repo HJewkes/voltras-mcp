@@ -4,7 +4,7 @@
 
 **When to read this.** You need a tool and do not know its name; OR you are unsure whether a tool exists on this server; OR you want the one rule that matters most for a tool before you call it.
 
-Every tool the server registers with the real adapter: **127 tools in 24 namespaces**, generated from the registry of the server this skill ships beside. Verified 2026-09-19 against voltras-mcp main (#479, store schema 35). The generated reference on the docs site carries the full descriptions. If a name here is missing from the harness, the live server is older than this skill; see the preflight in `14-sittings.md`. `mock.*` (2 tools) exists only under the mock adapter and is not listed.
+Every tool the server registers with the real adapter: **128 tools in 24 namespaces**, generated from the registry of the server this skill ships beside. Verified 2026-09-19 against voltras-mcp main (#479, store schema 35). The generated reference on the docs site carries the full descriptions. If a name here is missing from the harness, the live server is older than this skill; see the preflight in `14-sittings.md`. `mock.*` (2 tools) exists only under the mock adapter and is not listed.
 
 Names use dots here (`plan.block.schedule`). The harness shows underscores (`plan_block_schedule`).
 
@@ -132,15 +132,16 @@ Key: **W** writes to the store or the device. **R** reads only. **D** is a diagn
 
 ## 8. Goals
 
-| Tool                      |     | When                                        | The rule that matters                                                                                                                                                 |
-| ------------------------- | --- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `goal.declare_priorities` | W   | The lifter says what matters                | **Takes no target value.** Date the block first; read `block` back. Guardrails are advisory. Relay the fat-loss downgrade offer; never apply it                       |
-| `goal.propose_targets`    | W   | Once per priority                           | Every input is read, none is typed. Read out both edges, `infoLevel`, `tierProvisional`, notes and every `skipped[]` reason. Raise a `recalibrationOffers` entry once |
-| `goal.accept_target`      | W   | On the lifter's word, one target at a time  | After this the numbers never move. Their own number past the stretch edge needs `acknowledgeStretch: true`. `anchorLoad` only for `reps_at_load`                      |
-| `goal.list`               | R   | Read the accepted set back                  | A target with no `acceptedBy` is an unanswered proposal                                                                                                               |
-| `goal.retire`             | W   | A goal ended, or a proposal is declined     | Ask for the outcome: `met`, `missed`, `abandoned`. A retired proposal is never re-offered, so do not retire one the lifter only wants to postpone                     |
-| `goal.new_chapter`        | W   | The lifter says the movement itself changed | Never infer it from a drop. The numbers do not move                                                                                                                   |
-| `goal.weekly_review`      | W   | The Sunday bodyweight-rate review           | Never sized: it names intake and activity and the pick is the lifter's. Name any veto. Answer a `proposal` with `response`                                            |
+| Tool                                |     | When                                                                            | The rule that matters                                                                                                                                                 |
+| ----------------------------------- | --- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal.declare_priorities`           | W   | The lifter says what matters                                                    | **Takes no target value.** Date the block first; read `block` back. Guardrails are advisory. Relay the fat-loss downgrade offer; never apply it                       |
+| `goal.propose_targets`              | W   | Once per priority                                                               | Every input is read, none is typed. Read out both edges, `infoLevel`, `tierProvisional`, notes and every `skipped[]` reason. Raise a `recalibrationOffers` entry once |
+| `goal.accept_target`                | W   | On the lifter's word, one target at a time                                      | After this the numbers never move. Their own number past the stretch edge needs `acknowledgeStretch: true`. `anchorLoad` only for `reps_at_load`                      |
+| `goal.list`                         | R   | Read the accepted set back                                                      | A target with no `acceptedBy` is an unanswered proposal                                                                                                               |
+| `goal.retire`                       | W   | A goal ended, or a proposal is declined                                         | Ask for the outcome: `met`, `missed`, `abandoned`. A retired proposal is never re-offered, so do not retire one the lifter only wants to postpone                     |
+| `goal.new_chapter`                  | W   | The lifter says the movement itself changed                                     | Never infer it from a drop. The numbers do not move                                                                                                                   |
+| `goal.weekly_review`                | W   | The Sunday bodyweight-rate review                                               | Never sized: it names intake and activity and the pick is the lifter's. Name any veto. Answer a `proposal` with `response`                                            |
+| `accountability.declare_commitment` | W   | The lifter states or corrects which days they will train, at the Sunday sitting | Their words are stored verbatim. Never rewrite them, and never set the session count here                                                                             |
 
 ## 9. Profile, bodyweight, diet phase, check-ins
 

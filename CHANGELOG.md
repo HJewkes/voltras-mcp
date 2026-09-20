@@ -102,7 +102,15 @@ entry is written from the user's point of view is a review question, not a check
   withheld pending review": `report.weekly`'s header, the tier signal's evidence,
   `goal.propose_targets`, `plan.block.planning_brief`, `accountability.state`,
   `accountability.preview` and the `/api/goals` payload (VW-489, #479).
-
+- The lifter's own commitment for a week is stored rather than lost.
+  `accountability.declare_commitment` records which days, the fallback day named for each, the
+  if-then sentence and the commitment in the lifter's own words, and the Sunday message now reads
+  those words back instead of a placeholder, names the committed days with their fallbacks, and
+  shows last week's if-then before asking for this week's. The realign conversation re-architects
+  within the days actually committed to rather than within none. Declaring again for the same week
+  is a correction that keeps what it corrects: the superseded wording stays readable and an
+  identical retry changes nothing. The words are never rewritten, tightened or paraphrased. How
+  many sessions a week is still the attendance goal target's to say (VW-505).
 - The goals page's data now says which mesocycle it is in: the program and block, what the block
   is for, its dates, which week of it this is and whether that week is a deload, every week of the
   block with the ones held or added marked, and the next block when one is dated. It is empty

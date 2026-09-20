@@ -563,6 +563,12 @@ export const SKILL_TOOL_NOTES: Record<CoreToolName, SkillToolNote> = {
     rule: "Never sized: it names intake and activity and the pick is the lifter's. Name any veto. Answer a `proposal` with `response`",
   },
 
+  'accountability.declare_commitment': {
+    job: 'goals',
+    when: 'The lifter states or corrects which days they will train, at the Sunday sitting',
+    rule: 'Their words are stored verbatim. Never rewrite them, and never set the session count here',
+  },
+
   'profile.get_onboarding_gaps': {
     job: 'profile',
     when: 'Start of a workout or sitting',
