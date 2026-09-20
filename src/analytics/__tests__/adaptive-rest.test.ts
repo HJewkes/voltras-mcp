@@ -770,6 +770,36 @@ describe('arrivals (amendment s.3.1)', () => {
   });
 });
 
+describe('stepDirections', () => {
+  const step = (on: string, decision: RestStep['decision']): RestStep => ({
+    on,
+    fromSec: 120,
+    toSec: decision === 'down' ? 105 : decision === 'up' ? 135 : 120,
+    decision,
+    reason: 'recovered',
+    signal: 'opening_velocity',
+    rMedian: 0.99,
+    informativePairs: 2,
+    ignoredPairs: NO_IGNORED,
+  });
+
+  const history = [
+    step('2026-09-01', 'down'),
+    step('2026-09-02', 'down'),
+    step('2026-09-03', 'hold'),
+    step('2026-09-04', 'up'),
+  ];
+
+  it('keeps only the steps that moved the value', () => {
+    expect(stepDirections(history)).toEqual(['down', 'down', 'up']);
+  });
+
+  it('takes only the steps on or after a date, which is how a settled run is judged', () => {
+    expect(stepDirections(history, '2026-09-03')).toEqual(['up']);
+    expect(stepDirections(history, '2026-09-05')).toEqual([]);
+  });
+});
+
 describe('settledValue (amendment s.3.2)', () => {
   const arrival = (valueSec: number): Arrival => ({ on: DAY, kind: 'reversal', valueSec });
 
@@ -794,7 +824,7 @@ describe('nextState (amendment s.3.2)', () => {
     daysEvaluated: ADAPTIVE_REST_POLICY.learnedMinDaysEvaluated.value,
     informativePairs: ADAPTIVE_REST_POLICY.learnedMinInformativePairs.value,
     arrivals: threeArrivals(),
-    stepDirections: [] as StepDirection[],
+    stepsSinceLearned: [] as StepDirection[],
   };
 
   function threeArrivals(): Arrival[] {
@@ -826,26 +856,34 @@ describe('nextState (amendment s.3.2)', () => {
 
   it('no longer treats a reversal as a reason to wait: it is what grants the state', () => {
     const marching: StepDirection[] = ['down', 'down'];
-    expect(nextState({ ...READY, stepDirections: marching })).toBe('learned');
+    expect(nextState({ ...READY, stepsSinceLearned: marching })).toBe('learned');
   });
 
   it('returns a learned run to calibrating after three steps one way', () => {
     const learned = { ...READY, current: 'learned' as const };
-    expect(nextState({ ...learned, stepDirections: ['down', 'down', 'down'] })).toBe('calibrating');
-    expect(nextState({ ...learned, stepDirections: ['up', 'up', 'up'] })).toBe('calibrating');
+    expect(nextState({ ...learned, stepsSinceLearned: ['down', 'down', 'down'] })).toBe(
+      'calibrating',
+    );
+    expect(nextState({ ...learned, stepsSinceLearned: ['up', 'up', 'up'] })).toBe('calibrating');
   });
 
   it('keeps a learned run learned while its steps still turn', () => {
     const learned = { ...READY, current: 'learned' as const };
-    expect(nextState({ ...learned, stepDirections: ['down', 'down', 'up'] })).toBe('learned');
-    expect(nextState({ ...learned, stepDirections: ['down', 'up', 'down'] })).toBe('learned');
-    expect(nextState({ ...learned, stepDirections: ['down', 'down'] })).toBe('learned');
+    expect(nextState({ ...learned, stepsSinceLearned: ['down', 'down', 'up'] })).toBe('learned');
+    expect(nextState({ ...learned, stepsSinceLearned: ['down', 'up', 'down'] })).toBe('learned');
+    expect(nextState({ ...learned, stepsSinceLearned: ['down', 'down'] })).toBe('learned');
+  });
+
+  it('counts only steps taken SINCE the run settled, never the march that got it there', () => {
+    const learned = { ...READY, current: 'learned' as const };
+    // The run marched three times on its way to learned; nothing since.
+    expect(nextState({ ...learned, stepsSinceLearned: [] })).toBe('learned');
   });
 
   it('reads only the newest steps, so an old march does not demote a settled run', () => {
     const learned = { ...READY, current: 'learned' as const };
     const directions: StepDirection[] = ['up', 'up', 'up', 'down'];
-    expect(nextState({ ...learned, stepDirections: directions })).toBe('learned');
+    expect(nextState({ ...learned, stepsSinceLearned: directions })).toBe('learned');
   });
 });
 
@@ -1151,6 +1189,7 @@ describe('the staircase over many exercise-days (amendment s.3)', () => {
     pendingDirection: StepDirection | null;
     daysEvaluated: number;
     informativePairs: number;
+    learnedOn?: string;
   }
 
   function newRun(valueSec: number): Run {
@@ -1201,13 +1240,15 @@ describe('the staircase over many exercise-days (amendment s.3)', () => {
     run.pendingDirection = evaluation.pendingDirection;
     run.daysEvaluated += 1;
     if (evaluation.clearsWindow) run.evidence = [];
+    const wasLearned = run.state === 'learned';
     run.state = nextState({
       current: run.state,
       daysEvaluated: run.daysEvaluated,
       informativePairs: run.informativePairs,
       arrivals: arrivals(run.history),
-      stepDirections: stepDirections(run.history),
+      stepsSinceLearned: stepDirections(run.history, run.learnedOn ?? on),
     });
+    if (!wasLearned && run.state === 'learned') run.learnedOn = addDays(on, 1);
     return run;
   }
 
@@ -1219,6 +1260,8 @@ describe('the staircase over many exercise-days (amendment s.3)', () => {
   const recoveredDay = (at: number) => [pairAt(0.99, at), pairAt(0.99, at)];
   /** Two in-window pairs that both say "missed", which qualifies a step up. */
   const missedDay = (at: number) => [pairAt(0.8, at), pairAt(0.8, at)];
+  /** Two in-window pairs sitting exactly on the target, which holds in the dead band. */
+  const deadBandDay = (at: number) => [pairAt(0.95, at), pairAt(0.95, at)];
 
   it('keeps calibrating through a seven-day march, whatever the day and pair counts', () => {
     let run = newRun(180);
@@ -1274,6 +1317,28 @@ describe('the staircase over many exercise-days (amendment s.3)', () => {
     }
     expect(run.valueSec).toBe(120);
     expect(run.history.every((step) => step.toSec === step.fromSec)).toBe(true);
+  });
+
+  it('keeps a run learned while it only holds, however it marched before', () => {
+    let run = newRun(150);
+    // Three steps down, then a dead-band hold on each of three exercise-days.
+    run = runDay(run, dayOf(1), recoveredDay(run.valueSec));
+    run = runDay(run, dayOf(2), recoveredDay(run.valueSec));
+    run = runDay(run, dayOf(3), recoveredDay(run.valueSec));
+    expect(stepDirections(run.history)).toEqual(['down', 'down', 'down']);
+    for (const day of [4, 5, 6]) {
+      run = runDay(run, dayOf(day), deadBandDay(run.valueSec));
+    }
+    expect(arrivals(run.history)).toHaveLength(3);
+    expect(run.state).toBe('learned');
+
+    // Nothing has STEPPED since it settled, so nothing may un-settle it.
+    const settled: LearnedRestState[] = [];
+    for (const day of [7, 8, 9]) {
+      run = runDay(run, dayOf(day), deadBandDay(run.valueSec));
+      settled.push(run.state);
+    }
+    expect(settled).toEqual(['learned', 'learned', 'learned']);
   });
 
   it('returns a learned run to calibrating after three steps one way, restarting its arrivals', () => {

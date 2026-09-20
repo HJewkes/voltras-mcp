@@ -620,10 +620,19 @@ export function settledValue(found: readonly Arrival[]): number | null {
   return Math.max(...lastTwo.map((arrival) => arrival.valueSec));
 }
 
-/** The directions of the steps that actually moved the value, oldest first. */
-export function stepDirections(history: readonly RestStep[]): StepDirection[] {
+/**
+ * The directions of the steps that actually moved the value, oldest first.
+ *
+ * `since` is a local date: pass the day a run became `learned` to get only the
+ * steps it has taken since settling. That is what {@link NextStateInput}'s
+ * `stepsSinceLearned` wants, and passing the whole run instead is the easy
+ * mistake — a run that marched three times on its way to `learned` would
+ * un-settle itself on its very next evaluated day without having stepped at all.
+ */
+export function stepDirections(history: readonly RestStep[], since?: string): StepDirection[] {
   return history
     .filter((step) => step.decision === 'down' || step.decision === 'up')
+    .filter((step) => since === undefined || step.on >= since)
     .map((step) => step.decision as StepDirection);
 }
 
@@ -633,8 +642,16 @@ export interface NextStateInput {
   readonly informativePairs: number;
   /** Arrivals in this run, oldest first. The caller slices the history at the run's start. */
   readonly arrivals: readonly Arrival[];
-  /** Directions of the steps that moved the value in this run, oldest first. */
-  readonly stepDirections: readonly StepDirection[];
+  /**
+   * Directions of the steps taken SINCE the run became `learned`, oldest first.
+   * Empty while the run is still calibrating, and empty on the day it settles.
+   *
+   * It is not the whole run's steps. A run that marched three times on its way
+   * to `learned` must not un-settle itself the next day without having moved:
+   * only steps taken since it settled can undo it. Build it with
+   * {@link stepDirections} and the date the run became `learned`.
+   */
+  readonly stepsSinceLearned: readonly StepDirection[];
 }
 
 /**
@@ -646,13 +663,15 @@ export interface NextStateInput {
  * by construction. What earns the word now is arriving three times.
  *
  * A learned run goes back to calibrating when it marches
- * `relearnAfterSameDirectionSteps` in one direction: the lifter has changed, or
- * the sets have. The caller then starts a new run, so the arrival count
- * restarts with it.
+ * `relearnAfterSameDirectionSteps` in one direction SINCE IT SETTLED: the
+ * lifter has changed, or the sets have. Steps it took on the way to `learned`
+ * do not count, or a run that marched into its arrivals would un-settle itself
+ * the next day without having moved. The caller then starts a new run, so the
+ * arrival count restarts with it.
  */
 export function nextState(input: NextStateInput): LearnedRestState {
   if (input.current === 'learned') {
-    return isMarching(input.stepDirections) ? 'calibrating' : 'learned';
+    return isMarching(input.stepsSinceLearned) ? 'calibrating' : 'learned';
   }
   const enough =
     input.arrivals.length >= ADAPTIVE_REST_POLICY.learnedMinArrivals.value &&

@@ -13,6 +13,8 @@
 
 import { EMPTY_PHASE, type Rep } from '@voltras/workout-analytics';
 
+import { addDays } from '../../src/plan/block-calendar.js';
+
 import {
   ADAPTIVE_REST_POLICY,
   arrivals,
@@ -222,6 +224,8 @@ interface SimRecord {
   evidence: EvidencePair[];
   lastStepDecision?: StepDecision;
   history: RestStep[];
+  /** Local date the run became `learned`, so only later steps can un-settle it. */
+  learnedOn?: string;
 }
 
 /** Sort one day's pairs and fold them into the record's evidence. */
@@ -298,10 +302,11 @@ function advanceState(record: SimRecord, on: string): void {
     daysEvaluated: record.daysEvaluated,
     informativePairs: record.informativePairs,
     arrivals: found,
-    stepDirections: stepDirections(record.history),
+    stepsSinceLearned: stepDirections(record.history, record.learnedOn ?? on),
   });
   if (!wasLearned && record.state === 'learned') {
     record.valueSec = settledValue(found) ?? record.valueSec;
+    record.learnedOn = addDays(on, 1);
   }
   if (wasLearned && record.state === 'calibrating') restartRun(record, on);
 }
@@ -480,6 +485,7 @@ function restartRun(record: SimRecord, on: string): void {
   record.history = [];
   delete record.lastStepOn;
   delete record.lastStepDecision;
+  delete record.learnedOn;
 }
 
 const FALSE_LEARNED_STEPS = 2;
