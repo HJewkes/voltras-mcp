@@ -53,3 +53,9 @@ site/.vitepress/cache/
 
 # Scratch copies for the read-only replay (npm run sim:rest -- --replay)
 .sim-scratch/
+
+# Scratch build for scripts/store (npm run store)
+.store-build/
+
+# Rehearsal scratch for the store export/import tool (VW-534)
+.store-scratch/
