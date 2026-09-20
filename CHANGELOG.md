@@ -52,7 +52,7 @@ entry is written from the user's point of view is a review question, not a check
   population table: the rules that decide which two sets are comparable evidence, how
   recovered the second one was, and whether the rest should step 15 s shorter or longer.
   **Nothing counts down differently yet** — no caller reads any of it, and the countdown is
-  unchanged until the resolver is wired (VW-445, VW-515, #TBD).
+  unchanged until the resolver is wired (VW-445, VW-515, #484).
 - The coach skill now ships with the server, as `pt-session` inside the `voltras-channel`
   plugin, so the instructions the coach follows can no longer be older than the tools it
   is calling. Its tool inventory is generated from the registry by `npm run docs:reference`
