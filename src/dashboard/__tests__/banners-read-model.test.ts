@@ -7,6 +7,7 @@
 
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
+import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 import { dateBlock, seedOwnerShapedPlan } from '../../plan/__tests__/fixtures/owner-shaped-plan.js';
 import type { BlockCalendar } from '../../plan/block-calendar.js';
 import { SqliteSessionStore } from '../../store/sqlite-store.js';
@@ -44,18 +45,36 @@ function banner(kind: BannerRecord['kind']): BannerRecord {
   };
 }
 
-/** A finished session on the given local date, as a training day the read can see. */
+/** A finished, marked-training session with a working set: a training day the read can see. */
 async function trainingDayOn(date: string): Promise<void> {
-  await store.putSession({
+  await seedTrainingDay(store, {
     id: `sess-${date}`,
     startedAt: `${date}T15:00:00.000Z`,
     endedAt: `${date}T16:00:00.000Z`,
   });
 }
 
-/** A session on the given local date that never closed: not a training day (ended-only read). */
-async function unendedSessionOn(date: string): Promise<void> {
-  await store.putSession({ id: `open-${date}`, startedAt: `${date}T15:00:00.000Z` });
+/** A marked-training session on the given date that holds no working set: not a training day. */
+async function emptyOpenSessionOn(date: string): Promise<void> {
+  await store.putSession({
+    id: `open-${date}`,
+    startedAt: `${date}T15:00:00.000Z`,
+    kind: 'training',
+  });
+}
+
+/** A worked, unended session left unmarked: `kind` defaults to unreviewed, not training. */
+async function unreviewedWorkedSessionOn(date: string): Promise<void> {
+  const id = `unreviewed-${date}`;
+  await store.putSession({ id, startedAt: `${date}T15:00:00.000Z` });
+  await store.putSet({
+    id: `${id}-work`,
+    sessionId: id,
+    startedAt: `${date}T15:00:00.000Z`,
+    endedAt: `${date}T15:30:00.000Z`,
+    partial: false,
+    reps: [],
+  });
 }
 
 describe('BANNER_PRIORITY', () => {
@@ -223,10 +242,18 @@ describe('readTopBanner', () => {
     expect(await readTopBanner(store, TODAY, NOW)).toBeNull();
   });
 
-  it('still banners when the week only holds a session that never ended', async () => {
+  it('still banners when the week only holds a session with no working set', async () => {
     await dateBlock(store, 'b1', '2026-08-31', 4);
 
-    await unendedSessionOn('2026-09-02');
+    await emptyOpenSessionOn('2026-09-02');
+
+    expect(await readTopBanner(store, TODAY, NOW)).not.toBeNull();
+  });
+
+  it('still banners when the week only holds a worked session left unreviewed', async () => {
+    await dateBlock(store, 'b1', '2026-08-31', 4);
+
+    await unreviewedWorkedSessionOn('2026-09-02');
 
     expect(await readTopBanner(store, TODAY, NOW)).not.toBeNull();
   });

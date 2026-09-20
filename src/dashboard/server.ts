@@ -1086,7 +1086,7 @@ function hasBannerStore(
     typeof store.getWorkoutTemplatesForWeek === 'function' &&
     typeof store.getAssignmentsForTemplate === 'function' &&
     typeof store.getLiveBlockSchedule === 'function' &&
-    typeof store.listSessionEndTimes === 'function'
+    typeof store.listTrainingDayInstants === 'function'
   );
 }
 
