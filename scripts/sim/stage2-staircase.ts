@@ -31,8 +31,11 @@ import {
   targetFor,
   type EvidencePair,
   type IgnoredPairs,
+  type LearnedRecordSummary,
   type LearnedRestState,
+  type RestBaseSource,
   type RestIntentKey,
+  type RestSeed,
   type RestSetInput,
   type RestSignal,
   type RestStep,
@@ -83,6 +86,12 @@ export interface Stage2Config {
   readonly intent: RestIntentKey;
   readonly exerciseDays: number;
   readonly seed: number;
+  /**
+   * The lifter's other keys that have already settled, so `seedRest` can take
+   * its lifter-factor path. Empty means the run starts from the population
+   * default, which is every run the earlier stage 2 ever measured.
+   */
+  readonly otherRecords?: readonly LearnedRecordSummary[];
 }
 
 /** What one simulated run of the staircase produced. */
@@ -103,6 +112,11 @@ export interface Stage2Result {
   readonly restMinutesPerSessionOnDefault: number;
   readonly upSteps: number;
   readonly downSteps: number;
+  /** Arrivals this run reached, and the exercise-day each landed on. */
+  readonly arrivalCount: number;
+  readonly arrivalDays: readonly number[];
+  readonly seedSec: number;
+  readonly seedSource: RestBaseSource;
 }
 
 const BASE_DATE = Date.UTC(2026, 0, 5);
@@ -388,7 +402,11 @@ const PLAN_RESTART_SEC = 210;
 export function runStage2(config: Stage2Config): Stage2Result {
   const signal = signalForIntent(config.intent);
   const rng = makeRng(config.seed);
-  const seeded = seedRest({ intent: config.intent, restLearning: true });
+  const seeded = seedRest({
+    intent: config.intent,
+    restLearning: true,
+    ...(config.otherRecords !== undefined ? { otherRecords: config.otherRecords } : {}),
+  });
   const record = newRecord(seeded.seconds);
   const tally = newTally();
   for (let day = 0; day < config.exerciseDays; day += 1) {
@@ -403,7 +421,7 @@ export function runStage2(config: Stage2Config): Stage2Result {
     const decision = applyEvaluation(record, signal, on);
     recordStep(tally, record, decision, day, before);
   }
-  return summarise(config, record, tally, signal);
+  return summarise(config, record, tally, signal, seeded);
 }
 
 function newRecord(valueSec: number): SimRecord {
@@ -425,6 +443,7 @@ interface Tally {
   restSec: number;
   upSteps: number;
   downSteps: number;
+  arrivalDays: number[];
   daysToLearned: number | null;
   valueAtLearned: number | null;
   valueAtDay12: number | null;
@@ -439,6 +458,7 @@ function newTally(): Tally {
     restSec: 0,
     upSteps: 0,
     downSteps: 0,
+    arrivalDays: [],
     daysToLearned: null,
     valueAtLearned: null,
     valueAtDay12: null,
@@ -456,6 +476,8 @@ function recordStep(
 ): void {
   if (decision === 'up') tally.upSteps += 1;
   if (decision === 'down') tally.downSteps += 1;
+  const reached = arrivals(record.history).length;
+  while (tally.arrivalDays.length < reached) tally.arrivalDays.push(day + 1);
   if (record.state === 'learned' && tally.daysToLearned === null) {
     tally.daysToLearned = day + 1;
     tally.valueAtLearned = record.valueSec;
@@ -495,11 +517,13 @@ function summarise(
   record: SimRecord,
   tally: Tally,
   signal: RestSignal,
+  seeded: RestSeed,
 ): Stage2Result {
   const trueRest = trueRestFor(config.lifter, signal);
   const fixed = runOnFixedRest(config, intentDefaultSec(config.intent));
   const sessions = config.exerciseDays;
   const atLearned = tally.valueAtLearned;
+  const target = clampTrue(trueRest);
   return {
     lifter: config.lifter.name,
     behaviour: config.behaviour,
@@ -507,23 +531,88 @@ function summarise(
     trueRestSec: Math.round(trueRest),
     finalSec: record.valueSec,
     daysToLearned: tally.daysToLearned,
-    errorAtLearnedSec: atLearned === null ? null : Math.round(atLearned - clampTrue(trueRest)),
-    errorAtDay12Sec:
-      tally.valueAtDay12 === null ? null : Math.round(tally.valueAtDay12 - clampTrue(trueRest)),
-    falseLearned:
-      atLearned !== null && Math.abs(atLearned - clampTrue(trueRest)) > FALSE_LEARNED_STEPS * STEP,
+    errorAtLearnedSec: atLearned === null ? null : Math.round(atLearned - target),
+    errorAtDay12Sec: tally.valueAtDay12 === null ? null : Math.round(tally.valueAtDay12 - target),
+    falseLearned: atLearned !== null && Math.abs(atLearned - target) > FALSE_LEARNED_STEPS * STEP,
     bounceAfterLearned:
       tally.daysAfterLearned === 0 ? 0 : tally.movesAfterLearned / tally.daysAfterLearned,
+    ...restShares(tally, fixed, sessions),
+    upSteps: tally.upSteps,
+    downSteps: tally.downSteps,
+    arrivalCount: tally.arrivalDays.length,
+    arrivalDays: tally.arrivalDays,
+    seedSec: seeded.seconds,
+    seedSource: seeded.baseSource,
+  };
+}
+
+/** The two rest-volume figures and the two under-recovered shares, as one block. */
+function restShares(tally: Tally, fixed: FixedArm, sessions: number) {
+  return {
     underRecoveredShare: tally.pairs === 0 ? 0 : tally.underRecovered / tally.pairs,
     underRecoveredShareOnDefault: fixed.pairs === 0 ? 0 : fixed.underRecovered / fixed.pairs,
     restMinutesPerSession: tally.restSec / 60 / sessions,
     restMinutesPerSessionOnDefault: fixed.totalRestSec / 60 / sessions,
-    upSteps: tally.upSteps,
-    downSteps: tally.downSteps,
   };
 }
+
+type FixedArm = ReturnType<typeof runOnFixedRest>;
 
 /** The staircase can only ever report a value inside its own floor and ceiling. */
 function clampTrue(trueRest: number): number {
   return Math.min(CEILING, Math.max(FLOOR, trueRest));
+}
+
+/**
+ * How often a lifter who is still MARCHING reads a false arrival.
+ *
+ * This is the number that decides between two arrivals and three (amendment
+ * s.3.2). A marching staircase should turn only when it reaches the lifter's
+ * rest; a turn while it is still travelling is noise reading as arrival. The
+ * run is set up so the true rest is far below the seed, which means every
+ * reversal before the staircase gets there is false by construction.
+ */
+export interface FalseArrivalResult {
+  readonly runs: number;
+  readonly days: number;
+  /** Runs that produced at least one arrival while still more than two steps from the rest. */
+  readonly runsWithFalseArrival: number;
+  /** Runs that reached the arrival minimum while still that far away. */
+  readonly runsFalselyLearned: number;
+  readonly falseArrivalsPerRun: number;
+}
+
+const FALSE_ARRIVAL_MARGIN_STEPS = 2;
+
+export function falseArrivalRate(
+  lifter: SimLifter,
+  intent: RestIntentKey,
+  runs: number,
+  exerciseDays: number,
+): FalseArrivalResult {
+  const signal = signalForIntent(intent);
+  const trueRest = trueRestFor(lifter, signal);
+  let withFalse = 0;
+  let falselyLearned = 0;
+  let arrivalTotal = 0;
+  for (let run = 0; run < runs; run += 1) {
+    const result = runStage2({
+      lifter,
+      behaviour: 'compliant',
+      intent,
+      exerciseDays,
+      seed: 7000 + run,
+    });
+    const far = Math.abs(result.finalSec - trueRest) > FALSE_ARRIVAL_MARGIN_STEPS * STEP;
+    arrivalTotal += result.arrivalCount;
+    if (far && result.arrivalCount > 0) withFalse += 1;
+    if (far && result.daysToLearned !== null) falselyLearned += 1;
+  }
+  return {
+    runs,
+    days: exerciseDays,
+    runsWithFalseArrival: withFalse,
+    runsFalselyLearned: falselyLearned,
+    falseArrivalsPerRun: arrivalTotal / runs,
+  };
 }
