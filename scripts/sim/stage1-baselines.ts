@@ -81,8 +81,18 @@ export interface FitParams {
   readonly tauASec: number;
   readonly tauMenSec: number;
   readonly tauWomenSec: number;
-  /** Relative spread of tau within one of baseline B's two groups. */
-  readonly tauSpread: number;
+  /**
+   * Relative spread of tau within baseline B's women's group.
+   *
+   * Each group gets its OWN spread (amendment s.6.1). One shared spread cannot
+   * hold two groups whose published relative spreads differ, and this is the
+   * fix. The cost is stated wherever the result is: baseline B then has four
+   * published numbers and four free parameters, so it stops being a test of the
+   * model and becomes a CALIBRATION of the population spread.
+   */
+  readonly tauSpreadWomen: number;
+  /** Relative spread of tau within baseline B's men's group. Free for the same reason. */
+  readonly tauSpreadMen: number;
   /** Relative spread of tau in baseline A's population, which is a different study. */
   readonly tauSpreadA: number;
   /** Reps to failure at baseline A's load. */
@@ -168,10 +178,16 @@ function runBaselineB(params: LifterParams, rng: () => number): number {
 }
 
 /** Mean and SD of total reps for one baseline-B group. */
-function baselineBGroup(fit: FitParams, meanTau: number, seed: number, population: number) {
+function baselineBGroup(
+  fit: FitParams,
+  meanTau: number,
+  spread: number,
+  seed: number,
+  population: number,
+) {
   const rng = makeRng(seed);
   const totals = Array.from({ length: population }, () => {
-    const tau = drawTau(meanTau, fit.tauSpread, rng);
+    const tau = drawTau(meanTau, spread, rng);
     return runBaselineB(lifter({ ...BENCH_PRESS_75, n0: fit.n0B }, tau, fit), rng);
   });
   return { mean: mean(totals), sd: stdDev(totals) };
@@ -225,8 +241,14 @@ export function scoreFit(params: FitParams, seed = 4242, population = POPULATION
   const a60 = baselineAAt(params, 60, seed, population);
   const a180 = baselineAAt(params, 180, seed + 1, population);
   const a300 = baselineAAt(params, 300, seed + 2, population);
-  const women = baselineBGroup(params, params.tauWomenSec, seed + 3, population);
-  const men = baselineBGroup(params, params.tauMenSec, seed + 4, population);
+  const women = baselineBGroup(
+    params,
+    params.tauWomenSec,
+    params.tauSpreadWomen,
+    seed + 3,
+    population,
+  );
+  const men = baselineBGroup(params, params.tauMenSec, params.tauSpreadMen, seed + 4, population);
   const rests = runBaselineC(params);
   const errors = publishedErrors(a60.reps, a180.reps, a300.reps, women, men, rests[0]);
   const pattern =
@@ -254,13 +276,22 @@ export function scoreFit(params: FitParams, seed = 4242, population = POPULATION
  * Janicijevic's qualitative finding: the fastest rep falls set to set at 1 min
  * and not at 3 or 5.
  *
- * "Stable" is read as "not distinguishable from no change given the measurement
- * noise", so the ceiling is the measurement CV itself. A tighter ceiling would
- * ask the model to be steadier than the instrument the paper measured with,
- * which is a stricter test than the paper ran.
+ * THE STABILITY CEILING IS UNVERIFIED AND STILL THE SIMULATION'S OWN NUMBER.
+ * The amendment (s.6.1) asked for it to be set from the paper's set-by-set
+ * velocities and their spread. Those figures are not in the research note,
+ * which reports only the rep totals and the word "stable", and the paper itself
+ * was not read for this work. So it is left at the measurement CV, with the
+ * reasoning that a ceiling tighter than the instrument's own noise asks the
+ * model to be steadier than the thing the paper measured with.
+ *
+ * What would settle it: the set-by-set fastest-rep velocities at 3 and 5 min
+ * from https://pmc.ncbi.nlm.nih.gov/articles/PMC11812172/, and their
+ * between-set spread. Until someone reads them, this check passing or failing
+ * says as much about the ceiling as about the model. DO NOT loosen it to pass.
  */
 export const DECLINE_AT_60_MIN = 0.03;
 export const STABLE_AT_LONG_MAX = MEASUREMENT_CV;
+export const STABILITY_CEILING_IS_SOURCED = false;
 
 /** Relative error against every published figure the fit is scored on. */
 function publishedErrors(
@@ -304,7 +335,8 @@ const SEARCH_BOUNDS = {
   tauASec: [30, 400],
   tauMenSec: [30, 600],
   tauWomenSec: [30, 600],
-  tauSpread: [0.05, 0.6],
+  tauSpreadWomen: [0.05, 0.9],
+  tauSpreadMen: [0.05, 0.9],
   tauSpreadA: [0.05, 0.6],
   n0A: [6, 16],
   n0B: [6, 16],

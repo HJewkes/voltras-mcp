@@ -11,18 +11,25 @@
 // imported, never copied. Nothing here writes to a store, reads a real session,
 // or touches a device.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { intentDefaultSec, type RestIntentKey } from '../../src/analytics/adaptive-rest.js';
+import {
+  intentDefaultSec,
+  type LearnedRecordSummary,
+  type RestIntentKey,
+} from '../../src/analytics/adaptive-rest.js';
 import { fitModel, judgeStage1 } from './stage1-baselines.js';
 import {
+  falseArrivalRate,
   runStage2,
   type Behaviour,
   type SimLifter,
   type Stage2Result,
 } from './stage2-staircase.js';
 import { policyVersion, renderMarkdown, type Gate, type SimulationReport } from './report.js';
+import { replayStore, type ReplayCounts } from './replay.js';
 import type { FitParams } from './stage1-baselines.js';
 
 const DEFAULT_OUT_DIR = '/Users/hjewkes/projects/voltras-workspace/sources/research';
@@ -69,6 +76,9 @@ interface CliOptions {
   readonly jsonPath: string | null;
   readonly restarts: number;
   readonly days: number;
+  /** Run the read-only replay over a copy of the store. Off unless asked for. */
+  readonly replay: boolean;
+  readonly storePath: string;
 }
 
 function parseArgs(argv: readonly string[]): CliOptions {
@@ -81,7 +91,30 @@ function parseArgs(argv: readonly string[]): CliOptions {
     jsonPath: read('--json') ?? null,
     restarts: Number(read('--restarts') ?? 400),
     days: Number(read('--days') ?? 14),
+    replay: argv.includes('--replay'),
+    storePath: read('--store') ?? join(homedir(), '.voltras', 'vmcp.sqlite'),
   };
+}
+
+const SCRATCH_DIR = '.sim-scratch';
+
+/**
+ * Replay over a plain FILE COPY of the store, then delete the copy.
+ *
+ * The live file is never opened here. It is copied with `copyFileSync`, which
+ * only reads it, and everything after that touches the copy. The copy lands in
+ * a gitignored scratch directory and is removed in `finally`, so a crash does
+ * not leave a second copy of the lifter's training history on disk.
+ */
+function runReplay(storePath: string): ReplayCounts {
+  mkdirSync(SCRATCH_DIR, { recursive: true });
+  const copy = join(SCRATCH_DIR, `vmcp-replay-${process.pid}.sqlite`);
+  try {
+    copyFileSync(storePath, copy);
+    return replayStore(copy);
+  } finally {
+    rmSync(copy, { force: true });
+  }
 }
 
 const LEARNED_WITHIN_DAYS = 6;
@@ -115,25 +148,35 @@ function gateFalseLearned(results: readonly Stage2Result[]): Gate {
   };
 }
 
-function gateRusher(results: readonly Stage2Result[]): Gate {
-  const offenders: string[] = [];
-  for (const intent of INTENTS) {
-    for (const name of Object.keys(POPULATION_TAU_SCALE)) {
-      const rusher = find(results, name, 'rusher', intent);
-      const compliant = find(results, name, 'compliant', intent);
-      if (rusher === undefined || compliant === undefined) continue;
-      if (rusher.finalSec > compliant.finalSec) {
-        offenders.push(`${name}/${intent}: ${rusher.finalSec}s vs ${compliant.finalSec}s`);
-      }
-    }
-  }
+/**
+ * The amendment's widened gate (s.4): neither rushing nor loitering moves the
+ * rest in EITHER direction.
+ *
+ * The old form compared a rusher's final rest against a compliant lifter's. It
+ * went stale the moment veto-only evidence landed: the rusher is then correctly
+ * frozen at its seed while the compliant lifter descends properly, so the
+ * rusher ends higher and the comparison fired on a module that was behaving.
+ * It measured "did the rusher end above someone else", which was never the
+ * question. The question is whether their own rushing moved their own rest.
+ */
+function gateRusherAndLoiterer(results: readonly Stage2Result[]): Gate {
+  const drifted = results.filter(
+    (result) =>
+      (result.behaviour === 'rusher' || result.behaviour === 'loiterer') &&
+      (result.finalSec !== result.seedSec || result.upSteps > 0 || result.downSteps > 0),
+  );
+  const judged = results.filter(
+    (result) => result.behaviour === 'rusher' || result.behaviour === 'loiterer',
+  );
   return {
-    name: "A rusher's rest never rises because of rushing",
-    passed: offenders.length === 0,
+    name: 'Neither rushing nor loitering moves the rest, in either direction',
+    passed: drifted.length === 0,
     detail:
-      offenders.length === 0
-        ? 'No rusher finished above the same lifter resting as asked'
-        : offenders.join('; '),
+      drifted.length === 0
+        ? `${judged.length} rusher and loiterer runs, every one still at its seed with no step taken`
+        : drifted
+            .map((r) => `${r.lifter}/${r.behaviour}/${r.intent}: ${r.seedSec}s to ${r.finalSec}s`)
+            .join('; '),
   };
 }
 
@@ -165,18 +208,6 @@ function gateBounce(results: readonly Stage2Result[]): Gate {
   };
 }
 
-function find(
-  results: readonly Stage2Result[],
-  lifter: string,
-  behaviour: Behaviour,
-  intent: RestIntentKey,
-): Stage2Result | undefined {
-  return results.find(
-    (result) =>
-      result.lifter === lifter && result.behaviour === behaviour && result.intent === intent,
-  );
-}
-
 /**
  * What this run argues for. Recommendations only: stage 1 has to reproduce its
  * baselines before the simulation may move any engineering default, and the two
@@ -199,16 +230,28 @@ function main(): void {
 
   process.stderr.write('stage 2: running the production staircase...\n');
   const stage2 = sweepStage2(fit.params, options.days);
+  const multiKey = sweepMultiKeyLifters(fit.params, options.days);
+  const middle = populations(fit.params).find((lifter) => lifter.name === 'middle');
+  const falseArrivals = falseArrivalRate(middle ?? populations(fit.params)[0], 'strength', 40, 6);
+
+  let replay: ReplayCounts | null = null;
+  if (options.replay) {
+    process.stderr.write('stage 3: replaying over a read-only copy of the store...\n');
+    replay = runReplay(options.storePath);
+  }
 
   const report: SimulationReport = {
     generatedFor: 'VW-516',
     policyVersion: policyVersion(),
     stage1: { fit, verdict },
     stage2,
+    multiKey,
+    falseArrivals,
+    replay,
     gates: [
       gateLearnedSoon(stage2),
       gateFalseLearned(stage2),
-      gateRusher(stage2),
+      gateRusherAndLoiterer(stage2),
       gateUnderRecovered(stage2),
       gateBounce(stage2),
     ],
@@ -231,6 +274,43 @@ function sweepStage2(fit: FitParams, days: number): Stage2Result[] {
       for (const intent of INTENTS) {
         seed += 1;
         results.push(runStage2({ lifter, behaviour, intent, exerciseDays: days, seed }));
+      }
+    }
+  }
+  return results;
+}
+
+/** How many exercises one simulated lifter trains, so the lifter factor has keys to read. */
+const KEYS_PER_LIFTER = [4, 5, 6] as const;
+
+/**
+ * A lifter with several exercises. The first two keys settle from the
+ * population default; every key after them seeds from the LIFTER FACTOR, which
+ * no earlier stage 2 run ever exercised (amendment s.6.2, finding 5).
+ *
+ * The keys differ only in how hard their sets are taken, which is what makes
+ * their rests differ while the lifter's own recovery stays one number.
+ */
+function sweepMultiKeyLifters(fit: FitParams, days: number): Stage2Result[] {
+  const results: Stage2Result[] = [];
+  let seed = 5000;
+  for (const lifter of populations(fit)) {
+    for (const keys of KEYS_PER_LIFTER) {
+      const settled: LearnedRecordSummary[] = [];
+      for (let key = 0; key < keys; key += 1) {
+        seed += 1;
+        const result = runStage2({
+          lifter: { ...lifter, name: `${lifter.name} (${keys} keys)` },
+          behaviour: 'compliant',
+          intent: 'strength',
+          exerciseDays: days,
+          seed,
+          otherRecords: settled,
+        });
+        results.push(result);
+        if (result.daysToLearned !== null) {
+          settled.push({ intent: 'strength', valueSec: result.finalSec, state: 'learned' });
+        }
       }
     }
   }

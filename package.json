@@ -45,7 +45,8 @@
     "docs:captures": "node scripts/capture-screens.mjs",
     "changelog:check": "node scripts/check-changelog.mjs",
     "docs:check": "node scripts/check-docs.mjs",
-    "sim:rest": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/adaptive-rest-sim.js"
+    "sim:rest": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/adaptive-rest-sim.js",
+    "sim:rest:replay": "npm run sim:rest -- --replay"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

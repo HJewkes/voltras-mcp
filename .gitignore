@@ -50,3 +50,6 @@ site/.vitepress/cache/
 
 # Scratch build for scripts/sim (npm run sim:rest)
 .sim-build/
+
+# Scratch copies for the read-only replay (npm run sim:rest -- --replay)
+.sim-scratch/
