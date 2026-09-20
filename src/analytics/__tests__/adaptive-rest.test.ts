@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_PHASE, type Rep } from '@voltras/workout-analytics';
 
+import { addDays } from '../../plan/block-calendar.js';
 import {
   ADAPTIVE_REST_POLICY,
   evaluateExerciseDay,
@@ -199,6 +200,57 @@ describe('pairsForExerciseDay: what counts as evidence (design s.4.1)', () => {
     day.daySets.push(makeSet({ id: 'g', startSec: 60, endSec: 100, lifter: 'Jordan' }));
     expect(pairsForExerciseDay(day).valid).toHaveLength(1);
   });
+
+  // Boundaries. Each rule admits its own limit, so a value sitting exactly on a
+  // threshold is INSIDE it. Nine mutants survived the first round of these
+  // tests without a single assertion failing; these are the assertions.
+
+  it('admits a load exactly at the tolerance', () => {
+    const tolerance = ADAPTIVE_REST_POLICY.sameLoadToleranceLbs.value;
+    const day = twoSetDay({ second: { weightLbs: 100 + tolerance } });
+    expect(pairsForExerciseDay(day).valid).toHaveLength(1);
+  });
+
+  it('rejects a load one step past the tolerance', () => {
+    const tolerance = ADAPTIVE_REST_POLICY.sameLoadToleranceLbs.value;
+    const day = twoSetDay({ second: { weightLbs: 100 + tolerance + 0.01 } });
+    expect(pairsForExerciseDay(day).rejected[0].reason).toBe('load_differs');
+  });
+
+  /**
+   * The depth gate's exact tie cannot be exercised: a set built to land on
+   * exactly 10% loss computes to 9.999999999999998 in binary floating point and
+   * is rejected. That is immaterial for a gate written in whole percent, but it
+   * is what the code does, so it is what these two pin -- the nearest
+   * representable value on each side rather than a tie that does not exist.
+   */
+  it('rejects an earlier set that computes a hair under the depth gate', () => {
+    const day = twoSetDay({ first: { velocities: [1.0, 0.97, 0.94, 0.92, 0.9] } });
+    expect(pairsForExerciseDay(day).rejected[0].reason).toBe('too_shallow');
+  });
+
+  it('admits an earlier set that computes just over the depth gate', () => {
+    const day = twoSetDay({ first: { velocities: [1.0, 0.97, 0.94, 0.92, 0.89] } });
+    expect(pairsForExerciseDay(day).valid).toHaveLength(1);
+  });
+
+  it('admits a rest exactly at the short-rest floor', () => {
+    const floor = ADAPTIVE_REST_POLICY.minActualRestSec.value;
+    const day = twoSetDay({ second: { startSec: 40 + floor, endSec: 40 + floor + 40 } });
+    expect(pairsForExerciseDay(day).valid[0].actualRestSec).toBe(floor);
+  });
+
+  it('rejects a rest one second under the short-rest floor', () => {
+    const floor = ADAPTIVE_REST_POLICY.minActualRestSec.value;
+    const day = twoSetDay({ second: { startSec: 40 + floor - 1, endSec: 40 + floor + 40 } });
+    expect(pairsForExerciseDay(day).rejected[0].reason).toBe('rest_too_short');
+  });
+
+  it('rejects a negative rest from clock skew rather than reading it as a rest', () => {
+    // The later set's first rep timestamped BEFORE the earlier set closed.
+    const day = twoSetDay({ second: { workStartedAt: at(20) } });
+    expect(pairsForExerciseDay(day).rejected[0].reason).toBe('rest_too_short');
+  });
 });
 
 describe('pairsForExerciseDay: weights (design s.4.5)', () => {
@@ -347,6 +399,34 @@ describe('sortPair: the 2x2 against the probed rest (design s.4.4)', () => {
     const sort = sortPair(pairWithRatio(0.9, T + 45), T, 'opening_velocity');
     expect(sort.verdict).toBe('missed');
   });
+
+  it('counts a ratio exactly at the target as meeting it', () => {
+    const target = ADAPTIVE_REST_POLICY.openingVelocityTarget.value;
+    expect(sortPair(pairWithRatio(target, T), T, 'opening_velocity').verdict).toBe('recovered');
+  });
+
+  it('counts a ratio a hair under the target as missing it', () => {
+    const target = ADAPTIVE_REST_POLICY.openingVelocityTarget.value;
+    expect(sortPair(pairWithRatio(target - 0.001, T), T, 'opening_velocity').verdict).toBe(
+      'missed',
+    );
+  });
+
+  it('calls a rest exactly at the top of the window recovered, not long', () => {
+    expect(sortPair(pairWithRatio(0.96, T + TOL), T, 'opening_velocity').verdict).toBe('recovered');
+  });
+
+  it('calls a rest one second past the window long', () => {
+    expect(sortPair(pairWithRatio(0.96, T + TOL + 1), T, 'opening_velocity').verdict).toBe('long');
+  });
+
+  it('calls a rest exactly at the bottom of the window missed, not rushed', () => {
+    expect(sortPair(pairWithRatio(0.9, T - TOL), T, 'opening_velocity').verdict).toBe('missed');
+  });
+
+  it('calls a rest one second below the window rushed', () => {
+    expect(sortPair(pairWithRatio(0.9, T - TOL - 1), T, 'opening_velocity').verdict).toBe('rushed');
+  });
 });
 
 describe('evaluateExerciseDay: the step (design s.4.6)', () => {
@@ -447,6 +527,59 @@ describe('evaluateExerciseDay: the step (design s.4.6)', () => {
     expect(step.informativePairs).toBe(2);
     expect(step.ignoredPairs).toEqual(ignored);
     expect(step.rMedian).toBeCloseTo(0.99, 5);
+  });
+
+  // Boundaries of the step rule. The design's words are "at or above target +
+  // 0.02: down" and "below target - 0.02: up", so the upper limit steps and the
+  // lower limit holds. The asymmetry is deliberate and is pinned here.
+
+  it('steps down at exactly one dead band above the target', () => {
+    const target = ADAPTIVE_REST_POLICY.openingVelocityTarget.value;
+    const band = ADAPTIVE_REST_POLICY.deadBand.value;
+    const { step } = evaluate({ evidence: evidenceOf([target + band, target + band]) });
+    expect(step.decision).toBe('down');
+  });
+
+  it('holds a hair below one dead band above the target', () => {
+    const target = ADAPTIVE_REST_POLICY.openingVelocityTarget.value;
+    const band = ADAPTIVE_REST_POLICY.deadBand.value;
+    const { step } = evaluate({
+      evidence: evidenceOf([target + band - 0.001, target + band - 0.001]),
+    });
+    expect(step.decision).toBe('hold');
+  });
+
+  it('steps up a hair below one dead band under the target', () => {
+    const target = ADAPTIVE_REST_POLICY.openingVelocityTarget.value;
+    const band = ADAPTIVE_REST_POLICY.deadBand.value;
+    const { step } = evaluate({
+      evidence: evidenceOf([target - band - 0.001, target - band - 0.001]),
+    });
+    expect(step.decision).toBe('up');
+  });
+
+  it('keeps a pair dated exactly on the window boundary', () => {
+    const on = '2026-09-19';
+    const window = ADAPTIVE_REST_POLICY.evidenceWindowDays.value;
+    const oldest = addDays(on, -window);
+    const evidence = evidenceOf([0.99, 0.99]).map((pair) => ({ ...pair, on: oldest }));
+    expect(evaluate({ on, runStartedOn: '2026-01-01', evidence }).step.decision).toBe('down');
+  });
+
+  it('drops a pair one day older than the window', () => {
+    const on = '2026-09-19';
+    const window = ADAPTIVE_REST_POLICY.evidenceWindowDays.value;
+    const tooOld = addDays(on, -window - 1);
+    const evidence = evidenceOf([0.99, 0.99]).map((pair) => ({ ...pair, on: tooOld }));
+    expect(evaluate({ on, runStartedOn: '2026-01-01', evidence }).step.decision).toBe(
+      'no_evidence',
+    );
+  });
+
+  it('keeps a pair dated on the day of the newest step, which came before the sets', () => {
+    const evidence = evidenceOf([0.99, 0.99]).map((pair) => ({ ...pair, on: '2026-09-15' }));
+    const input = { evidence, lastStepOn: '2026-09-15' };
+    expect(evaluate(input).step.decision).toBe('down');
   });
 
   describe('the two-day rule once learned', () => {
@@ -686,6 +819,46 @@ describe('restConflictFor: the plan-versus-learned table (design s.5.1)', () => 
     expect(flag?.otherRows).toEqual([{ plannedExerciseId: 'pe-tuesday', restSec: 90 }]);
   });
 
+  it('treats another row exactly one step away as a disagreement', () => {
+    const flag = restConflictFor({
+      exerciseId: 'bench',
+      plannedRestSec: 180,
+      restLearning: true,
+      record,
+      otherRows: [{ plannedExerciseId: 'pe-tuesday', restSec: 180 - STEP }],
+    });
+    expect(flag?.kind).toBe('conflicting_plan_rows');
+  });
+
+  it('ignores another row a hair inside one step', () => {
+    const flag = restConflictFor({
+      exerciseId: 'bench',
+      plannedRestSec: 180,
+      restLearning: true,
+      record,
+      otherRows: [{ plannedExerciseId: 'pe-tuesday', restSec: 180 - STEP + 0.01 }],
+    });
+    expect(flag?.kind).toBe('differs_from_learned');
+  });
+
+  /**
+   * The owner's 2026-09-20 ruling: "Force one to be set, if learned is false
+   * then a rest value is required. If both are null due to data quality issue,
+   * seed rest time from learned value but then leave learning false (equates to
+   * recommendation)."
+   *
+   * The plan-write validator refuses that row; that is a later task. What the
+   * PURE module owes the ruling is the data-quality fallback: silence. No
+   * conflict, and a seed that never claims the plan supplied it, so learning
+   * stays off and the resolver is free to serve the frozen learned value.
+   */
+  it('is silent for the data-quality row: learning off with no rest', () => {
+    expect(restConflictFor({ exerciseId: 'bench', restLearning: false, record })).toBeNull();
+    const seed = seedRest({ intent: 'strength', restLearning: false });
+    expect(seed.baseSource).toBe('intent_default');
+    expect(seed.seconds).toBe(intentDefaultSec('strength'));
+  });
+
   it('does not restart a run that restarted inside the cooldown', () => {
     const flag = restConflictFor({
       exerciseId: 'bench',
@@ -723,15 +896,26 @@ describe('ADAPTIVE_REST_POLICY', () => {
   });
 
   it("keeps the owner's rulings out of the simulation's reach", () => {
-    expect(ADAPTIVE_REST_POLICY.stepSec.status).toBe('OWNER');
     expect(ADAPTIVE_REST_POLICY.floorSec.value).toBe(45);
     expect(ADAPTIVE_REST_POLICY.floorSec.status).toBe('OWNER');
     expect(ADAPTIVE_REST_POLICY.ceilingSec.value).toBe(300);
     expect(ADAPTIVE_REST_POLICY.signalByIntent.status).toBe('OWNER');
   });
 
-  it('marks the two targets as dose, which the simulation may only recommend moving', () => {
+  /**
+   * The step and the exercise-day unit are NOT rulings. The owner fixed 15 s as
+   * a starting value and said "one step per session per exercise"; the
+   * exercise-day is the designer's reading of that. The step still sets how
+   * much rest a lifter gets, so it carries the same sign-off the two targets do.
+   */
+  it('marks the step and the two targets as dose: recommend only', () => {
+    expect(ADAPTIVE_REST_POLICY.stepSec.status).toBe('ENGINEERING DEFAULT');
+    expect(ADAPTIVE_REST_POLICY.stepSec.ownerSignOff).toBe(true);
     expect(ADAPTIVE_REST_POLICY.openingVelocityTarget.ownerSignOff).toBe(true);
     expect(ADAPTIVE_REST_POLICY.repsPreservedTarget.ownerSignOff).toBe(true);
+  });
+
+  it("marks the exercise-day unit as the designer's reading, not a ruling", () => {
+    expect(ADAPTIVE_REST_POLICY.maxStepsPerExerciseDay.status).toBe('ENGINEERING DEFAULT');
   });
 });

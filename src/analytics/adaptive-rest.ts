@@ -4,8 +4,12 @@
 //
 // The owner's rulings, which nothing here may move:
 //
-//   * The staircase probes DOWNWARD to find the limit, one 15 s step per
-//     exercise-day, held between a 45 s floor and a 300 s ceiling.
+//   * The staircase probes DOWNWARD to find the limit, held between a 45 s
+//     floor and a 300 s ceiling. The 15 s step and the exercise-day as the
+//     unit are NOT rulings: the owner fixed 15 s as a starting value and said
+//     "one step per session per exercise", so both sit in the policy object as
+//     engineering defaults. The step still needs the owner's sign-off to move,
+//     because it sets how much rest a lifter gets.
 //   * The signal is reps preserved for hypertrophy and opening velocity for
 //     strength. Power follows strength; an exercise with no stated intent
 //     follows hypertrophy.
@@ -171,13 +175,14 @@ export const ADAPTIVE_REST_POLICY = {
 
   stepSec: {
     value: 15,
-    status: 'OWNER',
-    note: 'The owner fixed the staircase step at 15 s.',
+    status: 'ENGINEERING DEFAULT',
+    ownerSignOff: true,
+    note: "The owner's brief fixes 15 s as the STARTING value, which makes it a default with an origin rather than a ruling. It also sets how much rest a lifter gets, so it is dose: the simulation may recommend, the owner decides.",
   },
   maxStepsPerExerciseDay: {
     value: 1,
-    status: 'OWNER',
-    note: 'One step per exercise-day. A session row holds one exercise and one side, so the exercise-day is the unit that matches the ruling.',
+    status: 'ENGINEERING DEFAULT',
+    note: "The owner ruled one step per SESSION per exercise. The exercise-day is the designer's reading of that, because a session row holds one exercise and one side and an exercise often spans several rows in one visit.",
   },
   floorSec: {
     value: 45,
@@ -599,6 +604,15 @@ export interface RestConflictInput {
  *
  * The write always succeeds. This only tells the planner what their number will
  * do to a run that already exists.
+ *
+ * LEARNING OFF WITH NO REST is not a row a planner can write any more. The
+ * owner's 2026-09-20 ruling: "Force one to be set, if learned is false then a
+ * rest value is required. If both are null due to data quality issue, seed rest
+ * time from learned value but then leave learning false (equates to
+ * recommendation)". Refusing that write belongs to the plan-write validator, a
+ * later task. Here the combination survives only as the data-quality fallback
+ * the ruling's second sentence describes, and this function is silent about it:
+ * nothing is written, nothing is probed, and there is no conflict to report.
  */
 export function restConflictFor(input: RestConflictInput): RestConflict | null {
   const planned = input.plannedRestSec;
