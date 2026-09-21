@@ -105,6 +105,21 @@ describe('validatePrescription', () => {
   });
 });
 
+describe('validatePrescription on an edit', () => {
+  const brokenBoth = { goalKind: 'target_rpe', restLearning: false } as const;
+
+  it('checks only the groups it is given', () => {
+    expect(validatePrescription(brokenBoth, [])).toBeNull();
+    expect(validatePrescription(brokenBoth, ['rest'])).toContain('Give restSec');
+    expect(validatePrescription(brokenBoth, ['goal'])).toContain('Give an RPE');
+  });
+
+  it('checks both groups when none are named', () => {
+    expect(validatePrescription({ restLearning: false })).not.toBeNull();
+    expect(validatePrescription({ goalKind: 'target_rpe' })).not.toBeNull();
+  });
+});
+
 describe('isRestInvalid', () => {
   it('marks only learning off with no rest', () => {
     expect(isRestInvalid({ restLearning: false })).toBe(true);

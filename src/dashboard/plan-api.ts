@@ -41,7 +41,11 @@ import {
   type PlanTreeView,
 } from './read-models/index.js';
 import { validateTargets, type TargetField, type TargetValues } from './plan-targets.js';
-import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
+import {
+  defaultGoalKind,
+  validatePrescription,
+  type PrescriptionGroup,
+} from '../plan/goal-kind.js';
 import {
   PLAN_GOAL_KINDS,
   type PlanGoalKind,
@@ -363,7 +367,7 @@ export async function updatePlannedExercise(
   // `targetRepsLow` above the row's existing `targetRepsHigh` is exactly the
   // inverted band a per-field check waves through. The same holds for a patch that
   // clears the rest of a learning-off row without turning learning on.
-  assertRowIsValid(updated);
+  assertRowIsValid(updated, touchedGroups(body));
   await store.putPlannedExercise(updated);
   return { plannedExercise: updated };
 }
@@ -540,8 +544,25 @@ function assertTargetsInRange(values: TargetValues): void {
 }
 
 /** The bounds first, then the prescription shape every write path shares (VW-537). */
-function assertRowIsValid(row: StoredPlannedExercise): void {
+function assertRowIsValid(row: StoredPlannedExercise, groups?: readonly PrescriptionGroup[]): void {
   assertTargetsInRange(targetValuesOf(row));
-  const message = validatePrescription(row);
+  const message = validatePrescription(row, groups);
   if (message !== null) throw new PlanApiError('invalid_input', message);
+}
+
+const GOAL_KEYS = [
+  'goalKind',
+  'targetRepsLow',
+  'targetRepsHigh',
+  'targetRpe',
+  'targetVelocityLossPct',
+] as const;
+const REST_KEYS = ['restSec', 'restLearning'] as const;
+
+/** The groups a PATCH touches: a stored row that breaks one rule stays editable elsewhere. */
+function touchedGroups(body: TargetFieldsBody): PrescriptionGroup[] {
+  const groups: PrescriptionGroup[] = [];
+  if (GOAL_KEYS.some((key) => body[key] !== undefined)) groups.push('goal');
+  if (REST_KEYS.some((key) => body[key] !== undefined)) groups.push('rest');
+  return groups;
 }

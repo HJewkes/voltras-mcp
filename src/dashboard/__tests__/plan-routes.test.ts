@@ -645,6 +645,41 @@ describe('plan write routes: the goal and the rest pair', () => {
     expect(store.plannedExercises.get(row.id)?.restLearning).toBe(true);
   });
 
+  // Coordinator ruling on #497: a row stored with both null is a tolerated fallback, not a locked row.
+  it('lets a weight-only edit through on a learning-off row with no rest, and leaves it so', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+    const { restSec: _dropped, ...withoutRest } = row;
+    await store.putPlannedExercise(withoutRest);
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { targetWeightLbs: 135 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)).toMatchObject({
+      targetWeightLbs: 135,
+      restLearning: false,
+    });
+    expect(store.plannedExercises.get(row.id)?.restSec).toBeUndefined();
+    expect((await call(port, 'PATCH', path, { restLearning: false })).status).toBe(400);
+  });
+
+  it('checks the goal only when an edit touches a goal field', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRpe: 8 });
+    const [row] = [...store.plannedExercises.values()];
+    await store.putPlannedExercise({ ...row, goalKind: 'rep_range' });
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { restSec: 120 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)?.goalKind).toBe('rep_range');
+    const res = await call(port, 'PATCH', path, { targetRpe: 9 });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      message:
+        'A rep_range goal needs targetRepsLow. Give a rep range, or choose another goalKind.',
+    });
+  });
+
   it('switches a velocity_loss row to a rep range only when the percent is cleared too', async () => {
     const { store, port, templateId } = await withTemplate();
     await create(port, templateId, { targetRepsLow: 5, targetVelocityLossPct: 20 });

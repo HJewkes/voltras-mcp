@@ -54,13 +54,29 @@ const GOAL_FIELD_RULES: Record<PlanGoalKind, (f: PrescriptionFields) => string |
       : null,
 };
 
+/** The two independent halves of the shape check; an edit re-checks only the ones it touches. */
+export type PrescriptionGroup = 'goal' | 'rest';
+
+const ALL_GROUPS: readonly PrescriptionGroup[] = ['goal', 'rest'];
+
 /**
  * The one shape check every write path runs on the row it is about to store (VW-448
  * amendment, "One prescription shape"; VW-445 s.7.2). Returns the first broken rule as a
  * message that names the way out, or null. `goalKind` is the kind being written, already
- * defaulted; absent means the row states no goal. Absent `restLearning` means on.
+ * defaulted; absent means the row states no goal. Absent `restLearning` means on. A create
+ * checks both groups; an edit passes only the groups it touches, so a stored row that
+ * breaks a rule can still have its other fields edited.
  */
-export function validatePrescription(fields: PrescriptionFields): string | null {
+export function validatePrescription(
+  fields: PrescriptionFields,
+  groups: readonly PrescriptionGroup[] = ALL_GROUPS,
+): string | null {
+  const goalMessage = groups.includes('goal') ? validateGoal(fields) : null;
+  if (goalMessage !== null) return goalMessage;
+  return groups.includes('rest') ? validateRest(fields) : null;
+}
+
+function validateGoal(fields: PrescriptionFields): string | null {
   const kindMessage =
     fields.goalKind === undefined ? null : GOAL_FIELD_RULES[fields.goalKind](fields);
   if (kindMessage !== null) return kindMessage;
@@ -74,10 +90,13 @@ export function validatePrescription(fields: PrescriptionFields): string | null 
       'goalKind, or leave the percent out.'
     );
   }
-  if (fields.restLearning === false && fields.restSec === undefined) {
-    return 'Rest learning is off, so the row needs a fixed rest. Give restSec, or turn restLearning on.';
-  }
   return null;
+}
+
+function validateRest(fields: PrescriptionFields): string | null {
+  return isRestInvalid(fields)
+    ? 'Rest learning is off, so the row needs a fixed rest. Give restSec, or turn restLearning on.'
+    : null;
 }
 
 /** A stored row with learning off and no rest: the read-time fallback, never a valid write. */
