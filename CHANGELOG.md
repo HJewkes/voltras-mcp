@@ -62,6 +62,28 @@ entry is written from the user's point of view is a review question, not a check
   session as it had read it, so one could drop the other's change: a guest's session could
   reappear in the owner's history, or the carb context could vanish. Each now changes only
   its own field (VW-536).
+- Sets done with chains or eccentric overload no longer bend your fitted RIR-velocity
+  curve. Those settings change what a rep in reserve costs, so the curve is now fitted on
+  plain weight sets only, and `rir_velocity.fit` counts only those sets. Damper,
+  isokinetic, band, rowing and custom-curve sets are left out too, as are sets with no
+  recorded mode. Curves fitted before this change are refitted once when the server
+  starts, and until then they are not trusted to state reps in reserve (VW-538).
+- `metrics.compute` no longer under-counts its own pipelines: the description said it took
+  one of seventeen literals while the dispatcher accepted eighteen, and `strength.e1rm` was
+  the one it left out (VW-513, #482).
+- The published push-events table no longer lists `set_ended_by_device`, an event nothing
+  has emitted since device stops were unified into `set_ended`. A coach waiting for it
+  waited forever. The generator now refuses to publish a row for an event no publish site
+  emits (VW-513, #482).
+- The dashboard's six plan-write routes are no longer open to any page in the browser.
+  Until now the sidecar's only protection was its loopback bind, which stops another
+  device on the network and stops nothing running in a browser on this machine: any
+  page could create a program, add or reorder exercises, or unplan one, without ever
+  being able to read the reply. A write now has to come from the dashboard's own page,
+  send a JSON body, and carry a token minted fresh each time the server starts. Reads
+  are unchanged, so the wall's 2 s refresh is untouched, and a wall tab left open
+  across a restart picks the new token up by itself on its next edit rather than
+  needing a reload. The plan builder behaves exactly as before (VW-500).
 
 ### Changed
 
@@ -123,31 +145,6 @@ entry is written from the user's point of view is a review question, not a check
   is unknown and asks you to check rather than guessing, and that unresolved edit stays
   visible instead of being quietly marked failed. The plan builder behaves exactly as
   before (VW-502).
-
-### Fixed
-
-- Sets done with chains or eccentric overload no longer bend your fitted RIR-velocity
-  curve. Those settings change what a rep in reserve costs, so the curve is now fitted on
-  plain weight sets only, and `rir_velocity.fit` counts only those sets. Damper,
-  isokinetic, band, rowing and custom-curve sets are left out too, as are sets with no
-  recorded mode. Curves fitted before this change are refitted once when the server
-  starts, and until then they are not trusted to state reps in reserve (VW-538).
-- `metrics.compute` no longer under-counts its own pipelines: the description said it took
-  one of seventeen literals while the dispatcher accepted eighteen, and `strength.e1rm` was
-  the one it left out (VW-513, #482).
-- The published push-events table no longer lists `set_ended_by_device`, an event nothing
-  has emitted since device stops were unified into `set_ended`. A coach waiting for it
-  waited forever. The generator now refuses to publish a row for an event no publish site
-  emits (VW-513, #482).
-- The dashboard's six plan-write routes are no longer open to any page in the browser.
-  Until now the sidecar's only protection was its loopback bind, which stops another
-  device on the network and stops nothing running in a browser on this machine: any
-  page could create a program, add or reorder exercises, or unplan one, without ever
-  being able to read the reply. A write now has to come from the dashboard's own page,
-  send a JSON body, and carry a token minted fresh each time the server starts. Reads
-  are unchanged, so the wall's 2 s refresh is untouched, and a wall tab left open
-  across a restart picks the new token up by itself on its next edit rather than
-  needing a reload. The plan builder behaves exactly as before (VW-500).
 
 ### Added
 
