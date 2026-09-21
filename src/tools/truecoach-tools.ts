@@ -40,6 +40,7 @@ import { resolveDefaultProgram } from './plan-tools.js';
 import { placedIn, scheduledBlock } from './plan-schedule-tools.js';
 import { addDays } from '../plan/block-calendar.js';
 import type { PlacedBlock } from '../plan/block-placement.js';
+import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
 import { todayLocal } from '../analytics/training-days.js';
 import { isoWeekLabelsBetween, isoWeekMonday } from '../integrations/truecoach/map.js';
 
@@ -62,7 +63,12 @@ export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
   'sync. Credentials come from VMCP_TRUECOACH_USERNAME plus VMCP_TRUECOACH_PASSWORD or ' +
   'VMCP_TRUECOACH_PASSWORD_CMD; with none set it returns NOT_CONFIGURED and makes no network ' +
   'call. Idempotent — re-importing the same range updates rows in place via TrueCoach external ' +
-  'ids and never duplicates. Exercise names must match the catalog exactly; anything else is ' +
+  'ids and never duplicates. A new row takes the default `goalKind` and learns its rest only ' +
+  "when the coach wrote none (a written rest stays fixed); a re-import keeps a row's stored " +
+  '`goalKind`, `targetVelocityLossPct` and `restLearning`, except that learning turns on when ' +
+  'the coach removed the rest of a fixed-rest row. A row that breaks the shared prescription ' +
+  'rules (for example an inverted rep range) refuses the whole import with INVALID_INPUT ' +
+  'before anything is written. Exercise names must match the catalog exactly; anything else is ' +
   'reported in `unmapped` with candidates and skipped (the template still lands), and you can ' +
   'resolve it by passing `mapping: { "<TrueCoach name>": "<catalog exercise id>" }`. Use ' +
   'dryRun: true to see the mapped tree before writing. ToS note: TrueCoach publishes no API and ' +
@@ -123,6 +129,7 @@ export async function importWeek(
   if (input.dryRun === true) {
     return { dryRun: true, range, cacheHit: fetched.cacheHit, ...describe(plan) };
   }
+  assertImportRowsValid(plan);
   const resolved = await resolveWeeks(state, input.programId, plan);
   const result = await state.store.importPlanTree(toImportBatch(plan, resolved.weekIds));
   return {
@@ -376,7 +383,26 @@ function toImportExercise(exercise: MappedWorkout['exercises'][number]): PlanImp
   if (targetWeightLbs !== undefined) out.targetWeightLbs = targetWeightLbs;
   if (restSec !== undefined) out.restSec = restSec;
   if (exercise.notes !== undefined) out.notes = exercise.notes;
+  const goalKind = defaultGoalKind(out);
+  if (goalKind !== null) out.goalKind = goalKind;
+  // A rest the coach wrote stays fixed; no rest means the system learns one (OWNER).
+  out.restLearning = restSec === undefined;
   return out;
+}
+
+/** Refuse the whole import before any write when one row breaks the shared prescription rules. */
+function assertImportRowsValid(plan: MappedPlan): void {
+  for (const template of plan.workouts) {
+    for (const exercise of template.exercises.map(toImportExercise)) {
+      const refusal = validatePrescription(exercise);
+      if (refusal !== null) {
+        throw new ToolError(
+          'INVALID_INPUT',
+          `TrueCoach row "${exercise.externalId}" in "${template.name}": ${refusal}`,
+        );
+      }
+    }
+  }
 }
 
 export interface ImportRange {

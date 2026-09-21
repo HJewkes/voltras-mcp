@@ -573,6 +573,60 @@ describe('plan.exercise.create', () => {
     expect(body.plannedExercise.targetTempo).toBeUndefined();
   });
 
+  // VW-537: the goal and the rest pair, through the shared validator.
+  const base = { workoutTemplateId: 't1', exerciseId: 'squat', orderIndex: 0, targetSets: 3 };
+
+  it('takes the default goal kind when none is given, and states learning on', async () => {
+    const r = await h.invoke('plan.exercise.create', { ...base, targetRepsLow: 8, targetRpe: 9 });
+    const body = parseResult(r) as { plannedExercise: StoredPlannedExercise };
+    expect(body.plannedExercise).toMatchObject({ goalKind: 'rep_range', restLearning: true });
+    expect(h.store.putPlannedExercise).toHaveBeenCalledWith(
+      expect.objectContaining({ goalKind: 'rep_range', restLearning: true }),
+    );
+  });
+
+  it('leaves the goal absent on a row with no goal fields', async () => {
+    const r = await h.invoke('plan.exercise.create', base);
+    const body = parseResult(r) as { plannedExercise: StoredPlannedExercise };
+    expect(body.plannedExercise.goalKind).toBeUndefined();
+  });
+
+  it('stores a velocity_loss goal with its percent and a fixed rest', async () => {
+    const r = await h.invoke('plan.exercise.create', {
+      ...base,
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 180,
+      restLearning: false,
+    });
+    expect(r.isError).toBeUndefined();
+    expect(
+      (parseResult(r) as { plannedExercise: StoredPlannedExercise }).plannedExercise,
+    ).toMatchObject({
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 180,
+      restLearning: false,
+    });
+  });
+
+  it.each([
+    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }],
+    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }],
+    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }],
+    [
+      'a loss percent on a rep range',
+      { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
+    ],
+    ['learning off with no rest', { restLearning: false }],
+    ['an inverted rep range', { targetRepsLow: 12, targetRepsHigh: 8 }],
+  ])('refuses %s with INVALID_INPUT and writes nothing', async (_label, fields) => {
+    const r = await h.invoke('plan.exercise.create', { ...base, ...fields });
+    expect(r.isError).toBe(true);
+    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
+    expect(h.store.putPlannedExercise).not.toHaveBeenCalled();
+  });
+
   it('rejects a targetTempo with an unknown key', async () => {
     const r = await h.invoke('plan.exercise.create', {
       workoutTemplateId: 't1',

@@ -275,6 +275,92 @@ async function rowCounts(): Promise<{ templates: number; exercises: number }> {
   return { templates, exercises };
 }
 
+// VW-537: the import is the third write path. Written rests stay fixed (OWNER).
+describe('truecoach.import_week goal and rest', () => {
+  const byExternalId = (item: number) => `tc:item:${item}`;
+
+  async function plannedRow(item: number) {
+    const [block] = await store.getTrainingBlocksForProgram('prog-1');
+    for (const week of await store.getTrainingWeeksForBlock(block!.id)) {
+      for (const template of await store.getWorkoutTemplatesForWeek(week.id)) {
+        const rows = await store.getPlannedExercisesForTemplate(template.id);
+        const found = rows.find((r) => r.externalId === byExternalId(item));
+        if (found !== undefined) return found;
+      }
+    }
+    throw new Error(`no planned row for item ${item}`);
+  }
+
+  function withInfo(item: number, info: string): RawWorkoutsPage {
+    const page = JSON.parse(JSON.stringify(fixture('workouts-page-basic'))) as RawWorkoutsPage;
+    const row = (page.workout_items as { id: number; info: string }[]).find((i) => i.id === item);
+    row!.info = info;
+    return page;
+  }
+
+  it('fixes a written rest and learns a missing one on a new row', async () => {
+    await importWeek(state, { ...RANGE }, { fetchPages: pages(fixture('workouts-page-basic')) });
+
+    expect(await plannedRow(700001)).toMatchObject({
+      goalKind: 'rep_range',
+      restSec: 90,
+      restLearning: false,
+    });
+    const amrap = await plannedRow(700003);
+    expect(amrap.goalKind).toBeUndefined();
+    expect(amrap.restSec).toBeUndefined();
+    expect(amrap.restLearning).toBe(true);
+  });
+
+  it('keeps a local goal and learning flag through a re-import', async () => {
+    const fetchPages = pages(fixture('workouts-page-basic'));
+    await importWeek(state, { ...RANGE }, { fetchPages });
+    const row = await plannedRow(700001);
+    await store.putPlannedExercise({
+      ...row,
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restLearning: true,
+    });
+
+    await importWeek(state, { ...RANGE }, { fetchPages });
+
+    expect(await plannedRow(700001)).toMatchObject({
+      goalKind: 'velocity_loss',
+      targetVelocityLossPct: 20,
+      restSec: 90,
+      restLearning: true,
+    });
+  });
+
+  it('turns learning on when the coach removes the rest of a fixed-rest row', async () => {
+    await importWeek(state, { ...RANGE }, { fetchPages: pages(fixture('workouts-page-basic')) });
+    expect((await plannedRow(700001)).restLearning).toBe(false);
+
+    await importWeek(
+      state,
+      { ...RANGE },
+      { fetchPages: pages(withInfo(700001, '3 x 8-10 @ 135lb')) },
+    );
+
+    const row = await plannedRow(700001);
+    expect(row.restSec).toBeUndefined();
+    expect(row.restLearning).toBe(true);
+  });
+
+  it('refuses the whole import before any write when a row breaks the shared rules', async () => {
+    await expect(
+      importWeek(state, { ...RANGE }, { fetchPages: pages(withInfo(700001, '3 x 12-8')) }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+      message:
+        'TrueCoach row "tc:item:700001" in "Upper A": targetRepsHigh (8) must be at least ' +
+        'targetRepsLow (12).',
+    });
+    expect(await store.getTrainingBlocksForProgram('prog-1')).toEqual([]);
+  });
+});
+
 describe('truecoach.import_week dates its block (VW-479)', () => {
   const W36: RawWorkoutsPage = {
     workouts: [{ id: 11, title: 'Upper A', due: '2026-08-31' }],

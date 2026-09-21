@@ -1549,6 +1549,10 @@ export interface PlanImportExercise {
   targetWeightLbs?: number;
   restSec?: number;
   notes?: string;
+  /** Written on a NEW row only; a re-import keeps the stored kind (VW-537). */
+  goalKind?: PlanGoalKind;
+  /** Written on a NEW row only: on without a rest, off with one (OWNER, "written rests stay fixed"). */
+  restLearning?: boolean;
   // No targetTempo here (VW-46): the TrueCoach parser is not a source of coach
   // tempo data yet, so an import never carries one.
 }

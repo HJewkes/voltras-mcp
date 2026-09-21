@@ -21,7 +21,8 @@ export type TargetField =
   | 'targetRepsHigh'
   | 'targetWeightLbs'
   | 'targetRpe'
-  | 'restSec';
+  | 'restSec'
+  | 'targetVelocityLossPct';
 
 interface TargetRule {
   /** Human label used in error messages and as the field's accessible name. */
@@ -43,6 +44,7 @@ export const TARGET_RULES: Record<TargetField, TargetRule> = {
   targetWeightLbs: { label: 'Weight (lb)', min: 0, max: 2000, integer: false },
   targetRpe: { label: 'RPE', min: 1, max: 10, integer: false },
   restSec: { label: 'Rest (s)', min: 0, max: 3600, integer: true },
+  targetVelocityLossPct: { label: 'Velocity loss (%)', min: 1, max: 95, integer: false },
 };
 
 /** A field's value after parsing, keyed by field. Absent ⇒ "leave unchanged". */

@@ -203,7 +203,7 @@ List the workout templates belonging to one week (takes weekId).
 
 Add a planned exercise to a workout template — takes the parent workoutTemplateId.
 
-This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect.
+This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps/load for one slot in one template. Also returns `warnings[]`: tier-aware RP volume ceilings re-checked over the WHOLE template after the insert (sets per exercise, and hard sets per muscle per session, counted on each exercise's PRIMARY muscle group only), PLUS three cross-template checks over the rest of the week (hard sets per muscle per week, the same muscle over the per-session ceiling on two consecutive-orderIndex templates, and the priority muscle drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row you just created. Read a warning out to the lifter and offer the fix it names; if they decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override — `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/movement-pattern default when the live prescription resolves a tempo; omit it to leave the default in effect. `goalKind` (VW-537) is `rep_range`, `target_rpe` or `velocity_loss`; omit it and a loss target gives `velocity_loss`, else a rep range gives `rep_range` (an RPE on the same row is its effort cap), else an RPE gives `target_rpe`, else no goal. `targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a `velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets the system learn the rest; false makes `restSec` a fixed rest and then requires it. A row that breaks one of these rules is refused with INVALID_INPUT and nothing is written; this is the only refusal, since warnings never block. Nothing reads `goalKind` or `restLearning` during a set yet.
 
 **Parameters**
 
@@ -220,6 +220,9 @@ This is the leaf of the plan hierarchy: the actual prescribed exercise/sets/reps
 - `notes` — `string`, optional.
 - `targetTempo` — `object`, optional.
 - `trainingIntent` — `strength` | `hypertrophy` | `power`, optional.
+- `goalKind` — `rep_range` | `target_rpe` | `velocity_loss`, optional.
+- `targetVelocityLossPct` — `number` (1–95), optional.
+- `restLearning` — `boolean`, optional.
 
 ## `plan.exercise.list_for_template`
 

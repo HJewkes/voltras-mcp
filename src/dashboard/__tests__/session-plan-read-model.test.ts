@@ -52,6 +52,26 @@ describe('buildSessionPlanView', () => {
     });
   });
 
+  it('carries the goal and the rest learning flag through (VW-537)', () => {
+    const rows: SessionPlanRows = {
+      activeExerciseId: 'bench',
+      match: plannedRow({
+        goalKind: 'velocity_loss',
+        targetVelocityLossPct: 20,
+        restLearning: false,
+        restSec: 180,
+      }),
+      planned: [plannedRow()],
+      title: null,
+    };
+    expect(buildSessionPlanView(rows, undefined)).toMatchObject({
+      goalKind: 'velocity_loss',
+      velocityLossPct: 20,
+      restLearning: false,
+      restSec: 180,
+    });
+  });
+
   it('omits optional fields the plan never set, rather than nulling them', () => {
     const rows: SessionPlanRows = {
       activeExerciseId: 'bench',

@@ -78,6 +78,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Added
 
+- A planned exercise can now state its goal and whether its rest is learned.
+  `plan.exercise.create` and the dashboard's plan routes take `goalKind` (`rep_range`,
+  `target_rpe` or `velocity_loss`), `targetVelocityLossPct` and `restLearning`; the plan
+  tree and the live prescription return them. Leave `goalKind` out and the row's own numbers
+  choose it: a rep range with an RPE is a rep range whose RPE is the effort cap. All three
+  write paths, the TrueCoach import included, now refuse a row that does not hold together
+  (a goal missing its number, a loss percent on a goal that is not velocity loss, learning
+  off with no rest) and say how to fix it. A TrueCoach row with a written rest keeps that
+  rest fixed; a row without one learns it. **Nothing reads the goal or the learning flag
+  during a set yet**, so no cue, rest or gate behaves differently (VW-537).
 - Groundwork for more than one wall display: an action submitted from the dashboard can now
   name the display it came from, and the record of that action keeps the name, so two walls
   in one house are tellable apart in the audit trail instead of both reading "wall".

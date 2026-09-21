@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { IdSchema, SlotIdSchema } from './common.js';
 import { LifterLabel } from './session.js';
 import { TrainingIntent } from './set.js';
+import { PLAN_GOAL_KINDS } from '../store/types.js';
 
 /** A local calendar date, 'YYYY-MM-DD'. The Monday rule is checked by the handler, which can name the Monday meant. */
 const LocalDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a date as YYYY-MM-DD');
@@ -214,6 +215,19 @@ export const PlanExerciseCreateInput = z
      * from rep range or load — a guess here becomes a stop cue at the wrong rep.
      */
     trainingIntent: TrainingIntent.optional(),
+    /**
+     * What the row states as its goal (VW-448 amendment). Omit it to take the default: a
+     * loss target gives `velocity_loss`, else a rep range gives `rep_range` (an RPE on the
+     * same row is its effort cap), else an RPE gives `target_rpe`, else no goal.
+     */
+    goalKind: z.enum(PLAN_GOAL_KINDS).optional(),
+    /** The velocity-loss goal, percent. Only with `goalKind: 'velocity_loss'`. */
+    targetVelocityLossPct: z.number().min(1).max(95).optional(),
+    /**
+     * Whether the system learns this row's rest (VW-445). Default on. Off makes `restSec`
+     * a fixed rest, so off without a `restSec` is refused.
+     */
+    restLearning: z.boolean().optional(),
   })
   .strict();
 
