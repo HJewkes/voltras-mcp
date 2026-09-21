@@ -60,6 +60,12 @@ entry is written from the user's point of view is a review question, not a check
   in one house are tellable apart in the audit trail instead of both reading "wall".
   **Nothing sends a name yet** — the field is optional, no page fills it in, and an action
   without one behaves exactly as before (VW-521).
+- `npm run store` backs the training record up and proves the backup: `export` writes the
+  whole store to one plain-text file per table plus a manifest of counts and hashes,
+  `import` rebuilds a store from those files, and `verify` says whether the two match and
+  which table does not. Two exports of an unchanged store are byte-identical, `export`
+  opens the store read-only and `import` refuses to overwrite a file, so a rehearsal on a
+  copy cannot touch the real one. README has the exact commands (VW-534).
 - `npm run sim:rest` runs the adaptive-rest simulation: it fits a model of a lifter to three
   published rest studies, then runs the real learning rules over simulated lifters and writes
   a table of what they do — how many sessions until the rest settles, how far off it lands,

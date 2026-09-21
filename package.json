@@ -32,10 +32,11 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "typecheck": "tsc --noEmit && npm run typecheck:spa && npm run typecheck:tests && npm run typecheck:sim",
+    "typecheck": "tsc --noEmit && npm run typecheck:spa && npm run typecheck:tests && npm run typecheck:sim && npm run typecheck:store",
     "typecheck:spa": "tsc -p src/dashboard/spa/tsconfig.json",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "typecheck:sim": "tsc -p tsconfig.sim.json --noEmit",
+    "typecheck:store": "tsc -p tsconfig.store.json --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.{mjs,ts}\" \"eslint-rules/**/*.mjs\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,mjs,cjs,json}\" \"scripts/**/*.{mjs,ts}\" \"eslint-rules/**/*.mjs\"",
     "prepare": "husky",
@@ -46,7 +47,8 @@
     "changelog:check": "node scripts/check-changelog.mjs",
     "docs:check": "node scripts/check-docs.mjs",
     "sim:rest": "tsc -p tsconfig.sim.json && node .sim-build/scripts/sim/adaptive-rest-sim.js",
-    "sim:rest:replay": "npm run sim:rest -- --replay"
+    "sim:rest:replay": "npm run sim:rest -- --replay",
+    "store": "tsc -p tsconfig.store.json && node .store-build/scripts/store/store-portable-cli.js"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
