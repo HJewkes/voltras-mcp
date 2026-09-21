@@ -1881,6 +1881,14 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   getSet(id: string): Promise<StoredSet | undefined>;
 
+  /**
+   * Relabel one stored set (VW-169) and return it as it now stands, or
+   * `undefined` when no row matches. Writes the `lifter` column and nothing
+   * else, so a relabel can never roll back reps another writer persisted
+   * (VW-536). `null` hands the set back to the owner.
+   */
+  patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined>;
+
   /** Filtered/paginated session listing. */
   listSessions(filter: SessionListFilter): Promise<StoredSession[]>;
 

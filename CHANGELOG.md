@@ -46,6 +46,13 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Fixed
+
+- Relabelling a set with `set.update` can no longer undo reps. The relabel used to write
+  the whole set back as it had read it, reps included, so a set whose reps were saved by
+  another session in that moment lost them. It now changes the lifter label and nothing
+  else (VW-536).
+
 ### Changed
 
 - The unrecorded-week banner now carries the owner's wording instead of its placeholder
