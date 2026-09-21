@@ -413,6 +413,11 @@ rm -rf .store-scratch
 record in plain text: keep it where the store itself lives, and delete a rehearsal's copy
 when the rehearsal ends.
 
+After any schema change, rebase onto `main` and rerun the round-trip tests
+(`npx vitest run src/store/__tests__/portable-round-trip.test.ts`): the guard there is
+table-level, so a new table fails loudly but a new column on an existing table does not,
+and the fixture has to be extended by hand for one.
+
 `export` records whatever schema version the file is at, and `import` needs a build that
 creates exactly that version — it refuses a mismatch rather than guessing. A store left
 behind by an upgrade is brought forward by starting the server on it once; export after
