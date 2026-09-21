@@ -55,6 +55,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Changed
 
+- A fitted RIR-velocity curve now has to be tighter before its readings are called
+  high confidence. Its error must be 1.5 reps in reserve or under, where under 2 was
+  enough before. A curve with an error between 1.5 and 2 now reads medium, and its note
+  says to read the estimate as a range. `rir_velocity.fit` also reports a held-out
+  figure, `heldOutErrorReps`: how far a curve fitted without your newest set misses
+  that set's last rep (VW-538).
 - The unrecorded-week banner now carries the owner's wording instead of its placeholder
   copy. One missed week reads "Week of Mon 31 Aug: nothing recorded" with no subtitle;
   several read "3 planned weeks: nothing recorded", with the most recent named in the

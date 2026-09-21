@@ -1548,8 +1548,8 @@ describe('metrics.compute — vbt.rir', () => {
       return parsePayload(payload) as RirPayload;
     };
 
-    const tight = await read(1.9);
-    const wide = await read(2);
+    const tight = await read(1.5);
+    const wide = await read(1.51);
 
     // Both final reads sit inside the fitted RIR range, so only the fit error differs.
     expect(tight.final.inputDomain).toBe('high');
