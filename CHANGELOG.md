@@ -48,6 +48,11 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Declaring priorities from two sessions at once no longer doubles a goal. Two declarations
+  of the same muscle or whole-body goal (bodyweight, sessions, strength) could each create a
+  priority of their own, and the goals page then drew one goal twice. The second now folds
+  into the first, and a clashing whole-body declaration is refused as it is for one caller
+  (VW-536).
 - Relabelling a set with `set.update` can no longer undo reps. The relabel used to write
   the whole set back as it had read it, reps included, so a set whose reps were saved by
   another session in that moment lost them. It now changes the lifter label and nothing

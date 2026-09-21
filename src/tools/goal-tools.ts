@@ -223,6 +223,7 @@ async function declarePriorities(
   const tier = signal.declared ?? signal.tier;
   const dietState = await readDietPhaseState(state, declaredAt);
   const existing = await state.store.listPriorities(LOCAL_USER_ID);
+  // Refuse before any decline is recorded; `storeDeclaration` re-checks inside its write.
   assertOneWholeBodyPriorityPerRef(input.items, existing);
   const guardrails = evaluateDeclaration({
     items: input.items,
@@ -234,7 +235,7 @@ async function declarePriorities(
   });
   await recordDeclines(state, guardrails.declinedNow, dietState.phase, declaredAt);
   return {
-    priorities: await storeDeclaration(state, input, existing, declaredAt),
+    priorities: await storeDeclaration(state, input, declaredAt),
     warnings: guardrails.warnings,
     proposals: guardrails.proposals,
     dietPhase: dietState.phase,
@@ -279,20 +280,22 @@ function duplicateWholeBody(ref: string, other: StoredPriority | undefined): Too
   );
 }
 
-/** Every declared item, written as declared. No guardrail reaches this. */
+/**
+ * Every declared item, written as declared. No guardrail reaches this. The merge and the
+ * one-per-ref rule read the live list inside the write, so two declarations cannot both
+ * mint a row for one ref (VW-536).
+ */
 async function storeDeclaration(
   state: ServerState,
   input: z.infer<typeof GoalDeclarePrioritiesInput>,
-  existing: readonly StoredPriority[],
   declaredAt: string,
 ): Promise<StoredPriority[]> {
   const horizonWeeks = await resolveHorizonWeeks(state, input.horizonWeeks, input.blockId);
   const stamp = { declaredAt, horizonWeeks, blockId: input.blockId };
-  const priorities: StoredPriority[] = [];
-  for (const item of input.items) {
-    priorities.push(await state.store.putPriority(mergePriority(item, existing, stamp)));
-  }
-  return priorities;
+  return state.store.putPrioritiesDerived(LOCAL_USER_ID, (live) => {
+    assertOneWholeBodyPriorityPerRef(input.items, live);
+    return input.items.map((item) => mergePriority(item, live, stamp));
+  });
 }
 
 /** A re-declaration keeps its row, so `mesosHeld` keeps counting across blocks. */
