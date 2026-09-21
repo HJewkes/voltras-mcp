@@ -60,13 +60,33 @@ describe('validatePrescription', () => {
     expect(validatePrescription({})).toBeNull();
   });
 
+  // OWNER: "Eliminate variable names from user facing text"; the field rides beside the text.
   it.each([
-    ['rep_range', { targetRpe: 8 }, 'Give a rep range, or choose another goalKind.'],
-    ['target_rpe', { targetRepsLow: 8 }, 'Give an RPE, or choose another goalKind.'],
-    ['velocity_loss', { targetRepsLow: 8 }, 'or give a trainingIntent'],
-  ] as const)('refuses a %s goal without its required field', (goalKind, fields, wayOut) => {
-    expect(validatePrescription({ goalKind, ...fields })).toContain(wayOut);
-  });
+    [
+      'rep_range',
+      { targetRpe: 8 },
+      'targetRepsLow',
+      'A rep-range goal needs a rep range. Add one, or choose a different goal type.',
+    ],
+    [
+      'target_rpe',
+      { targetRepsLow: 8 },
+      'targetRpe',
+      'A target-RPE goal needs an RPE. Add one, or choose a different goal type.',
+    ],
+    [
+      'velocity_loss',
+      { targetRepsLow: 8 },
+      'targetVelocityLossPct',
+      'A velocity-loss goal needs a percent. Add a percent, or set a training intent so the ' +
+        'default percent can be used.',
+    ],
+  ] as const)(
+    'refuses a %s goal without its required field',
+    (goalKind, fields, field, message) => {
+      expect(validatePrescription({ goalKind, ...fields })).toEqual({ field, message });
+    },
+  );
 
   it('accepts a velocity_loss goal whose percent comes from the training intent', () => {
     expect(validatePrescription({ goalKind: 'velocity_loss', trainingIntent: 'power' })).toBeNull();
@@ -78,23 +98,35 @@ describe('validatePrescription', () => {
     ).toBeNull();
   });
 
-  it('refuses a rep range whose high bound is below its low bound', () => {
+  it('refuses a rep range whose top is below its bottom', () => {
     expect(
       validatePrescription({ goalKind: 'rep_range', targetRepsLow: 10, targetRepsHigh: 8 }),
-    ).toBe('targetRepsHigh (8) must be at least targetRepsLow (10).');
+    ).toEqual({
+      field: 'targetRepsHigh',
+      message: 'The top of the rep range (8) must be at least the bottom (10).',
+    });
   });
 
   it('refuses a loss percent under any other goal kind', () => {
+    const refusal = {
+      field: 'targetVelocityLossPct',
+      message:
+        'A velocity-loss percent only applies to a velocity-loss goal. Change the goal type, ' +
+        'or remove the percent.',
+    };
     expect(
       validatePrescription({ goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 }),
-    ).toContain('Set that goalKind, or leave the percent out.');
-    expect(validatePrescription({ targetVelocityLossPct: 20 })).not.toBeNull();
+    ).toEqual(refusal);
+    expect(validatePrescription({ targetVelocityLossPct: 20 })).toEqual(refusal);
   });
 
   it('refuses learning off with no rest, naming both ways out', () => {
-    expect(validatePrescription({ restLearning: false })).toBe(
-      'Rest learning is off, so the row needs a fixed rest. Give restSec, or turn restLearning on.',
-    );
+    expect(validatePrescription({ restLearning: false })).toEqual({
+      field: 'restSec',
+      message:
+        'Rest learning is off, so this exercise needs a fixed rest. Add a rest time, or turn ' +
+        'rest learning on.',
+    });
   });
 
   it('accepts every other rest pair', () => {
@@ -103,6 +135,20 @@ describe('validatePrescription', () => {
     expect(validatePrescription({ restSec: 90 })).toBeNull();
     expect(validatePrescription({ restLearning: false, restSec: 0 })).toBeNull();
   });
+
+  it('keeps every message free of field names and enum spellings', () => {
+    const rows = [
+      { goalKind: 'rep_range' },
+      { goalKind: 'target_rpe' },
+      { goalKind: 'velocity_loss' },
+      { targetRepsLow: 9, targetRepsHigh: 8 },
+      { targetVelocityLossPct: 20 },
+      { restLearning: false },
+    ] as const;
+    for (const row of rows) {
+      expect(validatePrescription(row)?.message).not.toMatch(/[a-z][A-Z]|_|`/);
+    }
+  });
 });
 
 describe('validatePrescription on an edit', () => {
@@ -110,8 +156,8 @@ describe('validatePrescription on an edit', () => {
 
   it('checks only the groups it is given', () => {
     expect(validatePrescription(brokenBoth, [])).toBeNull();
-    expect(validatePrescription(brokenBoth, ['rest'])).toContain('Give restSec');
-    expect(validatePrescription(brokenBoth, ['goal'])).toContain('Give an RPE');
+    expect(validatePrescription(brokenBoth, ['rest'])?.field).toBe('restSec');
+    expect(validatePrescription(brokenBoth, ['goal'])?.field).toBe('targetRpe');
   });
 
   it('checks both groups when none are named', () => {

@@ -354,8 +354,9 @@ describe('truecoach.import_week goal and rest', () => {
     ).rejects.toMatchObject({
       code: 'INVALID_INPUT',
       message:
-        'TrueCoach row "tc:item:700001" in "Upper A": targetRepsHigh (8) must be at least ' +
-        'targetRepsLow (12).',
+        'TrueCoach exercise in "Upper A": The top of the rep range (8) must be at least the ' +
+        'bottom (12).',
+      field: 'targetRepsHigh',
     });
     expect(await store.getTrainingBlocksForProgram('prog-1')).toEqual([]);
   });

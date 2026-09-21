@@ -611,21 +611,25 @@ describe('plan.exercise.create', () => {
   });
 
   it.each([
-    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }],
-    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }],
-    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }],
+    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }, 'targetRepsLow'],
+    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }, 'targetRpe'],
+    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }, 'targetVelocityLossPct'],
     [
       'a loss percent on a rep range',
       { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
+      'targetVelocityLossPct',
     ],
-    ['learning off with no rest', { restLearning: false }],
-    ['an inverted rep range', { targetRepsLow: 12, targetRepsHigh: 8 }],
-  ])('refuses %s with INVALID_INPUT and writes nothing', async (_label, fields) => {
-    const r = await h.invoke('plan.exercise.create', { ...base, ...fields });
-    expect(r.isError).toBe(true);
-    expect((parseResult(r) as { code: string }).code).toBe('INVALID_INPUT');
-    expect(h.store.putPlannedExercise).not.toHaveBeenCalled();
-  });
+    ['learning off with no rest', { restLearning: false }, 'restSec'],
+    ['an inverted rep range', { targetRepsLow: 12, targetRepsHigh: 8 }, 'targetRepsHigh'],
+  ])(
+    'refuses %s with INVALID_INPUT, names the field, and writes nothing',
+    async (_label, fields, field) => {
+      const r = await h.invoke('plan.exercise.create', { ...base, ...fields });
+      expect(r.isError).toBe(true);
+      expect(parseResult(r)).toMatchObject({ code: 'INVALID_INPUT', field });
+      expect(h.store.putPlannedExercise).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects a targetTempo with an unknown key', async () => {
     const r = await h.invoke('plan.exercise.create', {

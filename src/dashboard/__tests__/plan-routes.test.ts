@@ -606,7 +606,7 @@ describe('plan write routes: the goal and the rest pair', () => {
       { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
     ],
     ['learning off with no rest', { restLearning: false }],
-    ['an unknown goal kind', { goalKind: 'max_effort' }],
+    ['an unknown goal type', { goalKind: 'max_effort' }],
     ['a non-boolean learning flag', { restLearning: 'no' }],
     ['a loss percent out of range', { goalKind: 'velocity_loss', targetVelocityLossPct: 99 }],
   ])('refuses %s on create and stores nothing', async (_label, body) => {
@@ -624,9 +624,12 @@ describe('plan write routes: the goal and the rest pair', () => {
 
     const res = await call(port, 'PATCH', `/api/plan/exercises/${row.id}`, { restSec: null });
     expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({
+    expect(res.body).toEqual({
+      error: 'invalid_input',
       message:
-        'Rest learning is off, so the row needs a fixed rest. Give restSec, or turn restLearning on.',
+        'Rest learning is off, so this exercise needs a fixed rest. Add a rest time, or turn ' +
+        'rest learning on.',
+      field: 'restSec',
     });
     expect(store.plannedExercises.get(row.id)).toMatchObject({ restSec: 90, restLearning: false });
   });
@@ -675,8 +678,8 @@ describe('plan write routes: the goal and the rest pair', () => {
     const res = await call(port, 'PATCH', path, { targetRpe: 9 });
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({
-      message:
-        'A rep_range goal needs targetRepsLow. Give a rep range, or choose another goalKind.',
+      message: 'A rep-range goal needs a rep range. Add one, or choose a different goal type.',
+      field: 'targetRepsLow',
     });
   });
 

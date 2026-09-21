@@ -68,6 +68,7 @@ export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
   '`goalKind`, `targetVelocityLossPct` and `restLearning`, except that learning turns on when ' +
   'the coach removed the rest of a fixed-rest row. A row that breaks the shared prescription ' +
   'rules (for example an inverted rep range) refuses the whole import with INVALID_INPUT ' +
+  '(its `field` names the input to fix) ' +
   'before anything is written. Exercise names must match the catalog exactly; anything else is ' +
   'reported in `unmapped` with candidates and skipped (the template still lands), and you can ' +
   'resolve it by passing `mapping: { "<TrueCoach name>": "<catalog exercise id>" }`. Use ' +
@@ -79,9 +80,12 @@ export const TRUECOACH_IMPORT_WEEK_DESCRIPTION =
 
 class ToolError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /** The input field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: string, message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'ToolError';
   }
 }
@@ -398,7 +402,8 @@ function assertImportRowsValid(plan: MappedPlan): void {
       if (refusal !== null) {
         throw new ToolError(
           'INVALID_INPUT',
-          `TrueCoach row "${exercise.externalId}" in "${template.name}": ${refusal}`,
+          `TrueCoach exercise in "${template.name}": ${refusal.message}`,
+          refusal.field,
         );
       }
     }

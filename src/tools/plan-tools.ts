@@ -93,9 +93,12 @@ import { getTierSignal, type Tier, type TierConfidence, type TierSource } from '
 
 class ToolError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /** The input field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: string, message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'ToolError';
   }
 }
@@ -176,7 +179,8 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   '`targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a ' +
   '`velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets ' +
   'the system learn the rest; false makes `restSec` a fixed rest and then requires it. A ' +
-  'row that breaks one of these rules is refused with INVALID_INPUT and nothing is written; ' +
+  'row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and ' +
+  'nothing is written; ' +
   'this is the only refusal, since warnings never block. Nothing reads `goalKind` or ' +
   '`restLearning` during a set yet.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
@@ -745,7 +749,7 @@ async function createPlannedExercise(
     ...prescriptionGoalAndRest(input),
   };
   const refusal = validatePrescription(plannedExercise);
-  if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal);
+  if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
   const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
   return { plannedExercise, warnings };

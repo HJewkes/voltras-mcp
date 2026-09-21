@@ -88,9 +88,12 @@ export interface DashboardPlanStore {
 /** Thrown by the mutation helpers; `server.ts` maps `code` onto an HTTP status. */
 export class PlanApiError extends Error {
   readonly code: 'invalid_input' | 'not_found';
-  constructor(code: 'invalid_input' | 'not_found', message: string) {
+  /** The body field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: 'invalid_input' | 'not_found', message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'PlanApiError';
   }
 }
@@ -468,7 +471,7 @@ function goalAndRestPatch(body: TargetFieldsBody): Partial<StoredPlannedExercise
   if (goalKind !== undefined) patch.goalKind = goalKind;
   if (body.restLearning !== undefined && body.restLearning !== null) {
     if (typeof body.restLearning !== 'boolean') {
-      throw new PlanApiError('invalid_input', '`restLearning` must be true or false.');
+      throw new PlanApiError('invalid_input', 'Rest learning must be on or off.', 'restLearning');
     }
     patch.restLearning = body.restLearning;
   }
@@ -481,7 +484,8 @@ function optionalGoalKind(value: unknown): PlanGoalKind | undefined {
   if (kind === undefined) {
     throw new PlanApiError(
       'invalid_input',
-      `\`goalKind\` must be one of ${PLAN_GOAL_KINDS.join(', ')}.`,
+      'The goal type must be rep range, target RPE or velocity loss.',
+      'goalKind',
     );
   }
   return kind;
@@ -546,8 +550,8 @@ function assertTargetsInRange(values: TargetValues): void {
 /** The bounds first, then the prescription shape every write path shares (VW-537). */
 function assertRowIsValid(row: StoredPlannedExercise, groups?: readonly PrescriptionGroup[]): void {
   assertTargetsInRange(targetValuesOf(row));
-  const message = validatePrescription(row, groups);
-  if (message !== null) throw new PlanApiError('invalid_input', message);
+  const refusal = validatePrescription(row, groups);
+  if (refusal !== null) throw new PlanApiError('invalid_input', refusal.message, refusal.field);
 }
 
 const GOAL_KEYS = [
