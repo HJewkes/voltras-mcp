@@ -4991,14 +4991,37 @@ export class SqliteSessionStore implements SessionStore {
    * MUST APPEAR IN BOTH LISTS.
    */
   async putPriority(priority: StoredPriority): Promise<StoredPriority> {
+    return Promise.resolve(this.writePriority(priority));
+  }
+
+  private writePriority(priority: StoredPriority): StoredPriority {
     this.db.prepare(PUT_PRIORITY_SQL).run(...priorityBindings(priority));
     const row = this.db
       .prepare(`SELECT * FROM priorities WHERE id = ?`)
       .get(priority.id) as unknown as PriorityRow;
-    return Promise.resolve(rowToPriority(row));
+    return rowToPriority(row);
+  }
+
+  async putPrioritiesDerived(
+    userId: string,
+    derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
+  ): Promise<StoredPriority[]> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const written = derive(this.priorities(userId)).map((row) => this.writePriority(row));
+      this.db.exec('COMMIT');
+      return Promise.resolve(written);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   async listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]> {
+    return Promise.resolve(this.priorities(userId, options));
+  }
+
+  private priorities(userId: string, options?: ListPrioritiesOptions): StoredPriority[] {
     const retiredClause = options?.includeRetired === true ? '' : 'AND retired_at IS NULL';
     const rows = this.db
       .prepare(
@@ -5006,7 +5029,7 @@ export class SqliteSessionStore implements SessionStore {
          ORDER BY declared_at DESC, id ASC`,
       )
       .all(userId) as unknown as PriorityRow[];
-    return Promise.resolve(rows.map(rowToPriority));
+    return rows.map(rowToPriority);
   }
 
   /**

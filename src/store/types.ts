@@ -2461,6 +2461,17 @@ export interface SessionStore extends ExerciseSetupStore {
    */
   putPriority(priority: StoredPriority): Promise<StoredPriority>;
 
+  /**
+   * Read the user's live priorities, derive the rows to write from them and upsert those rows,
+   * in ONE transaction (VW-536): a re-declaration folds into the row it names, and a rule
+   * checked against the live list holds only if nothing is written between the read and the
+   * write. `derive` is synchronous; a throw from it writes nothing and reaches the caller.
+   */
+  putPrioritiesDerived(
+    userId: string,
+    derive: (live: readonly StoredPriority[]) => readonly StoredPriority[],
+  ): Promise<StoredPriority[]>;
+
   /** A user's declared priorities, newest declaration first. */
   listPriorities(userId: string, options?: ListPrioritiesOptions): Promise<StoredPriority[]>;
 
