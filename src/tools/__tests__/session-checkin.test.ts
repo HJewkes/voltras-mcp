@@ -95,6 +95,11 @@ function makeStore(): FakeStore {
     }),
     putSet: vi.fn(async () => {}),
     getSession: vi.fn(async (id: string) => sessions.get(id)),
+    patchSession: vi.fn(async (id: string, patch: Partial<StoredSession>) => {
+      const stored = sessions.get(id);
+      if (stored !== undefined) sessions.set(id, { ...stored, ...patch });
+      return sessions.get(id);
+    }),
     getSet: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     getSetsForSession: vi.fn(async () => []),

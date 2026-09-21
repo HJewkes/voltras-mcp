@@ -115,6 +115,7 @@ import {
   type SessionReviewKindFilter,
   type SessionReviewRow,
   type SessionListFilter,
+  type SessionPatch,
   type SessionStore,
   type SetCountFilter,
   type SetupCard,
@@ -3139,6 +3140,39 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve();
   }
 
+  async patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as
+        | SessionRow
+        | undefined;
+      const next = row === undefined ? undefined : patchedSession(rowToSession(row), patch);
+      if (next !== undefined) this.writeSessionPatch(next);
+      this.db.exec('COMMIT');
+      return Promise.resolve(next);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** The patchable columns only; the rest of the row stays as another writer left it. */
+  private writeSessionPatch(s: StoredSession): void {
+    this.db
+      .prepare(
+        `UPDATE sessions SET lifter = ?, diet_phase = ?,
+           pre_session_carbs_level = ?, pre_session_carbs_hours_since_meal = ?
+         WHERE id = ?`,
+      )
+      .run(
+        s.lifter ?? null,
+        this.stampableDietPhase(s),
+        s.preSessionCarbs?.level ?? null,
+        s.preSessionCarbs?.hoursSinceLastMeal ?? null,
+        s.id,
+      );
+  }
+
   /**
    * The phase to stamp on `s`, or `null`. Both `session.start` and
    * `session.end` re-put the row, so this is recomputed on each — a
@@ -6023,6 +6057,14 @@ function rowToSessionReviewRow(row: SessionReviewSqlRow): SessionReviewRow {
     out.lastWorkingSetEndedAt = row.last_working_set_ended_at;
   }
   return out;
+}
+
+function patchedSession(s: StoredSession, patch: SessionPatch): StoredSession {
+  const next = { ...s };
+  if (patch.lifter === null) delete next.lifter;
+  else if (patch.lifter !== undefined) next.lifter = patch.lifter;
+  if (patch.preSessionCarbs !== undefined) next.preSessionCarbs = patch.preSessionCarbs;
+  return next;
 }
 
 function rowToSession(row: SessionRow): StoredSession {

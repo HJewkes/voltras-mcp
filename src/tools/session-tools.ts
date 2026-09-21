@@ -577,16 +577,8 @@ async function setSessionLifter(
   if (active === undefined) {
     throw new ToolError('NO_ACTIVE_SESSION', 'No session is active.');
   }
-  const lifter = input.lifter ?? undefined;
-  slot.live.setSessionLifter(lifter);
-
-  const stored = await state.store.getSession(active.sessionId);
-  if (stored !== undefined) {
-    const next = { ...stored };
-    if (lifter !== undefined) next.lifter = lifter;
-    else delete next.lifter;
-    await state.store.putSession(next);
-  }
+  slot.live.setSessionLifter(input.lifter ?? undefined);
+  await state.store.patchSession(active.sessionId, { lifter: input.lifter });
   return { sessionId: active.sessionId, lifter: input.lifter };
 }
 
@@ -831,10 +823,9 @@ async function updatePreSessionCarbs(
   sessionId: string,
   preSessionCarbs: z.infer<typeof PreSessionCarbsInput>,
 ): Promise<void> {
-  const stored = await state.store.getSession(sessionId);
-  if (stored === undefined) return;
   const normalized = toStoredPreSessionCarbs(preSessionCarbs);
-  await state.store.putSession({ ...stored, preSessionCarbs: normalized });
+  const patched = await state.store.patchSession(sessionId, { preSessionCarbs: normalized });
+  if (patched === undefined) return;
   for (const slot of state.slots.values()) {
     if (slot.live.session?.sessionId === sessionId) {
       slot.live.setSessionPreSessionCarbs(normalized);
