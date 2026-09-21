@@ -37,8 +37,13 @@
 
 import { getRepMeanVelocity, type Rep } from '@voltras/workout-analytics';
 
-/** Stamped onto every model this module fits. Bump on any change below. */
-export const RIR_VELOCITY_MODEL_VERSION = 'rir-velocity@1.0.0';
+import type { ResistanceFamily } from './resistance-family.js';
+
+/**
+ * Stamped onto every model this module fits. Bump on any change below: a model
+ * stamped with an older version is not trusted until it is refitted.
+ */
+export const RIR_VELOCITY_MODEL_VERSION = 'rir-velocity@1.1.0';
 
 declare const rirModelVelocityBrand: unique symbol;
 
@@ -63,9 +68,14 @@ export const TRUSTED_RIR_ERROR_REPS = 2;
 /**
  * Whether a stored curve is trusted to state reps in reserve or RPE (VW-485). The one
  * trust gate: the effort resolver (VW-448) replaces this function, not its callers.
+ * A curve fitted under an older {@link RIR_VELOCITY_MODEL_VERSION} is not trusted.
  */
 export function isTrustedRirModel(model: RirVelocityModel | undefined): model is RirVelocityModel {
-  return model !== undefined && model.rirErrorReps < TRUSTED_RIR_ERROR_REPS;
+  return (
+    model !== undefined &&
+    model.version === RIR_VELOCITY_MODEL_VERSION &&
+    model.rirErrorReps < TRUSTED_RIR_ERROR_REPS
+  );
 }
 
 /** The source of a set's reps-in-reserve anchor. */
@@ -82,7 +92,9 @@ export interface RirVelocityPoint {
 /**
  * One candidate set, already reduced to points. `relativeIntensity` is the
  * set's load over the lifter's own reference 1RM for the exercise; the caller
- * computes it, because what counts as a reference is a store question.
+ * computes it, because what counts as a reference is a store question. The
+ * caller also passes constant-load sets only, which is what the fitted model
+ * records as its resistance family.
  */
 export interface RirVelocityObservation {
   setId: string;
@@ -197,6 +209,8 @@ export const GENERAL_MODEL_CAVEAT =
 export interface RirVelocityModel {
   form: 'linear';
   version: string;
+  /** The resistance the fitted sets met. Always constant load (VW-538). */
+  resistanceFamily: ResistanceFamily;
   /** Fitted velocity at RIR 0, m/s — the lifter's own terminal velocity. */
   interceptMps: number;
   /** Velocity gained per rep in reserve, m/s. Positive by construction. */
@@ -389,6 +403,7 @@ function buildModel(
   return {
     form: 'linear',
     version: RIR_VELOCITY_MODEL_VERSION,
+    resistanceFamily: 'constant',
     interceptMps: round3(line.intercept),
     slopeMpsPerRir: round3(line.slope),
     r2: round3(line.r2),

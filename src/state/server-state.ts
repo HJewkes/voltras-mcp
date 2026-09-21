@@ -450,6 +450,7 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     // the analytics package; calling once at boot is sufficient. When the
     // upstream catalog ships, swap to `loadCatalog()` and drop the seed.
     setCatalog(SEED_CABLE_EXERCISES);
+    await refitStaleRirVelocityModels(store);
     const client = new VoltraClient();
     const live = new LiveState();
     const exercises = new ExerciseService();
@@ -509,6 +510,23 @@ export async function bootstrapState(config: Config): Promise<ServerState> {
     await safeCloseStore(store);
     safeDisposeManager(manager);
     throw err;
+  }
+}
+
+/**
+ * A curve fitted under an older rule reads as untrusted until it is refitted, so
+ * refit them here, once. A failure leaves them untrusted rather than failing the boot.
+ */
+async function refitStaleRirVelocityModels(store: SessionStore): Promise<void> {
+  try {
+    const counts = await store.refitStaleRirVelocityModels();
+    if (counts.refitted + counts.removed === 0) return;
+    log.info(
+      `refitted ${String(counts.refitted)} and removed ${String(counts.removed)} of ` +
+        `${String(counts.stored)} stored RIR-velocity curves under the current rules`,
+    );
+  } catch (err) {
+    log.warn('bootstrapState: refitting stale RIR-velocity curves failed', err);
   }
 }
 

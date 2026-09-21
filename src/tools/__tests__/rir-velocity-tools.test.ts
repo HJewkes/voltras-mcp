@@ -327,6 +327,13 @@ describe('trusting a fitted curve (VW-485)', () => {
     expect(isTrustedRirModel(withError(2))).toBe(false);
   });
 
+  it('does not trust a curve fitted under an older model version until it is refitted', () => {
+    const tight = withError(0.5);
+
+    expect(isTrustedRirModel(tight)).toBe(true);
+    expect(isTrustedRirModel({ ...tight, version: 'rir-velocity@1.0.0' })).toBe(false);
+  });
+
   it('reads high only off a trusted curve, and medium off an untrusted one in range', () => {
     const reading = (model: RirVelocityModel) =>
       estimateRepRir(model, { ...inputs, meanVelocity: meanOf(0.45) });

@@ -1833,6 +1833,16 @@ export interface StoredRirVelocityModel {
   fitQuality: number;
 }
 
+/** Tally from one start-up pass over the stored RIR-velocity curves. */
+export interface RirVelocityRefitCounts {
+  /** Curves stored before the pass. */
+  stored: number;
+  /** Stale curves refitted under the current rules. */
+  refitted: number;
+  /** Stale curves that no longer qualify and were deleted. */
+  removed: number;
+}
+
 /** Verdict tally from a reharvest pass over one key's sets. */
 export interface FailureHarvestCounts {
   failure: number;
@@ -2520,6 +2530,14 @@ export interface SessionStore extends ExerciseSetupStore {
    * with a model the current rules say cannot be built.
    */
   refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit>;
+
+  /**
+   * Re-fit every stored curve stamped with an older model version, once each.
+   * Run at start, so a rule change reaches curves fitted under the old rule
+   * (VW-538). Idempotent: a refitted curve carries the current version, and a
+   * curve that no longer qualifies is deleted by the rule above.
+   */
+  refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts>;
 
   /** Release the underlying database handle. Idempotent. */
   close(): Promise<void>;

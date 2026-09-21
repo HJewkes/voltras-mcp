@@ -14,6 +14,7 @@ import { LOCAL_USER_ID, SqliteSessionStore } from '../../store/sqlite-store.js';
 import type { StoredRep, StoredSet } from '../../store/types.js';
 import type { ServerState } from '../../state/server-state.js';
 import { buildWeeklyReport, renderWeeklyMarkdown } from '../report-tools.js';
+import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
 import { seedTrainingDay } from '../../__tests__/fixtures/training-day.js';
 
 const EXERCISE_ID = 'seated-row';
@@ -134,7 +135,8 @@ function fitRirVelocityRow(
 ): void {
   const model = {
     form: 'linear',
-    version: 'rir-velocity@1.0.0',
+    version: RIR_VELOCITY_MODEL_VERSION,
+    resistanceFamily: 'constant',
     interceptMps,
     slopeMpsPerRir,
     r2: 0.9,
