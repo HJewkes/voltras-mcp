@@ -87,6 +87,7 @@ export const PROFILE_FRESHNESS_DAYS = 42;
 
 /** Why a curve is not trusted to drive the effort cue, as a typed id. */
 export type TrustReason =
+  | 'stale_model_version'
   | 'fit_error'
   | 'no_failure_anchor'
   | 'held_out_miss'
@@ -102,7 +103,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Whether a curve may drive the effort cue at set start (VW-448 design s.3.4). The
- * first gate that fails names the reason. Not yet read by any caller.
+ * first gate that fails names the reason; a curve fitted under an older model version
+ * fails first, because its other fields may not mean what they mean now.
  */
 export function profileTrust(model: RirVelocityModel, now: Date): ProfileTrust {
   const reason = firstFailedTrustGate(model, now);
@@ -110,6 +112,7 @@ export function profileTrust(model: RirVelocityModel, now: Date): ProfileTrust {
 }
 
 function firstFailedTrustGate(model: RirVelocityModel, now: Date): TrustReason | null {
+  if (model.version !== RIR_VELOCITY_MODEL_VERSION) return 'stale_model_version';
   if (model.rirErrorReps > TRUSTED_RIR_ERROR_REPS) return 'fit_error';
   if (model.anchorSources.failure < 1) return 'no_failure_anchor';
   const heldOut = model.heldOutErrorReps ?? null;

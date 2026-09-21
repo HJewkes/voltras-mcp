@@ -7,9 +7,13 @@
 
 export {
   buildSnapshotView,
+  recordWithEffort,
   resolveActiveExerciseMuscles,
   resolveSessionView,
+  withEffort,
   type DeviceEntry,
+  type SnapshotCompletedSet,
+  type SnapshotSet,
   type ActiveExerciseMuscles,
   type SnapshotResponse,
   type ExerciseMeta,

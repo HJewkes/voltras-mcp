@@ -70,7 +70,7 @@ describe('buildSnapshotView', () => {
     const view = buildSnapshotView({
       devices,
       session: session({ sessionId: 'sess-A' }),
-      activeSet: activeSet({ setId: 'set-A' }),
+      activeSet: { ...activeSet({ setId: 'set-A' }), effort: null },
       activeExercise: { muscleGroups: ['chest'], secondaryMuscleGroups: ['triceps'] },
     });
     expect(view.session?.sessionId).toBe('sess-A');
@@ -165,8 +165,16 @@ describe('buildSnapshotView', () => {
       session: session({ sessionId: 'sess-A' }),
       activeSet: undefined,
       completedSets: [
-        { set: activeSet({ setId: 'set-1', status: 'ended' }), device: device({ weightLbs: 20 }) },
-        { set: activeSet({ setId: 'set-2', status: 'ended' }), device: device({ weightLbs: 25 }) },
+        {
+          set: activeSet({ setId: 'set-1', status: 'ended' }),
+          device: device({ weightLbs: 20 }),
+          effort: null,
+        },
+        {
+          set: activeSet({ setId: 'set-2', status: 'ended' }),
+          device: device({ weightLbs: 25 }),
+          effort: null,
+        },
       ],
       activeExercise: undefined,
     });

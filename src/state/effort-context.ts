@@ -63,13 +63,17 @@ export type EffortProfile = {
   modelVersion: string;
 };
 
-/** Why no profile was pinned: a trust gate's id, or a reason the curve was never asked. */
+/**
+ * Why no profile was pinned: a trust gate's id, or a reason the curve was never asked.
+ * `not_pinned` marks a context built at read time for a set that has none of its own.
+ */
 export type ProfileWithheldReason =
   | TrustReason
   | 'guest_lifter'
   | 'no_exercise'
   | 'no_model'
-  | 'family_mismatch';
+  | 'family_mismatch'
+  | 'not_pinned';
 
 /** The library's `EffortSetContext`, plus the one thing kept beside it for the wall. */
 export type PinnedEffortContext = {

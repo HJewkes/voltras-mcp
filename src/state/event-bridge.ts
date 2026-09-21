@@ -177,8 +177,8 @@ import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
-import { settingsSignature } from './effort-context.js';
-import { repinEffortContext } from './effort-pin.js';
+import { logEffortGateDisagreement } from './effort-gate-disagreement.js';
+import { markSettingChange, repinEffortContext } from './effort-pin.js';
 import { onSetStarted } from './set-start-seam.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
@@ -840,8 +840,9 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // coach the user, but they never force-close the set. The
           // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
-          markSettingChange(state, live, set.setId, finalizedIndex + 1, device);
+          markSettingChange(state, live, set.setId, finalizedRep.repNumber, device);
           evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
+          logEffortGateDisagreement(set, finalizedIndex, device);
         }
       }
     }),
@@ -1819,20 +1820,6 @@ function refreshPreFirstRepSnapshot(state: ServerState, live: LiveState): void {
   state.setStartDeviceSnapshots.set(set.setId, live.snapshotDevice());
   // The context describes the start snapshot, so it follows the snapshot until rep 1.
   void repinEffortContext(state, live, set.setId);
-}
-
-/** Mark the first finalized rep performed under settings other than the start snapshot's. */
-function markSettingChange(
-  state: ServerState,
-  live: LiveState,
-  setId: string,
-  repNumber: number,
-  device: DeviceSnapshot,
-): void {
-  if (live.set?.settingChangedAtRep !== undefined) return;
-  const start = state.setStartDeviceSnapshots.get(setId);
-  if (start === undefined || settingsSignature(start) === settingsSignature(device)) return;
-  live.markSettingChanged(repNumber);
 }
 
 /**

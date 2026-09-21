@@ -143,6 +143,8 @@ import {
   buildSessionPaceView,
   buildSnapshotView,
   composeSessionTitle,
+  recordWithEffort,
+  withEffort,
   resolveSummarySessionId,
   startOfCalendarWeekIso,
   type DashboardSessionStore,
@@ -154,6 +156,8 @@ import {
   type PrescriptionView,
   type SessionPaceView,
   type SessionPlanRows,
+  type SnapshotCompletedSet,
+  type SnapshotSet,
   type SnapshotResponse,
 } from './read-models/index.js';
 import type { DashboardCatalogEntry } from './read-models/catalog-entry.js';
@@ -1604,8 +1608,8 @@ function pushSnapshot(res: ServerResponse, state: DashboardServerState): void {
 interface GatheredSnapshotState {
   devices: DeviceEntry[];
   session: ActiveSession | undefined;
-  activeSet: ActiveSet | undefined;
-  completedSets: CompletedSetRecord[];
+  activeSet: SnapshotSet | undefined;
+  completedSets: SnapshotCompletedSet[];
   activeExercise: ReturnType<NonNullable<DashboardServerState['exercises']>['getById']>;
   exerciseId: string | undefined;
 }
@@ -1619,20 +1623,20 @@ interface GatheredSnapshotState {
 function gatherSnapshotState(state: DashboardServerState): GatheredSnapshotState {
   const devices: DeviceEntry[] = [];
   let session: ActiveSession | undefined;
-  let activeSet: ActiveSet | undefined;
-  let completedSets: CompletedSetRecord[] = [];
+  let activeSet: SnapshotSet | undefined;
+  let completedSets: SnapshotCompletedSet[] = [];
   for (const [slotId, slot] of state.slots) {
     // Per-slot sets (VW-71): each slot's OWN active + completed sets ride on its
     // device entry so a bilateral (dual-Voltra) view reads per-limb telemetry. The
     // top-level `sets` below still reports the primary slot's for the single view.
-    const slotActive = slot.live.snapshotSet();
+    const device = slot.live.snapshotDevice();
+    const liveSet = slot.live.snapshotSet();
+    const slotActive = liveSet === undefined ? undefined : withEffort(liveSet, device);
+    const slotCompleted = (slot.live.snapshotCompletedSets?.() ?? []).map(recordWithEffort);
     devices.push({
       slotId,
-      device: slot.live.snapshotDevice(),
-      sets: {
-        active: slotActive ?? null,
-        completed: slot.live.snapshotCompletedSets?.() ?? [],
-      },
+      device,
+      sets: { active: slotActive ?? null, completed: slotCompleted },
     });
     // First slot wins for session/set — single-session contract today; if
     // a future slot has its own active session/set, the snapshot still
@@ -1644,7 +1648,7 @@ function gatherSnapshotState(state: DashboardServerState): GatheredSnapshotState
         // Completed sets belong to the session that owns them — read them from
         // the same slot (VW-70). Optional-chained so a minimal test fake without
         // the method degrades to no completed sets rather than throwing.
-        completedSets = slot.live.snapshotCompletedSets?.() ?? [];
+        completedSets = slotCompleted;
       }
     }
     if (activeSet === undefined) {
