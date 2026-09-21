@@ -88,6 +88,8 @@ import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
 import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
+import { repinEffortContext } from '../state/effort-pin.js';
+import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
 import { isModeRevertStillActive } from './device-handler-helpers.js';
 import { stopMotorForRest, type SetStopOutcome } from './device-exit.js';
@@ -118,6 +120,7 @@ type SetCapture = Pick<
   | 'assistMode'
   | 'settingsHash'
   | 'lifter'
+  | 'effortContext'
 >;
 
 class ToolError extends Error {
@@ -554,11 +557,14 @@ async function startSet(
     // set, which this slot cannot give while one is recording.
     if (active.autoCreatedBy === 'idle_rep' && active.upgradedAt === undefined) {
       assertEngageAllowed(state, slot, slotId, session.sessionId);
-      return upgradeAutoArmedSet(state, slotId, {
+      const upgraded = upgradeAutoArmedSet(state, slotId, {
         watch: await resolveWatchThresholds(state, session, watch),
         setPurpose,
         lifter,
       });
+      // The upgrade can change the watch, exercise or lifter the context was pinned from.
+      await repinEffortContext(state, slot.live, upgraded.setId);
+      return upgraded;
     }
     throw new ToolError('SET_ALREADY_ACTIVE', 'A set is already active.');
   }
@@ -628,6 +634,7 @@ async function startSet(
   }
   const device = slot.live.snapshotDevice();
   state.setStartDeviceSnapshots.set(setId, device);
+  await onSetStarted(state, { slotId, setId });
   // Push a lifecycle event so a channel-enabled host wakes the model on the
   // set boundary instead of forcing it to poll. Fire-and-forget when the
   // host didn't opt in to channels (see channel-publisher.ts).
@@ -1636,5 +1643,6 @@ function buildSetCapture(
       : {}),
     ...settings,
     ...(settingsHash !== undefined ? { settingsHash } : {}),
+    ...(active.effortContext !== undefined ? { effortContext: active.effortContext } : {}),
   };
 }

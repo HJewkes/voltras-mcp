@@ -177,6 +177,9 @@ import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
+import { settingsSignature } from './effort-context.js';
+import { repinEffortContext } from './effort-pin.js';
+import { onSetStarted } from './set-start-seam.js';
 
 // The SDK declares a numeric `MovementPhase` enum with UNKNOWN = -1; the
 // analytics-set state machine doesn't model UNKNOWN. Frames carrying it are
@@ -837,6 +840,7 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // coach the user, but they never force-close the set. The
           // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
+          markSettingChange(state, live, set.setId, finalizedIndex + 1, device);
           evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
         }
       }
@@ -1755,6 +1759,7 @@ function ensureGuidedLoadSessionAndSet(state: ServerState, slot: SlotState, slot
     // stale armed-time header weight (bench 2026-07-05: header 30 for a
     // set performed entirely at 50).
     state.setStartDeviceSnapshots.set(setId, slot.live.snapshotDevice());
+    void onSetStarted(state, { slotId, setId });
     // VMCP-02.15: arm a tight per-set inactivity watchdog so a failed
     // guided-load engagement reaps quickly instead of leaving a zombie
     // set sitting for ~90s (the bridge's default safety net) or 120s+
@@ -1812,6 +1817,22 @@ function refreshPreFirstRepSnapshot(state: ServerState, live: LiveState): void {
   const set = live.snapshotSet();
   if (set === undefined || set.reps.length > (set.adoptedRepCount ?? 0)) return;
   state.setStartDeviceSnapshots.set(set.setId, live.snapshotDevice());
+  // The context describes the start snapshot, so it follows the snapshot until rep 1.
+  void repinEffortContext(state, live, set.setId);
+}
+
+/** Mark the first finalized rep performed under settings other than the start snapshot's. */
+function markSettingChange(
+  state: ServerState,
+  live: LiveState,
+  setId: string,
+  repNumber: number,
+  device: DeviceSnapshot,
+): void {
+  if (live.set?.settingChangedAtRep !== undefined) return;
+  const start = state.setStartDeviceSnapshots.get(setId);
+  if (start === undefined || settingsSignature(start) === settingsSignature(device)) return;
+  live.markSettingChanged(repNumber);
 }
 
 /**

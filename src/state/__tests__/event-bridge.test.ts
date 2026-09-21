@@ -393,6 +393,7 @@ function makeBareState(opts: {
   channels: FakeChannels;
   server: FakeServer;
   restTimers: RestTimerRegistryT;
+  setStartDeviceSnapshots: Map<string, unknown>;
   config: { restTimer: 'on' };
 } {
   const slots = new Map<string, unknown>();
@@ -408,6 +409,7 @@ function makeBareState(opts: {
     channels: opts.channels,
     server: opts.server,
     restTimers: new RestTimerRegistry(),
+    setStartDeviceSnapshots: new Map(),
     // VMCP-04.08: finalizeSet resolves the persisted `side` through the
     // bindings store. Nothing here binds a device, so an empty store is
     // enough and every set is written side-unknown; the real-store
@@ -2034,6 +2036,83 @@ describe('wireEventBridge', () => {
     // m/s — past the same 20% threshold, and differ only in whether the device
     // was carrying an eccentric overload. Without one, rep 2's 22% drop is read
     // as fatigue and the set is cut there.
+    // VW-540: nothing reads the pinned context yet, so a context that names a different
+    // goal and no guard must leave the old gate firing on the watch exactly as before.
+    it('fires the velocity-loss cue from the watch whatever the pinned context says', async () => {
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      live.attachEffortContext('set-trig', {
+        goal: { kind: 'velocity_loss', lossPct: 90, source: 'plan' },
+        guard: { effortCapRpe: null, effortCapSource: null, lossPct: null, lossSource: null },
+      });
+      driveRep(1, 1.0);
+      startNextRep(2, 0.5);
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(0.5),
+        force: 50,
+      });
+      startNextRep(3, 0.5);
+      await flushMicrotasks();
+
+      const fired = channels.publish.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.meta.event_type === 'velocity_loss_exceeded');
+      expect(fired).toHaveLength(1);
+      expect(fired[0].meta.threshold_pct).toBe('30');
+    });
+
+    it('marks the first rep performed under changed settings, once', async () => {
+      startWatchedSet();
+      driveRep(1, 1.0);
+      startNextRep(2, 1.0);
+      live.applySettings({ chainSettingLbs: 20 });
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(1.0),
+        force: 50,
+      });
+      startNextRep(3, 1.0);
+      client.fire.frame({
+        sequence: 35,
+        timestamp: 1500,
+        phase: 3,
+        position: 0.4,
+        velocity: frameVelocity(1.0),
+        force: 50,
+      });
+      startNextRep(4, 1.0);
+      await flushMicrotasks();
+
+      expect(live.snapshotSet()?.settingChangedAtRep).toBe(2);
+    });
+
+    it('re-pins the context from the snapshot retaken before rep 1', async () => {
+      startWatchedSet();
+      live.applySettings({ chainSettingLbs: 20, trainingMode: 'Weight Training' });
+
+      client.fire.settingsUpdate({ weight: 120 });
+
+      await vi.waitFor(() => expect(live.snapshotSet()?.effortContext).toBeDefined());
+      expect(live.snapshotSet()?.effortContext).toMatchObject({
+        resistance: { family: 'chains' },
+      });
+    });
+
+    it('marks no rep while the settings match the start snapshot', async () => {
+      startWatchedSet();
+      driveRep(1, 1.0);
+      startNextRep(2, 1.0);
+      await flushMicrotasks();
+
+      expect(live.snapshotSet()).not.toHaveProperty('settingChangedAtRep');
+    });
+
     describe('eccentric-overload exclusion on velocity_loss_exceeded', () => {
       function driveAelSet(opts: { eccentricPercentTenths?: number }): void {
         startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 20 }] }, opts);
@@ -3234,6 +3313,19 @@ describe('wireEventBridge — guided-load auto-create', () => {
     // Single-shot: the next guided-load set on this slot brings its own.
     expect(slot.pendingGuidedLoadIsWarmup).toBeUndefined();
     expect(slot.pendingGuidedLoadWatch).toBeUndefined();
+  });
+
+  // VW-540: the third of the three places that open a set pins its context too.
+  it('pins the effort context on the set the guided load opens, from its stashed watch', async () => {
+    const slot = state.slots.get('primary') as unknown as { pendingGuidedLoadWatch?: unknown };
+    slot.pendingGuidedLoadWatch = { notifyOn: [{ type: 'rep_count_reached', value: 5 }] };
+
+    client.fireGuided({ phase: 'armed', countdownRemainingMs: null, fitnessModeRaw: null });
+
+    await vi.waitFor(() => expect(live.snapshotSet()?.effortContext).toBeDefined());
+    expect(live.snapshotSet()?.effortContext).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 5, repsHigh: 5, source: 'explicit' },
+    });
   });
 
   it('VW-168a: an ordinary guided load still records a working set with no watch', () => {
