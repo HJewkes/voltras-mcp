@@ -2182,6 +2182,14 @@ export interface SessionStore extends ExerciseSetupStore {
 
   /** Upsert a session-to-plan link. */
   putProgramAssignment(a: StoredProgramAssignment): Promise<void>;
+  /**
+   * Link a session to a workout or a planned lift once (VW-536). When the session already has
+   * a link for that template (or planned exercise), returns it with `created: false` and writes
+   * nothing; the check and the insert are one transaction, so two callers cannot both write.
+   */
+  putProgramAssignmentIfAbsent(
+    a: StoredProgramAssignment,
+  ): Promise<{ assignment: StoredProgramAssignment; created: boolean }>;
   /** Return every assignment that links to a given session. */
   getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]>;
   /**
