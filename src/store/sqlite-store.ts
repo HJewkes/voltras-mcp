@@ -3260,6 +3260,22 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(rowToSet(row, reps));
   }
 
+  async patchSetLifter(setId: string, lifter: string | null): Promise<StoredSet | undefined> {
+    // One column, never a `putSet` round-trip: that re-inserts the reps it read (VW-536).
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db
+        .prepare(`UPDATE sets SET lifter = ? WHERE id = ? RETURNING *`)
+        .get(lifter, setId) as SetRow | undefined;
+      const patched = row === undefined ? undefined : rowToSet(row, this.loadRepsForSet(row.id));
+      this.db.exec('COMMIT');
+      return Promise.resolve(patched);
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   async listSessions(filter: SessionListFilter): Promise<StoredSession[]> {
     const where: string[] = [];
     const params: (string | number)[] = [];

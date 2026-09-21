@@ -1421,15 +1421,10 @@ async function updateStoredSet(
   state: ServerState,
   input: z.infer<typeof SetUpdateInput>,
 ): Promise<{ setId: string; lifter: string | null; exerciseId: string | null }> {
-  const stored = await state.store.getSet(input.setId);
-  if (stored === undefined) {
+  const updated = await state.store.patchSetLifter(input.setId, input.lifter);
+  if (updated === undefined) {
     throw new ToolError('SET_NOT_FOUND', `No set found with id ${JSON.stringify(input.setId)}.`);
   }
-  const updated: StoredSet = { ...stored };
-  if (input.lifter !== null) updated.lifter = input.lifter;
-  else delete updated.lifter;
-
-  await state.store.putSet(updated);
   await resyncOwnerBaseline(state, updated);
   return {
     setId: updated.id,
