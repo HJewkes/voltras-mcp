@@ -645,6 +645,7 @@ const SCHEMA_SQL = `
   --     downstream; a silent default is not — which is the whole reason
   --     training_mode and weight_lbs stopped being NOT NULL here.
 
+  -- No comma in a comment above the last column: DROP COLUMN cuts at the nearest one.
   CREATE TABLE IF NOT EXISTS sets (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,

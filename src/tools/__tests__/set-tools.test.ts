@@ -167,6 +167,8 @@ function makeStore(): SessionStore & {
     getSetsForExercise: vi.fn(async () => []),
     // VW-300: the load-drift check's own profile source.
     getBaseline: vi.fn(async () => undefined),
+    // VW-540: the effort context pinned at set start asks for the fitted curve.
+    getRirVelocityModel: vi.fn(async () => undefined),
     listExerciseSetups: vi.fn(async () => []),
     close: vi.fn(async () => {}),
   };
@@ -682,6 +684,36 @@ describe('set.start', () => {
     expect(stored.isWarmup).toBe(true);
   });
 
+  // ── VW-540 — the effort context pinned at set start ─────────────────────
+  it('pins the effort context on the live set and carries it onto the persisted row', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 8 }] } });
+    const pinned = h.live.set?.effortContext;
+    await h.invoke('set.end', {});
+
+    expect(pinned).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 8, repsHigh: 8, source: 'explicit' },
+      guard: { effortCapRpe: null, lossPct: null },
+    });
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toEqual(pinned);
+  });
+
+  it('persists no effort context for a set that was never pinned', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    h.live.setSessionExercise('bench-press', 'Bench Press');
+    h.store.getAssignmentsForSession.mockRejectedValueOnce(new Error('store unavailable'));
+
+    await h.invoke('set.start', {});
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored).not.toHaveProperty('effortContext');
+  });
+
   it('refuses a setPurpose that contradicts isWarmup rather than picking one', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'WeightTraining' });
@@ -848,6 +880,17 @@ describe('set.start — upgrading an auto-armed set (VW-180)', () => {
     ]);
     expect(h.live.set?.reps).toHaveLength(2);
     expect(h.live.set?.startedAt).toBe(ARMED_AT);
+  });
+
+  it('re-pins the effort context from the watch the upgrade attaches', async () => {
+    autoArm();
+    h.state.setStartDeviceSnapshots.set('set-armed', h.live.snapshotDevice());
+
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 6 }] } });
+
+    expect(h.live.set?.effortContext).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 6, repsHigh: 6, source: 'explicit' },
+    });
   });
 
   it('adopts the session exercise the set was armed without', async () => {

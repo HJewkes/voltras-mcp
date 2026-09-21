@@ -224,6 +224,57 @@ describe('auto-arm on the lifter’s idle reps (VW-164)', () => {
     expect(h.live.idleReps).toEqual([]);
   });
 
+  // VW-540: auto-arm opens a set with no watch, so its goal is the planned row's or none.
+  it('pins an effort context with no goal on a set armed with nothing planned', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+
+    feedTwoWorkingReps();
+
+    await vi.waitFor(() => expect(h.live.set?.effortContext).toBeDefined());
+    expect(h.live.set?.effortContext).toMatchObject({
+      goal: null,
+      resistance: { family: 'constant' },
+      profileWithheld: 'no_exercise',
+    });
+  });
+
+  it("pins the planned row's goal on a set armed against a planned exercise", async () => {
+    Object.assign(h.state, {
+      store: {
+        getAssignmentsForSession: async () => [{ id: 'a1', plannedExerciseId: 'pe-1' }],
+        getPlannedExercisesForTemplate: async () => [],
+        getPlannedExercise: async () => ({
+          id: 'pe-1',
+          workoutTemplateId: 'tpl-1',
+          exerciseId: 'ex-row',
+          orderIndex: 0,
+          targetSets: 3,
+          targetRepsLow: 10,
+          targetRepsHigh: 12,
+          goalKind: 'rep_range',
+        }),
+        getRirVelocityModel: async () => undefined,
+      },
+    });
+    h.live.startSession({
+      sessionId: 'sess-1',
+      startedAt: '2026-09-07T00:00:00.000Z',
+      setIds: [],
+      status: 'active',
+      exerciseId: 'ex-row',
+    });
+    h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });
+
+    feedTwoWorkingReps();
+
+    await vi.waitFor(() => expect(h.live.set?.effortContext).toBeDefined());
+    expect(h.live.set?.effortContext).toMatchObject({
+      goal: { kind: 'rep_range', repsLow: 10, repsHigh: 12, source: 'plan' },
+      profileWithheld: 'no_model',
+    });
+  });
+
   it('publishes set_started with the auto_armed marker and the current weight', () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 170, trainingMode: 'Weight Training' });

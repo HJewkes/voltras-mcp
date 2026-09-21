@@ -347,8 +347,13 @@ export interface ActiveSet {
    * Undefined for sets started without a `watch` arg.
    */
   watch?: ResolvedWatchConfig;
-  /** The effort context pinned at set start (VW-540). Nothing sets it yet. */
+  /** The effort context pinned at set start (VW-540); see `effort-context.ts`. Nothing reads it yet. */
   effortContext?: JsonObject;
+  /**
+   * The first finalized rep whose device settings differ from the set's start snapshot
+   * (VW-540). Written once and never cleared: every later rep is also not like-for-like.
+   */
+  settingChangedAtRep?: number;
   /** What the effort cue decided, written at set end. Nothing sets it yet. */
   cueRecord?: JsonObject;
   /**
@@ -848,6 +853,18 @@ export class LiveState {
         : {}),
     };
     return this.snapshotSet();
+  }
+
+  /** Attach the pinned effort context to the active set, when it is still `setId`. */
+  attachEffortContext(setId: string, context: JsonObject): void {
+    if (this.set?.setId !== setId) return;
+    this.set = { ...this.set, effortContext: context };
+  }
+
+  /** Record the first rep performed under changed settings. Later calls are no-ops. */
+  markSettingChanged(repNumber: number): void {
+    if (this.set === undefined || this.set.settingChangedAtRep !== undefined) return;
+    this.set = { ...this.set, settingChangedAtRep: repNumber };
   }
 
   /**
