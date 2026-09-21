@@ -177,6 +177,7 @@ import { LOCAL_USER_ID } from '../store/sqlite-store.js';
 import { setPurposeFields } from '../store/set-purpose.js';
 import type { StoredIdleRep } from '../store/types.js';
 import { log } from '../logger.js';
+import { evaluateEffortCue } from './effort-cue.js';
 import { logEffortGateDisagreement } from './effort-gate-disagreement.js';
 import { markSettingChange, repinEffortContext } from './effort-pin.js';
 import { onSetStarted } from './set-start-seam.js';
@@ -841,7 +842,11 @@ export function wireBridgeForSlot(state: ServerState, slot: SlotState): () => vo
           // canonical set close comes from the device's `onSetSummary`
           // disengage signal or the user's explicit `set.end` tool call.
           markSettingChange(state, live, set.setId, finalizedRep.repNumber, device);
-          evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
+          if (state.config?.effortCue === 'on') {
+            evaluateEffortCue(live, slotChannels, set, finalizedIndex, device);
+          } else {
+            evaluateRepTriggers(live, slotChannels, finalizedIndex, finalizedRep, device);
+          }
           logEffortGateDisagreement(set, finalizedIndex, device);
         }
       }

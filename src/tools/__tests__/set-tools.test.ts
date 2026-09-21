@@ -227,6 +227,7 @@ function setup(
   opts: {
     repSource?: RepSource;
     restTimer?: 'on' | 'off';
+    effortCue?: 'on' | 'off';
     /** deviceId → physical side, seeded into the harness bindings store. */
     bindings?: Record<string, 'left' | 'right'>;
   } = {},
@@ -277,7 +278,11 @@ function setup(
     // Default the harness to restTimer:'on' so the existing rest_status
     // coverage exercises the timer mechanics; production defaults to 'off'
     // (opt-in, VMCP-02.54). Tests override to 'off' to assert suppression.
-    config: { repSource: opts.repSource, restTimer: opts.restTimer ?? 'on' } as never,
+    config: {
+      repSource: opts.repSource,
+      restTimer: opts.restTimer ?? 'on',
+      effortCue: opts.effortCue ?? 'off',
+    } as never,
     manager: {} as never,
     slots,
     store,
@@ -727,6 +732,39 @@ describe('set.start', () => {
     const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
     expect(stored.effortContext).toBeDefined();
     expect(stored.effortContext).not.toHaveProperty('settingChangedAtRep');
+  });
+
+  // VW-544: the cue record is written only when the effort cue decides the set.
+  it('stores the cue record, with the policy that judged it, when the effort cue is on', async () => {
+    h = setup({ effortCue: 'on' });
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Weight Training' });
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 2 }] } });
+    h.live.appendRep(makeRepAtVelocity(1, 0.5));
+    h.live.appendRep(makeRepAtVelocity(2, 0.5));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.cueRecord).toMatchObject({
+      policyId: 'effort/v1',
+      policyVersion: 'effort-policy@1.0.0',
+      goalKind: 'rep_range',
+      reason: 'reps',
+      reachedAtRep: 2,
+    });
+  });
+
+  it('stores no cue record when the effort cue is off', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'Weight Training' });
+    await h.invoke('set.start', { watch: { notifyOn: [{ type: 'rep_count_reached', value: 2 }] } });
+    h.live.appendRep(makeRepAtVelocity(1, 0.5));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored).not.toHaveProperty('cueRecord');
   });
 
   it('persists no effort context for a set that was never pinned', async () => {

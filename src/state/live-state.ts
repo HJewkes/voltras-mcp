@@ -354,6 +354,12 @@ export interface ActiveSet {
    * (VW-540). Written once and never cleared: every later rep is also not like-for-like.
    */
   settingChangedAtRep?: number;
+  /**
+   * The rep the effort cue fired on (VW-544). Its own latch rather than a key in
+   * {@link firedTriggers}, which exists only on a set with a watch: a set whose goal
+   * comes from its plan cues too.
+   */
+  effortCueFiredAtRep?: number;
   /** What the effort cue decided, written at set end. Nothing sets it yet. */
   cueRecord?: JsonObject;
   /**
@@ -859,6 +865,13 @@ export class LiveState {
   attachEffortContext(setId: string, context: JsonObject): void {
     if (this.set?.setId !== setId) return;
     this.set = { ...this.set, effortContext: context };
+  }
+
+  /** Latch the active set's one effort cue on `repNumber`. True only the first time. */
+  latchEffortCue(repNumber: number): boolean {
+    if (this.set === undefined || this.set.effortCueFiredAtRep !== undefined) return false;
+    this.set = { ...this.set, effortCueFiredAtRep: repNumber };
+    return true;
   }
 
   /** Record the first rep performed under changed settings. Later calls are no-ops. */

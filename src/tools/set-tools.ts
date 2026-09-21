@@ -94,6 +94,7 @@ import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
 import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
+import { cueRecordFor } from '../state/effort-cue.js';
 import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
 import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
@@ -127,6 +128,7 @@ type SetCapture = Pick<
   | 'settingsHash'
   | 'lifter'
   | 'effortContext'
+  | 'cueRecord'
 >;
 
 class ToolError extends Error {
@@ -1657,6 +1659,8 @@ function buildSetCapture(
     ...(active.effortContext !== undefined
       ? { effortContext: persistedEffortContext(active.effortContext, active.settingChangedAtRep) }
       : {}),
+    // VW-544: only the effort cue writes a record; with the flag off the stored set is unchanged.
+    ...(state.config?.effortCue === 'on' ? { cueRecord: cueRecordFor(active, device) } : {}),
   };
 }
 

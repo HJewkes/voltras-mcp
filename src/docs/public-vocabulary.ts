@@ -145,6 +145,8 @@ export const DOCUMENTED_RESULT_FIELDS: readonly string[] = [
   'echoedAfterMs',
   // VW-294: the warm-up ramp's own field, on `isometric.measure_max`'s `warmup`.
   'effortLevel',
+  // VW-544: `server.health` reports which rule decides the mid-set ending cue.
+  'effortCue',
   'event_type',
   // VW-296: the joint-angle gate on `isometric.measure_hold`'s `jointAngleGate`.
   'jointAngleGate',
