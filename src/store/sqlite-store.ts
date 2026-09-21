@@ -103,6 +103,7 @@ import {
   type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
   type ListGoalTargetsOptions,
+  type JsonObject,
   type ListPrioritiesOptions,
   type MarkExerciseChapterInput,
   type PutAdvisoryDecisionInput,
@@ -164,7 +165,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 39;
+const SCHEMA_VERSION = 40;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -530,6 +531,13 @@ const PLANNED_GOAL_KIND_DDL = `TEXT CHECK (goal_kind IS NULL OR goal_kind IN (${
 )}))`;
 
 /**
+ * The two v40 JSON columns on `sets`, shared by `SCHEMA_SQL` and the v40 step so a fresh
+ * store and a migrated one carry the same CHECK. NULL is the ordinary case: nothing filled it.
+ */
+const SET_EFFORT_CONTEXT_DDL = `TEXT CHECK (effort_context_json IS NULL OR json_valid(effort_context_json))`;
+const SET_CUE_RECORD_DDL = `TEXT CHECK (cue_record_json IS NULL OR json_valid(cue_record_json))`;
+
+/**
  * v38 (VW-445 s.3.2): one learned rest per lifter, exercise, intent and superset context.
  *
  * The key is four parts because each one changes the quantity: the signal and the target
@@ -751,7 +759,12 @@ const SCHEMA_SQL = `
     -- Denormalised from the session (v35 / VW-489), exactly as lifter is:
     -- the set-level reads behind baselines and the RIR fit filter here rather
     -- than joining back to the sessions table. NULL = never reviewed.
-    kind TEXT CHECK (kind IN ('training','test'))
+    kind TEXT CHECK (kind IN ('training','test')),
+
+    -- v40 (VW-539): the effort context pinned at set start and the cue record
+    -- written at set end. NULL = not recorded. Every pre-v40 set reads NULL.
+    effort_context_json ${SET_EFFORT_CONTEXT_DDL},
+    cue_record_json ${SET_CUE_RECORD_DDL}
   );
   CREATE INDEX IF NOT EXISTS idx_sets_session_id ON sets(session_id, started_at);
   -- The four v7 sets indexes are created by the rebuild in migrateV6ToV7, for
@@ -2161,6 +2174,27 @@ function migrateV38ToV39(db: DatabaseSync): void {
 }
 
 /**
+ * v39 -> v40: storage for the pinned effort context and the set-end cue record (VW-539).
+ * Two nullable JSON columns on `sets`. Nothing writes them yet.
+ *
+ * NO BACK-FILL: a set recorded before this step was never pinned, and NULL says so.
+ *
+ * One transaction, so a failure leaves the v39 shape; `addColumnIfMissing` makes a second
+ * run, and a fresh store whose `SCHEMA_SQL` already declared both, a no-op.
+ */
+function migrateV39ToV40(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    addColumnIfMissing(db, 'sets', 'effort_context_json', SET_EFFORT_CONTEXT_DDL);
+    addColumnIfMissing(db, 'sets', 'cue_record_json', SET_CUE_RECORD_DDL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * Row by row rather than as a SQL `CASE`, so the migration and every write path read the
  * same rule from `defaultGoalKind` and cannot drift. `planned_exercises` holds one row per
  * programmed lift, so the loop is over a table measured in hundreds.
@@ -2708,6 +2742,8 @@ interface SetRow {
   assist_mode: string | null;
   settings_json: string | null;
   settings_hash: string | null;
+  effort_context_json: string | null;
+  cue_record_json: string | null;
 }
 
 interface RepRow {
@@ -3144,9 +3180,9 @@ export class SqliteSessionStore implements SessionStore {
           firmware_peak_force_lbs, firmware_peak_power, firmware_reps_json,
           bilateral_group_id, group_source,
           chains_lbs, damper_level, eccentric_pct, inverse_chains_lbs, assist_mode,
-          settings_json, settings_hash)
+          settings_json, settings_hash, effort_context_json, cue_record_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          session_id = excluded.session_id,
          user_id = excluded.user_id,
@@ -3185,7 +3221,9 @@ export class SqliteSessionStore implements SessionStore {
          inverse_chains_lbs = excluded.inverse_chains_lbs,
          assist_mode = excluded.assist_mode,
          settings_json = excluded.settings_json,
-         settings_hash = excluded.settings_hash`,
+         settings_hash = excluded.settings_hash,
+         effort_context_json = excluded.effort_context_json,
+         cue_record_json = excluded.cue_record_json`,
     );
     const deleteReps = this.db.prepare(`DELETE FROM reps WHERE set_id = ?`);
     const insertRep = this.db.prepare(
@@ -3240,6 +3278,8 @@ export class SqliteSessionStore implements SessionStore {
         s.assistMode ?? null,
         s.settingsJson ?? null,
         s.settingsHash ?? null,
+        s.effortContext === undefined ? null : JSON.stringify(s.effortContext),
+        s.cueRecord === undefined ? null : JSON.stringify(s.cueRecord),
       );
       deleteReps.run(s.id);
       for (const rep of s.reps) {
@@ -5807,6 +5847,9 @@ function applyMigrations(db: DatabaseSync): void {
   if (current <= 38) {
     migrateV38ToV39(db);
   }
+  if (current <= 39) {
+    migrateV39ToV40(db);
+  }
 }
 
 function probeWriteLock(db: DatabaseSync, path: string): void {
@@ -6299,7 +6342,20 @@ function rowToSet(row: SetRow, reps: StoredRep[]): StoredSet {
   if (row.assist_mode !== null) out.assistMode = row.assist_mode;
   if (row.settings_json !== null) out.settingsJson = row.settings_json;
   if (row.settings_hash !== null) out.settingsHash = row.settings_hash;
+  const effortContext = parseJsonObject(row.effort_context_json);
+  if (effortContext !== undefined) out.effortContext = effortContext;
+  const cueRecord = parseJsonObject(row.cue_record_json);
+  if (cueRecord !== undefined) out.cueRecord = cueRecord;
   return out;
+}
+
+/** The CHECK admits any valid JSON; only an object is a context or a record. */
+function parseJsonObject(text: string | null): JsonObject | undefined {
+  if (text === null) return undefined;
+  const parsed: unknown = JSON.parse(text);
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as JsonObject)
+    : undefined;
 }
 
 function rowToIdleRep(row: IdleRepRow): StoredIdleRep {

@@ -76,6 +76,8 @@ const SET: StoredSet = {
   deviceId: 'dev-left',
   slot: 'left',
   setIndexInSession: 1,
+  effortContext: { goal: { kind: 'rep_range', low: 5, high: 8 }, guard: null },
+  cueRecord: { fired: false },
   reps: [rep(0), rep(1), rep(2)],
 };
 
