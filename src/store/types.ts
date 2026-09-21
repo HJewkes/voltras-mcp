@@ -409,7 +409,21 @@ export interface StoredSet {
    */
   settingsHash?: string;
 
+  /**
+   * The effort context pinned at set start (v40, VW-539). Its fields arrive with the
+   * pinning slice (VW-540); until then nothing writes it and every set reads absent.
+   */
+  effortContext?: JsonObject;
+  /** What the effort cue decided at set end (v40, VW-539). Nothing writes it yet. */
+  cueRecord?: JsonObject;
+
   reps: StoredRep[];
+}
+
+/** A value `JSON.stringify` then `JSON.parse` returns unchanged. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+export interface JsonObject {
+  [key: string]: JsonValue;
 }
 
 /**

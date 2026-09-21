@@ -117,6 +117,6 @@ describe('v34 -> v35 migration', () => {
     expect(reread?.kind).toBe('test');
     // The store stamps the CURRENT schema version, not this migration's target:
     // a v34 file runs every rung above it in one open.
-    expect(version.user_version).toBe(39);
+    expect(version.user_version).toBe(40);
   });
 });

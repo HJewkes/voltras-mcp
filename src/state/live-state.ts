@@ -39,7 +39,7 @@ import type { MovementClass } from '../exercises/movement-class.js';
 import type { TrainingModeName } from '../schemas/common.js';
 import type { ResolvedWatchConfig } from '../schemas/set.js';
 import { setPurposeFields } from '../store/set-purpose.js';
-import type { SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
+import type { JsonObject, SetPurpose, StoredPreSessionCarbs } from '../store/types.js';
 
 /** Latest known device-level state. All fields are best-effort snapshots. */
 export interface DeviceSnapshot {
@@ -347,6 +347,10 @@ export interface ActiveSet {
    * Undefined for sets started without a `watch` arg.
    */
   watch?: ResolvedWatchConfig;
+  /** The effort context pinned at set start (VW-540). Nothing sets it yet. */
+  effortContext?: JsonObject;
+  /** What the effort cue decided, written at set end. Nothing sets it yet. */
+  cueRecord?: JsonObject;
   /**
    * Dedupe ledger for trigger firings. Keys take the form
    * `${type}:${value or pct}` so identical specs collapse to one event,
@@ -1261,6 +1265,12 @@ export class LiveState {
       ...this.set,
       reps: [...this.set.reps],
       ...(this.set.firmwareReps !== undefined ? { firmwareReps: [...this.set.firmwareReps] } : {}),
+      ...(this.set.effortContext !== undefined
+        ? { effortContext: structuredClone(this.set.effortContext) }
+        : {}),
+      ...(this.set.cueRecord !== undefined
+        ? { cueRecord: structuredClone(this.set.cueRecord) }
+        : {}),
     };
   }
 
