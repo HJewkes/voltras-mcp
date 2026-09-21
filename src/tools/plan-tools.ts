@@ -1333,23 +1333,13 @@ async function completeWorkout(
     throw new ToolError('NOT_FOUND', `No session with id "${sessionId}" exists.`);
   }
   const blockBoundary = await resolveCompleteWorkoutBlockBoundary(state, template);
-  // Idempotency: if an assignment already exists for this (session, template)
-  // pair, return the existing row rather than writing a duplicate. The store
-  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
-  // (session_id, workout_template_id) tuple, so without this check we'd
-  // accumulate duplicate rows on retry.
-  const existing = await state.store.getAssignmentsForSession(sessionId);
-  const prior = existing.find((a) => a.workoutTemplateId === input.workoutTemplateId);
-  if (prior !== undefined) {
-    return { assignment: prior, blockBoundary, current: await readCurrent(state) };
-  }
-  const assignment: StoredProgramAssignment = {
+  // Idempotent: a retry gets the existing (session, template) link back (VW-536).
+  const { assignment } = await state.store.putProgramAssignmentIfAbsent({
     id: randomUUID(),
     sessionId,
     workoutTemplateId: input.workoutTemplateId,
     assignedAt: new Date().toISOString(),
-  };
-  await state.store.putProgramAssignment(assignment);
+  });
   return { assignment, blockBoundary, current: await readCurrent(state) };
 }
 
@@ -1367,17 +1357,11 @@ async function attachToSession(
   if (session === undefined) {
     throw new ToolError('NOT_FOUND', `No session with id "${input.sessionId}" exists.`);
   }
-  // Idempotency: check for an existing assignment before writing. The store
-  // upsert is keyed on assignment.id (a UUID we'd generate), not on the
-  // (session_id, planned_exercise_id / workout_template_id) tuple, so without
-  // this guard a retry would accumulate a duplicate row. Mirrors the same
-  // guard in completeWorkout.
-  const existing = await state.store.getAssignmentsForSession(input.sessionId);
+  // A retry gets its link back without re-resolving the target; the write below is what
+  // guarantees one link per target when two calls race (VW-536).
+  const prior = await existingLink(state, input);
+  if (prior !== undefined) return { assignment: prior };
   if (input.plannedExerciseId !== undefined) {
-    const prior = existing.find((a) => a.plannedExerciseId === input.plannedExerciseId);
-    if (prior !== undefined) {
-      return { assignment: prior };
-    }
     const planned = await findPlannedExerciseById(state, input.plannedExerciseId);
     if (planned === undefined) {
       throw new ToolError(
@@ -1385,33 +1369,38 @@ async function attachToSession(
         `No planned exercise with id "${input.plannedExerciseId}" exists.`,
       );
     }
-    const assignment: StoredProgramAssignment = {
-      id: randomUUID(),
-      sessionId: input.sessionId,
-      plannedExerciseId: input.plannedExerciseId,
-      assignedAt: new Date().toISOString(),
-    };
-    await state.store.putProgramAssignment(assignment);
-    return { assignment };
+    return attachOnce(state, { sessionId: input.sessionId, plannedExerciseId: planned.id });
   }
   // workoutTemplateId branch — Zod's XOR refine guarantees this is defined
   // when plannedExerciseId is not, but TS can't see through the refine.
   const workoutTemplateId = input.workoutTemplateId as string;
-  const priorTemplate = existing.find((a) => a.workoutTemplateId === workoutTemplateId);
-  if (priorTemplate !== undefined) {
-    return { assignment: priorTemplate };
-  }
   const template = await state.store.getWorkoutTemplate(workoutTemplateId);
   if (template === undefined) {
     throw new ToolError('NOT_FOUND', `No workout template with id "${workoutTemplateId}" exists.`);
   }
-  const assignment: StoredProgramAssignment = {
+  return attachOnce(state, { sessionId: input.sessionId, workoutTemplateId });
+}
+
+async function existingLink(
+  state: ServerState,
+  input: z.infer<typeof PlanAttachToSessionInput>,
+): Promise<StoredProgramAssignment | undefined> {
+  return (await state.store.getAssignmentsForSession(input.sessionId)).find((a) =>
+    input.plannedExerciseId !== undefined
+      ? a.plannedExerciseId === input.plannedExerciseId
+      : a.workoutTemplateId === input.workoutTemplateId,
+  );
+}
+
+async function attachOnce(
+  state: ServerState,
+  link: Omit<StoredProgramAssignment, 'id' | 'assignedAt'>,
+): Promise<{ assignment: StoredProgramAssignment }> {
+  const { assignment } = await state.store.putProgramAssignmentIfAbsent({
     id: randomUUID(),
-    sessionId: input.sessionId,
-    workoutTemplateId,
+    ...link,
     assignedAt: new Date().toISOString(),
-  };
-  await state.store.putProgramAssignment(assignment);
+  });
   return { assignment };
 }
 

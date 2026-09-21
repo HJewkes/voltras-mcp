@@ -4211,6 +4211,11 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async putProgramAssignment(a: StoredProgramAssignment): Promise<void> {
+    this.writeProgramAssignment(a);
+    return Promise.resolve();
+  }
+
+  private writeProgramAssignment(a: StoredProgramAssignment): void {
     this.db
       .prepare(
         // Upsert in place, not `INSERT OR REPLACE`. `program_assignments` has
@@ -4233,7 +4238,36 @@ export class SqliteSessionStore implements SessionStore {
         a.workoutTemplateId ?? null,
         a.assignedAt,
       );
-    return Promise.resolve();
+  }
+
+  async putProgramAssignmentIfAbsent(
+    a: StoredProgramAssignment,
+  ): Promise<{ assignment: StoredProgramAssignment; created: boolean }> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.assignmentFor(a);
+      if (existing === undefined) this.writeProgramAssignment(a);
+      this.db.exec('COMMIT');
+      return Promise.resolve({ assignment: existing ?? a, created: existing === undefined });
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** The session's earliest link to the same planned lift, or else the same template. */
+  private assignmentFor(a: StoredProgramAssignment): StoredProgramAssignment | undefined {
+    const [column, target] =
+      a.plannedExerciseId !== undefined
+        ? ['planned_exercise_id', a.plannedExerciseId]
+        : ['workout_template_id', a.workoutTemplateId ?? null];
+    const row = this.db
+      .prepare(
+        `SELECT * FROM program_assignments WHERE session_id = ? AND ${column} = ?
+           ORDER BY assigned_at ASC LIMIT 1`,
+      )
+      .get(a.sessionId, target) as ProgramAssignmentRow | undefined;
+    return row === undefined ? undefined : rowToProgramAssignment(row);
   }
 
   async getAssignmentsForSession(sessionId: string): Promise<StoredProgramAssignment[]> {
