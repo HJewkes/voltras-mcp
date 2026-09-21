@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isLearnedRestContext } from '../learned-rest-context.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 
-const CURRENT_VERSION = 40;
+const CURRENT_VERSION = 41;
 /** The version THIS step starts from, not whatever precedes the newest one: it was
  *  `CURRENT_VERSION - 1` while this was the newest step, and VW-521 landed above it. */
 const PRIOR_VERSION = 37;

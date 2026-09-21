@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SqliteSessionStore } from '../sqlite-store.js';
 
-const CURRENT_VERSION = 40;
+const CURRENT_VERSION = 41;
 const FROM_VERSIONS = [36, 38] as const;
 
 /** `ui_actions` as it stood from v36 through v38: no `device_id`, no device index. */

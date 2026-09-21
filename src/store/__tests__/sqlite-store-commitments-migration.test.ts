@@ -17,7 +17,7 @@ import { LOCAL_USER_ID } from '../types.js';
 const FROM_VERSION = 36;
 /** What the store stamps, which is the CURRENT version and not this step's target: a
  *  pre-migration file runs every rung above it in one open. */
-const CURRENT_VERSION = 40;
+const CURRENT_VERSION = 41;
 
 /** `users` and `commitments` as they stood before the change: no words, no revision. */
 const PRIOR_SCHEMA_SQL = `

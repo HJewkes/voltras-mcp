@@ -168,7 +168,7 @@ import {
   type StoredWorkoutTemplate,
 } from './types.js';
 
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 41;
 
 // `LOCAL_USER_ID` moved to `types.ts` (VMCP-01.72b, N12) so the tool layer
 // can import the constant from the persistence CONTRACT rather than this
@@ -414,6 +414,21 @@ const BLOCK_SCHEDULES_DDL = `
  * column. The v39 step owns them instead and runs on a fresh store too, which is where a
  * fresh store gets them. Same placement as `COMMITMENT_REVISION_INDEX_SQL`.
  */
+/**
+ * One link per session and plan target (VW-536): `putProgramAssignmentIfAbsent` checks before
+ * it inserts, and these refuse any other writer that does not. A link names one target and
+ * leaves the other column NULL, and NULLs never collide in a unique index.
+ *
+ * NOT in `SCHEMA_SQL`: that runs BEFORE the migrations, so on a file already holding a
+ * duplicate it would fail with SQLite's bare constraint error instead of the count the v41
+ * step reports. The step owns them, and runs on a fresh store too.
+ */
+const ASSIGNMENT_UNIQUE_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_program_assignments_session_template_unique
+    ON program_assignments(session_id, workout_template_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_program_assignments_session_planned_unique
+    ON program_assignments(session_id, planned_exercise_id);`;
+
 const UI_ACTION_DEVICE_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_ui_actions_device
     ON ui_actions(device_id, created_at DESC);`;
@@ -899,6 +914,8 @@ const SCHEMA_SQL = `
     ON program_assignments(planned_exercise_id);
   CREATE INDEX IF NOT EXISTS idx_program_assignments_template
     ON program_assignments(workout_template_id);
+  -- v41 (VW-536): one link per (session, template) and per (session, planned exercise),
+  -- created by the v41 step: see ASSIGNMENT_UNIQUE_INDEX_SQL.
 
   -- v6 (VMCP-04.11): isometric assessments. One isometric_measurements row
   -- per run of isometric.measure_imbalance, with one isometric_trials row per
@@ -2196,6 +2213,47 @@ function migrateV39ToV40(db: DatabaseSync): void {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+/**
+ * v40 -> v41: the two unique indexes behind one link per session and plan target (VW-536).
+ *
+ * NO REPAIR: the owner's store held no duplicate pair when this step was written, so a
+ * duplicate here is a surprise to report, not a row to choose between. The step refuses to
+ * open the store and names the count; it deletes nothing.
+ *
+ * One transaction, so a failure leaves the v40 shape; `IF NOT EXISTS` makes a second run a
+ * no-op.
+ */
+function migrateV40ToV41(db: DatabaseSync): void {
+  db.exec('BEGIN');
+  try {
+    assertNoDuplicateAssignments(db);
+    db.exec(ASSIGNMENT_UNIQUE_INDEX_SQL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+function assertNoDuplicateAssignments(db: DatabaseSync): void {
+  const { pairs } = db
+    .prepare(
+      `SELECT COUNT(*) AS pairs FROM (
+         SELECT 1 FROM program_assignments WHERE workout_template_id IS NOT NULL
+           GROUP BY session_id, workout_template_id HAVING COUNT(*) > 1
+         UNION ALL
+         SELECT 1 FROM program_assignments WHERE planned_exercise_id IS NOT NULL
+           GROUP BY session_id, planned_exercise_id HAVING COUNT(*) > 1)`,
+    )
+    .get() as { pairs: number };
+  if (pairs === 0) return;
+  throw new Error(
+    `schema v41: ${String(pairs)} session and plan-target pair(s) have more than one ` +
+      'program_assignments row, so the one-link-per-pair index cannot be created. Nothing was ' +
+      'changed or deleted; resolve the duplicates by hand, then reopen.',
+  );
 }
 
 /**
@@ -5984,6 +6042,9 @@ function applyMigrations(db: DatabaseSync): void {
   }
   if (current <= 39) {
     migrateV39ToV40(db);
+  }
+  if (current <= 40) {
+    migrateV40ToV41(db);
   }
 }
 
