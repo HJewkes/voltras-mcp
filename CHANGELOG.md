@@ -52,6 +52,11 @@ entry is written from the user's point of view is a review question, not a check
   the whole set back as it had read it, reps included, so a set whose reps were saved by
   another session in that moment lost them. It now changes the lifter label and nothing
   else (VW-536).
+- A block's dates now keep every change made to them from two sessions at once. A missed
+  week recorded while another session skipped a different week, resized the block or
+  re-imported it from TrueCoach could vanish from the calendar, while the schedule history
+  still listed it. Two blocks dated onto the same weeks at the same moment could also both
+  be accepted; the second is now refused as an overlap (VW-536).
 
 ### Changed
 

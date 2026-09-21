@@ -91,6 +91,8 @@ import {
   type BlockScheduleKind,
   type BlockScheduleSkip,
   type StoredBlockSchedule,
+  type DerivedBlockSchedules,
+  type ScheduledBlock,
   type CommitmentDay,
   type DeclareCommitmentInput,
   type DeclaredCommitment,
@@ -4482,7 +4484,48 @@ export class SqliteSessionStore implements SessionStore {
     return Promise.resolve(row === undefined ? undefined : rowToBlockSchedule(row));
   }
 
+  async deriveBlockSchedules<T>(
+    derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
+  ): Promise<{ rows: StoredBlockSchedule[]; result: T }> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const derived = derive(this.scheduledBlocks());
+      for (const input of derived.rows) {
+        const problem = scheduleProblem(input);
+        if (problem !== null) throw blockScheduleInvalid(input.blockId, problem);
+      }
+      if (derived.block !== undefined) this.writeTrainingBlock(derived.block);
+      const rows = derived.rows.map((input) => this.insertBlockSchedule(input));
+      this.db.exec('COMMIT');
+      return Promise.resolve({ rows, result: derived.result });
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Every block in program order, with its live row and whether its program is archived. */
+  private scheduledBlocks(): ScheduledBlock[] {
+    const live = new Map(this.liveBlockSchedules().map((row) => [row.blockId, row]));
+    const rows = this.db
+      .prepare(
+        `SELECT b.*, p.archived_at IS NOT NULL AS program_archived
+           FROM training_blocks b LEFT JOIN training_programs p ON p.id = b.program_id
+           ORDER BY b.program_id ASC, b.order_index ASC`,
+      )
+      .all() as unknown as (TrainingBlockRow & { program_archived: number })[];
+    return rows.map((row) => ({
+      block: rowToTrainingBlock(row),
+      live: live.get(row.id),
+      programArchived: row.program_archived === 1,
+    }));
+  }
+
   async listLiveBlockSchedules(): Promise<StoredBlockSchedule[]> {
+    return Promise.resolve(this.liveBlockSchedules());
+  }
+
+  private liveBlockSchedules(): StoredBlockSchedule[] {
     const rows = this.db
       .prepare(
         `SELECT s.* FROM block_schedules s
@@ -4490,7 +4533,7 @@ export class SqliteSessionStore implements SessionStore {
            ORDER BY s.starts_on ASC, s.block_id ASC`,
       )
       .all() as unknown as BlockScheduleRow[];
-    return Promise.resolve(rows.map(rowToBlockSchedule));
+    return rows.map(rowToBlockSchedule);
   }
 
   async listBlockScheduleHistory(blockId: string): Promise<StoredBlockSchedule[]> {

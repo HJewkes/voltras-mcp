@@ -1129,6 +1129,21 @@ export interface StoredBlockSchedule {
 /** What a caller supplies to append a schedule row; the store assigns `id` and `seq`. */
 export type AppendBlockScheduleInput = Omit<StoredBlockSchedule, 'id' | 'seq'>;
 
+/** One block and its live schedule row, as a schedule derive sees them (VW-536). */
+export interface ScheduledBlock {
+  block: StoredTrainingBlock;
+  /** The live row (highest `seq`); `undefined` for a block with no schedule. */
+  live: StoredBlockSchedule | undefined;
+  programArchived: boolean;
+}
+
+/** What a schedule derive writes: the rows to append, the block row when it changes, and its answer. */
+export interface DerivedBlockSchedules<T> {
+  block?: StoredTrainingBlock;
+  rows: readonly AppendBlockScheduleInput[];
+  result: T;
+}
+
 /**
  * One committed training day and the day it falls back to when that one breaks. Shaped like
  * the composer's `PlannedSlot` (`src/accountability/types.ts`), which is what renders it.
@@ -2263,6 +2278,16 @@ export interface SessionStore extends ExerciseSetupStore {
    * writes one row per block, and a half-applied cascade would leave blocks overlapping.
    */
   appendBlockSchedules(inputs: readonly AppendBlockScheduleInput[]): Promise<StoredBlockSchedule[]>;
+
+  /**
+   * Read every block with its live row, derive the next rows from that view and write them, in
+   * ONE transaction (VW-536): a row derived from a live row another writer has already replaced
+   * would drop that writer's change while the history showed both. `derive` is synchronous; a
+   * throw from it writes nothing and reaches the caller unchanged.
+   */
+  deriveBlockSchedules<T>(
+    derive: (world: readonly ScheduledBlock[]) => DerivedBlockSchedules<T>,
+  ): Promise<{ rows: StoredBlockSchedule[]; result: T }>;
 
   /** The block's live schedule row (highest `seq`), or `undefined` for an undated block. */
   getLiveBlockSchedule(blockId: string): Promise<StoredBlockSchedule | undefined>;

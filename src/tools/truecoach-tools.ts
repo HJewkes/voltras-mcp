@@ -28,6 +28,7 @@ import { mapPlan, type MappedPlan, type MappedWorkout } from '../integrations/tr
 import { TrueCoachImportWeekInput } from '../schemas/truecoach.js';
 import type { ServerState } from '../state/server-state.js';
 import type {
+  AppendBlockScheduleInput,
   PlanImportExercise,
   PlanImportTemplate,
   StoredBlockSchedule,
@@ -36,8 +37,9 @@ import type {
 } from '../store/types.js';
 import { wrapHandler } from './helpers.js';
 import { resolveDefaultProgram } from './plan-tools.js';
-import { placedBlocks } from './plan-schedule-tools.js';
+import { placedIn, scheduledBlock } from './plan-schedule-tools.js';
 import { addDays } from '../plan/block-calendar.js';
+import type { PlacedBlock } from '../plan/block-placement.js';
 import { todayLocal } from '../analytics/training-days.js';
 import { isoWeekLabelsBetween, isoWeekMonday } from '../integrations/truecoach/map.js';
 
@@ -232,26 +234,38 @@ async function scheduleImportBlock(
   const first = labels[0];
   if (first === undefined) return null;
   const startsOn = isoWeekMonday(first);
-  const live = await state.store.getLiveBlockSchedule(block.id);
-  const kind = importRowKind(live, startsOn, labels.length);
-  if (kind === null) return null;
   const today = todayLocal();
+  const { rows } = await state.store.deriveBlockSchedules((world) => {
+    const { live } = scheduledBlock(world, block.id);
+    const row = importRow(block, live, { startsOn, weeksCount: labels.length }, today);
+    if (row !== null) assertNoOverlap(placedIn(world), block, row);
+    return { rows: row === null ? [] : [row], result: null };
+  });
+  const written = rows[0];
+  return written === undefined ? null : { seq: written.seq, kind: written.kind };
+}
+
+/** The row this import's range asks for, or null when the live row already says it. */
+function importRow(
+  block: StoredTrainingBlock,
+  live: StoredBlockSchedule | undefined,
+  range: { startsOn: string; weeksCount: number },
+  today: string,
+): (AppendBlockScheduleInput & { startsOn: string }) | null {
+  const kind = importRowKind(live, range.startsOn, range.weeksCount);
+  if (kind === null) return null;
   // I3: a block that has started keeps its start, so an older week cannot re-date it.
   if (kind === 'moved' && live?.startsOn !== undefined && live.startsOn <= today) {
-    throw startedBlockError(block, live.startsOn, startsOn);
+    throw startedBlockError(block, live.startsOn, range.startsOn);
   }
-  const row = {
+  return {
     blockId: block.id,
-    startsOn,
-    weeksCount: labels.length,
+    ...range,
     skips: live?.skips ?? [],
     kind,
-    changedBy: 'import' as const,
+    changedBy: 'import',
     declaredAt: new Date().toISOString(),
   };
-  await assertNoOverlap(state, block, row);
-  const written = await state.store.appendBlockSchedule(row);
-  return { seq: written.seq, kind: written.kind };
 }
 
 function importRowKind(
@@ -277,13 +291,13 @@ function startedBlockError(
 }
 
 /** I2 over the import's own range: the coach's weeks may not land on another dated block. */
-async function assertNoOverlap(
-  state: ServerState,
+function assertNoOverlap(
+  placements: readonly PlacedBlock[],
   block: StoredTrainingBlock,
   row: { startsOn: string; weeksCount: number },
-): Promise<void> {
+): void {
   const endsOn = addDays(row.startsOn, 7 * row.weeksCount - 1);
-  const clash = (await placedBlocks(state)).find(
+  const clash = placements.find(
     (other) =>
       other.blockId !== block.id && other.startsOn <= endsOn && row.startsOn <= other.endsOn,
   );
