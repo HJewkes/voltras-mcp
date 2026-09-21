@@ -100,22 +100,22 @@ export const RIR_VELOCITY_MODEL_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
 
 /**
  * The model-calibration axis for a fitted curve whose own error is too wide to trust
- * (VW-485): `rirErrorReps` at or above `TRUSTED_RIR_ERROR_REPS`.
+ * (VW-485): `rirErrorReps` over `TRUSTED_RIR_ERROR_REPS`.
  */
 export const RIR_VELOCITY_MODEL_UNTRUSTED_CALIBRATION_CONFIDENCE: ConfidenceIndicator = {
   axis: 'model-calibration',
   level: 'medium',
   reasoning:
     "reading comes from the lifter's own fitted RIR-velocity curve (VW-298), but the curve's " +
-    `residual error is ${String(TRUSTED_RIR_ERROR_REPS)} reps in reserve or more, wider than ` +
-    'the error the individual-model evidence reports',
+    `residual error is over ${String(TRUSTED_RIR_ERROR_REPS)} reps in reserve, wider than the ` +
+    'bound this server trusts a curve to state effort within',
   userMessage:
     'This RIR estimate comes from a curve fitted to your own sets, but that curve still ' +
-    `scatters by ${String(TRUSTED_RIR_ERROR_REPS)} or more reps, so read it as a range ` +
+    `scatters by more than ${String(TRUSTED_RIR_ERROR_REPS)} reps, so read it as a range ` +
     'rather than a count.',
   improvementPath:
     'Re-run `rir_velocity.fit` as you log more qualifying sets; the curve is trusted once ' +
-    `its error (\`rirErrorReps\`) drops under ${String(TRUSTED_RIR_ERROR_REPS)} reps.`,
+    `its error (\`rirErrorReps\`) is ${String(TRUSTED_RIR_ERROR_REPS)} reps or under.`,
 };
 
 /**

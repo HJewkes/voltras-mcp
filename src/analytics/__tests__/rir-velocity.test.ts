@@ -178,3 +178,37 @@ describe('velocityForRir', () => {
     expect(outside.velocityMps).toBeGreaterThan(inside.velocityMps);
   });
 });
+
+describe('the held-out figure on a fitted curve (VW-538)', () => {
+  it('reads zero when the newest set sits on the curve the older sets draw', () => {
+    // Arrange: four sessions on one line, so three remain once the newest is held out.
+    const observations = [
+      ...corpus(0.2, 0.05),
+      setOnCurve('set-3', 's4', { intercept: 0.2, slope: 0.05, reps: 6 }),
+    ];
+
+    // Act
+    const fit = fitRirVelocityModel(observations);
+
+    // Assert
+    expect(fit.model?.heldOutErrorReps).toBe(0);
+  });
+
+  it('measures how far the older sets miss the newest set anchor', () => {
+    // Arrange: the newest set fails 0.05 m/s faster, one rep in reserve off the line.
+    const observations = [
+      ...corpus(0.2, 0.05),
+      setOnCurve('set-3', 's4', { intercept: 0.25, slope: 0.05, reps: 6 }),
+    ];
+
+    // Act
+    const fit = fitRirVelocityModel(observations);
+
+    // Assert
+    expect(fit.model?.heldOutErrorReps).toBeCloseTo(1, 2);
+  });
+
+  it('is null when the curve without the newest set does not stand', () => {
+    expect(fitRirVelocityModel(corpus(0.2, 0.05, 0.01)).model?.heldOutErrorReps).toBeNull();
+  });
+});

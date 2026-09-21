@@ -321,10 +321,11 @@ describe('trusting a fitted curve (VW-485)', () => {
       concentric: { peakVelocity: mps, _totalVelocity: mps, _movementSampleCount: 1 },
     } as unknown as Rep);
 
-  it('trusts a stored curve only when its error sits under the evidence bound', () => {
+  it('trusts a stored curve only when its error is 1.5 reps or under', () => {
     expect(isTrustedRirModel(undefined)).toBe(false);
-    expect(isTrustedRirModel(withError(1.99))).toBe(true);
-    expect(isTrustedRirModel(withError(2))).toBe(false);
+    expect(isTrustedRirModel(withError(1.5))).toBe(true);
+    expect(isTrustedRirModel(withError(1.51))).toBe(false);
+    expect(isTrustedRirModel(withError(1.9))).toBe(false);
   });
 
   it('does not trust a curve fitted under an older model version until it is refitted', () => {
