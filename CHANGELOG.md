@@ -57,6 +57,11 @@ entry is written from the user's point of view is a review question, not a check
   re-imported it from TrueCoach could vanish from the calendar, while the schedule history
   still listed it. Two blocks dated onto the same weeks at the same moment could also both
   be accepted; the second is now refused as an overlap (VW-536).
+- Naming who is lifting (`session.set_lifter`) and recording carbs in a check-in no longer
+  undo each other when two sessions do them at once. Each used to write back the whole
+  session as it had read it, so one could drop the other's change: a guest's session could
+  reappear in the owner's history, or the carb context could vanish. Each now changes only
+  its own field (VW-536).
 
 ### Changed
 

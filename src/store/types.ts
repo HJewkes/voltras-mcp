@@ -703,6 +703,13 @@ export interface StoredSession {
 }
 
 /** A session's self-reported pre-session carb context (VW-307). */
+/** The session fields a tool may change after start, for {@link SessionStore.patchSession}. */
+export interface SessionPatch {
+  /** `null` clears the label: the session is the owner's again. */
+  lifter?: string | null;
+  preSessionCarbs?: StoredPreSessionCarbs;
+}
+
 export interface StoredPreSessionCarbs {
   level: 'low' | 'normal' | 'high';
   /** Rough self-estimate, not a timestamp. */
@@ -1899,6 +1906,14 @@ export interface SessionStore extends ExerciseSetupStore {
    * fixed in #79). Update the row in place instead.
    */
   putSession(s: StoredSession): Promise<void>;
+
+  /**
+   * Change the named fields of one stored session and return it as it now stands, or
+   * `undefined` when no row matches (VW-536). Every other column is left as stored, so two
+   * writers editing different fields both land. The diet-phase stamp is re-derived exactly as
+   * {@link putSession} derives it, because it follows the lifter label.
+   */
+  patchSession(sessionId: string, patch: SessionPatch): Promise<StoredSession | undefined>;
 
   /**
    * Persist a completed (or partial) set together with its rep array.
