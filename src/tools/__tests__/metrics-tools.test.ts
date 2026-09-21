@@ -15,6 +15,7 @@ import type { Phase } from '@voltras/workout-analytics';
 import * as analytics from '@voltras/workout-analytics';
 import { detectBounce, detectHesitation } from '../../analytics/rep-faults.js';
 import { readRomIntegrity } from '../../analytics/rom-integrity.js';
+import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
 
 // Stub the SDK so the static import chain (helpers -> errors -> SDK)
 // does not pull in optional native peers.
@@ -1496,7 +1497,8 @@ describe('metrics.compute — vbt.rir', () => {
     return {
       model: {
         form: 'linear',
-        version: 'rir-velocity@1.0.0',
+        version: RIR_VELOCITY_MODEL_VERSION,
+        resistanceFamily: 'constant',
         interceptMps,
         slopeMpsPerRir,
         r2: 0.9,

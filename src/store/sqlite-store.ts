@@ -29,8 +29,13 @@ import {
   type FailureCandidateEvaluation,
   type FailureVerdict,
 } from './failure-harvest.js';
-import { fitRirVelocityModel, type RirVelocityFit } from '../analytics/rir-velocity.js';
 import {
+  fitRirVelocityModel,
+  RIR_VELOCITY_MODEL_VERSION,
+  type RirVelocityFit,
+} from '../analytics/rir-velocity.js';
+import {
+  constantLoadSets,
   referenceOneRepMax,
   toRirVelocityObservations,
   type RirAnchorRow,
@@ -93,6 +98,7 @@ import {
   type ExerciseSetsFilter,
   type ExerciseSetupFilter,
   type FailureHarvestCounts,
+  type RirVelocityRefitCounts,
   type GoalTargetSelector,
   type ListAdvisoryDecisionsFilter,
   type ListBodyMetricsFilter,
@@ -2853,6 +2859,12 @@ interface FailureAnchorVerdictRow {
   self_reported_rir: number | null;
 }
 
+interface StaleRirVelocityModelRow {
+  user_id: string;
+  exercise_id: string;
+  model_json: string;
+}
+
 interface RirVelocityModelRow {
   model_json: string;
   fitted_at: string;
@@ -5464,13 +5476,15 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Re-fit from the lifter's own working sets. Owner-scoped through
+   * Re-fit from the lifter's own constant-load working sets. Owner-scoped through
    * `getSetsForExercise`, which filters `lifter IS NULL` — a guest's set on the
    * same rig never enters the owner's curve, matching the baseline and anchor
    * reads.
    */
   async refitRirVelocityModel(userId: string, exerciseId: string): Promise<RirVelocityFit> {
-    const sets = await this.getSetsForExercise({ userId, exerciseId, purpose: ['working'] });
+    const sets = constantLoadSets(
+      await this.getSetsForExercise({ userId, exerciseId, purpose: ['working'] }),
+    );
     const reference = referenceOneRepMax(sets);
     const fit =
       reference === undefined
@@ -5480,6 +5494,21 @@ export class SqliteSessionStore implements SessionStore {
           );
     this.persistRirVelocityFit(userId, exerciseId, fit);
     return fit;
+  }
+
+  async refitStaleRirVelocityModels(): Promise<RirVelocityRefitCounts> {
+    const rows = this.db
+      .prepare(`SELECT user_id, exercise_id, model_json FROM rir_velocity_models`)
+      .all() as unknown as StaleRirVelocityModelRow[];
+    const counts: RirVelocityRefitCounts = { stored: rows.length, refitted: 0, removed: 0 };
+    for (const row of rows) {
+      const { version } = JSON.parse(row.model_json) as { version?: unknown };
+      if (version === RIR_VELOCITY_MODEL_VERSION) continue;
+      const fit = await this.refitRirVelocityModel(row.user_id, row.exercise_id);
+      if (fit.model === null) counts.removed++;
+      else counts.refitted++;
+    }
+    return counts;
   }
 
   /**

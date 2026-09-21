@@ -100,6 +100,12 @@ entry is written from the user's point of view is a review question, not a check
 
 ### Fixed
 
+- Sets done with chains or eccentric overload no longer bend your fitted RIR-velocity
+  curve. Those settings change what a rep in reserve costs, so the curve is now fitted on
+  plain weight sets only, and `rir_velocity.fit` counts only those sets. Damper,
+  isokinetic, band, rowing and custom-curve sets are left out too, as are sets with no
+  recorded mode. Curves fitted before this change are refitted once when the server
+  starts, and until then they are not trusted to state reps in reserve (VW-538).
 - `metrics.compute` no longer under-counts its own pipelines: the description said it took
   one of seventeen literals while the dispatcher accepted eighteen, and `strength.e1rm` was
   the one it left out (VW-513, #482).

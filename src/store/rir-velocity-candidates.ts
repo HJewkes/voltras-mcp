@@ -25,10 +25,16 @@
 // dropped rep still happened, so removing it must not renumber the reps around
 // it.
 //
+// CONSTANT LOAD ONLY. Under chains or eccentric overload velocity still falls
+// with fatigue inside a set, but the velocity per rep in reserve differs from
+// constant load, and a damper or isokinetic set has no rep in reserve to count
+// (VW-538). So only constant-load sets reach the curve or its reference 1RM.
+//
 // PURE. Every input is an already-fetched row.
 
 import { estimateE1RMFromReps, type Rep } from '@voltras/workout-analytics';
 
+import { resistanceFamilyOf } from '../analytics/resistance-family.js';
 import {
   rirModelVelocity,
   type RirAnchorSource,
@@ -44,6 +50,11 @@ import { normaliseVelocityToMps } from './velocity-units.js';
 export interface RirAnchorRow {
   verdict: FailureVerdict;
   selfReportedRir?: number;
+}
+
+/** The sets a constant-load curve may be fitted on, in their original order. */
+export function constantLoadSets(sets: readonly StoredSet[]): StoredSet[] {
+  return sets.filter((s) => resistanceFamilyOf(s) === 'constant');
 }
 
 /**

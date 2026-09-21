@@ -6,9 +6,11 @@
 // exercise, and that a corpus which stops qualifying takes its stale curve
 // with it.
 
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { Phase } from '@voltras/workout-analytics';
 
+import { RIR_VELOCITY_MODEL_VERSION } from '../../analytics/rir-velocity.js';
 import { SqliteSessionStore } from '../sqlite-store.js';
 import { LOCAL_USER_ID, type StoredRep, type StoredSession, type StoredSet } from '../types.js';
 
@@ -67,6 +69,7 @@ function failureSet(
     startedAt: daysAgo(3),
     endedAt: daysAgo(3),
     partial: false,
+    trainingMode: 'Weight Training',
     weightLbs: 150,
     setPurpose: 'working',
     setIndexInSession: 1,
@@ -105,6 +108,21 @@ function threeSessions(exerciseId: string, velocities: readonly number[]): Store
   return ['sess-1', 'sess-2', 'sess-3'].map((sessionId, i) =>
     failureSet(`${exerciseId}-set-${String(i)}`, sessionId, exerciseId, velocities),
   );
+}
+
+function rawDb(store: SqliteSessionStore): DatabaseSync {
+  return (store as unknown as { db: DatabaseSync }).db;
+}
+
+/** A stored curve as an earlier release wrote it, before the resistance family existed. */
+function storeOldCurve(store: SqliteSessionStore, exerciseId: string, version: string): void {
+  rawDb(store)
+    .prepare(
+      `INSERT INTO rir_velocity_models
+        (user_id, exercise_id, model_json, fitted_at, sample_size, fit_quality)
+       VALUES (?, ?, ?, '2026-08-01T00:00:00.000Z', 12, 0.9)`,
+    )
+    .run(LOCAL_USER_ID, exerciseId, JSON.stringify({ form: 'linear', version }));
 }
 
 describe('SqliteSessionStore — RIR-velocity fit', () => {
@@ -226,6 +244,71 @@ describe('SqliteSessionStore — RIR-velocity fit', () => {
       expect(refit.model).toBeNull();
       expect(refit.qualification.qualifyingSets).toBe(0);
       expect(await store.getRirVelocityModel(LOCAL_USER_ID, 'row')).toBeUndefined();
+    } finally {
+      await store.close();
+    }
+  });
+
+  // VW-538. Chains and eccentric overload change what a rep in reserve costs,
+  // so their sets must not bend a constant-load curve.
+  it('fits only the constant-load sets and says how many it saw', async () => {
+    // Arrange: three constant-load failure sets, plus one under chains and one
+    // under eccentric overload that would otherwise qualify.
+    const constant = threeSessions('row', DECAY);
+    const chains = { ...failureSet('row-chains', 'sess-1', 'row', DECAY), chainsLbs: 20 };
+    const eccentric = { ...failureSet('row-ecc', 'sess-2', 'row', DECAY), eccentricPct: 15 };
+    const store = await storeWith([...constant, chains, eccentric]);
+    try {
+      // Act
+      const fit = await store.refitRirVelocityModel(LOCAL_USER_ID, 'row');
+
+      // Assert
+      expect(fit.qualification).toMatchObject({ observedSets: 3, qualifyingSets: 3 });
+      expect(fit.model?.setCount).toBe(3);
+      expect(fit.model?.resistanceFamily).toBe('constant');
+      expect(fit.model?.version).toBe(RIR_VELOCITY_MODEL_VERSION);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('refits a curve stored under an older version and removes one that no longer qualifies', async () => {
+    // Arrange: 'row' still has a qualifying corpus, 'press' has none.
+    const store = await storeWith(threeSessions('row', DECAY));
+    try {
+      storeOldCurve(store, 'row', 'rir-velocity@1.0.0');
+      storeOldCurve(store, 'press', 'rir-velocity@1.0.0');
+
+      // Act
+      const counts = await store.refitStaleRirVelocityModels();
+      const repeat = await store.refitStaleRirVelocityModels();
+
+      // Assert
+      expect(counts).toEqual({ stored: 2, refitted: 1, removed: 1 });
+      expect(repeat).toEqual({ stored: 1, refitted: 0, removed: 0 });
+      const row = await store.getRirVelocityModel(LOCAL_USER_ID, 'row');
+      expect(row?.model).toMatchObject({
+        version: RIR_VELOCITY_MODEL_VERSION,
+        resistanceFamily: 'constant',
+      });
+      expect(await store.getRirVelocityModel(LOCAL_USER_ID, 'press')).toBeUndefined();
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('leaves a curve stamped with the current version alone', async () => {
+    // Arrange: no sets at all, so a refit would delete it.
+    const store = SqliteSessionStore.open(':memory:');
+    try {
+      storeOldCurve(store, 'row', RIR_VELOCITY_MODEL_VERSION);
+
+      // Act
+      const counts = await store.refitStaleRirVelocityModels();
+
+      // Assert
+      expect(counts).toEqual({ stored: 1, refitted: 0, removed: 0 });
+      expect(await store.getRirVelocityModel(LOCAL_USER_ID, 'row')).not.toBeUndefined();
     } finally {
       await store.close();
     }

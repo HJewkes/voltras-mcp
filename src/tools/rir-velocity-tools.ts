@@ -36,7 +36,8 @@ interface PlaceholderTools {
 
 const FIT_DESCRIPTION =
   "Re-fit this lifter's own RIR-velocity curve for one exercise from their recorded working " +
-  'sets, and store it. Qualifying sets are those in the 70-90% band of estimated 1RM that ended ' +
+  'sets done at a constant load (Weight Training with no chains, eccentric or damper setting), ' +
+  'and store it. Qualifying sets are those in the 70-90% band of estimated 1RM that ended ' +
   'at failure or carry a self-reported reps-in-reserve; every rep in such a set is one point, ' +
   'with reps in reserve counted back from the last rep. Returns `fitted`, a `reason` naming ' +
   'either what the fit stands on or which minimum was not met, the `model` itself when one ' +
