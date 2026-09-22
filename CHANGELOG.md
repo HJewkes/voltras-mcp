@@ -46,6 +46,16 @@ entry is written from the user's point of view is a review question, not a check
 
 ## [Unreleased]
 
+### Added
+
+- An opt-in effort cue, off by default: `VOLTRAS_EFFORT_CUE=on` hands the mid-set ending cue to
+  the effort rule. A set then gets **at most one** ending event (`set_target_reached`,
+  `velocity_loss_exceeded` or the new `effort_target_reached`), each saying which goal the set
+  had (`goal_kind`) and what ended it (`cue_reason`). A caller who types both a rep count and a
+  loss percent now gets one event, not two: whichever is met first, with a tie going to the
+  rep count. The set also stores what the cue decided. `server.health` reports the setting as
+  `effortCue`. With it off, nothing changes (VW-544).
+
 ### Fixed
 
 - Declaring priorities from two sessions at once no longer doubles a goal. Two declarations

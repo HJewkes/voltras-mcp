@@ -2171,6 +2171,159 @@ describe('wireEventBridge', () => {
       expect(live.snapshotSet()).not.toHaveProperty('settingChangedAtRep');
     });
 
+    // VW-544: with VOLTRAS_EFFORT_CUE on, the resolver decides the one ending cue.
+    describe('the effort cue', () => {
+      const ENDING = ['set_target_reached', 'velocity_loss_exceeded', 'effort_target_reached'];
+
+      function endingEvents(): { meta: Record<string, string>; content: string }[] {
+        return channels.publish.mock.calls
+          .map((c) => c[0])
+          .filter((e) => ENDING.includes(e.meta.event_type));
+      }
+
+      /** Rep n finalizes when rep n+1 begins; each rep carries `velocities[n-1]`. */
+      function driveReps(velocities: readonly number[]): void {
+        velocities.forEach((v, i) => {
+          const seq = i + 1;
+          startNextRep(seq, v);
+          client.fire.frame({
+            sequence: seq * 10 + 5,
+            timestamp: 1000 + seq * 100 + 50,
+            phase: 3,
+            position: seq * 0.1 + 0.1,
+            velocity: frameVelocity(v),
+            force: 50,
+          });
+        });
+        startNextRep(velocities.length + 1, velocities.at(-1) ?? 0);
+      }
+
+      function startCueSet(watch?: WatchSpec): void {
+        Object.assign(fakeState, { config: { restTimer: 'on', effortCue: 'on' } });
+        startWatchedSet(watch);
+        live.applySettings({ trainingMode: 'Weight Training' });
+      }
+
+      it('cues a typed loss guard once, before the rep goal, and never a second time', async () => {
+        startCueSet({
+          notifyOn: [
+            { type: 'rep_count_reached', value: 3 },
+            { type: 'velocity_loss_exceeded', pct: 30 },
+          ],
+        });
+
+        driveReps([1.0, 0.5, 0.5, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'velocity_loss_exceeded',
+          goal_kind: 'rep_range',
+          cue_reason: 'velocity_loss',
+          rep_count_at_threshold: '2',
+          threshold_pct: '30',
+        });
+      });
+
+      it('gives a tie on one rep to the goal', async () => {
+        startCueSet({
+          notifyOn: [
+            { type: 'rep_count_reached', value: 2 },
+            { type: 'velocity_loss_exceeded', pct: 30 },
+          ],
+        });
+
+        driveReps([1.0, 0.5, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'set_target_reached',
+          goal_kind: 'rep_range',
+          cue_reason: 'reps',
+          actual_rep_count: '2',
+        });
+      });
+
+      it('cues a loss goal once, on the loss', async () => {
+        startCueSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+
+        driveReps([1.0, 0.9, 0.6, 0.5]);
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'velocity_loss_exceeded',
+          goal_kind: 'velocity_loss',
+          cue_reason: 'velocity_loss',
+          rep_count_at_threshold: '3',
+        });
+      });
+
+      it('cues an RPE goal on a trusted curve as effort_target_reached, typed fields only', async () => {
+        startCueSet();
+        live.attachEffortContext('set-trig', {
+          ...buildEffortContext({
+            set: {},
+            device: { connected: true, trainingMode: 'Weight Training' },
+            planned: undefined,
+            profile: {
+              profile: {
+                interceptMps: 0.2,
+                slopeMpsPerRir: 0.05,
+                rirErrorReps: 1,
+                rirRange: [0, 6],
+                intensityRange: [0.6, 0.85],
+                resistanceFamily: 'constant',
+                modelVersion: 'rir-velocity@1.2.0',
+              },
+              relativeIntensity: 0.7,
+            },
+          }),
+          goal: { kind: 'target_rpe', targetRpe: 8, repsLow: null, repsHigh: null, source: 'plan' },
+        });
+
+        driveReps([0.5, 0.4, 0.28, 0.25]);
+        await flushMicrotasks();
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).toMatchObject({
+          event_type: 'effort_target_reached',
+          goal_kind: 'target_rpe',
+          cue_reason: 'effort',
+          rep_count_at_target: '3',
+          target_rpe: '8',
+        });
+        expect(JSON.parse(events[0]!.content)).not.toHaveProperty('summary');
+      });
+
+      it('never closes or persists the set it cues', async () => {
+        startCueSet({ notifyOn: [{ type: 'rep_count_reached', value: 2 }] });
+
+        driveReps([1.0, 1.0, 1.0]);
+        await flushMicrotasks();
+
+        expect(endingEvents()).toHaveLength(1);
+        expect(live.snapshotSet()?.status).toBe('active');
+        expect(fakeState.store.putSet).not.toHaveBeenCalled();
+      });
+
+      it('leaves the watch triggers to fire exactly as before with the flag off', async () => {
+        startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+
+        driveLossToFiftyPct();
+        await flushMicrotasks();
+
+        const events = endingEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]?.meta).not.toHaveProperty('cue_reason');
+        expect(events[0]?.meta).not.toHaveProperty('goal_kind');
+      });
+    });
+
     describe('eccentric-overload exclusion on velocity_loss_exceeded', () => {
       function driveAelSet(opts: { eccentricPercentTenths?: number }): void {
         startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 20 }] }, opts);
