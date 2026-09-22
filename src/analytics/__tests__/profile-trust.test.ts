@@ -41,6 +41,11 @@ describe('profileTrust', () => {
 
   it.each<[string, Partial<RirVelocityModel>, string]>([
     [
+      'a curve fitted under an older model version',
+      { version: 'rir-velocity@1.1.0' },
+      'stale_model_version',
+    ],
+    [
       'a fit error just past the bound',
       { rirErrorReps: TRUSTED_RIR_ERROR_REPS + 0.01 },
       'fit_error',

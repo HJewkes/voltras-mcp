@@ -17,6 +17,7 @@ import {
   buildEffortContext,
   deviceResistanceFamily,
   profileToPin,
+  settingsSignature,
   type EffortContextInputs,
 } from './effort-context.js';
 import type { ActiveSet, DeviceSnapshot, LiveState } from './live-state.js';
@@ -106,4 +107,21 @@ async function relativeIntensityOf(
   });
   const reference = referenceOneRepMax(constantLoadSets(sets));
   return reference === undefined ? null : loadLbs / reference;
+}
+
+/**
+ * Mark the first finalized rep performed under settings other than the start snapshot's.
+ * Called by the bridge for reps 1 to N-1 and by `finalizeSet` for the last rep.
+ */
+export function markSettingChange(
+  state: ServerState,
+  live: LiveState,
+  setId: string,
+  repNumber: number,
+  device: DeviceSnapshot,
+): void {
+  if (live.set?.setId !== setId || live.set.settingChangedAtRep !== undefined) return;
+  const start = state.setStartDeviceSnapshots.get(setId);
+  if (start === undefined || settingsSignature(start) === settingsSignature(device)) return;
+  live.markSettingChanged(repNumber);
 }

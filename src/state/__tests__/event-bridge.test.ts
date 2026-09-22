@@ -29,7 +29,7 @@
 // the bridge layer by the active-set check before the hint is sent.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import type { Mock } from 'vitest';
+import type { Mock, MockInstance } from 'vitest';
 // `@voltras/workout-analytics` is NOT mocked — the golden VBT compare in the
 // PR2 firmware-enrichment test replays the same sample slice through the real
 // analytics pipeline the bridge uses.
@@ -44,6 +44,8 @@ import type { Rep } from '@voltras/workout-analytics';
 // static import is safe ahead of the SDK mock below.
 import { LiveSignalHub, mmsToMps, mmToM, type LiveSignalEvent } from '../live-signal.js';
 import type { MovementClass } from '../../exercises/movement-class.js';
+import { log } from '../../logger.js';
+import { buildEffortContext } from '../effort-context.js';
 
 // Stub the SDK so unit tests don't pull in optional native peers (noble,
 // react-native-ble-plx). The bridge imports `TrainingMode` (enum values) and
@@ -2062,6 +2064,62 @@ describe('wireEventBridge', () => {
         .filter((e) => e.meta.event_type === 'velocity_loss_exceeded');
       expect(fired).toHaveLength(1);
       expect(fired[0].meta.threshold_pct).toBe('30');
+    });
+
+    // VW-543: a debug line measures how often the resolver and the old gate disagree.
+    function driveLossToFiftyPct(): void {
+      driveRep(1, 1.0);
+      startNextRep(2, 0.5);
+      client.fire.frame({
+        sequence: 25,
+        timestamp: 1400,
+        phase: 3,
+        position: 0.3,
+        velocity: frameVelocity(0.5),
+        force: 50,
+      });
+      startNextRep(3, 0.5);
+    }
+
+    function disagreements(debug: MockInstance): unknown[] {
+      return debug.mock.calls.filter((call) => String(call[0]).includes('disagree'));
+    }
+
+    it('logs a rep where the old gate fires and the resolver has no loss condition', async () => {
+      const debug = vi.spyOn(log, 'debug');
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      live.attachEffortContext('set-trig', {
+        ...buildEffortContext({
+          set: {},
+          device: { connected: true },
+          planned: undefined,
+          profile: 'no_model',
+        }),
+        goal: { kind: 'rep_range', repsLow: 8, repsHigh: 10, source: 'plan' },
+      });
+
+      driveLossToFiftyPct();
+      await flushMicrotasks();
+
+      expect(disagreements(debug)).toHaveLength(1);
+      expect(disagreements(debug)[0]).toEqual([
+        expect.any(String),
+        expect.objectContaining({ repNumber: 2, oldGate: true, resolver: false }),
+      ]);
+      debug.mockRestore();
+    });
+
+    it('logs nothing when the resolver reads the same loss condition from the watch', async () => {
+      const debug = vi.spyOn(log, 'debug');
+      startWatchedSet({ notifyOn: [{ type: 'velocity_loss_exceeded', pct: 30 }] });
+      // The SDK's mode name: the harness's legacy spelling maps to no resistance family.
+      live.applySettings({ trainingMode: 'Weight Training' });
+
+      driveLossToFiftyPct();
+      await flushMicrotasks();
+
+      expect(disagreements(debug)).toEqual([]);
+      debug.mockRestore();
     });
 
     it('marks the first rep performed under changed settings, once', async () => {

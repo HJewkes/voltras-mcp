@@ -701,6 +701,34 @@ describe('set.start', () => {
     expect(stored.effortContext).toEqual(pinned);
   });
 
+  // VW-543: the bridge checks reps 1 to N-1; a change landing on the last rep is caught here.
+  it('stores the first changed-setting rep inside the context, checking the last rep at close', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+    h.live.appendRep(makeRep(2));
+    h.live.applySettings({ chainSettingLbs: 20 });
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toMatchObject({ settingChangedAtRep: 2 });
+  });
+
+  it('stores no changed-setting rep when the settings held for the whole set', async () => {
+    startSession(h.live);
+    h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });
+    await h.invoke('set.start', {});
+    h.live.appendRep(makeRep(1));
+
+    await h.invoke('set.end', {});
+
+    const stored = h.store.putSet.mock.calls[0][0] as StoredSet;
+    expect(stored.effortContext).toBeDefined();
+    expect(stored.effortContext).not.toHaveProperty('settingChangedAtRep');
+  });
+
   it('persists no effort context for a set that was never pinned', async () => {
     startSession(h.live);
     h.live.applySettings({ connected: true, weightLbs: 100, trainingMode: 'WeightTraining' });

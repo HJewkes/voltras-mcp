@@ -52,7 +52,13 @@ import {
 } from '../analytics/load-drift.js';
 import { inferExerciseSetups } from '../store/exercise-setups.js';
 import { setPurposeFields, setPurposeOf } from '../store/set-purpose.js';
-import { LOCAL_USER_ID, type SetPurpose, type StoredRep, type StoredSet } from '../store/types.js';
+import {
+  LOCAL_USER_ID,
+  type JsonObject,
+  type SetPurpose,
+  type StoredRep,
+  type StoredSet,
+} from '../store/types.js';
 import { CURRENT_VELOCITY_UNITS } from '../store/velocity-units.js';
 
 import { selectSetReps, type ActiveSet, type DeviceSnapshot } from '../state/live-state.js';
@@ -88,7 +94,7 @@ import type { ChannelPublisher } from '../state/channel-publisher.js';
 import type { PhysicalSide } from '../state/slot-bindings.js';
 import type { BilateralSetClose } from '../state/bilateral-reconciler.js';
 import { log } from '../logger.js';
-import { repinEffortContext } from '../state/effort-pin.js';
+import { markSettingChange, repinEffortContext } from '../state/effort-pin.js';
 import { onSetStarted } from '../state/set-start-seam.js';
 import { wrapHandler } from './helpers.js';
 import { isModeRevertStillActive } from './device-handler-helpers.js';
@@ -1004,6 +1010,11 @@ export async function finalizeSet(
   // — those are intentional close moments where the analytics output is
   // already the right shape.
   const dropTrailingInProgress = opts.partialReason === 'inactivity_timeout';
+  // The bridge checks reps 1 to N-1 for a setting change; the last rep is checked here.
+  const lastRep = slot.live.set.reps.at(-1);
+  if (lastRep !== undefined) {
+    markSettingChange(state, slot.live, setId, lastRep.repNumber, slot.live.snapshotDevice());
+  }
   const finalized = slot.live.endSet(undefined, { dropTrailingInProgress });
   if (finalized === undefined) {
     return undefined;
@@ -1643,6 +1654,16 @@ function buildSetCapture(
       : {}),
     ...settings,
     ...(settingsHash !== undefined ? { settingsHash } : {}),
-    ...(active.effortContext !== undefined ? { effortContext: active.effortContext } : {}),
+    ...(active.effortContext !== undefined
+      ? { effortContext: persistedEffortContext(active.effortContext, active.settingChangedAtRep) }
+      : {}),
   };
+}
+
+/** The pinned context as stored: the set's first changed-setting rep rides inside it. */
+function persistedEffortContext(
+  context: JsonObject,
+  settingChangedAtRep: number | undefined,
+): JsonObject {
+  return settingChangedAtRep === undefined ? context : { ...context, settingChangedAtRep };
 }
