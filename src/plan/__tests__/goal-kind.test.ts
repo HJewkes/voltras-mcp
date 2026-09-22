@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultGoalKind } from '../goal-kind.js';
+import { defaultGoalKind, isRestInvalid, validatePrescription } from '../goal-kind.js';
 
 describe('defaultGoalKind', () => {
   it('reads a loss target as the goal', () => {
@@ -45,5 +45,132 @@ describe('defaultGoalKind', () => {
   it('does not read a falsy number as an absent field', () => {
     expect(defaultGoalKind({ targetRpe: 0 })).toBe('target_rpe');
     expect(defaultGoalKind({ targetRepsLow: 0 })).toBe('rep_range');
+  });
+});
+
+// The one shape check the three write paths share (VW-537). Each refusal names its way out.
+describe('validatePrescription', () => {
+  it('accepts a rep range with an RPE as its cap', () => {
+    expect(
+      validatePrescription({ goalKind: 'rep_range', targetRepsLow: 8, targetRpe: 9 }),
+    ).toBeNull();
+  });
+
+  it('accepts a row that states no goal', () => {
+    expect(validatePrescription({})).toBeNull();
+  });
+
+  // OWNER: "Eliminate variable names from user facing text"; the field rides beside the text.
+  it.each([
+    [
+      'rep_range',
+      { targetRpe: 8 },
+      'targetRepsLow',
+      'A rep-range goal needs a rep range. Add one, or choose a different goal type.',
+    ],
+    [
+      'target_rpe',
+      { targetRepsLow: 8 },
+      'targetRpe',
+      'A target-RPE goal needs an RPE. Add one, or choose a different goal type.',
+    ],
+    [
+      'velocity_loss',
+      { targetRepsLow: 8 },
+      'targetVelocityLossPct',
+      'A velocity-loss goal needs a percent. Add a percent, or set a training intent so the ' +
+        'default percent can be used.',
+    ],
+  ] as const)(
+    'refuses a %s goal without its required field',
+    (goalKind, fields, field, message) => {
+      expect(validatePrescription({ goalKind, ...fields })).toEqual({ field, message });
+    },
+  );
+
+  it('accepts a velocity_loss goal whose percent comes from the training intent', () => {
+    expect(validatePrescription({ goalKind: 'velocity_loss', trainingIntent: 'power' })).toBeNull();
+  });
+
+  it('accepts a velocity_loss goal with a typed percent', () => {
+    expect(
+      validatePrescription({ goalKind: 'velocity_loss', targetVelocityLossPct: 20 }),
+    ).toBeNull();
+  });
+
+  it('refuses a rep range whose top is below its bottom', () => {
+    expect(
+      validatePrescription({ goalKind: 'rep_range', targetRepsLow: 10, targetRepsHigh: 8 }),
+    ).toEqual({
+      field: 'targetRepsHigh',
+      message: 'The top of the rep range (8) must be at least the bottom (10).',
+    });
+  });
+
+  it('refuses a loss percent under any other goal kind', () => {
+    const refusal = {
+      field: 'targetVelocityLossPct',
+      message:
+        'A velocity-loss percent only applies to a velocity-loss goal. Change the goal type, ' +
+        'or remove the percent.',
+    };
+    expect(
+      validatePrescription({ goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 }),
+    ).toEqual(refusal);
+    expect(validatePrescription({ targetVelocityLossPct: 20 })).toEqual(refusal);
+  });
+
+  it('refuses learning off with no rest, naming both ways out', () => {
+    expect(validatePrescription({ restLearning: false })).toEqual({
+      field: 'restSec',
+      message:
+        'Rest learning is off, so this exercise needs a fixed rest. Add a rest time, or turn ' +
+        'rest learning on.',
+    });
+  });
+
+  it('accepts every other rest pair', () => {
+    expect(validatePrescription({ restLearning: false, restSec: 90 })).toBeNull();
+    expect(validatePrescription({ restLearning: true })).toBeNull();
+    expect(validatePrescription({ restSec: 90 })).toBeNull();
+    expect(validatePrescription({ restLearning: false, restSec: 0 })).toBeNull();
+  });
+
+  it('keeps every message free of field names and enum spellings', () => {
+    const rows = [
+      { goalKind: 'rep_range' },
+      { goalKind: 'target_rpe' },
+      { goalKind: 'velocity_loss' },
+      { targetRepsLow: 9, targetRepsHigh: 8 },
+      { targetVelocityLossPct: 20 },
+      { restLearning: false },
+    ] as const;
+    for (const row of rows) {
+      expect(validatePrescription(row)?.message).not.toMatch(/[a-z][A-Z]|_|`/);
+    }
+  });
+});
+
+describe('validatePrescription on an edit', () => {
+  const brokenBoth = { goalKind: 'target_rpe', restLearning: false } as const;
+
+  it('checks only the groups it is given', () => {
+    expect(validatePrescription(brokenBoth, [])).toBeNull();
+    expect(validatePrescription(brokenBoth, ['rest'])?.field).toBe('restSec');
+    expect(validatePrescription(brokenBoth, ['goal'])?.field).toBe('targetRpe');
+  });
+
+  it('checks both groups when none are named', () => {
+    expect(validatePrescription({ restLearning: false })).not.toBeNull();
+    expect(validatePrescription({ goalKind: 'target_rpe' })).not.toBeNull();
+  });
+});
+
+describe('isRestInvalid', () => {
+  it('marks only learning off with no rest', () => {
+    expect(isRestInvalid({ restLearning: false })).toBe(true);
+    expect(isRestInvalid({ restLearning: false, restSec: 60 })).toBe(false);
+    expect(isRestInvalid({ restLearning: true })).toBe(false);
+    expect(isRestInvalid({})).toBe(false);
   });
 });

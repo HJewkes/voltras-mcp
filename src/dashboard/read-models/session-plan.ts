@@ -11,7 +11,7 @@
 // Confidentiality: plan metadata and fitness units only — no protocol data (NF-07).
 
 import { resolveTargetTempo } from '../tempo-defaults.js';
-import type { StoredPlannedExercise } from '../../store/types.js';
+import type { PlanGoalKind, StoredPlannedExercise } from '../../store/types.js';
 
 /** Narrow catalog lookup this module needs — name + movement pattern, nothing else. */
 export type ExerciseCatalogLookup = {
@@ -46,6 +46,12 @@ export interface PrescriptionView {
   rpe?: number;
   /** Prescribed rest between sets, seconds. Absent when the coach left it unset. */
   restSec?: number;
+  /** The row's goal (VW-448 amendment); absent when it states none. Nothing reads it during a set yet. */
+  goalKind?: PlanGoalKind;
+  /** The velocity-loss goal, percent; only on a `velocity_loss` row. */
+  velocityLossPct?: number;
+  /** Whether the system learns this row's rest (VW-445). */
+  restLearning?: boolean;
   /**
    * Target tempo tuple `[eccentric, pauseBottom, concentric, pauseTop]` (seconds),
    * resolved from the coach override (VW-46) or the exercise default. Absent when
@@ -94,6 +100,11 @@ export function buildSessionPlanView(
   if (match.targetWeightLbs !== undefined) prescription.weightLbs = match.targetWeightLbs;
   if (match.targetRpe !== undefined) prescription.rpe = match.targetRpe;
   if (match.restSec !== undefined) prescription.restSec = match.restSec;
+  if (match.goalKind !== undefined) prescription.goalKind = match.goalKind;
+  if (match.targetVelocityLossPct !== undefined) {
+    prescription.velocityLossPct = match.targetVelocityLossPct;
+  }
+  if (match.restLearning !== undefined) prescription.restLearning = match.restLearning;
   // Coach-set tempo (VW-46), when the planned exercise carries one, wins over the
   // exercise/movement-pattern default. The movement pattern, when the catalog
   // knows it, widens coverage to the per-pattern fallback; unknown exercise/

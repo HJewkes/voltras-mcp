@@ -35,6 +35,7 @@ function exerciseView(overrides: Partial<PlanExerciseView> = {}): PlanExerciseVi
     name: 'Cable Row',
     orderIndex: 0,
     targetSets: 3,
+    restLearning: true,
     ...overrides,
   };
 }

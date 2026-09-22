@@ -568,6 +568,139 @@ describe('plan write routes', () => {
   });
 });
 
+// VW-537: the dashboard is the second of three write paths through the shared validator.
+describe('plan write routes: the goal and the rest pair', () => {
+  async function withTemplate(): Promise<{
+    store: FakePlanStore;
+    port: number;
+    templateId: string;
+  }> {
+    const store = new FakePlanStore();
+    const port = await start(makeState(store));
+    await call(port, 'POST', '/api/plan/programs', { name: 'P' });
+    const tree = (await call(port, 'GET', '/api/plan-tree')).body as PlanTreeBody;
+    return { store, port, templateId: firstTemplate(tree).id };
+  }
+
+  async function create(port: number, templateId: string, body: object): Promise<Result> {
+    return call(port, 'POST', `/api/plan/templates/${templateId}/exercises`, {
+      exerciseId: 'cable-row',
+      ...body,
+    });
+  }
+
+  it('defaults the goal kind on create and states learning on', async () => {
+    const { store, port, templateId } = await withTemplate();
+    const res = await create(port, templateId, { targetRepsLow: 8, targetRpe: 9 });
+    expect(res.status).toBe(201);
+    const [row] = [...store.plannedExercises.values()];
+    expect(row).toMatchObject({ goalKind: 'rep_range', restLearning: true });
+  });
+
+  it.each([
+    ['rep_range', { goalKind: 'rep_range', targetRpe: 8 }],
+    ['target_rpe', { goalKind: 'target_rpe', targetRepsLow: 8 }],
+    ['velocity_loss', { goalKind: 'velocity_loss', targetRepsLow: 8 }],
+    [
+      'a loss percent on a rep range',
+      { goalKind: 'rep_range', targetRepsLow: 8, targetVelocityLossPct: 20 },
+    ],
+    ['learning off with no rest', { restLearning: false }],
+    ['an unknown goal type', { goalKind: 'max_effort' }],
+    ['a non-boolean learning flag', { restLearning: 'no' }],
+    ['a loss percent out of range', { goalKind: 'velocity_loss', targetVelocityLossPct: 99 }],
+  ])('refuses %s on create and stores nothing', async (_label, body) => {
+    const { store, port, templateId } = await withTemplate();
+    const res = await create(port, templateId, body);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: 'invalid_input' });
+    expect(store.plannedExercises.size).toBe(0);
+  });
+
+  it('refuses a patch that clears the rest of a learning-off row', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+
+    const res = await call(port, 'PATCH', `/api/plan/exercises/${row.id}`, { restSec: null });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'invalid_input',
+      message:
+        'Rest learning is off, so this exercise needs a fixed rest. Add a rest time, or turn ' +
+        'rest learning on.',
+      field: 'restSec',
+    });
+    expect(store.plannedExercises.get(row.id)).toMatchObject({ restSec: 90, restLearning: false });
+  });
+
+  it('accepts the same clearing patch when it also turns learning on', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+
+    const res = await call(port, 'PATCH', `/api/plan/exercises/${row.id}`, {
+      restSec: null,
+      restLearning: true,
+    });
+    expect(res.status).toBe(200);
+    expect(store.plannedExercises.get(row.id)?.restSec).toBeUndefined();
+    expect(store.plannedExercises.get(row.id)?.restLearning).toBe(true);
+  });
+
+  // Coordinator ruling on #497: a row stored with both null is a tolerated fallback, not a locked row.
+  it('lets a weight-only edit through on a learning-off row with no rest, and leaves it so', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 8, restSec: 90, restLearning: false });
+    const [row] = [...store.plannedExercises.values()];
+    const { restSec: _dropped, ...withoutRest } = row;
+    await store.putPlannedExercise(withoutRest);
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { targetWeightLbs: 135 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)).toMatchObject({
+      targetWeightLbs: 135,
+      restLearning: false,
+    });
+    expect(store.plannedExercises.get(row.id)?.restSec).toBeUndefined();
+    expect((await call(port, 'PATCH', path, { restLearning: false })).status).toBe(400);
+  });
+
+  it('checks the goal only when an edit touches a goal field', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRpe: 8 });
+    const [row] = [...store.plannedExercises.values()];
+    await store.putPlannedExercise({ ...row, goalKind: 'rep_range' });
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { restSec: 120 })).status).toBe(200);
+    expect(store.plannedExercises.get(row.id)?.goalKind).toBe('rep_range');
+    const res = await call(port, 'PATCH', path, { targetRpe: 9 });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({
+      message: 'A rep-range goal needs a rep range. Add one, or choose a different goal type.',
+      field: 'targetRepsLow',
+    });
+  });
+
+  it('switches a velocity_loss row to a rep range only when the percent is cleared too', async () => {
+    const { store, port, templateId } = await withTemplate();
+    await create(port, templateId, { targetRepsLow: 5, targetVelocityLossPct: 20 });
+    const [row] = [...store.plannedExercises.values()];
+    expect(row.goalKind).toBe('velocity_loss');
+    const path = `/api/plan/exercises/${row.id}`;
+
+    expect((await call(port, 'PATCH', path, { goalKind: 'rep_range' })).status).toBe(400);
+    const res = await call(port, 'PATCH', path, {
+      goalKind: 'rep_range',
+      targetVelocityLossPct: null,
+    });
+    expect(res.status).toBe(200);
+    expect(store.plannedExercises.get(row.id)).toMatchObject({ goalKind: 'rep_range' });
+    expect(store.plannedExercises.get(row.id)?.targetVelocityLossPct).toBeUndefined();
+  });
+});
+
 describe('GET /api/plan-tree', () => {
   it('flags the template and exercise the live session is on', async () => {
     const store = new FakePlanStore();

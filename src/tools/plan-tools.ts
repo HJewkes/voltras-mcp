@@ -81,6 +81,7 @@ import {
 import { wrapHandler } from './helpers.js';
 import { assertCreateKeepsSchedule, calendarOf, datingRow } from './plan-schedule-tools.js';
 import { todayLocal } from '../analytics/training-days.js';
+import { defaultGoalKind, validatePrescription } from '../plan/goal-kind.js';
 import type { BlockCalendar } from '../plan/block-calendar.js';
 import {
   resolveCurrentBlock,
@@ -92,9 +93,12 @@ import { getTierSignal, type Tier, type TierConfidence, type TierSource } from '
 
 class ToolError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /** The input field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: string, message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'ToolError';
   }
 }
@@ -163,13 +167,22 @@ const PLAN_EXERCISE_CREATE_DESCRIPTION =
   'checks over the rest of the week (hard sets per muscle per week, the same muscle over the ' +
   'per-session ceiling on two consecutive-orderIndex templates, and the priority muscle ' +
   'drifting between week 1 and a later week of the same block — VMCP-06.03 / B32). Each ' +
-  'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. The ' +
+  'warning is a SUGGESTION; accept or decline it, and never re-apply it after a decline. A valid ' +
   'write ALWAYS succeeds — a warning never blocks, never rolls back, and never edits the row ' +
   'you just created. Read a warning out to the lifter and offer the fix it names; if they ' +
   'decline, drop it and move on. `targetTempo` (VW-46) is an optional coach-set tempo override ' +
   '— `{ ecc, pauseBottom, con, pauseTop }` seconds, each >= 0 — that wins over the exercise/' +
   'movement-pattern default when the live prescription resolves a tempo; omit it to leave the ' +
-  'default in effect.';
+  'default in effect. `goalKind` (VW-537) is `rep_range`, `target_rpe` or `velocity_loss`; ' +
+  'omit it and a loss target gives `velocity_loss`, else a rep range gives `rep_range` (an ' +
+  'RPE on the same row is its effort cap), else an RPE gives `target_rpe`, else no goal. ' +
+  '`targetVelocityLossPct` (1 to 95) is allowed only with `velocity_loss`, and a ' +
+  '`velocity_loss` row needs it or a `trainingIntent`. `restLearning` (default true) lets ' +
+  'the system learn the rest; false makes `restSec` a fixed rest and then requires it. A ' +
+  'row that breaks one of these rules is refused with INVALID_INPUT, whose `field` names the input to fix, and ' +
+  'nothing is written; ' +
+  'this is the only refusal, since warnings never block. Nothing reads `goalKind` or ' +
+  '`restLearning` during a set yet.';
 const PLAN_EXERCISE_LIST_DESCRIPTION =
   'List the planned exercises belonging to one workout template (takes workoutTemplateId).';
 
@@ -733,10 +746,27 @@ async function createPlannedExercise(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     ...(input.targetTempo !== undefined ? { targetTempo: input.targetTempo } : {}),
     ...(input.trainingIntent !== undefined ? { trainingIntent: input.trainingIntent } : {}),
+    ...prescriptionGoalAndRest(input),
   };
+  const refusal = validatePrescription(plannedExercise);
+  if (refusal !== null) throw new ToolError('INVALID_INPUT', refusal.message, refusal.field);
   await state.store.putPlannedExercise(plannedExercise);
   const warnings = await lintTemplateVolume(state, input.workoutTemplateId);
   return { plannedExercise, warnings };
+}
+
+/** The goal and rest fields as stored: an omitted kind takes the default, and learning states itself. */
+function prescriptionGoalAndRest(
+  input: z.infer<typeof PlanExerciseCreateInput>,
+): Pick<StoredPlannedExercise, 'goalKind' | 'targetVelocityLossPct' | 'restLearning'> {
+  const goalKind = input.goalKind ?? defaultGoalKind(input);
+  return {
+    ...(goalKind !== null ? { goalKind } : {}),
+    ...(input.targetVelocityLossPct !== undefined
+      ? { targetVelocityLossPct: input.targetVelocityLossPct }
+      : {}),
+    restLearning: input.restLearning ?? true,
+  };
 }
 
 /**

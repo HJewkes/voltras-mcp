@@ -41,14 +41,21 @@ import {
   type PlanTreeView,
 } from './read-models/index.js';
 import { validateTargets, type TargetField, type TargetValues } from './plan-targets.js';
-import type {
-  StoredBlockSchedule,
-  StoredPlannedExercise,
-  StoredProgramAssignment,
-  StoredTrainingBlock,
-  StoredTrainingProgram,
-  StoredTrainingWeek,
-  StoredWorkoutTemplate,
+import {
+  defaultGoalKind,
+  validatePrescription,
+  type PrescriptionGroup,
+} from '../plan/goal-kind.js';
+import {
+  PLAN_GOAL_KINDS,
+  type PlanGoalKind,
+  type StoredBlockSchedule,
+  type StoredPlannedExercise,
+  type StoredProgramAssignment,
+  type StoredTrainingBlock,
+  type StoredTrainingProgram,
+  type StoredTrainingWeek,
+  type StoredWorkoutTemplate,
 } from '../store/types.js';
 
 /**
@@ -81,9 +88,12 @@ export interface DashboardPlanStore {
 /** Thrown by the mutation helpers; `server.ts` maps `code` onto an HTTP status. */
 export class PlanApiError extends Error {
   readonly code: 'invalid_input' | 'not_found';
-  constructor(code: 'invalid_input' | 'not_found', message: string) {
+  /** The body field to fix, for a caller that cannot read the message (VW-537). */
+  readonly field: string | undefined;
+  constructor(code: 'invalid_input' | 'not_found', message: string, field?: string) {
     super(message);
     this.code = code;
+    this.field = field;
     this.name = 'PlanApiError';
   }
 }
@@ -283,6 +293,9 @@ interface TargetFieldsBody {
   targetRpe?: unknown;
   restSec?: unknown;
   notes?: unknown;
+  goalKind?: unknown;
+  targetVelocityLossPct?: unknown;
+  restLearning?: unknown;
 }
 
 export interface CreatePlannedExerciseBody extends TargetFieldsBody {
@@ -300,17 +313,21 @@ export async function createPlannedExercise(
   }
   const exerciseId = requireString(body.exerciseId, 'exerciseId');
   const siblings = await store.getPlannedExercisesForTemplate(templateId);
-  const patch = targetPatch(body);
-  const targetSets = optionalNumber(body.targetSets, 'targetSets') ?? 3;
-  assertTargetsInRange({ ...patch, targetSets });
   const plannedExercise: StoredPlannedExercise = {
     id: randomUUID(),
     workoutTemplateId: templateId,
     exerciseId,
     orderIndex: nextOrderIndex(siblings),
-    targetSets,
-    ...patch,
+    targetSets: optionalNumber(body.targetSets, 'targetSets') ?? 3,
+    restLearning: true,
+    ...targetPatch(body),
+    ...goalAndRestPatch(body),
   };
+  if (plannedExercise.goalKind === undefined) {
+    const goalKind = defaultGoalKind(plannedExercise);
+    if (goalKind !== null) plannedExercise.goalKind = goalKind;
+  }
+  assertRowIsValid(plannedExercise);
   await store.putPlannedExercise(plannedExercise);
   return { plannedExercise };
 }
@@ -321,7 +338,8 @@ export interface UpdatePlannedExerciseBody extends TargetFieldsBody {
 
 /**
  * Edit one planned exercise's targets (and/or its position). Absent keys are
- * left untouched — the caller PATCHes only what changed; `null` clears a field.
+ * left untouched — the caller PATCHes only what changed; `null` clears `restSec`
+ * or `targetVelocityLossPct` and reads as absent on every other field.
  */
 export async function updatePlannedExercise(
   store: DashboardPlanStore,
@@ -338,15 +356,21 @@ export async function updatePlannedExercise(
   const updated: StoredPlannedExercise = {
     ...existing,
     ...targetPatch(body),
+    ...goalAndRestPatch(body),
   };
+  // Only these two clear on `null`: switching a goal away from velocity loss drops its
+  // percent, and clearing a rest is the one edit the learning-off rule has to see.
+  if (body.restSec === null) delete updated.restSec;
+  if (body.targetVelocityLossPct === null) delete updated.targetVelocityLossPct;
   const targetSets = optionalNumber(body.targetSets, 'targetSets');
   if (targetSets !== undefined) updated.targetSets = targetSets;
   const orderIndex = optionalNumber(body.orderIndex, 'orderIndex');
   if (orderIndex !== undefined) updated.orderIndex = orderIndex;
   // Validated against the MERGED row, not the patch: a PATCH that raises only
   // `targetRepsLow` above the row's existing `targetRepsHigh` is exactly the
-  // inverted band a per-field check waves through.
-  assertTargetsInRange(targetValuesOf(updated));
+  // inverted band a per-field check waves through. The same holds for a patch that
+  // clears the rest of a learning-off row without turning learning on.
+  assertRowIsValid(updated, touchedGroups(body));
   await store.putPlannedExercise(updated);
   return { plannedExercise: updated };
 }
@@ -433,9 +457,38 @@ function targetPatch(body: TargetFieldsBody): Partial<StoredPlannedExercise> {
   if (rpe !== undefined) patch.targetRpe = rpe;
   const rest = optionalNumber(body.restSec, 'restSec');
   if (rest !== undefined) patch.restSec = rest;
+  const lossPct = optionalNumber(body.targetVelocityLossPct, 'targetVelocityLossPct');
+  if (lossPct !== undefined) patch.targetVelocityLossPct = lossPct;
   const notes = optionalString(body.notes, 'notes');
   if (notes !== undefined) patch.notes = notes;
   return patch;
+}
+
+/** The goal kind and the learning flag, present only when the body carried them. */
+function goalAndRestPatch(body: TargetFieldsBody): Partial<StoredPlannedExercise> {
+  const patch: Partial<StoredPlannedExercise> = {};
+  const goalKind = optionalGoalKind(body.goalKind);
+  if (goalKind !== undefined) patch.goalKind = goalKind;
+  if (body.restLearning !== undefined && body.restLearning !== null) {
+    if (typeof body.restLearning !== 'boolean') {
+      throw new PlanApiError('invalid_input', 'Rest learning must be on or off.', 'restLearning');
+    }
+    patch.restLearning = body.restLearning;
+  }
+  return patch;
+}
+
+function optionalGoalKind(value: unknown): PlanGoalKind | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const kind = PLAN_GOAL_KINDS.find((k) => k === value);
+  if (kind === undefined) {
+    throw new PlanApiError(
+      'invalid_input',
+      'The goal type must be rep range, target RPE or velocity loss.',
+      'goalKind',
+    );
+  }
+  return kind;
 }
 
 function requireString(value: unknown, field: string): string {
@@ -474,6 +527,7 @@ function targetValuesOf(row: StoredPlannedExercise): TargetValues {
     'targetWeightLbs',
     'targetRpe',
     'restSec',
+    'targetVelocityLossPct',
   ];
   const values: TargetValues = {};
   for (const field of fields) {
@@ -491,4 +545,28 @@ function targetValuesOf(row: StoredPlannedExercise): TargetValues {
 function assertTargetsInRange(values: TargetValues): void {
   const message = validateTargets(values);
   if (message !== null) throw new PlanApiError('invalid_input', message);
+}
+
+/** The bounds first, then the prescription shape every write path shares (VW-537). */
+function assertRowIsValid(row: StoredPlannedExercise, groups?: readonly PrescriptionGroup[]): void {
+  assertTargetsInRange(targetValuesOf(row));
+  const refusal = validatePrescription(row, groups);
+  if (refusal !== null) throw new PlanApiError('invalid_input', refusal.message, refusal.field);
+}
+
+const GOAL_KEYS = [
+  'goalKind',
+  'targetRepsLow',
+  'targetRepsHigh',
+  'targetRpe',
+  'targetVelocityLossPct',
+] as const;
+const REST_KEYS = ['restSec', 'restLearning'] as const;
+
+/** The groups a PATCH touches: a stored row that breaks one rule stays editable elsewhere. */
+function touchedGroups(body: TargetFieldsBody): PrescriptionGroup[] {
+  const groups: PrescriptionGroup[] = [];
+  if (GOAL_KEYS.some((key) => body[key] !== undefined)) groups.push('goal');
+  if (REST_KEYS.some((key) => body[key] !== undefined)) groups.push('rest');
+  return groups;
 }

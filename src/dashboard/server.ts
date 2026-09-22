@@ -1443,7 +1443,11 @@ async function runPlanRoute(
       return {
         ok: false,
         code: err.code,
-        result: { error: err.code, message: err.message },
+        result: {
+          error: err.code,
+          message: err.message,
+          ...(err.field !== undefined ? { field: err.field } : {}),
+        },
         errorStatus: err.code === 'not_found' ? 404 : 400,
       };
     }

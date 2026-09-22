@@ -4284,11 +4284,11 @@ export class SqliteSessionStore implements SessionStore {
       // Same reasoning as tempo: the importer is not a source of training
       // intent, so an existing local value survives a re-import.
       existing?.training_intent ?? null,
-      // TrueCoach carries no goal or rest flag either. Writing the import rule for a NEW
-      // row is VW-445 task 6; until then a local edit survives a re-import, as above.
-      existing?.goal_kind ?? null,
+      // A new row takes the importer's kind and learning flag; a re-import keeps the
+      // stored three, as it keeps a local RPE (VW-537).
+      existing === undefined ? (next.goalKind ?? null) : existing.goal_kind,
       existing?.target_velocity_loss_pct ?? null,
-      existing?.rest_learning ?? 1,
+      importedRestLearning(existing, next),
       next.externalId ?? null,
     );
   }
@@ -6923,6 +6923,18 @@ function sameTemplate(row: WorkoutTemplateRow | undefined, next: StoredWorkoutTe
     (row.notes ?? undefined) === next.notes &&
     row.order_index === next.orderIndex
   );
+}
+
+/**
+ * The stored learning flag, kept on a re-import unless keeping it would leave learning off
+ * with no rest: the import never writes that pair (VW-445 s.7.2), so learning turns on.
+ */
+function importedRestLearning(
+  existing: PlannedExerciseRow | undefined,
+  next: StoredPlannedExercise,
+): number {
+  if (existing === undefined) return next.restLearning === false ? 0 : 1;
+  return existing.rest_learning === 0 && next.restSec === undefined ? 1 : existing.rest_learning;
 }
 
 function sameExercise(row: PlannedExerciseRow | undefined, next: StoredPlannedExercise): boolean {
